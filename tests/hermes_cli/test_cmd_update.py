@@ -43,11 +43,44 @@ def _stub_update_side_effects(monkeypatch):
     the refresh still runs and stays observable for the test that asserts on
     it; what disappears is solely the ability to install for real.
 
-    No test in this file asserts on any of these seams, so stubbing them costs
-    no coverage and confines the flow to the git mock the tests already install.
+    A fourth seam of the same class, ``_detect_venv_python_processes``, is
+    stubbed one level up in ``tests/hermes_cli/conftest.py`` — it walks the
+    real host process table and cost 7.5-12.3s on every ``cmd_update`` call
+    here, unbounded under load (it wedged a full sweep for 2h16m on
+    2026-08-16). Seven files in this directory reach it, so it lives beside
+    the other update gate's autouse stub rather than being copied into each.
+
+    Seams five through seven are the post-pull profile/skill sync, which runs
+    against the developer's REAL ``~/.hermes`` because nothing in this flow is
+    redirected by ``PROJECT_ROOT`` patching:
+
+    * ``skills_sync.sync_skills`` — ``_dir_hash``-es and ``copytree``-s the
+      bundled skills into the live skills dir (449 real ``CopyFile2`` calls in
+      one profiled test). This is what actually blew the 60s per-test timeout
+      and killed the file mid-run: the traceback ends in ``_dir_hash ->
+      Path.read_bytes`` and, because pytest-timeout's thread method takes the
+      interpreter down, no summary line is ever printed.
+    * ``profiles.seed_profile_skills`` — spawns a SUBPROCESS per profile
+      (deliberately, for a clean HERMES_HOME), so the cost is spawn-bound and
+      scales with however many profiles the developer happens to have.
+    * ``profiles.backfill_profile_envs`` — copies the default install's
+      ``.env`` into other profiles. A unit test has no business rewriting
+      credential files on the host.
+
+    ``list_profiles`` is deliberately left real: it only reads, and the two
+    tests in ``TestCmdUpdateProfileSkillSync`` patch it themselves along with
+    the seeder they assert on — a test's own ``patch`` is applied after this
+    fixture and restored before it, so those assertions still see exactly the
+    fakes they install.
+
+    No other test in this file asserts on any of these seams, so stubbing them
+    costs no coverage and confines the flow to the git mock the tests already
+    install.
     """
     import hermes_cli.main as _m
+    import hermes_cli.profiles as _profiles
     import tools.lazy_deps as _lazy
+    import tools.skills_sync as _skills_sync
 
     monkeypatch.setattr(_m, "_build_web_ui", lambda *a, **k: True)
     monkeypatch.setattr(_m, "_kill_stale_dashboard_processes", lambda *a, **k: None)
@@ -55,6 +88,38 @@ def _stub_update_side_effects(monkeypatch):
         _lazy, "_venv_pip_install",
         lambda *a, **k: _lazy._InstallResult(True, "", ""),
     )
+
+    # Shapes match what _cmd_update_impl reads back: sync_skills is indexed
+    # ("copied") and .get()-ed ("updated"/"user_modified"/"cleaned"); a falsy
+    # seed result would print "sync failed", so return the empty-but-present
+    # dict; backfill_profile_envs is a list of profile names.
+    _empty_sync = {"copied": [], "updated": [], "user_modified": [], "cleaned": []}
+    monkeypatch.setattr(_skills_sync, "sync_skills", lambda *a, **k: dict(_empty_sync))
+    monkeypatch.setattr(
+        _profiles, "seed_profile_skills",
+        lambda *a, **k: {"copied": [], "updated": [], "user_modified": []},
+    )
+    monkeypatch.setattr(_profiles, "backfill_profile_envs", lambda *a, **k: [])
+
+    # Seam eight: _clear_bytecode_cache(PROJECT_ROOT) rmtree-s every real
+    # __pycache__ in the checkout. Beyond being a mutation of the developer's
+    # working tree, it is the most expensive thing left in the flow by a wide
+    # margin — after it runs, every module imported later in the process has
+    # to be re-read and re-compiled from source, which is where the profile's
+    # 56s of `open_code` and 19s of `compile` come from. Nothing asserts on it.
+    monkeypatch.setattr(_m, "_clear_bytecode_cache", lambda *a, **k: 0)
+
+    # Seam nine: the post-update "auto-restart ALL gateways" block. Like the
+    # pause/resume pair neutralized in conftest.py, it discovers real gateway
+    # PIDs and would SIGTERM (then SIGKILL) the developer's running gateways.
+    # Discovery alone is ~2.1s per test in psutil ancestry walks. Empty PID
+    # lists are the "nothing was running" answer, which short-circuits the
+    # restart, the kill list, and the survivor sweep.
+    import hermes_cli.gateway as _gateway
+
+    monkeypatch.setattr(_gateway, "find_gateway_pids", lambda *a, **k: [])
+    monkeypatch.setattr(_gateway, "find_profile_gateway_processes", lambda *a, **k: [])
+    monkeypatch.setattr(_gateway, "_get_service_pids", lambda *a, **k: [])
 
 
 def _make_run_side_effect(branch="main", verify_ok=True, commit_count="0"):

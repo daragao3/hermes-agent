@@ -25,6 +25,13 @@ import pytest
 
 from hermes_cli import main as cli_main
 
+# This file owns ``_detect_venv_python_processes``'s coverage, so it opts out
+# of conftest.py's autouse stub for it — every test here either drives the real
+# detector against a stubbed ``psutil`` or patches the seam with its own return
+# value. Same arrangement as test_update_concurrent_quarantine.py and the
+# ``real_concurrent_gate`` marker.
+pytestmark = pytest.mark.real_venv_holder_gate
+
 
 # ---------------------------------------------------------------------------
 # _venv_core_imports_healthy
