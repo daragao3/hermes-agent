@@ -464,6 +464,30 @@ def _setup_update_mocks(monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr("hermes_cli.profiles.list_profiles", lambda *a, **kw: [])
+    # `list_profiles -> []` short-circuits the seeding loop but NOT
+    # `backfill_profile_envs`, which does its own discovery from
+    # `_get_profiles_root()` — i.e. HERMES_HOME, which the PROJECT_ROOT
+    # redirection above does not cover. It copies the default install's `.env`
+    # into every named profile lacking one, so unstubbed these tests create
+    # credential files in the developer's real profiles. (It never overwrites
+    # an existing `.env`, which is the only reason this was survivable.)
+    monkeypatch.setattr(
+        "hermes_cli.profiles.backfill_profile_envs", lambda *a, **kw: []
+    )
+    # The post-update "auto-restart ALL gateways" block, same class as the
+    # dashboard scan above: it discovers real gateway PIDs and SIGTERMs (then
+    # SIGKILLs) them, and the discovery alone is ~2.1s per test in psutil
+    # ancestry walks. Empty PID lists are the "nothing was running" answer,
+    # which short-circuits the restart, the kill list and the survivor sweep.
+    # A tripwire run confirmed all three of these are genuinely reached here.
+    monkeypatch.setattr("hermes_cli.gateway.find_gateway_pids", lambda *a, **kw: [])
+    monkeypatch.setattr(
+        "hermes_cli.gateway.find_profile_gateway_processes", lambda *a, **kw: []
+    )
+    monkeypatch.setattr("hermes_cli.gateway._get_service_pids", lambda *a, **kw: [])
+    # Cheap here (PROJECT_ROOT is tmp_path, so there is no __pycache__ to walk),
+    # but stubbing it drops the dependency on that redirection holding.
+    monkeypatch.setattr(hermes_main, "_clear_bytecode_cache", lambda *a, **kw: 0)
 
 
 def test_cmd_update_retries_optional_extras_individually_when_all_fails(monkeypatch, tmp_path, capsys):
