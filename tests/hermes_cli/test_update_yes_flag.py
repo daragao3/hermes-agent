@@ -18,7 +18,7 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _stub_update_side_effects(monkeypatch):
+def _stub_update_side_effects(monkeypatch, no_update_sleep):
     """Keep ``cmd_update`` off the real host.
 
     Any test that drives the update flow far enough to be "behind" reaches two

@@ -145,3 +145,69 @@ def _suppress_windows_gateway_pause(request, monkeypatch):
         lambda *_a, **_k: None,
         raising=False,
     )
+
+
+class _FakeClock:
+    """Proxy the real ``time`` module with a virtual, instantly-advancing clock.
+
+    ``sleep`` banks the requested duration instead of waiting, and ``monotonic``
+    / ``time`` report the real reading plus everything banked so far. Every
+    other attribute falls through to the real module.
+
+    Advancing the clock rather than making ``sleep`` a plain no-op is the point.
+    ``_cmd_update_impl`` contains a poll loop of the form ``deadline =
+    _time.monotonic() + timeout; while ...: subprocess.run(...); if
+    _time.monotonic() >= deadline: return False; _time.sleep(0.5)``. With a
+    no-op sleep and a real clock that becomes a busy loop that re-runs the
+    mocked subprocess thousands of times over 0.5s of wall time, inflating the
+    call lists these tests assert on. With a banked sleep it exits after one
+    iteration, which is the behavior the test intends.
+    """
+
+    def __init__(self, real):
+        self._real = real
+        self._offset = 0.0
+
+    def sleep(self, seconds=0.0):
+        try:
+            self._offset += max(float(seconds), 0.0)
+        except (TypeError, ValueError):
+            pass
+
+    def monotonic(self):
+        return self._real.monotonic() + self._offset
+
+    def time(self):
+        return self._real.time() + self._offset
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+@pytest.fixture
+def no_update_sleep(monkeypatch):
+    """Opt-in: make ``hermes_cli.main`` sleep instantly. Request it by name.
+
+    The post-restart survivor sweep in ``_cmd_update_impl`` sleeps 3.0s
+    unconditionally (``main.py:11713``) and another 1.5s after force-killing
+    stragglers -- on EVERY test that drives ``cmd_update`` far enough to be
+    "behind". Stubbing the gateway-discovery functions does not skip it: the
+    3.0s sleep is the first statement inside its own ``try``, before anything
+    that consults a PID list.
+
+    This rebinds the module-global ``_time`` name in ``hermes_cli.main``
+    (bound once at ``main.py:819``, never shadowed inside ``_cmd_update_impl``)
+    rather than patching ``time.sleep`` process-wide. That distinction matters:
+    a global patch would reach background threads and, concretely, would break
+    ``test_backup.py``, which sleeps a real 1.05s to force distinct timestamps.
+    Scoped this way, nothing outside ``hermes_cli.main`` observes a fake clock.
+
+    NOT autouse -- other tests in this directory exercise sleeping code paths in
+    ``hermes_cli.main`` on purpose, so files opt in by naming this fixture in
+    their own update fixture's signature.
+    """
+    import time as _real_time
+
+    from hermes_cli import main as _cli_main
+
+    monkeypatch.setattr(_cli_main, "_time", _FakeClock(_real_time), raising=False)

@@ -39,6 +39,19 @@ def _patch_managed_uv(request):
          patch("hermes_cli.managed_uv.update_managed_uv", side_effect=_fake_update_managed_uv):
         yield
 
+
+@pytest.fixture(autouse=True)
+def _no_update_sleep(no_update_sleep):
+    """Pull in conftest.py's ``hermes_cli.main``-scoped fake clock.
+
+    ``_setup_update_mocks`` below is a plain helper, not a fixture, so it
+    cannot request ``no_update_sleep`` itself — this autouse shim does it for
+    the whole file. Without it every test that reaches the post-restart
+    survivor sweep pays a real 3.0s (``main.py:11713``), which the gateway-PID
+    stubs do not skip because that sleep runs before any PID list is consulted.
+    """
+
+
 def test_stash_local_changes_if_needed_returns_none_when_tree_clean(monkeypatch, tmp_path):
     calls = []
 
@@ -605,6 +618,13 @@ def test_install_with_optional_fallback_honors_custom_group(monkeypatch):
 
 def test_install_heartbeat_prints_when_dependency_install_is_silent(monkeypatch, capsys):
     """Long quiet installs should emit periodic heartbeat lines."""
+    # Opt back out of the file-wide fake clock: this test is ABOUT elapsed
+    # time. The heartbeat fires from a real timer, so the 1.2s below has to be
+    # a real 1.2s — with the banked-sleep clock it returns instantly and the
+    # heartbeat never gets the chance to print.
+    import time as _real_time
+
+    monkeypatch.setattr(hermes_main, "_time", _real_time)
 
     def fake_run(cmd, **kwargs):
         hermes_main._time.sleep(1.2)
