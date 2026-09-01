@@ -1011,6 +1011,9 @@ class _Backend(Protocol):
     def dismiss_claude_visibility_job(
         self, *, job_id: str, expected_error_code: str
     ) -> Mapping[str, Any]: ...
+    def requeue_failed_claude_visibility_job(
+        self, *, job_id: str, reserved_claude_uuid: str
+    ) -> Mapping[str, Any]: ...
     def characterize(self, *, provider: str) -> Mapping[str, Any]: ...
     def characterization_status(self) -> str: ...
     def backfill_candidates(self, *, days: int) -> list[dict[str, Any]]: ...
@@ -2833,6 +2836,44 @@ class ProductionBackend:
             # so as a gate refusal rather than a generic configuration error.
             raise RolloutGateBlocked("visibility_dismiss_identity_mismatch") from exc
 
+    def requeue_failed_claude_visibility_job(
+        self, *, job_id: str, reserved_claude_uuid: str
+    ) -> Mapping[str, Any]:
+        """Return one reviewed terminal failure to the queue under its own UUID.
+
+        Where ``dismiss`` gives a job up and ``repair`` reconciles a transcript
+        that already exists, this is the third disposition: the operator has
+        looked at the failure and judges it worth one more real attempt. It is
+        the ONLY writer of the 'operator authorized exact UUID reconciliation'
+        detail that ``claim_claude_visibility_job`` recognises as
+        ``operator_recovery``, which is what lets a job past the exhaustion
+        guard without falsifying its attempt ledger.
+
+        The store method has had coverage since it was written but no caller on
+        any surface, so on 2026-09-01 a stranded job had three documented
+        recovery verbs and none of them could actually be invoked.
+
+        The store returns the whole row; only a bounded payload is published,
+        because that row carries ``signed_marker``.
+        """
+
+        store = self._require_store()
+        try:
+            row = store.requeue_failed_claude_visibility_reconciliation(
+                job_id, reserved_claude_uuid
+            )
+        except ValueError as exc:
+            # Same shape as its siblings: the guarded UPDATE matched no row --
+            # wrong id or UUID, a state that is not claude_failed, an error the
+            # recovery guard does not accept, or another job still open.
+            raise RolloutGateBlocked("visibility_requeue_identity_mismatch") from exc
+        return {
+            "status": "requeued",
+            "job_id": row["id"],
+            "reserved_claude_uuid": row["reserved_claude_uuid"],
+            "error_code": row["error_code"],
+        }
+
     def abort_claude_visibility_characterization(
         self, *, expected_job_id: str, expected_reserved_claude_uuid: str
     ) -> Mapping[str, Any]:
@@ -4506,6 +4547,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="confirm the job is not worth another paid attempt",
     )
 
+    requeue_claude_visibility = commands.add_parser(
+        "claude-visibility-requeue",
+        help="return one reviewed terminal failure to the queue under its own UUID",
+    )
+    requeue_claude_visibility.add_argument("--job-id", required=True)
+    requeue_claude_visibility.add_argument("--reserved-claude-uuid", required=True)
+    requeue_claude_visibility.add_argument(
+        "--confirm-operator-recovery",
+        action="store_true",
+        help="confirm the job is worth one more paid attempt",
+    )
+
     characterize = commands.add_parser(
         "characterize", help="run the disposable live provider gate"
     )
@@ -4864,6 +4917,18 @@ def _main_unscoped(
                     backend.dismiss_claude_visibility_job(
                         job_id=args.job_id,
                         expected_error_code=args.error_code,
+                    )
+                )
+            )
+            return EXIT_OK
+        if args.command == "claude-visibility-requeue":
+            if not args.confirm_operator_recovery:
+                raise RolloutGateBlocked("visibility_requeue_confirmation_required")
+            _emit(
+                dict(
+                    backend.requeue_failed_claude_visibility_job(
+                        job_id=args.job_id,
+                        reserved_claude_uuid=args.reserved_claude_uuid,
                     )
                 )
             )

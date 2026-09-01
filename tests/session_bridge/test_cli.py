@@ -519,6 +519,24 @@ class FakeBackend:
             "attempts": 6,
         }
 
+    def requeue_failed_claude_visibility_job(
+        self,
+        *,
+        job_id: str,
+        reserved_claude_uuid: str,
+    ):
+        self.calls.append((
+            "requeue_failed_claude_visibility_job",
+            job_id,
+            reserved_claude_uuid,
+        ))
+        return {
+            "status": "requeued",
+            "job_id": job_id,
+            "reserved_claude_uuid": reserved_claude_uuid,
+            "error_code": "creation_ambiguous",
+        }
+
     def repair_failed_claude_visibility_job(
         self,
         *,
@@ -10346,3 +10364,130 @@ def test_terminal_visibility_repair_releases_its_lease_on_every_exit(
             "restored_error_detail": "exact transcript conflict",
         }
     ], f"the {mode} exit held its own lease instead of releasing it"
+
+
+def test_visibility_requeue_cli_requires_explicit_confirmation(capsys) -> None:
+    """Operator recovery had a store method but no way to reach it.
+
+    requeue_failed_claude_visibility_reconciliation is the ONLY path that
+    returns a reviewed terminal failure to the queue under its original
+    UUID -- it is what sets the 'operator authorized exact UUID
+    reconciliation' detail that lets claim_claude_visibility_job bypass the
+    exhaustion guard. It had store coverage but ZERO exposure on cli.py or
+    mcp_server.py, so on 2026-09-01 a stranded job had three documented
+    recovery verbs and not one of them could be invoked.
+
+    Gated like its siblings: recovery grants a further PAID attempt, so it
+    must be a deliberate act, not a default.
+    """
+
+    backend = FakeBackend()
+    job_id = "claude-visibility-job:test"
+    reserved_uuid = "11111111-1111-4111-8111-111111111111"
+
+    assert (
+        _run(
+            [
+                "claude-visibility-requeue",
+                "--job-id",
+                job_id,
+                "--reserved-claude-uuid",
+                reserved_uuid,
+            ],
+            backend,
+        )
+        == 4
+    )
+    assert _json_output(capsys) == {
+        "error": "rollout_gate_blocked",
+        "gate": "visibility_requeue_confirmation_required",
+    }
+    assert not any(
+        call[0] == "requeue_failed_claude_visibility_job" for call in backend.calls
+    )
+
+    assert (
+        _run(
+            [
+                "claude-visibility-requeue",
+                "--confirm-operator-recovery",
+                "--job-id",
+                job_id,
+                "--reserved-claude-uuid",
+                reserved_uuid,
+            ],
+            backend,
+        )
+        == 0
+    )
+    assert _json_output(capsys) == {
+        "status": "requeued",
+        "job_id": job_id,
+        "reserved_claude_uuid": reserved_uuid,
+        "error_code": "creation_ambiguous",
+    }
+    assert (
+        "requeue_failed_claude_visibility_job",
+        job_id,
+        reserved_uuid,
+    ) in backend.calls
+
+
+def test_visibility_requeue_backend_emits_a_bounded_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The store returns the WHOLE row; the CLI must not leak it.
+
+    Every sibling verb emits a small fixed dict. The row carries
+    signed_marker among other things, so echoing it would widen the public
+    surface of a recovery command.
+    """
+
+    job_id = "claude-visibility-job:test"
+    reserved_uuid = "11111111-1111-4111-8111-111111111111"
+
+    class Store:
+        def requeue_failed_claude_visibility_reconciliation(self, a, b):
+            assert (a, b) == (job_id, reserved_uuid)
+            return {
+                "id": job_id,
+                "reserved_claude_uuid": reserved_uuid,
+                "state": "claude_retry",
+                "error_code": "creation_ambiguous",
+                "error_detail": "operator authorized exact UUID reconciliation",
+                "signed_marker": "HERMES_SESSION_BRIDGE_V1:secret.half",
+                "attempts": 3,
+            }
+
+    backend = ProductionBackend(BridgeConfig())
+    monkeypatch.setattr(backend, "_require_store", lambda: Store())
+    payload = backend.requeue_failed_claude_visibility_job(
+        job_id=job_id, reserved_claude_uuid=reserved_uuid
+    )
+    assert payload == {
+        "status": "requeued",
+        "job_id": job_id,
+        "reserved_claude_uuid": reserved_uuid,
+        "error_code": "creation_ambiguous",
+    }
+    assert "signed_marker" not in payload
+
+
+def test_visibility_requeue_backend_reports_identity_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guarded UPDATE that matches no row is a gate refusal, not a crash."""
+
+    class Store:
+        def requeue_failed_claude_visibility_reconciliation(self, a, b):
+            raise ValueError("exact failed Claude visibility job required")
+
+    backend = ProductionBackend(BridgeConfig())
+    monkeypatch.setattr(backend, "_require_store", lambda: Store())
+    with pytest.raises(
+        RolloutGateBlocked, match="visibility_requeue_identity_mismatch"
+    ):
+        backend.requeue_failed_claude_visibility_job(
+            job_id="claude-visibility-job:test",
+            reserved_claude_uuid="11111111-1111-4111-8111-111111111111",
+        )
