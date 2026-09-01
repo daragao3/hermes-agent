@@ -61,7 +61,12 @@ from session_bridge.sidebar import (
 )
 from session_bridge.preview import build_session_preview
 from session_bridge.sidebar_executor import SidebarExecutionResult
-from session_bridge.store import SessionBridgeStore, SidebarSource, SidebarSourcePage
+from session_bridge.store import (
+    LocalSessionOwnsCanonicalId,
+    SessionBridgeStore,
+    SidebarSource,
+    SidebarSourcePage,
+)
 from session_bridge.worktree import (
     WorktreeSnapshot,
     WorktreeSnapshotError,
@@ -2599,6 +2604,157 @@ async def test_codex_deferred_thread_is_not_marked_seen() -> None:
     assert store.states[_CODEX_SEEN_KEY]["native_ids"] == ["codex-known"]
     # And the frontier must not move past work that never finished.
     assert _CODEX_FRONTIER_KEY not in store.states
+
+
+@pytest.mark.asyncio
+async def test_codex_locally_owned_thread_goes_terminal_and_frees_the_frontier() -> None:
+    """A permanently-refused thread must reach the seen-set, or the scan wedges.
+
+    Coverage gap found by mutation review 2026-09-01 (claim
+    codex-scan-merged-review-20260901): deleting `terminal_ids.add(native_id)`
+    from the `except LocalSessionOwnsCanonicalId` body left all 299 tests
+    passing. The consequence is not cosmetic -- a locally-owned id that never
+    goes terminal is re-staged and re-refused every cycle, AND
+    `terminal_ids >= set(staged_ids)` can never hold, so the frontier freezes
+    permanently. There are 1576 such collisions in the live catalog, so this
+    would wedge the continuous scan outright while every other signal stayed
+    green.
+
+    This test pins both halves: the id enters the seen-set, and the frontier
+    still advances on a cycle whose only work was a refusal.
+    """
+    refused = _codex_summary("codex-locally-owned", 300.0)
+    operations: list[tuple[object, ...]] = []
+
+    class LocalOwnerCodexAdapter(_BacklogCodexAdapter):
+        def __init__(self) -> None:
+            super().__init__(
+                inventory_batches=[],
+                summaries_by_native_id={refused.native_id: refused},
+                operations=operations,
+            )
+
+        def list_inventory(self, *, archived: bool) -> list[CodexThreadSummary]:
+            del archived
+            raise AssertionError("continuous scan must not page through full inventory")
+
+        def list_recent_inventory(
+            self,
+            *,
+            archived: bool,
+            after: float,
+        ) -> list[CodexThreadSummary]:
+            del after
+            return [] if archived else [refused]
+
+    class LocalOwnerStore(_StateStore):
+        def upsert_projection(
+            self,
+            projection: SessionProjection,
+            *,
+            rebuild: bool = False,
+        ) -> UpsertResult:
+            del rebuild
+            raise LocalSessionOwnsCanonicalId(
+                f"session ID collision for imported session {projection.native_id!r}"
+            )
+
+    adapter = LocalOwnerCodexAdapter()
+    store = LocalOwnerStore(operations)
+    coordinator = SessionBridgeCoordinator(
+        config=BridgeConfig(),
+        store=store,
+        adapters={Provider.CODEX: adapter},
+    )
+    coordinator._continuous_watermark = 250.0
+    store.states[_CODEX_SEEN_KEY] = {"version": 1, "native_ids": ["codex-known"]}
+
+    result = await coordinator.scan_once(Provider.CODEX)
+
+    # A collision is never a scan failure and is never indexed.
+    assert result.failed == 0
+    assert result.indexed == 0
+    assert result.locally_owned == 1
+    # It MUST be terminal, or it is re-staged forever.
+    assert store.states[_CODEX_SEEN_KEY]["native_ids"] == [
+        "codex-known",
+        "codex-locally-owned",
+    ]
+    # And the cycle counts as drained, so the frontier is free to move.
+    assert store.states[_CODEX_FRONTIER_KEY]["frontier"] == 300.0
+
+
+@pytest.mark.asyncio
+async def test_codex_continuous_scan_reports_locally_owned_on_its_final_return() -> None:
+    """The production continuous-scan return must carry locally_owned.
+
+    Coverage gap found by mutation review 2026-09-01: setting `locally_owned=0`
+    on the FINAL return of _scan_codex_persistent left all 299 tests passing.
+    That return is the one the running bridge takes on every ordinary cycle, so
+    it is precisely the silent-zero this field was added to prevent -- the
+    counter would be incremented, logged, and then dropped exactly as it was
+    before the field existed.
+    """
+    refused = _codex_summary("codex-refused", 300.0)
+    indexed_ok = _codex_summary("codex-indexed", 310.0)
+    operations: list[tuple[object, ...]] = []
+
+    class MixedCodexAdapter(_BacklogCodexAdapter):
+        def __init__(self) -> None:
+            super().__init__(
+                inventory_batches=[],
+                summaries_by_native_id={
+                    refused.native_id: refused,
+                    indexed_ok.native_id: indexed_ok,
+                },
+                operations=operations,
+            )
+
+        def list_inventory(self, *, archived: bool) -> list[CodexThreadSummary]:
+            del archived
+            raise AssertionError("continuous scan must not page through full inventory")
+
+        def list_recent_inventory(
+            self,
+            *,
+            archived: bool,
+            after: float,
+        ) -> list[CodexThreadSummary]:
+            del after
+            return [] if archived else [refused, indexed_ok]
+
+    class SelectiveOwnerStore(_StateStore):
+        def upsert_projection(
+            self,
+            projection: SessionProjection,
+            *,
+            rebuild: bool = False,
+        ) -> UpsertResult:
+            if projection.native_id == refused.native_id:
+                raise LocalSessionOwnsCanonicalId(
+                    f"session ID collision for imported session "
+                    f"{projection.native_id!r}"
+                )
+            return super().upsert_projection(projection, rebuild=rebuild)
+
+    adapter = MixedCodexAdapter()
+    store = SelectiveOwnerStore(operations)
+    coordinator = SessionBridgeCoordinator(
+        config=BridgeConfig(),
+        store=store,
+        adapters={Provider.CODEX: adapter},
+    )
+    coordinator._continuous_watermark = 250.0
+    store.states[_CODEX_SEEN_KEY] = {"version": 1, "native_ids": ["codex-known"]}
+
+    result = await coordinator.scan_once(Provider.CODEX)
+
+    # This is the FINAL return of _scan_codex_persistent, reached because no
+    # generic exception fired -- the path a healthy bridge takes every cycle.
+    assert result.failed == 0
+    assert result.indexed == 1
+    assert result.locally_owned == 1
+    assert adapter.projected_native_ids == ["codex-indexed", "codex-refused"]
 
 
 @pytest.mark.asyncio

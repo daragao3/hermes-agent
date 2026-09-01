@@ -5333,6 +5333,15 @@ class SessionBridgeCoordinator:
         # The frontier may only advance when this cycle finished everything it
         # staged. A partial batch, a deferral or a vanished-thread drop all mean
         # the next cycle must still be able to page back to where it started.
+        # `not deferred` is REDUNDANT and deliberately kept. A deferred id
+        # `continue`s without entering terminal_ids, so `terminal_ids >=
+        # set(staged_ids)` already excludes it -- mutation review 2026-09-01
+        # confirmed that deleting this conjunct fires no test, and no test CAN
+        # discriminate it while that invariant holds. It stays as a defensive
+        # statement of intent: deferral must block the frontier even if a future
+        # edit lets a deferred id reach terminal_ids by some other path. Do not
+        # "simplify" it away, and do not write a test for it -- a test that
+        # passes either way is worse than the honest comment.
         drained = (
             len(selected_ids) == len(staged_ids)
             and not deferred
