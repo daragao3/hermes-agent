@@ -2778,8 +2778,21 @@ class ProductionBackend:
         def _release_lease() -> None:
             lease_digest = getattr(claim, "lease_digest", None)
             prior_detail = getattr(claim, "prior_error_detail", None)
-            if not lease_digest or not prior_detail:
+            if not lease_digest:
                 return
+            if not prior_detail:
+                # The claim re-leased a row that ALREADY wore the marker -- the
+                # documented expired-lease branch -- so the original detail was
+                # lost by whichever earlier claim stamped it, before releases
+                # existed. Releasing still beats stranding, so restore the
+                # canonical detail for the only error code this verb accepts.
+                # bridge_conflict's two guard-accepted details are
+                # 'exact transcript conflict' and 'registration response
+                # malformed'; both are accepted by
+                # requeue_failed_claude_visibility_reconciliation, so recovery
+                # stays available either way and only the human-facing wording
+                # can be less precise than the original.
+                prior_detail = "exact transcript conflict"
             try:
                 store.release_failed_claude_visibility_repair(
                     job_id=job_id,

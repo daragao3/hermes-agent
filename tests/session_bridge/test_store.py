@@ -16813,3 +16813,80 @@ def test_repair_lease_release_refuses_a_lease_it_was_not_handed(
     assert _rows(
         db, "SELECT state FROM session_claude_visibility_jobs"
     ) == [{"state": "claude_leased"}]
+
+
+def test_repair_reclaim_of_an_expired_lease_does_not_call_the_marker_original(
+    db: SessionDB,
+) -> None:
+    """A re-claim must admit the original detail is gone, not hand back the marker.
+
+    claim_failed_claude_visibility_reconciliation deliberately accepts an
+    EXPIRED repair lease so a stranded row can be picked up again. On that
+    path the row already wears the marker, so due['error_detail'] IS the
+    marker. Reporting that as prior_error_detail would make a release write
+    the marker into a claude_failed row -- terminal, but matching no recovery
+    guard, and labelled in-progress with no lease behind it.
+    """
+
+    clock = {"t": 100.0}
+    store = SessionBridgeStore(
+        db, clock=lambda: clock["t"], local_timezone=timezone.utc
+    )
+    candidate, identity = _claude_visibility_identity("reclaim-detail")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id,
+        launch.lease_digest,
+        "bridge_conflict",
+        "exact transcript conflict",
+    )
+    first = store.claim_failed_claude_visibility_reconciliation(
+        100.0,
+        60,
+        expected_job_id=identity.job_id,
+        expected_reserved_claude_uuid=identity.claude_uuid,
+        expected_error_code="bridge_conflict",
+    )
+    assert first.prior_error_detail == "exact transcript conflict"
+
+    clock["t"] = 100.0 + 3600
+    second = store.claim_failed_claude_visibility_reconciliation(
+        clock["t"],
+        60,
+        expected_job_id=identity.job_id,
+        expected_reserved_claude_uuid=identity.claude_uuid,
+        expected_error_code="bridge_conflict",
+    )
+    assert second.lease_digest != first.lease_digest
+    assert second.prior_error_detail is None
+
+
+def test_repair_release_refuses_to_restore_the_marker(db: SessionDB) -> None:
+    """Defence in depth: the marker must never become a terminal row's detail."""
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("release-marker-guard")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id,
+        launch.lease_digest,
+        "bridge_conflict",
+        "exact transcript conflict",
+    )
+    claim = store.claim_failed_claude_visibility_reconciliation(
+        100.0,
+        60,
+        expected_job_id=identity.job_id,
+        expected_reserved_claude_uuid=identity.claude_uuid,
+        expected_error_code="bridge_conflict",
+    )
+
+    with pytest.raises(ValueError, match="cannot restore the repair marker"):
+        store.release_failed_claude_visibility_repair(
+            job_id=identity.job_id,
+            lease_digest=claim.lease_digest,
+            expected_error_code="bridge_conflict",
+            restored_error_detail="exact terminal reconciliation in progress",
+        )

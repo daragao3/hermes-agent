@@ -105,6 +105,11 @@ _SIDEBAR_HYDRATION_COMPLETION_KEY = b"session-sidebar-hydration-completion-v1"
 _SIDEBAR_HYDRATION_MAX_ATTEMPTS = 5
 _CLAUDE_VISIBILITY_CYCLE_STATE_KEY = "session-bridge:claude-visibility:cycle"
 _CLAUDE_VISIBILITY_CYCLE_STATE_VERSION = 2
+# The detail marker that carries terminal-repair authority. Every ordinary
+# reclaim path excludes it on purpose, so a row wearing it is waiting on an
+# operator rather than on a worker. Named here because Python now has to
+# COMPARE against it, not just embed it in SQL.
+_CLAUDE_REPAIR_IN_PROGRESS_DETAIL = "exact terminal reconciliation in progress"
 _CLAUDE_LINEAGE_RECONCILE_LIMIT_MAX = 100
 _CLAUDE_LINEAGE_CURSOR_VERSION = 1
 _CLAUDE_LINEAGE_CURSOR_OPERATION = "claude_visibility_lineage_reconcile"
@@ -2121,7 +2126,22 @@ class SessionBridgeStore:
             # Read BEFORE claim_failed_claude_visibility_reconciliation stamps the
             # 'exact terminal reconciliation in progress' marker over it, so a
             # release can restore the row exactly as it was.
-            prior_error_detail=due["error_detail"],
+            #
+            # None when the row ALREADY carries the marker. That happens on the
+            # documented re-claim of an EXPIRED repair lease
+            # (claim_failed_claude_visibility_reconciliation's second WHERE
+            # branch): by then the original detail was overwritten by the
+            # earlier claim and is simply not recoverable from the row. Handing
+            # the marker back as "the original" would be worse than admitting
+            # the gap -- the release would write the marker into a claude_failed
+            # row, and the operator-recovery guard matches exact detail strings,
+            # so the row would look terminal-but-unrecoverable forever. The
+            # caller substitutes a documented fallback instead.
+            prior_error_detail=(
+                None
+                if due["error_detail"] == _CLAUDE_REPAIR_IN_PROGRESS_DETAIL
+                else due["error_detail"]
+            ),
             requires_exact_id_reconciliation=True,
             registration_reserved=False,
             launch_permitted=False,
@@ -3313,6 +3333,11 @@ class SessionBridgeStore:
         normalized_detail = _exact_nonempty_text(
             restored_error_detail, "Claude visibility error detail"
         )
+        if normalized_detail == _CLAUDE_REPAIR_IN_PROGRESS_DETAIL:
+            # Writing the marker into a claude_failed row would leave a job that
+            # looks terminal but matches no recovery guard -- unreachable by
+            # requeue, and wearing an in-progress label with no lease behind it.
+            raise ValueError("release cannot restore the repair marker as a detail")
 
         def _write(conn):
             operation_time = _finite_number(self._clock(), "clock")
