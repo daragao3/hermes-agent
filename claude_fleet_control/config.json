@@ -1,8 +1,8 @@
 {
-  "_comment": "P6 Claude fleet controller policy. ENFORCE requires approved_enforce_digest to equal FleetPolicy.digest() AND an --allow-enforce invocation flag. This file was flipped to enforce under Diego's explicit cutover approval on 2026-09-01 (Diego approved in chat); the reaper was retired in the same change. To roll back: set mode to shadow OR null approved_enforce_digest (either disarms enforcement on the next pass).",
+  "_comment": "P6 Claude fleet controller policy. ENFORCE requires approved_enforce_digest to equal FleetPolicy.digest() AND an --allow-enforce invocation flag. Flipped to enforce under Diego's explicit cutover approval on 2026-09-01; the reaper was retired in the same change (and stayed retired -- see hermes commits b7348d08/dc35ee74 for a brief re-enable and its revert). 2026-09-01 ~19:2xZ: fleet_min_roots lowered 30 -> 25 on Diego's explicit instruction, and approved_enforce_digest RE-APPROVED in the same edit to the new policy digest -- changing any policy field changes digest(), and leaving the old digest would silently demote the controller to shadow on the next pass. Culling still needs BOTH triggers: planner.py sets triggers_armed = fleet_armed and pressure.valid, so a fresh D7 spawn-latency signal is still required; this change only widens the fleet-size half. To roll back: set mode to shadow OR null approved_enforce_digest (either disarms enforcement on the next pass).",
   "mode": "enforce",
   "policy_version": "p6-2026-08-31-1",
-  "fleet_min_roots": 30,
+  "fleet_min_roots": 25,
   "d7_max_age_seconds": 360,
   "idle_min_minutes": 30,
   "strikes_required": 2,
@@ -11,5 +11,5 @@
   "max_tree_processes": 24,
   "max_tree_rss_bytes": 2147483648,
   "cooldown_seconds": 1800,
-  "approved_enforce_digest": "5014226198956ff3cc0bd393b77f063fd33454bc46c32faf2d4de5918a67b36c"
+  "approved_enforce_digest": "549c9ed11e93d712a4e9a1849947511231606cfa655f7aa511cfc8ec53e220cf"
 }
