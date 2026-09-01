@@ -292,6 +292,7 @@ class StructuralSidebarInventory:
 class MutableSidebarInventory:
     def __init__(self) -> None:
         self.visible = False
+        self.cwd: str | None = None
         self.list_deadlines: list[float | None] = []
         self.read_deadlines: list[float | None] = []
         self.summary = SimpleNamespace(native_id=CODEX_ID)
@@ -315,7 +316,7 @@ class MutableSidebarInventory:
             provider=Provider.CODEX,
             native_id=summary.native_id,
             title="Shared task",
-            cwd=None,
+            cwd=self.cwd,
             started_at=0.0,
             last_active=0.0,
             messages=(
@@ -1157,255 +1158,80 @@ def test_sidebar_marker_compatibility_lookups_both_include_archived() -> None:
     ]
 
 
-def test_sidebar_recovery_key_lookup_returns_one_exact_native_thread(
-    tmp_path: Path,
-) -> None:
-    recovery_key = "hermes-session-bridge-create-v1:exact-recovery-key"
-    row = _codex_inventory(cwd=str(tmp_path.resolve()))["data"][0]
-    row["threadSource"] = recovery_key
-    client = FakeRequestClient({
-        "thread/list": [{"data": [row]}, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
+# find_by_recovery_key's tests lived here. It matched a thread_source field the
+# Codex app-server never returns, so the nine cases below it -- pagination depth,
+# malformed thread_source metadata, conflicting aliases -- were all exercising an
+# enumeration path that no longer exists. Recovery is keyed on the signed marker
+# now; what survives is the contract, retested against that oracle.
+
+
+def _marker_recovery_verifier(inventory: MutableSidebarInventory):
+    return SidebarThreadVerifier(
+        inventory,
         marker_secret=SECRET,
         reconciliation_interval=0,
         monotonic=lambda: 0.0,
     )
 
-    assert (
-        verifier.find_by_recovery_key(
-            recovery_key,
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-        == CODEX_ID
-    )
-    assert [method for method, _, _ in client.calls] == [
-        "thread/list",
-        "thread/list",
-    ]
 
-
-def test_sidebar_recovery_key_lookup_returns_none_after_complete_zero_scan(
+def test_marker_recovery_returns_the_thread_in_the_expected_cwd(
     tmp_path: Path,
 ) -> None:
-    client = FakeRequestClient({
-        "thread/list": [{"data": []}, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
+    inventory = MutableSidebarInventory()
+    inventory.visible = True
+    inventory.cwd = str(tmp_path.resolve())
+
+    recovered = _marker_recovery_verifier(inventory).recover_reserved_thread_by_marker(
+        _sidebar_expected(),
+        expected_cwd=str(tmp_path),
     )
 
-    assert (
-        verifier.find_by_recovery_key(
-            "hermes-session-bridge-create-v1:absent",
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-        is None
-    )
-    assert [method for method, _, _ in client.calls] == [
-        "thread/list",
-        "thread/list",
-    ]
+    assert recovered == CODEX_ID
 
 
-def test_sidebar_recovery_key_lookup_scales_past_fifty_inventory_pages(
-    tmp_path: Path,
-) -> None:
-    active_pages = [
-        {"data": [], "nextCursor": f"active-{index + 1}"}
-        for index in range(50)
-    ]
-    active_pages.append({"data": []})
-    client = FakeRequestClient({
-        "thread/list": [*active_pages, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
+def test_marker_recovery_returns_none_when_absence_is_proven(tmp_path: Path) -> None:
+    inventory = MutableSidebarInventory()
+    inventory.visible = False
+
+    recovered = _marker_recovery_verifier(inventory).recover_reserved_thread_by_marker(
+        _sidebar_expected(),
+        expected_cwd=str(tmp_path),
     )
 
-    assert (
-        verifier.find_by_recovery_key(
-            "hermes-session-bridge-create-v1:absent-at-scale",
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-        is None
-    )
-    assert [method for method, _, _ in client.calls] == ["thread/list"] * 52
+    assert recovered is None
 
 
-def test_sidebar_recovery_key_lookup_rejects_duplicate_native_threads(
-    tmp_path: Path,
-) -> None:
-    recovery_key = "hermes-session-bridge-create-v1:duplicate"
-    first = _codex_inventory(cwd=str(tmp_path.resolve()))["data"][0]
-    second = _codex_inventory(
-        native_id="33333333-3333-4333-8333-333333333333",
-        cwd=str(tmp_path.resolve()),
-    )["data"][0]
-    first["threadSource"] = recovery_key
-    second["threadSource"] = recovery_key
-    client = FakeRequestClient({
-        "thread/list": [{"data": [first]}, {"data": [second]}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
-    )
+def test_marker_recovery_rejects_a_thread_in_the_wrong_cwd(tmp_path: Path) -> None:
+    """Recovering a thread created elsewhere would bind the bridge to the wrong
+    workspace, so an authenticated marker is not sufficient on its own."""
 
-    with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            recovery_key,
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-
-    assert raised.value.code == "codex_thread_conflict"
-
-
-def test_sidebar_recovery_key_lookup_rejects_matching_thread_in_wrong_cwd(
-    tmp_path: Path,
-) -> None:
-    recovery_key = "hermes-session-bridge-create-v1:wrong-cwd"
     observed_cwd = tmp_path / "observed"
     expected_cwd = tmp_path / "expected"
     observed_cwd.mkdir()
     expected_cwd.mkdir()
-    row = _codex_inventory(cwd=str(observed_cwd.resolve()))["data"][0]
-    row["threadSource"] = recovery_key
-    client = FakeRequestClient({
-        "thread/list": [{"data": [row]}, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
-    )
+    inventory = MutableSidebarInventory()
+    inventory.visible = True
+    inventory.cwd = str(observed_cwd.resolve())
 
     with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            recovery_key,
+        _marker_recovery_verifier(inventory).recover_reserved_thread_by_marker(
+            _sidebar_expected(),
             expected_cwd=str(expected_cwd),
-            deadline=30.0,
         )
 
     assert raised.value.code == "codex_thread_conflict"
 
 
-def test_sidebar_recovery_key_lookup_rejects_source_cwd_instead_of_inbox(
-    tmp_path: Path,
-) -> None:
-    recovery_key = "hermes-session-bridge-create-v1:source-instead-of-inbox"
-    inbox_cwd = tmp_path / "inbox"
-    source_cwd = tmp_path / "source"
-    inbox_cwd.mkdir()
-    source_cwd.mkdir()
-    row = _codex_inventory(cwd=str(source_cwd.resolve()))["data"][0]
-    row["threadSource"] = recovery_key
-    client = FakeRequestClient({
-        "thread/list": [{"data": [row]}, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
-    )
+def test_marker_recovery_rejects_a_malformed_expected_cwd() -> None:
+    inventory = MutableSidebarInventory()
+    inventory.visible = True
 
-    with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            recovery_key,
-            expected_cwd=str(inbox_cwd.resolve()),
-            deadline=30.0,
-        )
-
-    assert raised.value.code == "codex_thread_conflict"
-
-
-def test_sidebar_recovery_key_lookup_never_returns_zero_after_incomplete_pagination(
-    tmp_path: Path,
-) -> None:
-    client = FakeRequestClient({
-        "thread/list": [{"data": [], "nextCursor": "more"}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        inventory_page_cap=1,
-        monotonic=lambda: 0.0,
-    )
-
-    with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            "hermes-session-bridge-create-v1:unknown",
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-
-    assert raised.value.code == "bridge_temporarily_unavailable"
-
-
-def test_sidebar_recovery_key_lookup_never_returns_zero_for_malformed_metadata(
-    tmp_path: Path,
-) -> None:
-    malformed = _codex_inventory(cwd=str(tmp_path.resolve()))["data"][0]
-    malformed["threadSource"] = 7
-    client = FakeRequestClient({
-        "thread/list": [{"data": [malformed]}, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
-    )
-
-    with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            "hermes-session-bridge-create-v1:unknown",
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-
-    assert raised.value.code == "bridge_temporarily_unavailable"
-
-
-def test_sidebar_recovery_key_lookup_rejects_conflicting_thread_source_aliases(
-    tmp_path: Path,
-) -> None:
-    recovery_key = "hermes-session-bridge-create-v1:metadata-conflict"
-    conflicting = _codex_inventory(cwd=str(tmp_path.resolve()))["data"][0]
-    conflicting["threadSource"] = recovery_key
-    conflicting["thread_source"] = "different-source"
-    client = FakeRequestClient({"thread/list": [{"data": [conflicting]}]})
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
-    )
-
-    with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            recovery_key,
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-
-    assert raised.value.code == "codex_thread_conflict"
+    for bad in ("", "   ", "relative/path"):
+        with pytest.raises(ValueError):
+            _marker_recovery_verifier(inventory).recover_reserved_thread_by_marker(
+                _sidebar_expected(),
+                expected_cwd=bad,
+            )
 
 
 def test_codex_thread_source_metadata_is_normalized_and_reconciled_exactly(

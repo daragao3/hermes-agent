@@ -579,39 +579,65 @@ class SidebarThreadVerifier:
             fixed_reason=None,
         )
 
-    def find_by_recovery_key(
+    def recover_reserved_thread_by_marker(
         self,
-        recovery_key: str,
+        expected: BridgeMarkerPayload,
         *,
         expected_cwd: str,
-        deadline: float,
     ) -> str | None:
-        key = _nonempty_string(recovery_key)
-        if key is None or key != recovery_key:
-            raise ValueError("Codex recovery key is malformed")
+        """Recover a reserved native thread by its SIGNED MARKER, in one cwd.
+
+        Replaces find_by_recovery_key, which asked the same question of a field
+        the app-server does not expose (see the note below). The marker is a
+        working oracle: it lives in the thread's own text, thread/read returns
+        it, and a thread/search on the unsigned prefix returns exactly the one
+        thread.
+
+        Same contract as the function it replaces: the thread id on a unique
+        authenticated match, None when absence is proven, and
+        SidebarVerificationError otherwise -- marker_conflict on ambiguity,
+        codex_thread_conflict when the recovered thread is not in the expected
+        cwd. That cwd check is why this is not just find_by_marker_including_
+        archived: recovering a thread created in the wrong directory would bind
+        the bridge to the wrong workspace.
+        """
+
         cwd = _nonempty_string(expected_cwd)
         if cwd is None or cwd != expected_cwd:
             raise ValueError("Codex recovery cwd is malformed")
         if filesystem_path_identity(cwd) is None:
-            raise ValueError("Codex recovery cwd must be absolute") from None
-        try:
-            summaries = self._source_adapter.list_sidebar_inventory(
-                deadline=deadline,
-                page_cap=self._inventory_page_cap,
-            )
-        except CodexInventoryProtocolError:
-            raise SidebarVerificationError("codex_thread_conflict") from None
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception:
-            raise SidebarVerificationError("bridge_temporarily_unavailable") from None
-        matches = [summary for summary in summaries if summary.thread_source == key]
-        if any(not placement_paths_equivalent(summary.cwd, cwd) for summary in matches):
+            raise ValueError("Codex recovery cwd must be absolute")
+        match = self._find_by_marker_compatibility(expected)
+        if match is None:
+            return None
+        # Re-read the matched thread for its projection: the marker lookup
+        # returns identity only, and the cwd lives on the projection. This is a
+        # targeted find+read, not a second enumeration.
+        verified = self.verify_thread(thread_id=match.thread_id, expected=expected)
+        projection = verified.projection
+        if projection is None:
+            raise SidebarVerificationError("bridge_temporarily_unavailable")
+        if not placement_paths_equivalent(projection.cwd, cwd):
             raise SidebarVerificationError("codex_thread_conflict")
-        native_ids = {summary.native_id for summary in matches}
-        if len(native_ids) > 1:
-            raise SidebarVerificationError("codex_thread_conflict")
-        return next(iter(native_ids), None)
+        return verified.thread_id
+
+    # find_by_recovery_key lived here. Removed 2026-09-01: it matched
+    # `summary.thread_source` against the reservation's recovery key, and the
+    # Codex app-server never returns that field -- measured null on all 4143
+    # enumerable threads, and absent from thread/read for a thread whose
+    # state_5.sqlite row carries the key. Nothing has written a
+    # hermes-session-bridge-create-v1 key since 2026-07-30 either, so the oracle
+    # was dead on both sides.
+    #
+    # It did not fail loudly. It enumerated the whole corpus and returned None,
+    # which every caller read as "no native thread exists" -- a silent false
+    # negative on a materialization gate, made MORE reachable by raising the read
+    # ceilings, since the enumeration now completes where it used to time out.
+    #
+    # The recovery KEY itself is untouched and still live: it is the ledger
+    # reservation's identity (sidebar_create_recovery_key, reserve_sidebar_create,
+    # clear_sidebar_create_reservation). Only the attempt to find a native thread
+    # by it is gone.
 
     def _fresh_marker_inventory_projections(
         self,

@@ -2143,10 +2143,9 @@ class ProductionBackend:
         if marker_match is not None:
             raise RolloutGateBlocked("native_thread_materialized")
         try:
-            recovery_match = verifier.find_by_recovery_key(
-                reservation["recovery_key"],
+            recovery_match = verifier.recover_reserved_thread_by_marker(
+                expected_marker,
                 expected_cwd=candidate.cwd,
-                deadline=time.monotonic() + 240.0,
             )
         except (KeyboardInterrupt, SystemExit):
             raise
@@ -2293,10 +2292,9 @@ class ProductionBackend:
         if marker_match is not None:
             raise RolloutGateBlocked("native_thread_materialized")
         try:
-            recovery_match = verifier.find_by_recovery_key(
-                reservation["recovery_key"],
+            recovery_match = verifier.recover_reserved_thread_by_marker(
+                expected_marker,
                 expected_cwd=candidate.cwd,
-                deadline=time.monotonic() + 240.0,
             )
         except (KeyboardInterrupt, SystemExit):
             raise
@@ -2487,10 +2485,9 @@ class ProductionBackend:
         if marker_match is not None:
             raise RolloutGateBlocked("native_thread_materialized")
         try:
-            recovery_match = verifier.find_by_recovery_key(
-                cast(Mapping[str, Any], reservation)["recovery_key"],
+            recovery_match = verifier.recover_reserved_thread_by_marker(
+                expected_marker,
                 expected_cwd=candidate.cwd,
-                deadline=time.monotonic() + 240.0,
             )
         except (KeyboardInterrupt, SystemExit):
             raise

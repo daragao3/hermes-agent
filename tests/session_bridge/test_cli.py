@@ -2926,7 +2926,7 @@ class _PrecreateProbeVerifier:
         self.scenario = scenario
         self.marker_calls: list[BridgeMarkerPayload] = []
         self.terminal_marker_calls: list[BridgeMarkerPayload] = []
-        self.recovery_calls: list[tuple[str, str, float]] = []
+        self.recovery_calls: list[tuple[BridgeMarkerPayload, str]] = []
         self.create_calls: list[object] = []
 
     def find_by_marker(self, expected: BridgeMarkerPayload) -> object | None:
@@ -2952,14 +2952,13 @@ class _PrecreateProbeVerifier:
     def all_marker_calls(self) -> list[BridgeMarkerPayload]:
         return [*self.marker_calls, *self.terminal_marker_calls]
 
-    def find_by_recovery_key(
+    def recover_reserved_thread_by_marker(
         self,
-        recovery_key: str,
+        expected: BridgeMarkerPayload,
         *,
         expected_cwd: str,
-        deadline: float,
     ) -> str | None:
-        self.recovery_calls.append((recovery_key, expected_cwd, deadline))
+        self.recovery_calls.append((expected, expected_cwd))
         if self.scenario == "recovery_error":
             raise TimeoutError("private recovery probe timeout")
         if self.scenario == "recovery_match":
@@ -3218,10 +3217,13 @@ def test_production_v2_attempt_zero_acknowledgement_uses_fresh_exact_cwd_probes(
         assert replay == {**first, "status": "already_acknowledged"}
         assert len(verifier.terminal_marker_calls) == 2
         assert verifier.marker_calls == []
-        assert [
-            (recovery_key, cwd)
-            for recovery_key, cwd, _deadline in verifier.recovery_calls
-        ] == [(reservation["recovery_key"], candidate.cwd)] * 2
+        assert [cwd for _marker, cwd in verifier.recovery_calls] == [
+            candidate.cwd
+        ] * 2
+        assert all(
+            marker in verifier.all_marker_calls
+            for marker, _cwd in verifier.recovery_calls
+        )
         assert verifier.create_calls == []
         assert store.get_sidebar_job_for_source(candidate.source_session_id) == before
     finally:
@@ -3295,18 +3297,16 @@ def test_production_v2_attempt_zero_snapshot_change_after_probes_is_cas_rejected
         )
     )
     verifier = _PrecreateProbeVerifier("zero")
-    original_recovery_probe = verifier.find_by_recovery_key
+    original_recovery_probe = verifier.recover_reserved_thread_by_marker
 
     def drift_after_probe(
-        recovery_key: str,
+        expected: BridgeMarkerPayload,
         *,
         expected_cwd: str,
-        deadline: float,
     ) -> str | None:
         result = original_recovery_probe(
-            recovery_key,
+            expected,
             expected_cwd=expected_cwd,
-            deadline=deadline,
         )
         store.db._execute_write(
             lambda conn: conn.execute(
@@ -3317,7 +3317,7 @@ def test_production_v2_attempt_zero_snapshot_change_after_probes_is_cas_rejected
         )
         return result
 
-    verifier.find_by_recovery_key = drift_after_probe  # type: ignore[method-assign]
+    verifier.recover_reserved_thread_by_marker = drift_after_probe  # type: ignore[method-assign]
     monkeypatch.setattr("session_bridge.cli.resolve_marker_key", lambda: marker_secret)
     monkeypatch.setattr(
         "session_bridge.cli.resolve_retired_marker_keys",
@@ -3361,18 +3361,16 @@ def test_production_v2_attempt_zero_materialization_after_probes_is_cas_rejected
         )
     )
     verifier = _PrecreateProbeVerifier("zero")
-    original_recovery_probe = verifier.find_by_recovery_key
+    original_recovery_probe = verifier.recover_reserved_thread_by_marker
 
     def materialize_after_probe(
-        recovery_key: str,
+        expected: BridgeMarkerPayload,
         *,
         expected_cwd: str,
-        deadline: float,
     ) -> str | None:
         result = original_recovery_probe(
-            recovery_key,
+            expected,
             expected_cwd=expected_cwd,
-            deadline=deadline,
         )
         target_session_id = "codex:v2-attempt-zero-raced-native"
         store.db.ensure_session(target_session_id, source="cli")
@@ -3395,7 +3393,7 @@ def test_production_v2_attempt_zero_materialization_after_probes_is_cas_rejected
         )
         return result
 
-    verifier.find_by_recovery_key = materialize_after_probe  # type: ignore[method-assign]
+    verifier.recover_reserved_thread_by_marker = materialize_after_probe  # type: ignore[method-assign]
     monkeypatch.setattr("session_bridge.cli.resolve_marker_key", lambda: marker_secret)
     monkeypatch.setattr(
         "session_bridge.cli.resolve_retired_marker_keys",
@@ -3484,23 +3482,21 @@ def test_production_v2_attempt_zero_proof_expiring_during_second_probe_is_reject
     )
     verifier = _PrecreateProbeVerifier("zero")
     clock = {"now": float(proof["expires_at"]) - 1.0}
-    original_recovery_probe = verifier.find_by_recovery_key
+    original_recovery_probe = verifier.recover_reserved_thread_by_marker
 
     def expire_during_recovery_probe(
-        recovery_key: str,
+        expected: BridgeMarkerPayload,
         *,
         expected_cwd: str,
-        deadline: float,
     ) -> str | None:
         result = original_recovery_probe(
-            recovery_key,
+            expected,
             expected_cwd=expected_cwd,
-            deadline=deadline,
         )
         clock["now"] = float(proof["expires_at"]) + 0.001
         return result
 
-    verifier.find_by_recovery_key = expire_during_recovery_probe  # type: ignore[method-assign]
+    verifier.recover_reserved_thread_by_marker = expire_during_recovery_probe  # type: ignore[method-assign]
     monkeypatch.setattr("session_bridge.cli.resolve_marker_key", lambda: marker_secret)
     monkeypatch.setattr(
         "session_bridge.cli.resolve_retired_marker_keys",
@@ -3548,16 +3544,15 @@ def test_production_v2_attempt_zero_recovery_probe_enforces_exact_candidate_cwd(
     verifier = _PrecreateProbeVerifier("zero")
 
     def wrong_cwd_probe(
-        recovery_key: str,
+        expected: BridgeMarkerPayload,
         *,
         expected_cwd: str,
-        deadline: float,
     ) -> None:
-        verifier.recovery_calls.append((recovery_key, expected_cwd, deadline))
+        verifier.recovery_calls.append((expected, expected_cwd))
         if expected_cwd == candidate.cwd:
             raise RuntimeError("provider reports recovery-key cwd mismatch")
 
-    verifier.find_by_recovery_key = wrong_cwd_probe  # type: ignore[method-assign]
+    verifier.recover_reserved_thread_by_marker = wrong_cwd_probe  # type: ignore[method-assign]
     monkeypatch.setattr("session_bridge.cli.resolve_marker_key", lambda: marker_secret)
     monkeypatch.setattr(
         "session_bridge.cli.resolve_retired_marker_keys",
@@ -3626,10 +3621,13 @@ def test_production_unbound_acknowledgement_probes_exact_identities_and_replays(
         }
         assert replay == {**first, "status": "already_acknowledged"}
         assert len(verifier.all_marker_calls) == 2
-        assert [
-            (recovery_key, cwd)
-            for recovery_key, cwd, _deadline in verifier.recovery_calls
-        ] == [(reservation["recovery_key"], candidate.cwd)] * 2
+        assert [cwd for _marker, cwd in verifier.recovery_calls] == [
+            candidate.cwd
+        ] * 2
+        assert all(
+            marker in verifier.all_marker_calls
+            for marker, _cwd in verifier.recovery_calls
+        )
         assert verifier.create_calls == []
         assert (
             store.get_sidebar_job_for_source(candidate.source_session_id) == before_job
@@ -3690,10 +3688,13 @@ def test_production_unbound_acknowledgement_accepts_pre_rotation_reservation(
             "error_code": "native_create_ambiguous",
             "resolution_code": "native_create_unrecoverable",
         }
-        assert [
-            (recovery_key, cwd)
-            for recovery_key, cwd, _deadline in verifier.recovery_calls
-        ] == [(reservation["recovery_key"], candidate.cwd)]
+        assert [cwd for _marker, cwd in verifier.recovery_calls] == [
+            candidate.cwd
+        ]
+        assert all(
+            marker in verifier.all_marker_calls
+            for marker, _cwd in verifier.recovery_calls
+        )
         [audit] = store.db._conn.execute(
             "SELECT * FROM session_sidebar_unbound_resolutions"
         ).fetchall()
@@ -3753,10 +3754,13 @@ def test_production_v2_attempt_zero_acknowledgement_accepts_pre_rotation_records
             "error_code": "native_create_ambiguous",
             "resolution_code": "v2_attempt_zero_create_unrecoverable",
         }
-        assert [
-            (recovery_key, cwd)
-            for recovery_key, cwd, _deadline in verifier.recovery_calls
-        ] == [(reservation["recovery_key"], candidate.cwd)]
+        assert [cwd for _marker, cwd in verifier.recovery_calls] == [
+            candidate.cwd
+        ]
+        assert all(
+            marker in verifier.all_marker_calls
+            for marker, _cwd in verifier.recovery_calls
+        )
         assert proof["proof_digest"] == failed["reconciliation_proof_digest"]
         [audit] = store.db._conn.execute(
             "SELECT * FROM session_sidebar_v2_attempt_zero_resolutions"
@@ -3818,13 +3822,12 @@ def test_production_precreate_acknowledgement_probes_exact_identities_and_replay
             ]
             * 2
         )
-        assert [
-            (recovery_key, cwd)
-            for recovery_key, cwd, _deadline in verifier.recovery_calls
-        ] == [(reservation["recovery_key"], candidate.cwd)] * 2
+        assert [cwd for _marker, cwd in verifier.recovery_calls] == [
+            candidate.cwd
+        ] * 2
         assert all(
-            isinstance(deadline, float) and deadline > 0
-            for _recovery_key, _cwd, deadline in verifier.recovery_calls
+            marker in verifier.all_marker_calls
+            for marker, _cwd in verifier.recovery_calls
         )
         assert verifier.create_calls == []
         assert (

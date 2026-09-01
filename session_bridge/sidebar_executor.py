@@ -1055,7 +1055,7 @@ class SidebarExecutor:
                     )
                 if reservation is not None:
                     try:
-                        recovery_key = validate_sidebar_create_reservation(
+                        validate_sidebar_create_reservation(
                             reservation,
                             job_id=job_id,
                             source_session_id=source_session_id,
@@ -1069,10 +1069,12 @@ class SidebarExecutor:
                             lease_token=lease_token,
                             error_code="native_create_ambiguous",
                         )
+                    # A reservation survives from an earlier attempt, so a
+                    # thread may already exist. Recover it by MARKER rather than
+                    # creating a second one.
                     thread_id, recovery_error = self._recover_reserved_thread(
-                        recovery_key,
+                        expected,
                         expected_cwd=placement.inbox_cwd,
-                        operation_deadline=operation_deadline,
                     )
                     if recovery_error is not None:
                         return self._settle(
@@ -1143,10 +1145,12 @@ class SidebarExecutor:
                             error_code=exc.code,
                         )
                     except NativeCreateAmbiguous:
+                        # thread/start timed out, so a thread may or may not have
+                        # been created. Recover it by MARKER before considering a
+                        # second create.
                         thread_id, recovery_error = self._recover_reserved_thread(
-                            recovery_key,
+                            expected,
                             expected_cwd=placement.inbox_cwd,
-                            operation_deadline=operation_deadline,
                         )
                         if recovery_error is not None:
                             return self._settle(
@@ -1539,16 +1543,26 @@ class SidebarExecutor:
 
     def _recover_reserved_thread(
         self,
-        recovery_key: str,
+        expected: BridgeMarkerPayload,
         *,
         expected_cwd: str,
-        operation_deadline: float,
     ) -> tuple[str | None, str | None]:
+        """Recover an already-created thread after an ambiguous create.
+
+        Was keyed on the reservation's recovery key until 2026-09-01; that oracle
+        was a field the app-server never returns, so this always reported absence
+        and every ambiguous create became a permanent failure. Now keyed on the
+        signed marker, which is a working oracle.
+
+        No operation_deadline parameter: the verifier bounds its own reads
+        (_READ_BUDGET_SECONDS) rather than borrowing the caller's remaining
+        budget. Callers already gate on _has_budget before reaching here.
+        """
+
         try:
-            raw_thread_id = self._verifier.find_by_recovery_key(
-                recovery_key,
+            raw_thread_id = self._verifier.recover_reserved_thread_by_marker(
+                expected,
                 expected_cwd=expected_cwd,
-                deadline=operation_deadline,
             )
         except (KeyboardInterrupt, SystemExit):
             raise
