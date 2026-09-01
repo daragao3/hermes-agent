@@ -135,6 +135,15 @@ class ClaudeVisibilityClaim:
     lease_digest: str | None = None
     attempt_ordinal: int | None = None
     prior_error_code: str | None = None
+    # 2026-09-01: the terminal-repair claim OVERWRITES error_detail with the
+    # 'exact terminal reconciliation in progress' marker, so the value the row
+    # carried before the lease is otherwise unrecoverable. A release has to put
+    # the original back verbatim: the operator-recovery guard in
+    # requeue_failed_claude_visibility_reconciliation matches on exact detail
+    # strings, so restoring the marker -- or a paraphrase -- silently disqualifies
+    # the row from recovery. Additive with a default, so no existing construction
+    # of this dataclass changes.
+    prior_error_detail: str | None = None
     requires_exact_id_reconciliation: bool = False
     registration_reserved: bool = False
     launch_permitted: bool = False
