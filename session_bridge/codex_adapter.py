@@ -49,6 +49,26 @@ from .sidebar_reconciliation import (
 
 _PARSER_VERSION = 1
 _REQUEST_TIMEOUT = 30.0
+# Ceiling for a single READ-ONLY sidebar request (thread/list, thread/search,
+# thread/read). Deliberately NOT _REQUEST_TIMEOUT: that constant also defaults
+# the thread/start-side timeouts, where 30s is still right -- a creation call
+# that hangs should fail fast, a census read should not.
+#
+# Measured 2026-09-01 against a live app-server (0.151.0-alpha.7.2, 4143
+# enumerable active threads). A single thread/search for a marker prefix ranged
+# 14s-101s, and the identical short term measured 2.19s / 56.72s / 2.97s within
+# minutes -- latency does NOT track term length, process age, or corpus scan
+# size, and the cause is not established. At 30.0 that distribution straddles
+# the ceiling, so find_by_marker_including_archived was a coin flip: with the
+# read budget raised but this left at 30.0 it passed 1 of 5 runs, and all four
+# failures landed at exactly 30.1s. With this raised it passed 12 of 13.
+#
+# 120.0 buys headroom over the worst observed search without swallowing the
+# caller: SidebarExecutor allows 240s for a whole operation
+# (_operation_budget_seconds), so one request can still never take more than
+# half of it. Raise THIS, not the read budget, if the marker path regresses --
+# an unbounded budget alone provably does not help.
+_SIDEBAR_READ_REQUEST_TIMEOUT = 120.0
 # Smallest remaining budget worth spending on a request. Below this the attempt
 # cannot finish (a thread/list page costs ~0.3-0.4s against a live app-server),
 # and issuing it anyway hands the transport a sub-second timeout whose error text
@@ -257,7 +277,31 @@ class _SidebarReadOnlyInventory(Protocol):
 class SidebarThreadVerifier:
     """Authenticate native Codex sidebar threads through read-only inventory."""
 
-    _ZERO_INTERVAL_READ_BUDGET_SECONDS = 30.0
+    # Budget for one read-only inventory operation, INDEPENDENT of
+    # reconciliation_interval.
+    #
+    # These are two different quantities that used to be one value.
+    # `reconciliation_interval` answers "how long should we keep RETRYING while
+    # we wait for a thread to appear in the index" -- a poll window. This answers
+    # "how long may a single read take before we give up on it". Conflating them
+    # meant the service verifier, built from service.reconcile_seconds, capped
+    # its reads at the LOOP CADENCE: a read that legitimately needed 40s was
+    # abandoned at 30s and reported as bridge_temporarily_unavailable, and the
+    # only way to widen it was to slow the reconciliation loop in coordinator.py
+    # as a side effect. They are now separate; see `_read_deadline`.
+    #
+    # Measured 2026-09-01: find_by_marker_including_archived issues TWO searches
+    # (active + archived) plus a thread/read per hit. End-to-end wall time for the
+    # identical operation on the identical thread ranged 16.2s-47.9s. At 30.0 it
+    # could not fit and failed closed as bridge_temporarily_unavailable on every
+    # run; at 45.0 it still failed 1 of 3; at 60.0 it passed 3 of 3 but with a
+    # 47.9s worst case. 150.0 leaves room for the observed spread rather than
+    # fitting the median, because the spread drifted upward between batches taken
+    # minutes apart and a ceiling near the median reintroduces the intermittency.
+    #
+    # Applies to every verifier now, so the service verifier is no longer
+    # capped at its own loop cadence.
+    _READ_BUDGET_SECONDS = 150.0
     _COMPATIBILITY_EVIDENCE_TTL_SECONDS = 30.0
 
     def __init__(
@@ -316,6 +360,19 @@ class SidebarThreadVerifier:
         self._monotonic = monotonic
         self._sleep = sleep
 
+    def _read_deadline(self) -> float:
+        """Deadline for ONE read operation, measured from now.
+
+        Deliberately re-derived per read rather than shared across a poll loop:
+        a read issued late in the window deserves the same budget as the first
+        one, or the loop silently starves its own last attempt. The bound on a
+        polling caller is therefore the poll window plus one read budget, not
+        the product of the two -- the loop re-checks its own poll deadline after
+        every scan and stops there.
+        """
+
+        return self._monotonic() + self._READ_BUDGET_SECONDS
+
     def verify_thread(
         self, *, thread_id: str, expected: BridgeMarkerPayload
     ) -> VerifiedSidebarThread:
@@ -323,19 +380,17 @@ class SidebarThreadVerifier:
         expected = _validated_sidebar_marker_payload(expected)
         started = self._monotonic()
         polling_enabled = self._reconciliation_interval > 0
-        deadline = started + (
-            self._reconciliation_interval
-            if polling_enabled
-            else self._ZERO_INTERVAL_READ_BUDGET_SECONDS
-        )
+        # The poll window governs RETRIES only. Each read below carries its own
+        # budget, so a slow read is no longer truncated by the loop cadence.
+        poll_deadline = started + self._reconciliation_interval
         completed_zero_scan = False
         while True:
-            if completed_zero_scan and self._monotonic() >= deadline:
+            if completed_zero_scan and self._monotonic() >= poll_deadline:
                 raise SidebarVerificationError("native_task_not_indexed")
             try:
                 summary = self._source_adapter.find_sidebar_thread(
                     native_id,
-                    deadline=deadline,
+                    deadline=self._read_deadline(),
                     page_cap=self._inventory_page_cap,
                 )
             except (KeyboardInterrupt, SystemExit):
@@ -348,7 +403,7 @@ class SidebarThreadVerifier:
                 try:
                     projection = self._source_adapter.read_sidebar_thread(
                         summary,
-                        deadline=deadline,
+                        deadline=self._read_deadline(),
                     )
                 except _ConflictingCodexBridgeMarkers:
                     raise SidebarVerificationError("marker_conflict") from None
@@ -371,9 +426,9 @@ class SidebarThreadVerifier:
                 return verified
             completed_zero_scan = True
             now = self._monotonic()
-            if not polling_enabled or now >= deadline or self._poll_interval == 0:
+            if not polling_enabled or now >= poll_deadline or self._poll_interval == 0:
                 raise SidebarVerificationError("native_task_not_indexed")
-            self._sleep(min(self._poll_interval, deadline - now))
+            self._sleep(min(self._poll_interval, poll_deadline - now))
 
     def find_by_marker(
         self, expected: BridgeMarkerPayload
@@ -524,39 +579,65 @@ class SidebarThreadVerifier:
             fixed_reason=None,
         )
 
-    def find_by_recovery_key(
+    def recover_reserved_thread_by_marker(
         self,
-        recovery_key: str,
+        expected: BridgeMarkerPayload,
         *,
         expected_cwd: str,
-        deadline: float,
     ) -> str | None:
-        key = _nonempty_string(recovery_key)
-        if key is None or key != recovery_key:
-            raise ValueError("Codex recovery key is malformed")
+        """Recover a reserved native thread by its SIGNED MARKER, in one cwd.
+
+        Replaces find_by_recovery_key, which asked the same question of a field
+        the app-server does not expose (see the note below). The marker is a
+        working oracle: it lives in the thread's own text, thread/read returns
+        it, and a thread/search on the unsigned prefix returns exactly the one
+        thread.
+
+        Same contract as the function it replaces: the thread id on a unique
+        authenticated match, None when absence is proven, and
+        SidebarVerificationError otherwise -- marker_conflict on ambiguity,
+        codex_thread_conflict when the recovered thread is not in the expected
+        cwd. That cwd check is why this is not just find_by_marker_including_
+        archived: recovering a thread created in the wrong directory would bind
+        the bridge to the wrong workspace.
+        """
+
         cwd = _nonempty_string(expected_cwd)
         if cwd is None or cwd != expected_cwd:
             raise ValueError("Codex recovery cwd is malformed")
         if filesystem_path_identity(cwd) is None:
-            raise ValueError("Codex recovery cwd must be absolute") from None
-        try:
-            summaries = self._source_adapter.list_sidebar_inventory(
-                deadline=deadline,
-                page_cap=self._inventory_page_cap,
-            )
-        except CodexInventoryProtocolError:
-            raise SidebarVerificationError("codex_thread_conflict") from None
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception:
-            raise SidebarVerificationError("bridge_temporarily_unavailable") from None
-        matches = [summary for summary in summaries if summary.thread_source == key]
-        if any(not placement_paths_equivalent(summary.cwd, cwd) for summary in matches):
+            raise ValueError("Codex recovery cwd must be absolute")
+        match = self._find_by_marker_compatibility(expected)
+        if match is None:
+            return None
+        # Re-read the matched thread for its projection: the marker lookup
+        # returns identity only, and the cwd lives on the projection. This is a
+        # targeted find+read, not a second enumeration.
+        verified = self.verify_thread(thread_id=match.thread_id, expected=expected)
+        projection = verified.projection
+        if projection is None:
+            raise SidebarVerificationError("bridge_temporarily_unavailable")
+        if not placement_paths_equivalent(projection.cwd, cwd):
             raise SidebarVerificationError("codex_thread_conflict")
-        native_ids = {summary.native_id for summary in matches}
-        if len(native_ids) > 1:
-            raise SidebarVerificationError("codex_thread_conflict")
-        return next(iter(native_ids), None)
+        return verified.thread_id
+
+    # find_by_recovery_key lived here. Removed 2026-09-01: it matched
+    # `summary.thread_source` against the reservation's recovery key, and the
+    # Codex app-server never returns that field -- measured null on all 4143
+    # enumerable threads, and absent from thread/read for a thread whose
+    # state_5.sqlite row carries the key. Nothing has written a
+    # hermes-session-bridge-create-v1 key since 2026-07-30 either, so the oracle
+    # was dead on both sides.
+    #
+    # It did not fail loudly. It enumerated the whole corpus and returned None,
+    # which every caller read as "no native thread exists" -- a silent false
+    # negative on a materialization gate, made MORE reachable by raising the read
+    # ceilings, since the enumeration now completes where it used to time out.
+    #
+    # The recovery KEY itself is untouched and still live: it is the ledger
+    # reservation's identity (sidebar_create_recovery_key, reserve_sidebar_create,
+    # clear_sidebar_create_reservation). Only the attempt to find a native thread
+    # by it is gone.
 
     def _fresh_marker_inventory_projections(
         self,
@@ -564,12 +645,7 @@ class SidebarThreadVerifier:
     ) -> tuple[SessionProjection, ...]:
         """Read a complete current inventory without consulting snapshot state."""
 
-        started = self._monotonic()
-        deadline = started + (
-            self._reconciliation_interval
-            if self._reconciliation_interval > 0
-            else self._ZERO_INTERVAL_READ_BUDGET_SECONDS
-        )
+        deadline = self._read_deadline()
         supports_search = getattr(
             self._source_adapter,
             "supports_sidebar_search",
@@ -1038,7 +1114,7 @@ class CodexSourceAdapter:
         deadline: float | None,
         stop: Any = None,
     ) -> dict[str, Any]:
-        timeout = _REQUEST_TIMEOUT
+        timeout = _SIDEBAR_READ_REQUEST_TIMEOUT
         if deadline is not None:
             remaining = deadline - float(self._monotonic())
             if remaining < _MIN_REQUEST_BUDGET_SECONDS:
@@ -1063,7 +1139,7 @@ class CodexSourceAdapter:
             # own cost -- "thread/list timed out after 0.062s" for a call that
             # reliably takes ~0.4s -- which points diagnosis at the transport
             # instead of at the deadline that actually ran out.
-            if deadline is not None and timeout < _REQUEST_TIMEOUT:
+            if deadline is not None and timeout < _SIDEBAR_READ_REQUEST_TIMEOUT:
                 raise _CodexReadBudgetExceeded(
                     "Codex sidebar deadline exhausted"
                 ) from None

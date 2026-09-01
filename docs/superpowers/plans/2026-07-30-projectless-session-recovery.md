@@ -333,9 +333,15 @@ def fork_thread(
     raise NotImplementedError
 ```
 
-Reuse `find_by_recovery_key` with `expected_cwd=placement.inbox_cwd` for fork
-reconciliation. Require exactly zero or one result; conflicting cwd or
-duplicate IDs is `codex_thread_conflict`.
+Reuse `recover_reserved_thread_by_marker` with
+`expected_cwd=placement.inbox_cwd` for fork reconciliation. Require exactly zero
+or one result; conflicting cwd or duplicate IDs is `codex_thread_conflict`.
+
+> **Corrected 2026-09-01.** This step named `find_by_recovery_key`, which has
+> been removed: it matched a `thread_source` field the Codex app-server never
+> returns (null on all 4143 enumerable threads), so it reported absence for
+> every thread that existed. `recover_reserved_thread_by_marker` is the
+> replacement and keeps the same contract, including the cwd check.
 
 - [ ] **Step 3: Prove copied history and original immutability**
 

@@ -1730,14 +1730,13 @@ class FakeVerifier:
             fixed_reason=None,
         )
 
-    def find_by_recovery_key(
+    def recover_reserved_thread_by_marker(
         self,
-        recovery_key: str,
+        expected: BridgeMarkerPayload,
         *,
         expected_cwd: str,
-        deadline: float,
     ) -> str | None:
-        self.events.append(("recover", recovery_key, expected_cwd, deadline))
+        self.events.append(("recover", expected, expected_cwd))
         if self.recovery_error is not None:
             raise self.recovery_error
         return self.recovery_result
@@ -2548,7 +2547,19 @@ def test_pre_rotation_reservation_recovers_thread_via_retired_marker_keys() -> N
     assert result.thread_id == THREAD_1
     assert native.create_calls == 0
     recover_events = [event for event in events if event[0] == "recover"]
-    assert [event[1] for event in recover_events] == [stored_key]
+    # Recovery probes the MARKER PAYLOAD now, not the reservation's key. The
+    # payload is identical across a rotation -- only the signing secret changes --
+    # so pre-rotation threads are matched by the verifier's retired_marker_secrets
+    # rather than by re-deriving recovery keys.
+    assert [event[1] for event in recover_events] == [
+        BridgeMarkerPayload(
+            bridge_id=sidebar_bridge_id(SOURCE_1),
+            source_session_id=SOURCE_1,
+            target_provider=Provider.CODEX,
+            policy_generation=1,
+        )
+    ]
+    # The reservation still carries its pre-rotation key, untouched.
     assert store.reservations[SOURCE_1]["recovery_key"] == stored_key
 
 
