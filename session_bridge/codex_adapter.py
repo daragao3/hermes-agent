@@ -277,9 +277,18 @@ class _SidebarReadOnlyInventory(Protocol):
 class SidebarThreadVerifier:
     """Authenticate native Codex sidebar threads through read-only inventory."""
 
-    # Total read budget for a verifier built with reconciliation_interval=0 --
-    # the precreate/unbound probe verifier built by
-    # `_require_sidebar_terminal_verifier` in cli.py.
+    # Budget for one read-only inventory operation, INDEPENDENT of
+    # reconciliation_interval.
+    #
+    # These are two different quantities that used to be one value.
+    # `reconciliation_interval` answers "how long should we keep RETRYING while
+    # we wait for a thread to appear in the index" -- a poll window. This answers
+    # "how long may a single read take before we give up on it". Conflating them
+    # meant the service verifier, built from service.reconcile_seconds, capped
+    # its reads at the LOOP CADENCE: a read that legitimately needed 40s was
+    # abandoned at 30s and reported as bridge_temporarily_unavailable, and the
+    # only way to widen it was to slow the reconciliation loop in coordinator.py
+    # as a side effect. They are now separate; see `_read_deadline`.
     #
     # Measured 2026-09-01: find_by_marker_including_archived issues TWO searches
     # (active + archived) plus a thread/read per hit. End-to-end wall time for the
@@ -290,14 +299,9 @@ class SidebarThreadVerifier:
     # fitting the median, because the spread drifted upward between batches taken
     # minutes apart and a ceiling near the median reintroduces the intermittency.
     #
-    # NOT the only budget in play: a verifier built with a NONZERO
-    # reconciliation_interval (the service verifier, built from
-    # service.reconcile_seconds, default 30) still uses that interval and is
-    # therefore still capped at ~30s. Deliberately left alone -- reconcile_seconds
-    # also drives the reconciliation loop cadence in coordinator.py, so widening
-    # it here would slow that loop as a side effect. Decoupling those two meanings
-    # is a separate change.
-    _ZERO_INTERVAL_READ_BUDGET_SECONDS = 150.0
+    # Applies to every verifier now, so the service verifier is no longer
+    # capped at its own loop cadence.
+    _READ_BUDGET_SECONDS = 150.0
     _COMPATIBILITY_EVIDENCE_TTL_SECONDS = 30.0
 
     def __init__(
@@ -356,6 +360,19 @@ class SidebarThreadVerifier:
         self._monotonic = monotonic
         self._sleep = sleep
 
+    def _read_deadline(self) -> float:
+        """Deadline for ONE read operation, measured from now.
+
+        Deliberately re-derived per read rather than shared across a poll loop:
+        a read issued late in the window deserves the same budget as the first
+        one, or the loop silently starves its own last attempt. The bound on a
+        polling caller is therefore the poll window plus one read budget, not
+        the product of the two -- the loop re-checks its own poll deadline after
+        every scan and stops there.
+        """
+
+        return self._monotonic() + self._READ_BUDGET_SECONDS
+
     def verify_thread(
         self, *, thread_id: str, expected: BridgeMarkerPayload
     ) -> VerifiedSidebarThread:
@@ -363,19 +380,17 @@ class SidebarThreadVerifier:
         expected = _validated_sidebar_marker_payload(expected)
         started = self._monotonic()
         polling_enabled = self._reconciliation_interval > 0
-        deadline = started + (
-            self._reconciliation_interval
-            if polling_enabled
-            else self._ZERO_INTERVAL_READ_BUDGET_SECONDS
-        )
+        # The poll window governs RETRIES only. Each read below carries its own
+        # budget, so a slow read is no longer truncated by the loop cadence.
+        poll_deadline = started + self._reconciliation_interval
         completed_zero_scan = False
         while True:
-            if completed_zero_scan and self._monotonic() >= deadline:
+            if completed_zero_scan and self._monotonic() >= poll_deadline:
                 raise SidebarVerificationError("native_task_not_indexed")
             try:
                 summary = self._source_adapter.find_sidebar_thread(
                     native_id,
-                    deadline=deadline,
+                    deadline=self._read_deadline(),
                     page_cap=self._inventory_page_cap,
                 )
             except (KeyboardInterrupt, SystemExit):
@@ -388,7 +403,7 @@ class SidebarThreadVerifier:
                 try:
                     projection = self._source_adapter.read_sidebar_thread(
                         summary,
-                        deadline=deadline,
+                        deadline=self._read_deadline(),
                     )
                 except _ConflictingCodexBridgeMarkers:
                     raise SidebarVerificationError("marker_conflict") from None
@@ -411,9 +426,9 @@ class SidebarThreadVerifier:
                 return verified
             completed_zero_scan = True
             now = self._monotonic()
-            if not polling_enabled or now >= deadline or self._poll_interval == 0:
+            if not polling_enabled or now >= poll_deadline or self._poll_interval == 0:
                 raise SidebarVerificationError("native_task_not_indexed")
-            self._sleep(min(self._poll_interval, deadline - now))
+            self._sleep(min(self._poll_interval, poll_deadline - now))
 
     def find_by_marker(
         self, expected: BridgeMarkerPayload
@@ -604,12 +619,7 @@ class SidebarThreadVerifier:
     ) -> tuple[SessionProjection, ...]:
         """Read a complete current inventory without consulting snapshot state."""
 
-        started = self._monotonic()
-        deadline = started + (
-            self._reconciliation_interval
-            if self._reconciliation_interval > 0
-            else self._ZERO_INTERVAL_READ_BUDGET_SECONDS
-        )
+        deadline = self._read_deadline()
         supports_search = getattr(
             self._source_adapter,
             "supports_sidebar_search",

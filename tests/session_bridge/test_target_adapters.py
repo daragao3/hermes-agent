@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
+from itertools import count
 import hashlib
 import json
 import os
@@ -777,9 +778,18 @@ def test_sidebar_marker_lookup_thread_cap_stops_before_thread_reads() -> None:
     assert all(method != "thread/read" for method, _, _ in client.calls)
 
 
+# Past any read budget. These deadline tests used to reach exhaustion by setting
+# a 1.0s reconciliation_interval; the read deadline no longer derives from the
+# interval, so they drive the read budget directly.
+def _past_read_budget() -> float:
+    return SidebarThreadVerifier._READ_BUDGET_SECONDS + 1.0
+
+
 def test_sidebar_marker_lookup_deadline_before_list_makes_no_request() -> None:
     client = FakeRequestClient({})
-    source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 2.0)
+    source = CodexSourceAdapter(
+        client, marker_secret=SECRET, monotonic=_past_read_budget
+    )
     verifier = SidebarThreadVerifier(
         source,
         marker_secret=SECRET,
@@ -796,7 +806,7 @@ def test_sidebar_marker_lookup_deadline_before_list_makes_no_request() -> None:
 
 def test_zero_interval_sidebar_lookup_still_has_finite_read_budget() -> None:
     client = FakeRequestClient({})
-    exhausted = SidebarThreadVerifier._ZERO_INTERVAL_READ_BUDGET_SECONDS + 1.0
+    exhausted = SidebarThreadVerifier._READ_BUDGET_SECONDS + 1.0
     source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: exhausted)
     verifier = SidebarThreadVerifier(
         source,
@@ -837,7 +847,7 @@ def test_sidebar_marker_lookup_deadline_after_list_is_retryable() -> None:
 def test_sidebar_marker_lookup_deadline_between_list_and_read_never_false_zero() -> (
     None
 ):
-    ticks = iter((0.0, 0.0, 0.0, 0.0, 2.0))
+    ticks = iter((0.0, 0.0, 0.0, 0.0, _past_read_budget()))
     client = FakeRequestClient({
         "thread/list": [_codex_inventory(), {"data": []}],
     })
@@ -861,7 +871,7 @@ def test_sidebar_marker_lookup_deadline_between_list_and_read_never_false_zero()
 
 
 def test_sidebar_marker_lookup_deadline_after_read_is_retryable_not_a_match() -> None:
-    ticks = iter((0.0, 0.0, 0.0, 0.0, 0.0, 2.0))
+    ticks = iter((0.0, 0.0, 0.0, 0.0, 0.0, _past_read_budget()))
     client = FakeRequestClient({
         "thread/list": [_codex_inventory(), {"data": []}],
         "thread/read": [_codex_signed_read()],
@@ -951,8 +961,11 @@ def test_sidebar_compatibility_lookup_bypasses_inventory_snapshot() -> None:
         monotonic=lambda: now[0],
     )
 
+    budget = SidebarThreadVerifier._READ_BUDGET_SECONDS
+
+    # Deadlines track the READ BUDGET, not the 600s reconciliation interval.
     assert verifier.find_by_marker(_sidebar_expected()) is None
-    assert inventory.list_deadlines == [600.0]
+    assert inventory.list_deadlines == [budget]
 
     inventory.visible = True
     now[0] = 29.0
@@ -961,7 +974,7 @@ def test_sidebar_compatibility_lookup_bypasses_inventory_snapshot() -> None:
         "claude:source-1",
         "bridge-1",
     )
-    assert inventory.list_deadlines == [600.0, 629.0]
+    assert inventory.list_deadlines == [budget, 29.0 + budget]
 
     now[0] = 31.0
     assert verifier.find_by_marker(_sidebar_expected()) == VerifiedSidebarThread(
@@ -969,8 +982,8 @@ def test_sidebar_compatibility_lookup_bypasses_inventory_snapshot() -> None:
         "claude:source-1",
         "bridge-1",
     )
-    assert inventory.list_deadlines == [600.0, 629.0, 631.0]
-    assert inventory.read_deadlines == [629.0, 631.0]
+    assert inventory.list_deadlines == [budget, 29.0 + budget, 31.0 + budget]
+    assert inventory.read_deadlines == [29.0 + budget, 31.0 + budget]
 
 
 @pytest.mark.parametrize(
@@ -6122,7 +6135,7 @@ def test_sidebar_budget_timeout_is_reported_as_budget_not_transport() -> None:
     assert not isinstance(raised.value, TimeoutError)
     assert [method for method, _params, _timeout in client.calls] == ["thread/list"]
 # --- read ceilings: see the block comments on _SIDEBAR_READ_REQUEST_TIMEOUT and
-# --- _ZERO_INTERVAL_READ_BUDGET_SECONDS in codex_adapter.py for the measurements.
+# --- _READ_BUDGET_SECONDS in codex_adapter.py for the measurements.
 
 # Worst single read-only request observed against a live app-server on
 # 2026-09-01 (a thread/search for a marker prefix). The read ceiling must clear
@@ -6173,14 +6186,14 @@ def test_bounded_sidebar_read_still_clamps_down_to_a_short_budget() -> None:
     assert {timeout for _, _, timeout in client.calls} == {5.0}
 
 
-def test_zero_interval_read_budget_accommodates_a_full_marker_lookup() -> None:
-    """The precreate verifier's budget must outlast the measured worst lookup.
+def test_read_budget_accommodates_a_full_marker_lookup() -> None:
+    """The read budget must outlast the measured worst lookup.
 
     At the previous 30.0 the two-search marker lookup could not fit and failed
     closed as bridge_temporarily_unavailable on every live run.
     """
 
-    budget = SidebarThreadVerifier._ZERO_INTERVAL_READ_BUDGET_SECONDS
+    budget = SidebarThreadVerifier._READ_BUDGET_SECONDS
     assert budget > _MEASURED_WORST_MARKER_LOOKUP_SECONDS
 
     # And behaviourally: a clock already past the OLD budget must no longer
@@ -6206,3 +6219,51 @@ def test_zero_interval_read_budget_accommodates_a_full_marker_lookup() -> None:
         "thread/list",
         "thread/read",
     ]
+def test_read_budget_is_independent_of_the_reconciliation_interval() -> None:
+    """A short reconciliation_interval must not shorten a read.
+
+    reconcile_seconds is the reconciliation LOOP CADENCE (coordinator.py). It used
+    to double as the read deadline, so the service verifier capped its reads at
+    its own cadence -- a read that legitimately needed 40s was abandoned at 30s.
+    Widening it meant slowing the loop. These are now separate.
+    """
+
+    inventory = MutableSidebarInventory()
+    inventory.visible = True
+    verifier = SidebarThreadVerifier(
+        inventory,
+        marker_secret=SECRET,
+        reconciliation_interval=1.0,
+        monotonic=lambda: 0.0,
+    )
+
+    assert verifier.find_by_marker(_sidebar_expected()) is not None
+    assert inventory.list_deadlines == [SidebarThreadVerifier._READ_BUDGET_SECONDS]
+
+
+def test_poll_window_still_follows_the_reconciliation_interval() -> None:
+    """The interval keeps its real job: how long to KEEP RETRYING.
+
+    Guards against the decoupling being taken too far and turning the poll window
+    into the read budget as well, which would make a never-indexed thread block
+    for the whole budget instead of the cadence.
+    """
+
+    slept: list[float] = []
+    clock = count(0.0, 0.5)
+    inventory = MutableSidebarInventory()
+    verifier = SidebarThreadVerifier(
+        inventory,
+        marker_secret=SECRET,
+        reconciliation_interval=2.0,
+        poll_interval=0.5,
+        monotonic=lambda: next(clock),
+        sleep=slept.append,
+    )
+
+    with pytest.raises(SidebarVerificationError) as raised:
+        verifier.verify_thread(thread_id=CODEX_ID, expected=_sidebar_expected())
+
+    assert raised.value.code == "native_task_not_indexed"
+    # Bounded by the 2.0s poll window, never by the 150s read budget.
+    assert slept and all(nap <= 2.0 for nap in slept)
