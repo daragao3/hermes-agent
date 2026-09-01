@@ -19,6 +19,7 @@ from agent.transports.codex_app_server import (
 from hermes_state import SessionDB
 import session_bridge.codex_adapter as codex_adapter_module
 from session_bridge.codex_adapter import (
+    _SIDEBAR_READ_REQUEST_TIMEOUT,
     CodexSourceAdapter,
     CodexThreadSummary,
     _VisibilityInventoryCancelled,
@@ -237,7 +238,7 @@ class TestInventory:
             assert params["limit"] == 100
             assert params["sortKey"] == "updated_at"
             assert params["sortDirection"] == "desc"
-            assert timeout == 30.0
+            assert timeout == _SIDEBAR_READ_REQUEST_TIMEOUT
 
     def test_recent_inventory_pages_past_a_full_page_of_known_tasks(self) -> None:
         """A page of already-known ids must NOT end enumeration.

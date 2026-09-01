@@ -49,6 +49,26 @@ from .sidebar_reconciliation import (
 
 _PARSER_VERSION = 1
 _REQUEST_TIMEOUT = 30.0
+# Ceiling for a single READ-ONLY sidebar request (thread/list, thread/search,
+# thread/read). Deliberately NOT _REQUEST_TIMEOUT: that constant also defaults
+# the thread/start-side timeouts, where 30s is still right -- a creation call
+# that hangs should fail fast, a census read should not.
+#
+# Measured 2026-09-01 against a live app-server (0.151.0-alpha.7.2, 4143
+# enumerable active threads). A single thread/search for a marker prefix ranged
+# 14s-101s, and the identical short term measured 2.19s / 56.72s / 2.97s within
+# minutes -- latency does NOT track term length, process age, or corpus scan
+# size, and the cause is not established. At 30.0 that distribution straddles
+# the ceiling, so find_by_marker_including_archived was a coin flip: with the
+# read budget raised but this left at 30.0 it passed 1 of 5 runs, and all four
+# failures landed at exactly 30.1s. With this raised it passed 12 of 13.
+#
+# 120.0 buys headroom over the worst observed search without swallowing the
+# caller: SidebarExecutor allows 240s for a whole operation
+# (_operation_budget_seconds), so one request can still never take more than
+# half of it. Raise THIS, not the read budget, if the marker path regresses --
+# an unbounded budget alone provably does not help.
+_SIDEBAR_READ_REQUEST_TIMEOUT = 120.0
 # Smallest remaining budget worth spending on a request. Below this the attempt
 # cannot finish (a thread/list page costs ~0.3-0.4s against a live app-server),
 # and issuing it anyway hands the transport a sub-second timeout whose error text
@@ -257,7 +277,27 @@ class _SidebarReadOnlyInventory(Protocol):
 class SidebarThreadVerifier:
     """Authenticate native Codex sidebar threads through read-only inventory."""
 
-    _ZERO_INTERVAL_READ_BUDGET_SECONDS = 30.0
+    # Total read budget for a verifier built with reconciliation_interval=0 --
+    # the precreate/unbound probe verifier built by
+    # `_require_sidebar_terminal_verifier` in cli.py.
+    #
+    # Measured 2026-09-01: find_by_marker_including_archived issues TWO searches
+    # (active + archived) plus a thread/read per hit. End-to-end wall time for the
+    # identical operation on the identical thread ranged 16.2s-47.9s. At 30.0 it
+    # could not fit and failed closed as bridge_temporarily_unavailable on every
+    # run; at 45.0 it still failed 1 of 3; at 60.0 it passed 3 of 3 but with a
+    # 47.9s worst case. 150.0 leaves room for the observed spread rather than
+    # fitting the median, because the spread drifted upward between batches taken
+    # minutes apart and a ceiling near the median reintroduces the intermittency.
+    #
+    # NOT the only budget in play: a verifier built with a NONZERO
+    # reconciliation_interval (the service verifier, built from
+    # service.reconcile_seconds, default 30) still uses that interval and is
+    # therefore still capped at ~30s. Deliberately left alone -- reconcile_seconds
+    # also drives the reconciliation loop cadence in coordinator.py, so widening
+    # it here would slow that loop as a side effect. Decoupling those two meanings
+    # is a separate change.
+    _ZERO_INTERVAL_READ_BUDGET_SECONDS = 150.0
     _COMPATIBILITY_EVIDENCE_TTL_SECONDS = 30.0
 
     def __init__(
@@ -1038,7 +1078,7 @@ class CodexSourceAdapter:
         deadline: float | None,
         stop: Any = None,
     ) -> dict[str, Any]:
-        timeout = _REQUEST_TIMEOUT
+        timeout = _SIDEBAR_READ_REQUEST_TIMEOUT
         if deadline is not None:
             remaining = deadline - float(self._monotonic())
             if remaining < _MIN_REQUEST_BUDGET_SECONDS:
@@ -1063,7 +1103,7 @@ class CodexSourceAdapter:
             # own cost -- "thread/list timed out after 0.062s" for a call that
             # reliably takes ~0.4s -- which points diagnosis at the transport
             # instead of at the deadline that actually ran out.
-            if deadline is not None and timeout < _REQUEST_TIMEOUT:
+            if deadline is not None and timeout < _SIDEBAR_READ_REQUEST_TIMEOUT:
                 raise _CodexReadBudgetExceeded(
                     "Codex sidebar deadline exhausted"
                 ) from None

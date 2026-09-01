@@ -30,6 +30,8 @@ from session_bridge.claude_adapter import (
     resolve_claude_command,
 )
 from session_bridge.codex_adapter import (
+    _REQUEST_TIMEOUT,
+    _SIDEBAR_READ_REQUEST_TIMEOUT,
     CodexSourceAdapter,
     CodexTargetAdapter,
     SidebarThreadVerifier,
@@ -794,7 +796,8 @@ def test_sidebar_marker_lookup_deadline_before_list_makes_no_request() -> None:
 
 def test_zero_interval_sidebar_lookup_still_has_finite_read_budget() -> None:
     client = FakeRequestClient({})
-    source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 31.0)
+    exhausted = SidebarThreadVerifier._ZERO_INTERVAL_READ_BUDGET_SECONDS + 1.0
+    source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: exhausted)
     verifier = SidebarThreadVerifier(
         source,
         marker_secret=SECRET,
@@ -3442,7 +3445,7 @@ def test_codex_exact_discovery_can_include_sidebar_and_app_server_threads() -> N
                 "archived": False,
                 "sourceKinds": ["vscode", "appServer"],
             },
-            30.0,
+            _SIDEBAR_READ_REQUEST_TIMEOUT,
         )
     ]
 
@@ -3476,7 +3479,7 @@ def test_codex_exact_discovery_can_use_the_bounded_state_database() -> None:
                 "useStateDbOnly": True,
                 "sourceKinds": ["vscode", "appServer"],
             },
-            30.0,
+            _SIDEBAR_READ_REQUEST_TIMEOUT,
         )
     ]
 
@@ -6118,3 +6121,88 @@ def test_sidebar_budget_timeout_is_reported_as_budget_not_transport() -> None:
 
     assert not isinstance(raised.value, TimeoutError)
     assert [method for method, _params, _timeout in client.calls] == ["thread/list"]
+# --- read ceilings: see the block comments on _SIDEBAR_READ_REQUEST_TIMEOUT and
+# --- _ZERO_INTERVAL_READ_BUDGET_SECONDS in codex_adapter.py for the measurements.
+
+# Worst single read-only request observed against a live app-server on
+# 2026-09-01 (a thread/search for a marker prefix). The read ceiling must clear
+# it or find_by_marker_including_archived becomes a coin flip: measured at a
+# 30.0 ceiling with an effectively unbounded budget, it passed 1 of 5 runs and
+# every failure landed exactly on the ceiling.
+_MEASURED_WORST_SIDEBAR_READ_SECONDS = 101.0
+
+# Worst end-to-end find_by_marker_including_archived observed the same day
+# (two searches plus a thread/read per hit).
+_MEASURED_WORST_MARKER_LOOKUP_SECONDS = 47.9
+
+
+def test_sidebar_read_ceiling_clears_the_measured_worst_request() -> None:
+    assert _SIDEBAR_READ_REQUEST_TIMEOUT > _MEASURED_WORST_SIDEBAR_READ_SECONDS
+
+
+def test_sidebar_read_ceiling_did_not_widen_the_creation_timeout() -> None:
+    """Reads got a longer ceiling; thread/start-side calls deliberately did not."""
+
+    assert _REQUEST_TIMEOUT == 30.0
+    assert _SIDEBAR_READ_REQUEST_TIMEOUT > _REQUEST_TIMEOUT
+
+
+def test_bounded_sidebar_read_hands_the_transport_the_read_ceiling() -> None:
+    # two pages consumed: the active kind, then the archived kind
+    client = FakeRequestClient({"thread/list": [_codex_inventory(), {"data": []}]})
+    source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0)
+
+    source.list_sidebar_inventory(deadline=None, page_cap=2)
+
+    assert client.calls, "expected at least one read"
+    assert {timeout for _, _, timeout in client.calls} == {
+        _SIDEBAR_READ_REQUEST_TIMEOUT
+    }
+
+
+def test_bounded_sidebar_read_still_clamps_down_to_a_short_budget() -> None:
+    """A deadline shorter than the ceiling must still win, so a nearly-exhausted
+    budget cannot buy a full-length request."""
+
+    client = FakeRequestClient({"thread/list": [_codex_inventory(), {"data": []}]})
+    source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0)
+
+    source.list_sidebar_inventory(deadline=5.0, page_cap=1)
+
+    assert client.calls, "expected at least one read"
+    assert {timeout for _, _, timeout in client.calls} == {5.0}
+
+
+def test_zero_interval_read_budget_accommodates_a_full_marker_lookup() -> None:
+    """The precreate verifier's budget must outlast the measured worst lookup.
+
+    At the previous 30.0 the two-search marker lookup could not fit and failed
+    closed as bridge_temporarily_unavailable on every live run.
+    """
+
+    budget = SidebarThreadVerifier._ZERO_INTERVAL_READ_BUDGET_SECONDS
+    assert budget > _MEASURED_WORST_MARKER_LOOKUP_SECONDS
+
+    # And behaviourally: a clock already past the OLD budget must no longer
+    # refuse before issuing a request.
+    client = FakeRequestClient({"thread/list": [_codex_inventory(), {"data": []}]})
+    source = CodexSourceAdapter(
+        client, marker_secret=SECRET, monotonic=lambda: _MEASURED_WORST_MARKER_LOOKUP_SECONDS
+    )
+    verifier = SidebarThreadVerifier(
+        source,
+        marker_secret=SECRET,
+        reconciliation_interval=0,
+        monotonic=lambda: 0.0,
+    )
+
+    with pytest.raises(SidebarVerificationError):
+        verifier.find_by_marker(_sidebar_expected())
+
+    # At the previous 30.0 budget this clock refused before issuing anything;
+    # now it gets through both inventory kinds and into the thread read.
+    assert [method for method, _, _ in client.calls] == [
+        "thread/list",
+        "thread/list",
+        "thread/read",
+    ]
