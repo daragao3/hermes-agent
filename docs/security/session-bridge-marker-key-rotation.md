@@ -21,8 +21,8 @@ the key:
 - **Reconciliation-proof marker digests** (`sha256(signed marker)`) bound
   into v2 attempt-zero reservations.
 
-The 2026-08-27 10:57 EDT rotation (leak response, old key destroyed) proved
-what happens without a rotation story, measured 2026-08-31 (loops claims
+The 2026-08-27 10:57 EDT key change proved what happens without a rotation
+story, measured 2026-08-31 (loops claims
 `sidebar-terminal-failures-cleared-20260831` →
 `sidebar-marker-key-rotation-20260831`):
 
@@ -39,8 +39,30 @@ what happens without a rotation story, measured 2026-08-31 (loops claims
    `absence_proven` proofs claim more than they can know for pre-rotation
    creates.
 3. Nothing could be repaired retroactively because no copy of the old key
-   survived (correct for a leak — see below — but it must be a *choice*, not
-   an accident of having no keyring).
+   appeared to survive — which must be a *choice*, not an accident of having
+   no keyring.
+
+**It was NOT a leak rotation — corrected 2026-09-01** (loops claim
+`marker-key-retirement-decision-20260901`). This paragraph previously called
+the 2026-08-27 change a "leak response, old key destroyed", conflating it with
+the bearer-token leak being rotated in the same incident window. They were
+different files and different events. What actually happened: the whole
+`~/.hermes/session-bridge/` secret set vanished in the unattributed storm
+deletion, the bridge crash-looped on
+`RuntimeError('session bridge marker key file is missing')`, and a fresh key
+was minted purely to make it boot. **The marker key was never compromised.**
+The 2026-08-19 rotation plan
+(`docs/superpowers/plans/2026-08-19-session-bridge-secret-rotation.md`) had
+already assessed it — "the value never left this machine" — and *recommended
+against* rotating it; its Phase 2 decision gate was never approved and never
+ran. The old key (sha256 `7fbb1686…`) survived in `~/.hermes` git history at
+`6f8d21222:session-bridge/marker-key`, on a repo with no network remote, and
+was retired into the keyring on 2026-09-01 after its signature was reproduced
+byte-for-byte against a real pre-rotation thread. Residual, recorded rather
+than hidden: that blob does not carry the live key's restricted ACL — but had
+the storm not deleted the file, this key would still be the *live signing* key
+today, so validation-only retirement is strictly less privilege than it held
+before the accident.
 
 ## The keyring
 
@@ -99,16 +121,37 @@ $bytes = New-Object byte[] 32
 [System.IO.File]::WriteAllBytes("$root\marker-key", $bytes)
 ```
 
-Then apply the restricted ACL to **both** the new key and the retired file
-(same recipe the installer uses):
+Then apply the restricted ACL to **both** the new key and the retired file,
+using the installer's `Set-RestrictedSecretAcl`
+(`scripts/install_session_bridge.ps1:207`) — reproduced here verbatim rather
+than paraphrased:
 
 ```powershell
-$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 foreach ($f in @("$root\marker-key", "$root\marker-key-retired\$stamp-marker-key")) {
-  icacls $f /inheritance:r /grant:r "*${sid}:(F)" "*S-1-5-18:(F)"
-  icacls $f /remove:g "*S-1-3-4" "*S-1-5-32-544"
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+  foreach ($op in @(
+      @($f, '/reset'),
+      @($f, '/inheritance:r'),
+      @($f, '/grant:r', "${identity}:(F)", '*S-1-5-18:(F)'),
+      @($f, '/setowner', $identity)
+  )) {
+    $null = @(& icacls.exe @op 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw 'could not restrict secret file ACL' }
+  }
 }
 ```
+
+**Corrected 2026-09-01.** This block previously carried a hand-written
+`icacls` sequence labelled "same recipe the installer uses" that was *not* the
+installer's recipe: it omitted `/setowner`. `_validate_windows_token_acl`
+compares the file's `owner_sid` against `current_sid`, so a file created under
+an inherited owner (e.g. Administrators, on an elevated shell) passes the
+grant check and still **fails closed** on ownership — and because
+`resolve_retired_marker_keys` raises rather than skipping, one badly-owned
+retired file takes down *every* key resolution, not just its own epoch. Stage
+the file outside `marker-key-retired/`, ACL it, verify it with
+`resolve_retired_marker_keys(retired_key_dir=<staging>)`, and only then move it
+in — never let a half-configured file be visible in the live directory.
 
 Restart the bridge. In-flight reservations, terminal-resolution lanes, and
 pre-rotation native-task probing keep working through the keyring. The
@@ -142,10 +185,27 @@ flight. Delete `marker-key-retired/<stamp>-marker-key` when **all** of:
 - no live create-reservation in `session_bridge_state` has `reserved_at`
   before the rotation stamp, and
 - no terminal-resolution acknowledgement of a pre-rotation record is still
-  expected.
+  expected, **and**
+- no pre-rotation native thread is still subject to marker probing or origin
+  detection (added 2026-09-01 — see below).
 
 Pre-rotation *bound* threads need no key at all for delivery; only marker
 re-probing of them does, which ends once their jobs are terminal.
+
+**The first three criteria are about the LEDGER, and the ledger empties long
+before the thread corpus does — do not read three greens as clearance.**
+Measured 2026-09-01: every sidebar/visibility table was empty
+(`session_sidebar_jobs`, `..._reconciliation_proofs`,
+`session_claude_visibility_jobs` and every resolution table at 0 rows;
+`session_bridge_state` entirely post-rotation), so all three criteria above
+were already satisfied — while **1438 distinct pre-rotation markers were still
+present across 4818 Codex rollout files on disk**. Deleting the retired key on
+the ledger criteria alone would have re-broken `_detect_origin` and
+`projection_has_marker_payload` for all of them, which is the failure that
+reclassifies a pre-rotation bridge-created thread as NATIVE and therefore
+sidebar-*eligible* — a duplicate-creation risk, not merely a lost probe. The
+retention question is "are pre-rotation threads still being probed", and the
+thread corpus is what answers it.
 
 ## Deliberately epoch-pinned surfaces (do NOT extend the keyring here)
 
