@@ -2118,6 +2118,10 @@ class SessionBridgeStore:
             lease_digest=lease_digest,
             attempt_ordinal=int(due["attempts"]),
             prior_error_code=prior_error_code,
+            # Read BEFORE claim_failed_claude_visibility_reconciliation stamps the
+            # 'exact terminal reconciliation in progress' marker over it, so a
+            # release can restore the row exactly as it was.
+            prior_error_detail=due["error_detail"],
             requires_exact_id_reconciliation=True,
             registration_reserved=False,
             launch_permitted=False,
@@ -3265,6 +3269,77 @@ class SessionBridgeStore:
                 "job_id": normalized_job,
                 "error_code": normalized_code,
                 "operator_cleared_at": operation_time,
+            }
+
+        return self.db._execute_write(_write)
+
+    def release_failed_claude_visibility_repair(
+        self,
+        *,
+        job_id: str,
+        lease_digest: str,
+        expected_error_code: str,
+        restored_error_detail: str,
+    ) -> dict[str, Any]:
+        """Hand a terminal-repair lease back after a repair could not commit.
+
+        ``claim_failed_claude_visibility_reconciliation`` takes a reconciliation
+        lease and stamps ``error_detail`` with the in-progress marker. Every
+        ordinary reclaim path excludes that marker on purpose -- the row is
+        waiting on an operator, not on a worker -- so if the repair then returns
+        anything other than ``visible`` and does NOT release, the job is stranded
+        in ``claude_leased`` past its own expiry with no way out: ``repair`` and
+        ``dismiss`` both require ``claude_failed``, and
+        ``requeue_failed_claude_visibility_reconciliation`` requires it too and
+        has no CLI surface. Measured live 2026-09-01, still leased seven minutes
+        after expiry.
+
+        The release is the exact inverse of that claim and nothing more. It
+        restores ``state`` and the ORIGINAL ``error_detail`` -- restoring the
+        marker, or any paraphrase, would silently disqualify the row from
+        operator recovery, whose guard matches exact detail strings. ``attempts``
+        and ``error_code`` are untouched, and the paid-attempt ledger is never
+        involved, so a release costs nothing and loses no history.
+
+        Guarded on the lease digest so a release can only ever retire the lease
+        it was handed -- never one another operation took in the meantime.
+        """
+
+        normalized_job = _exact_nonempty_text(job_id, "Claude visibility job ID")
+        normalized_lease = _exact_nonempty_text(lease_digest, "Claude lease digest")
+        normalized_code = _exact_nonempty_text(
+            expected_error_code, "Claude visibility error code"
+        )
+        normalized_detail = _exact_nonempty_text(
+            restored_error_detail, "Claude visibility error detail"
+        )
+
+        def _write(conn):
+            operation_time = _finite_number(self._clock(), "clock")
+            cursor = conn.execute(
+                """UPDATE session_claude_visibility_jobs
+                   SET state = 'claude_failed', error_detail = ?,
+                       lease_digest = NULL, lease_expires_at = NULL,
+                       lease_kind = NULL, updated_at = ?
+                   WHERE id = ? AND state = 'claude_leased'
+                     AND lease_kind = 'reconciliation'
+                     AND lease_digest = ? AND error_code = ?
+                     AND error_detail = 'exact terminal reconciliation in progress'""",
+                (
+                    normalized_detail,
+                    operation_time,
+                    normalized_job,
+                    normalized_lease,
+                    normalized_code,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("exact held Claude visibility repair lease required")
+            return {
+                "status": "released",
+                "job_id": normalized_job,
+                "error_code": normalized_code,
+                "error_detail": normalized_detail,
             }
 
         return self.db._execute_write(_write)

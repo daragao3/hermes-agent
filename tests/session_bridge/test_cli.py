@@ -10169,3 +10169,180 @@ def test_characterization_record_sync_accepts_pre_rotation_records_via_retired_k
     assert result == {"registered": 1, "cleanup_completed": 1}
     assert store.calls[-1]["signed_marker"] == old_identity.signed_marker
     assert store.calls[-1]["retired_marker_secrets"] == (retired_secret,)
+
+
+def test_terminal_visibility_repair_releases_its_lease_when_not_committed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repair that cannot commit must hand the lease back, not hold it.
+
+    Measured live 2026-09-01: `--apply` returned exit 4
+    visibility_repair_not_committed_visible while leaving the row
+    claude_leased with lease_kind='reconciliation' and the
+    'exact terminal reconciliation in progress' marker. That marker is
+    excluded from every reclaim path (store.py), so the row is unreachable
+    by BOTH operator verbs -- repair and dismiss each require
+    state='claude_failed' -- and status.repair_required then prescribes a
+    command whose own precondition the row violates. The row was still
+    leased seven minutes past lease expiry, polled at 20s intervals, and
+    the code's own comment says it "waits forever".
+
+    Releasing restores the original error_detail, not the marker: the
+    requeue guard matches on exact detail strings, so leaving the marker
+    would silently disqualify the row from operator recovery.
+    """
+
+    job_id = "claude-visibility-job:test"
+    reserved_uuid = "11111111-1111-4111-8111-111111111111"
+    released: list[dict[str, object]] = []
+
+    class Claim:
+        claimed = True
+        lease_kind = "reconciliation"
+        launch_permitted = False
+        registration_reserved = False
+        requires_exact_id_reconciliation = True
+        lease_digest = "d" * 64
+        prior_error_code = "bridge_conflict"
+        prior_error_detail = "exact transcript conflict"
+
+        def __init__(self) -> None:
+            self.job_id = job_id
+            self.reserved_claude_uuid = reserved_uuid
+
+    class Store:
+        def claim_failed_claude_visibility_reconciliation(self, *args, **kwargs):
+            return Claim()
+
+        def release_failed_claude_visibility_repair(self, **kwargs):
+            released.append(kwargs)
+            return {"status": "released"}
+
+    class Registrar:
+        def process(self, claim, **kwargs):
+            return type(
+                "Outcome",
+                (),
+                {
+                    "status": "failed",
+                    "job_id": job_id,
+                    "reserved_claude_uuid": reserved_uuid,
+                    "error_code": "bridge_conflict",
+                },
+            )()
+
+    backend = ProductionBackend(BridgeConfig())
+    monkeypatch.setattr(backend, "_require_store", lambda: Store())
+    monkeypatch.setattr("session_bridge.cli.resolve_marker_key", lambda: b"k" * 32)
+    monkeypatch.setattr(
+        "session_bridge.cli.ClaudeSourceAdapter", lambda *_args, **_kwargs: object()
+    )
+    monkeypatch.setattr(
+        "session_bridge.cli.ClaudeNativeRegistrar", lambda *_args, **_kwargs: Registrar()
+    )
+
+    with pytest.raises(
+        RolloutGateBlocked, match="visibility_repair_not_committed_visible"
+    ):
+        backend.repair_failed_claude_visibility_job(
+            job_id=job_id,
+            reserved_claude_uuid=reserved_uuid,
+            expected_error_code="bridge_conflict",
+        )
+
+    assert released == [
+        {
+            "job_id": job_id,
+            "lease_digest": "d" * 64,
+            "expected_error_code": "bridge_conflict",
+            "restored_error_detail": "exact transcript conflict",
+        }
+    ], "the repair held its own lease instead of releasing it"
+
+
+@pytest.mark.parametrize(
+    "mode,gate",
+    [
+        ("identity_mismatch", "visibility_repair_result_identity_mismatch"),
+        ("raises", None),
+    ],
+)
+def test_terminal_visibility_repair_releases_its_lease_on_every_exit(
+    monkeypatch: pytest.MonkeyPatch, mode: str, gate: str | None
+) -> None:
+    """The other two non-committing exits must release too, not just the common one.
+
+    A registrar that returns a mismatched identity, or that raises outright,
+    strands the lease exactly as a non-visible outcome does -- the marker is
+    already stamped by then. Each release site is asserted separately so that
+    deleting any ONE of them fails a test; a single test covering only the
+    common path would leave the other two wired to nothing.
+    """
+
+    job_id = "claude-visibility-job:test"
+    reserved_uuid = "11111111-1111-4111-8111-111111111111"
+    released: list[dict[str, object]] = []
+
+    class Claim:
+        claimed = True
+        lease_kind = "reconciliation"
+        launch_permitted = False
+        registration_reserved = False
+        requires_exact_id_reconciliation = True
+        lease_digest = "d" * 64
+        prior_error_code = "bridge_conflict"
+        prior_error_detail = "exact transcript conflict"
+
+        def __init__(self) -> None:
+            self.job_id = job_id
+            self.reserved_claude_uuid = reserved_uuid
+
+    class Store:
+        def claim_failed_claude_visibility_reconciliation(self, *args, **kwargs):
+            return Claim()
+
+        def release_failed_claude_visibility_repair(self, **kwargs):
+            released.append(kwargs)
+            return {"status": "released"}
+
+    class Registrar:
+        def process(self, claim, **kwargs):
+            if mode == "raises":
+                raise RuntimeError("registrar exploded")
+            return type(
+                "Outcome",
+                (),
+                {
+                    "status": "visible",
+                    "job_id": "claude-visibility-job:someone-else",
+                    "reserved_claude_uuid": reserved_uuid,
+                    "error_code": None,
+                },
+            )()
+
+    backend = ProductionBackend(BridgeConfig())
+    monkeypatch.setattr(backend, "_require_store", lambda: Store())
+    monkeypatch.setattr("session_bridge.cli.resolve_marker_key", lambda: b"k" * 32)
+    monkeypatch.setattr(
+        "session_bridge.cli.ClaudeSourceAdapter", lambda *_args, **_kwargs: object()
+    )
+    monkeypatch.setattr(
+        "session_bridge.cli.ClaudeNativeRegistrar", lambda *_args, **_kwargs: Registrar()
+    )
+
+    expected = RolloutGateBlocked if gate else RuntimeError
+    with pytest.raises(expected):
+        backend.repair_failed_claude_visibility_job(
+            job_id=job_id,
+            reserved_claude_uuid=reserved_uuid,
+            expected_error_code="bridge_conflict",
+        )
+
+    assert released == [
+        {
+            "job_id": job_id,
+            "lease_digest": "d" * 64,
+            "expected_error_code": "bridge_conflict",
+            "restored_error_detail": "exact transcript conflict",
+        }
+    ], f"the {mode} exit held its own lease instead of releasing it"

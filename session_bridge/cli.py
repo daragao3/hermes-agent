@@ -2764,13 +2764,44 @@ class ProductionBackend:
             process_timeout=policy.process_timeout_seconds,
             discovery_timeout=policy.discovery_timeout_seconds,
         )
-        outcome = registrar.process(claim, allow_absence=False)
+        # Every exit from here that is not a committed "visible" MUST hand the
+        # lease back. The claim stamped the in-progress marker, which excludes the
+        # row from every reclaim path, so a refusal that keeps the lease strands
+        # the job in claude_leased with no operator verb able to reach it -- both
+        # repair and dismiss require claude_failed. Measured live 2026-09-01: a
+        # single unreleased lease stayed leased seven minutes past expiry and
+        # additionally voided the whole health envelope. A registrar that raises
+        # is the same hazard, so the release covers that path too.
+        def _release_lease() -> None:
+            lease_digest = getattr(claim, "lease_digest", None)
+            prior_detail = getattr(claim, "prior_error_detail", None)
+            if not lease_digest or not prior_detail:
+                return
+            try:
+                store.release_failed_claude_visibility_repair(
+                    job_id=job_id,
+                    lease_digest=lease_digest,
+                    expected_error_code=expected_error_code,
+                    restored_error_detail=prior_detail,
+                )
+            except Exception:
+                # Never mask the real refusal with a release failure; the status
+                # projection still names the abandoned lease either way.
+                pass
+
+        try:
+            outcome = registrar.process(claim, allow_absence=False)
+        except BaseException:
+            _release_lease()
+            raise
         if (
             outcome.job_id != job_id
             or outcome.reserved_claude_uuid != reserved_claude_uuid
         ):
+            _release_lease()
             raise RolloutGateBlocked("visibility_repair_result_identity_mismatch")
         if outcome.status != "visible":
+            _release_lease()
             raise RolloutGateBlocked("visibility_repair_not_committed_visible")
         return {
             "status": outcome.status,

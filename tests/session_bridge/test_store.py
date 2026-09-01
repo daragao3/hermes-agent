@@ -16706,3 +16706,110 @@ def test_claude_lineage_cursor_minted_pre_rotation_validates_via_retired_keys(
         cursor=cursor,
     )
     assert resumed["scanned"] == 1
+
+
+def test_repair_lease_release_restores_the_row_and_its_original_detail(
+    db: SessionDB,
+) -> None:
+    """Releasing a held repair lease is the exact inverse of claiming it.
+
+    Without a release the row sits in claude_leased carrying the
+    'exact terminal reconciliation in progress' marker, which every reclaim
+    path excludes on purpose. Both operator verbs require claude_failed, so
+    the job becomes unreachable -- measured live 2026-09-01, still leased
+    seven minutes past its own expiry.
+    """
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("terminal-release")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id,
+        launch.lease_digest,
+        "bridge_conflict",
+        "exact transcript conflict",
+    )
+    claim = store.claim_failed_claude_visibility_reconciliation(
+        100.0,
+        60,
+        expected_job_id=identity.job_id,
+        expected_reserved_claude_uuid=identity.claude_uuid,
+        expected_error_code="bridge_conflict",
+    )
+    # The claim stamps the marker over the original detail, which is why the
+    # claim has to carry the original forward for the release to restore.
+    assert claim.prior_error_detail == "exact transcript conflict"
+    assert _rows(
+        db, "SELECT state, error_detail FROM session_claude_visibility_jobs"
+    ) == [
+        {
+            "state": "claude_leased",
+            "error_detail": "exact terminal reconciliation in progress",
+        }
+    ]
+
+    released = store.release_failed_claude_visibility_repair(
+        job_id=identity.job_id,
+        lease_digest=claim.lease_digest,
+        expected_error_code="bridge_conflict",
+        restored_error_detail=claim.prior_error_detail,
+    )
+    assert released["status"] == "released"
+    assert _rows(
+        db,
+        "SELECT state, error_code, error_detail, lease_digest, lease_expires_at,"
+        " lease_kind, attempts FROM session_claude_visibility_jobs",
+    ) == [
+        {
+            "state": "claude_failed",
+            "error_code": "bridge_conflict",
+            "error_detail": "exact transcript conflict",
+            "lease_digest": None,
+            "lease_expires_at": None,
+            "lease_kind": None,
+            "attempts": 1,
+        }
+    ]
+
+    # Released rows are ordinary terminal failures again, so the operator verbs
+    # that require claude_failed can reach them -- the property whose absence
+    # stranded the live job.
+    assert store.dismiss_claude_visibility_job(
+        job_id=identity.job_id, expected_error_code="bridge_conflict"
+    )["status"] == "dismissed"
+
+
+def test_repair_lease_release_refuses_a_lease_it_was_not_handed(
+    db: SessionDB,
+) -> None:
+    """The digest guard stops a release retiring someone else's lease."""
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("terminal-release-guard")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id,
+        launch.lease_digest,
+        "bridge_conflict",
+        "exact transcript conflict",
+    )
+    store.claim_failed_claude_visibility_reconciliation(
+        100.0,
+        60,
+        expected_job_id=identity.job_id,
+        expected_reserved_claude_uuid=identity.claude_uuid,
+        expected_error_code="bridge_conflict",
+    )
+
+    with pytest.raises(ValueError, match="exact held Claude visibility repair lease"):
+        store.release_failed_claude_visibility_repair(
+            job_id=identity.job_id,
+            lease_digest="f" * 64,
+            expected_error_code="bridge_conflict",
+            restored_error_detail="exact transcript conflict",
+        )
+    assert _rows(
+        db, "SELECT state FROM session_claude_visibility_jobs"
+    ) == [{"state": "claude_leased"}]
