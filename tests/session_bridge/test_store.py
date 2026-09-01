@@ -16890,3 +16890,99 @@ def test_repair_release_refuses_to_restore_the_marker(db: SessionDB) -> None:
             expected_error_code="bridge_conflict",
             restored_error_detail="exact terminal reconciliation in progress",
         )
+
+
+def _visibility_row(db: SessionDB) -> dict[str, Any]:
+    return _rows(db, "SELECT * FROM session_claude_visibility_jobs")[0]
+
+
+def test_refused_operator_writes_leave_the_row_byte_identical(db: SessionDB) -> None:
+    """A refusal must imply NO mutation -- the property (D) needed and lacked.
+
+    On 2026-09-01 both operator verbs were observed printing a
+    rollout_gate_blocked refusal while a write appeared to land:
+    ``claude-visibility-dismiss`` refused with
+    visibility_dismiss_identity_mismatch while operator_cleared_at was
+    stamped, and ``claude-visibility-repair-failed --apply`` refused with
+    visibility_repair_identity_mismatch while lease_expires_at advanced. The
+    repair half turned out to be legitimate -- the claim deliberately
+    re-leases an EXPIRED repair lease -- but nothing in the suite actually
+    pinned "refused means untouched", so a genuine violation would not have
+    been caught. It is pinned here, on the whole row rather than on the one
+    column each verb writes.
+    """
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("refusal-atomicity")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id,
+        launch.lease_digest,
+        "bridge_conflict",
+        "exact transcript conflict",
+    )
+    before = _visibility_row(db)
+
+    # Wrong error code.
+    with pytest.raises(ValueError):
+        store.dismiss_claude_visibility_job(
+            job_id=identity.job_id, expected_error_code="max_attempts_exhausted"
+        )
+    assert _visibility_row(db) == before
+
+    # Wrong job id.
+    with pytest.raises(ValueError):
+        store.dismiss_claude_visibility_job(
+            job_id="claude-visibility-job:absent",
+            expected_error_code="bridge_conflict",
+        )
+    assert _visibility_row(db) == before
+
+    # A release with no lease held at all.
+    with pytest.raises(ValueError):
+        store.release_failed_claude_visibility_repair(
+            job_id=identity.job_id,
+            lease_digest="f" * 64,
+            expected_error_code="bridge_conflict",
+            restored_error_detail="exact transcript conflict",
+        )
+    assert _visibility_row(db) == before
+
+    # A requeue whose guard rejects the error detail.
+    with pytest.raises(ValueError):
+        store.requeue_failed_claude_visibility_reconciliation(
+            identity.job_id, "11111111-1111-4111-8111-111111111111"
+        )
+    assert _visibility_row(db) == before
+
+    # The accepting call still works afterwards, so the refusals above were
+    # refusals and not silent corruption.
+    assert store.dismiss_claude_visibility_job(
+        job_id=identity.job_id, expected_error_code="bridge_conflict"
+    )["status"] == "dismissed"
+
+
+def test_a_second_dismissal_refuses_without_restamping_the_row(
+    db: SessionDB,
+) -> None:
+    """The second dismissal must not move operator_cleared_at or updated_at."""
+
+    clock = {"t": 100.0}
+    store = SessionBridgeStore(
+        db, clock=lambda: clock["t"], local_timezone=timezone.utc
+    )
+    stuck = _claude_visibility_identity("stuck-restamp")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id)
+    store.dismiss_claude_visibility_job(
+        job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+    )
+    after_first = _visibility_row(db)
+
+    clock["t"] = 999.0
+    with pytest.raises(ValueError, match="terminally failed"):
+        store.dismiss_claude_visibility_job(
+            job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+        )
+    assert _visibility_row(db) == after_first
