@@ -16706,3 +16706,283 @@ def test_claude_lineage_cursor_minted_pre_rotation_validates_via_retired_keys(
         cursor=cursor,
     )
     assert resumed["scanned"] == 1
+
+
+def test_repair_lease_release_restores_the_row_and_its_original_detail(
+    db: SessionDB,
+) -> None:
+    """Releasing a held repair lease is the exact inverse of claiming it.
+
+    Without a release the row sits in claude_leased carrying the
+    'exact terminal reconciliation in progress' marker, which every reclaim
+    path excludes on purpose. Both operator verbs require claude_failed, so
+    the job becomes unreachable -- measured live 2026-09-01, still leased
+    seven minutes past its own expiry.
+    """
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("terminal-release")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id,
+        launch.lease_digest,
+        "bridge_conflict",
+        "exact transcript conflict",
+    )
+    claim = store.claim_failed_claude_visibility_reconciliation(
+        100.0,
+        60,
+        expected_job_id=identity.job_id,
+        expected_reserved_claude_uuid=identity.claude_uuid,
+        expected_error_code="bridge_conflict",
+    )
+    # The claim stamps the marker over the original detail, which is why the
+    # claim has to carry the original forward for the release to restore.
+    assert claim.prior_error_detail == "exact transcript conflict"
+    assert _rows(
+        db, "SELECT state, error_detail FROM session_claude_visibility_jobs"
+    ) == [
+        {
+            "state": "claude_leased",
+            "error_detail": "exact terminal reconciliation in progress",
+        }
+    ]
+
+    released = store.release_failed_claude_visibility_repair(
+        job_id=identity.job_id,
+        lease_digest=claim.lease_digest,
+        expected_error_code="bridge_conflict",
+        restored_error_detail=claim.prior_error_detail,
+    )
+    assert released["status"] == "released"
+    assert _rows(
+        db,
+        "SELECT state, error_code, error_detail, lease_digest, lease_expires_at,"
+        " lease_kind, attempts FROM session_claude_visibility_jobs",
+    ) == [
+        {
+            "state": "claude_failed",
+            "error_code": "bridge_conflict",
+            "error_detail": "exact transcript conflict",
+            "lease_digest": None,
+            "lease_expires_at": None,
+            "lease_kind": None,
+            "attempts": 1,
+        }
+    ]
+
+    # Released rows are ordinary terminal failures again, so the operator verbs
+    # that require claude_failed can reach them -- the property whose absence
+    # stranded the live job.
+    assert store.dismiss_claude_visibility_job(
+        job_id=identity.job_id, expected_error_code="bridge_conflict"
+    )["status"] == "dismissed"
+
+
+def test_repair_lease_release_refuses_a_lease_it_was_not_handed(
+    db: SessionDB,
+) -> None:
+    """The digest guard stops a release retiring someone else's lease."""
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("terminal-release-guard")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id,
+        launch.lease_digest,
+        "bridge_conflict",
+        "exact transcript conflict",
+    )
+    store.claim_failed_claude_visibility_reconciliation(
+        100.0,
+        60,
+        expected_job_id=identity.job_id,
+        expected_reserved_claude_uuid=identity.claude_uuid,
+        expected_error_code="bridge_conflict",
+    )
+
+    with pytest.raises(ValueError, match="exact held Claude visibility repair lease"):
+        store.release_failed_claude_visibility_repair(
+            job_id=identity.job_id,
+            lease_digest="f" * 64,
+            expected_error_code="bridge_conflict",
+            restored_error_detail="exact transcript conflict",
+        )
+    assert _rows(
+        db, "SELECT state FROM session_claude_visibility_jobs"
+    ) == [{"state": "claude_leased"}]
+
+
+def test_repair_reclaim_of_an_expired_lease_does_not_call_the_marker_original(
+    db: SessionDB,
+) -> None:
+    """A re-claim must admit the original detail is gone, not hand back the marker.
+
+    claim_failed_claude_visibility_reconciliation deliberately accepts an
+    EXPIRED repair lease so a stranded row can be picked up again. On that
+    path the row already wears the marker, so due['error_detail'] IS the
+    marker. Reporting that as prior_error_detail would make a release write
+    the marker into a claude_failed row -- terminal, but matching no recovery
+    guard, and labelled in-progress with no lease behind it.
+    """
+
+    clock = {"t": 100.0}
+    store = SessionBridgeStore(
+        db, clock=lambda: clock["t"], local_timezone=timezone.utc
+    )
+    candidate, identity = _claude_visibility_identity("reclaim-detail")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id,
+        launch.lease_digest,
+        "bridge_conflict",
+        "exact transcript conflict",
+    )
+    first = store.claim_failed_claude_visibility_reconciliation(
+        100.0,
+        60,
+        expected_job_id=identity.job_id,
+        expected_reserved_claude_uuid=identity.claude_uuid,
+        expected_error_code="bridge_conflict",
+    )
+    assert first.prior_error_detail == "exact transcript conflict"
+
+    clock["t"] = 100.0 + 3600
+    second = store.claim_failed_claude_visibility_reconciliation(
+        clock["t"],
+        60,
+        expected_job_id=identity.job_id,
+        expected_reserved_claude_uuid=identity.claude_uuid,
+        expected_error_code="bridge_conflict",
+    )
+    assert second.lease_digest != first.lease_digest
+    assert second.prior_error_detail is None
+
+
+def test_repair_release_refuses_to_restore_the_marker(db: SessionDB) -> None:
+    """Defence in depth: the marker must never become a terminal row's detail."""
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("release-marker-guard")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id,
+        launch.lease_digest,
+        "bridge_conflict",
+        "exact transcript conflict",
+    )
+    claim = store.claim_failed_claude_visibility_reconciliation(
+        100.0,
+        60,
+        expected_job_id=identity.job_id,
+        expected_reserved_claude_uuid=identity.claude_uuid,
+        expected_error_code="bridge_conflict",
+    )
+
+    with pytest.raises(ValueError, match="cannot restore the repair marker"):
+        store.release_failed_claude_visibility_repair(
+            job_id=identity.job_id,
+            lease_digest=claim.lease_digest,
+            expected_error_code="bridge_conflict",
+            restored_error_detail="exact terminal reconciliation in progress",
+        )
+
+
+def _visibility_row(db: SessionDB) -> dict[str, Any]:
+    return _rows(db, "SELECT * FROM session_claude_visibility_jobs")[0]
+
+
+def test_refused_operator_writes_leave_the_row_byte_identical(db: SessionDB) -> None:
+    """A refusal must imply NO mutation -- the property (D) needed and lacked.
+
+    On 2026-09-01 both operator verbs were observed printing a
+    rollout_gate_blocked refusal while a write appeared to land:
+    ``claude-visibility-dismiss`` refused with
+    visibility_dismiss_identity_mismatch while operator_cleared_at was
+    stamped, and ``claude-visibility-repair-failed --apply`` refused with
+    visibility_repair_identity_mismatch while lease_expires_at advanced. The
+    repair half turned out to be legitimate -- the claim deliberately
+    re-leases an EXPIRED repair lease -- but nothing in the suite actually
+    pinned "refused means untouched", so a genuine violation would not have
+    been caught. It is pinned here, on the whole row rather than on the one
+    column each verb writes.
+    """
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("refusal-atomicity")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id,
+        launch.lease_digest,
+        "bridge_conflict",
+        "exact transcript conflict",
+    )
+    before = _visibility_row(db)
+
+    # Wrong error code.
+    with pytest.raises(ValueError):
+        store.dismiss_claude_visibility_job(
+            job_id=identity.job_id, expected_error_code="max_attempts_exhausted"
+        )
+    assert _visibility_row(db) == before
+
+    # Wrong job id.
+    with pytest.raises(ValueError):
+        store.dismiss_claude_visibility_job(
+            job_id="claude-visibility-job:absent",
+            expected_error_code="bridge_conflict",
+        )
+    assert _visibility_row(db) == before
+
+    # A release with no lease held at all.
+    with pytest.raises(ValueError):
+        store.release_failed_claude_visibility_repair(
+            job_id=identity.job_id,
+            lease_digest="f" * 64,
+            expected_error_code="bridge_conflict",
+            restored_error_detail="exact transcript conflict",
+        )
+    assert _visibility_row(db) == before
+
+    # A requeue whose guard rejects the error detail.
+    with pytest.raises(ValueError):
+        store.requeue_failed_claude_visibility_reconciliation(
+            identity.job_id, "11111111-1111-4111-8111-111111111111"
+        )
+    assert _visibility_row(db) == before
+
+    # The accepting call still works afterwards, so the refusals above were
+    # refusals and not silent corruption.
+    assert store.dismiss_claude_visibility_job(
+        job_id=identity.job_id, expected_error_code="bridge_conflict"
+    )["status"] == "dismissed"
+
+
+def test_a_second_dismissal_refuses_without_restamping_the_row(
+    db: SessionDB,
+) -> None:
+    """The second dismissal must not move operator_cleared_at or updated_at."""
+
+    clock = {"t": 100.0}
+    store = SessionBridgeStore(
+        db, clock=lambda: clock["t"], local_timezone=timezone.utc
+    )
+    stuck = _claude_visibility_identity("stuck-restamp")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id)
+    store.dismiss_claude_visibility_job(
+        job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+    )
+    after_first = _visibility_row(db)
+
+    clock["t"] = 999.0
+    with pytest.raises(ValueError, match="terminally failed"):
+        store.dismiss_claude_visibility_job(
+            job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+        )
+    assert _visibility_row(db) == after_first

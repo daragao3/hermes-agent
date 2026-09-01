@@ -1011,6 +1011,9 @@ class _Backend(Protocol):
     def dismiss_claude_visibility_job(
         self, *, job_id: str, expected_error_code: str
     ) -> Mapping[str, Any]: ...
+    def requeue_failed_claude_visibility_job(
+        self, *, job_id: str, reserved_claude_uuid: str
+    ) -> Mapping[str, Any]: ...
     def characterize(self, *, provider: str) -> Mapping[str, Any]: ...
     def characterization_status(self) -> str: ...
     def backfill_candidates(self, *, days: int) -> list[dict[str, Any]]: ...
@@ -2764,13 +2767,57 @@ class ProductionBackend:
             process_timeout=policy.process_timeout_seconds,
             discovery_timeout=policy.discovery_timeout_seconds,
         )
-        outcome = registrar.process(claim, allow_absence=False)
+        # Every exit from here that is not a committed "visible" MUST hand the
+        # lease back. The claim stamped the in-progress marker, which excludes the
+        # row from every reclaim path, so a refusal that keeps the lease strands
+        # the job in claude_leased with no operator verb able to reach it -- both
+        # repair and dismiss require claude_failed. Measured live 2026-09-01: a
+        # single unreleased lease stayed leased seven minutes past expiry and
+        # additionally voided the whole health envelope. A registrar that raises
+        # is the same hazard, so the release covers that path too.
+        def _release_lease() -> None:
+            lease_digest = getattr(claim, "lease_digest", None)
+            prior_detail = getattr(claim, "prior_error_detail", None)
+            if not lease_digest:
+                return
+            if not prior_detail:
+                # The claim re-leased a row that ALREADY wore the marker -- the
+                # documented expired-lease branch -- so the original detail was
+                # lost by whichever earlier claim stamped it, before releases
+                # existed. Releasing still beats stranding, so restore the
+                # canonical detail for the only error code this verb accepts.
+                # bridge_conflict's two guard-accepted details are
+                # 'exact transcript conflict' and 'registration response
+                # malformed'; both are accepted by
+                # requeue_failed_claude_visibility_reconciliation, so recovery
+                # stays available either way and only the human-facing wording
+                # can be less precise than the original.
+                prior_detail = "exact transcript conflict"
+            try:
+                store.release_failed_claude_visibility_repair(
+                    job_id=job_id,
+                    lease_digest=lease_digest,
+                    expected_error_code=expected_error_code,
+                    restored_error_detail=prior_detail,
+                )
+            except Exception:
+                # Never mask the real refusal with a release failure; the status
+                # projection still names the abandoned lease either way.
+                pass
+
+        try:
+            outcome = registrar.process(claim, allow_absence=False)
+        except BaseException:
+            _release_lease()
+            raise
         if (
             outcome.job_id != job_id
             or outcome.reserved_claude_uuid != reserved_claude_uuid
         ):
+            _release_lease()
             raise RolloutGateBlocked("visibility_repair_result_identity_mismatch")
         if outcome.status != "visible":
+            _release_lease()
             raise RolloutGateBlocked("visibility_repair_not_committed_visible")
         return {
             "status": outcome.status,
@@ -2801,6 +2848,44 @@ class ProductionBackend:
             # claude_failed, a different error_code, or already cleared. Say
             # so as a gate refusal rather than a generic configuration error.
             raise RolloutGateBlocked("visibility_dismiss_identity_mismatch") from exc
+
+    def requeue_failed_claude_visibility_job(
+        self, *, job_id: str, reserved_claude_uuid: str
+    ) -> Mapping[str, Any]:
+        """Return one reviewed terminal failure to the queue under its own UUID.
+
+        Where ``dismiss`` gives a job up and ``repair`` reconciles a transcript
+        that already exists, this is the third disposition: the operator has
+        looked at the failure and judges it worth one more real attempt. It is
+        the ONLY writer of the 'operator authorized exact UUID reconciliation'
+        detail that ``claim_claude_visibility_job`` recognises as
+        ``operator_recovery``, which is what lets a job past the exhaustion
+        guard without falsifying its attempt ledger.
+
+        The store method has had coverage since it was written but no caller on
+        any surface, so on 2026-09-01 a stranded job had three documented
+        recovery verbs and none of them could actually be invoked.
+
+        The store returns the whole row; only a bounded payload is published,
+        because that row carries ``signed_marker``.
+        """
+
+        store = self._require_store()
+        try:
+            row = store.requeue_failed_claude_visibility_reconciliation(
+                job_id, reserved_claude_uuid
+            )
+        except ValueError as exc:
+            # Same shape as its siblings: the guarded UPDATE matched no row --
+            # wrong id or UUID, a state that is not claude_failed, an error the
+            # recovery guard does not accept, or another job still open.
+            raise RolloutGateBlocked("visibility_requeue_identity_mismatch") from exc
+        return {
+            "status": "requeued",
+            "job_id": row["id"],
+            "reserved_claude_uuid": row["reserved_claude_uuid"],
+            "error_code": row["error_code"],
+        }
 
     def abort_claude_visibility_characterization(
         self, *, expected_job_id: str, expected_reserved_claude_uuid: str
@@ -4475,6 +4560,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="confirm the job is not worth another paid attempt",
     )
 
+    requeue_claude_visibility = commands.add_parser(
+        "claude-visibility-requeue",
+        help="return one reviewed terminal failure to the queue under its own UUID",
+    )
+    requeue_claude_visibility.add_argument("--job-id", required=True)
+    requeue_claude_visibility.add_argument("--reserved-claude-uuid", required=True)
+    requeue_claude_visibility.add_argument(
+        "--confirm-operator-recovery",
+        action="store_true",
+        help="confirm the job is worth one more paid attempt",
+    )
+
     characterize = commands.add_parser(
         "characterize", help="run the disposable live provider gate"
     )
@@ -4833,6 +4930,18 @@ def _main_unscoped(
                     backend.dismiss_claude_visibility_job(
                         job_id=args.job_id,
                         expected_error_code=args.error_code,
+                    )
+                )
+            )
+            return EXIT_OK
+        if args.command == "claude-visibility-requeue":
+            if not args.confirm_operator_recovery:
+                raise RolloutGateBlocked("visibility_requeue_confirmation_required")
+            _emit(
+                dict(
+                    backend.requeue_failed_claude_visibility_job(
+                        job_id=args.job_id,
+                        reserved_claude_uuid=args.reserved_claude_uuid,
                     )
                 )
             )
