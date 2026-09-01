@@ -1571,6 +1571,39 @@ def _detect_origin(
     return OriginKind.NATIVE, None
 
 
+# 2026-09-01: the CLI records its own slash-command bookkeeping as type="user"
+# records. A registration session that is torn down writes
+# "<command-name>/exit</command-name>..." and
+# "<local-command-stdout>Catch you later!</local-command-stdout>" AFTER the marker
+# turn. _is_human_user counted those as human turns, so _detect_origin classified
+# the transcript BRIDGE_CONTINUATION instead of BRIDGE_PLACEHOLDER, and
+# _validate_projection then rejected the registrar's own transcript -- the
+# registrar's teardown defeating the registrar's validator. Measured 2026-09-01:
+# 6/6 (and independently 8/8) successful registrations are 9-10 records with no
+# /exit record and 0 post-marker human turns, while the failing one is 17 records
+# with both. Matching is deliberately whole-content: a record counts as
+# bookkeeping only when it consists ENTIRELY of these envelopes, so a genuine
+# human turn that merely quotes one still reads as human.
+_CLI_COMMAND_RECORD_TAGS = (
+    "command-name",
+    "command-message",
+    "command-args",
+    "local-command-stdout",
+    "local-command-stderr",
+)
+_CLI_COMMAND_BOOKKEEPING_RE = re.compile(
+    r"(?:<(?P<tag>" + "|".join(_CLI_COMMAND_RECORD_TAGS) + r")>.*?</(?P=tag)>\s*)+",
+    re.DOTALL,
+)
+
+
+def _is_cli_command_bookkeeping(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return _CLI_COMMAND_BOOKKEEPING_RE.fullmatch(stripped) is not None
+
+
 def _is_human_user(record: dict[str, Any]) -> bool:
     if record.get("type") != "user" or not _is_eligible_record(record):
         return False
@@ -1579,7 +1612,7 @@ def _is_human_user(record: dict[str, Any]) -> bool:
         return False
     content = message.get("content")
     if isinstance(content, str):
-        return bool(content.strip())
+        return bool(content.strip()) and not _is_cli_command_bookkeeping(content)
     if not isinstance(content, list):
         return False
     return any(
@@ -1587,6 +1620,7 @@ def _is_human_user(record: dict[str, Any]) -> bool:
         and block.get("type") == "text"
         and isinstance(block.get("text"), str)
         and bool(block["text"].strip())
+        and not _is_cli_command_bookkeeping(block["text"])
         for block in content
     )
 
