@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import sys
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -12,10 +13,110 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from hermes_constants import (
+    get_default_hermes_root,
     get_hermes_home,
     reset_hermes_home_override,
     set_hermes_home_override,
 )
+
+
+_root_scope_divergence_warned = False
+
+
+def _sidebar_enabled_at_root() -> bool | None:
+    """Read ``session_bridge.sidebar.enabled`` from the ROOT ``config.yaml``.
+
+    Returns ``None`` -- meaning "no opinion, do not compare" -- when this
+    process is already root-scoped, when the root carries no explicit value,
+    or when anything at all goes wrong reading it.  Absence is not divergence,
+    and this guard must never be the reason a load fails.
+
+    Parses the file DIRECTLY rather than going through
+    ``hermes_cli.config.load_config``.  That helper merges built-in defaults
+    and, on a corrupt file, silently substitutes the whole default config --
+    so an ABSENT or UNPARSEABLE root key would come back as a real ``False``
+    and this guard would raise a false divergence alarm against a config that
+    never stated an opinion.  (It also rewrites a ``.corrupt.*.bak`` sidecar,
+    which a read-only guard has no business triggering.)  Both cases are
+    covered by tests in ``tests/session_bridge/test_root_scope_divergence.py``.
+    """
+    try:
+        root = get_default_hermes_root()
+        if root.resolve() == get_hermes_home().resolve():
+            # Root-scoped process (the normal service case) -- nothing to compare.
+            return None
+        import yaml
+
+        config_path = root / "config.yaml"
+        if not config_path.is_file():
+            return None
+        with config_path.open(encoding="utf-8") as handle:
+            document = yaml.safe_load(handle)
+        if not isinstance(document, Mapping):
+            return None
+        section = document.get("session_bridge")
+        if not isinstance(section, Mapping):
+            return None
+        sidebar = section.get("sidebar")
+        if not isinstance(sidebar, Mapping):
+            return None
+        value = sidebar.get("enabled")
+        return value if isinstance(value, bool) else None
+    except Exception:
+        # A broken or unreadable root config is a reason to stay quiet, not to
+        # break a load that would otherwise succeed.
+        return None
+
+
+def _warn_sidebar_root_scope_divergence(resolved_enabled: bool) -> None:
+    """Warn when this process's home disagrees with the root about the sidebar.
+
+    ``session_bridge`` is ROOT-scoped BY DESIGN: ``launch-session-bridge.ps1``
+    pins ``HERMES_HOME`` to the Hermes root, while ``laptop-start.ps1`` pins the
+    *gateway* to ``profiles/main``.  Two services, two homes.  Every reader of
+    ``sidebar.enabled`` lives in ``session_bridge/`` and reads whichever home
+    its own process resolved, so a profile-scoped invocation can silently
+    disagree with the service about whether the lane is retired.
+
+    Measured 2026-09-01: the root had ``enabled: false`` (Diego's retirement)
+    while ``profiles/main/config.yaml`` still said ``true`` and pointed at a
+    different, empty state.db -- so a profile-scoped read reported the retired
+    lane as ACTIVE and healthy with zero rows.  Green but blind.
+
+    Warn only.  Raising would brick callers over a file they may not own, and
+    silently preferring the root would hide the misconfiguration instead of
+    surfacing it.  Written straight to stderr, matching
+    ``hermes_constants._warn_profile_fallback_once`` -- config load happens
+    before logging is configured at several call sites.
+    """
+    global _root_scope_divergence_warned
+    if _root_scope_divergence_warned:
+        return
+    root_enabled = _sidebar_enabled_at_root()
+    if root_enabled is None or root_enabled == resolved_enabled:
+        return
+    _root_scope_divergence_warned = True
+    try:
+        root = get_default_hermes_root()
+        home = get_hermes_home()
+    except Exception:
+        return
+    msg = (
+        f"[session_bridge sidebar root-scope divergence] This process resolved "
+        f"HERMES_HOME={home} and read sidebar.enabled={resolved_enabled}, but the "
+        f"ROOT config at {root} says sidebar.enabled={root_enabled}. session_bridge "
+        f"is ROOT-scoped by design -- launch-session-bridge.ps1 pins the service to "
+        f"the root, so the ROOT value is what the running bridge uses and this "
+        f"process is reporting on a config no service reads. A retired lane read "
+        f"from a stale profile config looks ACTIVE and healthy with zero rows. "
+        f"Either unset HERMES_HOME for session_bridge work, or reconcile "
+        f"{home / 'config.yaml'} with {root / 'config.yaml'}."
+    )
+    try:
+        sys.stderr.write(msg + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
 
 
 _INTEGER_PATTERN = re.compile(r"-?(?:0|[1-9][0-9]*)\Z")
@@ -480,13 +581,17 @@ class BridgeConfig:
             raise ValueError(
                 "session_bridge.sidebar.oldest_job_alert_seconds must be exactly 300"
             )
+        sidebar_enabled = _toml_bool(
+            sidebar.get("enabled", sidebar_defaults.enabled),
+            "session_bridge.sidebar.enabled",
+        )
+        # session_bridge is ROOT-scoped by design; a profile-scoped process can
+        # read a config.yaml no running service reads.  See the guard's docstring.
+        _warn_sidebar_root_scope_divergence(sidebar_enabled)
         sidebar_config = SidebarConfig(
             inbox_cwd=inbox_cwd,
             placement_generation=placement_generation,
-            enabled=_toml_bool(
-                sidebar.get("enabled", sidebar_defaults.enabled),
-                "session_bridge.sidebar.enabled",
-            ),
+            enabled=sidebar_enabled,
             continuous=_toml_bool(
                 sidebar.get("continuous", sidebar_defaults.continuous),
                 "session_bridge.sidebar.continuous",

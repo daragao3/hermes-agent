@@ -359,6 +359,76 @@ def test_parse_accepts_claude_2_1_216_registration_metadata(tmp_path: Path) -> N
     ]
 
 
+def test_parse_accepts_claude_2_1_247_registration_metadata(tmp_path: Path) -> None:
+    """Claude Code began writing atis-latch and cost-state around 2026-08-26.
+
+    Neither was recognised, so unknown_records went nonzero and
+    _validate_projection refused EVERY registration with bridge_conflict on
+    transcripts that were otherwise perfectly well-formed -- the claude_visibility
+    lane registered nothing between 2026-08-25 and 2026-09-01.
+
+    The shapes below are the real ones, taken from the transcript of job
+    e8da2a4376aa (reserved uuid 31a21287-fa30-5c62-992a-7f116d1bf0de).  Both are
+    metadata: neither projects a message, so admitting them must leave the
+    message list exactly as it was.
+    """
+    path = tmp_path / f"{BASIC_SESSION_ID}.jsonl"
+    records = [
+        {
+            "type": "agent-name",
+            "sessionId": BASIC_SESSION_ID,
+            "agentName": "session-bridge",
+        },
+        {
+            "type": "atis-latch",
+            "sessionId": BASIC_SESSION_ID,
+            "atis": "synthetic-latch",
+        },
+        {
+            "type": "cost-state",
+            "sessionId": BASIC_SESSION_ID,
+            "startTime": 1767225600,
+            "totalCostUSD": 0.02,
+            "totalDuration": 1000,
+            "totalAPIDuration": 500,
+            "totalAPIDurationWithoutRetries": 500,
+            "totalToolDuration": 0,
+            "totalLinesAdded": 0,
+            "totalLinesRemoved": 0,
+            "hasUnknownModelCost": False,
+            "modelUsage": {},
+        },
+        _message_record("Registered prompt"),
+    ]
+    path.write_bytes(b"".join(_json_line(record) for record in records))
+
+    result = ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path)
+
+    assert result.unknown_records == 0, (
+        "an unrecognised record makes _validate_projection refuse the whole "
+        "registration with bridge_conflict"
+    )
+    assert result.malformed_lines == 0
+    # Metadata only: recognising them must not add, drop or reorder a message.
+    assert [(message.role, message.content) for message in result.projection.messages] == [
+        ("user", "Registered prompt")
+    ]
+
+
+def test_still_unknown_record_types_remain_fatal(tmp_path: Path) -> None:
+    """The allowlist stays fail-closed -- widening it for two types is not a blanket."""
+    path = tmp_path / f"{BASIC_SESSION_ID}.jsonl"
+    records = [
+        {"type": "a-type-claude-code-has-never-written", "sessionId": BASIC_SESSION_ID},
+        _message_record("Registered prompt"),
+    ]
+    path.write_bytes(b"".join(_json_line(record) for record in records))
+
+    result = ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path)
+
+    assert result.unknown_records == 1
+
+
 def test_parse_preserves_first_entrypoint_when_desktop_mode_changes(
     tmp_path: Path,
 ) -> None:
