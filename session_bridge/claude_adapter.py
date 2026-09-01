@@ -31,10 +31,32 @@ from .models import (
 _PARSER_VERSION = 1
 _HEAD_SAMPLE_BYTES = 65_536
 _NATIVE_ID_PROBE_BYTES = 65_536
+# Recognised means "the parser understands this record exists". Only "user" and
+# "assistant" project into messages; every other entry here is deliberately
+# skipped, so admitting one adds NOTHING to a projection -- it only stops the
+# record being counted into unknown_records.
+#
+# That distinction is load-bearing, because ONE unknown record is fatal:
+# claude_registrar.py's _validate_projection refuses the whole registration with
+# bridge_conflict when unknown_records is nonzero. The guard is deliberately
+# fail-closed -- an unrecognised record might carry content the projection would
+# otherwise silently drop -- so this set is widened only for records proven to be
+# metadata.
+#
+# 2026-09-01: "atis-latch" and "cost-state" added. Claude Code began writing both
+# around 2026-08-26 and the parser had never seen them, so EVERY registration
+# since failed with bridge_conflict on a transcript that was otherwise perfectly
+# well-formed. MEASURED: of the 36 jobs in claude_visible, 0 have transcripts
+# containing either type and the newest succeeded 08-25 14:17; of the 150
+# most-recently-modified transcripts under ~/.claude/projects, 142 contain them,
+# earliest 08-26 23:58. The lane registered nothing for six days and each failure
+# looked like a per-job conflict rather than one systemic parser gap.
 _RECOGNIZED_RECORD_TYPES = {
     "agent-name",
     "assistant",
+    "atis-latch",
     "attachment",
+    "cost-state",
     "custom-title",
     "file-history-snapshot",
     "last-prompt",
