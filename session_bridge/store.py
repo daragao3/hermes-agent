@@ -988,19 +988,49 @@ class SidebarSourcePage(list[SidebarSource]):
 
 
 class LocalSessionOwnsCanonicalId(ValueError):
-    """A local, non-bridge session already materialises this canonical id.
+    """A ``sessions`` row already holds this canonical id with no catalog entry.
 
-    Hermes writes its own Codex-provider sessions to ``codex:<native_id>`` --
-    the same namespace the bridge uses for imported native Codex threads -- so
-    both systems can legitimately claim one id for the same underlying thread,
-    materialised with different message representations.
+    The exact condition, raised by ``upsert_projection`` below: a ``sessions``
+    row exists for the incoming canonical id and its ``source`` already matches
+    the incoming provider, but there is no ``external_sessions`` row for it. The
+    bridge therefore cannot prove that row is the native thread it is importing,
+    and declines to write rather than guess.
 
-    This is neither corruption nor a failed import. The local row holds
-    authoritative content the bridge never wrote (delegation/heartbeat turns,
-    thousands of messages), so it must never be adopted or overwritten. It is a
-    known, benign condition: scans count it as an exclusion rather than a
-    failure, because treating it as a failure degrades the provider and starves
-    every downstream lane that depends on a healthy scan.
+    HISTORICAL CAUSE -- measured 2026-09-01, loops claim
+    ``codex-canonical-collision-writer-and-adoption-20260901``, MemPalace
+    ``session-bridge/codex-canonical-collision-writer-2026-09-01``. The 1,586
+    colliding codex rows were written by the SESSION BRIDGE ITSELF in its
+    pre-catalog era. ``external_sessions`` was first populated
+    2026-08-06T19:54:47, and the 19:54-20:22 backfill burst catalogued 1,993
+    CLAUDE rows against only 20 CODEX rows, so every earlier codex row was
+    stranded owning its own canonical id and was never backfilled. 798 of the
+    1,586 are provably bridge SIDEBAR artifacts: each is the ``to_session_id``
+    of a ``session_links`` row whose id starts ``sidebar-link:`` and whose
+    ``bridge_id`` is ``sidebar:<hex>`` (created 2026-07-15..07-28). The CLAUDE
+    side shows the identical shape (335 orphans, all ``sessions.rowid <=
+    3523``), so this was the catalog cutover, not a codex-specific condition.
+
+    An earlier version of this docstring described these rows as "a local,
+    non-bridge session" holding "authoritative content the bridge never wrote"
+    and concluded they "must never be adopted or overwritten". Do not rely on
+    that reasoning. It is false for the 798 sidebar artifacts, and the
+    Hermes-runtime columns it appealed to (``codex_message_items`` /
+    ``codex_reasoning_items``) appear in only 3 sessions and 38 messages out of
+    1,586 sessions / 13,568 messages -- a minority case used to justify a
+    blanket prohibition. Hermes CAN write its own Codex-provider sessions to
+    ``codex:<native_id>``, so a genuinely local, non-bridge writer stays
+    possible in principle; it simply was not what this population was.
+
+    The blanket prohibition is also spent: all 1,586 were adopted 2026-09-01
+    under Diego's explicit authorization. The orphan count is 0, and codex
+    ``external_sessions`` now equals ``sessions WHERE source='codex'`` exactly
+    (4410 = 4410). Adoption remains an operator decision rather than something
+    the importer performs on its own, which is why this path still refuses.
+
+    Unchanged and still load-bearing: this is neither corruption nor a failed
+    import. Scans must count it as an exclusion rather than a failure, because
+    treating it as a failure degrades the provider and starves every downstream
+    lane that depends on a healthy scan.
     """
 
 
@@ -4345,14 +4375,39 @@ class SessionBridgeStore:
                 # byte-identical to a surviving keyed twin across all 22
                 # columns first. So they were NOT retained indefinitely, and
                 # the 18,757/66 figures above are a dated 2026-08-25
-                # measurement rather than current state: live now is 13,062
-                # keyless rows over 60 sessions, every one of them twinless.
-                # Re-measure before quoting either.
+                # measurement rather than current state. Re-measure before
+                # quoting either.
                 #
-                # Size any recurrence off the residue's own footprint, not that
-                # 60: the 5,695 lived in 15 sessions, 4 of which held 5,144 of
-                # them. 60 is the TWINLESS session count and scopes a very
-                # different job.
+                # Size any recurrence off the residue's own footprint: the
+                # 5,695 lived in 15 sessions, 4 of which held 5,144 of them.
+                #
+                # RE-MEASURED 2026-09-02, and the "13,062 keyless rows over 60
+                # sessions, EVERY ONE TWINLESS" figure this comment used to
+                # state as current is now FALSE -- and false in the dangerous
+                # direction, because it reads as "there is nothing here but
+                # unique rows". Live root state.db, excluding the 1,586 codex
+                # canonical-id collisions adopted 2026-09-01 (keyless by
+                # construction; they swamp the figure and are NOT residue):
+                #   6,527 keyless rows over 15 external sessions, of which
+                #   6,235 (96%) DO have a keyed twin byte-identical across all
+                #   19 non-identity columns. Genuinely twinless: 292 over 14.
+                # The flip is one session -- codex:019f5cb6-7b41-7751-a600-
+                # 256db00fb3c1, cited above as holding "6,235 of them against a
+                # single keyed row", now carries 8,121 KEYED rows and every one
+                # of its 6,235 keyless rows has an exact twin. It was
+                # re-ingested some time after 2026-08-26. So the predicate's
+                # documented consequence -- twinned residue survives here where
+                # the wide form cleared it -- is not historical: it re-accrued
+                # within a week, in a single session, to roughly the size of
+                # the batch that was cleaned up. Those 6,235 are DELIBERATELY
+                # RETAINED (Diego, 2026-09-02): preserved over reclaimed, no
+                # deletion authorized. Record:
+                # MemPalace session-bridge/codex-adoption-ingest-watch-
+                # interpreted-2026-09-02.
+                #
+                # Neither figure is current state -- re-measure. The twin test
+                # is a self-join on the 19 columns that are not id, session_id
+                # or native_event_key.
                 conn.execute(
                     "DELETE FROM messages "
                     "WHERE session_id = ? AND native_event_key IS NOT NULL",

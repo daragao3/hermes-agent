@@ -256,6 +256,129 @@ def test_mixed_format_tie_that_disagrees_still_fails_closed():
     assert (ev.valid, ev.reason_code) == (False, "tied_contradictory")
 
 
+# --------------------------------------------------- pressure: commit axis
+# 2026-09-02, P2. The retired reaper was commit-gated and the controller was
+# not, so the documented 89-94% cascade had no automatic relief. commit_high
+# now arms too, ORed with spawn_latency, at a HIGHER bar than the reaper's 85.
+
+_COMMIT_POLICY = dataclasses.replace(POLICY, commit_pct_arm=90.0)
+
+
+def _commit_event(ts, pct, reasons=("commit_high",), latched=None, event_id="c1",
+                  sustained=None):
+    payload = {"reasons": list(reasons), "commit_pct": pct}
+    if latched is not None:
+        payload["axes_latched"] = sorted(latched)
+    if sustained is not None:
+        payload["spawn_latency_sustained_ms"] = sustained
+    return {"event_id": event_id, "timestamp": iso(ts), "payload": payload}
+
+
+def test_commit_axis_arms_at_or_past_the_bar_and_not_below():
+    at_bar = _commit_event(NOW - 60, 90.0)
+    ev = planner.evaluate_pressure([at_bar], NOW, _COMMIT_POLICY)
+    assert (ev.valid, ev.reason_code) == (True, "ok")
+    assert ev.armed_axes == ("commit_high",)
+    assert ev.commit_pct == 90.0
+    # No spawn evidence anywhere, and none is demanded of a commit arming.
+    assert ev.sustained_ms is None
+
+    deep = planner.evaluate_pressure([_commit_event(NOW - 60, 97.3)], NOW, _COMMIT_POLICY)
+    assert deep.valid
+
+    # 88 breaches the producer's 85 trigger but not the controller's 90 bar.
+    below = planner.evaluate_pressure([_commit_event(NOW - 60, 88.0)], NOW, _COMMIT_POLICY)
+    assert (below.valid, below.reason_code) == (False, "disarmed")
+
+
+def test_commit_axis_is_off_unless_the_policy_opts_in():
+    """Default None = axis off, so nothing inherits a kill trigger it did not
+    ask for. The SAME event that arms under _COMMIT_POLICY must not arm under
+    the default policy — that pairing is what makes this a real control."""
+    hot = _commit_event(NOW - 60, 99.1)
+    assert planner.evaluate_pressure([hot], NOW, _COMMIT_POLICY).valid
+    off = planner.evaluate_pressure([hot], NOW, POLICY)
+    assert (off.valid, off.reason_code) == (False, "disarmed")
+    assert POLICY.commit_pct_arm is None
+
+
+def test_commit_axis_demands_a_live_reading_not_just_the_latched_flag():
+    """The axis latches at 85 and stays latched down to its 80 disarm. A
+    latched-but-recovering commit axis must NOT keep a kill authorized: unlike
+    spawn, this axis is certified on the live number."""
+    recovering = _commit_event(
+        NOW - 60, 82.0, reasons=("disk_low",),
+        latched=("commit_high", "disk_low"),
+    )
+    ev = planner.evaluate_pressure([recovering], NOW, _COMMIT_POLICY)
+    assert (ev.valid, ev.reason_code) == (False, "disarmed")
+    # ...while spawn in the same hysteresis position DOES still arm, which is
+    # the deliberate asymmetry.
+    spawn_band = _latched_event(NOW - 60, ["disk_low"], ["disk_low", "spawn_latency"])
+    assert planner.evaluate_pressure([spawn_band], NOW, _COMMIT_POLICY).valid
+
+
+def test_axes_are_ORed_and_both_are_recorded():
+    both = _commit_event(
+        NOW - 60, 95.0, reasons=("commit_high", "spawn_latency"), sustained=2100.0,
+    )
+    ev = planner.evaluate_pressure([both], NOW, _COMMIT_POLICY)
+    assert ev.valid
+    assert ev.armed_axes == ("commit_high", "spawn_latency")
+    assert (ev.sustained_ms, ev.commit_pct) == (2100.0, 95.0)
+
+
+def test_a_broken_spawn_field_cannot_destroy_a_standalone_commit_arming():
+    """Regression guard on the fail-closed ordering. The sustained check used
+    to reject the WHOLE event; a commit arming stands on its own reading and
+    must survive a malformed spawn field — while a spawn-only event with the
+    same defect still fails closed exactly as before."""
+    mixed = _commit_event(
+        NOW - 60, 95.0, reasons=("commit_high", "spawn_latency"), sustained=None,
+    )
+    ev = planner.evaluate_pressure([mixed], NOW, _COMMIT_POLICY)
+    assert (ev.valid, ev.armed_axes) == (True, ("commit_high",))
+
+    spawn_only = _pressure_event(NOW - 60, ["spawn_latency"], sustained=None)
+    assert planner.evaluate_pressure(
+        [spawn_only], NOW, _COMMIT_POLICY).reason_code == "malformed"
+
+
+def test_garbage_commit_pct_fails_closed_on_that_axis_alone():
+    for junk in (None, "97", True, float("nan")):
+        payload = {"reasons": ["commit_high"], "commit_pct": junk}
+        ev = planner.evaluate_pressure(
+            [{"event_id": "j", "timestamp": iso(NOW - 60), "payload": payload}],
+            NOW, _COMMIT_POLICY,
+        )
+        assert (ev.valid, ev.reason_code) == (False, "disarmed"), junk
+    # ...and it does not take a co-armed spawn axis down with it.
+    payload = {
+        "reasons": ["commit_high", "spawn_latency"],
+        "commit_pct": "97",
+        "spawn_latency_sustained_ms": 2100.0,
+    }
+    ev = planner.evaluate_pressure(
+        [{"event_id": "j", "timestamp": iso(NOW - 60), "payload": payload}],
+        NOW, _COMMIT_POLICY,
+    )
+    assert (ev.valid, ev.armed_axes) == (True, ("spawn_latency",))
+
+
+def test_a_tie_arming_on_different_axes_is_agreement_not_contradiction():
+    a = _pressure_event(NOW - 30, ["spawn_latency"], event_id="a")
+    b = _commit_event(NOW - 30, 96.0, event_id="b")
+    ev = planner.evaluate_pressure([a, b], NOW, _COMMIT_POLICY)
+    assert (ev.valid, ev.reason_code) == (True, "ok")
+    # Both axes are credited even though only one event carried each.
+    assert ev.armed_axes == ("commit_high", "spawn_latency")
+
+
+def test_a_commit_arming_still_obeys_staleness_and_the_fleet_half():
+    stale = _commit_event(NOW - 5000, 97.0)
+    assert planner.evaluate_pressure([stale], NOW, _COMMIT_POLICY).reason_code == "stale"
+
+
 def test_axis_source_reaches_the_plan_payload():
     """Audit only — but it has to actually land on the event, or the split it
     exists to measure is unmeasurable."""

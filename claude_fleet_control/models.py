@@ -89,6 +89,11 @@ class TranscriptEvidence:
 AXIS_SOURCE_LATCHED = "axes_latched"   # the producer's own open-episode set
 AXIS_SOURCE_REASONS = "reasons"        # pre-2026-09-01 producer, or a replay
 
+# The pressure axes that can arm the trigger. Each is a payload axis label
+# from ResourcePressureMonitor; the trigger ORs them.
+AXIS_SPAWN_LATENCY = "spawn_latency"
+AXIS_COMMIT_HIGH = "commit_high"
+
 
 @dataclass(frozen=True)
 class PressureEvidence:
@@ -110,6 +115,12 @@ class PressureEvidence:
     # bus_error / a malformed or ill-timed event that never reached the axis
     # test). See planner.evaluate_pressure.
     axis_source: Optional[str] = None
+    # WHICH axes justified arming (2026-09-02, P2). Audit only — the trigger
+    # reads ``valid``. Empty whenever the pass is not armed. With more than
+    # one axis able to arm, "pressure.valid was true" stopped being a
+    # self-explaining statement; this says which one spoke.
+    armed_axes: Tuple[str, ...] = ()
+    commit_pct: Optional[float] = None  # the reading the commit axis judged
 
     def to_payload(self) -> Dict[str, object]:
         return {
@@ -120,6 +131,8 @@ class PressureEvidence:
             "age_seconds": self.age_seconds,
             "sustained_ms": self.sustained_ms,
             "axis_source": self.axis_source,
+            "armed_axes": list(self.armed_axes),
+            "commit_pct": self.commit_pct,
         }
 
 
@@ -135,7 +148,30 @@ class FleetPolicy:
     mode: str = MODE_DISABLED
     policy_version: str = "p6-unversioned"
     fleet_min_roots: int = 30            # trigger requires root count STRICTLY above this
+    # DEPLOYMENT NOTE (2026-09-02): this DEFAULT is deliberately left at the
+    # original 360.0 because tests pin it, but it is NOT a safe value to ship.
+    # The freshness window must outlive the producer's sustained re-ping
+    # interval (resource_monitor.DEFAULT_RE_ALERT_COOLDOWN_SECONDS = 900.0) or
+    # a live episode goes dark between re-pings and the trigger reads "stale"
+    # through most of it — the defect that held the controller at 295-of-295
+    # disarmed. The deployed config.json uses 1200.0; any new config must
+    # exceed 900.0 too. Pinned by
+    # test_d7_freshness_window_outlives_the_producers_reping_interval.
     d7_max_age_seconds: float = 360.0
+    # Commit-charge arming axis (2026-09-02, P2). None = axis OFF, which is
+    # the default so nothing inherits a kill trigger it did not ask for; the
+    # deployed config opts in at 90.0. ORed with spawn_latency, never ANDed.
+    #
+    # WHY NOT 85, the number the retired reaper used: 85.0 is
+    # resource_monitor's own DEFAULT_COMMIT_PCT_THRESHOLD, i.e. where
+    # ALERTING fires and where the historical cascade merely BEGINS. The
+    # documented crash-loop band (agent memory
+    # gateway_crashloop_commit_exhaustion.md, mempalace_zombie_watchdog_recovery.md)
+    # is 89-94%. 90.0 sits inside that band and above the alerting edge, so
+    # the controller acts INSIDE the cascade while 85-90 stays alerting's
+    # business. It deliberately does NOT align with COMMIT_BANDS' "severe"
+    # edge (92.0): 92 would miss the documented 89-91 onset.
+    commit_pct_arm: Optional[float] = None
     idle_min_minutes: float = 30.0
     strikes_required: int = 2
     strike_max_age_seconds: float = 900.0  # a strike older than this is not "the previous pass"
@@ -152,6 +188,7 @@ class FleetPolicy:
                 "policy_version": self.policy_version,
                 "fleet_min_roots": self.fleet_min_roots,
                 "d7_max_age_seconds": self.d7_max_age_seconds,
+                "commit_pct_arm": self.commit_pct_arm,
                 "idle_min_minutes": self.idle_min_minutes,
                 "strikes_required": self.strikes_required,
                 "strike_max_age_seconds": self.strike_max_age_seconds,
