@@ -475,6 +475,36 @@ def _separate_chunk_indicator_from_fence(text: str) -> str:
     return _CHUNK_INDICATOR_ON_FENCE_RE.sub(r'```\n\g<indicator>', text)
 
 
+_BARE_CHUNK_INDICATOR_RE = re.compile(r' \((\d+)/(\d+)\)$')
+
+
+def escape_chunk_indicators(chunks: List[str]) -> List[str]:
+    """MarkdownV2-escape the ``(N/M)`` suffix ``truncate_message()`` appends.
+
+    ``truncate_message()`` runs *after* :meth:`format_message` has escaped the
+    body, so the chunk indicator it appends carries raw parentheses. Telegram
+    then rejects the whole chunk with "character '(' is reserved and must be
+    escaped with the preceding '\\'", the send falls back to plain text (losing
+    every formatting entity), and the retry counts against the flood limit.
+
+    Call this on the chunk list whenever ``parse_mode`` is MarkdownV2 -- and
+    only then, since a backslash is a literal character under HTML parse mode.
+    Single-chunk sends get no indicator and are returned unchanged.
+
+    Shared by the in-gateway adapter's ``send()`` and the standalone
+    ``tools.send_message_tool._send_telegram`` so the two send paths cannot
+    drift again (the standalone copy lacked this from 2026-09-02 back).
+    """
+    if len(chunks) <= 1:
+        return chunks
+    return [
+        _separate_chunk_indicator_from_fence(
+            _BARE_CHUNK_INDICATOR_RE.sub(r' \\(\1/\2\\)', chunk)
+        )
+        for chunk in chunks
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Markdown table → Telegram-friendly row groups
 # ---------------------------------------------------------------------------
@@ -4076,16 +4106,11 @@ class TelegramAdapter(BasePlatformAdapter):
             chunks = self.truncate_message(
                 formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len,
             )
-            if len(chunks) > 1:
-                # truncate_message appends a raw " (1/2)" suffix. Escape the
-                # MarkdownV2-special parentheses so Telegram doesn't reject the
-                # chunk and fall back to plain text.
-                chunks = [
-                    _separate_chunk_indicator_from_fence(
-                        re.sub(r" \((\d+)/(\d+)\)$", r" \\(\1/\2\\)", chunk)
-                    )
-                    for chunk in chunks
-                ]
+            # truncate_message appends a raw " (1/2)" suffix. Escape the
+            # MarkdownV2-special parentheses so Telegram doesn't reject the
+            # chunk and fall back to plain text. (Shared with the standalone
+            # send path in tools.send_message_tool -- see the helper's docstring.)
+            chunks = escape_chunk_indicators(chunks)
             
             message_ids = []
             thread_id = self._metadata_thread_id(metadata)
