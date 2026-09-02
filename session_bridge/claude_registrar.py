@@ -8,6 +8,7 @@ import hmac
 import importlib.metadata
 import inspect
 import json
+import logging
 import os
 import queue
 import re
@@ -19,6 +20,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
+
+_LOG = logging.getLogger(__name__)
 
 from .claude_adapter import (
     ClaudeParseResult,
@@ -1242,6 +1245,42 @@ class _WinPtyProcess:
         return value if type(value) is int else None
 
 
+def _log_claude_visibility_launch_failed(
+    claim: Any, code: object, detail: object
+) -> None:
+    """Name the cause of a failed launch, at the moment it fails.
+
+    The DISCOVERY stage has had this since coordinator.py's
+    _log_visibility_discovery_degraded -- the helper that turned an opaque
+    provider_degraded into _CodexReadBudgetExceeded. The LAUNCH stage had
+    nothing, and every launch failure collapses into
+    pending=("retry", "creation_ambiguous", <reason>) where the reason is the
+    ONLY thing separating a paste that never submitted from a model turn that
+    never completed.
+
+    That reason reached the job row and was overwritten by the next attempt,
+    so after an exhaustion it was gone. Measured 2026-09-02 on a live three
+    attempt exhaustion: service.stderr.log covered the entire window without
+    rotating and carried WARNING 0, ERROR 0 and zero mentions of the job, the
+    reserved uuid or any registrar string. Three sessions failed to diagnose
+    that failure after the fact for want of this line.
+
+    Logging only -- the public result, the codes and the retry/fatal split are
+    untouched, and a failure to log never changes an outcome.
+    """
+
+    try:
+        _LOG.warning(
+            "claude_visibility_launch_failed job=%s attempt=%s code=%s detail=%r",
+            getattr(claim, "job_id", None),
+            getattr(claim, "attempt_ordinal", None),
+            code,
+            str(detail)[:200],
+        )
+    except Exception:
+        pass
+
+
 class ClaudeNativeRegistrar:
     """Processes exactly one already-leased Claude visibility claim."""
 
@@ -1928,6 +1967,7 @@ class ClaudeNativeRegistrar:
             provider_limit_observed or ambiguous_reconciliation
         ):
             transition, code, detail = pending
+            _log_claude_visibility_launch_failed(claim, code, detail)
             if transition == "fail":
                 return self._fail(claim, code, detail)
             return self._retry(claim, code, detail)
@@ -1958,7 +1998,15 @@ class ClaudeNativeRegistrar:
                         "Claude provider limit interrupted registration",
                     )
                 if pending is not None:
+                    _log_claude_visibility_launch_failed(
+                        claim, pending[1], pending[2]
+                    )
                     return self._retry(claim, pending[1], pending[2])
+                _log_claude_visibility_launch_failed(
+                    claim,
+                    "native_transcript_not_indexed",
+                    "native transcript not indexed",
+                )
                 return self._retry(
                     claim,
                     "native_transcript_not_indexed",
