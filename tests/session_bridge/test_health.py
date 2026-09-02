@@ -899,6 +899,56 @@ def test_disabled_sidebar_lane_outranks_blocking_failures() -> None:
     assert work["code"] == "optional_feature_disabled"
 
 
+def test_re_enabling_the_sidebar_lane_makes_the_row_alertable_again() -> None:
+    """Retirement must SUPPRESS alerting, never disable it permanently.
+
+    The companion to test_disabled_sidebar_lane_outranks_blocking_failures. That
+    one pins that a retired lane stays healthy; this one pins the other half --
+    that flipping sidebar.enabled back to True restores the error path for the
+    SAME parked failures, with nothing sticky left over from the disabled period.
+
+    Why it needs its own test rather than resting on the tests that already use
+    the True fixture: those pass trivially because healthy_inputs() defaults to
+    enabled, so they never exercise the disabled->enabled transition. A change
+    that made "disabled" sticky -- caching the axis, or reordering
+    _queue_work_axis so a once-disabled lane kept its optional_feature_disabled
+    code -- would leave every one of them green while silently making the 517
+    parked rows permanently un-alertable. That is the failure this guards.
+    """
+
+    failing = {
+        "blocking_failed_count": 2,
+        "counts_failed": 2,
+        "ledger_valid": False,
+    }
+
+    def evidence(enabled: bool) -> dict[str, Any]:
+        inputs = healthy_inputs()
+        inputs["sidebar_enabled"] = enabled
+        inputs["sidebar_status"]["blocking_failed_count"] = failing[
+            "blocking_failed_count"
+        ]
+        inputs["sidebar_status"]["counts"]["sidebar_failed"] = failing["counts_failed"]
+        inputs["sidebar_status"]["terminal_resolution_ledger_valid"] = failing[
+            "ledger_valid"
+        ]
+        return build_session_health_evidence(**inputs)
+
+    retired = evidence(False)["queues"]["sidebar_registration"]
+    assert retired["work_state"]["state"] == "healthy"
+    assert retired["work_state"]["code"] == "optional_feature_disabled"
+    assert retired["work_state"]["required_for_service_impact"] is False
+
+    revived = evidence(True)
+    queue = revived["queues"]["sidebar_registration"]
+    assert queue["work_state"]["state"] == "error"
+    assert queue["work_state"]["code"] == "sidebar_failed"
+    assert queue["work_state"]["required_for_service_impact"] is True
+    assert queue["ledger_integrity"]["state"] == "error"
+    # And it must reach the summary the tray reduces, not just the axis.
+    assert revived["service_impact_summary"]["state"] == "error"
+
+
 def test_sidebar_blocking_count_is_current_without_synthetic_blocker() -> None:
     inputs = healthy_inputs()
     inputs["sidebar_status"]["blocking_failed_count"] = 2

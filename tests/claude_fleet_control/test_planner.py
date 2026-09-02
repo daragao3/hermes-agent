@@ -582,3 +582,137 @@ def test_plan_digest_is_deterministic_and_input_sensitive():
 def test_corrupt_state_reasons_flow_into_the_plan():
     p = _plan([_eligible_assessment(-140)], extra=["state_corrupt"])
     assert "state_corrupt" in p.trigger_reasons
+
+
+# ------------------------------------------- commit-axis fleet-size bypass
+# 2026-09-02, P5. triggers_armed ANDs pressure with the fleet-size half, so a
+# box deep in the 89-94% crash-loop band got no relief from the commit axis
+# while its root count sat at or below fleet_min_roots. commit_bypass_min_roots
+# lowers the FLOOR when the commit axis actually armed. POLICY.fleet_min_roots
+# is 3 throughout, so root_count=3 is the "at the floor, disarmed" case every
+# test below leans on.
+
+_BYPASS_POLICY = dataclasses.replace(POLICY, commit_pct_arm=90.0,
+                                     commit_bypass_min_roots=1)
+
+
+def _commit_armed(policy=_BYPASS_POLICY, pct=93.0):
+    ev = planner.evaluate_pressure([_commit_event(NOW - 60, pct)], NOW, policy)
+    assert ev.valid and ev.armed_axes == ("commit_high",), ev
+    return ev
+
+
+def test_commit_bypass_lowers_the_floor_and_spawn_in_its_place_does_not():
+    """The one behaviour this field changes, with its own control.
+
+    Same assessments, same root count AT the floor, same policy — only the
+    ARMING AXIS differs. Commit arms through the lowered floor; spawn, which
+    is not what the bypass is keyed on, stays disarmed. Without the spawn half
+    this test would also pass if the floor had simply been lowered for
+    everyone.
+    """
+    a = _eligible_assessment(-200)
+
+    commit = _plan([a], root_count=3, pressure=_commit_armed(), policy=_BYPASS_POLICY)
+    assert commit.triggers_armed
+    assert REASON_FLEET_BELOW_MIN not in commit.trigger_reasons
+    assert commit.fleet_floor_applied == 1
+
+    spawn_ev = planner.evaluate_pressure(
+        [_latched_event(NOW - 60, ["disk_low"], ["disk_low", "spawn_latency"])],
+        NOW, _BYPASS_POLICY,
+    )
+    assert spawn_ev.valid and spawn_ev.armed_axes == ("spawn_latency",)
+    spawn = _plan([a], root_count=3, pressure=spawn_ev, policy=_BYPASS_POLICY)
+    assert not spawn.triggers_armed
+    assert REASON_FLEET_BELOW_MIN in spawn.trigger_reasons
+    assert spawn.fleet_floor_applied == 3
+
+
+def test_commit_bypass_is_off_unless_the_policy_opts_in():
+    """Default None = OFF, so nothing inherits a widened kill trigger it did
+    not ask for. The SAME armed commit evidence that gets through under
+    _BYPASS_POLICY must not get through under the opt-in-free policy."""
+    a = _eligible_assessment(-201)
+    off_policy = dataclasses.replace(POLICY, commit_pct_arm=90.0)
+    assert off_policy.commit_bypass_min_roots is None
+
+    ev = _commit_armed(policy=off_policy)
+    p = _plan([a], root_count=3, pressure=ev, policy=off_policy)
+    assert not p.triggers_armed and REASON_FLEET_BELOW_MIN in p.trigger_reasons
+    assert p.fleet_floor_applied == 3
+    # ...and the pairing that makes this a real control, not just an assertion
+    # about a default: the identical evidence DOES arm once the field is set.
+    assert _plan([a], root_count=3, pressure=ev, policy=_BYPASS_POLICY).triggers_armed
+
+
+def test_commit_bypass_cannot_resurrect_a_pass_pressure_already_disarmed():
+    """It widens ONE half of the AND. A dead pressure has empty armed_axes, so
+    the floor never moves and the pass stays down — the bypass must not become
+    a route around the pressure half."""
+    a = _eligible_assessment(-202)
+    dead = planner.evaluate_pressure([], NOW, _BYPASS_POLICY)
+    assert not dead.valid and dead.armed_axes == ()
+    p = _plan([a], root_count=3, pressure=dead, policy=_BYPASS_POLICY)
+    assert not p.triggers_armed
+    assert "pressure_missing" in p.trigger_reasons
+    assert p.fleet_floor_applied == 3
+
+
+def test_commit_bypass_does_not_ride_a_merely_latched_commit_axis():
+    """The axis latches at 85 and only AUTHORIZES at 90, so a recovering box
+    loses the bypass on the same pass it loses the arming — not a hysteresis
+    band later. Keying on armed_axes rather than on the latched set is what
+    buys this; a flag-based bypass would still be lowering the floor here."""
+    recovering = _commit_event(
+        NOW - 60, 82.0, reasons=("disk_low",), latched=("commit_high", "disk_low"),
+    )
+    ev = planner.evaluate_pressure([recovering], NOW, _BYPASS_POLICY)
+    assert (ev.valid, ev.reason_code) == (False, "disarmed")
+    p = _plan([_eligible_assessment(-203)], root_count=3, pressure=ev,
+              policy=_BYPASS_POLICY)
+    assert not p.triggers_armed and p.fleet_floor_applied == 3
+
+
+def test_commit_bypass_can_only_lower_the_floor_never_raise_it():
+    """min() is taken, so a bypass configured ABOVE fleet_min_roots is inert
+    rather than a back door for tightening the gate under a field whose name
+    and digest entry read like a loosening."""
+    a = _eligible_assessment(-204)
+    high = dataclasses.replace(POLICY, commit_pct_arm=90.0,
+                               commit_bypass_min_roots=10)
+    p = _plan([a], root_count=4, pressure=_commit_armed(policy=high), policy=high)
+    assert p.triggers_armed and p.fleet_floor_applied == 3
+
+
+def test_bypass_does_not_bypass_the_strike_and_idle_gates():
+    """What the widened authorization does NOT buy. Arming is not selecting:
+    the first armed pass still only records a strike, and the eligibility
+    gates are untouched — so the blast radius stays one idle tree per
+    cooldown, exactly as before P5."""
+    a = _eligible_assessment(-205)
+    ev = _commit_armed()
+    first = _plan([a], root_count=3, pressure=ev, policy=_BYPASS_POLICY)
+    assert first.triggers_armed
+    assert first.selected is None and first.decision == DECISION_NO_ACTION
+    assert dict(first.rejections).get(REASON_FIRST_STRIKE) == 1
+
+    busy = _eligible_assessment(-206, idle_min=1.0)
+    assert not busy.eligible
+    second = _plan([busy], root_count=3, pressure=ev, policy=_BYPASS_POLICY,
+                   prior={busy.strike_key: {"recorded_at": NOW - 300.0, "count": 1.0}})
+    assert second.triggers_armed and second.selected is None
+
+
+def test_fleet_floor_applied_is_reported_for_audit():
+    """"Why did this arm at 3 roots?" has to be answerable from the plan event
+    alone — configs here change under Diego's hand between passes, so an
+    auditor cannot assume the config on disk is the one that decided."""
+    a = _eligible_assessment(-207)
+    p = _plan([a], root_count=3, pressure=_commit_armed(), policy=_BYPASS_POLICY)
+    payload = p.to_payload()
+    assert payload["fleet_floor_applied"] == 1
+    assert payload["fleet_root_count"] == 3
+    assert payload["pressure"]["armed_axes"] == ["commit_high"]
+    # The default path still reports the real floor, never None.
+    assert _plan([a]).to_payload()["fleet_floor_applied"] == 3
