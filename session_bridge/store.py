@@ -4375,14 +4375,39 @@ class SessionBridgeStore:
                 # byte-identical to a surviving keyed twin across all 22
                 # columns first. So they were NOT retained indefinitely, and
                 # the 18,757/66 figures above are a dated 2026-08-25
-                # measurement rather than current state: live now is 13,062
-                # keyless rows over 60 sessions, every one of them twinless.
-                # Re-measure before quoting either.
+                # measurement rather than current state. Re-measure before
+                # quoting either.
                 #
-                # Size any recurrence off the residue's own footprint, not that
-                # 60: the 5,695 lived in 15 sessions, 4 of which held 5,144 of
-                # them. 60 is the TWINLESS session count and scopes a very
-                # different job.
+                # Size any recurrence off the residue's own footprint: the
+                # 5,695 lived in 15 sessions, 4 of which held 5,144 of them.
+                #
+                # RE-MEASURED 2026-09-02, and the "13,062 keyless rows over 60
+                # sessions, EVERY ONE TWINLESS" figure this comment used to
+                # state as current is now FALSE -- and false in the dangerous
+                # direction, because it reads as "there is nothing here but
+                # unique rows". Live root state.db, excluding the 1,586 codex
+                # canonical-id collisions adopted 2026-09-01 (keyless by
+                # construction; they swamp the figure and are NOT residue):
+                #   6,527 keyless rows over 15 external sessions, of which
+                #   6,235 (96%) DO have a keyed twin byte-identical across all
+                #   19 non-identity columns. Genuinely twinless: 292 over 14.
+                # The flip is one session -- codex:019f5cb6-7b41-7751-a600-
+                # 256db00fb3c1, cited above as holding "6,235 of them against a
+                # single keyed row", now carries 8,121 KEYED rows and every one
+                # of its 6,235 keyless rows has an exact twin. It was
+                # re-ingested some time after 2026-08-26. So the predicate's
+                # documented consequence -- twinned residue survives here where
+                # the wide form cleared it -- is not historical: it re-accrued
+                # within a week, in a single session, to roughly the size of
+                # the batch that was cleaned up. Those 6,235 are DELIBERATELY
+                # RETAINED (Diego, 2026-09-02): preserved over reclaimed, no
+                # deletion authorized. Record:
+                # MemPalace session-bridge/codex-adoption-ingest-watch-
+                # interpreted-2026-09-02.
+                #
+                # Neither figure is current state -- re-measure. The twin test
+                # is a self-join on the 19 columns that are not id, session_id
+                # or native_event_key.
                 conn.execute(
                     "DELETE FROM messages "
                     "WHERE session_id = ? AND native_event_key IS NOT NULL",
