@@ -2223,10 +2223,25 @@ def _is_provider_limit_before_registration_prompt(
 
 
 def _is_exact_registered_text(content: object) -> bool:
+    """Score the COMMITTED transcript text, and agree with the read-loop gate.
+
+    This is the last check in _validate_projection. It has to accept exactly
+    what _has_exact_registered_response accepts, or the two gates disagree and
+    a reply that latched in the read loop is rejected at commit time.
+
+    That split was live between 45bf4db290 and this commit: widening only the
+    read-loop gate let "REGISTERED." pass the terminal check, get /exit
+    written and reach _validate_and_commit, where this line then raised
+    bridge_conflict -- a FATAL code -- while the pre-fix path had merely timed
+    out to the RETRYABLE creation_ambiguous. It turned a slow retryable
+    failure into a fast terminal one for the very case the widening targeted.
+    Keep these two functions moving together.
+    """
+
     if not isinstance(content, str):
         return False
     cleaned = _stripped_terminal_text(content)
-    return cleaned.strip() == "REGISTERED"
+    return _is_registered_line(cleaned.strip())
 
 
 def _classify_exact_auth_recovery_messages(
