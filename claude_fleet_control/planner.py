@@ -350,11 +350,16 @@ def evaluate_pressure(
     is resource_monitor's own alerting threshold and the cascade's onset, not
     its danger zone. See FleetPolicy.commit_pct_arm.
 
-    NOT COVERED, deliberately: ``triggers_armed`` still ANDs this with the
+    NO LONGER UNCOVERED (2026-09-02, P5). This paragraph used to read "NOT
+    COVERED, deliberately: ``triggers_armed`` still ANDs this with the
     fleet-size half, so a high-commit / LOW-root-count box gets no relief from
-    this axis. Culling on pressure alone regardless of how many session trees
-    exist is a separate and larger policy question — if there are few trees,
-    they are probably not the cause — and it is Diego's to settle.
+    this axis ... it is Diego's to settle." Diego settled it: see
+    ``FleetPolicy.commit_bypass_min_roots`` and ``planner._fleet_floor``. When
+    ``commit_high`` is among ``armed_axes``, the fleet-size floor drops to that
+    value (deployed: 2, i.e. act from 3 trees up) instead of
+    ``fleet_min_roots``. The AND itself is untouched — an invalid pressure
+    still disarms the pass outright — and the bypass is keyed on the axis that
+    ARMED, so it cannot ride a merely-latched flag.
 
     WHICH FIELD CARRIES THE AXIS (2026-09-01). ``payload['axes_latched']``
     when the producer stamps it, ``payload['reasons']`` otherwise.
@@ -630,6 +635,30 @@ def _plan_digest(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _fleet_floor(policy: FleetPolicy, pressure: PressureEvidence) -> int:
+    """The root-count floor this pass compares against.
+
+    ``policy.fleet_min_roots``, except when the commit axis is among the axes
+    that ACTUALLY armed this pass and ``policy.commit_bypass_min_roots`` is
+    set — then the lower of the two.
+
+    Keyed on ``pressure.armed_axes``, deliberately, and NOT on
+    ``commit_pct_arm`` merely being configured nor on ``commit_high`` merely
+    being latched. That axis is certified on a LIVE reading at or past the bar
+    (see ``evaluate_pressure``), so a recovering box loses the bypass on the
+    very same pass it loses the arming, rather than one hysteresis band later.
+
+    An invalid ``PressureEvidence`` carries empty ``armed_axes``, so the
+    bypass can never resurrect a pass that pressure already disarmed. This
+    widens ONE half of the AND when the other half is standing on a live
+    reading; it does not weaken the AND itself.
+    """
+    bypass = policy.commit_bypass_min_roots
+    if bypass is None or AXIS_COMMIT_HIGH not in pressure.armed_axes:
+        return policy.fleet_min_roots
+    return min(policy.fleet_min_roots, bypass)
+
+
 def build_plan(
     *,
     assessments: Sequence[TreeAssessment],
@@ -646,7 +675,8 @@ def build_plan(
     strike state (the controller persists it verbatim — strikes are cleared,
     carried, or advanced here and nowhere else)."""
     trigger_reasons: List[str] = list(extra_reasons)
-    fleet_armed = fleet_root_count > policy.fleet_min_roots
+    fleet_floor = _fleet_floor(policy, pressure)
+    fleet_armed = fleet_root_count > fleet_floor
     if not fleet_armed:
         trigger_reasons.append(REASON_FLEET_BELOW_MIN)
     if not pressure.valid:
@@ -747,4 +777,5 @@ def build_plan(
         rejections=tuple(sorted(rejections.items())),
         digest=digest,
         new_strikes=new_strikes,
+        fleet_floor_applied=fleet_floor,
     )

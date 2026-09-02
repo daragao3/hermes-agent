@@ -5,6 +5,7 @@ from datetime import timezone
 import io
 import hashlib
 import json
+import logging
 from itertools import product
 import os
 from pathlib import Path
@@ -4825,3 +4826,79 @@ def test_registered_tolerance_reaches_the_final_validation_gate(reply: str) -> N
 )
 def test_final_validation_gate_still_refuses_anything_but_the_token(reply: str) -> None:
     assert _is_exact_registered_text(reply) is False
+
+
+def test_launch_failure_names_its_reason_in_the_service_log(caplog) -> None:
+    """A failed launch must say WHY in the log, at the moment it happens.
+
+    Measured 2026-09-02 on a live Mode A exhaustion (job b8a672937eb5fd, three
+    attempts of 361.9/360.8/360.5s, all reconciliations 'absent', no
+    transcript): service.stderr.log covered the whole window without rotating
+    -- 532,480 bytes spanning 08:38 to 10:03 -- and contained WARNING 0,
+    ERROR 0, and ZERO occurrences of "registrar", "creation_ambiguous",
+    "main_repl", the job id or the reserved uuid. The launch path is silent.
+
+    Every launch failure funnels into pending=("retry", "creation_ambiguous",
+    <reason>), and that reason is the only thing separating a paste that never
+    submitted from a model turn that never completed. It reaches the job row
+    and is overwritten by the next attempt, so after an exhaustion it is gone.
+    Three sessions failed to diagnose this after the fact for want of this one
+    line. DISCOVERY already has exactly this (coordinator.py's
+    _log_visibility_discovery_degraded, which is what resolved
+    provider_degraded to _CodexReadBudgetExceeded); the launch path did not.
+    """
+
+    item = claim()
+    process = FakePty(read_error=_PtyResponseTimeout("main_repl_without_prompt_echo"))
+    source = FakeSource([None, None])
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(source, FakeFactory(process)).process(item)
+
+    assert result.status == "retry"
+    text = caplog.text
+    assert "claude_visibility_launch_failed" in text, "launch failure was not logged"
+    # The discriminating reason -- not merely the generic code -- must survive.
+    assert "main_repl_without_prompt_echo" in text
+    assert result.error_code in text
+
+
+def test_successful_launch_logs_no_failure(caplog) -> None:
+    """The new line must fire on failure only, not on every registration."""
+
+    item = claim()
+    process = FakePty(
+        prompt_input_output="[Pasted text #1 +12 lines]\r\nREGISTERED\r\n",
+        read_error=_PtyResponseTimeout("no_response_output"),
+    )
+    source = FakeSource([None, projection_for(item)])
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(source, FakeFactory(process)).process(item)
+
+    assert result.status == "visible"
+    assert "claude_visibility_launch_failed" not in caplog.text
+
+
+def test_launch_logs_a_failure_resolved_before_the_discovery_poll(caplog) -> None:
+    """The EARLY resolution path must log too, not just the discovery timeout.
+
+    _launch has two non-committing exits. The discovery-timeout one covers the
+    Mode A shape; this one fires first, whenever pending is neither a provider
+    limit nor an ambiguous reconciliation -- e.g. an auth refusal, which
+    returns immediately without ever polling for a transcript. Mutation
+    testing found this site bound to nothing: deleting its log call failed no
+    test, because every existing case reached the poll instead.
+    """
+
+    item = claim()
+    process = FakePty(output="Authentication required\r\n")
+    source = FakeSource([None])
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(source, FakeFactory(process)).process(item)
+
+    assert result.status == "retry"
+    assert result.error_code == "claude_authentication_unavailable"
+    assert "claude_visibility_launch_failed" in caplog.text
+    assert "claude_authentication_unavailable" in caplog.text

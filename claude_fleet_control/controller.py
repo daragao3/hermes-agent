@@ -80,6 +80,13 @@ _OPTIONAL_NUMERIC_POLICY_FIELDS = (
     "commit_pct_arm",
 )
 
+# Same "explicit null means OFF" contract, but coerced to int rather than
+# float: these are ROOT COUNTS, compared against an int, and a 2.0 in the plan
+# payload reads like a measurement when it is a policy constant.
+_OPTIONAL_INT_POLICY_FIELDS = (
+    "commit_bypass_min_roots",
+)
+
 
 def default_state_dir() -> Path:
     return Path.home() / ".hermes" / "fleet_control"
@@ -132,6 +139,17 @@ def load_policy(config_path: Path) -> Tuple[Optional[FleetPolicy], List[str]]:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
             return None, [f"config field {field_name} malformed: {value!r}"]
         kwargs[field_name] = float(value)
+
+    for field_name in _OPTIONAL_INT_POLICY_FIELDS:
+        if field_name not in raw:
+            continue
+        value = raw[field_name]
+        if value is None:
+            kwargs[field_name] = None
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None, [f"config field {field_name} malformed: {value!r}"]
+        kwargs[field_name] = int(value)
 
     approved = raw.get("approved_enforce_digest")
     kwargs["approved_enforce_digest"] = str(approved) if approved else None

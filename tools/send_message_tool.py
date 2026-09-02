@@ -1294,6 +1294,27 @@ async def _send_telegram(token, chat_id, message, media_files=None, thread_id=No
             text_chunks = BasePlatformAdapter.truncate_message(
                 formatted, 4096, len_fn=utf16_len
             )
+
+            # truncate_message appends a raw " (1/2)" suffix AFTER the
+            # MarkdownV2 escaping above, so its parentheses are unescaped and
+            # Telegram rejects the chunk ("character '(' is reserved ..."),
+            # falling back to plain text and burning a flood-limit retry per
+            # chunk. Escape it here, on the MarkdownV2 branch only -- under
+            # HTML parse mode a backslash is a literal character.
+            # The in-gateway adapter has always done this; this path is the
+            # second copy that did not (measured 2026-09-02: a 4,221-char
+            # TelegramNotifier batch -> 2 chunks -> 2 parse failures).
+            if send_parse_mode == ParseMode.MARKDOWN_V2:
+                try:
+                    from plugins.platforms.telegram.adapter import (
+                        escape_chunk_indicators,
+                    )
+                    text_chunks = escape_chunk_indicators(text_chunks)
+                except Exception:
+                    # Formatting helper unavailable — send unescaped rather
+                    # than dropping the message (same posture as the
+                    # format_message fallback above).
+                    pass
             for _chunk_idx, chunk in enumerate(text_chunks):
                 # Buttons attach only to the final text chunk (the bubble the
                 # user actually taps). `send_kwargs` is a fresh copy so a
