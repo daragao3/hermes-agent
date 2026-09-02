@@ -967,6 +967,7 @@ _ProviderHealth = dict[str, float | str | None]
 _RECENT_ERROR_LIMIT = 20
 _CODEX_SCAN_FAILURE_CODE = "codex_scan_failed"
 _CODEX_SCAN_LOCAL_OWNER_CODE = "codex_local_session_owns_id"
+_CLAUDE_SCAN_LOCAL_OWNER_CODE = "claude_local_session_owns_id"
 _CODEX_SCAN_STAGES = frozenset({
     "full_history_project",
     "immediate_project",
@@ -4961,6 +4962,22 @@ class SessionBridgeCoordinator:
             discovery_mode,
             succeeded_ids,
         )
+        if locally_owned:
+            # Counted, never silent -- the same rule the three codex paths
+            # follow. Added 2026-09-02: this path incremented the counter and
+            # carried it into ScanSummary, but logged NOTHING, so a claude-side
+            # canonical-id collision left no trace an operator reading the log
+            # could find. 335 claude `sessions` rows have no `external_sessions`
+            # row (all rowid<=3523, the same pre-catalog cutover that stranded
+            # the codex backlog), so this fires in production.
+            try:
+                _LOG.info(
+                    "claude_scan_diagnostic stage=persistent_project code=%s excluded=%d",
+                    _CLAUDE_SCAN_LOCAL_OWNER_CODE,
+                    locally_owned,
+                )
+            except Exception:
+                pass
         return ScanSummary(
             provider=provider,
             discovered=len(set(staged_ids) | unavailable_ids),
