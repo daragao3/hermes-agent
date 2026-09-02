@@ -72,6 +72,14 @@ _NUMERIC_POLICY_FIELDS = (
     "cooldown_seconds",
 )
 
+# Numeric policy fields whose default is None ("axis off"). They cannot go in
+# _NUMERIC_POLICY_FIELDS because that loop coerces with type(default)(value),
+# and type(None)(value) raises. An explicit null in the config means OFF; a
+# present value must still be a sane non-negative number.
+_OPTIONAL_NUMERIC_POLICY_FIELDS = (
+    "commit_pct_arm",
+)
+
 
 def default_state_dir() -> Path:
     return Path.home() / ".hermes" / "fleet_control"
@@ -113,6 +121,17 @@ def load_policy(config_path: Path) -> Tuple[Optional[FleetPolicy], List[str]]:
             return None, [f"config field {field_name} malformed: {value!r}"]
         default = getattr(FleetPolicy, field_name)
         kwargs[field_name] = type(default)(value)
+
+    for field_name in _OPTIONAL_NUMERIC_POLICY_FIELDS:
+        if field_name not in raw:
+            continue
+        value = raw[field_name]
+        if value is None:
+            kwargs[field_name] = None
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            return None, [f"config field {field_name} malformed: {value!r}"]
+        kwargs[field_name] = float(value)
 
     approved = raw.get("approved_enforce_digest")
     kwargs["approved_enforce_digest"] = str(approved) if approved else None

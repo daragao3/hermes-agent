@@ -23,8 +23,10 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from claude_fleet_control.models import (
     ACTION_HARD_TERMINATE,
+    AXIS_COMMIT_HIGH,
     AXIS_SOURCE_LATCHED,
     AXIS_SOURCE_REASONS,
+    AXIS_SPAWN_LATENCY,
     DECISION_ENFORCE_PROJECTED,
     DECISION_NO_ACTION,
     DECISION_SHADOW_PROJECTED,
@@ -329,9 +331,30 @@ def evaluate_pressure(
     ({event_id, timestamp, payload}), newest-wins.
 
     Fail-closed catalogue: missing, stale, future-dated, malformed, a NEWER
-    pressure event that does not carry the spawn_latency axis (the axis
-    cleared — authorization is gone), and a same-timestamp tie whose members
-    contradict each other.
+    pressure event that carries no arming axis (they cleared — authorization
+    is gone), and a same-timestamp tie whose members contradict each other.
+
+    WHICH AXES CAN ARM (2026-09-02, P2). ``spawn_latency``, always; and
+    ``commit_high`` when ``policy.commit_pct_arm`` is set AND the event's live
+    ``commit_pct`` is at or past it. ORed, never ANDed — either alone
+    authorizes. The two are certified differently ON PURPOSE: spawn is taken
+    from the axis set alone and so survives the producer's hysteresis band,
+    while commit additionally demands the live reading, because that axis
+    latches at 85 but only authorizes at 90 and a recovering commit axis must
+    not keep a kill authorized on the strength of a flag.
+
+    The commit axis exists because the retired reaper was commit-gated and the
+    fleet controller was not, leaving a documented cascade shape (commit
+    exhausting 89-94% of ~71GB, zombieing mempalace and crash-looping the
+    gateway) with no automatic relief. It is NOT set to the reaper's 85: that
+    is resource_monitor's own alerting threshold and the cascade's onset, not
+    its danger zone. See FleetPolicy.commit_pct_arm.
+
+    NOT COVERED, deliberately: ``triggers_armed`` still ANDs this with the
+    fleet-size half, so a high-commit / LOW-root-count box gets no relief from
+    this axis. Culling on pressure alone regardless of how many session trees
+    exist is a separate and larger policy question — if there are few trees,
+    they are probably not the cause — and it is Diego's to settle.
 
     WHICH FIELD CARRIES THE AXIS (2026-09-01). ``payload['axes_latched']``
     when the producer stamps it, ``payload['reasons']`` otherwise.
@@ -380,8 +403,16 @@ def evaluate_pressure(
     newest_ts = max(ts for _, ts in stamped)
     newest = [ev for ev, ts in stamped if ts == newest_ts]
 
-    def _has_spawn(ev: Mapping[str, object]) -> Optional[Tuple[bool, str]]:
-        """(armed, which field said so), or None if the event is malformed."""
+    def _number(value: object) -> Optional[float]:
+        """A real, finite number, or None. bools are rejected explicitly —
+        ``isinstance(True, int)`` is True and would read as 1.0."""
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        value = float(value)
+        return None if value != value or value in (float("inf"), float("-inf")) else value
+
+    def _axes(ev: Mapping[str, object]) -> Optional[Tuple[frozenset, str]]:
+        """(axis labels, which field they came from), or None if malformed."""
         payload = ev.get("payload")
         if not isinstance(payload, dict):
             return None
@@ -392,30 +423,56 @@ def evaluate_pressure(
             # ``reasons`` would hide a broken producer behind a working read.
             if not isinstance(latched, (list, tuple)):
                 return None
-            return ("spawn_latency" in latched, AXIS_SOURCE_LATCHED)
+            return frozenset(latched), AXIS_SOURCE_LATCHED
         reasons = payload.get("reasons")
         if not isinstance(reasons, (list, tuple)):
             return None
-        return ("spawn_latency" in reasons, AXIS_SOURCE_REASONS)
+        return frozenset(reasons), AXIS_SOURCE_REASONS
 
-    flags = [_has_spawn(ev) for ev in newest]
-    if any(flag is None for flag in flags):
+    def _armed_axes(ev: Mapping[str, object], axes: frozenset) -> frozenset:
+        """Which arming axes this event actually supports. ORed, never ANDed.
+
+        The two axes are certified differently on purpose. spawn_latency is
+        taken from the axis set alone, so it survives the hysteresis band the
+        producer itself still calls an open episode. commit_high additionally
+        demands a LIVE reading at or past ``commit_pct_arm`` — the axis latches
+        at 85 but only authorizes at 90, and a latched-but-recovering commit
+        axis must not keep a kill authorized on the strength of a flag.
+        """
+        armed = set()
+        if AXIS_SPAWN_LATENCY in axes:
+            armed.add(AXIS_SPAWN_LATENCY)
+        if policy.commit_pct_arm is not None and AXIS_COMMIT_HIGH in axes:
+            payload = ev.get("payload")
+            pct = _number(payload.get("commit_pct")) if isinstance(payload, dict) else None
+            # A missing or garbage commit_pct means "cannot certify", which is
+            # NOT malformed: it must not destroy a spawn arming that stands on
+            # its own evidence. Fail closed on THIS axis only.
+            if pct is not None and pct >= policy.commit_pct_arm:
+                armed.add(AXIS_COMMIT_HIGH)
+        return frozenset(armed)
+
+    resolved = [_axes(ev) for ev in newest]
+    if any(r is None for r in resolved):
         return PressureEvidence(False, "malformed")
-    if len({armed for armed, _src in flags}) > 1:
-        # Two events at the identical newest timestamp disagreeing about the
-        # axis: no ordering exists to break the tie, so nothing is proven.
-        # Compared on the VERDICT only — two events that agree the axis is up
-        # are not contradictory just because one is a newer-format producer.
+    per_event = [_armed_axes(ev, axes) for ev, (axes, _src) in zip(newest, resolved)]
+
+    if len({bool(a) for a in per_event}) > 1:
+        # Two events at the identical newest timestamp disagreeing about
+        # whether ANY axis is up: no ordering exists to break the tie, so
+        # nothing is proven. Compared on the armed/not VERDICT — two events
+        # that agree pressure is up are not contradictory just because one is
+        # a newer-format producer, or because they arm on different axes.
         return PressureEvidence(False, "tied_contradictory")
-    armed = flags[0][0]
     # Deterministic across a mixed-format tie: the newer field wins the label
     # if any member carried it, so the audit never depends on iteration order.
     axis_source = (
         AXIS_SOURCE_LATCHED
-        if any(src == AXIS_SOURCE_LATCHED for _armed, src in flags)
+        if any(src == AXIS_SOURCE_LATCHED for _axes, src in resolved)
         else AXIS_SOURCE_REASONS
     )
-    if not armed:
+    armed_axes = frozenset().union(*per_event) if per_event else frozenset()
+    if not armed_axes:
         return PressureEvidence(False, "disarmed", axis_source=axis_source)
 
     ev = newest[0]
@@ -425,20 +482,28 @@ def evaluate_pressure(
     if age > policy.d7_max_age_seconds:
         return PressureEvidence(False, "stale")
 
-    payload = ev.get("payload")
-    sustained = payload.get("spawn_latency_sustained_ms") if isinstance(payload, dict) else None
-    if not isinstance(sustained, (int, float)) or isinstance(sustained, bool) or sustained <= 0:
+    payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+    sustained = _number(payload.get("spawn_latency_sustained_ms"))
+    if sustained is not None and sustained <= 0:
+        sustained = None
+    if sustained is None and AXIS_SPAWN_LATENCY in armed_axes:
         # D7 always stamps the sustained floor it judged the axis on; its
-        # absence means this is not a well-formed D7 spawn_latency event.
-        return PressureEvidence(False, "malformed")
+        # absence means this is not a well-formed D7 spawn_latency event. Drop
+        # THAT axis rather than the whole evidence — a commit arming standing
+        # on its own reading is untouched by a broken spawn field.
+        armed_axes = armed_axes - {AXIS_SPAWN_LATENCY}
+        if not armed_axes:
+            return PressureEvidence(False, "malformed")
 
     return PressureEvidence(
         True, "ok",
         event_id=str(ev.get("event_id") or ""),
         event_timestamp=str(ev.get("timestamp") or ""),
         age_seconds=age,
-        sustained_ms=float(sustained),
+        sustained_ms=sustained,
         axis_source=axis_source,
+        armed_axes=tuple(sorted(armed_axes)),
+        commit_pct=_number(payload.get("commit_pct")),
     )
 
 

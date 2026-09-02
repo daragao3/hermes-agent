@@ -186,6 +186,34 @@ def test_d7_freshness_window_outlives_the_producers_reping_interval():
     assert cfg["d7_max_age_seconds"] == 1200
 
 
+def test_commit_arming_bar_sits_above_the_producers_alerting_threshold():
+    """P2, 2026-09-02. The commit axis must authorize a KILL strictly deeper
+    than the point the producer merely ALERTS at, or the controller acts at
+    the cascade's onset instead of inside it — which is the behaviour of the
+    retired reaper this axis replaces, at the reaper's own number.
+
+    Pinned as a cross-module relation so raising resource_monitor's alerting
+    threshold past the arming bar fails here instead of silently inverting
+    the two.
+    """
+    import json
+    from pathlib import Path
+
+    from claude_fleet_control.controller import load_policy
+    from events.producers.resource_monitor import DEFAULT_COMMIT_PCT_THRESHOLD
+
+    policy, _notes = load_policy(Path(_CONFIG))
+    assert policy.commit_pct_arm is not None, "P2 commit axis is switched off"
+    assert policy.commit_pct_arm > DEFAULT_COMMIT_PCT_THRESHOLD, (
+        f"commit_pct_arm={policy.commit_pct_arm} is not deeper than the "
+        f"producer's {DEFAULT_COMMIT_PCT_THRESHOLD} alerting threshold"
+    )
+    # Below 100 or the axis can never fire; the reviewed value is 90.
+    assert policy.commit_pct_arm < 100.0
+    cfg = json.loads(_CONFIG.read_text(encoding="utf-8"))
+    assert cfg["commit_pct_arm"] == 90
+
+
 @requires_task
 def test_config_and_task_enforce_state_are_consistent():
     """Both gates must agree: config in enforce mode (with a digest) iff the
