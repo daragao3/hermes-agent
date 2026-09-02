@@ -5335,13 +5335,19 @@ class SessionBridgeCoordinator:
         # the next cycle must still be able to page back to where it started.
         # `not deferred` is REDUNDANT and deliberately kept. A deferred id
         # `continue`s without entering terminal_ids, so `terminal_ids >=
-        # set(staged_ids)` already excludes it -- mutation review 2026-09-01
-        # confirmed that deleting this conjunct fires no test, and no test CAN
-        # discriminate it while that invariant holds. It stays as a defensive
-        # statement of intent: deferral must block the frontier even if a future
-        # edit lets a deferred id reach terminal_ids by some other path. Do not
-        # "simplify" it away, and do not write a test for it -- a test that
-        # passes either way is worse than the honest comment.
+        # set(staged_ids)` already excludes it. The deferral-blocks-frontier
+        # SEMANTIC is pinned: test_codex_deferred_thread_is_not_marked_seen in
+        # tests/session_bridge/test_coordinator.py asserts _CODEX_FRONTIER_KEY
+        # stays unwritten for a single deferred thread at the default batch
+        # size -- the shape where len(selected_ids) == len(staged_ids), so the
+        # deferral is the only thing that can hold the frontier. What no test
+        # discriminates is this CONJUNCT: deleting it fires nothing (mutation
+        # review 2026-09-01), and since it is redundant by construction such a
+        # test cannot exist. It stays as a defensive statement of intent:
+        # deferral must block the frontier even if a future edit lets a deferred
+        # id reach terminal_ids by some other path. Do not "simplify" it away,
+        # and do not write a test for the conjunct -- a test that passes either
+        # way is worse than the honest comment.
         drained = (
             len(selected_ids) == len(staged_ids)
             and not deferred
