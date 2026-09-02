@@ -172,6 +172,29 @@ class FleetPolicy:
     # business. It deliberately does NOT align with COMMIT_BANDS' "severe"
     # edge (92.0): 92 would miss the documented 89-91 onset.
     commit_pct_arm: Optional[float] = None
+    # Commit-axis fleet-size bypass (2026-09-02, P5). None = OFF, and OFF is
+    # the default so nothing inherits a widened kill trigger it did not ask
+    # for. When set, and ONLY when the commit axis is among the axes that
+    # actually ARMED this pass, the fleet-size floor drops from
+    # ``fleet_min_roots`` to this value.
+    #
+    # WHY: ``triggers_armed`` ANDs the pressure half with the fleet-size half,
+    # so before this a box deep in the documented 89-94% crash-loop band got
+    # NO relief from the commit axis while its root count sat at or below
+    # ``fleet_min_roots``. The original rationale for that AND — "if there are
+    # few trees, they are probably not the cause" — is a fair prior at 79%
+    # commit and a bad one at 92%, where the box is degrading regardless of
+    # which process is to blame and the session trees are the only lever this
+    # lane holds.
+    #
+    # It can only ever LOWER the floor (``min`` is taken), so a value ABOVE
+    # ``fleet_min_roots`` is inert rather than a back door for tightening the
+    # gate without re-approving a digest that reads like a loosening.
+    #
+    # NOT zero, deliberately: a floor of 0 authorizes killing the last
+    # remaining tree, which on this box is routinely the session doing the
+    # diagnosing. The deployed config uses 2, i.e. act from 3 trees up.
+    commit_bypass_min_roots: Optional[int] = None
     idle_min_minutes: float = 30.0
     strikes_required: int = 2
     strike_max_age_seconds: float = 900.0  # a strike older than this is not "the previous pass"
@@ -189,6 +212,7 @@ class FleetPolicy:
                 "fleet_min_roots": self.fleet_min_roots,
                 "d7_max_age_seconds": self.d7_max_age_seconds,
                 "commit_pct_arm": self.commit_pct_arm,
+                "commit_bypass_min_roots": self.commit_bypass_min_roots,
                 "idle_min_minutes": self.idle_min_minutes,
                 "strikes_required": self.strikes_required,
                 "strike_max_age_seconds": self.strike_max_age_seconds,
@@ -299,6 +323,13 @@ class FleetPlan:
     rejections: Tuple[Tuple[str, int], ...]  # (reason_code, count), sorted
     digest: str  # deterministic digest over policy + evidence + identities
     new_strikes: Mapping[str, Dict[str, float]] = field(default_factory=dict)
+    # The fleet-size floor this pass actually compared ``fleet_root_count``
+    # against (2026-09-02, P5). Normally ``policy.fleet_min_roots``; lower
+    # when the commit-axis bypass applied. Recorded because "why did this arm
+    # at 4 roots?" has to be answerable from the plan event ALONE, without
+    # also having to know which config was live at the time — configs here
+    # change under Diego's hand between passes.
+    fleet_floor_applied: Optional[int] = None
 
     @property
     def plan_id(self) -> str:
@@ -317,6 +348,7 @@ class FleetPlan:
             "triggers_armed": self.triggers_armed,
             "trigger_reasons": list(self.trigger_reasons),
             "fleet_root_count": self.fleet_root_count,
+            "fleet_floor_applied": self.fleet_floor_applied,
             "pressure": self.pressure.to_payload(),
             "selected": self.selected.to_payload() if self.selected else None,
             "rejections": {code: count for code, count in self.rejections},
