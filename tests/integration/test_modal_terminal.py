@@ -21,10 +21,24 @@ import sys
 import json
 from pathlib import Path
 
-# Try to load .env file if python-dotenv is available
+# Try to load .env file if python-dotenv is available.
+#
+# The path is EXPLICIT and repo-scoped on purpose. A bare ``load_dotenv()``
+# walks up from this file looking for a ``.env``; because the checkout lives
+# at ``~/.hermes/agent-src`` that walk reaches the live ``~/.hermes/.env`` and
+# ``set_as_environment_variables`` injects the host's production credentials
+# (LANGFUSE_SECRET_KEY, OTEL_EXPORTER_OTLP_*) into ``os.environ``. That happens
+# at MODULE level, i.e. during collection -- so it fired on every default run
+# even though every test in this file is deselected by ``-m "not integration"``,
+# and it landed before any autouse fixture could scrub it. Same class as the
+# ``obs/otel_tracing._load_env_once`` leak fixed in 24e0a44868.
+#
+# The manual fallback below already scopes its lookup to the repo root; the two
+# branches simply disagreed. Pass the same path here so they agree.
+_REPO_ENV = Path(__file__).resolve().parents[2] / ".env"
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(_REPO_ENV)
 except ImportError:
     # Manually load .env if dotenv not available
     env_file = Path(__file__).parent.parent.parent / ".env"
