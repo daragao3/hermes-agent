@@ -155,6 +155,117 @@ def test_tied_contradictory_newest_fails_closed():
     assert (ev.valid, ev.reason_code) == (False, "tied_contradictory")
 
 
+# ------------------------------------------------- pressure: axes_latched
+# 2026-09-01. ``reasons`` names only the axes breaching in one sample and its
+# omissions assert nothing, so reading it newest-wins made a disk-only
+# emission look like the spawn axis clearing. Measured: 295 of 295 controller
+# passes read ``disarmed``, none ever armed. The producer now stamps its own
+# open-episode set and this function reads that instead.
+
+def _latched_event(ts, reasons, latched, sustained=2100.0, event_id="e1"):
+    payload = {"reasons": list(reasons), "axes_latched": sorted(latched)}
+    if sustained is not None:
+        payload["spawn_latency_sustained_ms"] = sustained
+    return {"event_id": event_id, "timestamp": iso(ts), "payload": payload}
+
+
+def test_disk_only_emission_no_longer_masks_a_live_spawn_episode():
+    """THE REGRESSION THIS FIELD EXISTS FOR — the exact production shape.
+
+    A spawn_latency event, then a newer disk-only re-ping while the spawn
+    episode is still open. Under newest-wins-on-``reasons`` the disk event
+    disarmed the controller; the episode is plainly still live and it must
+    now arm.
+    """
+    armed = _latched_event(
+        NOW - 120, ["disk_low", "spawn_latency"],
+        ["disk_low", "spawn_latency"], event_id="spawn",
+    )
+    disk_reping = _latched_event(
+        NOW - 30, ["disk_low"],
+        ["disk_low", "spawn_latency"], event_id="disk",
+    )
+    ev = planner.evaluate_pressure([armed, disk_reping], NOW, POLICY)
+    assert (ev.valid, ev.reason_code) == (True, "ok")
+    assert ev.event_id == "disk"
+    assert ev.axis_source == "axes_latched"
+
+    # Control: the identical pair WITHOUT the new field still disarms, so the
+    # fix is attributable to axes_latched and not to some other edit.
+    old_armed = _pressure_event(NOW - 120, ["disk_low", "spawn_latency"], event_id="spawn")
+    old_reping = _pressure_event(NOW - 30, ["disk_low"], event_id="disk")
+    old = planner.evaluate_pressure([old_armed, old_reping], NOW, POLICY)
+    assert (old.valid, old.reason_code, old.axis_source) == (False, "disarmed", "reasons")
+
+
+def test_axes_latched_still_disarms_when_the_episode_really_ended():
+    """The widening is bounded: once the producer drops spawn from its own
+    latched set, authorization is gone exactly as before."""
+    cleared = _latched_event(
+        NOW - 30, ["disk_low"], ["disk_low"], sustained=None, event_id="cleared",
+    )
+    ev = planner.evaluate_pressure([cleared], NOW, POLICY)
+    assert (ev.valid, ev.reason_code, ev.axis_source) == (False, "disarmed", "axes_latched")
+
+
+def test_axes_latched_beats_reasons_when_they_disagree():
+    hysteresis = _latched_event(
+        NOW - 30, ["disk_low"], ["disk_low", "spawn_latency"], event_id="band",
+    )
+    assert planner.evaluate_pressure([hysteresis], NOW, POLICY).valid
+
+
+def test_malformed_axes_latched_fails_closed_rather_than_falling_back():
+    """A producer that stamps the field owes a well-formed one. Falling back
+    to ``reasons`` here would hide a broken producer behind a working read."""
+    broken = {
+        "event_id": "b",
+        "timestamp": iso(NOW - 30),
+        "payload": {
+            "reasons": ["spawn_latency"],
+            "axes_latched": "spawn_latency",  # a string, not a list
+            "spawn_latency_sustained_ms": 2100.0,
+        },
+    }
+    ev = planner.evaluate_pressure([broken], NOW, POLICY)
+    assert (ev.valid, ev.reason_code) == (False, "malformed")
+
+
+def test_legacy_events_without_the_field_evaluate_exactly_as_before():
+    fresh = _pressure_event(NOW - 60, ["spawn_latency"])
+    ev = planner.evaluate_pressure([fresh], NOW, POLICY)
+    assert (ev.valid, ev.axis_source) == (True, "reasons")
+
+
+def test_mixed_format_tie_that_agrees_is_not_contradictory():
+    """Two events at the identical newest timestamp, one per producer format,
+    agreeing the axis is up. That is agreement, not contradiction, and the
+    recorded source is deterministic rather than iteration-order dependent."""
+    old_fmt = _pressure_event(NOW - 30, ["spawn_latency"], event_id="a")
+    new_fmt = _latched_event(NOW - 30, ["disk_low"], ["disk_low", "spawn_latency"], event_id="b")
+    for pair in ([old_fmt, new_fmt], [new_fmt, old_fmt]):
+        ev = planner.evaluate_pressure(pair, NOW, POLICY)
+        assert (ev.valid, ev.reason_code) == (True, "ok")
+        assert ev.axis_source == "axes_latched"
+
+
+def test_mixed_format_tie_that_disagrees_still_fails_closed():
+    old_fmt = _pressure_event(NOW - 30, ["spawn_latency"], event_id="a")
+    new_fmt = _latched_event(NOW - 30, ["disk_low"], ["disk_low"], sustained=None, event_id="b")
+    ev = planner.evaluate_pressure([old_fmt, new_fmt], NOW, POLICY)
+    assert (ev.valid, ev.reason_code) == (False, "tied_contradictory")
+
+
+def test_axis_source_reaches_the_plan_payload():
+    """Audit only — but it has to actually land on the event, or the split it
+    exists to measure is unmeasurable."""
+    ev = planner.evaluate_pressure(
+        [_latched_event(NOW - 30, ["disk_low"], ["disk_low", "spawn_latency"])],
+        NOW, POLICY,
+    )
+    assert ev.to_payload()["axis_source"] == "axes_latched"
+
+
 # ---------------------------------------------------------------- assessment
 
 def _idle_transcript(mtime=NOW - 3600.0, path="t.jsonl"):

@@ -23,6 +23,8 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from claude_fleet_control.models import (
     ACTION_HARD_TERMINATE,
+    AXIS_SOURCE_LATCHED,
+    AXIS_SOURCE_REASONS,
     DECISION_ENFORCE_PROJECTED,
     DECISION_NO_ACTION,
     DECISION_SHADOW_PROJECTED,
@@ -327,9 +329,38 @@ def evaluate_pressure(
     ({event_id, timestamp, payload}), newest-wins.
 
     Fail-closed catalogue: missing, stale, future-dated, malformed, a NEWER
-    pressure event whose reasons omit spawn_latency (the axis cleared or
-    another axis took over — either way authorization is gone), and a
-    same-timestamp tie whose members contradict each other.
+    pressure event that does not carry the spawn_latency axis (the axis
+    cleared — authorization is gone), and a same-timestamp tie whose members
+    contradict each other.
+
+    WHICH FIELD CARRIES THE AXIS (2026-09-01). ``payload['axes_latched']``
+    when the producer stamps it, ``payload['reasons']`` otherwise.
+
+    ``reasons`` lists only the axes breaching in THAT SAMPLE, and its
+    omissions are not assertions. ResourcePressureMonitor latches axes
+    independently and emits one multi-axis event per edge, so a disk-only
+    emission during a live spawn-latency episode says nothing at all about
+    spawn — yet reading ``reasons`` newest-wins turned that silence into
+    ``disarmed``. MEASURED: 295 of 295 controller passes read ``disarmed``
+    between 2026-08-31T14:41Z and 2026-09-01T20:00Z, pressure.valid TRUE on
+    none of them, because the chronically-latched disk axis re-emits every
+    ~15 min and overwrote all five spawn_latency events this box has ever
+    produced. ``axes_latched`` is the producer's own ``_latched`` set — every
+    axis whose episode is still open — so it answers the question this
+    function is actually asking. Record: loops
+    reaper-retirement-commit-gap-20260901.
+
+    THIS WIDENS AUTHORIZATION, deliberately and boundedly. ``axes_latched`` is
+    a superset of ``reasons``: it also holds an axis inside its hysteresis
+    band (past its trigger earlier, not yet comfortably below its disarm).
+    That is the producer's own definition of "the episode is not over", but it
+    is a weaker signal than an active breach, so ``PressureEvidence.axis_source``
+    records which one armed a given pass. It is audit only — the trigger does
+    not read it — and it exists so the split can be measured off the
+    CLAUDE_FLEET_PLAN events rather than argued about.
+
+    The ``reasons`` fallback keeps every pre-2026-09-01 event, and any replay
+    of one, evaluating exactly as it did before.
     """
     if not events:
         return PressureEvidence(False, "missing")
@@ -349,24 +380,43 @@ def evaluate_pressure(
     newest_ts = max(ts for _, ts in stamped)
     newest = [ev for ev, ts in stamped if ts == newest_ts]
 
-    def _has_spawn(ev: Mapping[str, object]) -> Optional[bool]:
+    def _has_spawn(ev: Mapping[str, object]) -> Optional[Tuple[bool, str]]:
+        """(armed, which field said so), or None if the event is malformed."""
         payload = ev.get("payload")
         if not isinstance(payload, dict):
             return None
+        latched = payload.get("axes_latched")
+        if latched is not None:
+            # Present but not a list is malformed — a producer that stamps the
+            # field owes a well-formed one; silently falling back to
+            # ``reasons`` would hide a broken producer behind a working read.
+            if not isinstance(latched, (list, tuple)):
+                return None
+            return ("spawn_latency" in latched, AXIS_SOURCE_LATCHED)
         reasons = payload.get("reasons")
         if not isinstance(reasons, (list, tuple)):
             return None
-        return "spawn_latency" in reasons
+        return ("spawn_latency" in reasons, AXIS_SOURCE_REASONS)
 
     flags = [_has_spawn(ev) for ev in newest]
     if any(flag is None for flag in flags):
         return PressureEvidence(False, "malformed")
-    if len(set(flags)) > 1:
+    if len({armed for armed, _src in flags}) > 1:
         # Two events at the identical newest timestamp disagreeing about the
         # axis: no ordering exists to break the tie, so nothing is proven.
+        # Compared on the VERDICT only — two events that agree the axis is up
+        # are not contradictory just because one is a newer-format producer.
         return PressureEvidence(False, "tied_contradictory")
-    if not flags[0]:
-        return PressureEvidence(False, "disarmed")
+    armed = flags[0][0]
+    # Deterministic across a mixed-format tie: the newer field wins the label
+    # if any member carried it, so the audit never depends on iteration order.
+    axis_source = (
+        AXIS_SOURCE_LATCHED
+        if any(src == AXIS_SOURCE_LATCHED for _armed, src in flags)
+        else AXIS_SOURCE_REASONS
+    )
+    if not armed:
+        return PressureEvidence(False, "disarmed", axis_source=axis_source)
 
     ev = newest[0]
     age = now - newest_ts
@@ -388,6 +438,7 @@ def evaluate_pressure(
         event_timestamp=str(ev.get("timestamp") or ""),
         age_seconds=age,
         sustained_ms=float(sustained),
+        axis_source=axis_source,
     )
 
 

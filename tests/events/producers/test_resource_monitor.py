@@ -1048,6 +1048,54 @@ class TestSpawnHysteresis:
         assert len(_pressure_events(bus)) == 2
 
 
+class TestAxesLatchedPayload:
+    """``axes_latched`` — the producer's own open-episode set, stamped on
+    every emission (2026-09-01).
+
+    ``reasons`` names only the axes breaching in THAT sample, so its omissions
+    assert nothing about the axes it leaves out. The P6 fleet controller read
+    them as assertions and disarmed on every disk-only re-ping: 295 of 295
+    passes, zero arms. This field is the answer to the question that consumer
+    is actually asking, and these tests pin the two properties it needs —
+    always present, and a true superset of ``reasons``.
+    """
+
+    def test_stamped_on_every_emission_and_matches_reasons_when_nothing_lingers(self, bus):
+        monitor = ResourcePressureMonitor(bus)
+        assert monitor.evaluate(make_sample(disk_free_gb=10.0), now=0.0)
+        payload = _pressure_events(bus)[0].payload
+        assert payload["axes_latched"] == sorted(payload["reasons"])
+
+    def test_holds_an_axis_that_reasons_has_dropped_into_its_hysteresis_band(self, bus):
+        """THE CASE THE FIELD EXISTS FOR. Spawn latches, then hovers between
+        the 1000 ms disarm and the 1500 ms trigger while the disk axis
+        re-pings. ``reasons`` on that emission is disk-only; the spawn episode
+        is demonstrably still open, and ``axes_latched`` says so."""
+        monitor = ResourcePressureMonitor(bus, re_alert_cooldown_seconds=900.0)
+        drive(monitor, [2000.0] * 3, disk_free_gb=300.0)      # spawn latches
+        # Disk now breaches: a fresh rising edge, so this emits despite the
+        # cooldown. Spawn is hovering in its band — latched, not breaching.
+        assert monitor.evaluate(
+            make_sample(spawn_ms=1200.0, disk_free_gb=10.0), now=180.0)
+        payload = _pressure_events(bus)[-1].payload
+        assert "spawn_latency" not in payload["reasons"]
+        assert "spawn_latency" in payload["axes_latched"]
+        assert set(payload["reasons"]).issubset(set(payload["axes_latched"]))
+
+    def test_drops_the_axis_once_the_episode_genuinely_clears(self, bus):
+        """The superset is bounded by the producer's own disarm, so the field
+        cannot wedge an authorization open."""
+        monitor = ResourcePressureMonitor(bus, re_alert_cooldown_seconds=900.0)
+        drive(monitor, [2000.0] * 3, disk_free_gb=300.0)
+        # Three readings comfortably under the 1000 ms disarm clear spawn.
+        drive(monitor, [100.0] * 3, start=180.0, disk_free_gb=300.0)
+        assert monitor.evaluate(
+            make_sample(spawn_ms=100.0, disk_free_gb=10.0), now=420.0)
+        payload = _pressure_events(bus)[-1].payload
+        assert "spawn_latency" not in payload["axes_latched"]
+        assert payload["axes_latched"] == ["disk_critical", "disk_low"]
+
+
 class TestSpawnLatencyProbe:
     def test_rate_limit_returns_none_inside_the_interval(self):
         if sys.platform != "win32":
