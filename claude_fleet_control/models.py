@@ -135,6 +135,15 @@ class FleetPolicy:
     mode: str = MODE_DISABLED
     policy_version: str = "p6-unversioned"
     fleet_min_roots: int = 30            # trigger requires root count STRICTLY above this
+    # DEPLOYMENT NOTE (2026-09-02): this DEFAULT is deliberately left at the
+    # original 360.0 because tests pin it, but it is NOT a safe value to ship.
+    # The freshness window must outlive the producer's sustained re-ping
+    # interval (resource_monitor.DEFAULT_RE_ALERT_COOLDOWN_SECONDS = 900.0) or
+    # a live episode goes dark between re-pings and the trigger reads "stale"
+    # through most of it — the defect that held the controller at 295-of-295
+    # disarmed. The deployed config.json uses 1200.0; any new config must
+    # exceed 900.0 too. Pinned by
+    # test_d7_freshness_window_outlives_the_producers_reping_interval.
     d7_max_age_seconds: float = 360.0
     idle_min_minutes: float = 30.0
     strikes_required: int = 2
