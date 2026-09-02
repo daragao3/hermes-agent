@@ -252,6 +252,36 @@ class TestJobflowApprovedRelease:
         # Point it at a path that does not exist so main() takes its documented
         # `else EMPTY_ALIASES` branch -- the state a clean host is in.
         monkeypatch.setattr(m, "ALIAS_SNAPSHOT_PATH", tmp_path / "absent-alias-snapshot.json")
+        # The three mailbox/workspace roots must move too, and for a different
+        # reason than the two above: they are WRITE targets. main()'s tailor
+        # branch calls _write_tailor_request(), which does
+        # TAILOR_INBOX.mkdir(...) + write into ~/.hermes/mailbox/tailor/inbox --
+        # the live queue the running gateway's MailboxWatcher drains, i.e. a
+        # test would enqueue a real job application.
+        #
+        # No test here reaches that branch today: every one stubs the functions
+        # that touch these roots, and the only release test classifies as
+        # "research" and stubs _write_research_request. That is isolation by
+        # which BRANCH each test happens to take, not by construction -- a test
+        # whose classify_release returns "tailor" writes to the live inbox
+        # immediately. Measured 2026-09-02 with an audit hook: the write was
+        # attempted at ~/.hermes/mailbox/tailor/inbox/<stamp>_TAILOR_REQUEST_
+        # approval-release_j1.json and only a blocking probe stopped it.
+        #
+        # Move the PATHS, per the rule the ALIAS_SNAPSHOT_PATH note above
+        # follows: the real write/scan code stays under test, it just lands in
+        # tmp_path. SEEN_DIRS is rebuilt rather than repointed because it is a
+        # list captured at import, not a lazily re-read constant.
+        monkeypatch.setattr(m, "TAILOR_INBOX", tmp_path / "mailbox" / "tailor" / "inbox")
+        monkeypatch.setattr(m, "RESEARCHER_INBOX", tmp_path / "mailbox" / "researcher" / "inbox")
+        monkeypatch.setattr(
+            m, "TAILOR_WORKSPACE", tmp_path / "profiles" / "tailor" / "workspace" / "applications"
+        )
+        monkeypatch.setattr(m, "SEEN_DIRS", [
+            tmp_path / "mailbox" / "tailor" / "inbox",
+            tmp_path / "mailbox" / "tailor" / "processed",
+            tmp_path / "mailbox" / "matcher" / "outbox",
+        ])
         monkeypatch.setattr(m, "already_requested_ids", lambda *args, **kwargs: set())
         monkeypatch.setattr(m, "mirror_approved_ids", lambda *args, **kwargs: set())
         monkeypatch.setattr(m, "research_pending_ids", lambda p: set())
@@ -287,6 +317,36 @@ class TestJobflowApprovedRelease:
         assert "research=1" in out
         payload = _iteration_json(out)
         assert payload["counters"]["requested_research"] == 1
+
+    def test_the_tailor_branch_writes_into_the_fixture_not_the_live_mailbox(
+        self, mod, tmp_path, monkeypatch, capsys
+    ):
+        """Drive the one branch that writes, and pin where the write lands.
+
+        This is the branch no other test in the class takes, which is exactly
+        why it was dangerous: ``_write_tailor_request`` is unstubbed here on
+        purpose, so the real envelope-writing code runs. Before the fixture
+        moved TAILOR_INBOX it landed in ``~/.hermes/mailbox/tailor/inbox`` --
+        the queue a running gateway drains -- and enqueued a genuine
+        TAILOR_REQUEST for a fake job id.
+
+        Deliberately asserts on the FILESYSTEM rather than on stdout: a stdout
+        assertion passes just as happily when the file went to the live inbox.
+        """
+        monkeypatch.setattr(mod, "plan_releases", lambda *a, **k: [("j1", {})])
+        monkeypatch.setattr(mod, "classify_release", lambda **k: "tailor")
+        monkeypatch.setattr(mod, "build_tailor_request", lambda *a, **k: {"job_id": "j1"})
+
+        assert mod.main() == 0
+
+        written = list((tmp_path / "mailbox" / "tailor" / "inbox").glob("*TAILOR_REQUEST*"))
+        assert written, (
+            "the tailor branch produced no envelope under tmp_path -- either the "
+            "branch stopped writing, or the write escaped the fixture"
+        )
+        live_inbox = pathlib.Path.home() / ".hermes" / "mailbox" / "tailor" / "inbox"
+        assert mod.TAILOR_INBOX != live_inbox
+        assert tmp_path in mod.TAILOR_INBOX.parents
 
     def test_dry_run_always_reports(self, mod, monkeypatch, capsys):
         """A human ran it explicitly; never swallow their output."""

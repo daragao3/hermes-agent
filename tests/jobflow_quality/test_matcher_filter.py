@@ -290,9 +290,15 @@ class TestDecisionContract:
             d.eligible = False
 
     def test_multiple_independent_reasons_are_all_reported(self):
+        # _TEST_FLOOR_USD, not DEFAULT_CRITERIA's floor: that one is read at
+        # import from matcher-criteria.json outside the repo, so it is None on
+        # any machine without that file -- compensation filtering then switches
+        # off, the $40k-$60k fixture stops producing a pay reason, and this
+        # assertion drops from 3 to 2. Measured. The file header states the
+        # rule; this was the one callsite that still ignored it.
         criteria = Criteria(
             hard_requirement_phrases=("security clearance",),
-            compensation_floor_usd=DEFAULT_CRITERIA.compensation_floor_usd,
+            compensation_floor_usd=_TEST_FLOOR_USD,
             excluded_companies=DEFAULT_CRITERIA.excluded_companies,
         )
         d = hard_filter(
