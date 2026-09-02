@@ -163,6 +163,44 @@ _FAILURE_REGISTRY[("claude_visibility", "reconciliation_repair_active")] = (
 _FAILURE_REGISTRY[("claude_visibility", "reconciliation_repair_abandoned")] = (
     "queue", "visibility_repair_authority_abandoned", "terminal"
 )
+# 2026-09-01: the lineage family, none of which was registered. Every one is a
+# "blocked" code from the single lineage inspector in store.py (~12820-12905),
+# which explains why a VISIBLE job's derivative lineage link cannot be finalised,
+# so they share the class/impact of the sibling already registered above,
+# ("claude_visibility", "unlinked_visible_lineage") -> ledger /
+# derivative_lineage_incomplete / terminal. Terminal rather than retryable for the
+# same reason as that sibling: none of these clears by retrying -- they need
+# `claude-visibility-reconcile-lineage` or an operator.
+#
+# This was live, not theoretical: claude_lineage_target_duplicate surfaced the
+# moment the last terminal job was dismissed at 23:13Z and collapsed the WHOLE
+# claude_visibility axis to unknown/unregistered_failure_code, exactly as the
+# comment above warns. Any ONE of the nine does that, because _failure() gives up
+# on the entire capability at the first unregistered code.
+#
+# Reusing derivative_lineage_incomplete rather than minting a new impact is
+# deliberate: it is accurate (the lineage record IS incomplete), and it keeps the
+# consumer's _FAILURE_IMPACTS unchanged, so only the code names have to be
+# mirrored downstream.
+#
+# claude_visibility_lineage_reconcile is DELIBERATELY ABSENT. Despite the name it
+# is not a failure code at all -- it is _CLAUDE_LINEAGE_CURSOR_OPERATION, the
+# cursor's operation label (store.py:13106, 13206). Registering it would invent a
+# failure that cannot occur.
+for _code in (
+    "claude_lineage_conflict",
+    "claude_lineage_invalid_completion",
+    "claude_lineage_missing_source",
+    "claude_lineage_source_identity_mismatch",
+    "claude_lineage_source_provenance_mismatch",
+    "claude_lineage_target_duplicate",
+    "claude_lineage_target_identity_mismatch",
+    "claude_lineage_target_missing",
+    "claude_lineage_target_provenance_mismatch",
+):
+    _FAILURE_REGISTRY[("claude_visibility", _code)] = (
+        "ledger", "derivative_lineage_incomplete", "terminal"
+    )
 
 
 def _mapping(value: object) -> dict[str, Any]:
