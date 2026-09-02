@@ -23,6 +23,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 from .claude_adapter import (
     ClaudeParseResult,
     ClaudeReadableSource,
+    _is_cli_command_bookkeeping,
     claude_project_directory_name,
 )
 from .claude_visibility import (
@@ -2140,6 +2141,33 @@ def _validate_projection(
     if response.role != "assistant":
         raise _TranscriptConflict("bridge_conflict")
     turn_messages = messages[1:]
+    # 2026-09-02: strip the registrar's OWN teardown records before the shape
+    # check. On the success branch the registrar writes "/exit" and the CLI then
+    # records that slash command and its local-command-stdout as USER records
+    # AFTER the response. Both land in messages[1:], where the loop below demands
+    # every entry be an assistant message carrying the response's event id -- so
+    # the registrar's own teardown made its own validator reject a registration
+    # that had just succeeded. Same root cause as the _is_human_user exclusion in
+    # 69043ccdd2, one check later; that fix cleared the ORIGIN check and this one
+    # was waiting behind it.
+    #
+    # This also restores the ordinal-contiguity assertion below. `ordinal` is a
+    # WITHIN-RECORD index (claude_adapter._project_record: 0 for string content,
+    # 0..n-1 for the blocks of a list), not a transcript sequence -- so the
+    # assertion means "turn_messages is exactly one record's content blocks".
+    # Each trailing user record contributes its own ordinal 0, which is what
+    # turned [0] into [0, 0, 0] and failed it.
+    #
+    # Trailing-only and user-only by construction: a multi-part assistant answer
+    # is untouched, and messages[1] is already proven to be the assistant
+    # response above, so the response itself can never be stripped.
+    while (
+        len(turn_messages) > 1
+        and turn_messages[-1].role == "user"
+        and isinstance(turn_messages[-1].content, str)
+        and _is_cli_command_bookkeeping(turn_messages[-1].content)
+    ):
+        turn_messages = turn_messages[:-1]
     response_event_id = response.native_event_id
     for message in turn_messages:
         if (

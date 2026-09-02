@@ -571,6 +571,81 @@ def test_registrar_rejects_noncanonical_startup_theme_before_spawn(
     assert factory.spawns == []
 
 
+_EXIT_CMD_RECORD = '<command-name>/exit</command-name> <command-message>exit</command-message> <command-args></command-args>'
+_EXIT_STDOUT_RECORD = '<local-command-stdout>See ya!</local-command-stdout>'
+# Built with chr() so this file carries no escape sequences:
+# ESC [?2004h Claude> ESC [0m REGISTERED CR LF
+_REGISTERED_PTY_OUTPUT = (
+    chr(27) + "[?2004hClaude>" + chr(27) + "[0m REGISTERED" + chr(13) + chr(10)
+)
+
+
+def _teardown_result(item, messages):
+    return registrar(
+        FakeSource([None, messages]),
+        FakeFactory(FakePty(output=_REGISTERED_PTY_OUTPUT)),
+    ).process(item)
+
+
+def test_own_exit_teardown_records_do_not_fail_the_turn_shape_check() -> None:
+    """The registrar's own /exit must not make its own validator reject the turn.
+
+    On the success branch the registrar writes "/exit"; the CLI then records that
+    slash command and its stdout as USER records AFTER the response. Both land in
+    messages[1:], where the turn-shape loop demands every entry be an assistant
+    message carrying the response's event id. Measured live 2026-09-02 on
+    transcript 4e62a4c3: turn_messages was [assistant, user, user] with ordinals
+    [0, 0, 0], failing both the role check and the ordinal-contiguity check, so a
+    registration that had already answered REGISTERED correctly was rejected
+    bridge_conflict. Same root cause as the _is_human_user exclusion in
+    69043ccdd2, one check later.
+    """
+
+    item = claim()
+    base = projection_for(item)
+    teardown = [
+        replace(base.messages[1], native_event_id="exit-cmd", role="user",
+                content=_EXIT_CMD_RECORD),
+        replace(base.messages[1], native_event_id="exit-out", role="user",
+                content=_EXIT_STDOUT_RECORD),
+    ]
+    result = _teardown_result(
+        item, replace(base, messages=[*base.messages, *teardown])
+    )
+
+    assert result.status == "visible"
+
+
+def test_a_real_user_turn_after_the_response_is_still_a_conflict() -> None:
+    """The trim is bookkeeping-only: a genuine later turn must still be rejected."""
+
+    item = claim()
+    base = projection_for(item)
+    genuine = replace(base.messages[1], native_event_id="later", role="user",
+                      content="and now please do something else")
+    result = _teardown_result(item, replace(base, messages=[*base.messages, genuine]))
+
+    assert result.status == "failed" and result.error_code == "bridge_conflict"
+
+
+def test_multi_part_assistant_answer_survives_the_trim() -> None:
+    """Trailing-only and user-only: a multi-part assistant answer is untouched."""
+
+    item = claim()
+    base = projection_for(item)
+    split = [
+        replace(base.messages[1], ordinal=0, content="REGIS"),
+        replace(base.messages[1], ordinal=1, content="TERED"),
+        replace(base.messages[1], native_event_id="exit-cmd", role="user",
+                content=_EXIT_CMD_RECORD),
+    ]
+    result = _teardown_result(
+        item, replace(base, messages=[base.messages[0], *split])
+    )
+
+    assert result.status == "visible"
+
+
 def test_launch_uses_interactive_mode_and_writes_prompt_then_exit() -> None:
     item = claim()
     process = FakePty(output="\x1b[?2004hClaude>\x1b[0m REGISTERED\r\n")
