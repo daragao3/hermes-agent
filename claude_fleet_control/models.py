@@ -84,6 +84,12 @@ class TranscriptEvidence:
     mtime: Optional[float]
 
 
+# Which payload field the spawn_latency verdict was read from. Audit labels,
+# not policy: neither value changes what the trigger decides.
+AXIS_SOURCE_LATCHED = "axes_latched"   # the producer's own open-episode set
+AXIS_SOURCE_REASONS = "reasons"        # pre-2026-09-01 producer, or a replay
+
+
 @dataclass(frozen=True)
 class PressureEvidence:
     """The D7 trigger, validated. ``valid`` is the only field the trigger
@@ -95,6 +101,15 @@ class PressureEvidence:
     event_timestamp: Optional[str] = None
     age_seconds: Optional[float] = None
     sustained_ms: Optional[float] = None
+    # Which payload field carried the axis verdict (2026-09-01). AUDIT ONLY —
+    # the trigger never reads it. ``axes_latched`` is a superset of
+    # ``reasons``: it also holds an axis sitting in its hysteresis band, a
+    # weaker signal than an active breach. Stamping the split makes the
+    # widening measurable off the CLAUDE_FLEET_PLAN events instead of
+    # arguable. ``None`` where no event was evaluated at all (missing /
+    # bus_error / a malformed or ill-timed event that never reached the axis
+    # test). See planner.evaluate_pressure.
+    axis_source: Optional[str] = None
 
     def to_payload(self) -> Dict[str, object]:
         return {
@@ -104,6 +119,7 @@ class PressureEvidence:
             "event_timestamp": self.event_timestamp,
             "age_seconds": self.age_seconds,
             "sustained_ms": self.sustained_ms,
+            "axis_source": self.axis_source,
         }
 
 

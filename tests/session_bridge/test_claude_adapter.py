@@ -1285,6 +1285,79 @@ def test_valid_claude_signed_marker_with_later_user_is_continuation(tmp_path):
     assert projection.origin_bridge_id == "bridge-continued"
 
 
+def test_cli_exit_bookkeeping_after_marker_stays_placeholder(tmp_path):
+    """The registrar's own teardown must not reclassify its own transcript.
+
+    A torn-down registration session records its /exit slash command and the
+    command's stdout as type="user" records AFTER the marker turn. Counting those
+    as human turns made _detect_origin return BRIDGE_CONTINUATION, which
+    _validate_projection rejects -- so the registrar's teardown defeated the
+    registrar's validator (measured live 2026-09-01).
+    """
+
+    marker = encode_bridge_marker(
+        BridgeMarkerPayload(
+            bridge_id="bridge-teardown",
+            source_session_id="codex:synthetic-source",
+            target_provider=Provider.CLAUDE,
+            policy_generation=4,
+        ),
+        SECRET,
+    )
+    records = [
+        _message_record(marker),
+        _message_record(
+            '<command-name>/exit</command-name> <command-message>exit</command-message> <command-args></command-args>',
+            event_id="24242424-2424-4242-8242-242424242424",
+            timestamp="2026-01-01T00:00:01Z",
+        ),
+        _message_record(
+            '<local-command-stdout>Catch you later!</local-command-stdout>',
+            event_id="25252525-2525-4252-8252-252525252525",
+            timestamp="2026-01-01T00:00:02Z",
+        ),
+    ]
+    path = tmp_path / "teardown-marker.jsonl"
+    path.write_bytes(b"".join(_json_line(record) for record in records))
+
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+
+    assert projection.origin_kind is OriginKind.BRIDGE_PLACEHOLDER
+    assert projection.origin_bridge_id == "bridge-teardown"
+
+
+def test_human_turn_quoting_a_command_tag_is_still_a_continuation(tmp_path):
+    """The exclusion is whole-content, so quoting a tag does not launder a turn."""
+
+    marker = encode_bridge_marker(
+        BridgeMarkerPayload(
+            bridge_id="bridge-quoted",
+            source_session_id="codex:synthetic-source",
+            target_provider=Provider.CLAUDE,
+            policy_generation=4,
+        ),
+        SECRET,
+    )
+    records = [
+        _message_record(marker),
+        _message_record(
+            'why did <command-name>/exit</command-name> show up in my transcript?',
+            event_id="26262626-2626-4262-8262-262626262626",
+            timestamp="2026-01-01T00:00:01Z",
+        ),
+    ]
+    path = tmp_path / "quoted-marker.jsonl"
+    path.write_bytes(b"".join(_json_line(record) for record in records))
+
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+
+    assert projection.origin_kind is OriginKind.BRIDGE_CONTINUATION
+
+
 def test_distinct_valid_bridge_markers_in_one_parse_are_rejected(tmp_path):
     records = [
         _message_record(_bridge_marker("bridge-first")),

@@ -880,6 +880,7 @@ class ResourcePressureMonitor:
             sample, reasons, growth_bytes, band, band_edge, change,
             commit_band, commit_band_edge, phys_band, phys_band_edge,
             spawn_band, spawn_band_edge, spawn_floor,
+            latched=self._latched,
         )
 
     def _emit(
@@ -893,9 +894,29 @@ class ResourcePressureMonitor:
         spawn_band: Optional[str] = None,
         spawn_band_edge: Optional[float] = None,
         spawn_floor_ms: Optional[float] = None,
+        latched: Optional[Set[str]] = None,
     ) -> str:
         payload = {
             "reasons": reasons,
+            # Every axis whose EPISODE is still open, not just the ones
+            # breaching in this sample (2026-09-01). ``reasons`` is always a
+            # subset: an axis in the hysteresis band -- past its trigger
+            # earlier, not yet comfortably clear of its disarm -- is latched
+            # but absent from ``reasons``.
+            #
+            # This exists because ``reasons`` alone is NOT a statement about
+            # the axes it omits, and a consumer that reads it as one is wrong.
+            # This monitor latches axes INDEPENDENTLY and emits one multi-axis
+            # event per edge, so a disk-only emission during a live
+            # spawn-latency episode says nothing about spawn -- yet the P6
+            # fleet controller's newest-event-wins rule read exactly that
+            # omission as "the axis cleared" and disarmed. Measured
+            # 2026-09-01: 295 of 295 controller passes read ``disarmed``, zero
+            # ever armed, because the chronically-latched disk axis re-emits
+            # every ~15 min and overwrote every spawn_latency event as
+            # "newest". See planner.evaluate_pressure and loops
+            # reaper-retirement-commit-gap-20260901.
+            "axes_latched": sorted(latched) if latched is not None else sorted(reasons),
             "commit_used_gb": round(sample.commit_used_bytes / _GB, 2),
             "commit_limit_gb": round(sample.commit_limit_bytes / _GB, 2),
             "commit_pct": round(sample.commit_pct, 1),

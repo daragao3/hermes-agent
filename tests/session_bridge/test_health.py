@@ -1270,3 +1270,76 @@ def test_every_status_fatal_code_is_registered_for_health() -> None:
     )
 
     assert unregistered == []
+
+
+LINEAGE_FAILURE_CODES = (
+    "claude_lineage_conflict",
+    "claude_lineage_invalid_completion",
+    "claude_lineage_missing_source",
+    "claude_lineage_source_identity_mismatch",
+    "claude_lineage_source_provenance_mismatch",
+    "claude_lineage_target_duplicate",
+    "claude_lineage_target_identity_mismatch",
+    "claude_lineage_target_missing",
+    "claude_lineage_target_provenance_mismatch",
+)
+# NOT a failure code despite the name: _CLAUDE_LINEAGE_CURSOR_OPERATION, the
+# cursor's operation label (store.py:13106, 13206). Registering it would invent a
+# failure that cannot occur, so the drift guard below must tolerate its absence.
+LINEAGE_CURSOR_OPERATION = "claude_visibility_lineage_reconcile"
+
+
+@pytest.mark.parametrize("code", LINEAGE_FAILURE_CODES)
+def test_lineage_codes_are_registered_failures(code: str) -> None:
+    """Each lineage code must classify as itself, not collapse the capability.
+
+    _failure() gives up on the ENTIRE capability at the first unregistered code,
+    so one unregistered lineage reason blanks the whole claude_visibility axis to
+    unknown/unregistered_failure_code. Live on 2026-09-01: the moment the last
+    terminal job was dismissed, claude_lineage_target_duplicate surfaced and did
+    exactly that.
+    """
+
+    from session_bridge.health import _classify_registered_codes
+
+    assert _classify_registered_codes(
+        [code], capability="claude_visibility"
+    ) == ("error", code)
+
+
+def test_every_store_lineage_code_is_registered_or_deliberately_excluded() -> None:
+    """The drift that caused this defect, pinned against store.py itself.
+
+    All nine lineage failure codes were defined in store.py and none was
+    registered here. A tenth added later would silently reintroduce the same
+    whole-axis collapse, so this reads the constants from source rather than
+    trusting a hand-kept list.
+    """
+
+    import pathlib
+    import re
+
+    from session_bridge.health import _FAILURE_REGISTRY
+
+    store_src = pathlib.Path(
+        __file__
+    ).resolve().parents[2].joinpath("session_bridge", "store.py").read_text(
+        encoding="utf-8"
+    )
+    defined = set(
+        re.findall(r'_CLAUDE_LINEAGE_[A-Z_]+\s*=\s*"([a-z_]+)"', store_src)
+    )
+    assert LINEAGE_CURSOR_OPERATION in defined, (
+        "the cursor-operation constant moved; re-check whether it is still not a "
+        "failure code before relaxing this guard"
+    )
+
+    unregistered = sorted(
+        code
+        for code in defined - {LINEAGE_CURSOR_OPERATION}
+        if ("claude_visibility", code) not in _FAILURE_REGISTRY
+    )
+    assert not unregistered, (
+        "these lineage codes are defined in store.py but unregistered here, so any "
+        "one of them collapses the whole claude_visibility axis: %s" % unregistered
+    )

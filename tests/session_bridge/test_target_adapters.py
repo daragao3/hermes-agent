@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
+from itertools import count
 import hashlib
 import json
 import os
@@ -30,6 +31,8 @@ from session_bridge.claude_adapter import (
     resolve_claude_command,
 )
 from session_bridge.codex_adapter import (
+    _REQUEST_TIMEOUT,
+    _SIDEBAR_READ_REQUEST_TIMEOUT,
     CodexSourceAdapter,
     CodexTargetAdapter,
     SidebarThreadVerifier,
@@ -289,6 +292,7 @@ class StructuralSidebarInventory:
 class MutableSidebarInventory:
     def __init__(self) -> None:
         self.visible = False
+        self.cwd: str | None = None
         self.list_deadlines: list[float | None] = []
         self.read_deadlines: list[float | None] = []
         self.summary = SimpleNamespace(native_id=CODEX_ID)
@@ -312,7 +316,7 @@ class MutableSidebarInventory:
             provider=Provider.CODEX,
             native_id=summary.native_id,
             title="Shared task",
-            cwd=None,
+            cwd=self.cwd,
             started_at=0.0,
             last_active=0.0,
             messages=(
@@ -775,9 +779,18 @@ def test_sidebar_marker_lookup_thread_cap_stops_before_thread_reads() -> None:
     assert all(method != "thread/read" for method, _, _ in client.calls)
 
 
+# Past any read budget. These deadline tests used to reach exhaustion by setting
+# a 1.0s reconciliation_interval; the read deadline no longer derives from the
+# interval, so they drive the read budget directly.
+def _past_read_budget() -> float:
+    return SidebarThreadVerifier._READ_BUDGET_SECONDS + 1.0
+
+
 def test_sidebar_marker_lookup_deadline_before_list_makes_no_request() -> None:
     client = FakeRequestClient({})
-    source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 2.0)
+    source = CodexSourceAdapter(
+        client, marker_secret=SECRET, monotonic=_past_read_budget
+    )
     verifier = SidebarThreadVerifier(
         source,
         marker_secret=SECRET,
@@ -794,7 +807,8 @@ def test_sidebar_marker_lookup_deadline_before_list_makes_no_request() -> None:
 
 def test_zero_interval_sidebar_lookup_still_has_finite_read_budget() -> None:
     client = FakeRequestClient({})
-    source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 31.0)
+    exhausted = SidebarThreadVerifier._READ_BUDGET_SECONDS + 1.0
+    source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: exhausted)
     verifier = SidebarThreadVerifier(
         source,
         marker_secret=SECRET,
@@ -834,7 +848,7 @@ def test_sidebar_marker_lookup_deadline_after_list_is_retryable() -> None:
 def test_sidebar_marker_lookup_deadline_between_list_and_read_never_false_zero() -> (
     None
 ):
-    ticks = iter((0.0, 0.0, 0.0, 0.0, 2.0))
+    ticks = iter((0.0, 0.0, 0.0, 0.0, _past_read_budget()))
     client = FakeRequestClient({
         "thread/list": [_codex_inventory(), {"data": []}],
     })
@@ -858,7 +872,7 @@ def test_sidebar_marker_lookup_deadline_between_list_and_read_never_false_zero()
 
 
 def test_sidebar_marker_lookup_deadline_after_read_is_retryable_not_a_match() -> None:
-    ticks = iter((0.0, 0.0, 0.0, 0.0, 0.0, 2.0))
+    ticks = iter((0.0, 0.0, 0.0, 0.0, 0.0, _past_read_budget()))
     client = FakeRequestClient({
         "thread/list": [_codex_inventory(), {"data": []}],
         "thread/read": [_codex_signed_read()],
@@ -948,8 +962,11 @@ def test_sidebar_compatibility_lookup_bypasses_inventory_snapshot() -> None:
         monotonic=lambda: now[0],
     )
 
+    budget = SidebarThreadVerifier._READ_BUDGET_SECONDS
+
+    # Deadlines track the READ BUDGET, not the 600s reconciliation interval.
     assert verifier.find_by_marker(_sidebar_expected()) is None
-    assert inventory.list_deadlines == [600.0]
+    assert inventory.list_deadlines == [budget]
 
     inventory.visible = True
     now[0] = 29.0
@@ -958,7 +975,7 @@ def test_sidebar_compatibility_lookup_bypasses_inventory_snapshot() -> None:
         "claude:source-1",
         "bridge-1",
     )
-    assert inventory.list_deadlines == [600.0, 629.0]
+    assert inventory.list_deadlines == [budget, 29.0 + budget]
 
     now[0] = 31.0
     assert verifier.find_by_marker(_sidebar_expected()) == VerifiedSidebarThread(
@@ -966,8 +983,8 @@ def test_sidebar_compatibility_lookup_bypasses_inventory_snapshot() -> None:
         "claude:source-1",
         "bridge-1",
     )
-    assert inventory.list_deadlines == [600.0, 629.0, 631.0]
-    assert inventory.read_deadlines == [629.0, 631.0]
+    assert inventory.list_deadlines == [budget, 29.0 + budget, 31.0 + budget]
+    assert inventory.read_deadlines == [29.0 + budget, 31.0 + budget]
 
 
 @pytest.mark.parametrize(
@@ -1141,255 +1158,80 @@ def test_sidebar_marker_compatibility_lookups_both_include_archived() -> None:
     ]
 
 
-def test_sidebar_recovery_key_lookup_returns_one_exact_native_thread(
-    tmp_path: Path,
-) -> None:
-    recovery_key = "hermes-session-bridge-create-v1:exact-recovery-key"
-    row = _codex_inventory(cwd=str(tmp_path.resolve()))["data"][0]
-    row["threadSource"] = recovery_key
-    client = FakeRequestClient({
-        "thread/list": [{"data": [row]}, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
+# find_by_recovery_key's tests lived here. It matched a thread_source field the
+# Codex app-server never returns, so the nine cases below it -- pagination depth,
+# malformed thread_source metadata, conflicting aliases -- were all exercising an
+# enumeration path that no longer exists. Recovery is keyed on the signed marker
+# now; what survives is the contract, retested against that oracle.
+
+
+def _marker_recovery_verifier(inventory: MutableSidebarInventory):
+    return SidebarThreadVerifier(
+        inventory,
         marker_secret=SECRET,
         reconciliation_interval=0,
         monotonic=lambda: 0.0,
     )
 
-    assert (
-        verifier.find_by_recovery_key(
-            recovery_key,
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-        == CODEX_ID
-    )
-    assert [method for method, _, _ in client.calls] == [
-        "thread/list",
-        "thread/list",
-    ]
 
-
-def test_sidebar_recovery_key_lookup_returns_none_after_complete_zero_scan(
+def test_marker_recovery_returns_the_thread_in_the_expected_cwd(
     tmp_path: Path,
 ) -> None:
-    client = FakeRequestClient({
-        "thread/list": [{"data": []}, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
+    inventory = MutableSidebarInventory()
+    inventory.visible = True
+    inventory.cwd = str(tmp_path.resolve())
+
+    recovered = _marker_recovery_verifier(inventory).recover_reserved_thread_by_marker(
+        _sidebar_expected(),
+        expected_cwd=str(tmp_path),
     )
 
-    assert (
-        verifier.find_by_recovery_key(
-            "hermes-session-bridge-create-v1:absent",
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-        is None
-    )
-    assert [method for method, _, _ in client.calls] == [
-        "thread/list",
-        "thread/list",
-    ]
+    assert recovered == CODEX_ID
 
 
-def test_sidebar_recovery_key_lookup_scales_past_fifty_inventory_pages(
-    tmp_path: Path,
-) -> None:
-    active_pages = [
-        {"data": [], "nextCursor": f"active-{index + 1}"}
-        for index in range(50)
-    ]
-    active_pages.append({"data": []})
-    client = FakeRequestClient({
-        "thread/list": [*active_pages, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
+def test_marker_recovery_returns_none_when_absence_is_proven(tmp_path: Path) -> None:
+    inventory = MutableSidebarInventory()
+    inventory.visible = False
+
+    recovered = _marker_recovery_verifier(inventory).recover_reserved_thread_by_marker(
+        _sidebar_expected(),
+        expected_cwd=str(tmp_path),
     )
 
-    assert (
-        verifier.find_by_recovery_key(
-            "hermes-session-bridge-create-v1:absent-at-scale",
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-        is None
-    )
-    assert [method for method, _, _ in client.calls] == ["thread/list"] * 52
+    assert recovered is None
 
 
-def test_sidebar_recovery_key_lookup_rejects_duplicate_native_threads(
-    tmp_path: Path,
-) -> None:
-    recovery_key = "hermes-session-bridge-create-v1:duplicate"
-    first = _codex_inventory(cwd=str(tmp_path.resolve()))["data"][0]
-    second = _codex_inventory(
-        native_id="33333333-3333-4333-8333-333333333333",
-        cwd=str(tmp_path.resolve()),
-    )["data"][0]
-    first["threadSource"] = recovery_key
-    second["threadSource"] = recovery_key
-    client = FakeRequestClient({
-        "thread/list": [{"data": [first]}, {"data": [second]}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
-    )
+def test_marker_recovery_rejects_a_thread_in_the_wrong_cwd(tmp_path: Path) -> None:
+    """Recovering a thread created elsewhere would bind the bridge to the wrong
+    workspace, so an authenticated marker is not sufficient on its own."""
 
-    with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            recovery_key,
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-
-    assert raised.value.code == "codex_thread_conflict"
-
-
-def test_sidebar_recovery_key_lookup_rejects_matching_thread_in_wrong_cwd(
-    tmp_path: Path,
-) -> None:
-    recovery_key = "hermes-session-bridge-create-v1:wrong-cwd"
     observed_cwd = tmp_path / "observed"
     expected_cwd = tmp_path / "expected"
     observed_cwd.mkdir()
     expected_cwd.mkdir()
-    row = _codex_inventory(cwd=str(observed_cwd.resolve()))["data"][0]
-    row["threadSource"] = recovery_key
-    client = FakeRequestClient({
-        "thread/list": [{"data": [row]}, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
-    )
+    inventory = MutableSidebarInventory()
+    inventory.visible = True
+    inventory.cwd = str(observed_cwd.resolve())
 
     with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            recovery_key,
+        _marker_recovery_verifier(inventory).recover_reserved_thread_by_marker(
+            _sidebar_expected(),
             expected_cwd=str(expected_cwd),
-            deadline=30.0,
         )
 
     assert raised.value.code == "codex_thread_conflict"
 
 
-def test_sidebar_recovery_key_lookup_rejects_source_cwd_instead_of_inbox(
-    tmp_path: Path,
-) -> None:
-    recovery_key = "hermes-session-bridge-create-v1:source-instead-of-inbox"
-    inbox_cwd = tmp_path / "inbox"
-    source_cwd = tmp_path / "source"
-    inbox_cwd.mkdir()
-    source_cwd.mkdir()
-    row = _codex_inventory(cwd=str(source_cwd.resolve()))["data"][0]
-    row["threadSource"] = recovery_key
-    client = FakeRequestClient({
-        "thread/list": [{"data": [row]}, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
-    )
+def test_marker_recovery_rejects_a_malformed_expected_cwd() -> None:
+    inventory = MutableSidebarInventory()
+    inventory.visible = True
 
-    with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            recovery_key,
-            expected_cwd=str(inbox_cwd.resolve()),
-            deadline=30.0,
-        )
-
-    assert raised.value.code == "codex_thread_conflict"
-
-
-def test_sidebar_recovery_key_lookup_never_returns_zero_after_incomplete_pagination(
-    tmp_path: Path,
-) -> None:
-    client = FakeRequestClient({
-        "thread/list": [{"data": [], "nextCursor": "more"}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        inventory_page_cap=1,
-        monotonic=lambda: 0.0,
-    )
-
-    with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            "hermes-session-bridge-create-v1:unknown",
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-
-    assert raised.value.code == "bridge_temporarily_unavailable"
-
-
-def test_sidebar_recovery_key_lookup_never_returns_zero_for_malformed_metadata(
-    tmp_path: Path,
-) -> None:
-    malformed = _codex_inventory(cwd=str(tmp_path.resolve()))["data"][0]
-    malformed["threadSource"] = 7
-    client = FakeRequestClient({
-        "thread/list": [{"data": [malformed]}, {"data": []}],
-    })
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
-    )
-
-    with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            "hermes-session-bridge-create-v1:unknown",
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-
-    assert raised.value.code == "bridge_temporarily_unavailable"
-
-
-def test_sidebar_recovery_key_lookup_rejects_conflicting_thread_source_aliases(
-    tmp_path: Path,
-) -> None:
-    recovery_key = "hermes-session-bridge-create-v1:metadata-conflict"
-    conflicting = _codex_inventory(cwd=str(tmp_path.resolve()))["data"][0]
-    conflicting["threadSource"] = recovery_key
-    conflicting["thread_source"] = "different-source"
-    client = FakeRequestClient({"thread/list": [{"data": [conflicting]}]})
-    verifier = SidebarThreadVerifier(
-        CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0),
-        marker_secret=SECRET,
-        reconciliation_interval=0,
-        monotonic=lambda: 0.0,
-    )
-
-    with pytest.raises(SidebarVerificationError) as raised:
-        verifier.find_by_recovery_key(
-            recovery_key,
-            expected_cwd=str(tmp_path),
-            deadline=30.0,
-        )
-
-    assert raised.value.code == "codex_thread_conflict"
+    for bad in ("", "   ", "relative/path"):
+        with pytest.raises(ValueError):
+            _marker_recovery_verifier(inventory).recover_reserved_thread_by_marker(
+                _sidebar_expected(),
+                expected_cwd=bad,
+            )
 
 
 def test_codex_thread_source_metadata_is_normalized_and_reconciled_exactly(
@@ -3442,7 +3284,7 @@ def test_codex_exact_discovery_can_include_sidebar_and_app_server_threads() -> N
                 "archived": False,
                 "sourceKinds": ["vscode", "appServer"],
             },
-            30.0,
+            _SIDEBAR_READ_REQUEST_TIMEOUT,
         )
     ]
 
@@ -3476,7 +3318,7 @@ def test_codex_exact_discovery_can_use_the_bounded_state_database() -> None:
                 "useStateDbOnly": True,
                 "sourceKinds": ["vscode", "appServer"],
             },
-            30.0,
+            _SIDEBAR_READ_REQUEST_TIMEOUT,
         )
     ]
 
@@ -6118,3 +5960,136 @@ def test_sidebar_budget_timeout_is_reported_as_budget_not_transport() -> None:
 
     assert not isinstance(raised.value, TimeoutError)
     assert [method for method, _params, _timeout in client.calls] == ["thread/list"]
+# --- read ceilings: see the block comments on _SIDEBAR_READ_REQUEST_TIMEOUT and
+# --- _READ_BUDGET_SECONDS in codex_adapter.py for the measurements.
+
+# Worst single read-only request observed against a live app-server on
+# 2026-09-01 (a thread/search for a marker prefix). The read ceiling must clear
+# it or find_by_marker_including_archived becomes a coin flip: measured at a
+# 30.0 ceiling with an effectively unbounded budget, it passed 1 of 5 runs and
+# every failure landed exactly on the ceiling.
+_MEASURED_WORST_SIDEBAR_READ_SECONDS = 101.0
+
+# Worst end-to-end find_by_marker_including_archived observed the same day
+# (two searches plus a thread/read per hit).
+_MEASURED_WORST_MARKER_LOOKUP_SECONDS = 47.9
+
+
+def test_sidebar_read_ceiling_clears_the_measured_worst_request() -> None:
+    assert _SIDEBAR_READ_REQUEST_TIMEOUT > _MEASURED_WORST_SIDEBAR_READ_SECONDS
+
+
+def test_sidebar_read_ceiling_did_not_widen_the_creation_timeout() -> None:
+    """Reads got a longer ceiling; thread/start-side calls deliberately did not."""
+
+    assert _REQUEST_TIMEOUT == 30.0
+    assert _SIDEBAR_READ_REQUEST_TIMEOUT > _REQUEST_TIMEOUT
+
+
+def test_bounded_sidebar_read_hands_the_transport_the_read_ceiling() -> None:
+    # two pages consumed: the active kind, then the archived kind
+    client = FakeRequestClient({"thread/list": [_codex_inventory(), {"data": []}]})
+    source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0)
+
+    source.list_sidebar_inventory(deadline=None, page_cap=2)
+
+    assert client.calls, "expected at least one read"
+    assert {timeout for _, _, timeout in client.calls} == {
+        _SIDEBAR_READ_REQUEST_TIMEOUT
+    }
+
+
+def test_bounded_sidebar_read_still_clamps_down_to_a_short_budget() -> None:
+    """A deadline shorter than the ceiling must still win, so a nearly-exhausted
+    budget cannot buy a full-length request."""
+
+    client = FakeRequestClient({"thread/list": [_codex_inventory(), {"data": []}]})
+    source = CodexSourceAdapter(client, marker_secret=SECRET, monotonic=lambda: 0.0)
+
+    source.list_sidebar_inventory(deadline=5.0, page_cap=1)
+
+    assert client.calls, "expected at least one read"
+    assert {timeout for _, _, timeout in client.calls} == {5.0}
+
+
+def test_read_budget_accommodates_a_full_marker_lookup() -> None:
+    """The read budget must outlast the measured worst lookup.
+
+    At the previous 30.0 the two-search marker lookup could not fit and failed
+    closed as bridge_temporarily_unavailable on every live run.
+    """
+
+    budget = SidebarThreadVerifier._READ_BUDGET_SECONDS
+    assert budget > _MEASURED_WORST_MARKER_LOOKUP_SECONDS
+
+    # And behaviourally: a clock already past the OLD budget must no longer
+    # refuse before issuing a request.
+    client = FakeRequestClient({"thread/list": [_codex_inventory(), {"data": []}]})
+    source = CodexSourceAdapter(
+        client, marker_secret=SECRET, monotonic=lambda: _MEASURED_WORST_MARKER_LOOKUP_SECONDS
+    )
+    verifier = SidebarThreadVerifier(
+        source,
+        marker_secret=SECRET,
+        reconciliation_interval=0,
+        monotonic=lambda: 0.0,
+    )
+
+    with pytest.raises(SidebarVerificationError):
+        verifier.find_by_marker(_sidebar_expected())
+
+    # At the previous 30.0 budget this clock refused before issuing anything;
+    # now it gets through both inventory kinds and into the thread read.
+    assert [method for method, _, _ in client.calls] == [
+        "thread/list",
+        "thread/list",
+        "thread/read",
+    ]
+def test_read_budget_is_independent_of_the_reconciliation_interval() -> None:
+    """A short reconciliation_interval must not shorten a read.
+
+    reconcile_seconds is the reconciliation LOOP CADENCE (coordinator.py). It used
+    to double as the read deadline, so the service verifier capped its reads at
+    its own cadence -- a read that legitimately needed 40s was abandoned at 30s.
+    Widening it meant slowing the loop. These are now separate.
+    """
+
+    inventory = MutableSidebarInventory()
+    inventory.visible = True
+    verifier = SidebarThreadVerifier(
+        inventory,
+        marker_secret=SECRET,
+        reconciliation_interval=1.0,
+        monotonic=lambda: 0.0,
+    )
+
+    assert verifier.find_by_marker(_sidebar_expected()) is not None
+    assert inventory.list_deadlines == [SidebarThreadVerifier._READ_BUDGET_SECONDS]
+
+
+def test_poll_window_still_follows_the_reconciliation_interval() -> None:
+    """The interval keeps its real job: how long to KEEP RETRYING.
+
+    Guards against the decoupling being taken too far and turning the poll window
+    into the read budget as well, which would make a never-indexed thread block
+    for the whole budget instead of the cadence.
+    """
+
+    slept: list[float] = []
+    clock = count(0.0, 0.5)
+    inventory = MutableSidebarInventory()
+    verifier = SidebarThreadVerifier(
+        inventory,
+        marker_secret=SECRET,
+        reconciliation_interval=2.0,
+        poll_interval=0.5,
+        monotonic=lambda: next(clock),
+        sleep=slept.append,
+    )
+
+    with pytest.raises(SidebarVerificationError) as raised:
+        verifier.verify_thread(thread_id=CODEX_ID, expected=_sidebar_expected())
+
+    assert raised.value.code == "native_task_not_indexed"
+    # Bounded by the 2.0s poll window, never by the 150s read budget.
+    assert slept and all(nap <= 2.0 for nap in slept)

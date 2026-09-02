@@ -244,19 +244,20 @@ class _Verifier:
             fixed_reason=None,
         )
 
-    def find_by_recovery_key(
+    def recover_reserved_thread_by_marker(
         self,
-        recovery_key: str,
+        expected: BridgeMarkerPayload,
         *,
         expected_cwd: str,
-        deadline: float,
     ) -> str | None:
-        assert deadline > 0
         assert expected_cwd == _INBOX_CWD
+        # Recovery is keyed on the signed marker now, so the world's own
+        # thread->payload map IS the oracle. recovery_keys stays populated: it is
+        # still the ledger reservation's identity, just no longer a thread lookup.
         matches = [
             thread_id
-            for thread_id, key in self._world.recovery_keys.items()
-            if key == recovery_key
+            for thread_id, payload in self._world.threads.items()
+            if payload == expected
         ]
         assert len(matches) <= 1
         return matches[0] if matches else None
