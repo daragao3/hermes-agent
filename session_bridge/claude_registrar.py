@@ -2624,6 +2624,41 @@ def _interactive_prompt_frame(prompt: str) -> str:
     return f"\x1b[200~{prompt}\x1b[201~"
 
 
+# Sentence punctuation a compliant acknowledgement may carry. The registration
+# prompt reads "You must reply exactly REGISTERED." -- a sentence that itself
+# ends in a full stop -- so a model cannot tell whether the stop belongs to the
+# token or to the instruction. Answering "REGISTERED." is the prompt's ambiguity,
+# not misbehaviour, and an exact equality charged a paid attempt for it: measured
+# 2026-09-01 against the production argv and the real prompt, 4 of 10 attempts
+# answered "REGISTERED." and every one was rejected, so the read loop never
+# latched a candidate, burned its whole budget, and the attempt was classified
+# main_repl_without_prompt_echo.
+#
+# "?" is deliberately NOT here: "REGISTERED?" is a question, not an assertion
+# that registration happened.
+_REGISTERED_TRAILING_PUNCTUATION = ".!…"
+
+
+def _is_registered_line(line: str) -> bool:
+    """True when one drawn line is the REGISTERED acknowledgement.
+
+    Only TRAILING sentence punctuation is forgiven -- everything before it must
+    still be exactly the token, so "NOT REGISTERED.", "UNREGISTERED." and
+    "REGISTERED FAILED" are refused exactly as before. This widens what counts
+    as an acknowledgement, never what counts as an identity: the binding is
+    proved by the signed marker and the exact reserved UUID, and this token only
+    confirms the model answered.
+    """
+
+    return (
+        line.rstrip(_REGISTERED_TRAILING_PUNCTUATION + " \t") == "REGISTERED"
+    )
+
+
+def _is_registered_only(lines: list[str]) -> bool:
+    return len(lines) == 1 and _is_registered_line(lines[0])
+
+
 def _has_exact_registered_response(output: str, prompt: str) -> bool:
     if not isinstance(output, str) or len(output) > _MAX_RESPONSE_CHARS:
         return False
@@ -2633,7 +2668,7 @@ def _has_exact_registered_response(output: str, prompt: str) -> bool:
         # Unwelding the rows is not enough on its own: the answer still shares
         # the capture with the whole screen, so the check below could only ever
         # fail on a drawn frame. Score what Claude drew as its message instead.
-        return drawn == ["REGISTERED"]
+        return _is_registered_only(drawn)
     prompt_lines = {line.strip() for line in prompt.splitlines()}
     meaningful: list[str] = []
     for raw in cleaned.splitlines():
@@ -2645,7 +2680,7 @@ def _has_exact_registered_response(output: str, prompt: str) -> bool:
             continue
         if line:
             meaningful.append(line)
-    return meaningful == ["REGISTERED"]
+    return _is_registered_only(meaningful)
 
 
 def _prompt_input_registered_response(
@@ -2679,7 +2714,7 @@ def _registered_suffix(output: str, *, require_complete: bool) -> str | None:
     stream_ended_on_a_line_break = output.endswith(("\r", "\n"))
     for index, raw in enumerate(lines):
         line = _strip_line_marker(raw.strip())
-        if line == "REGISTERED":
+        if _is_registered_line(line):
             if require_complete and not (
                 stream_ended_on_a_line_break
                 or any(remainder.strip() for remainder in lines[index + 1 :])

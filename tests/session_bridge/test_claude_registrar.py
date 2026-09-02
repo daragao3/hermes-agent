@@ -4676,3 +4676,49 @@ def test_materialize_claim_accepts_pre_rotation_signed_marker_via_retired_keys()
     result = pinned.process(item)
     assert result.status == "failed"
     assert result.error_code == "bridge_conflict"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["REGISTERED.", "REGISTERED!", "REGISTERED ", "REGISTERED...", "REGISTERED. "],
+)
+def test_registered_reply_is_accepted_with_trailing_punctuation(reply: str) -> None:
+    """A compliant answer must not be rejected on a full stop.
+
+    The registration prompt says "You must reply exactly REGISTERED." -- a
+    sentence that itself ends in a full stop, so a model cannot tell whether
+    the stop belongs to the token or the sentence. Measured live 2026-09-01
+    with a standalone PTY harness driving the production argv and the real
+    prompt: 4 of 10 attempts had the model answer literally "REGISTERED." and
+    every one was rejected by the exact equality, so the read loop never
+    latched, burned its whole budget, and the attempt was classified
+    main_repl_without_prompt_echo -- a paid failure caused by punctuation.
+    """
+
+    frame = f"\x1b[?2004h> \r\n{reply}\r\n"
+    assert _has_exact_registered_response(frame, "prompt") is True
+    assert _exact_registered_suffix(frame) is not None
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "NOT REGISTERED.",
+        "REGISTERED FAILED",
+        "REGISTERED?",
+        "UNREGISTERED.",
+        "REGISTERED elsewhere.",
+        "already REGISTERED.",
+    ],
+)
+def test_registered_matcher_still_refuses_anything_but_the_token(reply: str) -> None:
+    """Tolerating a trailing stop must not tolerate a different answer.
+
+    Only TRAILING sentence punctuation is forgiven; the rest of the line has
+    to be exactly the token. A question mark is deliberately NOT forgiven --
+    "REGISTERED?" is not an assertion that registration happened.
+    """
+
+    frame = f"\x1b[?2004h> \r\n{reply}\r\n"
+    assert _has_exact_registered_response(frame, "prompt") is False
+    assert _exact_registered_suffix(frame) is None
