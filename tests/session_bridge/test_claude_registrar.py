@@ -37,6 +37,7 @@ from session_bridge.claude_registrar import (
     _known_claude_input_modal_visible,
     _exact_registered_suffix,
     _has_exact_registered_response,
+    _is_exact_registered_text,
     _is_provider_limit_failure,
     _normalized_terminal_output,
     _prompt_input_registered_response,
@@ -4722,3 +4723,30 @@ def test_registered_matcher_still_refuses_anything_but_the_token(reply: str) -> 
     frame = f"\x1b[?2004h> \r\n{reply}\r\n"
     assert _has_exact_registered_response(frame, "prompt") is False
     assert _exact_registered_suffix(frame) is None
+
+
+@pytest.mark.parametrize("reply", ["REGISTERED.", "REGISTERED!", "REGISTERED..."])
+def test_registered_tolerance_reaches_the_final_validation_gate(reply: str) -> None:
+    """The read-loop gate and the commit gate must agree on what counts.
+
+    _is_exact_registered_text is the LAST check in _validate_projection.
+    Widening only _has_exact_registered_response (45bf4db290) split the two:
+    a punctuated answer latched in the read loop, got /exit written, reached
+    _validate_and_commit -- and was rejected at the final line with
+    bridge_conflict, which is FATAL, where the pre-fix path timed out to
+    creation_ambiguous, which is RETRYABLE. That converted a slow retryable
+    failure into a fast terminal one for exactly the case the fix targeted,
+    and with max_attempts=2 it kills the job on attempt 1. The two gates must
+    move together.
+    """
+
+    frame = f"\x1b[?2004h> \r\n{reply}\r\n"
+    assert _has_exact_registered_response(frame, "prompt") is True
+    assert _is_exact_registered_text(reply) is True
+
+
+@pytest.mark.parametrize(
+    "reply", ["NOT REGISTERED.", "UNREGISTERED.", "REGISTERED?", "REGISTERED FAILED"]
+)
+def test_final_validation_gate_still_refuses_anything_but_the_token(reply: str) -> None:
+    assert _is_exact_registered_text(reply) is False
