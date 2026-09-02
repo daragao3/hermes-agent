@@ -562,6 +562,64 @@ _AUTOMATION_CWD_PATTERN = re.compile(
 # First words of chip titles (imperative briefs). Deliberately conservative:
 # a bypassPermissions session whose title starts outside this set is treated
 # as the user's unless its cwd is an automation workspace.
+# Scheduled-task fires are the OTHER automation shape, and they are invisible to
+# both tests above by construction: the task runs in a REPO ROOT (no worktree, no
+# profile path) and the app titles the session from the taskId, so the first word
+# is a noun ("Capone ...", "Financier ...", "Fleet ..."), never an imperative verb.
+# Measured 2026-09-02 over the live convergence store: _is_chip() was False on
+# 7/7 unarchived scheduledTaskId records, while every one of them DID carry
+# bypassPermissions. Each fire strands a record that never exits -- one task on a
+# `15 1,4,7,10,13,16,19,22 * * *` cron is eight stranded records a day, and
+# fifa-kickoff reached 78 before a one-off hand sweep on 2026-08-23 cleared them.
+_SCHEDULED_TASK_FIELD = "scheduledTaskId"
+_KIND_CHIP = "chip"
+_KIND_TASK = "task"
+# A record the harness marked as errored is left for a human: an errored fire is
+# the shape most likely to have ended BLOCKED or without writing its capture, and
+# those are exactly the records that must stay visible in the sidebar.
+_ERROR_FIELDS = ("error", "errorAt")
+# Open-loop claim registry. A session holding an OPEN claim is still on the hook
+# for that target however idle it looks, so its record must stay visible.
+_CLAIM_HOLDER_PREFIX = "ccd:"
+_CLOSED_CLAIM_STATUSES = frozenset({"done", "closed"})
+
+
+def default_loops_registry_path() -> Path:
+    return Path.home() / ".hermes" / "loops" / "claims.json"
+
+
+def read_open_claim_session_ids(path: Path) -> frozenset[str] | None:
+    """Session ids holding an OPEN loops claim, or ``None`` if unreadable.
+
+    ``None`` is NOT "no claims" — it is "the registry could not be read", and the
+    caller must treat it the way ``loops.py check`` treats its exit 4: an
+    unreadable registry is not a green gate, because holders may be invisible
+    rather than absent. That distinction is the whole reason this returns an
+    Optional instead of an empty set: on 2026-08-19 an unreadable registry read
+    as EMPTY and a session then wrote its one record over five live claims.
+    """
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(document, list):
+        return None
+    session_ids: set[str] = set()
+    for row in document:
+        if not isinstance(row, Mapping):
+            return None
+        if str(row.get("status", "")).lower() in _CLOSED_CLAIM_STATUSES:
+            continue
+        holders = row.get("holders")
+        if not isinstance(holders, list):
+            continue
+        for holder in holders:
+            session = holder.get("session") if isinstance(holder, Mapping) else None
+            # `pid:<n>` holders name no session and are correctly ignored: a pid
+            # is dead by the time anyone reads it and the number gets reused.
+            if isinstance(session, str) and session.startswith(_CLAIM_HOLDER_PREFIX):
+                session_ids.add(session[len(_CLAIM_HOLDER_PREFIX) :])
+    return frozenset(session_ids)
 _CHIP_TITLE_VERBS = frozenset(
     """
     add adjudicate amend answer apply archive attach audit auto-recover backfill
@@ -598,7 +656,10 @@ class IdleChipArchiveWorker:
     - it ran under ``bypassPermissions`` AND looks automation-shaped: an
       imperative chip-verb title, or an agent-worktree / Hermes-profile cwd
       (the user's own bypass sessions have conversational titles and live
-      cwds, so they are spared);
+      cwds, so they are spared), or it carries ``scheduledTaskId``;
+    - it carries no ``error``/``errorAt`` mark -- an errored record is the
+      shape most likely to have ended blocked on a human or without writing
+      its capture, so it stays visible;
     - the SESSION has been idle past ``idle_seconds`` across every harness
       store copy. Liveness must span all roots read in the same pass: only
       the current-account store updates live, and a union-synced copy's
@@ -612,6 +673,33 @@ class IdleChipArchiveWorker:
     the per-cycle cost tracks recent activity, not store size. Archived
     records are left byte-identical apart from ``isArchived``; nothing is
     ever deleted, and ``run_min_interval_seconds`` throttles full passes.
+
+    Scheduled-task records get their OWN idle window, ``task_idle_seconds``,
+    and the axis is OFF (``None``) unless a caller opts in: nothing inherits a
+    new reaping axis it did not ask for. A shorter window than the chip one is
+    the point — a cron firing eight times a day accumulates eight records
+    inside a single 24h chip window, so a window sized to "this fire is over"
+    rather than "this chip is stale" is what actually bounds the population.
+
+    A session holding an OPEN loops claim is never archived on the task axis:
+    ``open_claim_session_ids`` supplies the holder set, and returning ``None``
+    from it (an unreadable registry) stands the task axis DOWN for that pass.
+    That is deliberately the same reading ``loops.py check`` gives its exit 4 —
+    unreadable is not a green gate, because holders may be invisible rather
+    than absent — and it degrades to the status quo (nothing retires task
+    records), never past it. The guard is scoped to the TASK axis on purpose:
+    making the CHIP lane fail closed on a file that is documented to VANISH on
+    this host would silently stop archiving that already works.
+
+    KNOWN LIMITATION, accepted deliberately (Diego, 2026-09-02). This worker
+    reads registry FILES, and pin state is not in them: the ``pinned`` key
+    appears on 0 of 4,055 records in the live convergence store, because the
+    desktop app holds pins in its own state. So a PINNED scheduled-task
+    session would still be archived here. Judged acceptable because these
+    records are machine-authored cron fires, archiving is reopenable from the
+    Archived list, and a task record carries no ``worktreePath`` (measured:
+    0 of 159), so archive cleanup has nothing to destroy. If pin state ever
+    becomes file-readable, gate on it here.
     """
 
     def __init__(
@@ -619,6 +707,8 @@ class IdleChipArchiveWorker:
         *,
         registry_roots: Iterable[Path],
         idle_seconds: float = 86_400.0,
+        task_idle_seconds: float | None = None,
+        open_claim_session_ids: Callable[[], frozenset[str] | None] | None = None,
         lookback_seconds: float = 14 * 86_400.0,
         run_min_interval_seconds: float = 3600.0,
         monotonic: Callable[[], float] = time.monotonic,
@@ -631,19 +721,35 @@ class IdleChipArchiveWorker:
         idle = float(idle_seconds)
         if not math.isfinite(idle) or idle <= 0:
             raise ValueError("idle_seconds must be finite and positive")
+        task_idle: float | None = None
+        if task_idle_seconds is not None:
+            task_idle = float(task_idle_seconds)
+            if not math.isfinite(task_idle) or task_idle <= 0:
+                raise ValueError(
+                    "task_idle_seconds must be finite and positive, or None to "
+                    "leave scheduled-task records alone"
+                )
         lookback = float(lookback_seconds)
         if not math.isfinite(lookback) or lookback <= 0:
             raise ValueError("lookback_seconds must be finite and positive")
-        if lookback <= idle * 2:
+        # The relation is checked against the WIDEST armed window, not just the
+        # chip one: a task window wider than half the lookback would let task
+        # records age out of the mtime-bounded scan before they ever qualify,
+        # which reads as "the axis is on" while archiving nothing.
+        widest_idle = idle if task_idle is None else max(idle, task_idle)
+        if lookback <= widest_idle * 2:
             raise ValueError(
-                "lookback_seconds must exceed twice idle_seconds; otherwise "
-                "records age past the scan window before they qualify"
+                "lookback_seconds must exceed twice the widest idle window "
+                "(idle_seconds, task_idle_seconds); otherwise records age past "
+                "the scan window before they qualify"
             )
         run_interval = float(run_min_interval_seconds)
         if not math.isfinite(run_interval) or run_interval < 0:
             raise ValueError("run_min_interval_seconds must be finite and non-negative")
         self._registry_roots = roots
         self._idle_seconds = idle
+        self._task_idle_seconds = task_idle
+        self._open_claim_session_ids = open_claim_session_ids
         self._lookback_seconds = lookback
         self._run_min_interval_seconds = run_interval
         self._monotonic = monotonic
@@ -708,10 +814,39 @@ class IdleChipArchiveWorker:
                 "throttled": 0,
             }
 
-        idle_floor_ms = (wall_now - self._idle_seconds) * 1000
+        task_axis = self._task_idle_seconds is not None
+        claimed_session_ids: frozenset[str] = frozenset()
+        if task_axis and self._open_claim_session_ids is not None:
+            claimed = self._open_claim_session_ids()
+            if claimed is None:
+                # Unreadable registry: stand the task axis down for this pass
+                # rather than archive past holders we simply cannot see. That
+                # restores today's behaviour (nothing retires task records), so
+                # a missing claims.json degrades to the status quo, never past it.
+                task_axis = False
+            else:
+                claimed_session_ids = claimed
+        idle_floor_by_kind = {
+            _KIND_CHIP: (wall_now - self._idle_seconds) * 1000,
+        }
+        if task_axis and self._task_idle_seconds is not None:
+            idle_floor_by_kind[_KIND_TASK] = (
+                wall_now - self._task_idle_seconds
+            ) * 1000
         for path, data, key in records:
-            if data.get("isArchived") or not self._is_chip(data):
+            kind = self._record_kind(data, task_axis=task_axis)
+            if data.get("isArchived") or kind not in idle_floor_by_kind:
                 continue
+            # Checked ONCE, here, and deliberately not repeated inside
+            # archive_if_still_eligible. The other guards are re-checked at
+            # write time because their inputs (isArchived, lastActivityAt) live
+            # in files Desktop can rewrite mid-pass. This one cannot change:
+            # claimed_session_ids is frozen for the pass, and _group_key already
+            # rejects a record whose sessionId moved under us. A re-check here
+            # would be unreachable-by-construction code shaped like a guard.
+            if self._holds_open_claim(data, claimed_session_ids):
+                continue
+            idle_floor_ms = idle_floor_by_kind[kind]
             if key not in group_last_ms or group_last_ms[key] >= idle_floor_ms:
                 continue
             # Re-read every copy immediately before each mutation. Do not cache
@@ -722,8 +857,19 @@ class IdleChipArchiveWorker:
 
             def archive_if_still_eligible(
                 current: MutableMapping[str, Any],
+                *,
+                kind: str = kind,
+                idle_floor_ms: float = idle_floor_ms,
             ) -> bool:
-                if current.get("isArchived") or not self._is_chip(current):
+                # Re-derive the kind from the record as it is NOW. A record
+                # whose classification moved under us (title edited, error
+                # stamped) is a skip, not a re-classification: the idle floor
+                # was chosen for the kind we saw, and applying it to another
+                # kind would archive on the wrong window.
+                if (
+                    current.get("isArchived")
+                    or self._record_kind(current, task_axis=task_axis) != kind
+                ):
                     return False
                 if self._group_key(current, path.name) != key:
                     return False
@@ -790,18 +936,57 @@ class IdleChipArchiveWorker:
         return latest
 
     @staticmethod
-    def _is_chip(data: Mapping[str, Any]) -> bool:
+    def _holds_open_claim(
+        data: Mapping[str, Any],
+        claimed_session_ids: frozenset[str],
+    ) -> bool:
+        if not claimed_session_ids:
+            return False
+        session_id = data.get("sessionId")
+        return isinstance(session_id, str) and session_id in claimed_session_ids
+
+    @classmethod
+    def _record_kind(
+        cls,
+        data: Mapping[str, Any],
+        *,
+        task_axis: bool,
+    ) -> str | None:
+        """Classify a registry record as ``chip``, ``task``, or not ours.
+
+        With the task axis ARMED, ``task`` wins over ``chip`` when both would
+        match: the two kinds are archived on different idle windows, and a
+        scheduled-task record is a task first — its title happening to start
+        with a chip verb ("Check ...", "Verify ...") says nothing about the
+        shorter window a cron fire deserves.
+
+        With the task axis OFF, ``scheduledTaskId`` is ignored entirely and the
+        record falls through to the chip tests exactly as before. That matters:
+        a handful of task titles DO start with a chip verb
+        (``check-329-kill-row-verdict``), and letting the disabled axis claim
+        them would silently NARROW chip coverage instead of leaving it alone.
+        """
         title = data.get("title")
         title = title.strip() if isinstance(title, str) else ""
         if _MIRROR_TAG_PATTERN.match(title):
-            return False
+            return None
         if data.get("permissionMode") != "bypassPermissions":
-            return False
+            return None
+        if any(data.get(field) is not None for field in _ERROR_FIELDS):
+            return None
+        if task_axis:
+            task_id = data.get(_SCHEDULED_TASK_FIELD)
+            if isinstance(task_id, str) and task_id.strip():
+                return _KIND_TASK
         first_word = title.split(" ", 1)[0].rstrip(":,.").lower() if title else ""
         if first_word in _CHIP_TITLE_VERBS:
-            return True
+            return _KIND_CHIP
         for field in ("cwd", "originCwd"):
             value = data.get(field)
             if isinstance(value, str) and _AUTOMATION_CWD_PATTERN.search(value):
-                return True
-        return False
+                return _KIND_CHIP
+        return None
+
+    @classmethod
+    def _is_chip(cls, data: Mapping[str, Any]) -> bool:
+        return cls._record_kind(data, task_axis=False) == _KIND_CHIP

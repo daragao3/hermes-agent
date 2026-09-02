@@ -90,8 +90,10 @@ from .desktop_registry_worker import DesktopRegistrySyncWorker
 from .mirror_float import (
     ClaudeMirrorFloatWorker,
     IdleChipArchiveWorker,
+    default_loops_registry_path,
     discover_ccd_convergence_roots,
     discover_ccd_registry_roots,
+    read_open_claim_session_ids,
 )
 from .mirror import (
     BatchProgress,
@@ -3981,6 +3983,17 @@ class ProductionBackend:
                     registry_roots=discover_ccd_convergence_roots(),
                     idle_seconds=float(
                         effective_config.claude_visibility.idle_chip_archive_seconds
+                    ),
+                    task_idle_seconds=(
+                        None
+                        if effective_config.claude_visibility.idle_task_session_archive_seconds
+                        is None
+                        else float(
+                            effective_config.claude_visibility.idle_task_session_archive_seconds
+                        )
+                    ),
+                    open_claim_session_ids=lambda: read_open_claim_session_ids(
+                        default_loops_registry_path()
                     ),
                 )
                 if (

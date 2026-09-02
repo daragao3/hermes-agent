@@ -221,6 +221,12 @@ class ClaudeVisibilityConfig:
     archive_idle_chips: bool = False
     reconcile_desktop_registries: bool = False
     idle_chip_archive_seconds: int = 86_400
+    # Scheduled-task fire records (``scheduledTaskId``, no worktree) get their
+    # own, shorter idle window. ``None`` = axis OFF, so nothing inherits a new
+    # reaping axis it did not ask for; set it to opt in. A cron firing eight
+    # times a day stacks eight records inside one 24h chip window, which is why
+    # this is a separate, smaller number rather than a reuse of the chip one.
+    idle_task_session_archive_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -323,6 +329,7 @@ class BridgeConfig:
                 "archive_idle_chips",
                 "reconcile_desktop_registries",
                 "idle_chip_archive_seconds",
+                "idle_task_session_archive_seconds",
             }),
             scope="session_bridge.claude_visibility",
         )
@@ -793,6 +800,14 @@ class BridgeConfig:
                 "session_bridge.claude_visibility.idle_chip_archive_seconds",
                 minimum=3600,
             ),
+            idle_task_session_archive_seconds=_optional_toml_int(
+                claude_visibility.get(
+                    "idle_task_session_archive_seconds",
+                    claude_visibility_defaults.idle_task_session_archive_seconds,
+                ),
+                "session_bridge.claude_visibility.idle_task_session_archive_seconds",
+                minimum=600,
+            ),
         )
         if claude_visibility_config.continuous_batch_limit != 1:
             raise ValueError(
@@ -919,6 +934,24 @@ def _toml_int(
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"{name} must be an integer")
     return _validate_int(value, name, minimum=minimum, maximum=maximum)
+
+
+def _optional_toml_int(
+    value: object,
+    name: str,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int | None:
+    """An integer setting whose explicit ``null`` means OFF.
+
+    ``_toml_int`` cannot express this: an Optional-defaulted field reaches it
+    as ``None`` and it raises "must be an integer" on the very value that means
+    "leave this axis disarmed".
+    """
+    if value is None:
+        return None
+    return _toml_int(value, name, minimum=minimum, maximum=maximum)
 
 
 def _positive_decimal(value: object, name: str) -> Decimal:
