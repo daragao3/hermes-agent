@@ -234,6 +234,24 @@ class TestJobflowApprovedRelease:
         canonical = tmp_path / "pipeline.json"
         canonical.write_text(json.dumps({"jobs": []}), encoding="utf-8")
         monkeypatch.setattr(m, "CANONICAL_PATH", canonical)
+        # ALIAS_SNAPSHOT_PATH must be isolated for the same reason CANONICAL_PATH
+        # is. main() binds the alias snapshot against the pipeline it just read,
+        # and this fixture's pipeline is deliberately EMPTY -- so pointing at the
+        # real ~/.hermes/runtime snapshot proves every armed target against zero
+        # candidate rows and raises JobIdentityError("... is missing or
+        # contested") before any assertion here runs.
+        #
+        # This was latent: the tests passed while that file was absent or
+        # disarmed, then began failing once postgres-sync (which freezes the
+        # snapshot) started publishing an armed one. That is a host-state
+        # dependency, not a product defect -- these four tests cover the
+        # silent-idle output contract, not alias binding, which has its own
+        # dedicated suites in the ~/.hermes repo (test_postgres_sync_alias_snapshot
+        # and the test_jobflow_identity_* family).
+        #
+        # Point it at a path that does not exist so main() takes its documented
+        # `else EMPTY_ALIASES` branch -- the state a clean host is in.
+        monkeypatch.setattr(m, "ALIAS_SNAPSHOT_PATH", tmp_path / "absent-alias-snapshot.json")
         monkeypatch.setattr(m, "already_requested_ids", lambda *args, **kwargs: set())
         monkeypatch.setattr(m, "mirror_approved_ids", lambda *args, **kwargs: set())
         monkeypatch.setattr(m, "research_pending_ids", lambda p: set())

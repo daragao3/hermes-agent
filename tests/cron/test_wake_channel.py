@@ -17,7 +17,41 @@ from cron import wake_channel
 
 
 @pytest.fixture(autouse=True)
-def _clean():
+def _isolated_control_store(tmp_path, monkeypatch):
+    """Point the quarantine-control DB at a temp file for the whole module.
+
+    Without this, every test here drives the REAL cross-profile store at
+    ``<hermes root>/telemetry/jobflow_quarantine_fence.db`` -- the same database
+    a running gateway drains. Two things follow, and both were observed:
+
+    * ``clear_wakes()`` in this fixture wipes genuinely pending production
+      wakes, and ``TestBounded`` writes MAX_PENDING (512) synthetic ``jN``
+      entries into that store for a live scheduler to pick up.
+    * Contending with the live gateway for the store's lock made
+      ``test_channel_is_capped_and_drops_loudly`` block inside
+      ``default_control_store()`` at ``lock_path.resolve()`` until
+      pytest-timeout killed it at 30s. It read as a hang with no assertion
+      error, which is why it looked unrelated to isolation.
+
+    Patching ``default_control_path`` rather than substituting a fake store
+    keeps every real code path under test -- capacity, transactions, the
+    identity checks -- and only moves the file. ``default_control_store``
+    caches on the resolved path, so changing the path is enough to make it
+    build a fresh store here and rebuild the real one afterwards.
+    """
+    from jobflow_dispatch import quarantine_control
+
+    monkeypatch.setattr(
+        quarantine_control,
+        "default_control_path",
+        lambda: tmp_path / "telemetry" / "jobflow_quarantine_fence.db",
+    )
+    (tmp_path / "telemetry").mkdir(parents=True, exist_ok=True)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _clean(_isolated_control_store):
     wake_channel.clear_wakes()
     yield
     wake_channel.clear_wakes()
