@@ -25,6 +25,20 @@ import pytest
 
 # Load ~/.hermes/.env so live runs pick up OPENROUTER_API_KEY without
 # needing the runner to shell-source it first. Silent if the file is absent.
+#
+# GATED ON THE LIVE FLAG, and the gate is the whole point. This ran
+# unconditionally at MODULE level, so every default run -- where every test in
+# this file is skipped by the two pytestmark skipifs below -- still slurped the
+# host's real ~/.hermes/.env into os.environ during COLLECTION, before any
+# autouse fixture existed to scrub it. Skipping is not the same as not
+# importing. The leaked names (LANGFUSE_*, OTEL_EXPORTER_OTLP_*) are neither
+# credential-shaped enough for _hermetic_environment's scrub nor listed in
+# _HERMES_BEHAVIORAL_VARS, so they survived into every other test in the
+# process. Same class as the obs/otel_tracing._load_env_once leak fixed in
+# 24e0a44868.
+#
+# Live runs are unaffected: HERMES_LIVE_TESTS=1 is exactly when the keys are
+# wanted, and it is already required for any test here to run at all.
 def _load_user_env() -> None:
     env_file = Path.home() / ".hermes" / ".env"
     if not env_file.exists():
@@ -40,10 +54,11 @@ def _load_user_env() -> None:
         os.environ.setdefault(k, v)
 
 
-_load_user_env()
-
-
 LIVE = os.environ.get("HERMES_LIVE_TESTS") == "1"
+
+if LIVE:
+    _load_user_env()
+
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
 pytestmark = [

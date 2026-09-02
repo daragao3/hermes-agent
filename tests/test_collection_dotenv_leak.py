@@ -1,10 +1,17 @@
 """Collection must not inject the host's live ``~/.hermes/.env`` into os.environ.
 
-``tests/integration/test_modal_terminal.py`` called a bare ``load_dotenv()`` at
-MODULE level. ``find_dotenv()`` walks up from the calling file, and this
-checkout lives at ``~/.hermes/agent-src``, so the walk reached the live
-``~/.hermes/.env``; ``set_as_environment_variables()`` then copied the host's
-production credentials into ``os.environ``.
+Two test modules did this, by different mechanisms, and a full-tree audit hook
+found both:
+
+* ``tests/integration/test_modal_terminal.py`` called a bare ``load_dotenv()``
+  at MODULE level. ``find_dotenv()`` walks up from the calling file, and this
+  checkout lives at ``~/.hermes/agent-src``, so the walk reached the live
+  ``~/.hermes/.env``; ``set_as_environment_variables()`` then copied the host's
+  production credentials into ``os.environ``.
+* ``tests/run_agent/test_sequential_chats_live.py`` hand-rolled the same thing
+  in a ``_load_user_env()`` called unconditionally at module scope, reading
+  ``Path.home()/".hermes"/".env"`` and ``os.environ.setdefault``-ing every key.
+  It is now gated on ``HERMES_LIVE_TESTS``.
 
 Three properties made that worse than it looks, and they are why this guard is
 behavioural rather than a grep:
@@ -18,7 +25,15 @@ behavioural rather than a grep:
   ``_HERMES_BEHAVIORAL_VARS``, so they survived into every subsequent test.
 
 Same class as the ``obs/otel_tracing._load_env_once`` leak fixed in
-``24e0a44868``; this one re-opened it from the test side.
+``24e0a44868``; these re-opened it from the test side.
+
+KNOWN AND DELIBERATELY NOT ASSERTED HERE: ``mini_swe_runner.py:40`` -- PRODUCT
+code, not a test -- also calls a bare ``load_dotenv()`` at module scope, so
+importing it leaks the same way. Fixing that is a production change (the same
+audit that fixed ``_load_env_once`` found the leak was load-bearing for the live
+gateway and needed 16 keys mirrored into ``profiles/main/.env`` first), so this
+guard is deliberately scoped to the two TEST modules rather than asserting a
+tree-wide property it would fail on today.
 """
 
 from __future__ import annotations
@@ -60,12 +75,17 @@ def _live_env_names() -> set[str]:
     return names
 
 
-def test_collecting_the_integration_module_does_not_import_the_live_dotenv(tmp_path):
-    """Collect the offending module in a child pytest and read its environment.
+@pytest.mark.parametrize("target", [
+    "tests/integration/test_modal_terminal.py",
+    "tests/run_agent/test_sequential_chats_live.py",
+])
+def test_collecting_a_module_does_not_import_the_live_dotenv(tmp_path, target):
+    """Collect the module in a child pytest and read that child's environment.
 
     Textual assertions ("no bare ``load_dotenv()``") go quiet the moment someone
-    reintroduces the leak through a different call, so this drives the real
-    collection instead.
+    reintroduces the leak through a different call -- and in fact the two known
+    cases used *different* calls, one ``load_dotenv()`` and one hand-rolled
+    reader. So this drives the real collection instead of grepping.
     """
     present = _live_env_names() & set(_PROBE_NAMES)
     if not present:
@@ -87,7 +107,7 @@ def test_collecting_the_integration_module_does_not_import_the_live_dotenv(tmp_p
         env.pop(name, None)
 
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/integration/test_modal_terminal.py",
+        [sys.executable, "-m", "pytest", target,
          "--collect-only", "-q", "-p", "no:randomly", "-p", "collect_env_probe"],
         cwd=str(PROJECT_ROOT), env=env, capture_output=True, text=True, timeout=180,
     )
@@ -100,8 +120,9 @@ def test_collecting_the_integration_module_does_not_import_the_live_dotenv(tmp_p
     seen = json.loads(line[len("PROBE"):])
     leaked = sorted(n for n in present if seen.get(n))
     assert not leaked, (
-        f"collecting tests/integration/test_modal_terminal.py injected {leaked} "
-        f"from the live {LIVE_ENV} into the test process environment. Give "
-        "load_dotenv() an explicit repo-scoped path -- a bare call walks up "
-        "into ~/.hermes because the checkout lives inside it."
+        f"collecting {target} injected {leaked} from the live {LIVE_ENV} into "
+        "the test process environment. Either give load_dotenv() an explicit "
+        "repo-scoped path -- a bare call walks up into ~/.hermes because the "
+        "checkout lives inside it -- or gate the read behind the flag that "
+        "makes the module's tests actually run."
     )
