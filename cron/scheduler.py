@@ -4090,6 +4090,37 @@ def _run_job_script_with_claim_heartbeat(
         heartbeat_thread.join(timeout=1.0)
 
 
+def _prerun_failure_error(script_path: str, script_output: str) -> str:
+    """Build the authoritative run error for a failed AGENT pre-run script.
+
+    An agent job's ``script:`` slot runs BEFORE the model turn and its result
+    was, until 2026-09-02, consumed by exactly one thing: the wakeAgent gate,
+    and only when it SUCCEEDED. A failed pre-run script was merely prepended
+    to the prompt as "## Script Error" and the run's status came solely from
+    the agent turn, so ``last_status`` stayed ``ok`` unless the model chose to
+    declare ``reason=error``. That is what hid the 2026-08-19/20 profile-race
+    "Script not found" failures (loops applier-cron-script-profile-race-20260820)
+    and it is wider than a missing file: ``_run_job_script`` also returns
+    failure for a nonzero exit code, a timeout, and any exec exception.
+
+    The no_agent path never had this hole — it returns failure directly. The
+    structured-workload gates (64ed479556, a8f2d166c5) do not close it either:
+    both require the AGENT to declare failure, and a script that died never
+    reaches them.
+
+    The error is applied AFTER the agent turn so the model still receives the
+    script error, still writes its report, and delivery is unchanged — only
+    the recorded status changes.
+    """
+    first_line = ""
+    for line in (script_output or "").splitlines():
+        if line.strip():
+            first_line = line.strip()
+            break
+    detail = f": {first_line}" if first_line else ""
+    return f"Pre-run script failed ({script_path}){detail}"
+
+
 def _parse_wake_gate(script_output: str) -> bool:
     """Parse the last non-empty stdout line of a cron job's pre-check script
     as a wake gate.
@@ -4954,12 +4985,18 @@ def _run_job_impl(
     # _build_job_prompt below via ``prerun_script``.
     # ---------------------------------------------------------------
     prerun_script = None
+    # Set when an AGENT job's pre-run script failed, so the agent turn still
+    # runs and reports the problem but the RUN is recorded as failed. See
+    # _prerun_failure_error and the return at the end of the agent path.
+    prerun_failure: Optional[str] = None
     script_path = job.get("script")
     if script_path:
         # Claim-heartbeat wrapper resolves the per-job
         # script_timeout_seconds override internally.
         prerun_script = _run_job_script_with_claim_heartbeat(job, script_path)
         _ran_ok, _script_output = prerun_script
+        if not _ran_ok:
+            prerun_failure = _prerun_failure_error(script_path, _script_output)
         if _ran_ok and not _parse_wake_gate(_script_output):
             logger.info(
                 "Job '%s' (ID: %s): wakeAgent=false, skipping agent run",
@@ -5917,13 +5954,28 @@ def _run_job_impl(
         # The model loop finished, which is process evidence only. Artifact,
         # domain, and delivery evidence are not available here, so the derived
         # final outcome is `unknown` — never inferred success.
+        # process="succeeded" stays accurate even when the pre-run script
+        # failed: this field is MODEL-LOOP process evidence (see the note
+        # above — the derived final outcome is already `unknown`, never
+        # inferred success), and the model loop did finish. Only the run's
+        # returned status is overridden below.
         _finish_cron_activity(
             _activity_recorder,
             process="succeeded",
             evidence_refs=(f"session:{_cron_session_id}",),
         )
+        if prerun_failure is not None:
+            # The agent ran and reported the script error; `output` and
+            # `final_response` are returned untouched so delivery is
+            # identical. Only the recorded status changes, which is what
+            # makes a dead pre-run script visible to last_status/cron_failed.
+            logger.error(
+                "Job '%s' ran the agent but its pre-run script failed: %s",
+                job_name, prerun_failure,
+            )
+            return False, output, final_response, prerun_failure
         return True, output, final_response, None
-        
+
     except Exception as e:
         error_msg = f"{type(e).__name__}: {str(e)}"
         logger.exception("Job '%s' failed: %s", job_name, error_msg)
