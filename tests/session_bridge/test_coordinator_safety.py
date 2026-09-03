@@ -42,6 +42,12 @@ from tests.session_bridge.test_end_to_end import (
 )
 
 
+# Guard for waits that only need a background task to REACH a point -- never an
+# assertion target: the timing CLAIM here is the separate `stop_task.done() is
+# False` check before the release.  Sized for the worst host.
+_SYNC_GUARD_SECONDS = 30.0
+
+
 def _job(provider: Provider, *, state: MirrorJobState = MirrorJobState.RUNNING):
     return {
         "id": f"job:safety-{provider.value}",
@@ -512,7 +518,7 @@ async def test_stop_drains_inflight_provider_call_before_returning() -> None:
     class BlockingClaudeSource:
         def discover(self) -> list[Path]:
             started.set()
-            if not release.wait(timeout=2.0):
+            if not release.wait(timeout=_SYNC_GUARD_SECONDS):
                 raise RuntimeError("test provider release timed out")
             return []
 
@@ -523,14 +529,14 @@ async def test_stop_drains_inflight_provider_call_before_returning() -> None:
         refresh_timeout=1.0,
     )
     await coordinator.start()
-    assert await asyncio.to_thread(started.wait, 1.0)
+    assert await asyncio.to_thread(started.wait, _SYNC_GUARD_SECONDS)
 
     stop_task = asyncio.create_task(coordinator.stop())
     await asyncio.sleep(0.03)
     assert stop_task.done() is False
 
     release.set()
-    await asyncio.wait_for(stop_task, timeout=1.0)
+    await asyncio.wait_for(stop_task, timeout=_SYNC_GUARD_SECONDS)
     assert coordinator.health()["provider_calls_inflight"] == 0
 
 

@@ -60,10 +60,13 @@ from tests.session_bridge.test_claude_registrar import (
 )
 
 
-# Generous by design: these bound how long a *correct* run may take to schedule
-# a thread, so they cost nothing when the code is right and only decide how fast
-# a genuine hang is reported. Neither is an assertion about performance.
-_THREAD_START_GRACE_S = 10.0
+# Generous by design: bounds how long a *correct* run may block a fake before it
+# gives up, so it costs nothing when the code is right and only decides how fast
+# a genuine hang is reported. Not an assertion about performance.
+#
+# There is no thread-start grace constant any more: waiting for a to_thread call
+# to START, from a to_thread call, competes with it for the same executor and no
+# bound fixes that. See test_source_refresh_timeout_returns_durable_snapshot.
 _HANG_GUARD_S = 10.0
 
 NOW = 100.0
@@ -294,13 +297,20 @@ async def test_source_refresh_timeout_returns_durable_snapshot(
         timeout=0.01,
     )
     elapsed = asyncio.get_running_loop().time() - started
-    # Synchronisation, not an assertion about speed: block until the worker
-    # thread has actually entered the adapter, so `release.set()` cannot land
-    # before the `wait()` that observes it. The old 0.2s bound made this a
-    # de-facto scheduling deadline and it went red under suite load on
-    # 2026-09-02; nothing about the behaviour under test depends on how long
-    # Windows takes to schedule a thread.
-    assert await asyncio.to_thread(adapter.started.wait, _THREAD_START_GRACE_S)
+    # NO wait for `adapter.started` here, deliberately -- see 2026-09-03 below.
+    # `release` is a threading.Event, i.e. LEVEL-triggered: setting it before the
+    # adapter reaches `release.wait()` is harmless, because a wait on an
+    # already-set event returns immediately. There is nothing to synchronise.
+    #
+    # The wait that used to stand here was not merely unnecessary, it was
+    # ACTIVELY HARMFUL, and a bigger bound could not fix it. Both the provider
+    # call (coordinator._start_provider_call -> asyncio.to_thread) and the wait
+    # itself ran on the SAME default ThreadPoolExecutor (16 workers here). Under
+    # full-suite load the test burned a worker to block on an event that a
+    # provider call still QUEUED for a worker would set. Widening 0.2 -> 10.0 on
+    # 2026-09-02 was the wrong fix from the wrong diagnosis (scheduler jitter);
+    # it failed again at 50x the original bound on 2026-09-03, which is what
+    # falsified that reading. Do not reintroduce a to_thread wait here.
     adapter.release.set()
     for _ in range(100):
         if coordinator.health()["provider_calls_inflight"] == 0:

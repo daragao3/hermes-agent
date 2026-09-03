@@ -2172,9 +2172,9 @@ def test_winpty_fallback_reader_observes_cancellation_while_read_is_blocked() ->
     reader = threading.Thread(target=read)
     reader.start()
     try:
-        assert read_started.wait(1.0)
+        assert read_started.wait(_READER_EOF_GUARD_SECONDS)
         stop.set()
-        assert finished.wait(1.0)
+        assert finished.wait(_READER_EOF_GUARD_SECONDS)
     finally:
         release_read.set()
         reader.join(2.0)
@@ -3201,6 +3201,11 @@ def test_winpty_close_is_idempotent_and_reports_all_cleanup_postconditions() -> 
             self._thread.start()
 
         def read(self, size: int = 1024) -> str:
+            # NOT a guard: `released` is never set, so this wait is EXPECTED to
+            # expire.  It simulates a reader still blocked when close() runs, and
+            # its duration is the point -- widening it to the file's 30s guard
+            # constant just parks a thread for 30s (measured 2026-09-03: it cost
+            # the suite ~14 minutes).  Leave it small.
             released.wait(1)
             raise EOFError
 
