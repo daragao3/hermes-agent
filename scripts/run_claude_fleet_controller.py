@@ -58,7 +58,7 @@ def main(argv=None) -> int:
     _PhaseLog.log_boot(
         _T_ENTRY, _T_IMPORTED,
         spawn_epoch_ms=os.environ.get("P6_SPAWN_EPOCH_MS"),
-        now_epoch_ms=_T_ENTRY_EPOCH_MS,
+        entry_epoch_ms=_T_ENTRY_EPOCH_MS,
     )
 
     controller = Controller(
