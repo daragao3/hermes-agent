@@ -249,6 +249,47 @@ _LOG = logging.getLogger(__name__)
 _NOISY_THIRD_PARTY_LOGGERS = ("watchfiles",)
 
 
+def _install_plain_root_log_handler() -> None:
+    """Claim the root logger before FastMCP can put a rich handler on it.
+
+    FastMCP calls logging.basicConfig(handlers=[RichHandler(...)]) from
+    configure_logging (mcp/server/fastmcp/server.py). basicConfig is documented
+    to do nothing when the root logger ALREADY has handlers and force= is not
+    passed, and FastMCP does not pass it -- verified against this venv. So
+    installing a plain handler here means the rich handler is never constructed
+    at all, rather than being installed and then torn out.
+
+    Measured 2026-09-03 against the handler FastMCP builds, stderr redirected to
+    a file as the service runs: 2.392 ms per record versus 0.005 ms for a plain
+    StreamHandler -- 328x. Every record from every library pays that, and the
+    ones emitted from the asyncio event loop pay it in loop OCCUPANCY, which is
+    what starves the static /health route the launcher probes on a 5s budget.
+
+    Nothing is lost but the formatting: level, logger name, timestamp and
+    message are all still written, and the launcher only tails and rolls this
+    file -- it never parses the format.
+
+    Also sets the root LEVEL, which basicConfig would otherwise have set. Its
+    no-op skips the level too, so omitting this would silently leave root at
+    WARNING and drop every INFO record the service used to emit.
+    """
+    root = logging.getLogger()
+    if root.handlers:
+        # Someone configured logging before us -- a test harness, or a future
+        # caller with its own opinion. Do not fight it, and do not stack a
+        # second handler on top and double every line.
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s %(message)s",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+    )
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
 def _quiet_noisy_third_party_loggers() -> None:
     """Raise the floor on third-party loggers that spam INFO.
 
@@ -1143,6 +1184,10 @@ class ProductionBackend:
             raise first_error
 
     def serve(self) -> None:
+        # BEFORE create_app(): FastMCP is constructed there and installs a rich
+        # handler on the root logger unless one is already present.
+        _install_plain_root_log_handler()
+        _quiet_noisy_third_party_loggers()
         visibility_stop: threading.Event | None = None
         visibility_thread: threading.Thread | None = None
         listener_watchdog: ListenerWatchdog | None = None
@@ -1188,7 +1233,6 @@ class ProductionBackend:
                     daemon=False,
                 )
                 visibility_thread.start()
-            _quiet_noisy_third_party_loggers()
             import uvicorn
 
             # uvicorn.run() builds exactly this and throws the Server away. We
