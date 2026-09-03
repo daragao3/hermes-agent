@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-04-15-hermes-communication-layer-design.md`
 
-**Source root:** `C:/Users/diego/Usersdiegohermes-agent-src/`
+**Source root:** `C:/Users/diego/.hermes/agent-src/`
 
 ---
 
@@ -190,7 +190,7 @@ class TestEvent:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_schema.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_schema.py -v`
 
 Expected: `ModuleNotFoundError: No module named 'events'`
 
@@ -374,14 +374,14 @@ class Event:
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_schema.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_schema.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/__init__.py events/schema.py tests/events/__init__.py tests/events/test_schema.py
 git commit -m "feat(events): add event schema — EventType catalog, Priority levels, Event dataclass"
 ```
@@ -577,7 +577,7 @@ class TestThreadSafety:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_bus.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_bus.py -v`
 
 Expected: `ModuleNotFoundError: No module named 'events.bus'`
 
@@ -863,14 +863,14 @@ __all__ = ["Event", "EventType", "Priority", "EventBus"]
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_bus.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_bus.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/bus.py events/__init__.py tests/events/test_bus.py
 git commit -m "feat(events): add SQLite-backed EventBus with emit/subscribe/ack/query"
 ```
@@ -1020,7 +1020,7 @@ class TestSubscriberRegistry:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_base_subscriber.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_base_subscriber.py -v`
 
 Expected: `ModuleNotFoundError: No module named 'events.subscribers'`
 
@@ -1154,14 +1154,14 @@ class SubscriberRegistry:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_base_subscriber.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_base_subscriber.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/subscribers/__init__.py events/subscribers/base.py tests/events/test_base_subscriber.py
 git commit -m "feat(events): add BaseSubscriber abstract class and SubscriberRegistry"
 ```
@@ -1252,7 +1252,7 @@ class TestAuditLogger:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_audit_logger.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_audit_logger.py -v`
 
 Expected: `ModuleNotFoundError: No module named 'events.subscribers.audit_logger'`
 
@@ -1299,14 +1299,14 @@ class AuditLogger(BaseSubscriber):
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_audit_logger.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_audit_logger.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/subscribers/audit_logger.py tests/events/test_audit_logger.py
 git commit -m "feat(events): add AuditLogger subscriber — JSONL event trail"
 ```
@@ -1418,7 +1418,7 @@ class TestCronLifecycle:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_cron_emitter.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_cron_emitter.py -v`
 
 Expected: `ModuleNotFoundError: No module named 'events.producers'`
 
@@ -1532,7 +1532,7 @@ class CronEventEmitter:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_cron_emitter.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_cron_emitter.py -v`
 
 Expected: All tests PASS
 
@@ -1636,14 +1636,14 @@ And after `mark_job_run(job["id"], success, error, delivery_error=delivery_error
 
 - [ ] **Step 7: Run full test suite to verify no regressions**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/ tests/cron/ -v --timeout=30`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/ tests/cron/ -v --timeout=30`
 
 Expected: All tests PASS
 
 - [ ] **Step 8: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/producers/__init__.py events/producers/cron_emitter.py \
         tests/events/test_cron_emitter.py cron/scheduler.py cron/jobs.py
 git commit -m "feat(events): add CronEventEmitter and hook into cron pipeline"
@@ -1722,7 +1722,7 @@ class TestHealthMonitor:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_health_monitor.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_health_monitor.py -v`
 
 Expected: `ModuleNotFoundError: No module named 'events.producers.health_monitor'`
 
@@ -1785,14 +1785,14 @@ class GatewayHealthMonitor:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_health_monitor.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_health_monitor.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/producers/health_monitor.py tests/events/test_health_monitor.py
 git commit -m "feat(events): add GatewayHealthMonitor — state-change-only health events"
 ```
@@ -1904,7 +1904,7 @@ class TestMailboxWatcher:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_mailbox_watcher.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_mailbox_watcher.py -v`
 
 Expected: `ModuleNotFoundError`
 
@@ -2062,14 +2062,14 @@ class MailboxWatcher:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_mailbox_watcher.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_mailbox_watcher.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/producers/mailbox_watcher.py tests/events/test_mailbox_watcher.py
 git commit -m "feat(events): add MailboxWatcher — polls inter-agent mailbox for protocol messages"
 ```
@@ -2201,7 +2201,7 @@ class TestTelegramNotifier:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_telegram_notifier.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_telegram_notifier.py -v`
 
 Expected: `ModuleNotFoundError`
 
@@ -2424,14 +2424,14 @@ class TelegramNotifier(BaseSubscriber):
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_telegram_notifier.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_telegram_notifier.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/subscribers/telegram_notifier.py tests/events/test_telegram_notifier.py
 git commit -m "feat(events): add TelegramNotifier — routes events to forum topics"
 ```
@@ -2559,7 +2559,7 @@ class TestMessageFormat:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_whatsapp_escalator.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_whatsapp_escalator.py -v`
 
 Expected: `ModuleNotFoundError`
 
@@ -2776,14 +2776,14 @@ class WhatsAppEscalator(BaseSubscriber):
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_whatsapp_escalator.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_whatsapp_escalator.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/subscribers/whatsapp_escalator.py tests/events/test_whatsapp_escalator.py
 git commit -m "feat(events): add WhatsAppEscalator — quiet-hours-aware escalation"
 ```
@@ -2849,7 +2849,7 @@ class TestDigestComposer:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_digest_composer.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_digest_composer.py -v`
 
 Expected: `ModuleNotFoundError`
 
@@ -3033,14 +3033,14 @@ class DigestComposer(BaseSubscriber):
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_digest_composer.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_digest_composer.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/subscribers/digest_composer.py tests/events/test_digest_composer.py
 git commit -m "feat(events): add DigestComposer — 3x/day structured notification digests"
 ```
@@ -3109,7 +3109,7 @@ class TestMemoryWriter:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_memory_writer.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_memory_writer.py -v`
 
 Expected: `ModuleNotFoundError`
 
@@ -3328,14 +3328,14 @@ class MemoryWriter(BaseSubscriber):
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_memory_writer.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_memory_writer.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/subscribers/memory_writer.py tests/events/test_memory_writer.py
 git commit -m "feat(events): add MemoryWriter — routes high-signal events to memory layers"
 ```
@@ -3387,7 +3387,7 @@ class TestTelegramMirror:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_telegram_mirror.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_telegram_mirror.py -v`
 
 Expected: `ModuleNotFoundError`
 
@@ -3471,14 +3471,14 @@ class TelegramMirror(BaseSubscriber):
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_telegram_mirror.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_telegram_mirror.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/subscribers/telegram_mirror.py tests/events/test_telegram_mirror.py
 git commit -m "feat(events): add TelegramMirror — shadow-copies mailbox messages to Agent Comms"
 ```
@@ -3664,7 +3664,7 @@ if __name__ == "__main__":
 - [ ] **Step 2: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add scripts/hermes_telegram_setup.py
 git commit -m "feat(events): add Telegram group setup script for forum topics"
 ```
@@ -3836,14 +3836,14 @@ In the shutdown sequence (around line 9699-9708), before MCP shutdown, add:
 
 - [ ] **Step 3: Run tests to verify no regressions**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/ tests/gateway/ -v --timeout=30 -x`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/ tests/gateway/ -v --timeout=30 -x`
 
 Expected: All tests PASS
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add events/gateway_integration.py gateway/run.py
 git commit -m "feat(events): wire EventBus and subscribers into gateway lifecycle"
 ```
@@ -3981,7 +3981,7 @@ if __name__ == "__main__":
 - [ ] **Step 2: Commit (do NOT run the script yet — it modifies live config)**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add scripts/migrate_cron_delivery.py
 git commit -m "feat(events): add cron delivery migration script — local delivery + OpenClaw cleanup"
 ```
@@ -3989,7 +3989,7 @@ git commit -m "feat(events): add cron delivery migration script — local delive
 - [ ] **Step 3: Run the migration script**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 python scripts/migrate_cron_delivery.py
 ```
 
@@ -4132,20 +4132,20 @@ class TestEndToEnd:
 
 - [ ] **Step 2: Run integration tests**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/test_integration.py -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/test_integration.py -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 3: Run full event test suite**
 
-Run: `cd C:/Users/diego/Usersdiegohermes-agent-src && python -m pytest tests/events/ -v`
+Run: `cd C:/Users/diego/.hermes/agent-src && python -m pytest tests/events/ -v`
 
 Expected: All tests PASS
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd C:/Users/diego/Usersdiegohermes-agent-src
+cd C:/Users/diego/.hermes/agent-src
 git add tests/events/test_integration.py
 git commit -m "test(events): add end-to-end integration tests for EventBus pipeline"
 ```
