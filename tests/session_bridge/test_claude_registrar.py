@@ -2142,7 +2142,24 @@ def test_fixed_launch_failure_codes_and_cleanup(
 # Tests that deliberately assert ON the deadline -- e.g.
 # test_winpty_slow_drip_after_candidate_stays_bounded_by_global_timeout, which
 # checks `elapsed < 1.0` -- keep their own small value and must NOT use this.
-_READER_EOF_GUARD_SECONDS = 30.0
+#
+# 30.0 -> 10.0 on 2026-09-03, DEFENSIVE: 30.0 was exactly pytest-timeout's
+# per-test cap (pyproject addopts `--timeout=30`), so any regression that made
+# this guard the thing which actually expires would race the plugin -- and a
+# plugin kill reports no assertion and no readable cause. 10.0 keeps a 20s
+# margin and stays far above _RESPONSE_SETTLE_SECONDS (0.5), the floor the
+# paragraph above is about. Matches _OFFLINE_FIXTURE_EXIT_GUARD_SECONDS here and
+# NEW_DEADLOCK_GUARD in test_refresh_wallclock_falsifier, both 10.0 for the same
+# reason.
+#
+# HONEST LIMIT OF THE EVIDENCE: no reachable case was found where 30.0 actually
+# produced a plugin kill. Two mutations tried and failed -- blocking the fake
+# stream so EOF never arrives leaves `read_until` returning normally on its
+# quiet period, so this guard is NOT the operative deadline even at the two
+# call sites that pass it straight to `read_until()`. It is a hang guard in
+# every use. Reaching the race needs the settle logic broken AND a blocked read.
+# So this is margin against a future defect, not a fix for a demonstrated one.
+_READER_EOF_GUARD_SECONDS = 10.0
 
 # Exit guard for the OFFLINE fixture processes, which exit immediately -- so this
 # is a hang guard, never a deadline.  Deliberately 10.0, NOT the 120s real-ConPTY
