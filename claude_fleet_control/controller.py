@@ -19,6 +19,7 @@ Fail-closed inventory (each is pinned by a test):
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import logging
@@ -231,6 +232,48 @@ def _live_ppid_map() -> Optional[Dict[int, Optional[int]]]:
         return {int(k): (int(v) if v is not None else None) for k, v in m.items()}
     except Exception:
         return None
+
+
+class _PhaseLog:
+    """Log each pass phase AS IT COMPLETES, so a killed pass leaves a trail.
+
+    Why per-phase and not one summary line at the end: the scheduled task kills
+    the pass at its PT8M ExecutionTimeLimit, and a summary emitted after the
+    work is exactly the line a kill destroys. Measured 2026-09-02: 58 of 454
+    passes were killed and logged NOTHING after "pass start", and the 98 passes
+    that were merely slow (up to 617s) completed with no breakdown at all -- so
+    neither failure mode said where the time went. A phase that hangs never
+    logs, so the last line present names the phase that was still running.
+
+    Durations use ``time.monotonic``, never the injected ``now_fn``: tests pin
+    a frozen clock, which would render every phase as 0ms and make this useless
+    exactly where it is being verified.
+    """
+
+    def __init__(self, run_id: str):
+        self.run_id = run_id
+        self.ms: Dict[str, float] = {}
+
+    @contextlib.contextmanager
+    def __call__(self, name: str):
+        t0 = time.monotonic()
+        try:
+            yield
+        finally:
+            dt = (time.monotonic() - t0) * 1000.0
+            self.ms[name] = round(dt, 1)
+            logger.info(
+                "fleet-controller phase %s=%.1fms (run %s)", name, dt, self.run_id[:8]
+            )
+
+    def summary(self) -> None:
+        total = sum(self.ms.values())
+        logger.info(
+            "fleet-controller phases total=%.1fms %s (run %s)",
+            total,
+            " ".join(f"{k}={v}ms" for k, v in self.ms.items()),
+            self.run_id[:8],
+        )
 
 
 def live_snapshot() -> ProcessSnapshot:
@@ -626,39 +669,46 @@ class Controller:
         now = self._now()
         run_id = str(uuid.uuid4())
         reasons = list(extra_reasons)
+        phase = _PhaseLog(run_id)
 
-        state, corrupt = self._load_state()
+        with phase("state_load"):
+            state, corrupt = self._load_state()
         if corrupt:
             reasons.append(REASON_STATE_CORRUPT)
 
         try:
-            bus = self._bus_factory()
+            with phase("bus_init"):
+                bus = self._bus_factory()
         except Exception as exc:
             logger.error("fleet-controller: EventBus unavailable: %s", exc)
             return EXIT_RUNTIME_FAILURE, None
 
-        raw_events = self._query_pressure_events(bus, now)
+        with phase("pressure_query"):
+            raw_events = self._query_pressure_events(bus, now)
         if raw_events is None:
             pressure = planner.PressureEvidence(False, "bus_error")
         else:
             pressure = planner.evaluate_pressure(raw_events, now, policy)
 
-        snapshot = self._snapshot()
-        assessments, root_count = self._assess_all(snapshot, policy, now)
+        with phase("snapshot"):
+            snapshot = self._snapshot()
+        with phase("assess"):
+            assessments, root_count = self._assess_all(snapshot, policy, now)
 
         prior_strikes = state.get("strikes") if not corrupt else {}
         last_intent = state.get("last_enforce_intent_at")
-        plan = planner.build_plan(
-            assessments=assessments,
-            fleet_root_count=root_count,
-            pressure=pressure,
-            prior_strikes=prior_strikes if isinstance(prior_strikes, dict) else {},
-            last_enforce_intent_at=last_intent if isinstance(last_intent, (int, float)) else None,
-            policy=policy,
-            now=now,
-            run_id=run_id,
-            extra_reasons=reasons,
-        )
+        with phase("plan"):
+            plan = planner.build_plan(
+                assessments=assessments,
+                fleet_root_count=root_count,
+                pressure=pressure,
+                prior_strikes=prior_strikes if isinstance(prior_strikes, dict) else {},
+                last_enforce_intent_at=last_intent if isinstance(last_intent, (int, float)) else None,
+                policy=policy,
+                now=now,
+                run_id=run_id,
+                extra_reasons=reasons,
+            )
 
         new_state = {
             "version": _STATE_VERSION,
@@ -666,12 +716,15 @@ class Controller:
             "last_enforce_intent_at": state.get("last_enforce_intent_at"),
         }
         try:
-            self._save_state(new_state)
+            with phase("state_save"):
+                self._save_state(new_state)
         except OSError as exc:
             logger.error("fleet-controller: state save failed, abandoning pass: %s", exc)
             return EXIT_RUNTIME_FAILURE, None
 
-        result = self._emit_and_maybe_act(bus, plan, new_state, enforce_authorized)
+        with phase("emit_and_act"):
+            result = self._emit_and_maybe_act(bus, plan, new_state, enforce_authorized)
+        phase.summary()
         exit_code = EXIT_OK if result is not None and result.status != RESULT_FAILED else EXIT_RUNTIME_FAILURE
         return exit_code, result
 

@@ -333,3 +333,65 @@ def test_bus_query_failure_yields_no_action(tmp_path):
     code, result = controller.run_once()
     assert result.status == RESULT_NO_ACTION
     assert "pressure_bus_error" in result.detail
+
+
+# ------------------------------------------------------- pass phase timing
+# Added 2026-09-02. The pass had NO instrumentation: 58 of 454 passes that day
+# were killed at the task's PT8M ExecutionTimeLimit and logged nothing after
+# "pass start", while 98 merely-slow passes (up to 617s) completed with no
+# breakdown. Neither said where the time went. Claim
+# p6-fleet-silence-watchdog-flap-20260902.
+
+_EXPECTED_PHASES = (
+    "state_load", "bus_init", "pressure_query", "snapshot",
+    "assess", "plan", "state_save", "emit_and_act",
+)
+
+
+def test_pass_logs_every_phase_as_it_completes(tmp_path, caplog):
+    import logging as _logging
+    controller, _bus = _make_controller(
+        tmp_path, _fleet(3), _write_config(tmp_path), now=NOW,
+    )
+    with caplog.at_level(_logging.INFO, logger="claude_fleet_control.controller"):
+        controller.run_once()
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    for name in _EXPECTED_PHASES:
+        assert f"phase {name}=" in logged, f"phase {name} was not logged: {logged}"
+    assert "phases total=" in logged
+
+
+def test_phase_is_logged_even_when_it_raises(tmp_path, caplog):
+    """A phase that fails must still emit its line, or the trail stops early
+    for the wrong reason. The finally: is what makes a killed pass legible."""
+    import logging as _logging
+    from claude_fleet_control.controller import _PhaseLog
+    p = _PhaseLog("abcdef1234")
+    with caplog.at_level(_logging.INFO, logger="claude_fleet_control.controller"):
+        try:
+            with p("boom"):
+                raise RuntimeError("kaboom")
+        except RuntimeError:
+            pass
+    assert "phase boom=" in " ".join(r.getMessage() for r in caplog.records)
+    assert "boom" in p.ms
+
+
+def test_phase_timing_ignores_a_frozen_injected_clock(tmp_path, caplog):
+    """Durations must come from time.monotonic, not now_fn.
+
+    Every controller test injects a frozen now_fn; if timing used it, each
+    phase would render 0.0ms and the instrumentation would look healthy while
+    measuring nothing -- green for the wrong reason.
+    """
+    import logging as _logging
+    import time as _time
+    from claude_fleet_control.controller import _PhaseLog
+    p = _PhaseLog("abcdef1234")
+    with caplog.at_level(_logging.INFO, logger="claude_fleet_control.controller"):
+        with p("sleepy"):
+            _time.sleep(0.05)
+    assert p.ms["sleepy"] >= 40.0, (
+        "expected a real elapsed measurement, got %s -- timing is not monotonic-based"
+        % p.ms["sleepy"]
+    )
