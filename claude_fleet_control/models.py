@@ -67,6 +67,9 @@ class ProcessSnapshot:
     taken_at: float
     records: Tuple[ProcessRecord, ...]
     complete: bool  # False if the iteration itself failed partway
+    # True when a deadline cut the census short. Defaulted so every
+    # existing constructor (and every test fake) stays valid.
+    truncated: bool = False
 
 
 # Transcript resolution outcomes. Only "exact" and "fallback" are usable;
@@ -227,6 +230,7 @@ class FleetPolicy:
 
 
 # Tree/pass rejection reason codes — stable strings, asserted by tests.
+REASON_CENSUS_TRUNCATED = "census_truncated"
 REASON_INCOMPLETE_MEMBER = "incomplete_member"
 REASON_INFRA_MEMBER = "infra_member"
 REASON_ACTOR_MEMBER = "actor_member"
