@@ -266,6 +266,47 @@ class _PhaseLog:
                 "fleet-controller phase %s=%.1fms (run %s)", name, dt, self.run_id[:8]
             )
 
+    @staticmethod
+    def log_boot(entry_monotonic: float, imported_monotonic: float,
+                 spawn_epoch_ms=None, entry_epoch_ms=None) -> Dict[str, float]:
+        """Log the two phases that precede main(): process boot, then imports.
+
+        These are invisible to the in-pass phases by construction -- the first
+        one cannot run until the interpreter and every import are already done.
+        Measured 2026-09-02: a pass whose phases totalled 9313ms had ~12s of
+        wall time, so ~3s (25%) sat in this blind spot.
+
+        ``spawn_epoch_ms`` is stamped by the WRAPPER immediately before it
+        invokes python, because a process cannot time its own creation. When it
+        is absent (an ad-hoc run, or a wrapper that predates the stamp) the
+        boot phase is skipped rather than guessed -- a fabricated 0ms would
+        read as "boot is free", which is the opposite of the finding.
+        """
+        out: Dict[str, float] = {}
+        if spawn_epoch_ms is not None:
+            try:
+                spawned = float(spawn_epoch_ms)
+            except (TypeError, ValueError):
+                spawned = None
+            if spawned is not None:
+                # Wall clock on BOTH ends: the stamps come from two different
+                # processes, so monotonic clocks are not comparable across them.
+                # entry_epoch_ms is captured at module entry, so this is exactly
+                # "wrapper stamped -> python reached its first line".
+                entry_ms = (float(entry_epoch_ms) if entry_epoch_ms is not None
+                            else time.time() * 1000.0)
+                boot = entry_ms - spawned
+                # A negative delta means the clocks disagree (or the stamp is
+                # from a later run); report nothing rather than a nonsense
+                # figure that would be averaged into someone's diagnosis.
+                if boot >= 0:
+                    out["spawn_and_boot"] = round(boot, 1)
+                    logger.info("fleet-controller phase spawn_and_boot=%.1fms (pre-pass)", boot)
+        imports = (imported_monotonic - entry_monotonic) * 1000.0
+        out["imports"] = round(imports, 1)
+        logger.info("fleet-controller phase imports=%.1fms (pre-pass)", imports)
+        return out
+
     def summary(self) -> None:
         total = sum(self.ms.values())
         logger.info(

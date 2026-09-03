@@ -15,6 +15,7 @@ people learn to skip, which is worse than no gate. Assert the invariant the
 value exists to serve.
 """
 
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -101,8 +102,37 @@ def test_runner_gates_enforce_behind_the_switch():
     code = "\n".join(code_lines)
     assert "param([switch]$AllowEnforce)" in code       # declares the switch
     assert "if ($AllowEnforce)" in code                 # the flag is guarded
-    assert "$Py $Script --allow-enforce" in code        # the enforce branch
-    assert "& $Py $Script 2>&1" in code                 # the shadow-default branch (no flag)
+
+    # Pin the INVARIANT, not the exact command literal. This previously read
+    #     assert "$Py $Script --allow-enforce" in code
+    # which pinned incidental spelling: adding `-u` (needed so a killed pass's
+    # streamed output is not lost to python's block buffering) broke it on
+    # 2026-09-02 while the safety property it guards was untouched. A gate test
+    # that goes red on an unrelated correct change gets "fixed" by loosening
+    # it, so assert the property instead: --allow-enforce is invoked exactly
+    # once, and only inside the -AllowEnforce guard.
+    # An INVOCATION, not any mention: the $gate line names the flag in a log
+    # string, and counting that as a call site is how this assertion first
+    # went wrong.
+    _INVOKE = re.compile(r"&\s+\$Py\b.*\$Script")
+    lines = code.splitlines()
+    enforce_invocations = [
+        ln for ln in lines if _INVOKE.search(ln) and "--allow-enforce" in ln
+    ]
+    assert len(enforce_invocations) == 1, enforce_invocations
+
+    guard_idx = next(i for i, ln in enumerate(lines)
+                     if "if ($AllowEnforce)" in ln and _INVOKE.search(ln) is None
+                     and ln.lstrip().startswith("if"))
+    enforce_idx = next(i for i, ln in enumerate(lines)
+                       if _INVOKE.search(ln) and "--allow-enforce" in ln)
+    assert enforce_idx > guard_idx, "the enforce branch must sit inside the guard"
+
+    # The shadow default must invoke the SAME script with NO enforce flag.
+    shadow = [ln for ln in code.splitlines()
+              if re.search(r"&\s+\$Py\b.*\$Script", ln) and "--allow-enforce" not in ln]
+    assert shadow, "no shadow-default invocation found"
+
     assert "cull-claude-sessions" not in code
     assert "cull-idle-claude-sessions" not in code
     assert "run_claude_fleet_controller.py" in code
