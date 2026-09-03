@@ -37,6 +37,7 @@ from claude_fleet_control.models import (
     MODE_DISABLED,
     MODE_ENFORCE,
     MODE_SHADOW,
+    REASON_CENSUS_TRUNCATED,
     REASON_STATE_CORRUPT,
     RESULT_CANCELLED,
     RESULT_FAILED,
@@ -60,6 +61,24 @@ EXIT_OK = 0
 EXIT_CONFIG_ERROR = 2
 EXIT_LOCK_HELD = 3
 EXIT_RUNTIME_FAILURE = 4
+
+# Wall-clock ceiling on the whole live census. Measured 2026-09-02/03 on this
+# box, the same live_snapshot() call took 0.36s, 1.30s and 7.05s in three runs
+# hours apart -- a 20x swing with identical code, driven by host conditions
+# (spawn latency median 46ms on fast passes vs 834ms on the ones the task
+# killed). The task's ExecutionTimeLimit is PT8M and a kill is SILENT, so the
+# census is bounded well below it: exceeding this deadline degrades to a
+# protected census that still REPORTS, instead of the whole pass being
+# SIGKILLed with no record at all.
+#
+# 45s is ~6x the worst census observed and ~10% of the task budget, leaving
+# room for the other phases plus the ~1s of pre-pass boot.
+#
+# Deliberately a MODULE CONSTANT, not a FleetPolicy field: FleetPolicy.digest()
+# enumerates its fields, so adding one changes the digest, breaks
+# approved_enforce_digest, and silently demotes the enforce lane to shadow --
+# a safety regression dressed as a tuning knob.
+CENSUS_DEADLINE_SECONDS = 45.0
 
 _NUMERIC_POLICY_FIELDS = (
     "fleet_min_roots",
@@ -369,6 +388,9 @@ def live_snapshot() -> ProcessSnapshot:
     same argument."""
     import psutil
 
+    _t_start = time.monotonic()
+    truncated = False
+
     # Phase 1 — genuinely cheap whole-table census: pid/name from
     # process_iter, and the entire pid->ppid table from ONE snapshot call.
     # Neither ppid nor create_time is asked of process_iter here; see the
@@ -455,8 +477,35 @@ def live_snapshot() -> ProcessSnapshot:
 
     # Phase 2 — enrich only Claude processes and their trees.
     cheap = [by_pid[r.pid] for r in cheap if r.pid not in gone]
-    targets = planner.enrichment_pids(cheap)
-    for pid in targets:
+    # sorted(): enrichment_pids returns a frozenset, which is neither
+    # ordered nor sliceable, and the deadline path needs to name the
+    # REMAINING targets. Sorting also makes a truncated census
+    # reproducible instead of set-iteration-order dependent.
+    targets = sorted(planner.enrichment_pids(cheap))
+    for idx, pid in enumerate(targets):
+        if time.monotonic() - _t_start > CENSUS_DEADLINE_SECONDS:
+            # Deadline hit. Mark every REMAINING target incomplete rather than
+            # leaving it cheap-but-plausible: an unenriched record has no
+            # cmdline/username/rss, and the planner would read those absences
+            # as ordinary values instead of as "not measured".
+            #
+            # Per-RECORD complete=False is the lever that actually protects
+            # (planner._assess_tree -> REASON_INCOMPLETE_MEMBER, and one
+            # incomplete member protects the WHOLE tree). Setting only
+            # ProcessSnapshot.complete would be INERT: nothing reads it --
+            # measured 2026-09-03, its sole consumer is the per-member flag.
+            for rest in targets[idx:]:
+                stale = by_pid.get(rest)
+                if stale is not None:
+                    by_pid[rest] = dataclasses.replace(stale, complete=False)
+            complete = False
+            truncated = True
+            logger.warning(
+                "fleet-controller: census deadline %.0fs exceeded; %d of %d "
+                "enrichment targets left unmeasured and their trees protected",
+                CENSUS_DEADLINE_SECONDS, len(targets) - idx, len(targets),
+            )
+            break
         base = by_pid.get(pid)
         if base is None:
             continue
@@ -485,7 +534,8 @@ def live_snapshot() -> ProcessSnapshot:
             complete = False
 
     records = tuple(by_pid[r.pid] for r in cheap)
-    return ProcessSnapshot(taken_at=time.time(), records=records, complete=complete)
+    return ProcessSnapshot(taken_at=time.time(), records=records,
+                           complete=complete, truncated=truncated)
 
 
 def _projects_dir() -> Path:
@@ -733,6 +783,11 @@ class Controller:
 
         with phase("snapshot"):
             snapshot = self._snapshot()
+        # Surface a deadline-truncated census in the PLAN, not just the log:
+        # the trees it protected are indistinguishable from genuinely
+        # ineligible ones once the reason is gone.
+        if getattr(snapshot, "truncated", False):
+            reasons.append(REASON_CENSUS_TRUNCATED)
         with phase("assess"):
             assessments, root_count = self._assess_all(snapshot, policy, now)
 
