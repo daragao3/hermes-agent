@@ -90,6 +90,15 @@ from session_bridge.sidebar_reconciliation import (
 from session_bridge.store import SessionBridgeStore
 
 
+# Guard for waits that only need a concurrent thread to REACH a point or a
+# release to ARRIVE -- never an assertion target, so it is sized for the worst
+# host rather than for expected latency.  Every site using it is an `assert
+# X.wait(...)` (or a Barrier/process/future wait), which CANNOT pass unless the
+# thing waited for actually happens -- that is what proves these are guards and
+# not scenarios whose expiry is the point.
+_SYNC_GUARD_SECONDS = 30.0
+
+
 @dataclass
 class FakeBackend:
     characterization: str = "passed"
@@ -8297,7 +8306,7 @@ def test_mutate_config_serializes_competing_updates_without_lost_keys(
     def first_mutation(value: dict[str, Any]) -> None:
         value["sidebar_writer"] = True
         first_inside.set()
-        assert release_first.wait(timeout=5)
+        assert release_first.wait(timeout=_SYNC_GUARD_SECONDS)
 
     def second_mutation(value: dict[str, Any]) -> None:
         second_inside.set()
@@ -8306,7 +8315,7 @@ def test_mutate_config_serializes_competing_updates_without_lost_keys(
     first = Thread(target=lambda: config_module.mutate_config(first_mutation))
     second = Thread(target=lambda: config_module.mutate_config(second_mutation))
     first.start()
-    assert first_inside.wait(timeout=5)
+    assert first_inside.wait(timeout=_SYNC_GUARD_SECONDS)
     second.start()
     assert not second_inside.wait(timeout=0.1)
     release_first.set()
@@ -8691,7 +8700,7 @@ def test_production_serve_quiesces_inflight_visibility_request(
             assert cancel_event is not None
             request_threads.append(current_thread())
             entered.set()
-            assert cancel_event.wait(2.0)
+            assert cancel_event.wait(_SYNC_GUARD_SECONDS)
             raise CodexRequestCancelled("codex app-server request cancelled")
 
         def close(self) -> None:
@@ -8738,7 +8747,7 @@ def test_production_serve_quiesces_inflight_visibility_request(
 
     def run_until_request(self: object) -> None:
         transport.ran = True
-        assert entered.wait(2.0)
+        assert entered.wait(_SYNC_GUARD_SECONDS)
 
     monkeypatch.setattr("uvicorn.Server.run", run_until_request)
 

@@ -938,7 +938,7 @@ class _BlockingJobTargetAdapter:
     def create_placeholder(self, **kwargs: Any) -> PlaceholderResult:
         self.calls += 1
         self.started.set()
-        if not self.release.wait(timeout=2.0):
+        if not self.release.wait(timeout=_REFRESH_DEADLOCK_GUARD_SECONDS):
             raise RuntimeError("test target release timed out")
         native_id = "codex-blocking-target"
         self.source.add_placeholder(native_id, kwargs["bridge_id"])
@@ -4574,7 +4574,7 @@ class _HeartbeatClaimStore:
         if self.fail_heartbeat:
             raise RuntimeError("heartbeat failed")
         if self.block_heartbeat:
-            assert self.heartbeat_release.wait(timeout=5)
+            assert self.heartbeat_release.wait(timeout=_REFRESH_DEADLOCK_GUARD_SECONDS)
 
     def claim_sidebar_hydration_jobs(
         self, *, now: float, limit: int
@@ -5443,7 +5443,7 @@ class _BarrierEnqueueSidebarStore(SessionBridgeStore):
         self.barrier = barrier
 
     def enqueue_sidebar_job(self, candidate: SidebarCandidate) -> dict[str, Any]:
-        self.barrier.wait(timeout=5)
+        self.barrier.wait(timeout=_REFRESH_DEADLOCK_GUARD_SECONDS)
         return super().enqueue_sidebar_job(candidate)
 
 
@@ -5675,7 +5675,7 @@ async def test_sidebar_executor_cancellation_drains_worker_before_propagating() 
     class BlockingExecutor:
         def run_once(self) -> SidebarExecutionResult:
             started.set()
-            if not release.wait(timeout=5.0):
+            if not release.wait(timeout=_REFRESH_DEADLOCK_GUARD_SECONDS):
                 raise RuntimeError("test executor release timed out")
             completed.set()
             return SidebarExecutionResult(status="idle")

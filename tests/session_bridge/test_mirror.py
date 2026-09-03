@@ -45,6 +45,15 @@ NOW = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc).timestamp()
 DAY = 24 * 60 * 60
 
 
+# Guard for waits that only need a concurrent thread to REACH a point or a
+# release to ARRIVE -- never an assertion target, so it is sized for the worst
+# host rather than for expected latency.  Every site using it is an `assert
+# X.wait(...)` (or a Barrier/process/future wait), which CANNOT pass unless the
+# thing waited for actually happens -- that is what proves these are guards and
+# not scenarios whose expiry is the point.
+_SYNC_GUARD_SECONDS = 30.0
+
+
 @pytest.fixture
 def db(tmp_path):
     database = SessionDB(tmp_path / "state.db")
@@ -400,7 +409,7 @@ def test_concurrent_watermark_writers_cannot_commit_a_late_lower_value(
 
     def delay_lower_write(operation):
         lower_entered_write.set()
-        assert higher_finished_write.wait(timeout=5.0)
+        assert higher_finished_write.wait(timeout=_SYNC_GUARD_SECONDS)
         return original_lower_write(operation)
 
     def signal_higher_write(operation):
@@ -422,7 +431,7 @@ def test_concurrent_watermark_writers_cannot_commit_a_late_lower_value(
     lower = threading.Thread(target=write, args=("lower", lower_store, 150.0))
     higher = threading.Thread(target=write, args=("higher", higher_store, 200.0))
     lower.start()
-    assert lower_entered_write.wait(timeout=5.0)
+    assert lower_entered_write.wait(timeout=_SYNC_GUARD_SECONDS)
     higher.start()
     lower.join(timeout=5.0)
     higher.join(timeout=5.0)

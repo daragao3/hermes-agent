@@ -78,6 +78,15 @@ from session_bridge.store import (
 from session_bridge.worktree import WorktreeSnapshot, capture_worktree_snapshot
 
 
+# Guard for waits that only need a concurrent thread to REACH a point or a
+# release to ARRIVE -- never an assertion target, so it is sized for the worst
+# host rather than for expected latency.  Every site using it is an `assert
+# X.wait(...)` (or a Barrier/process/future wait), which CANNOT pass unless the
+# thing waited for actually happens -- that is what proves these are guards and
+# not scenarios whose expiry is the point.
+_SYNC_GUARD_SECONDS = 30.0
+
+
 @pytest.fixture
 def db(tmp_path):
     database = SessionDB(tmp_path / "state.db")
@@ -8995,7 +9004,7 @@ def test_concurrent_sidebar_create_reserve_has_one_exact_replay(db) -> None:
     barrier = Barrier(2)
 
     def reserve() -> dict[str, Any]:
-        barrier.wait(timeout=5)
+        barrier.wait(timeout=_SYNC_GUARD_SECONDS)
         return store.reserve_sidebar_create(
             lease_token=lease["lease_token"],
             recovery_key="hermes-session-bridge-create-v1:concurrent",
@@ -11763,11 +11772,11 @@ def test_sidebar_broker_heartbeat_is_monotonic_across_overlapping_stores(db) -> 
 
     def finish_older_request_late() -> None:
         older_started.set()
-        assert newer_finished.wait(timeout=5)
+        assert newer_finished.wait(timeout=_SYNC_GUARD_SECONDS)
         older_store.record_sidebar_broker_heartbeat(now=100.0)
 
     def finish_newer_request_first() -> None:
-        assert older_started.wait(timeout=5)
+        assert older_started.wait(timeout=_SYNC_GUARD_SECONDS)
         newer_store.record_sidebar_broker_heartbeat(now=200.0)
         newer_finished.set()
 
@@ -11775,8 +11784,8 @@ def test_sidebar_broker_heartbeat_is_monotonic_across_overlapping_stores(db) -> 
         with ThreadPoolExecutor(max_workers=2) as executor:
             older = executor.submit(finish_older_request_late)
             newer = executor.submit(finish_newer_request_first)
-            older.result(timeout=5)
-            newer.result(timeout=5)
+            older.result(timeout=_SYNC_GUARD_SECONDS)
+            newer.result(timeout=_SYNC_GUARD_SECONDS)
 
         assert older_store.get_state("session-bridge:sidebar:broker-heartbeat") == {
             "at": 200.0
@@ -14445,11 +14454,11 @@ def test_cycle_empty_verification_serializes_after_concurrent_insert(tmp_path) -
                 conn, candidate, identity, _CLAUDE_MARKER_SECRET, 100.0
             )
             inserted.set()
-            assert release.wait(timeout=10)
+            assert release.wait(timeout=_SYNC_GUARD_SECONDS)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             insertion = executor.submit(insert_db._execute_write, insert_while_locked)
-            assert inserted.wait(timeout=10)
+            assert inserted.wait(timeout=_SYNC_GUARD_SECONDS)
             recording = executor.submit(
                 record_store.record_claude_visibility_cycle,
                 status="no_due_job",
@@ -14457,8 +14466,8 @@ def test_cycle_empty_verification_serializes_after_concurrent_insert(tmp_path) -
                 registrar_result=False,
             )
             release.set()
-            insertion.result(timeout=10)
-            recording.result(timeout=10)
+            insertion.result(timeout=_SYNC_GUARD_SECONDS)
+            recording.result(timeout=_SYNC_GUARD_SECONDS)
 
         status = record_store.claude_visibility_status(100.0)
         assert status["last_cycle"]["value"]["empty_verified"] is False

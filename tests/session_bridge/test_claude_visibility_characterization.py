@@ -62,6 +62,15 @@ _PINNED_SERIES, _, _PINNED_PATCH_TEXT = PINNED.rpartition(".")
 _PINNED_PATCH = int(_PINNED_PATCH_TEXT)
 
 
+# Guard for waits that only need a concurrent thread to REACH a point or a
+# release to ARRIVE -- never an assertion target, so it is sized for the worst
+# host rather than for expected latency.  Every site using it is an `assert
+# X.wait(...)` (or a Barrier/process/future wait), which CANNOT pass unless the
+# thing waited for actually happens -- that is what proves these are guards and
+# not scenarios whose expiry is the point.
+_SYNC_GUARD_SECONDS = 30.0
+
+
 def _aborted_characterization_state(
     root: Path, operation_id: str
 ) -> tuple[dict[str, Any], Path]:
@@ -523,7 +532,7 @@ def test_characterization_serializes_concurrent_root_operations(
         uuid_calls.append(value)
         if len(uuid_calls) == 1:
             first_uuid_entered.set()
-            assert release_first_uuid.wait(5)
+            assert release_first_uuid.wait(_SYNC_GUARD_SECONDS)
         return value
 
     monkeypatch.setattr(
@@ -591,12 +600,12 @@ def test_characterization_serializes_concurrent_root_operations(
     first = threading.Thread(target=run)
     second = threading.Thread(target=run)
     first.start()
-    assert first_uuid_entered.wait(5)
+    assert first_uuid_entered.wait(_SYNC_GUARD_SECONDS)
     second.start()
     time.sleep(0.1)
     release_first_uuid.set()
-    first.join(5)
-    second.join(5)
+    first.join(_SYNC_GUARD_SECONDS)
+    second.join(_SYNC_GUARD_SECONDS)
 
     assert not first.is_alive() and not second.is_alive()
     assert errors == []
@@ -3247,7 +3256,7 @@ def test_concurrent_cleanup_callers_serialize_without_replaying_checkpoints(
         nonlocal restart_calls
         restart_calls += 1
         first_inside_restart.set()
-        assert release_restart.wait(timeout=5)
+        assert release_restart.wait(timeout=_SYNC_GUARD_SECONDS)
         return restarted_source()
 
     def cleanup() -> None:
@@ -3268,7 +3277,7 @@ def test_concurrent_cleanup_callers_serialize_without_replaying_checkpoints(
     first = threading.Thread(target=cleanup)
     second = threading.Thread(target=cleanup)
     first.start()
-    assert first_inside_restart.wait(timeout=5)
+    assert first_inside_restart.wait(timeout=_SYNC_GUARD_SECONDS)
     second.start()
     time.sleep(0.1)
     release_restart.set()
