@@ -36,9 +36,6 @@ import fire
 from dotenv import load_dotenv
 from agent.tool_dispatch_helpers import make_tool_result_message
 
-# Load environment variables
-load_dotenv()
-
 
 def _effective_temperature_for_model(
     model: str,
@@ -729,4 +726,30 @@ def main(
 
 
 if __name__ == "__main__":
+    # Load ~/.hermes/.env so a CLI run picks up OPENROUTER_API_KEY /
+    # ANTHROPIC_API_KEY / OPENAI_API_KEY without shell-sourcing first. Those are
+    # read lazily inside the runner (see _build_client), so loading here is
+    # early enough for every code path.
+    #
+    # DELIBERATELY HERE AND NOT AT MODULE SCOPE. `load_dotenv()` with no path
+    # walks up from the caller looking for a .env; this checkout lives at
+    # ~/.hermes/agent-src, so the walk reaches the operator's real
+    # ~/.hermes/.env and `set_as_environment_variables()` copied its production
+    # values -- LANGFUSE_SECRET_KEY, OTEL_EXPORTER_OTLP_* -- into os.environ for
+    # anyone who merely IMPORTED this module. Under pytest that happened during
+    # COLLECTION, before any autouse fixture could scrub it, and the leaked
+    # names are neither credential-shaped enough for `_hermetic_environment` nor
+    # listed in `_HERMES_BEHAVIORAL_VARS`, so they survived into every other
+    # test in the process. Same class as the `obs/otel_tracing._load_env_once`
+    # leak fixed in 24e0a44868.
+    #
+    # The call is left BARE on purpose: resolving through
+    # `hermes_cli.env_loader.load_hermes_dotenv` would read $HERMES_HOME/.env
+    # instead, and under a profile-scoped HERMES_HOME that is
+    # profiles/main/.env -- a different file with a different key set. Changing
+    # which file a CLI reads is a config change, not test hygiene; the 08-22
+    # `_load_env_once` fix had to mirror 16 keys into profiles/main/.env before
+    # it was safe to deploy. Moving WHEN it loads fixes the leak and changes
+    # nothing for a CLI user.
+    load_dotenv()
     fire.Fire(main)
