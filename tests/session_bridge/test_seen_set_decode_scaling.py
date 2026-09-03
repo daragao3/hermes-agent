@@ -73,41 +73,40 @@ def _best_of_three(count: int) -> float:
 
 
 def test_decode_is_not_quadratic_in_the_seen_set_size() -> None:
-    """Quadrupling the input must not ~16x the cost.
+    """Decoding 20,000 ids must not take anywhere near a second.
 
-    WHY THIS IS A SCALING TEST AND NOT AN ASSERTION ABOUT BEHAVIOUR: the fix
-    this guards is a pure performance change -- the decode returns the same
-    list, in the same order, and raises on exactly the same inputs as before.
-    No correctness assertion can fail without it, so the only property that
-    distinguishes fixed from broken is algorithmic complexity.
+    WHY A TIMING TEST AT ALL: the fix this guards is a pure performance change
+    -- the decode returns the same list, in the same order, and raises on
+    exactly the same inputs as before. No correctness assertion can fail
+    without it, so complexity is the only property that separates fixed from
+    broken. The eight semantics tests above deliberately pass either way.
 
-    WHY A RATIO AND NOT A WALL-CLOCK CEILING: this suite has a documented
-    history of load-dependent wall-clock flakes, and an absolute threshold
-    encodes this machine's speed. A ratio cancels both -- uniform load and
-    slower hardware scale the two measurements together. Combined with
-    best-of-three it takes a spike landing on exactly one arm to fool it.
+    WHY AN ABSOLUTE CEILING AND NOT A SCALING RATIO -- learned the hard way on
+    2026-09-03. The first version of this test asserted that quadrupling the
+    input must not more than 8x the cost, reasoning that a ratio cancels
+    machine speed and background load. That reasoning was sound and beside the
+    point: at n=3000 the fixed decode runs in about 1 ms, where constant
+    overhead and allocator noise dominate, so the FIXED implementation's own
+    ratio was measured at 4.0, 4.0, 4.3, 5.2, 5.7 and 5.9 across six trials --
+    and 8.4 on the run that failed CI. The bound had no margin. The dominant
+    noise was small-n timing variance, not machine speed, so the ratio
+    cancelled the wrong variable.
 
-    THE NUMBERS: measured 2026-09-03 against the live codex seen-set shape,
-    the pre-fix list-membership decode ran 220.8 ms at n=4352, 1312.7 ms at
-    n=10000 and 4717.5 ms at n=20000 -- ~4x per doubling, i.e. ~16x per
-    quadrupling. The set-membership decode ran 2.0-19 ms across the same
-    range. So a 4x input increase costs ~4x linear versus ~16x quadratic, and
-    the bound below sits between them with room on both sides.
+    An absolute ceiling at a LARGER n has the margin the ratio never did.
+    Measured on this box: fixed 8.8-11.4 ms at n=20000 (best of three);
+    the pre-fix list-membership decode 4535 ms. A 1.5 s ceiling therefore sits
+    132x above the fixed implementation and 3x below the broken one. It takes a
+    132x slowdown of a pure-CPU loop to produce a false positive, which is a
+    different universe from the ~2x headroom the ratio had.
     """
 
-    small = _best_of_three(3_000)
-    large = _best_of_three(12_000)
+    elapsed = _best_of_three(20_000)
 
-    # Guard against a divide-by-zero on an implausibly fast clock, and against
-    # asserting on timings too small to be meaningful.
-    if small < 1e-4:
-        pytest.skip("decode too fast to time reliably on this machine")
-
-    ratio = large / small
-    assert ratio < 8.0, (
-        f"decode scaling looks quadratic: 4x the input cost {ratio:.1f}x the "
-        f"time ({small * 1000:.1f} ms at n=3000 -> {large * 1000:.1f} ms at "
-        f"n=12000). Linear is ~4x; the pre-2026-09-03 list-membership "
-        f"duplicate check was ~16x. This decode runs on the asyncio event "
-        f"loop, so a regression here starves the static /health route."
+    assert elapsed < 1.5, (
+        f"decoding 20,000 ids took {elapsed * 1000:.0f} ms; the set-membership "
+        f"implementation does this in ~10 ms and the pre-2026-09-03 "
+        f"list-membership duplicate check took ~4535 ms. This decode runs on "
+        f"the asyncio event loop, so a regression here starves the static "
+        f"/health route and the launcher tears the service down on a single "
+        f"over-budget probe."
     )
