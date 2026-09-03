@@ -1902,14 +1902,34 @@ class CodexSourceAdapter:
         while True:
             if stop is not None and stop.is_set():
                 raise _VisibilityInventoryCancelled()
-            params: dict[str, Any] = {"archived": archived}
+            # An explicit sort key is REQUIRED on every shape, not just the
+            # state-DB one. thread/list's cursor is a bare timestamp with no id
+            # tiebreaker, and its precision follows the request shape: with
+            # `{archived}` alone the server emits it truncated to whole seconds
+            # ('2026-09-02T15:38:45Z'), so a page boundary landing inside a
+            # same-second cluster steps over the rest of that second and those
+            # threads are never enumerated. sortKey promotes the cursor to
+            # milliseconds ('2026-09-02T16:45:55.734Z').
+            # Measured 2026-09-02, codex-cli 0.152.0, 5009 active threads:
+            # `{archived}` alone -> 4344 rows / 174 pages; sorted -> 4610. Of the
+            # 266 lost, 97% shared their exact updated_at second with another row
+            # (control over rows that DID return: 53%). `limit` alone is not a
+            # fix -- it only cuts the boundary count (4555 / 46 pages) -- and with
+            # sortKey present, page size stops mattering (limit 25 and 100 return
+            # byte-identical sets). Loss concentrated in bulk-creation bursts,
+            # which is why it read as a mid-history band rather than a tail.
+            # `useStateDbOnly` stays scoped to the state-DB callers: it is a DATA
+            # SOURCE switch and was NOT the cause. A sorted walk with it absent
+            # returned exactly the state-DB walk's set, so this changes which
+            # rows are paged over without changing which source they come from.
+            params: dict[str, Any] = {
+                "archived": archived,
+                "limit": 100,
+                "sortKey": "updated_at",
+                "sortDirection": "desc",
+            }
             if state_db_only:
-                params.update({
-                    "limit": 100,
-                    "sortKey": "updated_at",
-                    "sortDirection": "desc",
-                    "useStateDbOnly": True,
-                })
+                params["useStateDbOnly"] = True
             if source_kinds is not None:
                 params["sourceKinds"] = list(source_kinds)
             if cursor is not None:

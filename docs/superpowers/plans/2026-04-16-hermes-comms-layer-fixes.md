@@ -27,7 +27,7 @@
 
 ## Conventions Used In This Plan
 
-**Repo root:** `C:\Users\diego\Usersdiegohermes-agent-src` (referred to below as `<root>`). All file paths in tasks are repo-relative.
+**Repo root:** `C:\Users\diego\.hermes\agent-src` (referred to below as `<root>`). All file paths in tasks are repo-relative.
 
 **Test runner:** `pytest` from `<root>`. Use `-x` (stop at first fail) during TDD and `-q` for the whole-suite verification.
 
