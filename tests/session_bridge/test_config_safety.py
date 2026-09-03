@@ -725,6 +725,10 @@ _CLAUDE_VISIBILITY_DEFAULTS = {
     "archive_idle_chips": False,
     "reconcile_desktop_registries": False,
     "idle_chip_archive_seconds": 86_400,
+    # None = the scheduled-task reaping axis is disarmed. This default is the
+    # safe one on purpose: nothing inherits a new reaping axis it did not ask
+    # for, so a box that never opts in keeps byte-identical behaviour.
+    "idle_task_session_archive_seconds": None,
 }
 
 
@@ -794,6 +798,7 @@ def test_claude_visibility_config_parses_every_valid_override(
         "archive_idle_chips": True,
         "reconcile_desktop_registries": True,
         "idle_chip_archive_seconds": 43_200,
+        "idle_task_session_archive_seconds": 14_400,
     }
 
     config = _load_with_claude_visibility(monkeypatch, configured)
