@@ -1884,6 +1884,59 @@ class TestInventory:
                 client, marker_secret=SECRET
             ).list_claude_visibility_sources(after=0)
 
+    def test_sidebar_inventory_requests_a_sorted_page(self) -> None:
+        """The bounded sidebar walk needs the same sort key as the scan paths.
+
+        Second occurrence of the 2026-09-02 cursor defect, in
+        ``_bounded_sidebar_inventory_kind`` rather than
+        ``_fetch_inventory_pages``. thread/list's cursor is a bare timestamp with
+        no id tiebreaker; on the ``{archived}``-only shape the server truncates it
+        to whole seconds, so rows sharing a boundary second are stepped over and
+        never enumerated.
+
+        MEASURED against the live app-server (codex-cli 0.152.0), calling the real
+        method: it returned 4369 rows in 175 pages while the sorted shape returned
+        4626 in 47 -- 257 threads missed, 0 in the other direction. This walk backs
+        the marker path's fallback when thread/search is unavailable, so a skipped
+        row makes find_by_marker_including_archived report a false negative on a
+        thread that exists.
+
+        The page count matters independently: page_cap defaults to 250 and the
+        unsorted walk spent 175 of it, so the cap was ~70% consumed. At limit 100
+        the same corpus costs 47 pages.
+        """
+
+        client = FakeInitializingClient({
+            "thread/list": [
+                {
+                    "data": [{
+                        "id": "thread-one",
+                        "title": "One",
+                        "cwd": "C:/one",
+                        "createdAt": 1783850400,
+                        "updatedAt": 1783850700,
+                        "archived": False,
+                    }]
+                },
+                {"data": []},
+            ]
+        })
+
+        CodexSourceAdapter(client, marker_secret=SECRET).list_sidebar_inventory(
+            deadline=None, page_cap=8
+        )
+
+        listings = [
+            params for method, params, _ in client.calls if method == "thread/list"
+        ]
+        assert listings, "expected a thread/list call"
+        for params in listings:
+            assert params["sortKey"] == "updated_at"
+            assert params["sortDirection"] == "desc"
+            assert params["limit"] == 100
+            # This walk has no state-DB variant; it must not acquire one here.
+            assert "useStateDbOnly" not in params
+
     def test_find_sidebar_thread_reuses_scanner_cache_without_relisting(self) -> None:
         client = FakeInitializingClient({
             "thread/list": [
