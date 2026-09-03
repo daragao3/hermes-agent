@@ -1,15 +1,26 @@
 # Codex Marker Recovery — Recency Prefilter Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
-> **DO NOT START AT TASK 1.** This plan opens with a decision gate (§2) that changes a
-> verification path's semantics. Nothing below §2 is authorised until Diego answers it.
+> ## ⛔ CLOSED — DO NOT IMPLEMENT
+>
+> **Decision: Diego answered NO to the §2 decision gate on 2026-09-03.** The recency
+> prefilter is **not** being built. Do not start at Task 1; do not "just try" §3–§4.
+>
+> This document is kept for its DIAGNOSIS (§1) and its ruled-out list, so the next
+> person to hit a slow marker lookup does not re-derive any of it. The tasks in §4 are
+> a record of what was designed and declined, not a backlog.
+>
+> **To reopen** you would need the §2 answer to change, and the trigger for that is
+> stated in §2: `blocked` rising above 0, or the sidebar lane coming out of retirement
+> (`enabled: false` / `lane_state: retired` as of 2026-09-03). Re-measure before
+> reopening — every number here is dated and the corpus grows ~250 threads/day.
 
 **Goal:** Cut the cost of `find_by_marker_including_archived` from a full-corpus
 `thread/search` (~13–23s today, growing linearly with the thread corpus) to a bounded
 `thread/list` head read (~0.5s) in the common case.
 
-**Status:** NOT AUTHORISED. Diagnosis complete and measured; the design carries a real
-semantic tradeoff that is not mine to accept.
+**Status:** **CLOSED 2026-09-03 — DECLINED.** Diagnosis complete and measured; the design
+carried a semantic tradeoff (§2) that Diego declined to accept. The slow-but-sound path
+stays. No code was written.
 
 **Baseline:** `tests/session_bridge/` — 3783 passed, 11 skipped, 5 xfailed, 0 failed
 (measured 2026-09-02 on `8ab19a1313`, ~22.5 min, ConPTY tests included). Every task
@@ -87,6 +98,14 @@ case; a prefilter that short-circuits on 1 match is fast but weakens the check.
 **The question:** for the post-create ambiguity window, is
 "first verified match within the N most recently updated threads wins" acceptable, given
 that duplicate deliveries arise from re-delivery and therefore cluster in time?
+
+### ✅ ANSWERED 2026-09-03: **NO.** Plan closed, nothing implemented.
+
+Diego declined. Rationale on the record: the measured cost is real and grows linearly,
+but it is currently blocking nothing — the lane is retired, `blocked` is 0, and no job
+carries a marker error. Trading a whole-corpus uniqueness guarantee on a verification
+path for latency that nothing is waiting on is a bad trade today. §3–§7 below were
+never started.
 
 - **Answer NO** → stop. Close this plan; keep the slow-but-sound path, and revisit only
   if `blocked` or latency actually starts hurting. This is the status-quo-safe answer and
