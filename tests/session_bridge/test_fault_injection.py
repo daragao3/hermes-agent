@@ -60,6 +60,12 @@ from tests.session_bridge.test_claude_registrar import (
 )
 
 
+# Generous by design: these bound how long a *correct* run may take to schedule
+# a thread, so they cost nothing when the code is right and only decide how fast
+# a genuine hang is reported. Neither is an assertion about performance.
+_THREAD_START_GRACE_S = 10.0
+_HANG_GUARD_S = 10.0
+
 NOW = 100.0
 MARKER_SECRET = b"synthetic-marker-secret-at-least-32-bytes"
 
@@ -259,7 +265,7 @@ class _BlockingCodexRefreshAdapter:
     def find_native_thread(self, native_id: str) -> SessionProjection:
         assert native_id == self.projection.native_id
         self.started.set()
-        if not self.release.wait(timeout=2.0):
+        if not self.release.wait(timeout=_HANG_GUARD_S):
             raise RuntimeError("synthetic refresh was not released")
         return self.projection
 
@@ -288,14 +294,28 @@ async def test_source_refresh_timeout_returns_durable_snapshot(
         timeout=0.01,
     )
     elapsed = asyncio.get_running_loop().time() - started
-    assert await asyncio.to_thread(adapter.started.wait, 0.2)
+    # Synchronisation, not an assertion about speed: block until the worker
+    # thread has actually entered the adapter, so `release.set()` cannot land
+    # before the `wait()` that observes it. The old 0.2s bound made this a
+    # de-facto scheduling deadline and it went red under suite load on
+    # 2026-09-02; nothing about the behaviour under test depends on how long
+    # Windows takes to schedule a thread.
+    assert await asyncio.to_thread(adapter.started.wait, _THREAD_START_GRACE_S)
     adapter.release.set()
     for _ in range(100):
         if coordinator.health()["provider_calls_inflight"] == 0:
             break
         await asyncio.sleep(0.005)
 
-    assert elapsed < 0.2
+    # THE discriminating assertion, and it is unavoidably a wall-clock one: the
+    # claim is that refresh_session returns on its own 0.01s budget instead of
+    # waiting out the blocked provider call. Widened 0.2 -> 1.0 on 2026-09-02
+    # after it went red under suite load; detection was RE-PROVEN, not assumed,
+    # because widening a bound can silence the flake and the test together:
+    # with the timeout path disengaged (timeout=30.0) this measures 10.0s and
+    # still fails. 1.0s sits an order of magnitude below that and an order of
+    # magnitude above the ~15ms of jitter that produced the flake.
+    assert elapsed < 1.0
     assert result.stale is True
     assert result.cursor == projection.native_cursor
     assert result.source_hash == projection.native_hash

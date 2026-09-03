@@ -14,8 +14,14 @@ from session_bridge.codex_client import RecoveringCodexAppServerClient
 
 
 class _FakeClient:
-    def __init__(self, responses: dict[str, list[object]]) -> None:
+    def __init__(
+        self,
+        responses: dict[str, list[object]],
+        *,
+        on_request: Callable[[], None] | None = None,
+    ) -> None:
         self.responses = responses
+        self._on_request = on_request
         self.initialize_calls: list[dict[str, Any]] = []
         self.calls: list[tuple[str, dict[str, Any], float]] = []
         self.closed = False
@@ -33,6 +39,8 @@ class _FakeClient:
         timeout: float = 30.0,
     ) -> dict[str, Any]:
         self.calls.append((method, params or {}, timeout))
+        if self._on_request is not None:
+            self._on_request()
         value = self.responses[method].pop(0)
         if isinstance(value, BaseException):
             raise value
@@ -57,10 +65,35 @@ def _factory(
 
 
 def test_read_request_recycles_dead_client_and_retries_once() -> None:
-    first = _FakeClient({"thread/list": [TimeoutError("dead transport")]})
+    """The retry must inherit the REMAINING budget, not a fresh `timeout`.
+
+    The clock is INJECTED and advanced by a known 1.5s inside the doomed
+    transport call, so the expected value is exact arithmetic (5.0 - 1.5) rather
+    than a tolerance around the original timeout. Until 2026-09-02 this asserted
+    `pytest.approx(5.0)` against the real `time.monotonic`, which was wrong twice
+    over: it FLAKED under load (measured 4.98499999998603 against a default
+    rel=1e-6 -- ~15ms of scheduling delay is enough), and because it expected the
+    UNDEDUCTED 5.0 it could never have distinguished "passes what is left" from
+    "passes the original timeout" in the first place. A frozen clock would have
+    fixed the flake and kept that blind spot, since both values coincide at
+    elapsed=0; advancing it is what makes the assertion discriminate.
+    """
+
+    clock = {"now": 100.0}
+
+    def burn_a_second_and_a_half() -> None:
+        clock["now"] += 1.5
+
+    first = _FakeClient(
+        {"thread/list": [TimeoutError("dead transport")]},
+        on_request=burn_a_second_and_a_half,
+    )
     second = _FakeClient({"thread/list": [{"data": [{"id": "fresh"}]}]})
     factory, created = _factory([first, second])
-    client = RecoveringCodexAppServerClient(factory)
+    client = RecoveringCodexAppServerClient(
+        factory,
+        monotonic=lambda: clock["now"],
+    )
 
     client.initialize(capabilities={"experimentalApi": True})
     result = client.request("thread/list", {"archived": False}, timeout=5.0)
@@ -68,13 +101,16 @@ def test_read_request_recycles_dead_client_and_retries_once() -> None:
     assert result == {"data": [{"id": "fresh"}]}
     assert created == [first, second]
     assert first.closed is True
+    assert first.calls == [("thread/list", {"archived": False}, 5.0)]
+    # 5.0 - 1.5 spent in the dead transport. Exact: no clock is read that this
+    # test does not control.
     assert second.initialize_calls == [
         {
             "capabilities": {"experimentalApi": True},
-            "timeout": pytest.approx(5.0),
+            "timeout": 3.5,
         }
     ]
-    assert second.calls == [("thread/list", {"archived": False}, pytest.approx(5.0))]
+    assert second.calls == [("thread/list", {"archived": False}, 3.5)]
 
 
 def test_lock_queue_wait_does_not_consume_transport_request_budget() -> None:
@@ -353,7 +389,12 @@ def test_per_initialize_cancellation_is_forwarded_but_not_retained_for_replay() 
     first = InitializingClient({"thread/list": [TimeoutError("dead transport")]})
     second = InitializingClient({"thread/list": [{"data": []}]})
     factory, created = _factory([first, second])
-    client = RecoveringCodexAppServerClient(factory)
+    # Frozen clock: this test is about cancel_event forwarding, but it asserts on
+    # the retry budget in passing, and the client DEDUCTS elapsed time from it.
+    # Against the real clock that made `approx(30.0)` a ~30us deadline (default
+    # rel=1e-6) -- the same defect that took down the sibling assertion in this
+    # file under load on 2026-09-02, merely not yet triggered.
+    client = RecoveringCodexAppServerClient(factory, monotonic=lambda: 100.0)
 
     client.initialize(
         capabilities={"experimentalApi": True},
@@ -366,7 +407,7 @@ def test_per_initialize_cancellation_is_forwarded_but_not_retained_for_replay() 
     assert second.initialize_calls == [
         {
             "capabilities": {"experimentalApi": True},
-            "timeout": pytest.approx(30.0),
+            "timeout": 30.0,
         }
     ]
 
