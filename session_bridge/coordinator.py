@@ -4449,6 +4449,7 @@ class SessionBridgeCoordinator:
         indexed = 0
         rebuilt = 0
         failed = len(unavailable_paths)
+        locally_owned = 0
         for path in paths:
             try:
                 parsed = await self._provider_call(_call, adapter, "parse", path)
@@ -4461,11 +4462,45 @@ class SessionBridgeCoordinator:
                 )
             except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                 raise
+            except LocalSessionOwnsCanonicalId:
+                # 2026-09-03: the last CLAUDE path with no handler for this, and
+                # the only one of the three that is reachable from the CLI
+                # against the PRODUCTION store -- `_scan_all_claude_history` is
+                # not gated on `_supports_scan_state`, so `scan --all-history`
+                # walks straight into it. Measured on the live catalog
+                # (~/.hermes/state.db): 335 claude `sessions` rows have no
+                # `external_sessions` row, and exactly ONE of them still has a
+                # transcript on disk for `discover` to find --
+                # claude:5dc2e902-01ad-4dee-9a5d-45cedd83346e, the same session
+                # named in `_scan_claude_persistent`. Left in the generic branch
+                # below it counted a failure, and `_scan_all_history_provider`
+                # turns any `summary.failed` into
+                # `degraded_reason=scan_failed` for the whole provider. The row
+                # is never adopted, so that degradation was permanent and no
+                # retry could clear it.
+                locally_owned += 1
+                continue
+            except StaleExternalProjection:
+                # Kept SEPARATE from the clause above, as on the persistent
+                # path. Behaviour is identical (still a no-op `continue`), but
+                # a stale projection is not a canonical-id collision and
+                # folding it in would make `locally_owned` overstate them.
+                continue
             except Exception:
                 failed += 1
                 continue
             indexed += 1
             rebuilt += int(not result.first_seen)
+        if locally_owned:
+            # Counted, never silent -- the rule the other five scan paths follow.
+            try:
+                _LOG.info(
+                    "claude_scan_diagnostic stage=full_history_project code=%s excluded=%d",
+                    _CLAUDE_SCAN_LOCAL_OWNER_CODE,
+                    locally_owned,
+                )
+            except Exception:
+                pass
         return ScanSummary(
             provider=Provider.CLAUDE,
             discovered=len(paths) + len(unavailable_paths),
@@ -4473,6 +4508,7 @@ class SessionBridgeCoordinator:
             rebuilt=rebuilt,
             failed=failed,
             duration_ms=0,
+            locally_owned=locally_owned,
         )
 
     async def _scan_all_codex_history(self) -> ScanSummary:
@@ -4589,6 +4625,7 @@ class SessionBridgeCoordinator:
         indexed = 0
         rebuilt = 0
         failed = 0
+        locally_owned = 0
         incremental = self._claude_incremental_reads(adapter)
         cursors = self._claude_immediate_cursors
         # Nothing persists on this path, so drop cursors for transcripts the
@@ -4619,6 +4656,23 @@ class SessionBridgeCoordinator:
                 )
             except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                 raise
+            except LocalSessionOwnsCanonicalId:
+                # Same benign collision as the other two claude paths. This one
+                # only runs when the store exposes no `get_state`/`set_state`
+                # (see `_scan_claude`), so it is not what the live bridge takes
+                # -- but it is a supported branch reached with the SAME store
+                # contract, and it is the more exposed of the two: it re-walks
+                # every discovered transcript each cycle with no fingerprint
+                # filter, so a collision here recurs on every single scan.
+                # Leaving one of six paths without the handler is exactly the
+                # gap 2026-08-13 opened and 2026-09-02 was still closing.
+                locally_owned += 1
+                continue
+            except StaleExternalProjection:
+                # Split from the clause above for the same reason as on the
+                # other two claude paths: identical behaviour, but a stale
+                # projection must not inflate the collision count.
+                continue
             except Exception:
                 failed += 1
                 continue
@@ -4627,6 +4681,16 @@ class SessionBridgeCoordinator:
             # Only a committed upsert may advance the cursor: an offset moved
             # past bytes the store never accepted would skip them forever.
             _remember_claude_cursor(cursors, cursor_key, parsed)
+        if locally_owned:
+            # Counted, never silent -- the rule the other five scan paths follow.
+            try:
+                _LOG.info(
+                    "claude_scan_diagnostic stage=immediate_project code=%s excluded=%d",
+                    _CLAUDE_SCAN_LOCAL_OWNER_CODE,
+                    locally_owned,
+                )
+            except Exception:
+                pass
         return ScanSummary(
             provider=Provider.CLAUDE,
             discovered=discovered,
@@ -4634,6 +4698,7 @@ class SessionBridgeCoordinator:
             rebuilt=rebuilt,
             failed=failed,
             duration_ms=0,
+            locally_owned=locally_owned,
         )
 
     async def _scan_codex(self, discovery_mode: DiscoveryMode) -> ScanSummary:
