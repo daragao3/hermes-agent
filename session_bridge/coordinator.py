@@ -5307,6 +5307,24 @@ class SessionBridgeCoordinator:
                 )
             indexed += 1
             terminal_ids.add(native_id)
+        if deferred:
+            # Counted, never silent: retried next cycle, never a scan failure.
+            # The other two codex paths have logged this since 2026-08-13; this
+            # one counted it and said nothing. That silence stopped being
+            # cosmetic when `deferred` became load-bearing below: the `drained`
+            # guard requires `not deferred`, so a thread that defers every cycle
+            # pins the frontier and the continuous window never advances. With
+            # failed=0, locally_owned possibly 0, and no `deferred` field on
+            # ScanSummary, that stall had no observable signal at all.
+            try:
+                _LOG.warning(
+                    "codex_scan_diagnostic stage=persistent_project "
+                    "code=app_server_timeout deferred=%d indexed=%d",
+                    deferred,
+                    indexed,
+                )
+            except Exception:
+                pass
         if vanished:
             # Counted, never silent. Unlike the timeout branch these ids are DROPPED
             # from staged rather than retried: the source cannot resolve them at all.

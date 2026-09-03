@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from session_bridge.codex_adapter import CodexThreadSummary
@@ -61,10 +63,27 @@ class _OwnedCanonicalIdStore:
 
     This is the live 2026-09-01 shape: 1,586 root-DB rows with source='codex'
     and no `external_sessions` row.
+
+    `get_state`/`set_state` are REQUIRED, not incidental. `_scan_codex`
+    dispatches on `_supports_scan_state(store)`, which duck-types on exactly
+    those two attributes; a fake without them routes silently to
+    `_scan_codex_immediate` -- a DIFFERENT function with its own
+    `locally_owned` counter -- so these tests passed while never executing
+    `_scan_codex_persistent`, the path they were written for. Measured
+    2026-09-01: without them the emitted diagnostics carry
+    `stage=immediate_project`; with them, `stage=persistent_project`.
+    An under-implemented fake does not fail, it selects the other branch.
     """
 
     def __init__(self) -> None:
         self.attempts = 0
+        self.states: dict[str, object] = {}
+
+    def get_state(self, key: str) -> object:
+        return self.states.get(key)
+
+    def set_state(self, key: str, value: object) -> None:
+        self.states[key] = value
 
     def upsert_projection(
         self,
@@ -80,7 +99,9 @@ class _OwnedCanonicalIdStore:
 
 
 @pytest.mark.asyncio
-async def test_declined_thread_is_reported_not_silently_dropped() -> None:
+async def test_declined_thread_is_reported_not_silently_dropped(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """failed=0 must stop implying "nothing was declined".
 
     Without the ScanSummary field the handler still counts `locally_owned`
@@ -99,7 +120,19 @@ async def test_declined_thread_is_reported_not_silently_dropped() -> None:
         },
     )
 
-    summary = await coordinator.scan_once(Provider.CODEX)
+    with caplog.at_level(logging.INFO, logger="session_bridge.coordinator"):
+        summary = await coordinator.scan_once(Provider.CODEX)
+
+    stages = {
+        part
+        for record in caplog.records
+        for part in record.getMessage().split()
+        if part.startswith("stage=")
+    }
+    assert "stage=immediate_project" not in stages, (
+        "routed to _scan_codex_immediate: the store fake lost get_state/set_state, "
+        "so this asserts about the wrong function while still passing"
+    )
 
     assert store.attempts >= 1, "the store must actually have been asked"
     assert summary.failed == 0, "a collision is benign and must not degrade"
