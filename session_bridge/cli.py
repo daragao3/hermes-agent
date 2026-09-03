@@ -231,6 +231,34 @@ _SENSITIVE_KEY_FRAGMENTS = (
     "token",
 )
 _LOG = logging.getLogger(__name__)
+
+# Third-party loggers that are pure noise at INFO in a long-running service, and
+# are NOT merely noisy -- they are expensive. FastMCP installs a rich handler on
+# the ROOT logger (mcp/server/fastmcp/server.py -> configure_logging ->
+# logging.basicConfig(handlers=[RichHandler(...)])), so every record any library
+# emits is rendered through a rich Table. Measured 2026-09-03: 2.392 ms per
+# record for that handler versus 0.005 ms for a plain StreamHandler, 328x.
+#
+# watchfiles logs one INFO record per change batch from its own awatch loop
+# (watchfiles/main.py:308), and the bridge's file watcher drives that loop, so
+# the render happens ON the asyncio event loop. Occupancy matters more than the
+# CPU here: while the loop is inside that render it cannot serve anything else,
+# and /health is a static route whose latency is therefore a direct measure of
+# loop availability. It was sampled between 105 ms and 10083 ms, and the
+# launcher tears the service down on a single probe over its 5 s budget.
+_NOISY_THIRD_PARTY_LOGGERS = ("watchfiles",)
+
+
+def _quiet_noisy_third_party_loggers() -> None:
+    """Raise the floor on third-party loggers that spam INFO.
+
+    Deliberately sets the LOGGER level rather than removing the root handler:
+    the handler belongs to FastMCP, other libraries may legitimately want it,
+    and a level check short-circuits before any record is created, so nothing
+    is rendered at all.
+    """
+    for name in _NOISY_THIRD_PARTY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 _CLAUDE_LINEAGE_CODE = re.compile(r"[a-z][a-z0-9_]{0,127}")
 
 
@@ -1160,6 +1188,7 @@ class ProductionBackend:
                     daemon=False,
                 )
                 visibility_thread.start()
+            _quiet_noisy_third_party_loggers()
             import uvicorn
 
             # uvicorn.run() builds exactly this and throws the Server away. We
