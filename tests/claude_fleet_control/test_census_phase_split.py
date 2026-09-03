@@ -316,3 +316,60 @@ def test_process_that_exits_between_phases_is_dropped_not_incomplete(monkeypatch
     assert -3 not in by_pid, "dead process should not appear in the census"
     assert by_pid[-2].complete is True
     assert snap.complete is True
+
+
+# ------------------------------------------------------- census deadline
+# Added 2026-09-03. The census is the dominant phase and its cost is set by
+# host conditions, not by the code: the same live_snapshot() call measured
+# 0.36s, 1.30s and 7.05s in three runs hours apart. Unbounded, it rides the
+# whole pass past the task's PT8M ExecutionTimeLimit, where the kill is
+# SILENT. Bounded, an overrun degrades to a protected census that reports.
+
+
+def test_deadline_marks_remaining_targets_incomplete_and_flags_truncation(monkeypatch):
+    table = [(-2, None, "claude.exe", NOW - 50.0), (-3, -2, "bash.exe", NOW - 40.0)]
+    _install_fake_psutil(monkeypatch, table)
+    # Negative deadline: already expired when phase 2 starts.
+    monkeypatch.setattr(controller, "CENSUS_DEADLINE_SECONDS", -1.0)
+    snap = controller.live_snapshot()
+    assert snap.truncated is True
+    assert snap.complete is False
+    # Every enrichment target is protected, not left cheap-but-plausible.
+    enriched_targets = planner.enrichment_pids(list(snap.records))
+    by_pid = {r.pid: r for r in snap.records}
+    assert enriched_targets, "fixture must have enrichment targets to be meaningful"
+    for pid in enriched_targets:
+        assert by_pid[pid].complete is False, pid
+
+
+def test_no_deadline_breach_leaves_the_census_untruncated(monkeypatch):
+    """Control: without this the truncation test could pass on a broken census."""
+    table = [(-2, None, "claude.exe", NOW - 50.0), (-3, -2, "bash.exe", NOW - 40.0)]
+    _install_fake_psutil(monkeypatch, table)
+    monkeypatch.setattr(controller, "CENSUS_DEADLINE_SECONDS", 3600.0)
+    snap = controller.live_snapshot()
+    assert snap.truncated is False
+    assert snap.complete is True
+    assert all(r.complete for r in snap.records)
+
+
+def test_truncation_protects_via_the_MEMBER_flag_not_the_snapshot_flag():
+    """THE trap this design had to dodge, pinned.
+
+    ProcessSnapshot.complete is written by the census and read by NOBODY --
+    measured 2026-09-03, its only consumer in planner/controller is the
+    per-MEMBER flag at planner._assess_tree. So the obvious implementation of
+    a deadline ("abort and mark the snapshot incomplete") would have been
+    INERT: a fail-safe that protects nothing while looking like it does.
+
+    This asserts the real lever: a member with complete=False contributes
+    REASON_INCOMPLETE_MEMBER, and a snapshot-level flag does not.
+    """
+    import inspect
+
+    src = inspect.getsource(planner)
+    # The protection is driven by member.complete ...
+    assert "if not member.complete:" in src
+    assert "REASON_INCOMPLETE_MEMBER" in src
+    # ... and nothing in the planner consults the snapshot-level flag.
+    assert "snapshot.complete" not in src

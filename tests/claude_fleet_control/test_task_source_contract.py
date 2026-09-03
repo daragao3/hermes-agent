@@ -15,6 +15,7 @@ people learn to skip, which is worse than no gate. Assert the invariant the
 value exists to serve.
 """
 
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -101,8 +102,37 @@ def test_runner_gates_enforce_behind_the_switch():
     code = "\n".join(code_lines)
     assert "param([switch]$AllowEnforce)" in code       # declares the switch
     assert "if ($AllowEnforce)" in code                 # the flag is guarded
-    assert "$Py $Script --allow-enforce" in code        # the enforce branch
-    assert "& $Py $Script 2>&1" in code                 # the shadow-default branch (no flag)
+
+    # Pin the INVARIANT, not the exact command literal. This previously read
+    #     assert "$Py $Script --allow-enforce" in code
+    # which pinned incidental spelling: adding `-u` (needed so a killed pass's
+    # streamed output is not lost to python's block buffering) broke it on
+    # 2026-09-02 while the safety property it guards was untouched. A gate test
+    # that goes red on an unrelated correct change gets "fixed" by loosening
+    # it, so assert the property instead: --allow-enforce is invoked exactly
+    # once, and only inside the -AllowEnforce guard.
+    # An INVOCATION, not any mention: the $gate line names the flag in a log
+    # string, and counting that as a call site is how this assertion first
+    # went wrong.
+    _INVOKE = re.compile(r"&\s+\$Py\b.*\$Script")
+    lines = code.splitlines()
+    enforce_invocations = [
+        ln for ln in lines if _INVOKE.search(ln) and "--allow-enforce" in ln
+    ]
+    assert len(enforce_invocations) == 1, enforce_invocations
+
+    guard_idx = next(i for i, ln in enumerate(lines)
+                     if "if ($AllowEnforce)" in ln and _INVOKE.search(ln) is None
+                     and ln.lstrip().startswith("if"))
+    enforce_idx = next(i for i, ln in enumerate(lines)
+                       if _INVOKE.search(ln) and "--allow-enforce" in ln)
+    assert enforce_idx > guard_idx, "the enforce branch must sit inside the guard"
+
+    # The shadow default must invoke the SAME script with NO enforce flag.
+    shadow = [ln for ln in code.splitlines()
+              if re.search(r"&\s+\$Py\b.*\$Script", ln) and "--allow-enforce" not in ln]
+    assert shadow, "no shadow-default invocation found"
+
     assert "cull-claude-sessions" not in code
     assert "cull-idle-claude-sessions" not in code
     assert "run_claude_fleet_controller.py" in code
@@ -230,3 +260,45 @@ def test_config_and_task_enforce_state_are_consistent():
     assert config_enforce == task_enforce, (
         f"gate mismatch: config_enforce={config_enforce} task_enforce={task_enforce}"
     )
+
+
+_RUNNER_PY = Path(__file__).resolve().parents[2] / "scripts" / "run_claude_fleet_controller.py"
+
+
+def test_runner_actually_executes_end_to_end(tmp_path):
+    """Run the real runner in a subprocess with a DISABLED config.
+
+    This exists because unit tests that call _PhaseLog.log_boot directly all
+    passed while the runner's call site used a stale keyword name, and the
+    scheduled task then died with TypeError on every fire (2026-09-03). A
+    helper test proves the helper; only executing the wiring proves the wiring.
+
+    mode=disabled returns before the lock and the bus, so this touches no
+    shared state -- but it does run module import, log_boot, Controller
+    construction and run_once's config path, which is where the break was.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({
+        "mode": "disabled",
+        "policy_version": "test",
+        "approved_enforce_digest": None,
+    }), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["P6_SPAWN_EPOCH_MS"] = "1000"          # exercise the stamped path
+    proc = subprocess.run(
+        [sys.executable, "-u", str(_RUNNER_PY),
+         "--config", str(cfg), "--state-dir", str(tmp_path / "state")],
+        capture_output=True, text=True, timeout=180, env=env,
+    )
+    combined = proc.stdout + proc.stderr
+    assert "Traceback" not in combined, combined
+    assert proc.returncode == 0, combined
+    # The stamped path must have produced both pre-pass phases.
+    assert "phase imports=" in combined, combined
+    assert "phase spawn_and_boot=" in combined, combined

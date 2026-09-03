@@ -19,6 +19,7 @@ Fail-closed inventory (each is pinned by a test):
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import logging
@@ -36,6 +37,7 @@ from claude_fleet_control.models import (
     MODE_DISABLED,
     MODE_ENFORCE,
     MODE_SHADOW,
+    REASON_CENSUS_TRUNCATED,
     REASON_STATE_CORRUPT,
     RESULT_CANCELLED,
     RESULT_FAILED,
@@ -59,6 +61,24 @@ EXIT_OK = 0
 EXIT_CONFIG_ERROR = 2
 EXIT_LOCK_HELD = 3
 EXIT_RUNTIME_FAILURE = 4
+
+# Wall-clock ceiling on the whole live census. Measured 2026-09-02/03 on this
+# box, the same live_snapshot() call took 0.36s, 1.30s and 7.05s in three runs
+# hours apart -- a 20x swing with identical code, driven by host conditions
+# (spawn latency median 46ms on fast passes vs 834ms on the ones the task
+# killed). The task's ExecutionTimeLimit is PT8M and a kill is SILENT, so the
+# census is bounded well below it: exceeding this deadline degrades to a
+# protected census that still REPORTS, instead of the whole pass being
+# SIGKILLed with no record at all.
+#
+# 45s is ~6x the worst census observed and ~10% of the task budget, leaving
+# room for the other phases plus the ~1s of pre-pass boot.
+#
+# Deliberately a MODULE CONSTANT, not a FleetPolicy field: FleetPolicy.digest()
+# enumerates its fields, so adding one changes the digest, breaks
+# approved_enforce_digest, and silently demotes the enforce lane to shadow --
+# a safety regression dressed as a tuning knob.
+CENSUS_DEADLINE_SECONDS = 45.0
 
 _NUMERIC_POLICY_FIELDS = (
     "fleet_min_roots",
@@ -233,6 +253,89 @@ def _live_ppid_map() -> Optional[Dict[int, Optional[int]]]:
         return None
 
 
+class _PhaseLog:
+    """Log each pass phase AS IT COMPLETES, so a killed pass leaves a trail.
+
+    Why per-phase and not one summary line at the end: the scheduled task kills
+    the pass at its PT8M ExecutionTimeLimit, and a summary emitted after the
+    work is exactly the line a kill destroys. Measured 2026-09-02: 58 of 454
+    passes were killed and logged NOTHING after "pass start", and the 98 passes
+    that were merely slow (up to 617s) completed with no breakdown at all -- so
+    neither failure mode said where the time went. A phase that hangs never
+    logs, so the last line present names the phase that was still running.
+
+    Durations use ``time.monotonic``, never the injected ``now_fn``: tests pin
+    a frozen clock, which would render every phase as 0ms and make this useless
+    exactly where it is being verified.
+    """
+
+    def __init__(self, run_id: str):
+        self.run_id = run_id
+        self.ms: Dict[str, float] = {}
+
+    @contextlib.contextmanager
+    def __call__(self, name: str):
+        t0 = time.monotonic()
+        try:
+            yield
+        finally:
+            dt = (time.monotonic() - t0) * 1000.0
+            self.ms[name] = round(dt, 1)
+            logger.info(
+                "fleet-controller phase %s=%.1fms (run %s)", name, dt, self.run_id[:8]
+            )
+
+    @staticmethod
+    def log_boot(entry_monotonic: float, imported_monotonic: float,
+                 spawn_epoch_ms=None, entry_epoch_ms=None) -> Dict[str, float]:
+        """Log the two phases that precede main(): process boot, then imports.
+
+        These are invisible to the in-pass phases by construction -- the first
+        one cannot run until the interpreter and every import are already done.
+        Measured 2026-09-02: a pass whose phases totalled 9313ms had ~12s of
+        wall time, so ~3s (25%) sat in this blind spot.
+
+        ``spawn_epoch_ms`` is stamped by the WRAPPER immediately before it
+        invokes python, because a process cannot time its own creation. When it
+        is absent (an ad-hoc run, or a wrapper that predates the stamp) the
+        boot phase is skipped rather than guessed -- a fabricated 0ms would
+        read as "boot is free", which is the opposite of the finding.
+        """
+        out: Dict[str, float] = {}
+        if spawn_epoch_ms is not None:
+            try:
+                spawned = float(spawn_epoch_ms)
+            except (TypeError, ValueError):
+                spawned = None
+            if spawned is not None:
+                # Wall clock on BOTH ends: the stamps come from two different
+                # processes, so monotonic clocks are not comparable across them.
+                # entry_epoch_ms is captured at module entry, so this is exactly
+                # "wrapper stamped -> python reached its first line".
+                entry_ms = (float(entry_epoch_ms) if entry_epoch_ms is not None
+                            else time.time() * 1000.0)
+                boot = entry_ms - spawned
+                # A negative delta means the clocks disagree (or the stamp is
+                # from a later run); report nothing rather than a nonsense
+                # figure that would be averaged into someone's diagnosis.
+                if boot >= 0:
+                    out["spawn_and_boot"] = round(boot, 1)
+                    logger.info("fleet-controller phase spawn_and_boot=%.1fms (pre-pass)", boot)
+        imports = (imported_monotonic - entry_monotonic) * 1000.0
+        out["imports"] = round(imports, 1)
+        logger.info("fleet-controller phase imports=%.1fms (pre-pass)", imports)
+        return out
+
+    def summary(self) -> None:
+        total = sum(self.ms.values())
+        logger.info(
+            "fleet-controller phases total=%.1fms %s (run %s)",
+            total,
+            " ".join(f"{k}={v}ms" for k, v in self.ms.items()),
+            self.run_id[:8],
+        )
+
+
 def live_snapshot() -> ProcessSnapshot:
     """Whole-box census via psutil, in three phases.
 
@@ -284,6 +387,9 @@ def live_snapshot() -> ProcessSnapshot:
     it; non-enriched, non-Claude processes keep empty expensive fields on the
     same argument."""
     import psutil
+
+    _t_start = time.monotonic()
+    truncated = False
 
     # Phase 1 — genuinely cheap whole-table census: pid/name from
     # process_iter, and the entire pid->ppid table from ONE snapshot call.
@@ -371,8 +477,35 @@ def live_snapshot() -> ProcessSnapshot:
 
     # Phase 2 — enrich only Claude processes and their trees.
     cheap = [by_pid[r.pid] for r in cheap if r.pid not in gone]
-    targets = planner.enrichment_pids(cheap)
-    for pid in targets:
+    # sorted(): enrichment_pids returns a frozenset, which is neither
+    # ordered nor sliceable, and the deadline path needs to name the
+    # REMAINING targets. Sorting also makes a truncated census
+    # reproducible instead of set-iteration-order dependent.
+    targets = sorted(planner.enrichment_pids(cheap))
+    for idx, pid in enumerate(targets):
+        if time.monotonic() - _t_start > CENSUS_DEADLINE_SECONDS:
+            # Deadline hit. Mark every REMAINING target incomplete rather than
+            # leaving it cheap-but-plausible: an unenriched record has no
+            # cmdline/username/rss, and the planner would read those absences
+            # as ordinary values instead of as "not measured".
+            #
+            # Per-RECORD complete=False is the lever that actually protects
+            # (planner._assess_tree -> REASON_INCOMPLETE_MEMBER, and one
+            # incomplete member protects the WHOLE tree). Setting only
+            # ProcessSnapshot.complete would be INERT: nothing reads it --
+            # measured 2026-09-03, its sole consumer is the per-member flag.
+            for rest in targets[idx:]:
+                stale = by_pid.get(rest)
+                if stale is not None:
+                    by_pid[rest] = dataclasses.replace(stale, complete=False)
+            complete = False
+            truncated = True
+            logger.warning(
+                "fleet-controller: census deadline %.0fs exceeded; %d of %d "
+                "enrichment targets left unmeasured and their trees protected",
+                CENSUS_DEADLINE_SECONDS, len(targets) - idx, len(targets),
+            )
+            break
         base = by_pid.get(pid)
         if base is None:
             continue
@@ -401,7 +534,8 @@ def live_snapshot() -> ProcessSnapshot:
             complete = False
 
     records = tuple(by_pid[r.pid] for r in cheap)
-    return ProcessSnapshot(taken_at=time.time(), records=records, complete=complete)
+    return ProcessSnapshot(taken_at=time.time(), records=records,
+                           complete=complete, truncated=truncated)
 
 
 def _projects_dir() -> Path:
@@ -626,39 +760,51 @@ class Controller:
         now = self._now()
         run_id = str(uuid.uuid4())
         reasons = list(extra_reasons)
+        phase = _PhaseLog(run_id)
 
-        state, corrupt = self._load_state()
+        with phase("state_load"):
+            state, corrupt = self._load_state()
         if corrupt:
             reasons.append(REASON_STATE_CORRUPT)
 
         try:
-            bus = self._bus_factory()
+            with phase("bus_init"):
+                bus = self._bus_factory()
         except Exception as exc:
             logger.error("fleet-controller: EventBus unavailable: %s", exc)
             return EXIT_RUNTIME_FAILURE, None
 
-        raw_events = self._query_pressure_events(bus, now)
+        with phase("pressure_query"):
+            raw_events = self._query_pressure_events(bus, now)
         if raw_events is None:
             pressure = planner.PressureEvidence(False, "bus_error")
         else:
             pressure = planner.evaluate_pressure(raw_events, now, policy)
 
-        snapshot = self._snapshot()
-        assessments, root_count = self._assess_all(snapshot, policy, now)
+        with phase("snapshot"):
+            snapshot = self._snapshot()
+        # Surface a deadline-truncated census in the PLAN, not just the log:
+        # the trees it protected are indistinguishable from genuinely
+        # ineligible ones once the reason is gone.
+        if getattr(snapshot, "truncated", False):
+            reasons.append(REASON_CENSUS_TRUNCATED)
+        with phase("assess"):
+            assessments, root_count = self._assess_all(snapshot, policy, now)
 
         prior_strikes = state.get("strikes") if not corrupt else {}
         last_intent = state.get("last_enforce_intent_at")
-        plan = planner.build_plan(
-            assessments=assessments,
-            fleet_root_count=root_count,
-            pressure=pressure,
-            prior_strikes=prior_strikes if isinstance(prior_strikes, dict) else {},
-            last_enforce_intent_at=last_intent if isinstance(last_intent, (int, float)) else None,
-            policy=policy,
-            now=now,
-            run_id=run_id,
-            extra_reasons=reasons,
-        )
+        with phase("plan"):
+            plan = planner.build_plan(
+                assessments=assessments,
+                fleet_root_count=root_count,
+                pressure=pressure,
+                prior_strikes=prior_strikes if isinstance(prior_strikes, dict) else {},
+                last_enforce_intent_at=last_intent if isinstance(last_intent, (int, float)) else None,
+                policy=policy,
+                now=now,
+                run_id=run_id,
+                extra_reasons=reasons,
+            )
 
         new_state = {
             "version": _STATE_VERSION,
@@ -666,12 +812,15 @@ class Controller:
             "last_enforce_intent_at": state.get("last_enforce_intent_at"),
         }
         try:
-            self._save_state(new_state)
+            with phase("state_save"):
+                self._save_state(new_state)
         except OSError as exc:
             logger.error("fleet-controller: state save failed, abandoning pass: %s", exc)
             return EXIT_RUNTIME_FAILURE, None
 
-        result = self._emit_and_maybe_act(bus, plan, new_state, enforce_authorized)
+        with phase("emit_and_act"):
+            result = self._emit_and_maybe_act(bus, plan, new_state, enforce_authorized)
+        phase.summary()
         exit_code = EXIT_OK if result is not None and result.status != RESULT_FAILED else EXIT_RUNTIME_FAILURE
         return exit_code, result
 

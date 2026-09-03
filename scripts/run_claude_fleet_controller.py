@@ -15,8 +15,15 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
+import time
 from pathlib import Path
+
+# Stamped FIRST, before the expensive import below, so the import cost is
+# attributable. Everything above this line is stdlib and effectively free.
+_T_ENTRY = time.monotonic()
+_T_ENTRY_EPOCH_MS = time.time() * 1000.0
 
 # Make the agent-src root importable when invoked by path (the scheduled
 # runner calls this file directly rather than via -m).
@@ -24,7 +31,9 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from claude_fleet_control.controller import Controller  # noqa: E402
+from claude_fleet_control.controller import Controller, _PhaseLog  # noqa: E402
+
+_T_IMPORTED = time.monotonic()
 
 
 def main(argv=None) -> int:
@@ -41,6 +50,15 @@ def main(argv=None) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    # The two phases that precede every in-pass phase. P6_SPAWN_EPOCH_MS is
+    # stamped by bin/claude_fleet_controller_run.ps1 immediately before it
+    # invokes python; absent it, the boot phase is skipped rather than guessed.
+    _PhaseLog.log_boot(
+        _T_ENTRY, _T_IMPORTED,
+        spawn_epoch_ms=os.environ.get("P6_SPAWN_EPOCH_MS"),
+        entry_epoch_ms=_T_ENTRY_EPOCH_MS,
     )
 
     controller = Controller(

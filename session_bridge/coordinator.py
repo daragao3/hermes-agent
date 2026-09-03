@@ -119,6 +119,14 @@ class ScanSummary:
     # handler `continue`s. Counted at each site but historically dropped
     # before this summary, which made failed=0 read as "nothing declined".
     locally_owned: int = 0
+    # Threads the scan DEFERRED without failing: the source could not resolve
+    # them this cycle (persistent app-server timeout, StaleExternalProjection),
+    # so they are retried next cycle and stay out of `terminal_ids`. A deferral
+    # HOLDS THE CONTINUOUS FRONTIER (`drained` in _scan_codex_persistent), so a
+    # thread that defers every cycle pins the frontier indefinitely -- counted
+    # at each site but historically dropped before this summary, which made
+    # failed=0 read as "nothing was left behind".
+    deferred: int = 0
 
 
 @dataclass(frozen=True)
@@ -1274,6 +1282,7 @@ class SessionBridgeCoordinator:
             failed=sum(summary.failed for summary in summaries),
             duration_ms=sum(summary.duration_ms for summary in summaries),
             locally_owned=sum(summary.locally_owned for summary in summaries),
+            deferred=sum(summary.deferred for summary in summaries),
         )
         await self._after_successful_scan(summary)
         return summary
@@ -1301,6 +1310,7 @@ class SessionBridgeCoordinator:
             failed=sum(summary.failed for summary in summaries),
             duration_ms=sum(summary.duration_ms for summary in summaries),
             locally_owned=sum(summary.locally_owned for summary in summaries),
+            deferred=sum(summary.deferred for summary in summaries),
         )
 
     async def register_sidebar_jobs_once(
@@ -4378,6 +4388,7 @@ class SessionBridgeCoordinator:
                 failed=summary.failed,
                 duration_ms=self._elapsed_ms(started),
                 locally_owned=summary.locally_owned,
+                deferred=summary.deferred,
             )
 
     async def _scan_all_history_provider(self, provider: Provider) -> ScanSummary:
@@ -4417,6 +4428,7 @@ class SessionBridgeCoordinator:
                 failed=summary.failed,
                 duration_ms=self._elapsed_ms(started),
                 locally_owned=summary.locally_owned,
+                deferred=summary.deferred,
             )
 
     async def _scan_all_claude_history(self) -> ScanSummary:
@@ -4559,6 +4571,7 @@ class SessionBridgeCoordinator:
             failed=failed,
             duration_ms=0,
             locally_owned=locally_owned,
+            deferred=deferred,
         )
 
     async def _scan_claude(self, discovery_mode: DiscoveryMode) -> ScanSummary:
@@ -4715,6 +4728,7 @@ class SessionBridgeCoordinator:
             failed=failed,
             duration_ms=0,
             locally_owned=locally_owned,
+            deferred=deferred,
         )
 
     async def _scan_claude_persistent(
@@ -5304,6 +5318,7 @@ class SessionBridgeCoordinator:
                     failed=1,
                     duration_ms=0,
                     locally_owned=locally_owned,
+                    deferred=deferred,
                 )
             indexed += 1
             terminal_ids.add(native_id)
@@ -5408,6 +5423,7 @@ class SessionBridgeCoordinator:
             failed=0,
             duration_ms=0,
             locally_owned=locally_owned,
+            deferred=deferred,
         )
 
     async def _load_pending(self, provider: Provider) -> list[str]:
