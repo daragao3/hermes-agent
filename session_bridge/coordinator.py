@@ -6457,14 +6457,28 @@ def _decode_native_id_set_state(state: object, *, label: str) -> list[str]:
     if not isinstance(native_ids, list):
         raise RuntimeError(f"invalid {label} state")
     normalized: list[str] = []
+    # `seen` exists only to make the duplicate check O(1). Testing membership
+    # against `normalized` -- a list being appended to in this same loop -- made
+    # this decode O(n^2), and it runs ON the event loop: `_load_codex_seen_ids`
+    # offloads the DB read with `asyncio.to_thread` and then calls this function
+    # outside it. Measured 2026-09-03 against the live codex seen-set (n=4352,
+    # ~9.47M comparisons): 220.8 ms here versus 2.0 ms with a set, 112x, and
+    # py-spy put this single stack at 21.0% of MainThread samples while the loop
+    # was blocked 55.6% of the time. Because the cost is quadratic in a set that
+    # only grows, it worsened on its own -- n was 4260 the day before. A blocked
+    # loop starves the STATIC /health route, which the launcher probes on a 5s
+    # budget and tears the service down on a single over-budget sample.
+    # Semantics are unchanged: same order, same duplicate rejection.
+    seen: set[str] = set()
     for native_id in native_ids:
         if (
             not isinstance(native_id, str)
             or not native_id.strip()
             or native_id != native_id.strip()
-            or native_id in normalized
+            or native_id in seen
         ):
             raise RuntimeError(f"invalid {label} state")
+        seen.add(native_id)
         normalized.append(native_id)
     return normalized
 
