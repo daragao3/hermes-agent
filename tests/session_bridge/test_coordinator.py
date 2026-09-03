@@ -190,8 +190,25 @@ class _GatedDebounceSleep:
 async def _wait_until(
     predicate: Callable[[], bool],
     *,
-    timeout: float = 1.0,
+    timeout: float = _REFRESH_DEADLOCK_GUARD_SECONDS,
 ) -> None:
+    """Poll until `predicate` holds. The bound is a GUARD, not a deadline.
+
+    Default raised 1.0 -> the file's worst-host guard on 2026-09-03. Every one of
+    the 14 call sites waits for a flag set by a provider call the coordinator
+    dispatched through `asyncio.to_thread`, so the wait is really on the default
+    ThreadPoolExecutor handing that call a worker -- and under full-suite load
+    that queue is not bounded by anything this test controls. No call site
+    relies on this expiring (none wraps it in `pytest.raises(TimeoutError)`), so
+    a generous bound costs nothing on a passing run: the loop exits as soon as
+    the predicate holds.
+
+    Polling on the event loop rather than blocking a pool thread is deliberate
+    and load-bearing -- a `to_thread` wait for a `to_thread` call to start
+    competes with it for the same 16 workers, which is how
+    test_source_refresh_timeout_returns_durable_snapshot failed at a 10s bound.
+    """
+
     async def wait_loop() -> None:
         while not predicate():
             await asyncio.sleep(0.005)
@@ -1090,7 +1107,12 @@ class _HungRefreshAdapter(_RefreshAdapter):
         self.read_calls += 1
         self.operations.append(("hung_refresh_find", native_id, self.read_calls))
         self.started.set()
-        if not self.release.wait(timeout=2.0):
+        # Hang guard, never the intended path: both callers set `release` in a
+        # `finally`. At 2.0s it was also a CLOCK the callers raced -- they assert
+        # `hung_read.done() is False` while it ticks, so a loaded host could
+        # complete the read before the assertion ran. That is what made
+        # test_refresh_wallclock_falsifier flaky. Sized for the worst host now.
+        if not self.release.wait(timeout=_REFRESH_DEADLOCK_GUARD_SECONDS):
             raise RuntimeError("test refresh release timed out")
         return self.projection
 
@@ -1390,15 +1412,15 @@ async def test_start_returns_while_initial_reconcile_gates_background_scans(
         return ReconcileSummary(examined=0, recovered=0, retried=0, failed=0)
 
     monkeypatch.setattr(coordinator, "reconcile_once", reconcile_once)
-    await asyncio.wait_for(coordinator.start(), timeout=1)
-    await asyncio.wait_for(reconcile_started.wait(), timeout=1)
+    await asyncio.wait_for(coordinator.start(), timeout=_REFRESH_DEADLOCK_GUARD_SECONDS)
+    await asyncio.wait_for(reconcile_started.wait(), timeout=_REFRESH_DEADLOCK_GUARD_SECONDS)
     await asyncio.sleep(0.03)
 
     assert claude.discover_calls == 0
     assert codex.inventory_calls == 0
 
     allow_reconcile.set()
-    await asyncio.wait_for(claude.scan_started.wait(), timeout=1)
+    await asyncio.wait_for(claude.scan_started.wait(), timeout=_REFRESH_DEADLOCK_GUARD_SECONDS)
     await coordinator.stop()
     calls_after_stop = (claude.discover_calls, codex.inventory_calls)
 
@@ -3115,7 +3137,7 @@ async def test_stop_signals_and_closes_watcher_without_post_stop_scan(
             )
         )
         await coordinator.stop()
-        await asyncio.wait_for(awatch.closed.wait(), timeout=1)
+        await asyncio.wait_for(awatch.closed.wait(), timeout=_REFRESH_DEADLOCK_GUARD_SECONDS)
         calls_after_stop = (claude.discover_calls, codex.inventory_calls)
 
         assert awatch.stop_event is not None
@@ -4670,7 +4692,7 @@ async def test_cancelled_heartbeat_cannot_acquire_a_hydration_lease() -> None:
     )
 
     task = asyncio.create_task(coordinator.claim_sidebar_hydration_for_delivery())
-    assert await asyncio.to_thread(store.heartbeat_started.wait, 1)
+    assert await asyncio.to_thread(store.heartbeat_started.wait, _REFRESH_DEADLOCK_GUARD_SECONDS)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -5667,7 +5689,7 @@ async def test_sidebar_executor_cancellation_drains_worker_before_propagating() 
         sidebar_executor=BlockingExecutor(),
     )
     scan = asyncio.create_task(coordinator.scan_once(Provider.CLAUDE))
-    assert await asyncio.to_thread(started.wait, 2.0) is True
+    assert await asyncio.to_thread(started.wait, _REFRESH_DEADLOCK_GUARD_SECONDS) is True
 
     scan.cancel()
     await asyncio.sleep(0)
@@ -5676,7 +5698,7 @@ async def test_sidebar_executor_cancellation_drains_worker_before_propagating() 
 
     with pytest.raises(asyncio.CancelledError):
         await scan
-    assert completed.wait(timeout=2.0) is True
+    assert completed.wait(timeout=_REFRESH_DEADLOCK_GUARD_SECONDS) is True
     assert cancellation_propagated_before_release is False
 
 
@@ -6581,7 +6603,7 @@ async def test_reconcile_waits_for_active_job_processing_critical_section() -> N
     )
 
     process_task = asyncio.create_task(coordinator.process_jobs_once())
-    assert await asyncio.to_thread(started.wait, 1.0)
+    assert await asyncio.to_thread(started.wait, _REFRESH_DEADLOCK_GUARD_SECONDS)
     reconcile_task = asyncio.create_task(coordinator.reconcile_once())
     await asyncio.sleep(0.03)
     reconcile_completed_during_creation = reconcile_task.done()
@@ -6627,7 +6649,7 @@ async def test_reconcile_waits_for_other_coordinator_processing_same_store() -> 
     )
 
     process_task = asyncio.create_task(processor.process_jobs_once())
-    assert await asyncio.to_thread(started.wait, 1.0)
+    assert await asyncio.to_thread(started.wait, _REFRESH_DEADLOCK_GUARD_SECONDS)
     reconcile_task = asyncio.create_task(reconciler.reconcile_once())
     await asyncio.sleep(0.03)
     reconcile_completed_during_creation = reconcile_task.done()

@@ -3,8 +3,11 @@
 INDUCED SLOWNESS: the inner refresh timeout is raised to 0.5s -- well past the
 OLD test's 0.1s outer budget.  This models a host so loaded that the inner
 deadline lands after the outer one, which is exactly the failing condition the
-flake hits under real load.  It is still comfortably inside the adapter's 2.0s
-release wait, so the read is genuinely still hung when the inner timeout fires.
+flake hits under real load.  It is still comfortably inside the adapter's
+release wait (raised from 2.0s to the worst-host guard on 2026-09-03, because at
+2.0s that wait was a clock this test raced: it asserts the read is still hung
+while the window ticks), so the read is genuinely still hung when the inner
+timeout fires.
 
 OLD shape must FAIL consistently.  NEW shape must PASS.
 

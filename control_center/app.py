@@ -460,7 +460,9 @@ async def api_v1_pipeline_jobs_stage(job_id: str, request: Request) -> JSONRespo
     Request body (JSON):
         {
             "stage": "approved",                 # required, in VALID_STAGES
-            "actor": "diego",                     # optional, default "diego"
+            "actor": "diego",                     # optional; absent/blank ->
+                                                  #   "unattributed:<source>",
+                                                  #   NEVER a guessed person
             "source": "legacy_dashboard",         # optional, default "legacy_dashboard"
             "notes": "...",                       # optional
             "metadata": {...}                     # optional, merged non-destructively
@@ -489,8 +491,15 @@ async def api_v1_pipeline_jobs_stage(job_id: str, request: Request) -> JSONRespo
     if not stage:
         return JSONResponse({"ok": False, "error": "stage is required"}, status_code=400)
 
-    actor = (payload.get("actor") or "diego").strip()
     source = (payload.get("source") or "legacy_dashboard").strip()
+    # Absent OR blank actor -> name the surface, never a person. This endpoint
+    # establishes no identity (opt-in bearer token at most), so a "diego"
+    # default wrote a durable pipeline.json entry claiming a decision Diego may
+    # never have made. See storage.unattributed_actor for the full reasoning and
+    # for why nothing here guesses. A whitespace-only actor also has to fall
+    # back: pre-fix it slipped past the `or` and was written through as the
+    # EMPTY STRING, which reads as attributed-to-nothing rather than as missing.
+    actor = (payload.get("actor") or "").strip() or storage.unattributed_actor(source)
     notes = payload.get("notes") or ""
     metadata = payload.get("metadata") or None
 

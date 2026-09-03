@@ -38,6 +38,12 @@ from session_bridge.store import SessionBridgeStore, SidebarSource
 FIXTURES = Path(__file__).parent / "fixtures" / "codex"
 SECRET = b"codex-adapter-test-secret"
 
+# Guard for waits that only need a background thread to REACH a point -- never an
+# assertion target, so it is sized for the worst host rather than for expected
+# latency.  A 1.0s bound here is a de-facto scheduling deadline and flakes under
+# suite load; nothing under test depends on how fast Windows schedules a thread.
+_SYNC_GUARD_SECONDS = 30.0
+
 
 class FakeRequestClient:
     def __init__(self, responses: dict[str, list[dict[str, Any] | Exception]]) -> None:
@@ -745,7 +751,7 @@ class TestInventory:
                 self.received_stop = cancel_event
                 entered.set()
                 assert cancel_event is not None
-                assert cancel_event.wait(1.0)
+                assert cancel_event.wait(_SYNC_GUARD_SECONDS)
                 raise CodexRequestCancelled()
 
         client = BlockingInitializeClient()
@@ -763,9 +769,9 @@ class TestInventory:
 
         thread = Thread(target=inventory)
         thread.start()
-        assert entered.wait(1.0)
+        assert entered.wait(_SYNC_GUARD_SECONDS)
         stop.set()
-        thread.join(1.0)
+        thread.join(_SYNC_GUARD_SECONDS)
 
         assert thread.is_alive() is False
         assert client.received_stop is stop
@@ -819,7 +825,7 @@ class TestInventory:
                 if method == "thread/read":
                     self.calls.append((method, params, timeout))
                     entered.set()
-                    assert stop.wait(1.0)
+                    assert stop.wait(_SYNC_GUARD_SECONDS)
                     raise CodexRequestCancelled()
                 return super().request(method, params, timeout)
 
@@ -847,9 +853,9 @@ class TestInventory:
 
         thread = Thread(target=inventory)
         thread.start()
-        assert entered.wait(1.0)
+        assert entered.wait(_SYNC_GUARD_SECONDS)
         stop.set()
-        thread.join(1.0)
+        thread.join(_SYNC_GUARD_SECONDS)
 
         assert thread.is_alive() is False
         assert len(result) == 1

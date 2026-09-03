@@ -60,6 +60,15 @@ from tests.session_bridge.test_claude_registrar import (
 )
 
 
+# Generous by design: bounds how long a *correct* run may block a fake before it
+# gives up, so it costs nothing when the code is right and only decides how fast
+# a genuine hang is reported. Not an assertion about performance.
+#
+# There is no thread-start grace constant any more: waiting for a to_thread call
+# to START, from a to_thread call, competes with it for the same executor and no
+# bound fixes that. See test_source_refresh_timeout_returns_durable_snapshot.
+_HANG_GUARD_S = 10.0
+
 NOW = 100.0
 MARKER_SECRET = b"synthetic-marker-secret-at-least-32-bytes"
 
@@ -259,7 +268,7 @@ class _BlockingCodexRefreshAdapter:
     def find_native_thread(self, native_id: str) -> SessionProjection:
         assert native_id == self.projection.native_id
         self.started.set()
-        if not self.release.wait(timeout=2.0):
+        if not self.release.wait(timeout=_HANG_GUARD_S):
             raise RuntimeError("synthetic refresh was not released")
         return self.projection
 
@@ -288,14 +297,35 @@ async def test_source_refresh_timeout_returns_durable_snapshot(
         timeout=0.01,
     )
     elapsed = asyncio.get_running_loop().time() - started
-    assert await asyncio.to_thread(adapter.started.wait, 0.2)
+    # NO wait for `adapter.started` here, deliberately -- see 2026-09-03 below.
+    # `release` is a threading.Event, i.e. LEVEL-triggered: setting it before the
+    # adapter reaches `release.wait()` is harmless, because a wait on an
+    # already-set event returns immediately. There is nothing to synchronise.
+    #
+    # The wait that used to stand here was not merely unnecessary, it was
+    # ACTIVELY HARMFUL, and a bigger bound could not fix it. Both the provider
+    # call (coordinator._start_provider_call -> asyncio.to_thread) and the wait
+    # itself ran on the SAME default ThreadPoolExecutor (16 workers here). Under
+    # full-suite load the test burned a worker to block on an event that a
+    # provider call still QUEUED for a worker would set. Widening 0.2 -> 10.0 on
+    # 2026-09-02 was the wrong fix from the wrong diagnosis (scheduler jitter);
+    # it failed again at 50x the original bound on 2026-09-03, which is what
+    # falsified that reading. Do not reintroduce a to_thread wait here.
     adapter.release.set()
     for _ in range(100):
         if coordinator.health()["provider_calls_inflight"] == 0:
             break
         await asyncio.sleep(0.005)
 
-    assert elapsed < 0.2
+    # THE discriminating assertion, and it is unavoidably a wall-clock one: the
+    # claim is that refresh_session returns on its own 0.01s budget instead of
+    # waiting out the blocked provider call. Widened 0.2 -> 1.0 on 2026-09-02
+    # after it went red under suite load; detection was RE-PROVEN, not assumed,
+    # because widening a bound can silence the flake and the test together:
+    # with the timeout path disengaged (timeout=30.0) this measures 10.0s and
+    # still fails. 1.0s sits an order of magnitude below that and an order of
+    # magnitude above the ~15ms of jitter that produced the flake.
+    assert elapsed < 1.0
     assert result.stale is True
     assert result.cursor == projection.native_cursor
     assert result.source_hash == projection.native_hash
