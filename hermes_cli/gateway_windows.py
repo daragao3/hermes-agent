@@ -1621,6 +1621,10 @@ _STOP_ESCALATION_MARGIN_S = 10.0
 # Absolute ceiling on that wait. ``hermes gateway stop`` is interactive and
 # must terminate even if someone configures an absurd drain timeout.
 _STOP_GRACE_CEILING_S = 300.0
+# Stand-in drain budget for when the configured one cannot be READ at all
+# (unreadable config, import failure). Not the config default — 0 is, and 0 is
+# a legal value we honour; see ``_windows_stop_drain_timeout``.
+_STOP_FALLBACK_DRAIN_TIMEOUT_S = 30.0
 
 
 def _windows_stop_drain_timeout() -> float:
@@ -1652,13 +1656,31 @@ def _windows_stop_drain_timeout() -> float:
     The cost is a longer worst-case restart, but it is paid only where it
     buys something: ``_drain_gateway_pid`` polls until the PID exits, so a
     teardown that finishes in 2s still returns in 2s.
+
+    ``0`` is a legal configured value, not a missing one.  ``agent.
+    restart_drain_timeout`` defaults to 0 and documents it as the deliberate
+    choice ("no drain, interrupt immediately" — ``hermes_cli/config.py``), and
+    every other consumer honours it: ``parse_restart_drain_timeout`` clamps to
+    ``>= 0``, and ``resolve_shutdown_watchdog_delay(0.0)`` is still a real 60s
+    leash.  Testing it with ``or`` would turn the fallback below into an
+    accidental FLOOR — 0 is falsy, so both "no drain, please" and an unset key
+    would be costed as a configured 30s.  That inflates the grace by the 30s
+    the gateway was never granted and contradicts the derivation above, so
+    only an ABSENT lookup result falls back.
+
+    Honouring 0 does not collapse the escalation ordering: no drain is not no
+    shutdown, so the grace is still ``60 + 10 = 70s`` — past the watchdog,
+    which fires on its own grace regardless of the drain budget.
     """
+    configured = _STOP_FALLBACK_DRAIN_TIMEOUT_S
     try:
         from hermes_cli.gateway import _get_restart_drain_timeout
 
-        configured = float(_get_restart_drain_timeout() or 30.0)
+        raw = _get_restart_drain_timeout()
+        if raw is not None:
+            configured = max(float(raw), 0.0)
     except Exception:
-        configured = 30.0
+        configured = _STOP_FALLBACK_DRAIN_TIMEOUT_S
     try:
         from gateway.shutdown_watchdog import resolve_shutdown_watchdog_delay
 
