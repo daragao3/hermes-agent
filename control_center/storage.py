@@ -29,6 +29,57 @@ STATE_DB = HERMES / "control_center" / "state.db"
 
 
 # ---------------------------------------------------------------------------
+# Actor attribution
+# ---------------------------------------------------------------------------
+
+#: Prefix for an actor value written when the request established no actor.
+#: Deliberately not a person's name -- see :func:`unattributed_actor`.
+UNATTRIBUTED_ACTOR_PREFIX = "unattributed"
+
+#: Surface label for the Control Center's own approve/reject buttons.
+CONTROL_CENTER_SURFACE = "control_center"
+
+
+def unattributed_actor(surface: Optional[str]) -> str:
+    """Return the actor to record when nothing established WHO acted.
+
+    Names the SURFACE the request arrived on, never a person, and marks itself
+    as unattributed so a reader is not left inferring it. Until 2026-09-03 both
+    Control Center write paths defaulted to the literal ``"diego"`` instead:
+
+    * ``app.api_v1_pipeline_jobs_stage`` -- body ``actor`` is optional, and the
+      endpoint is a loopback POST whose auth is OPT-IN (``HERMES_CC_TOKEN``);
+      even when enabled that token is a bearer secret identifying nobody.
+    * ``resume_graph`` -- the approve/reject buttons post no actor at all.
+
+    That is WRONG attribution rather than missing attribution, and a confident
+    wrong answer stops a postmortem looking. It was not inert:
+    ``jobflow_quality.golden_set._HUMAN_ACTORS = ("diego",)`` reads a ``diego``
+    actor in pipeline history as proof a real person decided, and labels the job
+    ``HUMAN_APPROVAL`` in the golden evaluation set -- so the default could
+    manufacture human labels for decisions no human made.
+
+    The value is self-describing on purpose, because consumers render the actor
+    string ALONE (``events/subscribers/telegram_notifier.py`` prints
+    ``p.get("actor")``); a bare ``"unattributed"`` would lose the surface.
+
+    DO NOT replace this with a guesser. Nothing in either request links the
+    action to a person -- no session, no identity, no signed principal -- so a
+    heuristic would re-create exactly the confident-wrong-answer failure this
+    removes. The way to record a real actor is to THREAD one in (both call
+    paths now accept it); per-request identity has to come from a real
+    authenticated principal, which this app does not yet have.
+
+    A blank or whitespace-only surface is treated as absent for the same reason
+    a blank actor is: a falsy component reads as attributed-to-nothing rather
+    than as missing. Same property ``cron_lifecycle_emitter.resolve_caller``
+    makes load-bearing on the cron side.
+    """
+    cleaned = (surface or "").strip() or "unknown_surface"
+    return f"{UNATTRIBUTED_ACTOR_PREFIX}:{cleaned}"
+
+
+# ---------------------------------------------------------------------------
 # Resolution state DB
 # ---------------------------------------------------------------------------
 
@@ -315,15 +366,26 @@ def list_recent_events(
 # ---------------------------------------------------------------------------
 
 
-def resume_graph(thread_id: str, decision: str, reason: str = "") -> dict:
+def resume_graph(
+    thread_id: str,
+    decision: str,
+    reason: str = "",
+    actor: Optional[str] = None,
+) -> dict:
     """Resume a paused LangGraph run with the supplied decision.
 
     The graph's tracker_update_node now writes through PipelineManager
     automatically (iter cross-surface unification) — this function just calls
     resume_full and reports the result. We ALSO emit an approval-event audit
     pass through pipeline.json directly (source=control_center) so the
-    history entry records that Diego clicked a UI button, not that the
+    history entry records that the SURFACE was used to decide, not that the
     graph-internal approval_hitl returned.
+
+    ``actor`` is the caller's chance to record WHO decided, and it is the only
+    way a real identity gets in. The approve/reject buttons post no actor, so
+    it defaults to :func:`unattributed_actor` — see there for why this used to
+    hardcode ``"diego"``, why that was wrong attribution rather than missing
+    attribution, and why nothing here derives an actor instead.
     """
     import importlib.util
     import sys
@@ -352,13 +414,13 @@ def resume_graph(thread_id: str, decision: str, reason: str = "") -> dict:
     #
     # Stage policy: MIRROR what the graph actually produced in tracker_stage
     # (not a forced "ready_to_submit"). This way:
-    #   - If the graph paused at HITL and Diego approved, tracker_update_node
-    #     writes stage=ready_to_submit (or submitted if apply_node ran), and
-    #     our control_center entry stays at that same stage — just audits WHO
-    #     clicked the button.
+    #   - If the graph paused at HITL and the decision came in,
+    #     tracker_update_node writes stage=ready_to_submit (or submitted if
+    #     apply_node ran), and our control_center entry stays at that same
+    #     stage — just audits WHICH SURFACE the decision arrived on.
     #   - If the graph already completed (e.g. decision=review, no HITL), the
     #     button click doesn't forcibly override the stage; it just records
-    #     that Diego acknowledged the run.
+    #     that the run was acknowledged through the Control Center.
     try:
         from pipeline_state import PipelineManager
 
@@ -374,15 +436,24 @@ def resume_graph(thread_id: str, decision: str, reason: str = "") -> dict:
                 "ready_to_submit" if decision == "approved"
                 else "rejected_by_user"
             )
+        # The note is the human-readable half of the same durable record, so it
+        # must agree with the actor field. Fixing one and leaving the other
+        # would keep the false claim exactly where a reader looks first.
+        resolved_actor = (actor or "").strip() or unattributed_actor(
+            CONTROL_CENTER_SURFACE
+        )
         audit_note = (
-            f"Control Center: diego clicked {decision!r}"
+            f"Control Center: {decision!r} submitted by {resolved_actor}"
             + (f" — {reason}" if reason else "")
         )
         mgr.update_stage(
             job_id=job_id,
             new_stage=graph_stage,
-            actor="diego",
-            source="control_center",
+            actor=resolved_actor,
+            # Keeps the STAGE_TRANSITION event at HIGH priority: pipeline_state
+            # bumps on `source in human_surfaces OR actor == "diego"`, and this
+            # change removes the second disjunct for this path.
+            source=CONTROL_CENTER_SURFACE,
             notes=audit_note,
             metadata={
                 "title": job.get("title"),
