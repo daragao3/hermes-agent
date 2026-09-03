@@ -2144,6 +2144,14 @@ def test_fixed_launch_failure_codes_and_cleanup(
 # checks `elapsed < 1.0` -- keep their own small value and must NOT use this.
 _READER_EOF_GUARD_SECONDS = 30.0
 
+# Exit guard for the OFFLINE fixture processes, which exit immediately -- so this
+# is a hang guard, never a deadline.  Deliberately 10.0, NOT the 120s real-ConPTY
+# guard and NOT the 30s reader guard: pytest-timeout's per-test cap is 30s, and a
+# guard at or above it means a regression gets KILLED by the plugin instead of
+# failing here with a readable TimeoutError.  Same reasoning as
+# test_refresh_wallclock_falsifier's NEW_DEADLOCK_GUARD.
+_OFFLINE_FIXTURE_EXIT_GUARD_SECONDS = 10.0
+
 
 def test_winpty_fallback_reader_observes_cancellation_while_read_is_blocked() -> None:
     stop = threading.Event()
@@ -2177,7 +2185,7 @@ def test_winpty_fallback_reader_observes_cancellation_while_read_is_blocked() ->
         assert finished.wait(_READER_EOF_GUARD_SECONDS)
     finally:
         release_read.set()
-        reader.join(2.0)
+        reader.join(_READER_EOF_GUARD_SECONDS)
 
     assert reader.is_alive() is False
     assert len(errors) == 1
@@ -3527,7 +3535,7 @@ def test_offline_interactive_fixture_records_frames_exit_and_delayed_index(
     assert b"REGISTERED" in process.stdout.readline()
     process.stdin.write(b"/exit\n")
     process.stdin.flush()
-    assert process.wait(timeout=2) == 0
+    assert process.wait(timeout=_OFFLINE_FIXTURE_EXIT_GUARD_SECONDS) == 0
 
     events = json.loads(record.read_text(encoding="utf-8"))
     assert events[0] == {
@@ -3569,7 +3577,7 @@ def test_offline_fixture_reads_complete_multiline_bracketed_paste_frame(
     assert b"REGISTERED" in process.stdout.readline()
     process.stdin.write(b"/exit\r\n")
     process.stdin.flush()
-    assert process.wait(timeout=2) == 0
+    assert process.wait(timeout=_OFFLINE_FIXTURE_EXIT_GUARD_SECONDS) == 0
     events = json.loads(record.read_text(encoding="utf-8"))
     assert events[1] == {
         "event": "stdin",
@@ -3644,7 +3652,7 @@ def test_offline_fixture_named_terminating_scenarios_record_exit(
     if scenario != "authentication_failure":
         process.stdin.write(b"/exit\n")
         process.stdin.flush()
-    assert process.wait(timeout=2) == expected_code
+    assert process.wait(timeout=_OFFLINE_FIXTURE_EXIT_GUARD_SECONDS) == expected_code
     events = json.loads(record.read_text(encoding="utf-8"))
     assert events[-1] == {
         "event": "exit",
@@ -4074,7 +4082,7 @@ def test_registrar_spawn_does_not_mutate_standard_pywinpty_reader_during_overlap
         time.sleep(0.01)
     standard.fileobj.close()
     standard._server.close()
-    standard._thread.join(5)
+    standard._thread.join(_READER_EOF_GUARD_SECONDS)
     assert not changed
     monkeypatch.setattr(winpty_module, "_read_in_thread", original_reader)
     assert winpty_module._read_in_thread is original_reader

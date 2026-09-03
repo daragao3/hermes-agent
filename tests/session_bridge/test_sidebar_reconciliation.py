@@ -41,6 +41,24 @@ THREAD = "22222222-2222-4222-8222-222222222222"
 _SYNC_GUARD_SECONDS = 30.0
 
 
+async def _wait_event(event: threading.Event) -> None:
+    """Wait for `event` from the EVENT LOOP, never from a pool thread.
+
+    Replaces `await asyncio.to_thread(event.wait, 5)`, which was the 2026-09-03
+    anti-pattern: the flags waited on here are set by store/adapter calls the
+    coordinator dispatched through `asyncio.to_thread`, so blocking a worker to
+    watch for one competes with the very call that would set it. With 16 workers
+    (min(32, cpu+4)) and a whole suite running, no bound fixes that -- see
+    test_fault_injection, which failed at a 10s bound for exactly this reason.
+    """
+
+    async def loop() -> None:
+        while not event.is_set():
+            await asyncio.sleep(0.005)
+
+    await asyncio.wait_for(loop(), timeout=_SYNC_GUARD_SECONDS)
+
+
 def test_sidebar_reconciliation_proof_digest_binds_every_authority_field() -> None:
     base = SidebarReconciliationProofInput(
         job_id="sidebar-job:1",
@@ -374,7 +392,7 @@ class BlockingVerifier(FakeVerifier):
     ) -> VerifiedSidebarThread | None:
         self.find_calls.append(expected)
         self.started.set()
-        assert self.release.wait(timeout=5)
+        assert self.release.wait(timeout=_SYNC_GUARD_SECONDS)
         return None
 
     def reconcile_marker(
@@ -386,7 +404,7 @@ class BlockingVerifier(FakeVerifier):
     ) -> SidebarReconciliationEvidence:
         self.reconcile_calls.append((expected, now, ttl_seconds))
         self.started.set()
-        assert self.release.wait(timeout=5)
+        assert self.release.wait(timeout=_SYNC_GUARD_SECONDS)
         return _absence_evidence()
 
 
@@ -663,7 +681,7 @@ class BlockingBindStore(FakeSidebarStore):
         self, *, lease_token: str, codex_thread_id: str, now: float
     ) -> dict[str, Any]:
         self.bind_started.set()
-        assert self.bind_release.wait(timeout=5)
+        assert self.bind_release.wait(timeout=_SYNC_GUARD_SECONDS)
         return super().bind_sidebar_thread(
             lease_token=lease_token,
             codex_thread_id=codex_thread_id,
@@ -678,7 +696,7 @@ async def test_cancellation_during_recovered_bind_settles_with_exact_id() -> Non
     claim_task = asyncio.create_task(
         coordinator.claim_sidebar_jobs_for_delivery(now=100.0, limit=1)
     )
-    assert await asyncio.to_thread(store.bind_started.wait, 5)
+    await _wait_event(store.bind_started)
 
     claim_task.cancel("cancel-during-recovered-bind")
     try:
@@ -1179,7 +1197,7 @@ async def test_cancelled_reconciliation_releases_every_claimed_lease(tmp_path) -
     claim_task = asyncio.create_task(
         coordinator.claim_sidebar_jobs_for_delivery(now=100.0, limit=1)
     )
-    assert await asyncio.to_thread(verifier.started.wait, 5)
+    await _wait_event(verifier.started)
     claim_task.cancel()
     verifier.release.set()
     with pytest.raises(asyncio.CancelledError):
@@ -1230,7 +1248,7 @@ async def test_cancelled_durable_claim_returns_by_deadline_then_recovers_in_back
     def claim_then_pause(**kwargs: Any) -> list[dict[str, Any]]:
         claimed = original_claim(**kwargs)
         committed.set()
-        assert release.wait(timeout=5)
+        assert release.wait(timeout=_SYNC_GUARD_SECONDS)
         return claimed
 
     monkeypatch.setattr(store, "claim_sidebar_jobs", claim_then_pause)
@@ -1243,7 +1261,7 @@ async def test_cancelled_durable_claim_returns_by_deadline_then_recovers_in_back
     claim_task = asyncio.create_task(
         coordinator.claim_sidebar_jobs_for_delivery(now=100.0, limit=1)
     )
-    assert await asyncio.to_thread(committed.wait, 5)
+    await _wait_event(committed)
 
     claim_task.cancel("claim-deadline-cancel")
     with pytest.raises(asyncio.CancelledError):
@@ -1286,7 +1304,7 @@ class BlockingClaimFailureStore(FakeSidebarStore):
         self, *, now: float, limit: int, lease_seconds: int
     ) -> list[dict[str, Any]]:
         self.started.set()
-        assert self.release.wait(timeout=5)
+        assert self.release.wait(timeout=_SYNC_GUARD_SECONDS)
         raise RuntimeError("claim worker failed with lease=must-not-leak")
 
 
@@ -1298,7 +1316,7 @@ async def test_cancelled_claim_worker_failure_does_not_mask_cancellation() -> No
     claim_task = asyncio.create_task(
         coordinator.claim_sidebar_jobs_for_delivery(now=100.0, limit=1)
     )
-    assert await asyncio.to_thread(store.started.wait, 5)
+    await _wait_event(store.started)
 
     claim_task.cancel()
     await asyncio.sleep(0)
@@ -1321,7 +1339,7 @@ async def test_non_cancelled_claim_worker_exception_propagates_unchanged() -> No
     claim_task = asyncio.create_task(
         coordinator.claim_sidebar_jobs_for_delivery(now=100.0, limit=1)
     )
-    assert await asyncio.to_thread(store.started.wait, 5)
+    await _wait_event(store.started)
 
     store.release.set()
     with pytest.raises(
@@ -1339,7 +1357,7 @@ async def test_cancelled_claim_worker_exception_chain_is_fully_detached() -> Non
     claim_task = asyncio.create_task(
         coordinator.claim_sidebar_jobs_for_delivery(now=100.0, limit=1)
     )
-    assert await asyncio.to_thread(store.started.wait, 5)
+    await _wait_event(store.started)
 
     claim_task.cancel("original-claim-cancel")
     store.release.set()
@@ -1462,7 +1480,7 @@ async def test_repeated_cancellation_during_cleanup_still_releases_single_lease(
         cleanup_calls += 1
         if cleanup_calls == 1:
             cleanup_started.set()
-            assert cleanup_release.wait(timeout=5)
+            assert cleanup_release.wait(timeout=_SYNC_GUARD_SECONDS)
         return original_fail(**kwargs)
 
     monkeypatch.setattr(store, "fail_sidebar_job", blocking_first_cleanup)
@@ -1470,10 +1488,10 @@ async def test_repeated_cancellation_during_cleanup_still_releases_single_lease(
     claim_task = asyncio.create_task(
         coordinator.claim_sidebar_jobs_for_delivery(now=100.0, limit=1)
     )
-    assert await asyncio.to_thread(verifier.started.wait, 5)
+    await _wait_event(verifier.started)
     claim_task.cancel()
     verifier.release.set()
-    assert await asyncio.to_thread(cleanup_started.wait, 5)
+    await _wait_event(cleanup_started)
 
     claim_task.cancel()
     await asyncio.sleep(0)
@@ -1524,7 +1542,7 @@ async def test_hung_cleanup_does_not_block_cancelled_caller_or_shutdown(
 
     def hung_cleanup(**_kwargs: Any) -> dict[str, Any]:
         cleanup_started.set()
-        assert cleanup_release.wait(timeout=5)
+        assert cleanup_release.wait(timeout=_SYNC_GUARD_SECONDS)
         raise RuntimeError("hung cleanup token=must-not-leak")
 
     monkeypatch.setattr(store, "fail_sidebar_job", hung_cleanup)
@@ -1537,10 +1555,10 @@ async def test_hung_cleanup_does_not_block_cancelled_caller_or_shutdown(
     claim_task = asyncio.create_task(
         coordinator.claim_sidebar_jobs_for_delivery(now=100.0, limit=1)
     )
-    assert await asyncio.to_thread(verifier.started.wait, 5)
+    await _wait_event(verifier.started)
     claim_task.cancel("hung-cleanup-cancel")
     verifier.release.set()
-    assert await asyncio.to_thread(cleanup_started.wait, 5)
+    await _wait_event(cleanup_started)
 
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(claim_task, timeout=_SYNC_GUARD_SECONDS)
@@ -1586,7 +1604,7 @@ async def test_cancelled_reconciliation_cleanup_failure_does_not_mask_cancel() -
     claim_task = asyncio.create_task(
         coordinator.claim_sidebar_jobs_for_delivery(now=100.0, limit=1)
     )
-    assert await asyncio.to_thread(verifier.started.wait, 5)
+    await _wait_event(verifier.started)
     claim_task.cancel()
     verifier.release.set()
     with pytest.raises(asyncio.CancelledError):

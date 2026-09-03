@@ -65,6 +65,15 @@ INBOX_CWD = "C:/Users/diego/.hermes" if os.name == "nt" else "/srv/session-inbox
 SOURCE_CWD = "C:/source" if os.name == "nt" else "/srv/session-source"
 
 
+# Guard for waits that only need a concurrent thread to REACH a point or a
+# release to ARRIVE -- never an assertion target, so it is sized for the worst
+# host rather than for expected latency.  Every site using it is an `assert
+# X.wait(...)` (or a Barrier/process/future wait), which CANNOT pass unless the
+# thing waited for actually happens -- that is what proves these are guards and
+# not scenarios whose expiry is the point.
+_SYNC_GUARD_SECONDS = 30.0
+
+
 def _placement() -> SidebarPlacement:
     return SidebarPlacement(
         inbox_cwd=INBOX_CWD,
@@ -3342,7 +3351,7 @@ def test_two_executor_instances_share_one_process_wide_delivery_lock() -> None:
                 deadline=deadline,
             )
             entered_create.set()
-            assert release_create.wait(timeout=5)
+            assert release_create.wait(timeout=_SYNC_GUARD_SECONDS)
             return result
 
     class SecondStore(FakeStore):
@@ -3373,7 +3382,7 @@ def test_two_executor_instances_share_one_process_wide_delivery_lock() -> None:
     second_thread = threading.Thread(target=lambda: results.append(second.run_once()))
 
     first_thread.start()
-    assert entered_create.wait(timeout=5)
+    assert entered_create.wait(timeout=_SYNC_GUARD_SECONDS)
     second_thread.start()
     assert not second_claimed.wait(timeout=0.2)
     release_create.set()
