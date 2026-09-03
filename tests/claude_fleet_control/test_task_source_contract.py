@@ -260,3 +260,45 @@ def test_config_and_task_enforce_state_are_consistent():
     assert config_enforce == task_enforce, (
         f"gate mismatch: config_enforce={config_enforce} task_enforce={task_enforce}"
     )
+
+
+_RUNNER_PY = Path(__file__).resolve().parents[2] / "scripts" / "run_claude_fleet_controller.py"
+
+
+def test_runner_actually_executes_end_to_end(tmp_path):
+    """Run the real runner in a subprocess with a DISABLED config.
+
+    This exists because unit tests that call _PhaseLog.log_boot directly all
+    passed while the runner's call site used a stale keyword name, and the
+    scheduled task then died with TypeError on every fire (2026-09-03). A
+    helper test proves the helper; only executing the wiring proves the wiring.
+
+    mode=disabled returns before the lock and the bus, so this touches no
+    shared state -- but it does run module import, log_boot, Controller
+    construction and run_once's config path, which is where the break was.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({
+        "mode": "disabled",
+        "policy_version": "test",
+        "approved_enforce_digest": None,
+    }), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["P6_SPAWN_EPOCH_MS"] = "1000"          # exercise the stamped path
+    proc = subprocess.run(
+        [sys.executable, "-u", str(_RUNNER_PY),
+         "--config", str(cfg), "--state-dir", str(tmp_path / "state")],
+        capture_output=True, text=True, timeout=180, env=env,
+    )
+    combined = proc.stdout + proc.stderr
+    assert "Traceback" not in combined, combined
+    assert proc.returncode == 0, combined
+    # The stamped path must have produced both pre-pass phases.
+    assert "phase imports=" in combined, combined
+    assert "phase spawn_and_boot=" in combined, combined
