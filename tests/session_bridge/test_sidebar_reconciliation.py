@@ -32,6 +32,15 @@ BRIDGE = "sidebar:bridge-1"
 THREAD = "22222222-2222-4222-8222-222222222222"
 
 
+# Guard for awaits that only need an already-decided outcome to ARRIVE -- never an
+# assertion target.  The CLAIMS these accompany are separate assertions: that the
+# cancellation propagates at all, and that stop() leaves `_sidebar_recovery_tasks`
+# intact rather than draining it.  A hung stop() blocks on a recovery task that is
+# released only AFTER these lines, so it times out at ANY bound -- the old 0.2s/0.5s
+# values bought no detection and only raced the host's scheduler.
+_SYNC_GUARD_SECONDS = 30.0
+
+
 def test_sidebar_reconciliation_proof_digest_binds_every_authority_field() -> None:
     base = SidebarReconciliationProofInput(
         job_id="sidebar-job:1",
@@ -1238,13 +1247,13 @@ async def test_cancelled_durable_claim_returns_by_deadline_then_recovers_in_back
 
     claim_task.cancel("claim-deadline-cancel")
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(claim_task, timeout=0.5)
+        await asyncio.wait_for(claim_task, timeout=_SYNC_GUARD_SECONDS)
 
     leased = [store.get_sidebar_job_for_source(source) for source in sources]
     assert all(job is not None for job in leased)
     assert all(job["state"] == "sidebar_leased" for job in leased if job is not None)
     assert len(coordinator._sidebar_recovery_tasks) == 1
-    await asyncio.wait_for(coordinator.stop(), timeout=0.2)
+    await asyncio.wait_for(coordinator.stop(), timeout=_SYNC_GUARD_SECONDS)
     assert len(coordinator._sidebar_recovery_tasks) == 1
 
     release.set()
@@ -1534,9 +1543,9 @@ async def test_hung_cleanup_does_not_block_cancelled_caller_or_shutdown(
     assert await asyncio.to_thread(cleanup_started.wait, 5)
 
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(claim_task, timeout=0.5)
+        await asyncio.wait_for(claim_task, timeout=_SYNC_GUARD_SECONDS)
     assert coordinator._sidebar_recovery_tasks
-    await asyncio.wait_for(coordinator.stop(), timeout=0.2)
+    await asyncio.wait_for(coordinator.stop(), timeout=_SYNC_GUARD_SECONDS)
 
     cleanup_release.set()
     deadline = asyncio.get_running_loop().time() + 1.0

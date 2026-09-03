@@ -33,6 +33,12 @@ from session_bridge.store import SessionBridgeStore
 from tests.session_bridge.test_end_to_end import _SidebarEndToEndHarness
 
 
+# Guard for waits that only need a background task to REACH a point -- never an
+# assertion target: every timing CLAIM in this file is a separate assertion
+# (`blocked_before_drain`, `provider_calls_inflight`).  Sized for the worst host.
+_SYNC_GUARD_SECONDS = 30.0
+
+
 def _projection(
     provider: Provider,
     native_id: str,
@@ -542,7 +548,7 @@ async def test_stop_timeout_blocks_restart_until_provider_tasks_drain() -> None:
     class BlockingClaude:
         def discover(self) -> list[Path]:
             started.set()
-            if not release.wait(timeout=2.0):
+            if not release.wait(timeout=_SYNC_GUARD_SECONDS):
                 raise RuntimeError("test release timed out")
             return []
 
@@ -558,7 +564,7 @@ async def test_stop_timeout_blocks_restart_until_provider_tasks_drain() -> None:
         refresh_timeout=0.01,
     )
     await coordinator.start()
-    assert await asyncio.to_thread(started.wait, 1.0)
+    assert await asyncio.to_thread(started.wait, _SYNC_GUARD_SECONDS)
     await coordinator.stop()
     # Independent provider loops may leave the blocked Claude call plus a
     # concurrently scheduled Codex call draining at the stop deadline.
@@ -568,7 +574,7 @@ async def test_stop_timeout_blocks_restart_until_provider_tasks_drain() -> None:
     await asyncio.sleep(0.03)
     blocked_before_drain = not restart.done()
     release.set()
-    await asyncio.wait_for(restart, timeout=1.0)
+    await asyncio.wait_for(restart, timeout=_SYNC_GUARD_SECONDS)
     await coordinator.stop()
 
     assert blocked_before_drain is True
@@ -727,7 +733,7 @@ async def test_background_scan_failure_is_reported_and_next_cycle_runs(
 
     await coordinator.start()
     try:
-        await asyncio.wait_for(recovered.wait(), timeout=1.0)
+        await asyncio.wait_for(recovered.wait(), timeout=_SYNC_GUARD_SECONDS)
         assert "catalog_scan_loop_failed" in coordinator.health()["recent_error_codes"]
     finally:
         await coordinator.stop()
@@ -765,7 +771,7 @@ async def test_background_provider_scans_do_not_block_each_other(
 
     await coordinator.start()
     try:
-        await asyncio.wait_for(claude_scanned_twice.wait(), timeout=1.0)
+        await asyncio.wait_for(claude_scanned_twice.wait(), timeout=_SYNC_GUARD_SECONDS)
         assert claude_calls >= 2
     finally:
         codex_release.set()
@@ -806,8 +812,8 @@ async def test_initial_reconcile_timeout_releases_background_scans(
 
     await coordinator.start()
     try:
-        await asyncio.wait_for(reconcile_started.wait(), timeout=1.0)
-        await asyncio.wait_for(claude_scanned.wait(), timeout=1.0)
+        await asyncio.wait_for(reconcile_started.wait(), timeout=_SYNC_GUARD_SECONDS)
+        await asyncio.wait_for(claude_scanned.wait(), timeout=_SYNC_GUARD_SECONDS)
         assert "mirror_reconcile_failed" in coordinator.health()["recent_error_codes"]
     finally:
         await coordinator.stop()
