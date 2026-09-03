@@ -1607,3 +1607,71 @@ class TestWindowsStopDrainTimeout:
         )
 
         assert gateway_windows._windows_stop_drain_timeout() >= 1.0
+
+    def test_zero_drain_is_honoured_rather_than_read_as_unset(self, monkeypatch):
+        """0 is a real configured value here, not a missing one.
+
+        ``agent.restart_drain_timeout`` defaults to 0 and documents it as the
+        deliberate choice — "no drain, interrupt immediately" (see
+        ``hermes_cli/config.py``) — and every other consumer honours it:
+        ``parse_restart_drain_timeout`` clamps to ``>= 0`` and
+        ``resolve_shutdown_watchdog_delay(0.0)`` is still a real 60s leash.
+        A falsy ``or`` test here would make 0 inexpressible, so both an
+        operator who asked for no drain and one who never set the key at all
+        would silently be costed as if 30s had been configured.
+        """
+        from gateway.shutdown_watchdog import resolve_shutdown_watchdog_delay
+
+        self._configured(monkeypatch, 0.0)
+
+        assert gateway_windows._windows_stop_drain_timeout() == pytest.approx(
+            resolve_shutdown_watchdog_delay(0.0)
+            + gateway_windows._STOP_ESCALATION_MARGIN_S
+        )
+
+    def test_zero_drain_still_outlasts_the_shutdown_watchdog_leash(self, monkeypatch):
+        """Honouring 0 must not collapse the escalation ordering.
+
+        "No drain" is not "no shutdown": the watchdog still gets its full
+        grace to fire, log CRITICAL, and dump. The stopper stays behind it.
+        """
+        from gateway.shutdown_watchdog import resolve_shutdown_watchdog_delay
+
+        self._configured(monkeypatch, 0.0)
+
+        assert gateway_windows._windows_stop_drain_timeout() > (
+            resolve_shutdown_watchdog_delay(0.0)
+        )
+
+    def test_unset_config_key_gets_the_documented_zero_not_thirty(
+        self, monkeypatch
+    ):
+        """The default path, through the real resolver rather than a stub.
+
+        With no env override and no ``agent.restart_drain_timeout`` in
+        config.yaml, ``_get_restart_drain_timeout`` returns the shared default,
+        which is 0. The stopper must cost that as the 0 it is.
+        """
+        from gateway.shutdown_watchdog import resolve_shutdown_watchdog_delay
+
+        monkeypatch.delenv("HERMES_RESTART_DRAIN_TIMEOUT", raising=False)
+        monkeypatch.setattr(gateway, "read_raw_config", lambda: {}, raising=False)
+
+        assert gateway._get_restart_drain_timeout() == 0.0
+        assert gateway_windows._windows_stop_drain_timeout() == pytest.approx(
+            resolve_shutdown_watchdog_delay(0.0)
+            + gateway_windows._STOP_ESCALATION_MARGIN_S
+        )
+
+    def test_only_a_missing_drain_value_falls_back_to_the_default(self, monkeypatch):
+        """The fallback is for an ABSENT lookup result, not a falsy one."""
+        from gateway.shutdown_watchdog import resolve_shutdown_watchdog_delay
+
+        self._configured(monkeypatch, None)
+
+        assert gateway_windows._windows_stop_drain_timeout() == pytest.approx(
+            resolve_shutdown_watchdog_delay(
+                gateway_windows._STOP_FALLBACK_DRAIN_TIMEOUT_S
+            )
+            + gateway_windows._STOP_ESCALATION_MARGIN_S
+        )
