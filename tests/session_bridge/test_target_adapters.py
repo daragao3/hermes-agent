@@ -3282,6 +3282,12 @@ def test_codex_exact_discovery_can_include_sidebar_and_app_server_threads() -> N
             "thread/list",
             {
                 "archived": False,
+                # Every thread/list shape carries an explicit sort key since
+                # 2026-09-02; the bare `{archived}` cursor was truncated to whole
+                # seconds and skipped same-second rows at page boundaries.
+                "limit": 100,
+                "sortKey": "updated_at",
+                "sortDirection": "desc",
                 "sourceKinds": ["vscode", "appServer"],
             },
             _SIDEBAR_READ_REQUEST_TIMEOUT,

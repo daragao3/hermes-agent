@@ -2108,6 +2108,57 @@ class TestInventory:
             "two",
         ]
 
+    def test_full_inventory_requests_a_sorted_page(self) -> None:
+        """thread/list must carry an explicit sort key on the full-history path.
+
+        Regression for the 2026-09-02 under-collection. The pagination cursor is
+        a bare timestamp with no id tiebreaker, and its PRECISION depends on the
+        request shape: with ``{archived}`` alone the server emits it truncated to
+        whole seconds ('2026-09-02T15:38:45Z'), so every page boundary landing
+        inside a same-second cluster skipped the remainder of that second. Adding
+        sortKey promotes the cursor to milliseconds
+        ('2026-09-02T16:45:55.734Z') and the skips stop.
+
+        Measured live against codex-cli 0.152.0 over 5009 active threads:
+        ``{archived}`` alone returned 4344 rows in 174 pages while the sorted
+        shape returned 4610 -- 266 threads, 97% of which shared their exact
+        updated_at second with another row (control: 53%). ``limit`` alone is NOT
+        a fix; it only reduces the boundary count (4555 in 46 pages). With
+        sortKey present, page size stops mattering at all: limit 25 and limit 100
+        returned byte-identical sets.
+        """
+
+        client = FakeInitializingClient({
+            "thread/list": [
+                {
+                    "data": [{
+                        "id": "one",
+                        "title": "One",
+                        "cwd": "C:/one",
+                        "createdAt": 100,
+                        "updatedAt": 200,
+                    }]
+                }
+            ]
+        })
+
+        CodexSourceAdapter(client, marker_secret=SECRET).list_full_inventory(
+            archived=False
+        )
+
+        listings = [
+            params for method, params, _ in client.calls if method == "thread/list"
+        ]
+        assert listings, "expected a thread/list call"
+        for params in listings:
+            assert params["sortKey"] == "updated_at"
+            assert params["sortDirection"] == "desc"
+            assert params["limit"] == 100
+            # The data source is deliberately unchanged: the gap was the query
+            # shape, not the source. A sorted walk with useStateDbOnly ABSENT
+            # returned exactly the state-DB walk's set.
+            assert "useStateDbOnly" not in params
+
     def test_full_inventory_bypasses_changed_cache_on_every_call(self) -> None:
         row = {
             "id": "one",
