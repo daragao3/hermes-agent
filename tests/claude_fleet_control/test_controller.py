@@ -395,3 +395,50 @@ def test_phase_timing_ignores_a_frozen_injected_clock(tmp_path, caplog):
         "expected a real elapsed measurement, got %s -- timing is not monotonic-based"
         % p.ms["sleepy"]
     )
+
+
+# ----------------------------------------------------- pre-pass boot timing
+# The in-pass phases cannot see interpreter boot or imports: the first one
+# cannot run until both are already done. Measured 2026-09-02, a pass whose
+# phases totalled 9313ms had ~12s wall -- ~3s (25%) invisible.
+
+
+def test_log_boot_reports_imports_and_spawn(caplog):
+    import logging as _logging
+    from claude_fleet_control.controller import _PhaseLog
+    entry, imported = 100.0, 100.25          # 250ms of imports
+    with caplog.at_level(_logging.INFO, logger="claude_fleet_control.controller"):
+        out = _PhaseLog.log_boot(
+            entry, imported,
+            spawn_epoch_ms=1_000_000.0,
+            entry_epoch_ms=1_000_900.0,      # 900ms from stamp to python entry
+        )
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "phase imports=" in logged and "phase spawn_and_boot=" in logged
+    assert out["imports"] == 250.0
+    assert out["spawn_and_boot"] == 900.0   # stamp -> entry, wall clock
+
+
+def test_log_boot_skips_spawn_when_the_wrapper_did_not_stamp(caplog):
+    """No stamp must SKIP the phase, never report 0ms.
+
+    A fabricated zero would read as "boot is free" -- the opposite of the
+    finding this exists to measure -- and would look identical to a healthy
+    measurement on an old wrapper.
+    """
+    import logging as _logging
+    from claude_fleet_control.controller import _PhaseLog
+    with caplog.at_level(_logging.INFO, logger="claude_fleet_control.controller"):
+        out = _PhaseLog.log_boot(100.0, 100.1, spawn_epoch_ms=None)
+    assert "spawn_and_boot" not in out
+    assert "phase spawn_and_boot=" not in " ".join(r.getMessage() for r in caplog.records)
+    assert "imports" in out
+
+
+def test_log_boot_survives_a_garbage_stamp(caplog):
+    """A malformed env var must not crash the pass before it starts."""
+    import logging as _logging
+    from claude_fleet_control.controller import _PhaseLog
+    with caplog.at_level(_logging.INFO, logger="claude_fleet_control.controller"):
+        out = _PhaseLog.log_boot(100.0, 100.1, spawn_epoch_ms="not-a-number")
+    assert "spawn_and_boot" not in out and "imports" in out

@@ -997,7 +997,25 @@ class CodexSourceAdapter:
         while True:
             if pages >= page_cap:
                 raise _CodexReadBudgetExceeded("Codex sidebar page cap exceeded")
-            params: dict[str, Any] = {"archived": archived}
+            # Same cursor defect as _fetch_inventory_pages, second occurrence.
+            # thread/list's cursor is a bare timestamp with no id tiebreaker, and
+            # on the `{archived}`-only shape the server truncates it to whole
+            # seconds, so rows sharing a boundary second are stepped over and
+            # never enumerated. Measured 2026-09-02 against codex-cli 0.152.0 by
+            # calling this very method: 4369 rows in 175 pages unsorted, against
+            # 4626 in 47 sorted -- 257 missed, 0 the other way.
+            # This walk backs the marker path's fallback when thread/search is
+            # unavailable, so a skipped row makes find_by_marker_including_archived
+            # report a false negative on a thread that exists.
+            # limit also buys page_cap headroom, which is the runaway guard this
+            # loop enforces: the unsorted walk spent 175 of the default cap of
+            # 250 (~70%) on today's corpus; at limit 100 it costs 47.
+            params: dict[str, Any] = {
+                "archived": archived,
+                "limit": 100,
+                "sortKey": "updated_at",
+                "sortDirection": "desc",
+            }
             if cursor is not None:
                 params["cursor"] = cursor
             response = self._bounded_sidebar_request(
