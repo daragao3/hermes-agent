@@ -39,6 +39,24 @@ def _perfect(items):
     return tuple(Prediction(job_id=i.job_id, label=i.label) for i in items)
 
 
+
+def _partial(items, difficulty, n_correct):
+    """Perfect everywhere except `difficulty`, where only `n_correct` are right."""
+    preds = []
+    seen = 0
+    for item in items:
+        if item.difficulty is not difficulty:
+            preds.append(Prediction(job_id=item.job_id, label=item.label))
+            continue
+        seen += 1
+        if seen <= n_correct:
+            preds.append(Prediction(job_id=item.job_id, label=item.label))
+        else:
+            flipped = Label.EXCLUDE if item.label is Label.ADVANCE else Label.ADVANCE
+            preds.append(Prediction(job_id=item.job_id, label=flipped))
+    return tuple(preds)
+
+
 class TestPerfectCandidate:
     def test_a_candidate_agreeing_everywhere_passes(self):
         items = _balanced()
@@ -173,3 +191,95 @@ class TestCircularityIsVisibleInTheReport:
         r = evaluate(items, tuple(preds))
         assert r.accuracy_by_source["human_approval"] < 1.0
         assert r.accuracy_by_source["deterministic_exclusion"] == 1.0
+
+
+class TestTheAccuracyFloor:
+    """Without a floor, a candidate that answers everything the same way passes.
+
+    Measured rather than hypothesised. Baseline #1 (2026-09-04, the first run
+    ever made against the golden set) recorded a constant "always advance"
+    predictor scoring 50% on the 56-item set, producing zero false excludes,
+    and passing with an empty reason list. The same run scored 100% on the
+    nuanced half and 28.6% on the obvious half for a 64.3% headline — which is
+    why the floor is applied per difficulty and not to the aggregate the
+    failing half hides inside.
+    """
+
+    def test_a_constant_advance_candidate_fails(self):
+        items = _balanced()
+        preds = tuple(Prediction(job_id=i.job_id, label=Label.ADVANCE) for i in items)
+        r = evaluate(items, preds)
+        assert r.passed is False
+
+    def test_a_constant_candidate_is_named_as_one(self):
+        items = _balanced()
+        preds = tuple(Prediction(job_id=i.job_id, label=Label.ADVANCE) for i in items)
+        r = evaluate(items, preds)
+        assert any("constant" in reason for reason in r.reasons)
+
+    def test_a_constant_exclude_candidate_fails_as_a_constant_too(self):
+        """It already failed on protected positives; it must be named a constant as well."""
+        items = _balanced()
+        preds = tuple(Prediction(job_id=i.job_id, label=Label.EXCLUDE) for i in items)
+        r = evaluate(items, preds)
+        assert r.passed is False
+        assert any("constant" in reason for reason in r.reasons)
+        assert any("protected" in reason for reason in r.reasons)
+
+    def test_a_ghost_prediction_cannot_rescue_a_constant_candidate(self):
+        """Only predictions that matched an item count toward what was answered."""
+        items = _balanced()
+        preds = tuple(Prediction(job_id=i.job_id, label=Label.ADVANCE) for i in items)
+        preds += (Prediction(job_id="ghost", label=Label.EXCLUDE),)
+        r = evaluate(items, preds)
+        assert any("constant" in reason for reason in r.reasons)
+
+    def test_a_strong_headline_with_one_stratum_below_chance_fails(self):
+        """The exact shape baseline #1 found, reproduced: 100% / 28.6% for a 64.3% headline."""
+        items = _balanced(7)
+        r = evaluate(items, _partial(items, Difficulty.OBVIOUS, 2))
+        assert r.correct == 9 and r.total == 14
+        assert r.accuracy_by_difficulty["nuanced"] == 1.0
+        assert r.passed is False
+
+    def test_the_reason_names_the_difficulty_that_failed(self):
+        """An operator must be able to act on it without re-deriving which half broke."""
+        items = _balanced(7)
+        r = evaluate(items, _partial(items, Difficulty.OBVIOUS, 2))
+        assert any("obvious" in reason for reason in r.reasons)
+        assert not any("nuanced" in reason for reason in r.reasons)
+
+    def test_a_stratum_exactly_at_chance_fails(self):
+        """Chance is the line to beat, not the line to match."""
+        items = _balanced(4)
+        r = evaluate(items, _partial(items, Difficulty.OBVIOUS, 2))
+        assert r.accuracy_by_difficulty["obvious"] == 0.5
+        assert r.passed is False
+
+    def test_a_stratum_just_above_chance_passes(self):
+        """The floor is the weakest rule that does the job, not a quality bar."""
+        items = _balanced(5)
+        r = evaluate(items, _partial(items, Difficulty.OBVIOUS, 3))
+        assert r.accuracy_by_difficulty["obvious"] == 0.6
+        assert r.passed is True
+
+    def test_a_perfect_candidate_still_passes(self):
+        items = _balanced()
+        assert evaluate(items, _perfect(items)).passed is True
+
+
+class TestTheFloorDoesNotFireOnTheSetsOwnShape:
+    def test_a_single_label_set_does_not_make_a_correct_candidate_degenerate(self):
+        """`balanced` checks DIFFICULTY, so a set may legitimately carry one label.
+
+        A candidate that gets such a set entirely right emits one label and must
+        not be called a constant for it — that would fail the gate on the shape
+        of the set rather than on anything the candidate did.
+        """
+        items = (
+            _item("a0", Label.ADVANCE, Difficulty.NUANCED),
+            _item("a1", Label.ADVANCE, Difficulty.OBVIOUS),
+        )
+        r = evaluate(items, _perfect(items))
+        assert r.passed is True
+        assert r.reasons == ()
