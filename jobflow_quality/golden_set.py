@@ -24,6 +24,13 @@ job whatever any model thinks. These are *obvious*, and are labelled as such
 because an evaluation set padded with easy negatives flatters every scorer that
 reads it.
 
+The hard filter also excludes on company name, and those rows are labelled here
+on the same footing — the rule is as deterministic as the other. They are
+nonetheless kept out of the *sampled* set, because a blocklisted posting is one
+nothing ever fetched the text of, and an item with no text behind it grades a
+scorer on its title and company alone. :func:`balanced_sample` drops them and
+says what that costs.
+
 Difficulty is therefore recorded per item, and :func:`summarize` refuses to call
 a set balanced when one difficulty dominates.
 
@@ -88,6 +95,10 @@ _AUTO_MARKERS = ("main-auto-route", "auto-approved under", "auto_approve")
 # good scorer from one that only handles easy cases.
 _MIN_DIFFICULTY_SHARE = 0.2
 
+# The digest of an absent posting. An item carrying it references no text, so
+# there is nothing to replay a scorer against — see `balanced_sample`.
+_EMPTY_DESCRIPTION_SHA256 = hashlib.sha256(b"").hexdigest()
+
 
 @dataclass(frozen=True)
 class GoldenItem:
@@ -100,6 +111,17 @@ class GoldenItem:
     evidence: str
     description_sha256: str
     conflicted: bool = False
+
+    @property
+    def replayable(self) -> bool:
+        """True when a posting exists to run a scorer against.
+
+        The item holds a digest and never the text, so this asks the only
+        question the digest can answer on its own: was there any text at all?
+        Answering it here rather than at the call site keeps the check honest
+        for a caller that has the item but not the pipeline row.
+        """
+        return self.description_sha256 != _EMPTY_DESCRIPTION_SHA256
 
 
 def _sha256(text: str) -> str:
@@ -229,6 +251,20 @@ def balanced_sample(items: tuple[GoldenItem, ...]) -> tuple[GoldenItem, ...]:
     competent ranker near-perfectly while hiding the nuanced failures worth
     finding. Capping to parity is what makes it able to discriminate.
 
+    Items with no posting behind them are dropped before any of that. A scorer
+    replayed against one is graded on its title and company alone, which is not
+    the thing this set exists to measure. Measured 2026-09-04 that was not a
+    rounding error: 65 of the 93 exclusions were the *same* company matched
+    against a one-entry blocklist, so keeping them made 25 of the 33 sampled
+    obvious items one string comparison repeated, and 38% of the published set.
+    Dropping them cost 10 items of 66 and bought an obvious half of 28 distinct
+    companies whose evidence is in the text the item points at.
+
+    The test is the digest, not the evidence string. ``GoldenItem`` carries no
+    posting text by construction, so replayability has to be decided from the
+    digest anyway — and keying on it means a *future* exclusion rule is judged
+    on whether its items can be replayed rather than on being named here.
+
     Selection is by sorted ``job_id`` rather than a shuffle, because two runs
     that graded different samples produce scores nobody can compare.
 
@@ -236,11 +272,12 @@ def balanced_sample(items: tuple[GoldenItem, ...]) -> tuple[GoldenItem, ...]:
     balance against, and quietly returning the easy half would restore exactly
     the flattery this removes.
     """
-    if not items:
+    replayable = [item for item in items if item.replayable]
+    if not replayable:
         return ()
 
     buckets: dict[Difficulty, list[GoldenItem]] = {}
-    for item in items:
+    for item in replayable:
         buckets.setdefault(item.difficulty, []).append(item)
     if len(buckets) < len(Difficulty):
         return ()
