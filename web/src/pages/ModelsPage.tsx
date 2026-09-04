@@ -1259,7 +1259,15 @@ export default function ModelsPage() {
                         },
                         {
                           label: t.models.estimatedCost,
-                          value: formatCost(data.totals.total_estimated_cost),
+                          // A trailing "+" marks the total as a FLOOR when some
+                          // tokens were served by a route with no pricing data:
+                          // those contribute $0, so the bare figure under-states
+                          // spend. Symbol rather than a word so it needs no new
+                          // i18n key in all 18 locales.
+                          value:
+                            data.totals.unpriced_tokens > 0
+                              ? `${formatCost(data.totals.total_estimated_cost)}+`
+                              : formatCost(data.totals.total_estimated_cost),
                         },
                         {
                           label: t.analytics.totalSessions,

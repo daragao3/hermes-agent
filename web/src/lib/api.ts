@@ -2037,6 +2037,13 @@ export interface AnalyticsResponse {
     total_actual_cost: number;
     total_sessions: number;
     total_api_calls: number;
+    /** Sessions whose route had no pricing data. */
+    unpriced_sessions: number;
+    /**
+     * Tokens on those sessions. > 0 means `total_estimated_cost` is a FLOOR:
+     * unpriced tokens contribute $0 to it, so it under-states real spend.
+     */
+    unpriced_tokens: number;
   };
   skills: {
     summary: AnalyticsSkillsSummary;
@@ -2109,6 +2116,13 @@ export interface ModelsAnalyticsResponse {
     total_actual_cost: number;
     total_sessions: number;
     total_api_calls: number;
+    /** Sessions whose route had no pricing data. */
+    unpriced_sessions: number;
+    /**
+     * Tokens on those sessions. > 0 means `total_estimated_cost` is a FLOOR:
+     * unpriced tokens contribute $0 to it, so it under-states real spend.
+     */
+    unpriced_tokens: number;
   };
   period_days: number;
 }

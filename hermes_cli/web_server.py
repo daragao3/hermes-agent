@@ -16451,7 +16451,20 @@ def _get_usage_analytics(days: int = 30, profile: Optional[str] = None):
                    COALESCE(SUM(estimated_cost_usd), 0) as total_estimated_cost,
                    COALESCE(SUM(actual_cost_usd), 0) as total_actual_cost,
                    COUNT(*) as total_sessions,
-                   SUM(COALESCE(api_call_count, 0)) as total_api_calls
+                   SUM(COALESCE(api_call_count, 0)) as total_api_calls,
+                   -- estimated_cost_usd is NOT NULL DEFAULT 0, so a session
+                   -- nobody could price is indistinguishable from a free one
+                   -- once summed. These two columns are the caveat on the
+                   -- total: > 0 means total_estimated_cost is a FLOOR.
+                   -- COALESCE because SUM over an empty window is NULL, and
+                   -- these two are typed as plain numbers on both clients.
+                   COALESCE(SUM(CASE WHEN cost_status = 'unknown'
+                       THEN 1 ELSE 0 END), 0) as unpriced_sessions,
+                   COALESCE(SUM(CASE WHEN cost_status = 'unknown' THEN
+                       COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
+                       + COALESCE(cache_read_tokens, 0)
+                       + COALESCE(cache_write_tokens, 0)
+                   ELSE 0 END), 0) as unpriced_tokens
             FROM sessions WHERE started_at > ?
         """, (cutoff,))
         totals = dict(cur3.fetchone())
@@ -16650,7 +16663,20 @@ def _get_models_analytics(days: int = 30, profile: Optional[str] = None):
                    COALESCE(SUM(estimated_cost_usd), 0) as total_estimated_cost,
                    COALESCE(SUM(actual_cost_usd), 0) as total_actual_cost,
                    COUNT(*) as total_sessions,
-                   SUM(COALESCE(api_call_count, 0)) as total_api_calls
+                   SUM(COALESCE(api_call_count, 0)) as total_api_calls,
+                   -- estimated_cost_usd is NOT NULL DEFAULT 0, so a session
+                   -- nobody could price is indistinguishable from a free one
+                   -- once summed. These two columns are the caveat on the
+                   -- total: > 0 means total_estimated_cost is a FLOOR.
+                   -- COALESCE because SUM over an empty window is NULL, and
+                   -- these two are typed as plain numbers on both clients.
+                   COALESCE(SUM(CASE WHEN cost_status = 'unknown'
+                       THEN 1 ELSE 0 END), 0) as unpriced_sessions,
+                   COALESCE(SUM(CASE WHEN cost_status = 'unknown' THEN
+                       COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
+                       + COALESCE(cache_read_tokens, 0)
+                       + COALESCE(cache_write_tokens, 0)
+                   ELSE 0 END), 0) as unpriced_tokens
             FROM sessions WHERE started_at > ? AND model IS NOT NULL AND model != ''
         """, (cutoff,))
         totals = dict(totals_cur.fetchone())

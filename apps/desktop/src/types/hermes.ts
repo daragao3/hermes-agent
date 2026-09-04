@@ -623,6 +623,13 @@ export interface AnalyticsTotals {
   total_output: null | number
   total_reasoning: null | number
   total_sessions: number
+  /** Sessions whose route had no pricing data. */
+  unpriced_sessions: number
+  /**
+   * Tokens on those sessions. > 0 means `total_estimated_cost` is a FLOOR:
+   * unpriced tokens contribute $0 to it, so it under-states real spend.
+   */
+  unpriced_tokens: number
 }
 
 export interface CronJob {
