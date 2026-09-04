@@ -373,3 +373,112 @@ class TestHumanLabelRequiresPositiveEvidence:
                             _nested_human_event()])
         items = build_golden_set({"j1": row}, DEFAULT_CRITERIA)
         assert len(items) == 1
+class TestSamplingRequiresAReplayablePosting:
+    """An item with no posting behind it cannot measure text comprehension.
+
+    Measured on live data 2026-09-04: 65 of the 93 exclusions were the *same*
+    company matched against a one-entry blocklist, and none of them carried
+    posting text — the blocklist fires on the company field, so nothing ever
+    fetched one. Sampled, they were 25 of 33 obvious items, so 38% of the
+    published set was one string comparison repeated. The label is sound; what
+    it *measures* is not what the set is for.
+    """
+
+    def _textless(self, **over):
+        """A row the hard filter excludes on company, with no posting at all."""
+        return _row(company="DataAnnotation", description_raw="", **over)
+
+    def test_an_item_with_no_posting_is_not_replayable(self):
+        items = build_golden_set({"j1": self._textless()}, DEFAULT_CRITERIA)
+        assert items[0].evidence == "excluded_company"
+        assert items[0].replayable is False
+
+    def test_an_item_with_a_posting_is_replayable(self):
+        items = build_golden_set({"j1": _row(history=[_human_event()])},
+                                 DEFAULT_CRITERIA)
+        assert items[0].replayable is True
+
+    def test_the_empty_digest_is_what_marks_an_item_unreplayable(self):
+        """Not a flag set at build time — the digest itself carries it."""
+        import hashlib
+
+        items = build_golden_set({"j1": self._textless()}, DEFAULT_CRITERIA)
+        assert items[0].description_sha256 == hashlib.sha256(b"").hexdigest()
+
+    def test_sampling_drops_items_with_no_posting(self):
+        from jobflow_quality.golden_set import balanced_sample
+
+        jobs = {f"h{i:03d}": _row(history=[_human_event()]) for i in range(5)}
+        jobs.update({f"x{i:03d}": self._textless() for i in range(5)})
+        sampled = balanced_sample(build_golden_set(jobs, DEFAULT_CRITERIA))
+        assert sampled == ()
+
+    def test_every_sampled_item_is_replayable(self):
+        from jobflow_quality.golden_set import balanced_sample
+
+        jobs = {f"h{i:03d}": _row(history=[_human_event()]) for i in range(6)}
+        jobs.update({f"e{i:03d}": _row(salary_range={"min": 1.0, "max": 90000.0,
+                                                     "currency": "USD",
+                                                     "period": "annual"})
+                     for i in range(4)})
+        jobs.update({f"x{i:03d}": self._textless() for i in range(20)})
+        sampled = balanced_sample(build_golden_set(jobs, DEFAULT_CRITERIA))
+        assert sampled
+        assert all(i.replayable for i in sampled)
+
+    def test_the_cap_is_computed_after_dropping_unreplayable_items(self):
+        """The order is load-bearing, and getting it wrong is invisible.
+
+        Dropping *after* the cap would fill the obvious bucket with the 20
+        text-less rows, cap both halves at 6, and then hand back a lopsided set
+        — the exact flattery the balance exists to remove, arriving under a
+        summary that still reports the set balanced.
+        """
+        from jobflow_quality.golden_set import balanced_sample, summarize
+
+        jobs = {f"h{i:03d}": _row(history=[_human_event()]) for i in range(6)}
+        jobs.update({f"e{i:03d}": _row(salary_range={"min": 1.0, "max": 90000.0,
+                                                     "currency": "USD",
+                                                     "period": "annual"})
+                     for i in range(4)})
+        jobs.update({f"x{i:03d}": self._textless() for i in range(20)})
+        s = summarize(balanced_sample(build_golden_set(jobs, DEFAULT_CRITERIA)))
+        assert s["by_difficulty"] == {"nuanced": 4, "obvious": 4}
+
+    def test_a_blocklisted_company_that_does_carry_text_is_kept(self):
+        """The test is the posting, not the rule that excluded the job.
+
+        Keyed on the evidence string instead, this item would be thrown away
+        for carrying the wrong rule name while being perfectly replayable — and
+        a new exclusion rule would be silently excluded from the set until
+        someone remembered to name it here.
+        """
+        from jobflow_quality.golden_set import balanced_sample
+
+        jobs = {f"h{i:03d}": _row(history=[_human_event()]) for i in range(3)}
+        jobs.update({f"b{i:03d}": _row(company="DataAnnotation",
+                                       description_raw="A real posting.")
+                     for i in range(3)})
+        sampled = balanced_sample(build_golden_set(jobs, DEFAULT_CRITERIA))
+        kept = [i for i in sampled if i.evidence == "excluded_company"]
+        assert len(kept) == 3
+
+    def test_a_set_with_no_replayable_items_at_all_samples_to_empty(self):
+        from jobflow_quality.golden_set import balanced_sample
+
+        jobs = {f"x{i:03d}": self._textless() for i in range(9)}
+        assert balanced_sample(build_golden_set(jobs, DEFAULT_CRITERIA)) == ()
+
+    def test_dropping_postings_never_invents_or_reorders_items(self):
+        from jobflow_quality.golden_set import balanced_sample
+
+        jobs = {f"h{i:03d}": _row(history=[_human_event()]) for i in range(5)}
+        jobs.update({f"e{i:03d}": _row(salary_range={"min": 1.0, "max": 90000.0,
+                                                     "currency": "USD",
+                                                     "period": "annual"})
+                     for i in range(5)})
+        jobs.update({f"x{i:03d}": self._textless() for i in range(5)})
+        items = build_golden_set(jobs, DEFAULT_CRITERIA)
+        sampled = balanced_sample(items)
+        assert set(sampled) <= set(items)
+        assert list(sampled) == sorted(sampled, key=lambda i: i.job_id)
