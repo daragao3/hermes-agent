@@ -137,6 +137,48 @@ _CLAUDE_LINEAGE_SOURCE_IDENTITY_MISMATCH = "claude_lineage_source_identity_misma
 _CLAUDE_LINEAGE_SOURCE_PROVENANCE_MISMATCH = "claude_lineage_source_provenance_mismatch"
 _CLAUDE_LINEAGE_INVALID_COMPLETION = "claude_lineage_invalid_completion"
 _CLAUDE_LINEAGE_CONFLICT = "claude_lineage_conflict"
+
+# Lineage codes a commit is allowed to proceed THROUGH, leaving the job visible
+# but unlinked. Both mean "the other end of the link is not in the catalog" --
+# a completeness fact about the CATALOG, not an integrity claim about this job --
+# and the system already models that outcome first-class:
+# _claude_visibility_lineage_status reports unlinked_visible with per-code
+# blocker_codes and a repairable count, and the reconcile path picks such a job
+# up if the missing end is catalogued later.
+#
+# TARGET_MISSING was tolerated from the start. MISSING_SOURCE was NOT, and the
+# asymmetry was a latent trap that fired on 2026-09-02: job ...17fb8341ea6bd4
+# had a valid transcript that passed _validate_projection, so the commit set
+# state='claude_visible' -- and then this check raised, _execute_write rolled
+# the WHOLE transaction back, and the registrar's except swallowed it. The job
+# livelocked a reconciliation lease every ~8 minutes for two days, and because
+# an open job suppresses discovery via open_reasons the ENTIRE visibility lane
+# stopped enqueueing work, at health exit 0. Its source was an agent-spawned
+# Codex session that Codex never projected into thread_history -- a population
+# that is uncatalogued by construction, so this was never going to self-heal.
+#
+# Deliberately NARROW: a CONFLICT or an identity/provenance mismatch still
+# raises. Those are two records disagreeing, which is an integrity problem worth
+# refusing a commit over. A missing end is not.
+_CLAUDE_LINEAGE_COMMIT_TOLERATED = frozenset({
+    _CLAUDE_LINEAGE_TARGET_MISSING,
+    _CLAUDE_LINEAGE_MISSING_SOURCE,
+})
+
+
+def _require_committable_claude_lineage(lineage: dict[str, Any]) -> None:
+    """Refuse a commit only for a lineage blocker that is not mere absence.
+
+    One rule in one place: four call sites (the visibility commit and three
+    auth-recovery completions) had this condition written out longhand, so a
+    change to the tolerated set had four chances to be applied to three of them.
+    """
+
+    if (
+        lineage["state"] == "blocked"
+        and lineage["code"] not in _CLAUDE_LINEAGE_COMMIT_TOLERATED
+    ):
+        raise ValueError(str(lineage["code"]))
 _PROFILE_SHADOW_SOURCE = "session_bridge_profile"
 _EXTERNAL_ACTIVITY_KEY_PREFIX = "session-bridge:external-activity:"
 # Repeated verbatim by idx_session_bridge_state_activity_ordered.  SQLite only
@@ -2714,10 +2756,7 @@ class SessionBridgeStore:
                 created_at=operation_time,
                 source_identity_issue=self._claude_lineage_source_identity_issue,
             )
-            if lineage["state"] == "blocked" and lineage["code"] != (
-                _CLAUDE_LINEAGE_TARGET_MISSING
-            ):
-                raise ValueError(str(lineage["code"]))
+            _require_committable_claude_lineage(lineage)
             return dict(
                 conn.execute(
                     "SELECT * FROM session_claude_visibility_jobs WHERE id = ?",
@@ -2794,10 +2833,7 @@ class SessionBridgeStore:
                     created_at=operation_time,
                     source_identity_issue=self._claude_lineage_source_identity_issue,
                 )
-                if lineage["state"] == "blocked" and lineage["code"] != (
-                    _CLAUDE_LINEAGE_TARGET_MISSING
-                ):
-                    raise ValueError(str(lineage["code"]))
+                _require_committable_claude_lineage(lineage)
                 return dict(completed_job)
             if (
                 recovery["state"] not in ("leased", "retry")
@@ -2841,10 +2877,7 @@ class SessionBridgeStore:
                 created_at=operation_time,
                 source_identity_issue=self._claude_lineage_source_identity_issue,
             )
-            if lineage["state"] == "blocked" and lineage["code"] != (
-                _CLAUDE_LINEAGE_TARGET_MISSING
-            ):
-                raise ValueError(str(lineage["code"]))
+            _require_committable_claude_lineage(lineage)
             return dict(
                 conn.execute(
                     "SELECT * FROM session_claude_visibility_jobs WHERE id = ?",
@@ -3184,10 +3217,7 @@ class SessionBridgeStore:
                 created_at=operation_time,
                 source_identity_issue=self._claude_lineage_source_identity_issue,
             )
-            if lineage["state"] == "blocked" and lineage["code"] != (
-                _CLAUDE_LINEAGE_TARGET_MISSING
-            ):
-                raise ValueError(str(lineage["code"]))
+            _require_committable_claude_lineage(lineage)
             return dict(
                 conn.execute(
                     "SELECT * FROM session_claude_visibility_jobs WHERE id = ?",
