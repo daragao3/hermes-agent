@@ -3272,7 +3272,11 @@ class SessionBridgeStore:
         return self.db._execute_write(_write)
 
     def dismiss_claude_visibility_job(
-        self, *, job_id: str, expected_error_code: str
+        self,
+        *,
+        job_id: str,
+        expected_error_code: str,
+        expected_attempts: int,
     ) -> dict[str, Any]:
         """Retire one terminally failed job so the gates stop counting it open.
 
@@ -3292,14 +3296,16 @@ class SessionBridgeStore:
         job from re-spending ordinals it has already used -- deleting them is
         what re-arms the livelock this stamp exists to end.
 
-        *expected_error_code* must match the failure on the row, so an
-        operator cannot clear a job whose verdict changed since they looked.
+        *expected_error_code* and *expected_attempts* must match the failure
+        on the row, so an operator cannot clear a job whose verdict or attempt
+        count changed since they looked.
         """
 
         normalized_job = _exact_nonempty_text(job_id, "Claude visibility job ID")
         normalized_code = _exact_nonempty_text(
             expected_error_code, "Claude visibility error code"
         )
+        _nonnegative_integer(expected_attempts, "expected Claude visibility attempts")
 
         def _write(conn):
             operation_time = _finite_number(self._clock(), "clock")
@@ -3307,8 +3313,14 @@ class SessionBridgeStore:
                 """UPDATE session_claude_visibility_jobs
                    SET operator_cleared_at = ?, updated_at = ?
                    WHERE id = ? AND state = 'claude_failed' AND error_code = ?
-                     AND operator_cleared_at IS NULL""",
-                (operation_time, operation_time, normalized_job, normalized_code),
+                     AND attempts = ? AND operator_cleared_at IS NULL""",
+                (
+                    operation_time,
+                    operation_time,
+                    normalized_job,
+                    normalized_code,
+                    expected_attempts,
+                ),
             )
             if cursor.rowcount != 1:
                 raise ValueError(

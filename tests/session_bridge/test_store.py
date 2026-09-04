@@ -14379,7 +14379,8 @@ def test_no_due_cycle_advances_empty_after_multiple_operator_dismissals(
         _enqueue_claude_visibility_job(store, *stuck)
         _fail_claude_visibility_job(db, stuck[1].job_id)
         store.dismiss_claude_visibility_job(
-            job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+            job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted",
+            expected_attempts=7,
         )
 
     store.record_claude_visibility_cycle(
@@ -15066,7 +15067,8 @@ def test_terminal_repair_lease_requires_exact_uncleared_bridge_conflict(
     )
     if cleared:
         store.dismiss_claude_visibility_job(
-            job_id=identity.job_id, expected_error_code="bridge_conflict"
+            job_id=identity.job_id, expected_error_code="bridge_conflict",
+            expected_attempts=1,
         )
 
     expected_error = (
@@ -15385,7 +15387,9 @@ def test_operator_dismissal_reopens_the_enqueue_gate(db: SessionDB) -> None:
     )
 
     store.dismiss_claude_visibility_job(
-        job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+        job_id=stuck[1].job_id,
+        expected_error_code="max_attempts_exhausted",
+        expected_attempts=7,
     )
     reopened = store.enqueue_claude_visibility_batch_if_idle(
         [_claude_visibility_identity("after")], _CLAUDE_MARKER_SECRET
@@ -15412,7 +15416,9 @@ def test_operator_dismissal_clears_the_status_open_and_fatal_signals(
 
     before = store.claude_visibility_status(100.0)
     store.dismiss_claude_visibility_job(
-        job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+        job_id=stuck[1].job_id,
+        expected_error_code="max_attempts_exhausted",
+        expected_attempts=7,
     )
     after = store.claude_visibility_status(100.0)
 
@@ -15441,7 +15447,9 @@ def test_operator_dismissal_never_touches_the_registration_usage_ledger(
         db._conn.commit()
 
     store.dismiss_claude_visibility_job(
-        job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+        job_id=stuck[1].job_id,
+        expected_error_code="max_attempts_exhausted",
+        expected_attempts=7,
     )
 
     ledger = _rows(
@@ -15463,7 +15471,9 @@ def test_operator_dismissal_refuses_a_job_that_is_still_live(db: SessionDB) -> N
 
     with pytest.raises(ValueError, match="terminally failed"):
         store.dismiss_claude_visibility_job(
-            job_id=pending[1].job_id, expected_error_code="max_attempts_exhausted"
+            job_id=pending[1].job_id,
+            expected_error_code="max_attempts_exhausted",
+            expected_attempts=7,
         )
 
     assert store.claude_visibility_status(100.0)["counts"]["claude_pending"] == 1
@@ -15477,10 +15487,86 @@ def test_operator_dismissal_refuses_a_mismatched_error_code(db: SessionDB) -> No
 
     with pytest.raises(ValueError, match="terminally failed"):
         store.dismiss_claude_visibility_job(
-            job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+            job_id=stuck[1].job_id,
+            expected_error_code="max_attempts_exhausted",
+            expected_attempts=7,
         )
 
     assert store.claude_visibility_status(100.0)["failed_codes"] == {"uuid_conflict": 1}
+
+
+def test_operator_dismissal_refuses_mismatched_attempts_without_mutating_the_row(
+    db: SessionDB,
+) -> None:
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    stuck = _claude_visibility_identity("stuck")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id, attempts=6)
+
+    with pytest.raises(ValueError, match="terminally failed"):
+        store.dismiss_claude_visibility_job(
+            job_id=stuck[1].job_id,
+            expected_error_code="max_attempts_exhausted",
+            expected_attempts=7,
+        )
+
+    row = _rows(
+        db,
+        """SELECT state, attempts, error_code, error_detail, operator_cleared_at
+           FROM session_claude_visibility_jobs WHERE id = ?""",
+        (stuck[1].job_id,),
+    )[0]
+    assert dict(row) == {
+        "state": "claude_failed",
+        "attempts": 6,
+        "error_code": "max_attempts_exhausted",
+        "error_detail": "maximum paid launch attempts exhausted",
+        "operator_cleared_at": None,
+    }
+
+
+def test_operator_dismissal_predicate_arms_expected_attempts_inside_immediate_cas(
+    db: SessionDB,
+) -> None:
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    stuck = _claude_visibility_identity("stuck")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id)
+    statements: list[str] = []
+    with db._lock:
+        assert db._conn is not None
+        db._conn.set_trace_callback(statements.append)
+    try:
+        store.dismiss_claude_visibility_job(
+            job_id=stuck[1].job_id,
+            expected_error_code="max_attempts_exhausted",
+            expected_attempts=7,
+        )
+    finally:
+        with db._lock:
+            db._conn.set_trace_callback(None)
+
+    transaction = [statement.upper() for statement in statements]
+    update = [
+        statement
+        for statement in transaction
+        if statement.lstrip().startswith("UPDATE SESSION_CLAUDE_VISIBILITY_JOBS")
+    ]
+    assert transaction[0] == "BEGIN IMMEDIATE"
+    # SQLite's trace callback repeats the outer UPDATE while firing its audit
+    # trigger. Every observed copy must remain the same guarded CAS.
+    assert len(set(update)) == 1
+    assert all(
+        clause in update[0]
+        for clause in (
+            f"WHERE ID = '{stuck[1].job_id.upper()}'",
+            "AND STATE = 'CLAUDE_FAILED'",
+            "AND ERROR_CODE = 'MAX_ATTEMPTS_EXHAUSTED'",
+            "AND ATTEMPTS = 7",
+            "AND OPERATOR_CLEARED_AT IS NULL",
+        )
+    )
+    assert transaction[-1] == "COMMIT"
 
 
 def test_operator_dismissal_refuses_a_second_time(db: SessionDB) -> None:
@@ -15489,12 +15575,16 @@ def test_operator_dismissal_refuses_a_second_time(db: SessionDB) -> None:
     _enqueue_claude_visibility_job(store, *stuck)
     _fail_claude_visibility_job(db, stuck[1].job_id)
     store.dismiss_claude_visibility_job(
-        job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+        job_id=stuck[1].job_id,
+        expected_error_code="max_attempts_exhausted",
+        expected_attempts=7,
     )
 
     with pytest.raises(ValueError, match="terminally failed"):
         store.dismiss_claude_visibility_job(
-            job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+            job_id=stuck[1].job_id,
+            expected_error_code="max_attempts_exhausted",
+            expected_attempts=7,
         )
 
 
@@ -16785,7 +16875,8 @@ def test_repair_lease_release_restores_the_row_and_its_original_detail(
     # that require claude_failed can reach them -- the property whose absence
     # stranded the live job.
     assert store.dismiss_claude_visibility_job(
-        job_id=identity.job_id, expected_error_code="bridge_conflict"
+        job_id=identity.job_id, expected_error_code="bridge_conflict",
+        expected_attempts=1,
     )["status"] == "dismissed"
 
 
@@ -16936,7 +17027,8 @@ def test_refused_operator_writes_leave_the_row_byte_identical(db: SessionDB) -> 
     # Wrong error code.
     with pytest.raises(ValueError):
         store.dismiss_claude_visibility_job(
-            job_id=identity.job_id, expected_error_code="max_attempts_exhausted"
+            job_id=identity.job_id, expected_error_code="max_attempts_exhausted",
+            expected_attempts=1,
         )
     assert _visibility_row(db) == before
 
@@ -16945,6 +17037,7 @@ def test_refused_operator_writes_leave_the_row_byte_identical(db: SessionDB) -> 
         store.dismiss_claude_visibility_job(
             job_id="claude-visibility-job:absent",
             expected_error_code="bridge_conflict",
+            expected_attempts=1,
         )
     assert _visibility_row(db) == before
 
@@ -16968,7 +17061,8 @@ def test_refused_operator_writes_leave_the_row_byte_identical(db: SessionDB) -> 
     # The accepting call still works afterwards, so the refusals above were
     # refusals and not silent corruption.
     assert store.dismiss_claude_visibility_job(
-        job_id=identity.job_id, expected_error_code="bridge_conflict"
+        job_id=identity.job_id, expected_error_code="bridge_conflict",
+        expected_attempts=1,
     )["status"] == "dismissed"
 
 
@@ -16985,13 +17079,15 @@ def test_a_second_dismissal_refuses_without_restamping_the_row(
     _enqueue_claude_visibility_job(store, *stuck)
     _fail_claude_visibility_job(db, stuck[1].job_id)
     store.dismiss_claude_visibility_job(
-        job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+        job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted",
+        expected_attempts=7,
     )
     after_first = _visibility_row(db)
 
     clock["t"] = 999.0
     with pytest.raises(ValueError, match="terminally failed"):
         store.dismiss_claude_visibility_job(
-            job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted"
+            job_id=stuck[1].job_id, expected_error_code="max_attempts_exhausted",
+            expected_attempts=7,
         )
     assert _visibility_row(db) == after_first

@@ -1080,7 +1080,11 @@ class _Backend(Protocol):
         expected_error_code: str,
     ) -> Mapping[str, Any]: ...
     def dismiss_claude_visibility_job(
-        self, *, job_id: str, expected_error_code: str
+        self,
+        *,
+        job_id: str,
+        expected_error_code: str,
+        expected_attempts: int,
     ) -> Mapping[str, Any]: ...
     def requeue_failed_claude_visibility_job(
         self, *, job_id: str, reserved_claude_uuid: str
@@ -2899,7 +2903,11 @@ class ProductionBackend:
         }
 
     def dismiss_claude_visibility_job(
-        self, *, job_id: str, expected_error_code: str
+        self,
+        *,
+        job_id: str,
+        expected_error_code: str,
+        expected_attempts: int,
     ) -> Mapping[str, Any]:
         """Acknowledge one terminally failed job so discovery can resume.
 
@@ -2913,11 +2921,13 @@ class ProductionBackend:
         store = self._require_store()
         try:
             return store.dismiss_claude_visibility_job(
-                job_id=job_id, expected_error_code=expected_error_code
+                job_id=job_id,
+                expected_error_code=expected_error_code,
+                expected_attempts=expected_attempts,
             )
         except ValueError as exc:
             # The guarded UPDATE matched no row: wrong id, a state that is not
-            # claude_failed, a different error_code, or already cleared. Say
+            # claude_failed, different error_code/attempts, or already cleared. Say
             # so as a gate refusal rather than a generic configuration error.
             raise RolloutGateBlocked("visibility_dismiss_identity_mismatch") from exc
 
@@ -4633,9 +4643,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dismiss_claude_visibility.add_argument("--job-id", required=True)
     dismiss_claude_visibility.add_argument(
-        "--error-code",
+        "--expected-error-code",
+        dest="error_code",
         required=True,
         help="the failure recorded on the row, restated to prove intent",
+    )
+    dismiss_claude_visibility.add_argument(
+        "--expected-attempts",
+        dest="attempts",
+        required=True,
+        type=_positive_int,
+        help="the row attempt count, restated to prove intent",
     )
     dismiss_claude_visibility.add_argument(
         "--confirm-terminal-failure",
@@ -5013,6 +5031,7 @@ def _main_unscoped(
                     backend.dismiss_claude_visibility_job(
                         job_id=args.job_id,
                         expected_error_code=args.error_code,
+                        expected_attempts=args.attempts,
                     )
                 )
             )
