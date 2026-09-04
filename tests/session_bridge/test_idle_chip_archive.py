@@ -88,7 +88,14 @@ def test_archives_idle_verb_title_bypass_chip(tmp_path) -> None:
 
     result = worker.run_once()
 
-    assert result == {"examined": 1, "archived": 1, "skipped": 0, "throttled": 0}
+    assert result == {
+        "examined": 1,
+        "archived": 1,
+        "skipped": 0,
+        "throttled": 0,
+        "task_archived_without_capture": 0,
+        "task_archived_capture_unknown": 0,
+    }
     record = _load(path)
     assert record["isArchived"] is True
     # every other field survives the rewrite byte-for-byte in value terms
@@ -418,7 +425,14 @@ def test_lookback_bounds_the_scan(tmp_path) -> None:
     )
     result = _worker(tmp_path / "a").run_once()
 
-    assert result == {"examined": 0, "archived": 0, "skipped": 0, "throttled": 0}
+    assert result == {
+        "examined": 0,
+        "archived": 0,
+        "skipped": 0,
+        "throttled": 0,
+        "task_archived_without_capture": 0,
+        "task_archived_capture_unknown": 0,
+    }
 
 
 def test_unreadable_record_fail_closes_all_archival(tmp_path) -> None:
@@ -466,7 +480,14 @@ def test_second_run_within_interval_throttles(tmp_path) -> None:
     second = worker.run_once()
 
     assert first["archived"] == 1
-    assert second == {"examined": 0, "archived": 0, "skipped": 0, "throttled": 1}
+    assert second == {
+        "examined": 0,
+        "archived": 0,
+        "skipped": 0,
+        "throttled": 1,
+        "task_archived_without_capture": 0,
+        "task_archived_capture_unknown": 0,
+    }
 
 
 def test_rejects_invalid_construction() -> None:
