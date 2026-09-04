@@ -2,8 +2,8 @@
 
 The premium-routing plan's gate reads *"No premium route is changed until
 workload evaluation and shadow outputs pass. Cost is a tie-breaker only after
-quality floors."* This is that gate, and it fails closed. Three ways to not
-pass, and only one of them is "the candidate was wrong":
+quality floors."* This is that gate, and it fails closed. Four ways to not
+pass, and only two of them are "the candidate was wrong":
 
 * **The set cannot judge.** An evaluation set that is all easy negatives scores
   any competent candidate near-perfectly. A headline accuracy computed over it
@@ -11,6 +11,11 @@ pass, and only one of them is "the candidate was wrong":
 * **The candidate did not answer.** A missing prediction is scored as wrong,
   never skipped. Treating silence as agreement is how a candidate that crashed
   on half the set walks through the gate with 100%.
+* **The candidate did no better than a coin.** Accuracy is floored *per
+  difficulty*, never in aggregate, because the aggregate is exactly where a
+  failing half hides. A candidate that predicts one label for every item is
+  refused outright whatever it scores: that is a constant, not a scorer, and on
+  a set whose halves are single-label it collects one perfect half for free.
 * **The candidate excluded a human-approved job.** See below.
 
 The errors are not symmetric and the gate refuses to average them. Advancing a
@@ -28,6 +33,26 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .golden_set import Difficulty, GoldenItem, Label, summarize
+
+# Chance. A candidate at or below it on some difficulty has demonstrated nothing
+# about that difficulty, and whatever the aggregate says is coming from the
+# other one.
+#
+# DELIBERATELY THE CHANCE LINE AND NOT A QUALITY BAR, for the same reason the
+# protected-positive rule is stated as a rule: a floor picked for taste is a
+# floor someone tunes down later, and this one has to survive that. It is the
+# weakest threshold that does the job it was added for.
+#
+# MEASURED, not hypothesised. Baseline #1 (2026-09-04) was the first evaluation
+# ever run against the golden set, and it found this gate reachable by a
+# candidate that had made no decision at all: a constant "always advance"
+# predictor scored 50% over the 56-item set, produced zero false excludes, and
+# returned passed=True with an empty reason list. The same run showed why the
+# floor cannot be an aggregate one — the production Matcher scored 100% on the
+# nuanced half and 28.6% on the obvious half, which averages to a 64.3% headline
+# that reads like a mediocre scorer rather than one that never learned to
+# exclude.
+_CHANCE_ACCURACY = 0.5
 
 
 @dataclass(frozen=True)
@@ -77,8 +102,15 @@ def evaluate(
     # agrees with itself by construction.
     per_source: dict[str, list[bool]] = {}
 
+    # Labels the candidate actually committed to, counted over the SET only: a
+    # prediction for a job that is not in it must not rescue a constant
+    # candidate from being recognised as one.
+    answered: set[Label] = set()
+
     for item in items:
         predicted = seen.get(item.job_id)
+        if predicted is not None:
+            answered.add(predicted)
         # Absent is wrong, not absent. Scoring only what the candidate answered
         # rewards a candidate that answered only the easy ones.
         correct = predicted is item.label
@@ -100,6 +132,26 @@ def evaluate(
     elif not summarize(tuple(items))["balanced"]:
         reasons.append(
             "set balance: one difficulty dominates, so accuracy over it is not evidence"
+        )
+
+    for name, results in sorted(per_difficulty.items()):
+        accuracy = sum(1 for ok in results if ok) / len(results)
+        if accuracy <= _CHANCE_ACCURACY:
+            reasons.append(
+                f"accuracy floor: {name} accuracy {accuracy:.1%} does not beat "
+                f"chance ({_CHANCE_ACCURACY:.0%})"
+            )
+
+    # Checked separately from the floor rather than folded into it, because the
+    # floor only catches a constant while the strata happen to be single-label.
+    # That is true of today's set by construction and is not promised: a stratum
+    # carrying both labels would let a constant clear chance on it. Guarded on
+    # the SET holding more than one label, so a legitimately single-label set
+    # cannot fail a candidate that got every item right.
+    if len({item.label for item in items}) > 1 and len(answered) == 1:
+        reasons.append(
+            "degenerate candidate: every item got the same label, which is a "
+            "constant rather than a scorer"
         )
 
     if unpredicted:
