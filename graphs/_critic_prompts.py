@@ -168,6 +168,12 @@ CRITIC_PROPOSAL_USER_TEMPLATE = """\
 
   * proceed_threshold: 8.75 (env: HERMES_JOBFLOW_PROCEED_THRESHOLD)
   * review_threshold: 5.0 (env: HERMES_JOBFLOW_REVIEW_THRESHOLD)
+  * comp_floor: 2.0 (env: HERMES_JOBFLOW_COMP_FLOOR) -- a comp_alignment score
+    at or below this archives the job whatever the weighted total says. NOT on
+    the auto-apply surface above: proposing a change to it is fine, applying one
+    is Diego's. Note when proposing a review_threshold move that this veto
+    already removes sub-floor-pay jobs from the review queue, so that is not a
+    reason to raise it.
   * model: gpt-4o-mini (env: HERMES_JOBFLOW_MODEL)
   * temperature: 0.1
   * dimensions + weights:

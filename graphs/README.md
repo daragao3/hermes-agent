@@ -46,9 +46,10 @@ Both runs latency ~3–5s end-to-end; full trace trees in Langfuse
             │ state.{score, recommendation, breakdown, penalties, strengths, gaps, rationale}
             ▼
    ┌─────────────────┐
-   │ route_decision  │   score >= 8.75 -> tailor
-   │ (deterministic) │   score >= 5.0  -> review
-   └────────┬────────┘   else          -> archive
+   │ route_decision  │   comp_alignment <= 2.0 -> archive   (veto, first)
+   │ (deterministic) │   score >= 8.75         -> tailor
+   └────────┬────────┘   score >= 5.0          -> review
+            │             else                 -> archive
             │
             ▼
            END
