@@ -68,6 +68,7 @@ from session_bridge.store import (
     SIDEBAR_RETRYABLE_ERRORS,
     LocalSessionOwnsCanonicalId,
     SessionBridgeStore,
+    _CLAUDE_LINEAGE_COMMIT_TOLERATED,
     _EXTERNAL_ACTIVITY_KEY_PREFIX,
     _external_activity_state_key,
     sidebar_precreate_terminal_evidence_digest,
@@ -4556,7 +4557,6 @@ def test_claude_visibility_historical_lineage_reconciliation_is_concurrent_safe(
 @pytest.mark.parametrize(
     ("case", "expected_code"),
     [
-        ("missing_source", "claude_lineage_missing_source"),
         ("wrong_target", "claude_lineage_target_identity_mismatch"),
         ("wrong_provenance", "claude_lineage_target_provenance_mismatch"),
         ("duplicate_target", "claude_lineage_target_duplicate"),
@@ -17091,3 +17091,77 @@ def test_a_second_dismissal_refuses_without_restamping_the_row(
             expected_attempts=7,
         )
     assert _visibility_row(db) == after_first
+
+
+def test_claude_visibility_commit_succeeds_when_only_the_source_is_uncatalogued(
+    db,
+) -> None:
+    """A missing SOURCE no longer aborts the commit; the job lands visible-unlinked.
+
+    OVERTURNS A PREVIOUSLY PINNED INVARIANT, deliberately, on Diego's 2026-09-04
+    instruction. ("missing_source", "claude_lineage_missing_source") used to be a
+    case of test_claude_visibility_commit_lineage_mismatch_rolls_back_without_
+    partial_write, i.e. the rollback was intentional and grouped with genuine
+    integrity failures.
+
+    Why it changed: a missing source is not an integrity failure, it is a
+    completeness fact about the CATALOG, and refusing the commit over it is
+    catastrophically expensive. Job ...17fb8341ea6bd4 had a valid transcript that
+    passed _validate_projection, so the commit set claude_visible and this check
+    then rolled the whole transaction back. The registrar's except swallowed the
+    error, the reconciliation lease was retaken every ~8 minutes for two days,
+    and because an open job suppresses discovery via open_reasons the ENTIRE
+    visibility lane stopped enqueueing work -- at health exit 0. Its source was
+    an agent-spawned Codex session that Codex never projected into
+    thread_history, a population that is uncatalogued by construction, so it
+    could never have self-healed.
+
+    The resulting state is one the system already models first-class:
+    unlinked_visible with a per-code blocker, repairable by the reconcile path if
+    the source is ever catalogued -- see
+    test_claude_visibility_historical_lineage_missing_source_remains_blocked,
+    which asserts exactly this shape for a historically visible row.
+    """
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("commit-missing-source")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    claim = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+
+    committed = store.commit_claude_visibility_job(
+        identity.job_id, claim.lease_digest, "c" * 64, 100.0
+    )
+
+    assert committed["state"] == "claude_visible"
+    assert committed["error_code"] is None
+    assert committed["lease_digest"] is None
+    status = store.claude_visibility_status(100.0)
+    assert status["counts"]["claude_visible"] == 1
+    assert status["counts"]["claude_leased"] == 0
+    # The point of tolerating it: the job is VISIBLE and the gap is REPORTED,
+    # rather than the job being invisible and the lane silently stalled.
+    assert status["lineage"]["unlinked_visible"] == 1
+    assert status["lineage"]["blocker_codes"] == {"claude_lineage_missing_source": 1}
+    assert (
+        _rows(db, "SELECT id FROM session_links WHERE bridge_id = ?", (identity.bridge_id,))
+        == []
+    )
+
+
+def test_claude_visibility_commit_still_refuses_a_real_lineage_conflict(db) -> None:
+    """The tolerance is NARROW: absence is forgiven, disagreement is not.
+
+    Guards against the obvious over-correction -- dropping the lineage check
+    altogether, or tolerating every blocked state. A conflict means two records
+    disagree, which is worth refusing a commit over; the four integrity cases
+    remain parametrised on the rollback test above and this pins the intent.
+    """
+
+    assert "claude_lineage_conflict" not in _CLAUDE_LINEAGE_COMMIT_TOLERATED
+    assert "claude_lineage_target_identity_mismatch" not in (
+        _CLAUDE_LINEAGE_COMMIT_TOLERATED
+    )
+    assert _CLAUDE_LINEAGE_COMMIT_TOLERATED == frozenset({
+        "claude_lineage_target_missing",
+        "claude_lineage_missing_source",
+    })
