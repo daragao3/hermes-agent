@@ -43,9 +43,27 @@ def _row(**over):
     return base
 
 
-def _human_event():
+def _human_event(**over):
+    """A genuine human approval: actor, emitter and intent type together.
+
+    All three are load-bearing since 2026-09-03. A bare ``actor_id`` used to be
+    enough, which is why the Control Center caller-default could have written
+    rows that read as human decisions.
+    """
+    meta = {"actor_id": "diego", "emitted_by": "tracker-intent-applier",
+            "intent_type": "APPROVAL_INTENT"}
+    meta.update(over)
+    return {"from_stage": "scored", "to_stage": "approved", "metadata": meta}
+
+
+def _nested_human_event(**over):
+    """The shape real history actually carries: intent under metadata.metadata."""
+    inner = {"actor_id": "diego", "emitted_by": "tracker-intent-applier",
+             "intent_type": "APPROVAL_INTENT"}
+    inner.update(over)
     return {"from_stage": "scored", "to_stage": "approved",
-            "metadata": {"actor_id": "diego", "emitted_by": "tracker-intent-applier"}}
+            "metadata": {"source_file": "20260714T011234154965Z_PIPELINE_UPDATE_operator_045b191d.json",
+                         "metadata": inner}}
 
 
 def _auto_event():
@@ -276,3 +294,82 @@ class TestBalancedSampling:
         items = self._mixed(0, 12)
         assert balanced_sample(items) == ()
         assert summarize(balanced_sample(items))["balanced"] is False
+
+
+class TestHumanLabelRequiresPositiveEvidence:
+    """A person's *name* is not evidence that a person decided.
+
+    Until 2026-09-03 both Control Center write paths defaulted the actor to
+    "diego" when the request established nobody, so an unauthenticated loopback
+    POST could mint a durable history entry that read as a human approval. The
+    label now requires the approval gate itself — emitter and intent type —
+    alongside the name. The pre-fix rows on disk are deliberately left as they
+    are; this narrows what the *label* will accept, it does not rewrite history.
+    """
+
+    def test_the_real_nested_shape_still_earns_a_label(self):
+        # Real history nests the intent under metadata.metadata; the fixture
+        # above is flat. Both must work, or this passes in tests and silently
+        # labels nothing in production.
+        items = build_golden_set({"j1": _row(history=[_nested_human_event()])},
+                                 DEFAULT_CRITERIA)
+        assert len(items) == 1
+        assert items[0].source is LabelSource.HUMAN_APPROVAL
+
+    def test_a_bare_actor_name_is_not_a_human_decision(self):
+        # Exactly what the caller-default produced: the name, nothing else.
+        bare = {"from_stage": "scored", "to_stage": "approved",
+                "metadata": {"actor_id": "diego"}}
+        assert build_golden_set({"j1": _row(history=[bare])}, DEFAULT_CRITERIA) == ()
+
+    def test_a_state_transition_is_not_an_approval(self):
+        # Measured on live data: job 4432638835's only diego entry is a
+        # review->ready move. An operator stepping a job between stages — to
+        # verify a restart, say — is not a hiring decision.
+        moved = _nested_human_event(intent_type="STATE_TRANSITION_INTENT")
+        assert build_golden_set({"j1": _row(history=[moved])}, DEFAULT_CRITERIA) == ()
+
+    def test_an_actor_without_the_intent_applier_is_not_a_human_decision(self):
+        elsewhere = _human_event(emitted_by="operator_api")
+        assert build_golden_set({"j1": _row(history=[elsewhere])}, DEFAULT_CRITERIA) == ()
+
+    def test_the_three_fields_must_sit_on_one_record(self):
+        # The old check json.dumps'd the whole entry and substring-matched, so
+        # unrelated objects could combine to satisfy it. Here the actor sits on
+        # one object and the approval markers on another: not evidence.
+        split = {"from_stage": "scored", "to_stage": "approved",
+                 "metadata": {"actor_id": "diego"},
+                 "other": {"emitted_by": "tracker-intent-applier",
+                           "intent_type": "APPROVAL_INTENT"}}
+        assert build_golden_set({"j1": _row(history=[split])}, DEFAULT_CRITERIA) == ()
+
+    def test_an_unattributed_actor_is_never_a_human_decision(self):
+        # What the fix writes now in place of the fabricated default.
+        unattributed = _nested_human_event(actor_id="unattributed:legacy_dashboard")
+        assert build_golden_set({"j1": _row(history=[unattributed])},
+                                DEFAULT_CRITERIA) == ()
+
+    def test_a_job_keeps_its_label_when_one_of_several_entries_qualifies(self):
+        # Live shape: job e8d66258 carries two operator "post-restart verify"
+        # state transitions AND a genuine approval. The probes must not cost it
+        # the label the real approval earns.
+        row = _row(history=[
+            _nested_human_event(intent_type="STATE_TRANSITION_INTENT",
+                                notes="post-restart verify archived"),
+            _nested_human_event(),
+        ])
+        items = build_golden_set({"j1": row}, DEFAULT_CRITERIA)
+        assert len(items) == 1
+        assert items[0].source is LabelSource.HUMAN_APPROVAL
+
+    def test_field_matching_tolerates_case_and_padding(self):
+        padded = _nested_human_event(intent_type="  approval_intent  ",
+                                     emitted_by="Tracker-Intent-Applier")
+        assert len(build_golden_set({"j1": _row(history=[padded])},
+                                    DEFAULT_CRITERIA)) == 1
+
+    def test_a_malformed_entry_is_not_evidence_and_does_not_raise(self):
+        row = _row(history=[None, 42, "nonsense", {"metadata": {"actor_id": None}},
+                            _nested_human_event()])
+        items = build_golden_set({"j1": row}, DEFAULT_CRITERIA)
+        assert len(items) == 1

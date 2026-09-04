@@ -13,8 +13,11 @@ Two label sources survive the test "would this still be true if the scorer were
 wrong?":
 
 **Human decisions.** A person moved the job through the approval gate
-(``actor_id: diego`` via ``tracker-intent-applier``). These are the *nuanced*
-cases — the ones a scorer can plausibly get wrong — so they carry the weight.
+(``actor_id: diego`` via ``tracker-intent-applier``, on an ``APPROVAL_INTENT``).
+All three are required together: a bare actor name is not evidence, because
+until 2026-09-03 the Control Center defaulted it to ``diego`` for requests that
+established nobody. These are the *nuanced* cases — the ones a scorer can
+plausibly get wrong — so they carry the weight.
 
 **Posting facts.** A stated compensation ceiling below the bail line decides the
 job whatever any model thinks. These are *obvious*, and are labelled as such
@@ -34,7 +37,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 import hashlib
-import json
 from typing import Any
 
 from .matcher_filter import Criteria, hard_filter
@@ -59,6 +61,24 @@ class Difficulty(str, Enum):
 # reaches stage `approved` — score routing, VIP auto-approval — is the system
 # agreeing with itself.
 _HUMAN_ACTORS = ("diego",)
+
+# Positive evidence required *alongside* the actor name, never the name alone.
+# Until 2026-09-03 both Control Center write paths defaulted the actor to
+# "diego" whenever the request established nobody — an unauthenticated loopback
+# POST with no `actor` produced a durable history entry naming a person who may
+# never have seen the job (fixed by `control_center.storage.unattributed_actor`,
+# which now writes "unattributed:<surface>"). The rows written before that fix
+# are still on disk and are deliberately left alone: no field separates a
+# fabricated default from a real click, so rewriting them would replace one
+# confident wrong answer with another.
+#
+# These two fields are what the module docstring has always claimed the label
+# means — a decision taken *through the approval gate* — and neither is
+# something the minimal unattributed POST carries. They are checked together on
+# one record, so three unrelated objects in the same entry cannot combine to
+# satisfy them.
+_HUMAN_INTENT_EMITTER = "tracker-intent-applier"
+_HUMAN_INTENT_TYPES = ("approval_intent",)
 
 # Markers of a machine approval. Present only so the circular case is named in
 # code rather than merely absent from it.
@@ -86,6 +106,46 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _intent_records(node: Any) -> Any:
+    """Yield every mapping under `node` that names an actor.
+
+    The nesting is not stable: a real history entry carries the intent under
+    ``metadata.metadata``, while older rows put it one level up. Walking for
+    the record instead of indexing a fixed path keeps this working across both
+    without asserting a layout the data does not guarantee — the same
+    shape-tolerance the previous ``json.dumps`` scan had, minus its willingness
+    to match fields that belong to different objects.
+    """
+    if isinstance(node, Mapping):
+        if "actor_id" in node:
+            yield node
+        for value in node.values():
+            yield from _intent_records(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _intent_records(value)
+
+
+def _is_human_approval(record: Mapping[str, Any]) -> bool:
+    """True only on positive evidence, never on the actor name alone.
+
+    All three fields must sit on *this* record. A bare ``actor_id`` is exactly
+    what the pre-2026-09-03 caller-default produced, and a
+    ``STATE_TRANSITION_INTENT`` is not an approval however it is signed — an
+    operator moving a job between stages to verify a restart is not a hiring
+    decision, and labelling it one puts a fabricated ``advance`` into the set.
+    """
+    def field(name: str) -> str:
+        value = record.get(name)
+        return value.strip().lower() if isinstance(value, str) else ""
+
+    return (
+        field("actor_id") in _HUMAN_ACTORS
+        and field("emitted_by") == _HUMAN_INTENT_EMITTER
+        and field("intent_type") in _HUMAN_INTENT_TYPES
+    )
+
+
 def _has_human_decision(row: Mapping[str, Any]) -> bool:
     history = row.get("history")
     if not isinstance(history, list):
@@ -94,11 +154,10 @@ def _has_human_decision(row: Mapping[str, Any]) -> bool:
         if not isinstance(entry, Mapping):
             continue  # a malformed entry is not evidence either way
         try:
-            blob = json.dumps(entry).lower()
-        except (TypeError, ValueError):
-            continue
-        if any(f'"actor_id": "{actor}"' in blob for actor in _HUMAN_ACTORS):
-            return True
+            if any(_is_human_approval(r) for r in _intent_records(entry)):
+                return True
+        except (TypeError, ValueError, AttributeError, RecursionError):
+            continue  # a malformed entry is not evidence either way
     return False
 
 
