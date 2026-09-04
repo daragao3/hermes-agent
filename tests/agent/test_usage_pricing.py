@@ -644,3 +644,79 @@ def test_deepseek_v4_flash_estimate_usage_cost():
     assert result.amount_usd is not None
     # 1M input × $0.14/M + 500K output × $0.28/M = $0.14 + $0.14 = $0.28
     assert float(result.amount_usd) == 0.28
+
+
+# --- Gemini official-docs snapshot (reconciled 2026-09-04) -------------------
+
+
+def _gemini_cost(model, provider=None, base_url=None):
+    return estimate_usage_cost(
+        model,
+        CanonicalUsage(input_tokens=1_000_000, output_tokens=1_000_000),
+        provider=provider,
+        base_url=base_url,
+    )
+
+
+def test_gemini_2_5_flash_matches_googles_published_rate():
+    """Regression: this entry sat at $0.15/$0.60 against a published $0.30/$2.50.
+
+    A 2x input / 4.2x output UNDER-report, stamped google-pricing-2026-03-16
+    and sourced from the retired ai.google.dev/pricing page.
+    """
+    result = _gemini_cost("gemini-2.5-flash", provider="google")
+    assert result.status == "estimated"
+    assert float(result.amount_usd) == 2.80  # 1M x 0.30 + 1M x 2.50
+
+
+def test_gemini_pricing_keys_are_reachable_from_every_google_route():
+    """Regression: the route said "gemini" while the keys are ("google", ...).
+
+    Vertex and bare "gemini-*" model names therefore missed every Gemini key
+    and came back cost=None / status="unknown" -- priced at nothing.
+    """
+    routes = [
+        {"provider": "google"},
+        {"provider": "gemini"},
+        {"provider": "vertex"},
+        {"base_url": "https://aiplatform.googleapis.com/v1"},
+        {"base_url": "https://generativelanguage.googleapis.com/v1beta"},
+    ]
+    # NOT covered, deliberately: a bare "gemini-*" with neither provider nor
+    # base_url still resolves to provider "unknown" and goes unpriced. That is
+    # pre-existing and vendor-neutral -- this module never infers a vendor from
+    # a model name (only from an explicit "google/" prefix) -- so fixing it is a
+    # design decision for the whole table, not part of this reconciliation.
+    for kwargs in routes:
+        result = _gemini_cost("gemini-2.5-flash", **kwargs)
+        assert result.status == "estimated", f"unpriced via {kwargs}"
+        assert float(result.amount_usd) == 2.80, f"wrong rate via {kwargs}"
+    # ...including the "google/" vendor prefix the OpenAI-compat endpoint wants.
+    prefixed = _gemini_cost("google/gemini-2.5-flash", provider="vertex")
+    assert float(prefixed.amount_usd) == 2.80
+
+
+def test_current_gemini_generations_are_priced_not_unknown():
+    expected = {
+        "gemini-3.8-flash": 9.00,   # 1.50 + 7.50 (post-promo; promo is 0.75/3.75)
+        "gemini-3.7-flash": 9.00,
+        "gemini-3.6-flash": 9.00,
+        "gemini-3.5-flash": 10.50,  # 1.50 + 9.00
+        "gemini-3.5-flash-lite": 2.80,
+        "gemini-3.1-flash-lite": 1.75,
+        "gemini-3.1-pro-preview": 14.00,
+        "gemini-2.5-pro": 11.25,
+        "gemini-2.5-flash-lite": 0.50,
+    }
+    for model, total in expected.items():
+        result = _gemini_cost(model, provider="google")
+        assert result.status == "estimated", f"{model} is unpriced"
+        assert float(result.amount_usd) == total, model
+
+
+def test_gemini_entries_carry_the_reconciliation_stamp():
+    # 2.0-flash is exempt: Google removed it from the pricing page, so it keeps
+    # its original stamp rather than borrowing a check that never happened.
+    entry = get_pricing_entry("gemini-2.5-flash", provider="google")
+    assert entry.pricing_version == "google-pricing-2026-09-04"
+    assert entry.source_url == "https://ai.google.dev/gemini-api/docs/pricing"
