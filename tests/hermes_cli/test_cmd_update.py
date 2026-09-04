@@ -1,6 +1,7 @@
 """Tests for cmd_update — branch fallback when remote branch doesn't exist."""
 
 import hashlib
+import os
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1267,8 +1268,15 @@ class TestNodeRuntimeNpmResolution:
         import hermes_constants
 
         monkeypatch.setattr(hm, "_is_windows", lambda: False)
+        # os.pathsep, not a literal ":" -- the function under test splits PATH
+        # on os.pathsep, which is ";" on Windows. A ":"-joined string is one
+        # single directory there, so the rescan loop below never sees
+        # /root/.local/bin and the test failed on Windows only.
         monkeypatch.setenv(
-            "PATH", "/mnt/c/Program Files/nodejs:/root/.local/bin:/usr/bin"
+            "PATH",
+            os.pathsep.join(
+                ["/mnt/c/Program Files/nodejs", "/root/.local/bin", "/usr/bin"]
+            ),
         )
 
         def fake_which(cmd, path=None):
@@ -1292,7 +1300,12 @@ class TestNodeRuntimeNpmResolution:
         import hermes_constants
 
         monkeypatch.setattr(hm, "_is_windows", lambda: False)
-        monkeypatch.setenv("PATH", "/mnt/c/Program Files/nodejs:/usr/bin")
+        # os.pathsep for the same reason as the test above. This one passed on
+        # Windows regardless -- None is the expected value either way -- so the
+        # ":"-joined string made it assert nothing there.
+        monkeypatch.setenv(
+            "PATH", os.pathsep.join(["/mnt/c/Program Files/nodejs", "/usr/bin"])
+        )
 
         def fake_which(cmd, path=None):
             if path is None:
