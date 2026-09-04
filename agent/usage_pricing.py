@@ -510,7 +510,96 @@ _OFFICIAL_DOCS_PRICING: Dict[tuple[str, str], PricingEntry] = {
         source_url="https://api-docs.deepseek.com/quick_start/pricing",
         pricing_version="deepseek-pricing-2026-07",
     ),
-    # Google Gemini
+    # Google Gemini -- reconciled 2026-09-04 against
+    # https://ai.google.dev/gemini-api/docs/pricing (standard/paid tier, text
+    # input, prompts <=200k). Keys are ("google", <model>), so resolve_billing_route
+    # MUST emit provider "google" for Vertex, bare "gemini-*" and "google/*"
+    # alike -- a "gemini" route missed every key here and priced those calls at
+    # nothing. 3.8/3.7/3.6-flash are booked at their POST-promo price; Google
+    # charges $0.75/$3.75 through 2026-12-31 and reverts to the $1.50/$7.50
+    # below on 2027-01-01, so these read deliberately high until then rather
+    # than needing an edit at the new year.
+    (
+        "google",
+        "gemini-3.8-flash",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("1.50"),
+        output_cost_per_million=Decimal("7.50"),
+        source="official_docs_snapshot",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
+    ),
+    (
+        "google",
+        "gemini-3.7-flash",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("1.50"),
+        output_cost_per_million=Decimal("7.50"),
+        source="official_docs_snapshot",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
+    ),
+    (
+        "google",
+        "gemini-3.6-flash",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("1.50"),
+        output_cost_per_million=Decimal("7.50"),
+        source="official_docs_snapshot",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
+    ),
+    (
+        "google",
+        "gemini-3.5-flash",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("1.50"),
+        output_cost_per_million=Decimal("9.00"),
+        source="official_docs_snapshot",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
+    ),
+    (
+        "google",
+        "gemini-3.5-flash-lite",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("0.30"),
+        output_cost_per_million=Decimal("2.50"),
+        source="official_docs_snapshot",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
+    ),
+    (
+        "google",
+        "gemini-3.1-flash-lite",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("0.25"),
+        output_cost_per_million=Decimal("1.50"),
+        source="official_docs_snapshot",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
+    ),
+    (
+        "google",
+        "gemini-3.1-pro-preview",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("2.00"),
+        output_cost_per_million=Decimal("12.00"),
+        source="official_docs_snapshot",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
+    ),
+    # Forward alias: the id Google will publish when 3.1 Pro leaves preview.
+    (
+        "google",
+        "gemini-3.1-pro",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("2.00"),
+        output_cost_per_million=Decimal("12.00"),
+        source="official_docs_snapshot",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
+    ),
     (
         "google",
         "gemini-2.5-pro",
@@ -518,19 +607,32 @@ _OFFICIAL_DOCS_PRICING: Dict[tuple[str, str], PricingEntry] = {
         input_cost_per_million=Decimal("1.25"),
         output_cost_per_million=Decimal("10.00"),
         source="official_docs_snapshot",
-        source_url="https://ai.google.dev/pricing",
-        pricing_version="google-pricing-2026-03-16",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
     ),
     (
         "google",
         "gemini-2.5-flash",
     ): PricingEntry(
-        input_cost_per_million=Decimal("0.15"),
-        output_cost_per_million=Decimal("0.60"),
+        input_cost_per_million=Decimal("0.30"),
+        output_cost_per_million=Decimal("2.50"),
         source="official_docs_snapshot",
-        source_url="https://ai.google.dev/pricing",
-        pricing_version="google-pricing-2026-03-16",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
     ),
+    (
+        "google",
+        "gemini-2.5-flash-lite",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("0.10"),
+        output_cost_per_million=Decimal("0.40"),
+        source="official_docs_snapshot",
+        source_url="https://ai.google.dev/gemini-api/docs/pricing",
+        pricing_version="google-pricing-2026-09-04",
+    ),
+    # 2.0-flash has been REMOVED from Google's pricing page, so this rate is no
+    # longer verifiable; it keeps its original 2026-03-16 stamp rather than
+    # borrowing today's, which would assert a check that did not happen.
     (
         "google",
         "gemini-2.0-flash",
@@ -931,11 +1033,17 @@ def resolve_billing_route(
         return BillingRoute(provider="openai", model=model.split("/")[-1], base_url=base_url or "", billing_mode="official_docs_snapshot")
     if provider_name in {"minimax", "minimax-cn"}:
         return BillingRoute(provider=provider_name, model=model.split("/")[-1], base_url=base_url or "", billing_mode="official_docs_snapshot")
-    # Vertex AI hosts the same Gemini models as Google AI Studio; price them
-    # off the gemini official-docs snapshot. Strip the "google/" vendor prefix
-    # the OpenAI-compat endpoint requires so the pricing key matches.
-    if provider_name == "vertex" or base_url_host_matches(base_url or "", "aiplatform.googleapis.com"):
-        return BillingRoute(provider="gemini", model=model.split("/")[-1], base_url=base_url or "", billing_mode="official_docs_snapshot")
+    # Vertex AI hosts the same Gemini models as Google AI Studio; price them off
+    # the same official-docs snapshot. Strip the "google/" vendor prefix the
+    # OpenAI-compat endpoint requires so the pricing key matches. The route must
+    # say "google", NOT "gemini": _OFFICIAL_DOCS_PRICING is keyed ("google", ...),
+    # so a "gemini" route missed every Gemini key and returned cost=None /
+    # status="unknown" for Vertex and for a bare "gemini-*" model name. Same
+    # class of mismatch as the openai-api normalization above.
+    if provider_name in {"google", "gemini", "vertex"} or base_url_host_matches(
+        base_url or "", "aiplatform.googleapis.com"
+    ) or base_url_host_matches(base_url or "", "generativelanguage.googleapis.com"):
+        return BillingRoute(provider="google", model=model.split("/")[-1], base_url=base_url or "", billing_mode="official_docs_snapshot")
     if provider_name == "fireworks" or base_url_host_matches(base_url or "", "api.fireworks.ai"):
         # Fireworks model ids look like accounts/fireworks/models/<name>;
         # rsplit("/", 1)[-1] yields just <name> which is what the dict keys on.
