@@ -720,3 +720,119 @@ def test_gemini_entries_carry_the_reconciliation_stamp():
     entry = get_pricing_entry("gemini-2.5-flash", provider="google")
     assert entry.pricing_version == "google-pricing-2026-09-04"
     assert entry.source_url == "https://ai.google.dev/gemini-api/docs/pricing"
+
+
+# --- Vendor inference from a bare model name: deliberately REFUSED ----------
+
+
+def _cost(model, **kwargs):
+    return estimate_usage_cost(
+        model,
+        CanonicalUsage(input_tokens=1_000_000, output_tokens=1_000_000),
+        **kwargs,
+    )
+
+
+def test_bare_model_name_is_never_vendor_inferred():
+    """A bare model name with no provider and no base_url must stay unpriced.
+
+    Guards a deliberate refusal, not an oversight -- see the
+    ``resolve_billing_route`` docstring. Adding a stem->vendor table looks like
+    a one-liner and is the change this test exists to stop: the pricing table
+    already sells these stems under several vendors at different prices, so any
+    such table must GUESS, and guessing cheap under-reports silently. "unknown"
+    is a signal a caller can act on; a wrong number is not.
+
+    Measured 2026-09-04 across both live state.db files: of 869 token-bearing
+    sessions, zero arrived here without a provider or base_url, so inference
+    would have recovered nothing while introducing that risk.
+    """
+    for model in (
+        "gemini-2.5-flash",   # ("google", ...) exists
+        "claude-opus-4-7",    # ("anthropic", ...) exists
+        "gpt-5.6-sol",        # ("openai", ...) AND ("fireworks", ...) exist
+        "deepseek-v4-pro",    # ("deepseek", ...) AND ("fireworks", ...) exist
+        "minimax-m2.7",       # three vendors
+        "kimi-k3",            # ("moonshot", ...) exists
+    ):
+        result = _cost(model)
+        assert result.status == "unknown", f"{model} was vendor-inferred"
+        assert result.amount_usd is None, f"{model} was vendor-inferred"
+
+    # The explicit signals still work -- this is a refusal to GUESS, not a
+    # refusal to price.
+    assert _cost("gemini-2.5-flash", provider="google").status == "estimated"
+    assert _cost("google/gemini-2.5-flash").status == "estimated"
+
+
+def test_colliding_stems_price_differently_per_vendor():
+    """The evidence behind the refusal above; fails if a collision is removed.
+
+    If these ever converge, the argument in ``resolve_billing_route``'s
+    docstring weakens and the decision deserves re-litigating -- rather than a
+    stale comment nobody rechecks.
+    """
+    cheap = get_pricing_entry("deepseek-v4-pro", provider="deepseek")
+    dear = get_pricing_entry("deepseek-v4-pro", provider="fireworks")
+    assert cheap.input_cost_per_million != dear.input_cost_per_million
+    assert dear.input_cost_per_million > cheap.input_cost_per_million
+
+
+# --- Kimi Coding Plan is a subscription, not an unpriced route --------------
+
+
+def test_kimi_coding_plan_is_included_not_unknown():
+    """Regression: every Coding Plan call priced as unknown/None.
+
+    Measured 2026-09-04 before the fix: 244,412 tokens across 20
+    activity-telemetry rows and 23 sessions carried a NULL cost, which the
+    analytics total then read as $0 of spend. The plan bills a flat monthly
+    subscription with a refreshing quota -- ``/coding/v1/usages`` returns
+    limit/used/remaining counts, never dollars -- so $0 is the true recorded
+    cost, and "included" says so where "unknown" did not.
+    """
+    for model in ("kimi-for-coding", "kimi-k3", "k3"):
+        for kwargs in (
+            {"provider": "kimi-coding"},
+            {"provider": "kimi-coding", "base_url": "https://api.kimi.com/coding"},
+            {"provider": "kimi-coding-cn"},
+        ):
+            result = _cost(model, **kwargs)
+            assert result.status == "included", f"{model} via {kwargs}"
+            assert float(result.amount_usd) == 0.0, f"{model} via {kwargs}"
+
+
+def test_kimi_coding_plan_has_an_api_equivalent_at_list_price():
+    """ignore_subscription must reach Moonshot's published rates.
+
+    Without an underlying vendor a subscription workload reads as free and
+    wins every cost comparison by construction, which is what
+    ``_SUBSCRIPTION_UNDERLYING_PROVIDER`` exists to prevent.
+    """
+    result = _cost(
+        "kimi-for-coding",
+        provider="kimi-coding",
+        base_url="https://api.kimi.com/coding",
+        ignore_subscription=True,
+    )
+    assert result.status == "estimated"
+    # 1M x $3.00 + 1M x $15.00 -- the K3 rate.
+    assert float(result.amount_usd) == 18.00
+
+
+def test_moonshot_pay_as_you_go_rates_match_published_prices():
+    """The Kimi Open Platform is a separate surface from the Coding Plan."""
+    expected = {
+        "kimi-k3": 18.00,                    # 3.00 + 15.00
+        "kimi-k2.7-code": 4.95,              # 0.95 + 4.00
+        "kimi-k2.7-code-highspeed": 9.90,    # 1.90 + 8.00
+        "kimi-k2.6": 4.95,                   # 0.95 + 4.00
+    }
+    for model, total in expected.items():
+        result = _cost(model, provider="moonshot")
+        assert result.status == "estimated", f"{model} is unpriced"
+        assert float(result.amount_usd) == total, model
+
+    entry = get_pricing_entry("kimi-k3", provider="moonshot")
+    assert entry.pricing_version == "moonshot-pricing-2026-09-04"
+    assert entry.cache_read_cost_per_million is not None

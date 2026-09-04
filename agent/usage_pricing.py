@@ -969,6 +969,90 @@ _OFFICIAL_DOCS_PRICING: Dict[tuple[str, str], PricingEntry] = {
         source_url="https://docs.fireworks.ai/serverless/pricing",
         pricing_version="fireworks-pricing-2026-07",
     ),
+    # Moonshot / Kimi Open Platform — the PAY-AS-YOU-GO surface
+    # (api.moonshot.ai / platform.kimi.ai), snapshot of
+    # https://platform.kimi.ai/docs/pricing/chat on 2026-09-04. Moonshot
+    # publishes a cache-hit input rate per model, which maps to
+    # cache_read_cost_per_million; no cache-write or cache-storage rate is
+    # published on any of the per-model pages, so cache_write is left unset.
+    #
+    # These are NOT the rates a Kimi Coding Plan call is billed at — that plan
+    # is a flat subscription and routes to "kimi-coding"/"subscription_included"
+    # below. This vendor exists so ``ignore_subscription=True`` can answer "what
+    # would these tokens have cost at list", via _SUBSCRIPTION_UNDERLYING_PROVIDER.
+    (
+        "moonshot",
+        "kimi-k3",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("3.00"),
+        output_cost_per_million=Decimal("15.00"),
+        cache_read_cost_per_million=Decimal("0.30"),
+        source="official_docs_snapshot",
+        source_url="https://platform.kimi.ai/docs/pricing/chat-k3",
+        pricing_version="moonshot-pricing-2026-09-04",
+    ),
+    # The Coding Plan serves K3 under the bare slug "k3" (see
+    # anthropic_adapter._KIMI_FAMILY_EXACT_SLUGS) and under the alias
+    # "kimi-for-coding". Neither is sold on the Open Platform, so neither has a
+    # list price of its own; both are booked at the K3 rate — the DEAREST live
+    # Kimi tier — so the api-equivalent figure errs high, the only direction
+    # this file allows. Affects the counterfactual only: the recorded cost of a
+    # Coding Plan call is $0/"included", never these numbers.
+    (
+        "moonshot",
+        "k3",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("3.00"),
+        output_cost_per_million=Decimal("15.00"),
+        cache_read_cost_per_million=Decimal("0.30"),
+        source="official_docs_snapshot",
+        source_url="https://platform.kimi.ai/docs/pricing/chat-k3",
+        pricing_version="moonshot-pricing-2026-09-04",
+    ),
+    (
+        "moonshot",
+        "kimi-for-coding",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("3.00"),
+        output_cost_per_million=Decimal("15.00"),
+        cache_read_cost_per_million=Decimal("0.30"),
+        source="official_docs_snapshot",
+        source_url="https://platform.kimi.ai/docs/pricing/chat-k3",
+        pricing_version="moonshot-pricing-2026-09-04",
+    ),
+    (
+        "moonshot",
+        "kimi-k2.7-code",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("0.95"),
+        output_cost_per_million=Decimal("4.00"),
+        cache_read_cost_per_million=Decimal("0.19"),
+        source="official_docs_snapshot",
+        source_url="https://platform.kimi.ai/docs/pricing/chat-k27-code",
+        pricing_version="moonshot-pricing-2026-09-04",
+    ),
+    (
+        "moonshot",
+        "kimi-k2.7-code-highspeed",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("1.90"),
+        output_cost_per_million=Decimal("8.00"),
+        cache_read_cost_per_million=Decimal("0.38"),
+        source="official_docs_snapshot",
+        source_url="https://platform.kimi.ai/docs/pricing/chat-k27-code",
+        pricing_version="moonshot-pricing-2026-09-04",
+    ),
+    (
+        "moonshot",
+        "kimi-k2.6",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("0.95"),
+        output_cost_per_million=Decimal("4.00"),
+        cache_read_cost_per_million=Decimal("0.16"),
+        source="official_docs_snapshot",
+        source_url="https://platform.kimi.ai/docs/pricing/chat-k26",
+        pricing_version="moonshot-pricing-2026-09-04",
+    ),
 }
 
 # GPT-5.6 "-pro" high-effort variants bill at the same per-token rates as
@@ -1000,7 +1084,13 @@ def _to_int(value: Any) -> int:
 # Subscription routes bill nothing per token, but the same call has a published
 # list price under the vendor that actually serves it. Only routes whose tokens
 # are genuinely the vendor's own belong here.
-_SUBSCRIPTION_UNDERLYING_PROVIDER: Dict[str, str] = {"openai-codex": "openai"}
+_SUBSCRIPTION_UNDERLYING_PROVIDER: Dict[str, str] = {
+    "openai-codex": "openai",
+    # Kimi Coding Plan tokens are genuinely Moonshot's own; the same models are
+    # sold per-token on the Kimi Open Platform under the "moonshot" vendor.
+    "kimi-coding": "moonshot",
+    "kimi-coding-cn": "moonshot",
+}
 
 
 def resolve_billing_route(
@@ -1008,6 +1098,30 @@ def resolve_billing_route(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
 ) -> BillingRoute:
+    """Map a (model, provider, base_url) triple onto a billing route.
+
+    A vendor is taken from an EXPLICIT signal only: the provider slug, the
+    base_url host, or a ``<vendor>/`` prefix on the model name. A bare model
+    name with neither provider nor base_url resolves to provider "unknown" and
+    is deliberately left unpriced.
+
+    This module does NOT infer a vendor from the shape of a model name, and
+    that refusal is load-bearing rather than an oversight. _OFFICIAL_DOCS_PRICING
+    already sells the same model-name stems under different vendors at different
+    prices -- "deepseek-v4-pro" is $0.435/$0.87 under "deepseek" and $1.74/$3.48
+    under "fireworks", a 4x spread; "gpt-*" spans openai and fireworks;
+    "minimax-*" spans minimax, minimax-cn and fireworks. A stem->vendor table
+    must therefore guess, and guessing the cheaper vendor silently UNDER-reports,
+    which is the one direction this file's rate cards are written never to err in.
+    Refusing to price is the honest answer, and "unknown" is a signal callers can
+    act on; a wrong number is not.
+
+    Measured before rejecting it (2026-09-04, both live state.db files): of 869
+    token-bearing sessions, ZERO reached here with a bare model name and no
+    provider and no base_url, so inference would have recovered nothing while
+    introducing that under-report risk. Guarded by
+    tests/agent/test_usage_pricing.py::test_bare_model_name_is_never_vendor_inferred.
+    """
     provider_name = (provider or "").strip().lower()
     base = (base_url or "").strip().lower()
     model = (model_name or "").strip()
@@ -1019,6 +1133,22 @@ def resolve_billing_route(
 
     if provider_name == "openai-codex":
         return BillingRoute(provider="openai-codex", model=model, base_url=base_url or "", billing_mode="subscription_included")
+    # Kimi Coding Plan (api.kimi.com/coding) is a flat monthly subscription with
+    # a refreshing usage quota, not per-token billing: its /coding/v1/usages
+    # endpoint returns limit/used/remaining counts over hour/day windows, never
+    # dollars (see agent/account_usage.py::_kimi_window). Same shape as
+    # openai-codex above, so it gets the same treatment -- calls are "included"
+    # at $0 rather than "unknown" at None. Before this, every Coding Plan call
+    # priced as unknown: 244,412 tokens across 20 activity-telemetry rows and 23
+    # sessions carried a NULL cost that the analytics total then read as $0.
+    # Matched on the provider slug ONLY, deliberately: the underlying-vendor
+    # re-resolution in get_pricing_entry re-enters this function with the same
+    # base_url, and a base_url branch here would match again and pin the route
+    # to "included", making the ignore_subscription counterfactual unreachable.
+    # The pay-as-you-go Kimi Open Platform (api.moonshot.ai) is a different
+    # surface and prices under the "moonshot" vendor.
+    if provider_name in {"kimi-coding", "kimi-coding-cn"}:
+        return BillingRoute(provider=provider_name, model=model.split("/")[-1], base_url=base_url or "", billing_mode="subscription_included")
     if provider_name == "openrouter" or base_url_host_matches(base_url or "", "openrouter.ai"):
         return BillingRoute(provider="openrouter", model=model, base_url=base_url or "", billing_mode="official_models_api")
     if provider_name == "nous" or base_url_host_matches(base_url or "", "inference-api.nousresearch.com"):

@@ -42,8 +42,17 @@ def _estimate_cost(
     cache_write_tokens: int = 0,
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
-) -> tuple[float, str]:
-    """Estimate the USD cost for a session row or a model/token tuple."""
+) -> tuple[Optional[float], str]:
+    """Estimate the USD cost for a session row or a model/token tuple.
+
+    Returns ``(None, "unknown")`` when the route cannot be priced. None and
+    0.0 are DIFFERENT answers and callers must keep them apart: None means
+    "nobody could price these tokens", 0.0 means "these tokens are genuinely
+    free" (a subscription route, status "included"). This used to return
+    ``float(amount or 0.0)``, which collapsed the two -- an unpriceable route
+    then contributed $0 to a total the reader takes for complete, silently
+    under-reporting spend rather than declaring it unknown.
+    """
     if isinstance(session_or_model, dict):
         session = session_or_model
         model = session.get("model") or ""
@@ -69,7 +78,9 @@ def _estimate_cost(
         provider=provider,
         base_url=base_url,
     )
-    return float(result.amount_usd or 0.0), result.status
+    if result.amount_usd is None:
+        return None, result.status
+    return float(result.amount_usd), result.status
 
 
 
@@ -422,10 +433,24 @@ class InsightsEngine:
         models_without_pricing = set()
         unknown_cost_sessions = 0
         included_cost_sessions = 0
+        # Tokens on sessions nobody could price. total_cost sums only the
+        # sessions that WERE priced, so a non-zero figure here means the total
+        # is a floor, not a complete number -- surface it alongside the total
+        # rather than letting the unpriced tokens read as $0 of spend.
+        unpriced_tokens = 0
         for s in sessions:
             model = s.get("model") or ""
             estimated, status = _estimate_cost(s)
-            total_cost += estimated
+            if estimated is None:
+                unpriced_tokens += sum(
+                    s.get(k) or 0
+                    for k in (
+                        "input_tokens", "output_tokens",
+                        "cache_read_tokens", "cache_write_tokens",
+                    )
+                )
+            else:
+                total_cost += estimated
             actual_cost += s.get("actual_cost_usd") or 0.0
             display = model.split("/")[-1] if "/" in model else (model or "unknown")
             if status == "included":
@@ -439,6 +464,12 @@ class InsightsEngine:
 
         if models:
             total_cost = sum(float(m.get("cost") or 0.0) for m in models)
+            # Recompute from the same source as the total it caveats, or the
+            # two disagree: the breakdown covers auxiliary rows and residuals
+            # the sessions counters do not (see the note below).
+            unpriced_tokens = sum(
+                int(m.get("unpriced_tokens") or 0) for m in models
+            )
             # Token totals likewise: the per-model breakdown includes
             # auxiliary usage rows (vision/compression/titles — task
             # dimension in session_model_usage, #23270) plus reconciled
@@ -492,6 +523,10 @@ class InsightsEngine:
             "models_without_pricing": sorted(models_without_pricing),
             "unknown_cost_sessions": unknown_cost_sessions,
             "included_cost_sessions": included_cost_sessions,
+            # > 0 means "estimated_cost" is a FLOOR: these tokens were served
+            # by a route with no pricing data and contribute no dollars to it.
+            "unpriced_tokens": unpriced_tokens,
+            "cost_is_partial": unpriced_tokens > 0,
         }
 
     _GET_MODEL_USAGE_WITH_SOURCE = (
@@ -553,6 +588,7 @@ class InsightsEngine:
             "cache_read_tokens": 0, "cache_write_tokens": 0,
             "reasoning_tokens": 0, "total_tokens": 0, "api_calls": 0,
             "tool_calls": 0, "cost": 0.0, "actual_cost": 0.0,
+            "unpriced_tokens": 0,
         })
 
         def _accumulate(model, provider, base_url, session_id, inp, out,
@@ -576,9 +612,22 @@ class InsightsEngine:
                     provider=provider or None, base_url=base_url,
                 )
             else:
-                estimate = float(stored_cost or 0.0)
                 status = cost_status or "unknown"
-            d["cost"] += estimate
+                # A STORED cost of 0 under status "unknown" is not $0 of spend:
+                # sessions.estimated_cost_usd is NOT NULL DEFAULT 0, so "nobody
+                # could price this" and "this was free" are the same byte on
+                # disk and only cost_status tells them apart. Trusting the 0
+                # here is the silent under-report this accounting exists to
+                # stop -- 1,346,100 Kimi Coding Plan tokens sat in that state
+                # on 2026-09-04.
+                estimate = None if status == "unknown" else float(stored_cost or 0.0)
+            # An unpriceable route contributes no dollars and its tokens are
+            # counted as unpriced instead, so d["cost"] stays a floor rather
+            # than quietly absorbing them at $0.
+            if estimate is None:
+                d["unpriced_tokens"] += inp + out + cache_read + cache_write
+            else:
+                d["cost"] += estimate
             d["actual_cost"] += float(actual_cost or 0.0)
             d["cost_status"] = status
             if has_known_pricing(model, provider or None, base_url):
@@ -676,6 +725,7 @@ class InsightsEngine:
             # output shape is uniform for downstream/JSON consumers.
             entry.setdefault("has_pricing", False)
             entry.setdefault("cost_status", "unknown")
+            entry.setdefault("unpriced_tokens", 0)
             result.append(entry)
         # Sort by tokens first, fall back to session count when tokens are 0
         result.sort(key=lambda x: (x["total_tokens"], x["sessions"]), reverse=True)
