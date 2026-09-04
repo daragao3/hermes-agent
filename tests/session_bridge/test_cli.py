@@ -584,8 +584,17 @@ class FakeBackend:
             "error_code": None,
         }
 
-    def dismiss_claude_visibility_job(self, *, job_id: str, expected_error_code: str):
-        self.calls.append(("dismiss_claude_visibility_job", job_id, expected_error_code))
+    def dismiss_claude_visibility_job(
+        self, *, job_id: str, expected_error_code: str, expected_attempts: int
+    ):
+        self.calls.append(
+            (
+                "dismiss_claude_visibility_job",
+                job_id,
+                expected_error_code,
+                expected_attempts,
+            )
+        )
         return {
             "status": "dismissed",
             "job_id": job_id,
@@ -7220,7 +7229,9 @@ def test_visibility_dismiss_backend_reports_a_stale_row_as_a_gate_refusal(
     """A CAS that matched nothing must not read as a generic config error."""
 
     class Store:
-        def dismiss_claude_visibility_job(self, *, job_id, expected_error_code):
+        def dismiss_claude_visibility_job(
+            self, *, job_id, expected_error_code, expected_attempts
+        ):
             raise ValueError("exact terminally failed Claude visibility job required")
 
     backend = ProductionBackend(BridgeConfig())
@@ -7230,6 +7241,7 @@ def test_visibility_dismiss_backend_reports_a_stale_row_as_a_gate_refusal(
         backend.dismiss_claude_visibility_job(
             job_id="claude-visibility-job:test",
             expected_error_code="max_attempts_exhausted",
+            expected_attempts=7,
         )
 
     assert raised.value.gate == "visibility_dismiss_identity_mismatch"
@@ -7324,8 +7336,10 @@ def test_visibility_dismiss_cli_requires_explicit_confirmation(capsys) -> None:
                 "claude-visibility-dismiss",
                 "--job-id",
                 job_id,
-                "--error-code",
+                "--expected-error-code",
                 "max_attempts_exhausted",
+                "--expected-attempts",
+                "7",
             ],
             backend,
         )
@@ -7346,8 +7360,10 @@ def test_visibility_dismiss_cli_requires_explicit_confirmation(capsys) -> None:
                 "--confirm-terminal-failure",
                 "--job-id",
                 job_id,
-                "--error-code",
+                "--expected-error-code",
                 "max_attempts_exhausted",
+                "--expected-attempts",
+                "7",
             ],
             backend,
         )
@@ -7363,6 +7379,7 @@ def test_visibility_dismiss_cli_requires_explicit_confirmation(capsys) -> None:
         "dismiss_claude_visibility_job",
         job_id,
         "max_attempts_exhausted",
+        7,
     ) in backend.calls
 
 
