@@ -99,6 +99,24 @@ from session_bridge.store import SessionBridgeStore
 _SYNC_GUARD_SECONDS = 30.0
 
 
+
+@pytest.fixture(autouse=True)
+def _preflight_pin_is_hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the version pin off this machine's real characterization store.
+
+    Since 2026-09-04 the preflight reads the accepted Claude version from the
+    newest passing characterization proof rather than from a literal. Without
+    this fixture every assertion below would silently depend on whatever
+    version this box last characterized, so a routine `characterize` refresh
+    would turn the suite red. Returning None selects the documented bootstrap
+    fallback, which is the literal these tests were written against.
+
+    Tests that mean to exercise the PROOF path override it explicitly.
+    """
+
+    monkeypatch.setattr(cli_module, "characterized_claude_version", lambda: None)
+
+
 @dataclass
 class FakeBackend:
     characterization: str = "passed"

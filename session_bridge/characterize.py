@@ -2449,6 +2449,56 @@ def _expected_gate_versions(root: Path) -> dict[str, str] | None:
     }
 
 
+def characterized_claude_version(*, report_root: Path | None = None) -> str | None:
+    """The Claude CLI version the standing characterization proof passed against.
+
+    The visibility preflight pins the exact Claude CLI it is willing to drive.
+    That pin used to be a hand-maintained literal beside the check
+    (``cli.py`` ``_CLAUDE_VISIBILITY_PINNED_VERSION``), which broke every time
+    the Desktop app self-updated -- three times in the nine days to 2026-09-03,
+    each one killing the whole visibility lane at ``ProviderDegraded`` BEFORE
+    discovery, and each one needing a code change plus a deploy to clear.
+
+    A characterization run is the only thing on this box that actually PROVES a
+    given Claude CLI can be driven, so the accepted version is now READ from
+    that proof rather than restated next to it. Refreshing characterization --
+    already the documented remedy for a CLI bump, already consent-gated -- now
+    also clears the preflight, so a Desktop bump costs one operator action
+    instead of a code edit, a review, a merge and a restart.
+
+    Deliberately CLAUDE-SCOPED, and NOT a call to
+    ``resolve_characterization_gate``: that resolves both providers and raises
+    on codex drift, and codex drift has never been a reason to stop registering
+    Claude sessions. Widening it here would couple the visibility lane to an
+    unrelated CLI.
+
+    Selection mirrors the gate's Claude half exactly -- newest report RECORDING
+    Claude, chosen before the pass check, so a later failing run buries an
+    earlier passing one. The gate's ``bridge_revision`` rule is deliberately not
+    applied: it exists to stop a SCOPED reuse of a non-newest report, which is
+    an installer-admission concern, not a question about which binary is safe to
+    spawn.
+
+    Returns ``None`` when no report records Claude, when the newest one that
+    does records a FAILING Claude run, or when the store cannot be read at all.
+    Every one of those leaves the caller to fail closed.
+    """
+
+    try:
+        root = _gate_report_root(report_root)
+        _require_safe_report_root(root)
+        reports = _read_validated_gate_reports(root)
+    except (CharacterizationGateError, OSError, ValueError):
+        return None
+    candidates = [report for report in reports if "claude" in report.providers]
+    if not candidates:
+        return None
+    latest = max(candidates, key=_gate_report_order)
+    if not latest.provider_passed["claude"]:
+        return None
+    return latest.versions["claude"]
+
+
 def _require_safe_report_root(root: Path) -> None:
     for candidate in (root, *root.parents):
         if _path_is_redirect(candidate):

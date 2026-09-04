@@ -38,6 +38,7 @@ from .characterize import (
     resolve_cli_executable,
     claim_claude_visibility_characterization_abort,
     characterization_source_root,
+    characterized_claude_version,
     characterize_claude_visibility,
     cleanup_characterized_claude_visibility,
     load_codex_characterization_origins,
@@ -177,7 +178,14 @@ _CHARACTERIZATION_PROVIDER_SELECTIONS: dict[str, tuple[str, ...]] = {
     "claude": ("claude",),
     "codex": ("codex",),
 }
-# Bumped 2026-08-26 from 2.1.216. The pin was pinned to the npm global, which
+# RETIRED AS A PIN 2026-09-04 -- read _claude_visibility_pinned_version below
+# before touching anything here. The accepted Claude version is now READ from the
+# newest passing characterization proof; this literal survives only as the
+# bootstrap default for a box that has never characterized. DO NOT BUMP IT: a
+# bump fixes nothing on any box that has a proof, and re-creates the treadmill
+# the history below records.
+#
+# HISTORY, kept because it is the evidence for the change. Bumped 2026-08-26 from 2.1.216. The pin was pinned to the npm global, which
 # had silently drifted to 2.1.216 while the Desktop app ran 2.1.237; that npm
 # copy was UNINSTALLED 2026-08-25 (see resolve_claude_command), so the resolver
 # correctly began returning the Desktop-shipped CLI and every preflight refused
@@ -192,11 +200,41 @@ _CHARACTERIZATION_PROVIDER_SELECTIONS: dict[str, tuple[str, ...]] = {
 # 2.1.246 is what claude_registrar's screen model was originally measured
 # against -- the two live TUI frames it was built on were captured 2026-08-25
 # and 2026-08-26 through this repo's own isolation argv on this CLI.
+# Then a THIRD time, 2026-09-03: Desktop installed 2.1.258 at 12:35:37 and the
+# lane was dead on version_unpinned from 12:36:42, unnoticed for 21 hours
+# because the health report names the stranded job's lease_expired and never the
+# preflight code. Three breakages in nine days from a self-updating vendor CLI
+# is not bad luck; an equality pin maintained by hand cannot win that race, so
+# the pin moved to the artefact that actually proves a CLI is drivable.
+# The registrar's fail-closed screen checks remain the guard against TUI drift,
+# and characterization itself now fails rather than pass for a CLI it cannot
+# drive -- so nothing here is a loosening.
 _CLAUDE_VISIBILITY_PINNED_VERSION = "2.1.247"
-_CLAUDE_VISIBILITY_VERSION_OUTPUTS = frozenset({
-    _CLAUDE_VISIBILITY_PINNED_VERSION,
-    f"{_CLAUDE_VISIBILITY_PINNED_VERSION} (Claude Code)",
-})
+_CLAUDE_VERSION_BANNER_SUFFIX = " (Claude Code)"
+
+
+def _claude_visibility_pinned_version() -> str:
+    """The bare Claude version the preflight will accept, proof-first.
+
+    Characterization reports store the banner form ("2.1.247 (Claude Code)");
+    the preflight compares against `claude --version`, which may print either
+    form, so the banner suffix is stripped here and both forms are rebuilt by
+    _claude_visibility_version_outputs.
+    """
+
+    characterized = characterized_claude_version()
+    base = (
+        _CLAUDE_VISIBILITY_PINNED_VERSION if characterized is None else characterized
+    )
+    if base.endswith(_CLAUDE_VERSION_BANNER_SUFFIX):
+        base = base[: -len(_CLAUDE_VERSION_BANNER_SUFFIX)]
+    return base
+
+
+def _claude_visibility_version_outputs(base: str) -> frozenset[str]:
+    return frozenset({base, f"{base}{_CLAUDE_VERSION_BANNER_SUFFIX}"})
+
+
 _CLAUDE_FORCED_ONBOARDING = frozenset({"banner", "step"})
 _CLAUDE_FORCED_ONBOARDING_ENVIRONMENTS = (
     "CLAUDE_CODE_POWERUP_ONBOARDING",
@@ -534,7 +572,7 @@ def _claude_visibility_local_preflight_detail(
         return _refused("claude_visibility_preflight_failed_theme_unavailable")
     return _ClaudeVisibilityPreflight(
         {
-            "version": _CLAUDE_VISIBILITY_PINNED_VERSION,
+            "version": _claude_visibility_pinned_version(),
             "authentication": "available",
             "theme": theme,
         },
@@ -638,7 +676,23 @@ def _claude_visibility_preflight_detail(
     version_text = version.stdout.strip() if version.returncode == 0 else ""
     # Split from one combined condition purely to name the gate; the order is
     # preserved, so exactly the same inputs are refused as before.
-    if version_text not in _CLAUDE_VISIBILITY_VERSION_OUTPUTS:
+    accepted_version = _claude_visibility_pinned_version()
+    if version_text not in _claude_visibility_version_outputs(accepted_version):
+        # One code for two causes on purpose. A distinct code for "no proof on
+        # disk" would have to be added to CLAUDE_VISIBILITY_STATUS_FATAL_CODES
+        # and to three separate literal sets in the health report, and an axis
+        # code missing from any one of them voids the WHOLE evidence envelope
+        # (measured 2026-09-01). The log line below carries the discriminator
+        # instead, at zero risk to the public vocabulary.
+        _LOG.warning(
+            "Claude visibility preflight refused the installed CLI "
+            "observed=%r accepted=%r source=%s",
+            version_text,
+            accepted_version,
+            "characterization_proof"
+            if characterized_claude_version() is not None
+            else "bootstrap_literal_no_proof",
+        )
         return _refused("claude_visibility_preflight_failed_version_unpinned")
     if authentication.returncode != 0:
         return _refused("claude_visibility_preflight_failed_auth_unavailable")
@@ -652,7 +706,7 @@ def _claude_visibility_preflight_detail(
     theme = cast(dict[str, str], local.startup)["theme"]
     return _ClaudeVisibilityPreflight(
         {
-            "version": _CLAUDE_VISIBILITY_PINNED_VERSION,
+            "version": accepted_version,
             "authentication": "available",
             "theme": theme,
         },
