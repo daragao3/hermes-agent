@@ -226,19 +226,55 @@ class TestCronStaleMonitor:
 
     @requires_thresholds_config
     @pytest.mark.parametrize(
-        ("job_name", "threshold"),
+        "job_name",
         [
-            ("jobflow-tracker-cycle", 2100),
-            ("jobflow-tracker-followup", 2400),
-            ("nightly-test-gate", 3600),
-            ("postgres-sync", 1800),
+            "jobflow-tracker-cycle",
+            "jobflow-tracker-followup",
+            "nightly-test-gate",
+            "postgres-sync",
         ],
     )
-    def test_production_threshold_boundaries(self, bus, job_name, threshold):
+    def test_production_threshold_boundaries(self, bus, job_name):
+        """Boundary behaviour against the DEPLOYED thresholds config.
+
+        The threshold is READ from the config rather than restated here.
+        These numbers are operator-tunable live state: the file is
+        ~/.hermes/notifications/cron_stale_thresholds.json, which is untracked
+        and outside this repo, so a value pinned in this test cannot be kept
+        true by any repository change. On 2026-09-03 exactly that happened --
+        jobflow-tracker-cycle was raised 2100 -> 3000 in production and this
+        test went red for a legitimate operator action, with no defect
+        anywhere. Restating the number here would only re-arm that trap at the
+        next tune.
+
+        What IS pinned is the part that is a fault when it changes: every job
+        below must still HAVE its own entry. A job dropping out of ``per_job``
+        silently reverts it to ``default_seconds``, which is the shape of the
+        2026-08-31 config-loss incident (see loops
+        cron-stale-default-seconds-restore-20260831) and is invisible in
+        behaviour until something wedges. ``default_seconds`` is likewise
+        checked for presence and sanity rather than for one magic number.
+
+        The behavioural assertions below are unchanged and are the real
+        subject: a run just under its threshold stays quiet, a run just over it
+        emits exactly one cron_stale carrying that same threshold back.
+        """
         config = json.loads(THRESHOLDS_CONFIG.read_text(encoding="utf-8"))
 
-        assert config["default_seconds"] == 1200
-        assert config["per_job"][job_name] == threshold
+        default_seconds = config["default_seconds"]
+        assert isinstance(default_seconds, int) and default_seconds > 0, (
+            f"default_seconds must be a positive int, got {default_seconds!r}"
+        )
+        assert job_name in config["per_job"], (
+            f"{job_name} has no per_job threshold, so it silently falls back to "
+            f"default_seconds={default_seconds}. That is the config-loss shape, "
+            f"not a tuning change -- restore the entry rather than deleting this "
+            f"job from the parametrisation."
+        )
+        threshold = config["per_job"][job_name]
+        assert isinstance(threshold, int) and threshold > 0, (
+            f"{job_name} threshold must be a positive int, got {threshold!r}"
+        )
 
         within = datetime.now(timezone.utc) - timedelta(
             seconds=threshold - _WITHIN_MARGIN_SECONDS
