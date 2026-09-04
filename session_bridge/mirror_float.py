@@ -620,6 +620,191 @@ def read_open_claim_session_ids(path: Path) -> frozenset[str] | None:
             if isinstance(session, str) and session.startswith(_CLAIM_HOLDER_PREFIX):
                 session_ids.add(session[len(_CLAIM_HOLDER_PREFIX) :])
     return frozenset(session_ids)
+
+
+# --- Capture observation (OBSERVE ONLY -- never gates an archive) -------------
+#
+# A scheduled-task fire can finish cleanly, report well, and write NOTHING
+# durable: local_146a4406 "Applier gemini recheck read 20260824" made seven tool
+# calls, all Bash/PowerShell, and no MemPalace or GBrain write. Measured
+# 2026-09-03 over the 25 task records inside the 14-day scan window: 10 wrote a
+# capture, 15 did not (6 of those made zero tool calls -- timing-gate stand-downs
+# and errored fires, which have nothing to capture by construction).
+#
+# THIS IS DELIBERATELY NOT A GATE. Refusing to archive a capture-less record
+# would strand 15 of 25 -- reopening the leak IdleChipArchiveWorker exists to
+# close, and hitting hardest the fires that correctly did nothing. Diego's call,
+# 2026-09-03. The observation exists so the source-side fix (the scheduled-task
+# capture reminder hook) has a falsifier, not so the reaper can second-guess it.
+#
+# THE TRAP, measured: a SUBSTRING search of a transcript for capture tool names
+# is a false positive on EVERY session on this host. Claude Code attaches the
+# full MCP tool roster to the transcript, so "mempalace_add_drawer" appears
+# verbatim in a session that never called it -- the proven capture-less session
+# above greps as one hit. It fails toward "captured, safe to archive", which is
+# the wrong direction. Parse `tool_use` blocks; never grep.
+_CAPTURE_TOOL_BASENAMES = frozenset(
+    {
+        # MemPalace durable writes. Deletes and reconnects are not captures.
+        "mempalace_add_drawer",
+        "mempalace_update_drawer",
+        "mempalace_diary_write",
+        "mempalace_kg_add",
+        # GBrain durable writes. Reads, reverts and restores are not captures.
+        "put_page",
+        "put_page_conditional",
+        "add_timeline_entry",
+        "add_link",
+    }
+)
+_MCP_TOOL_PREFIX = "mcp__"
+
+
+def default_claude_projects_root() -> Path:
+    return Path.home() / ".claude" / "projects"
+
+
+def default_capture_miss_log_path() -> Path:
+    return Path.home() / ".hermes" / "logs" / "task-session-capture-misses.jsonl"
+
+
+def _project_slug(cwd: str) -> str:
+    """Claude Code's per-project transcript directory name for ``cwd``.
+
+    Every character that is not alphanumeric becomes ``-``, so
+    ``C:\\Users\\diego\\.hermes`` becomes ``C--Users-diego--hermes``.
+    """
+    return "".join(ch if ch.isalnum() else "-" for ch in cwd)
+
+
+def transcript_path_for(
+    data: Mapping[str, Any],
+    *,
+    projects_root: Path,
+) -> Path | None:
+    """Locate a registry record's CLI transcript, or ``None``.
+
+    Resolves the ``cwd`` slug first (O(1)) and falls back to a glob across
+    project directories, because a session's transcript follows the cwd it
+    STARTED in and a record's ``cwd`` can be rewritten afterwards.
+    """
+    cli_session_id = data.get("cliSessionId")
+    if not isinstance(cli_session_id, str) or not cli_session_id:
+        return None
+    if "/" in cli_session_id or "\\" in cli_session_id or cli_session_id == "..":
+        return None
+    for field in ("cwd", "originCwd"):
+        value = data.get(field)
+        if not isinstance(value, str) or not value:
+            continue
+        candidate = projects_root / _project_slug(value) / f"{cli_session_id}.jsonl"
+        if candidate.is_file():
+            return candidate
+    try:
+        for candidate in projects_root.glob(f"*/{cli_session_id}.jsonl"):
+            if candidate.is_file():
+                return candidate
+    except OSError:
+        return None
+    return None
+
+
+def transcript_wrote_capture(path: Path) -> bool | None:
+    """Did this transcript contain a durable memory write?
+
+    ``True``/``False`` on a readable transcript, ``None`` when it could not be
+    read -- unknown is not "no", exactly as an unreadable claim registry is not
+    "no claims". Returns as soon as the first capture call is seen.
+    """
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                # PERFORMANCE ONLY -- removing this line changes no verdict, and
+                # a mutation run confirmed it (the suite stayed green without
+                # it). What defeats the roster false positive is the tool-NAME
+                # check below, never this pre-filter: the roster attachment has
+                # no tool_use block, so parsing it in full also yields nothing.
+                # Do not read this line as the guard.
+                if '"tool_use"' not in line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if not isinstance(entry, Mapping):
+                    continue
+                message = entry.get("message")
+                content = message.get("content") if isinstance(message, Mapping) else None
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, Mapping):
+                        continue
+                    if block.get("type") != "tool_use":
+                        continue
+                    name = block.get("name")
+                    if not isinstance(name, str):
+                        continue
+                    basename = name
+                    if name.startswith(_MCP_TOOL_PREFIX):
+                        basename = name.rsplit("__", 1)[-1]
+                    if basename in _CAPTURE_TOOL_BASENAMES:
+                        return True
+    except OSError:
+        return None
+    return False
+
+
+class CaptureMissRecorder:
+    """Append a line for each archived task record that wrote no capture.
+
+    The coordinator DISCARDS ``run_once``'s return value, so counters alone
+    surface nowhere: the durable leg is this file. One JSON object per line,
+    append-only, never read back by the worker.
+
+    Every failure is swallowed. Observation must never break archiving -- a
+    reaper that dies because it could not write a log line is worse than the
+    gap it is reporting on.
+    """
+
+    def __init__(
+        self,
+        log_path: Path,
+        *,
+        projects_root: Path | None = None,
+        wall_clock: Callable[[], float] = time.time,
+    ) -> None:
+        self._log_path = log_path
+        self._projects_root = (
+            default_claude_projects_root() if projects_root is None else projects_root
+        )
+        self._wall_clock = wall_clock
+
+    def __call__(self, data: Mapping[str, Any]) -> bool | None:
+        transcript = transcript_path_for(data, projects_root=self._projects_root)
+        captured = (
+            None if transcript is None else transcript_wrote_capture(transcript)
+        )
+        if captured is True:
+            return True
+        record = {
+            "observedAt": self._wall_clock(),
+            "sessionId": data.get("sessionId"),
+            "cliSessionId": data.get("cliSessionId"),
+            "scheduledTaskId": data.get(_SCHEDULED_TASK_FIELD),
+            "title": data.get("title"),
+            "transcript": None if transcript is None else str(transcript),
+            "capture": "missing" if captured is False else "unknown",
+        }
+        try:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except (OSError, TypeError, ValueError):
+            pass
+        return captured
+
+
 _CHIP_TITLE_VERBS = frozenset(
     """
     add adjudicate amend answer apply archive attach audit auto-recover backfill
@@ -691,6 +876,15 @@ class IdleChipArchiveWorker:
     making the CHIP lane fail closed on a file that is documented to VANISH on
     this host would silently stop archiving that already works.
 
+    Capture state is OBSERVED, never gated. ``capture_observer`` is called
+    after a task record is archived and its verdict is counted into
+    ``task_archived_without_capture`` / ``task_archived_capture_unknown``; it
+    cannot change the outcome. Measured 2026-09-03 over the 25 task records
+    inside the scan window: 15 wrote no capture, 6 of them because they made
+    zero tool calls at all. Gating on capture would strand all 15 forever,
+    which is the leak this worker exists to close. The source-side fix is the
+    scheduled-task capture reminder hook; this counter is its falsifier.
+
     KNOWN LIMITATION, accepted deliberately (Diego, 2026-09-02). This worker
     reads registry FILES, and pin state is not in them: the ``pinned`` key
     appears on 0 of 4,055 records in the live convergence store, because the
@@ -709,6 +903,7 @@ class IdleChipArchiveWorker:
         idle_seconds: float = 86_400.0,
         task_idle_seconds: float | None = None,
         open_claim_session_ids: Callable[[], frozenset[str] | None] | None = None,
+        capture_observer: Callable[[Mapping[str, Any]], bool | None] | None = None,
         lookback_seconds: float = 14 * 86_400.0,
         run_min_interval_seconds: float = 3600.0,
         monotonic: Callable[[], float] = time.monotonic,
@@ -750,6 +945,7 @@ class IdleChipArchiveWorker:
         self._idle_seconds = idle
         self._task_idle_seconds = task_idle
         self._open_claim_session_ids = open_claim_session_ids
+        self._capture_observer = capture_observer
         self._lookback_seconds = lookback
         self._run_min_interval_seconds = run_interval
         self._monotonic = monotonic
@@ -762,12 +958,20 @@ class IdleChipArchiveWorker:
             self._last_run_at is not None
             and now - self._last_run_at < self._run_min_interval_seconds
         ):
-            return {"examined": 0, "archived": 0, "skipped": 0, "throttled": 1}
+            return {
+                "examined": 0,
+                "archived": 0,
+                "skipped": 0,
+                "throttled": 1,
+                "task_archived_without_capture": 0,
+                "task_archived_capture_unknown": 0,
+            }
         self._last_run_at = now
 
         wall_now = self._wall_clock()
         mtime_floor = wall_now - self._lookback_seconds
         examined = archived = skipped = 0
+        task_no_capture = task_capture_unknown = 0
 
         records: list[tuple[Path, dict[str, Any], tuple[str, str]]] = []
         group_last_ms: dict[tuple[str, str], float] = {}
@@ -812,6 +1016,8 @@ class IdleChipArchiveWorker:
                 "archived": 0,
                 "skipped": skipped,
                 "throttled": 0,
+                "task_archived_without_capture": 0,
+                "task_archived_capture_unknown": 0,
             }
 
         task_axis = self._task_idle_seconds is not None
@@ -890,12 +1096,30 @@ class IdleChipArchiveWorker:
                 skipped += 1
                 continue
             archived += int(changed)
+            # Observe AFTER the write, and only on the task axis. After, because
+            # the observation must not influence the decision -- it cannot, if
+            # the decision is already made. Task axis only, because the capture
+            # obligation this reports on is a scheduled-task obligation; a chip
+            # is a foreground request whose answer went to the person who asked.
+            if changed and kind == _KIND_TASK and self._capture_observer is not None:
+                try:
+                    captured = self._capture_observer(data)
+                except Exception:
+                    # An observer that raises is a broken observer, never a
+                    # reason to stop archiving. Swallow and keep going.
+                    captured = True
+                if captured is False:
+                    task_no_capture += 1
+                elif captured is None:
+                    task_capture_unknown += 1
 
         return {
             "examined": examined,
             "archived": archived,
             "skipped": skipped,
             "throttled": 0,
+            "task_archived_without_capture": task_no_capture,
+            "task_archived_capture_unknown": task_capture_unknown,
         }
 
     @staticmethod
