@@ -34,6 +34,23 @@ def main_mod(monkeypatch):
     monkeypatch.setattr(mod, "_has_any_provider_configured", lambda: True)
     # Reset the idempotency guard so each test starts fresh.
     monkeypatch.setattr(mod, "_oneshot_cleanup_done", False)
+    # ``cmd_chat`` calls ``_sync_bundled_skills_for_startup`` on every startup,
+    # which copies (and then md5-hashes) the whole bundled-skills tree into
+    # SKILLS_DIR. ``tools.skills_sync`` snapshots that path from HERMES_HOME at
+    # *import* time, so it keeps pointing at the tmp home of whichever test
+    # imported it first — a directory pytest deletes as soon as that test
+    # passes. Every later test therefore re-copies the entire tree from
+    # scratch, which costs more than the 30s per-test timeout and kills the
+    # run. These tests assert on argument routing into ``_launch_tui``, not on
+    # skill installation, so default the sync to a no-op. The two tests that
+    # do exercise the sync decision install their own ``tools.skills_sync``
+    # stub, which overrides this one (``_sync_bundled_skills_for_startup``
+    # imports it from ``sys.modules`` at call time).
+    monkeypatch.setitem(
+        sys.modules,
+        "tools.skills_sync",
+        types.SimpleNamespace(sync_skills=lambda quiet=False: None),
+    )
     return mod
 
 
@@ -1068,19 +1085,29 @@ def test_oneshot_subprocess_exits_without_teardown_abort():
         """
     )
 
+    # ``text=True`` decodes through universal newlines. Without it the child's
+    # text-mode stdout arrives as raw bytes, and on Windows that means the
+    # b"ok\r\n" the CRT wrote — not the b"ok\n" of a POSIX run. The assertion
+    # here is about *what* the one-shot path printed, not the platform's line
+    # terminator, so normalize rather than encode CRLF into the expectation.
+    # Pin the codec: the default is the locale's (cp1252 here), which raises
+    # UnicodeDecodeError on any non-ASCII byte the import chain warns with.
     result = subprocess.run(
         [sys.executable, "-c", program],
         cwd=Path(__file__).resolve().parents[2],
         capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         check=False,
     )
 
     assert result.returncode == 0
-    assert result.stdout == b"ok\n"
-    # Don't demand byte-empty stderr — an import-time warning from the heavy
+    assert result.stdout == "ok\n"
+    # Don't demand empty stderr — an import-time warning from the heavy
     # CLI import chain shouldn't fail this. What matters is no crash traceback.
-    assert b"Traceback" not in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_exit_after_oneshot_bypasses_late_atexit_abort():
@@ -1097,16 +1124,21 @@ def test_exit_after_oneshot_bypasses_late_atexit_abort():
         """
     )
 
+    # text=True so the assertion compares content, not the platform's line
+    # terminator (Windows would otherwise deliver b"done\r\n").
     result = subprocess.run(
         [sys.executable, "-c", program],
         cwd=Path(__file__).resolve().parents[2],
         capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=10,
         check=False,
     )
 
     assert result.returncode == 0
-    assert result.stdout == b"done\n"
+    assert result.stdout == "done\n"
 
 
 def test_run_and_exit_oneshot_passes_through_nonzero_return(monkeypatch, main_mod):
@@ -1154,17 +1186,22 @@ def test_main_oneshot_path_bypasses_late_atexit_abort():
         """
     )
 
+    # text=True so the assertion compares content, not the platform's line
+    # terminator (Windows would otherwise deliver b"ok\r\n").
     result = subprocess.run(
         [sys.executable, "-c", program],
         cwd=Path(__file__).resolve().parents[2],
         capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
         check=False,
     )
 
     assert result.returncode == 0
-    assert result.stdout == b"ok\n"
-    assert b"Traceback" not in result.stderr
+    assert result.stdout == "ok\n"
+    assert "Traceback" not in result.stderr
 
 
 def test_oneshot_run_agent_closes_agent_after_chat(monkeypatch):

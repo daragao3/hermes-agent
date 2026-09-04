@@ -11,6 +11,38 @@ import pytest
 from tools.approval import detect_dangerous_command, detect_hardline_command
 
 
+def _unusable_binary(*tools: str) -> str | None:
+    """Return a skip reason for the first tool that is not the binary we pin.
+
+    ``shutil.which`` only proves *some* executable answers to the name. On
+    Windows ``sort`` resolves to ``C:\\Windows\\System32\\sort.exe`` — an
+    unrelated program that shares nothing but the name: it has no
+    ``--compress-program``, no ``--`` end-of-options convention, and reports
+    "Input file specified two times." (rc 1) where GNU coreutils reports a
+    usage error (rc 2). Guarding on ``which`` alone let those cases run
+    against the wrong binary and fail on grammar it never claimed to have.
+
+    ``--version`` is the discriminator: every GNU/POSIX tool modelled here
+    answers it with rc 0, while the Windows binary treats it as a filename
+    and exits non-zero.
+    """
+    for tool in tools:
+        if shutil.which(tool) is None:
+            return f"{tool} is not installed"
+        try:
+            probe = subprocess.run(
+                [tool, "--version"], capture_output=True, timeout=10
+            )
+        except (OSError, subprocess.SubprocessError):
+            return f"{tool} is installed but did not answer --version"
+        if probe.returncode != 0:
+            return (
+                f"{tool} resolves to {shutil.which(tool)}, which is not the "
+                f"GNU-style binary whose grammar this test pins"
+            )
+    return None
+
+
 @pytest.mark.parametrize(
     ("argv", "stdin", "expected_returncode", "expected_output"),
     [
@@ -23,8 +55,9 @@ def test_real_read_tool_binaries_confirm_option_ownership(
     argv, stdin, expected_returncode, expected_output
 ):
     """Pin the CLI grammar that the approval detector models."""
-    if shutil.which(argv[0]) is None:
-        pytest.skip(f"{argv[0]} is not installed")
+    unusable = _unusable_binary(argv[0])
+    if unusable:
+        pytest.skip(unusable)
 
     completed = subprocess.run(argv, input=stdin, text=True, capture_output=True)
 
@@ -47,8 +80,11 @@ def test_real_binaries_execute_leading_dash_program_payload(
     tmp_path, tool, args, stdin, needs_tty
 ):
     """A PATH marker proves these binaries do not reparse '-program' as an option."""
-    if shutil.which(tool) is None or (needs_tty and shutil.which("script") is None):
-        pytest.skip(f"{tool} or script is not installed")
+    unusable = _unusable_binary(tool)
+    if unusable is None and needs_tty and shutil.which("script") is None:
+        unusable = "script is not installed"
+    if unusable:
+        pytest.skip(unusable)
 
     marker = tmp_path / "executed"
     payload = tmp_path / "-payload-marker"
