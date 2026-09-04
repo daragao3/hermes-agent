@@ -18,7 +18,7 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _stub_update_side_effects(monkeypatch):
+def _stub_update_side_effects(monkeypatch, no_update_sleep):
     """Keep ``cmd_update`` off the real host.
 
     Any test that drives the update flow far enough to be "behind" reaches two
@@ -35,13 +35,45 @@ def _stub_update_side_effects(monkeypatch):
       Unguarded this would kill a real dashboard — the guard caught it doing
       exactly that (``os.kill(<host pid>, 15)``).
 
-    No test in this file asserts on either seam, so stubbing them costs no
-    coverage and confines the flow to the git mock the tests already install.
+    The rest of the list below is the same set stubbed in
+    ``test_cmd_update.py``, whose fixture carries the full rationale for each:
+    a real ``pip install``, the profile/skill sync writing into the live
+    ``~/.hermes``, the bytecode-cache rmtree (which forces every later import
+    to recompile from source), and the post-update gateway auto-restart that
+    discovers and kills real gateways. The two seams every file in this
+    directory reaches — the venv-holder gate and the gateway pause/resume
+    pair — are handled by autouse fixtures in ``conftest.py`` instead.
+
+    Both tests here assert only on config-migration prompting, so none of this
+    costs coverage; it confines the flow to the git mock they already install.
     """
     import hermes_cli.main as _m
+    import hermes_cli.gateway as _gateway
+    import hermes_cli.profiles as _profiles
+    import tools.lazy_deps as _lazy
+    import tools.skills_sync as _skills_sync
 
     monkeypatch.setattr(_m, "_build_web_ui", lambda *a, **k: True)
     monkeypatch.setattr(_m, "_kill_stale_dashboard_processes", lambda *a, **k: None)
+    monkeypatch.setattr(_m, "_clear_bytecode_cache", lambda *a, **k: 0)
+    monkeypatch.setattr(
+        _lazy, "_venv_pip_install",
+        lambda *a, **k: _lazy._InstallResult(True, "", ""),
+    )
+    monkeypatch.setattr(
+        _skills_sync, "sync_skills",
+        lambda *a, **k: {
+            "copied": [], "updated": [], "user_modified": [], "cleaned": []
+        },
+    )
+    monkeypatch.setattr(
+        _profiles, "seed_profile_skills",
+        lambda *a, **k: {"copied": [], "updated": [], "user_modified": []},
+    )
+    monkeypatch.setattr(_profiles, "backfill_profile_envs", lambda *a, **k: [])
+    monkeypatch.setattr(_gateway, "find_gateway_pids", lambda *a, **k: [])
+    monkeypatch.setattr(_gateway, "find_profile_gateway_processes", lambda *a, **k: [])
+    monkeypatch.setattr(_gateway, "_get_service_pids", lambda *a, **k: [])
 
 
 def _make_run_side_effect(
