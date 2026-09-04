@@ -13,6 +13,9 @@ Hermetic-test invariants enforced here (see AGENTS.md for rationale):
 3. **Deterministic runtime.** TZ=UTC, LANG=C.UTF-8, PYTHONHASHSEED=0.
 4. **No HERMES_SESSION_* inheritance** — the agent's current gateway
    session must not leak into tests.
+5. **No OTel span export.** HERMES_OTEL_DISABLE=1 is pinned at *import*
+   time (see below), so nothing the suite imports can build a real span
+   exporter aimed at the developer's Langfuse collector.
 
 These invariants make the local test run match CI closely. Gaps that
 remain (CPU count, xdist worker count) are addressed by the canonical
@@ -33,6 +36,37 @@ import threading
 from pathlib import Path
 
 import pytest
+
+# Hard-off the OpenTelemetry span exporter for the whole suite.
+#
+# WHY IT CANNOT BE A FIXTURE. graphs/critic.py:68, graphs/jobflow.py:25,
+# events/subscribers/base.py:37 and cron/scheduler.py:58 each call
+# ``get_tracer(...)`` at MODULE scope, which runs
+# ``obs.otel_tracing.ensure_initialized()`` on import — i.e. during collection,
+# before any fixture has run. By the time an autouse fixture could set this,
+# the exporter and its atexit flush already exist, and spans opened during the
+# run are POSTed after pytest has printed its green line.
+#
+# THIS IS DEFENCE IN DEPTH, NOT THE ONLY THING STANDING BETWEEN THE SUITE AND
+# THE COLLECTOR. Measured 2026-09-03: with this pin removed, a traced module
+# imported at collection still leaves ``_PROVIDER`` as None, because two other
+# things already hold. ``_pin_hermes_home_before_collection()`` below runs at
+# module level, and ``obs.otel_tracing._load_env_once()`` resolves its .env via
+# ``get_hermes_home()`` rather than ``Path.home()`` (invariant 2's rule, applied
+# at that callsite), so the real ~/.hermes/.env is never read and the
+# LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY it carries never reach os.environ.
+# Provider construction needs both keys, so it stops there.
+#
+# The pin is kept because it is the module's own documented hard-off switch and
+# is checked BEFORE that .env read (obs/otel_tracing.py: the gate at the top of
+# ``ensure_initialized`` short-circuits ahead of ``_load_env_once()``). It
+# therefore does not depend on either of the above continuing to hold — and a
+# host that does have LANGFUSE_* exported in the ambient shell is not covered by
+# them at all.
+#
+# Set, not setdefault: a developer shell must not be able to re-enable live
+# export for the suite.
+os.environ["HERMES_OTEL_DISABLE"] = "1"
 
 # Ensure project root is importable
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -849,6 +883,11 @@ def _hermetic_environment(tmp_path, monkeypatch):
     # should never perform that implicit network/bootstrap path; Tirith-specific
     # tests opt back in by patching the security config directly.
     monkeypatch.setenv("TIRITH_ENABLED", "false")
+    # Re-pin the import-time OTel hard-off (see module header). This covers a
+    # module imported lazily INSIDE a test body, and survives a test that
+    # rewrites os.environ wholesale. It is NOT a substitute for the import-time
+    # pin: by the time this fixture runs, collection-time imports are done.
+    monkeypatch.setenv("HERMES_OTEL_DISABLE", "1")
 
     # 5. Reset plugin singleton so tests don't leak plugins from
     #    ~/.hermes/plugins/ (which, per step 3, is now empty — but the
