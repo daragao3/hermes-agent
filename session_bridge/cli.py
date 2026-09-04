@@ -88,8 +88,10 @@ from .mcp_server import (
 )
 from .desktop_registry_worker import DesktopRegistrySyncWorker
 from .mirror_float import (
+    CaptureMissRecorder,
     ClaudeMirrorFloatWorker,
     IdleChipArchiveWorker,
+    default_capture_miss_log_path,
     default_loops_registry_path,
     discover_ccd_convergence_roots,
     discover_ccd_registry_roots,
@@ -4077,6 +4079,13 @@ class ProductionBackend:
                     ),
                     open_claim_session_ids=lambda: read_open_claim_session_ids(
                         default_loops_registry_path()
+                    ),
+                    # Observation only: records which archived task sessions
+                    # wrote no durable memory capture. It cannot spare a record
+                    # -- see IdleChipArchiveWorker's docstring for why gating on
+                    # capture would strand 15 of 25 in-window task records.
+                    capture_observer=CaptureMissRecorder(
+                        default_capture_miss_log_path()
                     ),
                 )
                 if (

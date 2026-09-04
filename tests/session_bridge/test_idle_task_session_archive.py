@@ -24,7 +24,9 @@ from pathlib import Path
 import pytest
 
 from session_bridge.mirror_float import (
+    CaptureMissRecorder,
     IdleChipArchiveWorker,
+    default_capture_miss_log_path,
     read_open_claim_session_ids,
 )
 from tests.session_bridge.test_idle_chip_archive import (
@@ -463,6 +465,11 @@ def test_serve_runtime_passes_task_window_through(
         coordinator._idle_chip_archiver._open_claim_session_ids(),
         (frozenset, type(None)),
     )
+    # Same reasoning for the capture observer: unit-tested in isolation, it
+    # would still report nothing in production if serve never passed one.
+    observer = coordinator._idle_chip_archiver._capture_observer
+    assert isinstance(observer, CaptureMissRecorder)
+    assert observer._log_path == default_capture_miss_log_path()
 
 
 def test_serve_runtime_leaves_task_axis_off_by_default(
