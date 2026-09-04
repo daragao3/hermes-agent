@@ -408,3 +408,82 @@ class TestInsightsAuxTotals:
         ov = report["overview"]
         assert ov["total_input_tokens"] == 2040
         assert ov["total_output_tokens"] == 208
+
+
+class TestAutoRoutedProviderIsResolved:
+    """Auto-routed aux calls recorded billing_provider="auto" (2026-09-04).
+
+    ``_get_cached_client()`` picks a concrete backend but returns only
+    (client, model), so the caller still held the literal "auto". No billing
+    route recognises it, so every auto-routed aux call priced as unknown:
+    313 rows / 1,248,804 tokens on this box, split across the Codex
+    subscription endpoint and the metered DeepSeek API.
+    """
+
+    def _record(self, provider, base_url, model="gpt-5.6-sol", prompt=1000, completion=500):
+        from agent import aux_accounting
+        from agent.auxiliary_client import _validate_llm_response
+
+        captured = []
+
+        class _DB:
+            def record_auxiliary_usage(self, session_id, task, **kw):
+                captured.append(kw)
+
+        token = aux_accounting.set_accounting_context(
+            _DB(), "s-auto", source="cli", model_config={}
+        )
+        try:
+            _validate_llm_response(
+                _mk_response(model=model, prompt=prompt, completion=completion),
+                "approval", provider=provider, base_url=base_url,
+            )
+        finally:
+            aux_accounting.reset_accounting_context(token)
+        return captured[0] if captured else None
+
+    def test_codex_subscription_route_is_resolved_and_priced_as_included(self):
+        row = self._record("auto", "https://chatgpt.com/backend-api/codex/")
+        assert row["billing_provider"] == "openai-codex"
+        # Subscription: $0 is the TRUE cost, and distinguishable from unknown.
+        assert row["estimated_cost_usd"] == 0.0
+
+    def test_metered_route_is_resolved_and_recovers_real_dollars(self):
+        """DeepSeek is metered, so leaving it "auto" lost money, not a label."""
+        row = self._record("auto", "https://api.deepseek.com/v1/", model="deepseek-v4-pro")
+        assert row["billing_provider"] == "deepseek"
+        assert row["estimated_cost_usd"] is not None
+        assert row["estimated_cost_usd"] > 0
+
+    def test_anthropic_route_resolves_for_billing_without_zeroing_the_usage(self):
+        """The trap this split exists to avoid — do not collapse the two args.
+
+        ``provider`` selects the usage-normalisation shape and
+        ``billing_provider`` selects the rate card. The aux adapters convert
+        every backend's usage to the OpenAI shape before returning, so if a
+        resolved "anthropic" reached normalize_usage it would read the
+        ``input_tokens`` the adapter never set, get zeros, and the row would
+        be DISCARDED as empty — usage vanishing instead of being repriced.
+        """
+        row = self._record("auto", "https://api.anthropic.com", model="claude-fable-5")
+        assert row is not None, "row was dropped: normalize_usage got the resolved provider"
+        assert row["billing_provider"] == "anthropic"
+        assert row["input_tokens"] == 1000
+        assert row["output_tokens"] == 500
+
+    def test_unknown_host_is_not_guessed(self):
+        row = self._record("auto", "https://example.invalid/v1")
+        assert row["billing_provider"] == "auto"
+
+    def test_absent_route_stays_absent_rather_than_becoming_literal_auto(self):
+        """Fallback paths omit the route; an empty route must stay empty.
+
+        The resolver normalises a missing provider to "auto", so a naive
+        override would write a literal "auto" that reads like real config.
+        """
+        row = self._record(None, None)
+        assert not row["billing_provider"]
+
+    def test_an_explicit_provider_is_never_second_guessed(self):
+        row = self._record("openrouter", "https://chatgpt.com/backend-api/codex/")
+        assert row["billing_provider"] == "openrouter"

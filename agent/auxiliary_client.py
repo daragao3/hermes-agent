@@ -3966,6 +3966,51 @@ def _refresh_provider_credentials(provider: str) -> bool:
     return False
 
 
+# Host -> concrete provider slug for auto-routed auxiliary calls.
+#
+# ``_get_cached_client()`` picks a real backend but returns only (client,
+# model), so the CALLER still holds the literal string "auto". The selected
+# client's base URL is the only surviving witness of what was actually
+# chosen, so both the auth-refresh path and the accounting path recover the
+# backend from it. One table, deliberately, so the two cannot drift.
+#
+# EVIDENCE-LED, not exhaustive: entries are added when a route is observed
+# arriving unresolved, never speculatively. An unmapped host degrades to
+# "auto", which prices as unknown -- and since 9634a87293 that shows up as
+# counted unpriced_tokens rather than a silent $0, which is the signal that
+# says a host belongs here.
+_AUTO_ROUTE_HOST_PROVIDERS: tuple[tuple[str, str], ...] = (
+    ("api.githubcopilot.com", "copilot"),
+    ("chatgpt.com", "openai-codex"),
+    ("api.anthropic.com", "anthropic"),
+    ("inference-api.nousresearch.com", "nous"),
+    # Added 2026-09-04: observed on live auto-routed aux rows (task
+    # "approval") alongside chatgpt.com. Unlike the four above this one is
+    # metered per token, so leaving it unresolved lost real dollars, not
+    # just a subscription label.
+    ("api.deepseek.com", "deepseek"),
+)
+
+
+def _concrete_provider_for_route(
+    resolved_provider: Optional[str],
+    client_base_url: str,
+) -> str:
+    """Resolve "auto" to the backend that actually served the call.
+
+    Returns an already-concrete provider unchanged, so an explicit route is
+    never second-guessed. An unrecognised host returns the input untouched
+    (normally "auto") rather than a guess.
+    """
+    normalized = _normalize_aux_provider(resolved_provider)
+    if normalized and normalized != "auto":
+        return normalized
+    for host, concrete in _AUTO_ROUTE_HOST_PROVIDERS:
+        if base_url_host_matches(client_base_url, host):
+            return concrete
+    return normalized
+
+
 def _auth_refresh_provider_for_route(
     resolved_provider: Optional[str],
     client_base_url: str,
@@ -3976,19 +4021,13 @@ def _auth_refresh_provider_for_route(
     after _get_cached_client() selects a concrete backend. Infer the backend
     from the selected client's base URL so auth refresh works for auto →
     Copilot/Codex/Anthropic/Nous routes too. (#20832)
+
+    Thin alias over :func:`_concrete_provider_for_route`; a host that has no
+    short-lived credentials simply falls through
+    ``_refresh_provider_credentials``'s if-chain and returns False, exactly
+    as an unresolved "auto" already did.
     """
-    normalized = _normalize_aux_provider(resolved_provider)
-    if normalized and normalized != "auto":
-        return normalized
-    if base_url_host_matches(client_base_url, "api.githubcopilot.com"):
-        return "copilot"
-    if base_url_host_matches(client_base_url, "chatgpt.com"):
-        return "openai-codex"
-    if base_url_host_matches(client_base_url, "api.anthropic.com"):
-        return "anthropic"
-    if base_url_host_matches(client_base_url, "inference-api.nousresearch.com"):
-        return "nous"
-    return normalized
+    return _concrete_provider_for_route(resolved_provider, client_base_url)
 
 
 def _fallback_entry_timeout(task: Optional[str], fb_label: str) -> Optional[float]:
@@ -7151,13 +7190,33 @@ def _validate_llm_response(
     best-effort and never affects validation. *provider*/*base_url* are
     optional accounting hints — fallback-path calls omit them and the row
     keeps the model (read from the response itself) with an empty route.
+
+    An auto-routed call arrives here with *provider* still the literal
+    "auto" (see :func:`_concrete_provider_for_route`), which no billing
+    route recognises, so those rows priced as unknown. The concrete backend
+    is passed as ``billing_provider`` — SEPARATELY, because ``provider``
+    also selects the usage-normalisation shape and these two answers differ:
+    the adapters above hand back OpenAI-shaped usage
+    (``prompt_tokens``/``completion_tokens``) no matter which vendor served
+    the call, so billing wants "anthropic" while normalisation must NOT have
+    it, or it reads the unset ``input_tokens`` and drops the row.
     """
     if response is None:
         raise RuntimeError(
             f"Auxiliary {task or 'call'}: LLM returned None response"
         )
     from agent.aux_accounting import record_aux_usage
-    record_aux_usage(response, task, provider=provider, base_url=base_url)
+    # Only override when a concrete backend was actually recovered. The
+    # resolver normalises a missing provider to "auto", and the fallback
+    # paths that omit the route entirely must keep recording an EMPTY route
+    # rather than inventing a literal "auto" that reads like real config.
+    _billing_provider = _concrete_provider_for_route(provider, base_url or "")
+    if _billing_provider == "auto":
+        _billing_provider = provider
+    record_aux_usage(
+        response, task, provider=provider, base_url=base_url,
+        billing_provider=_billing_provider,
+    )
     # Allow SimpleNamespace responses from adapters (CodexAuxiliaryClient,
     # AnthropicAuxiliaryClient) — they have .choices[0].message.
     try:

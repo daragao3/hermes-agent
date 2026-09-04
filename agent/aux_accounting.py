@@ -81,6 +81,7 @@ def record_aux_usage(
     *,
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
+    billing_provider: Optional[str] = None,
 ) -> None:
     """Record an auxiliary response's token usage against the ambient session.
 
@@ -95,6 +96,23 @@ def record_aux_usage(
     The model is read from ``response.model`` (accurate even after the aux
     client's provider-fallback chains); *provider*/*base_url* reflect the
     originally-resolved route and are best-effort.
+
+    *provider* and *billing_provider* are deliberately SEPARATE and are not
+    interchangeable:
+
+    * *provider* selects the usage-normalisation shape. The auxiliary
+      client's adapters convert every backend's native usage into the
+      OpenAI shape (``prompt_tokens``/``completion_tokens``) before
+      returning, so this must stay the value the caller passed. Handing
+      normalisation a resolved ``"anthropic"`` would make it read the
+      ``input_tokens``/``output_tokens`` the adapter never set, yielding
+      zeros — and a zero row is DISCARDED below, so the usage would vanish
+      rather than merely be mis-attributed.
+    * *billing_provider* is the concrete backend that served the call, used
+      for pricing and stored on the row. Auto-routed calls pass *provider*
+      as the literal ``"auto"``, which no billing route recognises; without
+      this they priced as unknown. Defaults to *provider* so existing
+      callers are unaffected.
     """
     try:
         if not task or task in _EXCLUDED_TASKS:
@@ -118,10 +136,14 @@ def record_aux_usage(
             return
 
         model = str(getattr(response, "model", "") or "") or "unknown"
+        # See the docstring: normalisation above keeps `provider`, billing
+        # takes the resolved backend. Falling back to `provider` keeps every
+        # caller that predates the split behaving exactly as before.
+        route_provider = billing_provider or provider
         estimated_cost = None
         try:
             cost = estimate_usage_cost(
-                model, usage, provider=provider, base_url=base_url
+                model, usage, provider=route_provider, base_url=base_url
             )
             if cost.amount_usd is not None:
                 estimated_cost = float(cost.amount_usd)
@@ -132,7 +154,7 @@ def record_aux_usage(
             session_id,
             task,
             model=model,
-            billing_provider=provider,
+            billing_provider=route_provider,
             billing_base_url=base_url,
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
