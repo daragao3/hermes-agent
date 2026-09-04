@@ -71,6 +71,26 @@ _PINNED_PATCH = int(_PINNED_PATCH_TEXT)
 _SYNC_GUARD_SECONDS = 30.0
 
 
+
+@pytest.fixture(autouse=True)
+def _preflight_pin_is_hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the version pin off this machine's real characterization store.
+
+    Since 2026-09-04 the preflight reads the accepted Claude version from the
+    newest passing characterization proof rather than from a literal. Without
+    this fixture every assertion below would silently depend on whatever
+    version this box last characterized, so a routine `characterize` refresh
+    would turn the suite red. Returning None selects the documented bootstrap
+    fallback, which is the literal these tests were written against.
+
+    Tests that mean to exercise the PROOF path override it explicitly.
+    """
+
+    import session_bridge.cli as _cli_module
+
+    monkeypatch.setattr(_cli_module, "characterized_claude_version", lambda: None)
+
+
 def _aborted_characterization_state(
     root: Path, operation_id: str
 ) -> tuple[dict[str, Any], Path]:
@@ -3694,3 +3714,91 @@ def test_preflight_wrapper_still_returns_none_on_failure(tmp_path: Path) -> None
         )
         is None
     )
+
+
+def _pin_proof(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
+    """Override the hermetic autouse fixture to exercise the PROOF path."""
+
+    import session_bridge.cli as _cli_module
+
+    monkeypatch.setattr(
+        _cli_module, "characterized_claude_version", lambda: value
+    )
+
+
+def test_preflight_accepts_the_version_the_characterization_proof_pins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _pin_proof(monkeypatch, "9.9.9 (Claude Code)")
+
+    detail = _detail(tmp_path, version_output="9.9.9 (Claude Code)")
+
+    assert detail.failure_code is None
+    assert detail.startup == {
+        "version": "9.9.9",
+        "authentication": "available",
+        "theme": "light",
+    }
+
+
+def test_preflight_refuses_the_bootstrap_literal_once_a_proof_pins_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole point of the 2026-09-04 change: the literal stops governing.
+
+    Before it, the accepted version was _CLAUDE_VISIBILITY_PINNED_VERSION and a
+    Desktop self-update killed the lane until someone edited, reviewed, merged
+    and deployed a new literal -- three times in the nine days to 2026-09-03.
+    If this test ever passes a CLI reporting the literal while the standing
+    proof names something else, the literal is governing again.
+    """
+
+    _pin_proof(monkeypatch, "9.9.9 (Claude Code)")
+
+    detail = _detail(tmp_path, version_output=PINNED_BANNER)
+
+    assert detail.startup is None
+    assert detail.failure_code == (
+        "claude_visibility_preflight_failed_version_unpinned"
+    )
+
+
+def test_preflight_accepts_the_bare_form_of_a_banner_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reports store the banner form; `claude --version` may print either."""
+
+    _pin_proof(monkeypatch, "9.9.9 (Claude Code)")
+
+    detail = _detail(tmp_path, version_output="9.9.9")
+
+    assert detail.failure_code is None
+
+
+def test_preflight_falls_back_to_the_bootstrap_literal_without_a_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A box that has never characterized still starts, on the documented default."""
+
+    _pin_proof(monkeypatch, None)
+
+    detail = _detail(tmp_path, version_output=PINNED_BANNER)
+
+    assert detail.failure_code is None
+    assert detail.startup is not None
+    assert detail.startup["version"] == PINNED
+
+
+def test_preflight_still_refuses_a_neighbouring_version_under_a_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading the pin from a proof must not loosen it into a range."""
+
+    _pin_proof(monkeypatch, "9.9.9 (Claude Code)")
+
+    for drifted in ("9.9.8 (Claude Code)", "9.9.10 (Claude Code)", "9.9.9-beta"):
+        detail = _detail(tmp_path, version_output=drifted)
+        assert detail.startup is None, drifted
+        assert detail.failure_code == (
+            "claude_visibility_preflight_failed_version_unpinned"
+        ), drifted

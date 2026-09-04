@@ -18,6 +18,7 @@ from session_bridge.characterize import (
     current_bridge_revisions,
     describe_characterization_gate,
     load_codex_characterization_origins,
+    characterized_claude_version,
     resolve_characterization_gate,
     run_live_characterization,
     write_characterization_report,
@@ -1658,3 +1659,83 @@ def test_pre_rotation_codex_origin_guard_loads_via_retired_keys(
         marker_secret=current_secret,
         retired_marker_secrets=(retired_secret,),
     ) == {native_id: f"characterization-{_ID_A}-codex"}
+
+
+def test_characterized_claude_version_reads_the_newest_passing_claude_proof(
+    tmp_path: Path,
+) -> None:
+    _write_report(
+        tmp_path,
+        "11111111-1111-4111-8111-111111111111",
+        mtime_ns=100,
+        versions={"claude": "2.1.247 (Claude Code)", "codex": "4.5.6"},
+        created_at="2026-07-14T12:00:00+00:00",
+    )
+    _write_report(
+        tmp_path,
+        "22222222-2222-4222-8222-222222222222",
+        mtime_ns=200,
+        versions={"claude": "2.1.258 (Claude Code)", "codex": "4.5.6"},
+        created_at="2026-07-15T12:00:00+00:00",
+    )
+
+    assert characterized_claude_version(report_root=tmp_path) == (
+        "2.1.258 (Claude Code)"
+    )
+
+
+def test_characterized_claude_version_is_none_when_the_newest_claude_run_failed(
+    tmp_path: Path,
+) -> None:
+    """A later FAILING run buries an earlier passing one, exactly as the gate does.
+
+    Without this the preflight would keep spawning a CLI that characterization
+    has since proven it cannot drive -- strictly worse than the literal it
+    replaced.
+    """
+
+    _write_report(
+        tmp_path,
+        "11111111-1111-4111-8111-111111111111",
+        mtime_ns=100,
+        versions={"claude": "2.1.247 (Claude Code)", "codex": "4.5.6"},
+        created_at="2026-07-14T12:00:00+00:00",
+    )
+    _write_report(
+        tmp_path,
+        "22222222-2222-4222-8222-222222222222",
+        mtime_ns=200,
+        versions={"claude": "2.1.258 (Claude Code)", "codex": "4.5.6"},
+        created_at="2026-07-15T12:00:00+00:00",
+        claude_passed=False,
+    )
+
+    assert characterized_claude_version(report_root=tmp_path) is None
+
+
+def test_characterized_claude_version_ignores_a_failing_codex_half(
+    tmp_path: Path,
+) -> None:
+    """Claude-scoped on purpose: codex drift must never stop Claude registration.
+
+    resolve_characterization_gate raises on the codex axis; this accessor must
+    not, or a codex CLI bump would take the Claude visibility lane down with it.
+    """
+
+    _write_report(
+        tmp_path,
+        "11111111-1111-4111-8111-111111111111",
+        mtime_ns=100,
+        versions={"claude": "2.1.258 (Claude Code)", "codex": "4.5.6"},
+        codex_passed=False,
+    )
+
+    assert characterized_claude_version(report_root=tmp_path) == (
+        "2.1.258 (Claude Code)"
+    )
+
+
+def test_characterized_claude_version_is_none_when_the_store_is_empty(
+    tmp_path: Path,
+) -> None:
+    assert characterized_claude_version(report_root=tmp_path) is None
