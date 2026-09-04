@@ -395,3 +395,68 @@ def no_update_sleep(monkeypatch):
     from hermes_cli import main as _cli_main
 
     monkeypatch.setattr(_cli_main, "_time", _FakeClock(_real_time), raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _stub_bundled_skills_sync(request, monkeypatch):
+    """Neutralize ``tools.skills_sync.sync_skills`` for every test.
+
+    ``_cmd_update_impl`` calls it near the end, and it runs against the
+    developer's REAL skills tree -- ``SKILLS_DIR`` is a module-level constant
+    frozen from ``get_hermes_home()`` at import, so no ``HERMES_HOME``
+    monkeypatch can redirect it. ``_dir_hash`` then ``read_bytes()`` every file
+    under each destination skill: 5127 files / 39 MB of
+    ``~/.hermes/skills`` on this box, re-walked once per bundled skill.
+
+    That is what killed the suite. A full ``pytest tests/hermes_cli/`` run died
+    at 11.3% (1061 of 9423) inside ``tools/skills_sync.py::_dir_hash``, in
+    ``test_cmd_update.py::TestCmdUpdateBranchFallback::
+    test_update_refreshes_repo_and_tui_node_dependencies``. Because
+    ``--timeout-method=thread`` (pyproject.toml) cannot interrupt a blocked C
+    call, crossing the 30s cap takes the WHOLE pytest process down: no summary
+    line, and the reported failure set is only whatever had accumulated.
+
+    Reading is not the dangerous half. The un-taken branches of the same loop
+    ``shutil.copytree`` new skills in, ``shutil.move`` existing ones to
+    ``.bak``, ``_rmtree_writable`` stale shadows and rewrite
+    ``.bundled_manifest`` -- all against the developer's real skills, from a
+    unit test. The run that died happened to be killed mid-hash, before any
+    write, which is luck rather than isolation.
+
+    The empty result is the in-contract "nothing to do" shape, identical to
+    what the function itself returns when no bundled directory exists, so
+    every caller's ``result["copied"]`` / ``.get("updated")`` reporting stays
+    on its real code path and simply prints nothing.
+
+    Patched at the source module because ``main.py`` imports it inside the
+    function body (``from tools.skills_sync import sync_skills``), so the
+    lookup happens per call. Real coverage of the sync itself lives in
+    ``tests/tools/test_skills_sync.py``, which this directory-scoped fixture
+    does not touch. Tests here that already patch the same attribute keep
+    winning -- their ``monkeypatch`` runs after this one. Opt out with
+    ``@pytest.mark.real_skills_sync``.
+    """
+    if request.node.get_closest_marker("real_skills_sync"):
+        return
+    try:
+        from tools import skills_sync as _skills_sync
+    except Exception:
+        return
+    # raising=False for the same partially-initialized-module race documented
+    # on _suppress_concurrent_hermes_gate above.
+    monkeypatch.setattr(
+        _skills_sync,
+        "sync_skills",
+        lambda *_a, **_k: {
+            "copied": [],
+            "updated": [],
+            "skipped": 0,
+            "user_modified": [],
+            "cleaned": [],
+            "suppressed": [],
+            "total_bundled": 0,
+            "optional_provenance_backfilled": [],
+            "shadowed_by_external": [],
+        },
+        raising=False,
+    )
