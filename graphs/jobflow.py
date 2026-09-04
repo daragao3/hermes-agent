@@ -34,6 +34,7 @@ import os
 import time
 import uuid
 from pathlib import Path
+from collections.abc import Mapping
 from typing import List, Literal, Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -323,26 +324,115 @@ def match_score_node(state: JobFlowState) -> dict:
         }
 
 
-def route_decision_node(state: JobFlowState) -> dict:
-    """Deterministic branch based on score threshold.
+# The dimension the compensation veto reads, and the value at or below which a
+# posting's stated pay is treated as disqualifying.
+#
+# MEASURED, not chosen. Across the 56 golden-set items of baseline #1
+# (2026-09-04, the first evaluation ever run against that set) the
+# human-approved half never scored below 4.0 on this dimension, while 26 of the
+# 28 postings stating a ceiling below the candidate's bail line scored at or
+# below 2.0. Cutting here separates the set at 96.4% with ZERO false excludes.
+# The best cut on the weighted TOTAL manages 94.6% and archives three
+# human-approved jobs, which is the expensive error and fails the release gate
+# outright -- so the veto reads the dimension rather than moving a threshold.
+#
+# A 2 here is a reading of a stated number, not an absence of one: the rubric
+# sends an undisclosed salary to 5 (neutral), so a posting with nothing to go on
+# lands nowhere near this floor.
+_COMP_DIMENSION = "comp_alignment"
+_DEFAULT_COMP_FLOOR = 2.0
 
-    PROCEED  >= proceed_threshold (default 8.75) -> tailor
-    REVIEW   >= review_threshold  (default 5.0)  -> review
-    ARCHIVE  < review_threshold                  -> archive
+
+def _comp_floor() -> float:
+    """The veto's floor, tolerating a malformed env value instead of raising.
+
+    Deliberately more forgiving than the two threshold reads in the node below,
+    which raise on a bad value -- and the asymmetry is the point, so do not
+    "tidy" it into agreement. A typo here must neither take the scoring run down
+    nor silently DISARM the veto; falling back to the measured default keeps it
+    armed, which is the safe direction for a rule whose job is to stop jobs.
+
+    Set a negative value to turn the veto off. Dimension scores are bounded at
+    0, so nothing can reach a negative floor.
+    """
+    raw = os.environ.get("HERMES_JOBFLOW_COMP_FLOOR")
+    if raw is None:
+        return _DEFAULT_COMP_FLOOR
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "HERMES_JOBFLOW_COMP_FLOOR=%r is not a number -- falling back to %s; "
+            "the compensation veto stays armed",
+            raw,
+            _DEFAULT_COMP_FLOOR,
+        )
+        return _DEFAULT_COMP_FLOOR
+
+
+def _comp_below_floor(state: JobFlowState, floor: float) -> bool:
+    """True only on a comp score the model actually produced.
+
+    Absent, unreadable or non-numeric comp data returns False and the job routes
+    on its total. This follows the asymmetry the rest of the pipeline is built
+    on: a job wrongly kept costs one model call, a job wrongly archived destroys
+    a real opportunity silently and leaves no artifact to notice it happened. So
+    every ambiguity here resolves toward keeping the job.
+
+    ``bool`` is rejected explicitly because ``True == 1`` in Python and would
+    trip the veto without ever looking like a score.
+    """
+    breakdown = state.get("breakdown")
+    if not isinstance(breakdown, Mapping):
+        return False
+    value = breakdown.get(_COMP_DIMENSION)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return float(value) <= floor
+
+
+def route_decision_node(state: JobFlowState) -> dict:
+    """Deterministic branch on the score, with a compensation veto above it.
+
+    COMP     comp_alignment <= comp_floor (default 2.0) -> archive
+    PROCEED  >= proceed_threshold (default 8.75)        -> tailor
+    REVIEW   >= review_threshold  (default 5.0)         -> review
+    ARCHIVE  < review_threshold                         -> archive
+
+    The veto exists because the weighted total is a poor discriminator at the
+    bottom of the range. Comp Alignment is 10% of a seven-dimension rubric, so a
+    stated ceiling below the bail line moves the total by well under a point:
+    baseline #1 measured 20 of 28 such jobs landing in `review` beside 22 a
+    person had approved, 75% of the set in one band that cannot route its halves
+    apart.
 
     Thresholds are tunable via env for calibration experiments and Critic
-    auto-apply (allowed_knobs.json includes these):
+    auto-apply (allowed_knobs.json includes the first two; the comp floor is
+    NOT on Critic's auto-apply surface and is Diego-only):
         HERMES_JOBFLOW_PROCEED_THRESHOLD  (default 8.75)
         HERMES_JOBFLOW_REVIEW_THRESHOLD   (default 5.0)
+        HERMES_JOBFLOW_COMP_FLOOR         (default 2.0; negative disables)
     """
     with _TRACER.start_as_current_span("jobflow.route_decision") as span:
         score = float(state.get("score") or 0.0)
         proceed = float(os.environ.get("HERMES_JOBFLOW_PROCEED_THRESHOLD", "8.75"))
         review = float(os.environ.get("HERMES_JOBFLOW_REVIEW_THRESHOLD", "5.0"))
+        comp_floor = _comp_floor()
+        comp_vetoed = _comp_below_floor(state, comp_floor)
         span.set_attribute("threshold.proceed", proceed)
         span.set_attribute("threshold.review", review)
+        span.set_attribute("threshold.comp_floor", comp_floor)
+        span.set_attribute("comp.vetoed", comp_vetoed)
         if state.get("error"):
             decision = "review"  # fail-safe: always surface errors to the operator
+        elif comp_vetoed:
+            # Above the proceed branch on purpose. `hard_filter` already excludes
+            # on a stated sub-floor ceiling with no carve-out for an otherwise
+            # excellent job, and a model-read rule that were WEAKER than the
+            # deterministic one would be the odd rule rather than the safe one.
+            # No measured item was both sub-floor and proceed-band, so this
+            # ordering is a deliberate choice and not one fitted to the data.
+            decision = "archive"
         elif score >= proceed:
             decision = "tailor"
         elif score >= review:
