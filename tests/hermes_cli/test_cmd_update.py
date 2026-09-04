@@ -125,6 +125,24 @@ def _stub_update_side_effects(monkeypatch, no_update_sleep):
     _stub_clear = lambda *a, **k: 0  # noqa: E731
     _stub_clear._stubbed_for_tests = True
     monkeypatch.setattr(_m, "_clear_bytecode_cache", _stub_clear)
+    # A FIFTH seam of the same class. ``sync_skills`` copies the whole bundled
+    # skills tree into SKILLS_DIR and md5-hashes every destination file to
+    # detect user edits. ``tools.skills_sync`` snapshots SKILLS_DIR from
+    # HERMES_HOME at *import* time, so it keeps pointing at the tmp home of
+    # whichever test imported it first — a directory pytest deletes as soon as
+    # that test passes. Every later test therefore re-copies and re-hashes the
+    # whole tree from scratch, which alone can exceed the 30s
+    # --timeout-method=thread cap and take the entire pytest process down.
+    # Returns the empty-result shape ``_cmd_update_impl`` reads. The two tests
+    # that assert on skill seeding across profiles install their own
+    # ``sync_skills`` patch, which overrides this one.
+    monkeypatch.setattr(
+        _skills_sync,
+        "sync_skills",
+        lambda *a, **k: {
+            "copied": [], "updated": [], "user_modified": [], "cleaned": []
+        },
+    )
     monkeypatch.setattr(
         _lazy, "_venv_pip_install",
         lambda *a, **k: _lazy._InstallResult(True, "", ""),
@@ -615,13 +633,22 @@ class TestCmdUpdateBranchFallback:
         mock_run.side_effect = _make_run_side_effect(
             branch="main", verify_ok=True, commit_count="1"
         )
-        # The web UI build runs through _run_with_idle_timeout now (issue
-        # #33788) so it no longer appears in subprocess.run's call list.
-        # Mock it so the test doesn't actually shell out to ``tsc``.
-        import subprocess as _subprocess
-        build_ok = _subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        # npm is resolved through hermes_constants.find_node_executable, which
+        # only delegates to shutil.which on POSIX: on Windows
+        # find_node_executable_on_path walks PATH itself with Path.is_file(),
+        # to prefer the launchable .cmd shim over the extensionless one. The
+        # shutil.which mock above therefore intercepts nothing there, npm
+        # resolves to the host's real npm (or None), and no call carries the
+        # "/usr/bin/npm" argv0 this test filters on — leaving npm_calls empty.
+        # Patch the resolver seam itself so the assertion holds on both
+        # platforms.
+        import hermes_constants
         with patch.object(hm, "_is_termux_env", return_value=False), \
-             patch.object(hm, "_run_with_idle_timeout", return_value=build_ok) as mock_idle:
+             patch.object(
+                 hermes_constants,
+                 "find_node_executable",
+                 side_effect={"npm": "/usr/bin/npm", "node": "/usr/bin/node"}.get,
+             ):
             cmd_update(mock_args)
 
         npm_calls = [
@@ -630,17 +657,18 @@ class TestCmdUpdateBranchFallback:
             if call.args and call.args[0][0] == "/usr/bin/npm"
         ]
 
-        # cmd_update runs npm commands in these locations:
-        #   1. repo root  — root-only install (--workspaces=false)
-        #   2. repo root  — workspace install (--workspace ui-tui --workspace web)
-        #   3. web/       — npm ci --silent (if lockfile not at root)
-        #                  via _build_web_ui (subprocess.run)
-        #   4. web/       — npm run build (_run_with_idle_timeout)
+        # cmd_update runs npm through _update_node_dependencies in two passes,
+        # both from the repo root:
+        #   1. root-only install (--workspaces=false)
+        #   2. workspace install (--workspace ui-tui --workspace web)
         #
-        # With a single workspace lockfile at the repo root, the root
-        # install covers all workspaces.  The web/ ci call runs from the
-        # workspace root too (parent of web_dir) when the root lockfile
-        # exists.
+        # With a single workspace lockfile at the repo root, the root install
+        # covers all workspaces. The web/ install and `npm run build` belong to
+        # _build_web_ui, which this file's autouse _stub_update_side_effects
+        # fixture replaces with a no-op so cmd_update can never shell out to a
+        # real Vite build — so they cannot appear here. Their coverage,
+        # including that the build streams through _run_with_idle_timeout
+        # (#33788) rather than subprocess.run, lives in test_web_ui_build.py.
         #
         # The root install omits `--silent` and runs without
         # `capture_output` so optional postinstall scripts (e.g.
@@ -667,22 +695,10 @@ class TestCmdUpdateBranchFallback:
             "--workspace",
             "web",
         ]
-        assert npm_calls[:2] == [
+        assert npm_calls == [
             (root_flags, PROJECT_ROOT),
             (ws_flags, PROJECT_ROOT),
         ]
-        if len(npm_calls) > 2:
-            # The web/ install runs from the workspace root when the root
-            # lockfile exists (npm workspaces hoist node_modules upward).
-            assert npm_calls[2:] == [
-                (["/usr/bin/npm", "ci", "--include=dev", "--workspace", "web", "--silent"], PROJECT_ROOT),
-            ]
-
-        # The web UI build itself went through the streaming helper.
-        mock_idle.assert_called_once()
-        idle_args, idle_kwargs = mock_idle.call_args
-        assert idle_args[0] == ["/usr/bin/npm", "run", "build"]
-        assert idle_kwargs["cwd"] == PROJECT_ROOT / "web"
 
         # Regression for #18840: root npm installs must stream output
         # (capture_output=False) so postinstall progress is visible

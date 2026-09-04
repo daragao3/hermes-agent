@@ -4,11 +4,34 @@ Verifies worktree creation, cleanup, .worktreeinclude handling,
 .gitignore management, and integration with the CLI.  (#652)
 """
 
+import functools
 import os
 import shutil
 import subprocess
+import tempfile
 import pytest
 from pathlib import Path
+
+
+@functools.cache
+def _can_create_symlinks() -> bool:
+    """Whether this host lets an unprivileged process create a symlink.
+
+    Windows grants SeCreateSymbolicLinkPrivilege only to an elevated token or
+    to processes running with Developer Mode enabled; without either,
+    ``os.symlink`` raises ``OSError: [WinError 1314] A required privilege is
+    not held by the client``. That is a host privilege setting, not a defect
+    in the worktree code under test, so the symlink test is skipped rather
+    than failed. POSIX hosts always answer True.
+    """
+    with tempfile.TemporaryDirectory() as probe:
+        target = Path(probe) / "target"
+        target.mkdir()
+        try:
+            os.symlink(str(target), str(Path(probe) / "link"))
+        except (OSError, NotImplementedError, AttributeError):
+            return False
+    return True
 
 
 @pytest.fixture
@@ -462,6 +485,14 @@ class TestGitignoreManagement:
 class TestMultipleWorktrees:
     """Test running multiple worktrees concurrently (the core use case)."""
 
+    # Backstop only. This test drives ~40 real git subprocesses (10 × worktree
+    # add, checkout, unpushed-commit check, worktree remove) against a real
+    # repo on disk; it measured 74s on Windows, where process spawn plus
+    # per-file antivirus inspection dominates. The suite-wide --timeout=30 in
+    # pyproject.toml is sized for unit tests and killed this one mid-cleanup,
+    # stranding worktrees. Raise the ceiling rather than thin the scenario —
+    # ten concurrent agents is the case being pinned.
+    @pytest.mark.timeout(300)
     def test_ten_concurrent_worktrees(self, git_repo):
         """Create 10 worktrees — simulating 10 parallel agents."""
         worktrees = []
@@ -511,6 +542,10 @@ class TestMultipleWorktrees:
 class TestWorktreeDirectorySymlink:
     """Test .worktreeinclude with directories (symlinked)."""
 
+    @pytest.mark.skipif(
+        not _can_create_symlinks(),
+        reason="symlink creation needs Developer Mode or an elevated token",
+    )
     def test_symlinks_directory(self, git_repo):
         """Directories in .worktreeinclude should be symlinked."""
         # Create a .venv directory
