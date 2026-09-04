@@ -4932,3 +4932,169 @@ def test_launch_logs_a_failure_resolved_before_the_discovery_poll(caplog) -> Non
     assert result.error_code == "claude_authentication_unavailable"
     assert "claude_visibility_launch_failed" in caplog.text
     assert "claude_authentication_unavailable" in caplog.text
+
+
+def test_swallowed_store_failure_is_logged_with_the_operation_and_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A store failure the registrar converts to a bare code must still be named.
+
+    These call sites catch Exception and return session_bridge_unavailable /
+    "store transition unavailable". Returning that is correct; being SILENT
+    about it is what cost three sessions. A visibility job livelocked from
+    2026-09-02 to 2026-09-04 -- lease reclaimed and retaken every ~8 minutes,
+    retry/session_bridge_unavailable each time, nothing written and nothing
+    logged. The cause was commit_claude_visibility_job raising
+    ValueError('claude_lineage_missing_source'); one log line would have named
+    it on the first cycle.
+    """
+
+    class RaisingStore(FakeStore):
+        def commit_claude_visibility_job(self, *args: Any) -> dict[str, Any]:
+            raise ValueError("claude_lineage_missing_source")
+
+    item = claim(
+        lease_kind="reconciliation",
+        launch_permitted=False,
+        registration_reserved=False,
+        requires_exact_id_reconciliation=True,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(
+            FakeSource([projection_for(item)]), FakeFactory(), RaisingStore()
+        ).process(item)
+
+    assert result.status == "retry"
+    assert result.error_code == "session_bridge_unavailable"
+    records = [
+        record
+        for record in caplog.records
+        if "store transition failed" in record.getMessage()
+    ]
+    assert len(records) == 1, "exactly one swallow should be reported"
+    message = records[0].getMessage()
+    assert "operation=commit_claude_visibility_job" in message
+    assert "lease_kind=reconciliation" in message
+    # The exception TYPE and text are the whole discriminator -- without
+    # exc_info the line names the call but still not the reason.
+    assert records[0].exc_info is not None
+    assert "claude_lineage_missing_source" in caplog.text
+
+
+def test_swallowed_absence_store_failure_is_logged_with_its_own_operation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The absence path swallows separately and must not borrow another name."""
+
+    class RaisingStore(FakeStore):
+        def record_claude_visibility_exact_id_absent(
+            self, *args: Any
+        ) -> dict[str, Any]:
+            raise ValueError("exact active Claude reconciliation lease required")
+
+    class MissingSource(FakeSource):
+        def find_native_sessions_by_stem_fresh(self, native_id: str) -> list[Path]:
+            return []
+
+        def find_native_sessions_by_stem(self, native_id: str) -> list[Path]:
+            return []
+
+        def find_native_sessions(self, native_id: str) -> list[Path]:
+            return []
+
+        def find_native_session(self, native_id: str) -> Path | None:
+            return None
+
+    item = claim(
+        lease_kind="reconciliation",
+        launch_permitted=False,
+        registration_reserved=False,
+        requires_exact_id_reconciliation=True,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(MissingSource(), FakeFactory(), RaisingStore()).process(item)
+
+    assert result.status == "retry"
+    assert result.error_code == "session_bridge_unavailable"
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "store transition failed" in record.getMessage()
+    ]
+    assert len(messages) == 1
+    assert "operation=record_claude_visibility_exact_id_absent" in messages[0]
+
+
+def test_swallowed_retry_store_failure_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_retry rewrites its own code on failure; without a log the cause is gone."""
+
+    class RaisingStore(FakeStore):
+        def retry_claude_visibility_job(self, *args: Any) -> dict[str, Any]:
+            raise ValueError("exact active Claude visibility lease required")
+
+    stop = threading.Event()
+    stop.set()
+    item = claim(
+        lease_kind="reconciliation",
+        launch_permitted=False,
+        registration_reserved=False,
+        requires_exact_id_reconciliation=True,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(FakeSource(), FakeFactory(), RaisingStore()).process(
+            item, stop=stop
+        )
+
+    assert result.status == "retry"
+    assert result.error_code == "session_bridge_unavailable"
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "store transition failed" in record.getMessage()
+    ]
+    assert len(messages) == 1
+    assert "operation=retry_claude_visibility_job" in messages[0]
+
+
+def test_swallowed_fail_store_failure_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_fail rewrites a real terminal verdict into session_bridge_unavailable."""
+
+    class RaisingStore(FakeStore):
+        def fail_claude_visibility_job(self, *args: Any) -> dict[str, Any]:
+            raise ValueError("exact active Claude visibility lease required")
+
+    class ConflictingSource(FakeSource):
+        def find_native_sessions_by_stem_fresh(self, native_id: str) -> list[Path]:
+            return [Path("a.jsonl"), Path("b.jsonl")]
+
+        def find_native_sessions_by_stem(self, native_id: str) -> list[Path]:
+            return [Path("a.jsonl"), Path("b.jsonl")]
+
+    item = claim(
+        lease_kind="reconciliation",
+        launch_permitted=False,
+        registration_reserved=False,
+        requires_exact_id_reconciliation=True,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(ConflictingSource(), FakeFactory(), RaisingStore()).process(
+            item
+        )
+
+    assert result.status == "failed"
+    assert result.error_code == "session_bridge_unavailable"
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "store transition failed" in record.getMessage()
+    ]
+    assert len(messages) == 1
+    assert "operation=fail_claude_visibility_job" in messages[0]

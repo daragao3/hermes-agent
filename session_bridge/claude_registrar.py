@@ -1281,6 +1281,41 @@ def _log_claude_visibility_launch_failed(
         pass
 
 
+def _log_swallowed_store_failure(
+    operation: str, claim: "ClaudeVisibilityClaim"
+) -> None:
+    """Name a store failure the registrar is about to convert into a bare code.
+
+    Every one of these call sites catches Exception and returns
+    session_bridge_unavailable / "store transition unavailable". That is the
+    right RESULT -- the lane must not crash on a store hiccup -- but until
+    2026-09-04 it was also the entire record, and the swallowed exception was
+    the only thing that said WHY.
+
+    It cost three sessions. A visibility job livelocked from 2026-09-02 to
+    2026-09-04: its reconciliation lease was reclaimed and retaken every ~8
+    minutes, the registrar returned retry/session_bridge_unavailable each time,
+    and nothing was written or logged. The cause turned out to be
+    commit_claude_visibility_job raising ValueError('claude_lineage_missing_source')
+    -- the commit set claude_visible, the lineage finaliser then refused because
+    the job's SOURCE session was not in the catalog, and _execute_write rolled
+    the whole transaction back. One log line would have named it immediately.
+
+    exc_info is deliberate: the exception TYPE and message are the discriminator,
+    and the store raises plain ValueError with the reason as its text.
+    """
+
+    _LOG.warning(
+        "Claude visibility store transition failed operation=%s job_id=%s "
+        "lease_kind=%s attempt=%s -- converted to session_bridge_unavailable",
+        operation,
+        claim.job_id,
+        claim.lease_kind,
+        claim.attempt_ordinal,
+        exc_info=True,
+    )
+
+
 class ClaudeNativeRegistrar:
     """Processes exactly one already-leased Claude visibility claim."""
 
@@ -1696,6 +1731,9 @@ class ClaudeNativeRegistrar:
                     evidence,
                 )
             except Exception:
+                _log_swallowed_store_failure(
+                    "record_claude_visibility_exact_id_absent", claim
+                )
                 return ClaudeRegistrarOutcome(
                     "retry",
                     claim.job_id,
@@ -2076,6 +2114,7 @@ class ClaudeNativeRegistrar:
                 claim.job_id or "", claim.lease_digest or "", digest, self._clock()
             )
         except Exception:
+            _log_swallowed_store_failure("commit_claude_visibility_job", claim)
             return ClaudeRegistrarOutcome(
                 "retry",
                 claim.job_id,
@@ -2097,6 +2136,7 @@ class ClaudeNativeRegistrar:
                 detail,
             )
         except Exception:
+            _log_swallowed_store_failure("retry_claude_visibility_job", claim)
             code, detail = "session_bridge_unavailable", "store transition unavailable"
         return ClaudeRegistrarOutcome(
             "retry", claim.job_id, claim.reserved_claude_uuid, code, detail
@@ -2110,6 +2150,7 @@ class ClaudeNativeRegistrar:
                 claim.job_id or "", claim.lease_digest or "", code, detail
             )
         except Exception:
+            _log_swallowed_store_failure("fail_claude_visibility_job", claim)
             code, detail = "session_bridge_unavailable", "store transition unavailable"
         return ClaudeRegistrarOutcome(
             "failed", claim.job_id, claim.reserved_claude_uuid, code, detail
