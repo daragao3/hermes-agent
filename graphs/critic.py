@@ -392,9 +392,17 @@ def generate_proposals_node(state: CriticState) -> dict:
         except Exception:
             allowed_knobs = {"knobs": [], "propose_only": []}
 
+        # The prompt tells Critic the Matcher's CURRENT model so its proposals
+        # reason from the live configuration. Read it from the Matcher module
+        # rather than restating the default here: a literal in the prompt drifted
+        # to gpt-4o-mini while jobflow.DEFAULT_MODEL had been gpt-5.5 for months.
+        # Lazy import, matching _llm_prompt_edit_replay below.
+        from .jobflow import DEFAULT_MODEL as matcher_model
+
         user = CRITIC_PROPOSAL_USER_TEMPLATE.format(
             clusters_json=json.dumps(clusters, indent=2),
             allowed_knobs_json=json.dumps(allowed_knobs, indent=2),
+            matcher_model=matcher_model,
         )
 
         span.set_attribute("gen_ai.system", "openai")

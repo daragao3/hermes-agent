@@ -11,7 +11,8 @@
 
 - Graph module: `agent-src/graphs/` (`jobflow.py` + `_profile.py` + `_prompts.py`)
 - CLI runner: `~/.hermes/bin/jobflow_run.py`
-- Backend: LangGraph 1.1.9 + LangChain 1.2 + OpenAI (gpt-4o-mini default)
+- Backend: LangGraph 1.1.9 + the Codex Responses API over OAuth
+  (`gpt-5.5` default; see the model contract section below)
 - Observability: OTel spans → Langfuse. LLM call auto-promoted to GENERATION
   observation (prompt + structured completion visible in UI).
 
@@ -40,8 +41,8 @@ Both runs latency ~3–5s end-to-end; full trace trees in Langfuse
             │ state.profile_summary
             ▼
    ┌─────────────────┐
-   │  match_score    │   ChatOpenAI(gpt-4o-mini, temperature=0.1)
-   │  (LLM call)     │   .with_structured_output(MatcherScore)
+   │  match_score    │   codex_structured_invoke(MatcherScore, model=gpt-5.5)
+   │  (LLM call)     │   via obs/oauth_llm.py -- no temperature (endpoint rejects it)
    └────────┬────────┘
             │ state.{score, recommendation, breakdown, penalties, strengths, gaps, rationale}
             ▼
@@ -428,7 +429,11 @@ python ~/.hermes/bin/critic_run.py --window 14 --dataset hermes-jobs-v1
 
 ## Changing the LLM backend
 
-Set `HERMES_JOBFLOW_MODEL` in `~/.hermes/.env`. Default is `gpt-4o-mini`.
-For higher quality (and cost), try `gpt-4o`. Anthropic support via
-`langchain-anthropic` is a one-file swap in `jobflow.py` once we set
-`ANTHROPIC_API_KEY`.
+Set `HERMES_JOBFLOW_MODEL` (Matcher + Tailor graph) or `HERMES_CRITIC_MODEL`
+(Critic graph) in `~/.hermes/.env`. The default for both is `gpt-5.5`
+(`DEFAULT_MODEL` in `jobflow.py` and `critic.py`). Whatever you set is sent
+to the Codex Responses endpoint through
+`obs/oauth_llm.py::codex_structured_invoke`, so it must be a model that
+endpoint serves under the OAuth mandate above. There is no `OPENAI_API_KEY`
+or Anthropic side path to switch to, and no temperature knob: the endpoint
+rejects the parameter, so none is sent.

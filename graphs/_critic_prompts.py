@@ -174,8 +174,12 @@ CRITIC_PROPOSAL_USER_TEMPLATE = """\
     is Diego's. Note when proposing a review_threshold move that this veto
     already removes sub-floor-pay jobs from the review queue, so that is not a
     reason to raise it.
-  * model: gpt-4o-mini (env: HERMES_JOBFLOW_MODEL)
-  * temperature: 0.1
+  * model: {matcher_model} (env: HERMES_JOBFLOW_MODEL; this is the value the
+    Matcher graph resolved at import, not a documented default)
+  * temperature: none. The Matcher calls the Codex Responses endpoint through
+    obs/oauth_llm.py, which sends no temperature because that endpoint rejects
+    the parameter (HTTP 400). There is no temperature setting to move, so a
+    matcher.temperature proposal cannot currently be applied to anything.
   * dimensions + weights:
       - title_match (0.20)
       - skills_overlap (0.25)
