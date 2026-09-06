@@ -1335,6 +1335,12 @@ class LocalEnvironment(BaseEnvironment):
     CWD persists via file-based read after each command.
     """
 
+    # On Windows the host shell is Git Bash (see _find_bash), an MSYS build
+    # that resolves paths without Win32 DOS-device parsing — so `> NUL` there
+    # creates a real file instead of discarding. Everywhere else bash is a
+    # genuine POSIX shell and `NUL` is just a filename.
+    _msys_windows_device_redirects: bool = os.name == "nt"
+
     def __init__(self, cwd: str = "", timeout: int = 60, env: dict = None):
         cwd = _resolve_local_initial_cwd(cwd)
         super().__init__(cwd=cwd, timeout=timeout, env=env)
