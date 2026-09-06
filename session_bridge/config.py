@@ -809,6 +809,22 @@ class BridgeConfig:
                 minimum=600,
             ),
         )
+        # A launch is allowed process_timeout_seconds of driving the TUI and
+        # then discovery_timeout_seconds of polling for its transcript, all under
+        # ONE lease. Measured 2026-09-01: with lease 300 and 180 + 120 the sum
+        # was EQUAL to the lease, so any full-budget attempt expired its own
+        # lease before it could report and was recorded as lease_expired
+        # instead of its real cause. Strict headroom keeps that class closed.
+        budget = (
+            claude_visibility_config.process_timeout_seconds
+            + claude_visibility_config.discovery_timeout_seconds
+        )
+        if claude_visibility_config.lease_seconds <= budget:
+            raise ValueError(
+                "session_bridge.claude_visibility.lease_seconds must exceed "
+                "process_timeout_seconds + discovery_timeout_seconds "
+                f"({claude_visibility_config.lease_seconds} <= {budget})"
+            )
         if claude_visibility_config.continuous_batch_limit != 1:
             raise ValueError(
                 "session_bridge.claude_visibility.continuous_batch_limit "

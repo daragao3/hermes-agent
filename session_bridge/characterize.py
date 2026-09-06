@@ -112,6 +112,17 @@ def characterization_store_root() -> Path:
     return get_default_hermes_root() / "session-bridge" / "characterization"
 
 
+def registrar_diagnostics_root() -> Path:
+    """Where a registrar launch leaves the Claude CLI's own debug log.
+
+    Anchored on the same machine-global root as the characterization store,
+    for the same reason: a launch failure is a fact about this machine, and a
+    profile-scoped home would fork the evidence in two places.
+    """
+
+    return get_default_hermes_root() / "session-bridge" / "diagnostics" / "registrar"
+
+
 def characterization_source_root() -> Path:
     """Claude visibility source records live inside the one store."""
 

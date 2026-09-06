@@ -39,6 +39,7 @@ from .characterize import (
     claim_claude_visibility_characterization_abort,
     characterization_source_root,
     characterized_claude_version,
+    registrar_diagnostics_root,
     characterize_claude_visibility,
     cleanup_characterized_claude_visibility,
     load_codex_characterization_origins,
@@ -3654,6 +3655,7 @@ class ProductionBackend:
                 claude_command=claude_command,
                 process_timeout=self.config.claude_visibility.process_timeout_seconds,
                 discovery_timeout=self.config.claude_visibility.discovery_timeout_seconds,
+                debug_log_dir=registrar_diagnostics_root(),
             )
 
             coordinator = ClaudeVisibilityCoordinator(

@@ -1403,7 +1403,11 @@ class ClaudeNativeRegistrar:
         discovery_timeout: float = 15.0,
         retry_delay: float = 30.0,
         poll_interval: float = 0.1,
+        debug_log_dir: Path | None = None,
     ) -> None:
+        if debug_log_dir is not None and not isinstance(debug_log_dir, Path):
+            raise TypeError("debug_log_dir must be a Path or None")
+        self._debug_log_dir = debug_log_dir
         if type(retired_marker_secrets) is not tuple or any(
             type(value) is not bytes or not value
             for value in retired_marker_secrets
@@ -1861,6 +1865,18 @@ class ClaudeNativeRegistrar:
             "--permission-mode",
             "dontAsk",
         ]
+        debug_log = self._launch_debug_log_path(claim)
+        if debug_log is not None:
+            # The CLI's own account of the launch. Mode A -- a launch that
+            # burns its whole budget and writes no transcript -- was
+            # undiagnosable from the registrar's side: the drawn screen at
+            # timeout was 40 bytes of footer. The CLI's debug log records
+            # whether [engine] turn 1 ever started, its config-lock waits
+            # ("Lock file is already being held" against ~/.claude.json,
+            # contended by every concurrent Claude process on the box) and its
+            # file-index refresh, which is exactly the stretch in which the
+            # 2026-09-06 healthy run spent 53 seconds before its first turn.
+            argv.extend(["--debug-file", str(debug_log)])
         process: InteractivePty | None = None
         launched = False
         clean_exit = False
@@ -2126,6 +2142,37 @@ class ClaudeNativeRegistrar:
                 return self._retry(
                     claim, "creation_ambiguous", "visibility cycle cancelled"
                 )
+
+    _DEBUG_LOGS_KEPT = 40
+
+    def _launch_debug_log_path(self, claim: ClaudeVisibilityClaim) -> Path | None:
+        """One CLI debug log per launch attempt, or None when not configured.
+
+        Best-effort by construction: a failure to prepare the directory or to
+        prune old logs never changes an outcome, because the launch is the
+        product and the log is only evidence about it.
+        """
+
+        directory = self._debug_log_dir
+        if directory is None:
+            return None
+        job_id = str(claim.job_id or "")
+        stem = job_id.rsplit(":", 1)[-1][:12] or "job"
+        attempt = claim.attempt_ordinal if claim.attempt_ordinal is not None else 0
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            logs = sorted(
+                (p for p in directory.glob("*.log") if p.is_file()),
+                key=lambda p: p.stat().st_mtime,
+            )
+            for stale in logs[: max(0, len(logs) - self._DEBUG_LOGS_KEPT + 1)]:
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            return None
+        return directory / f"{stem}-att{int(attempt)}.log"
 
     def _read_exact(self, native_id: str) -> _ExactTranscript | None:
         fresh = getattr(self._source, "find_native_sessions_by_stem_fresh", None)

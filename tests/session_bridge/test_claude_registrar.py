@@ -5253,3 +5253,87 @@ def test_prompt_input_raise_site_attaches_the_screen_it_classified() -> None:
         process.read_until_prompt_input(0.05, prompt="a registration prompt")
 
     assert "an unsettled paste screen" in exc_info.value.output
+
+
+def test_launch_argv_has_no_debug_file_when_no_debug_dir_is_configured() -> None:
+    """The default keeps the production argv byte-identical (the exact pins above)."""
+
+    item = claim()
+    factory = FakeFactory()
+    registrar(FakeSource([None, projection_for(item)]), factory).process(item)
+
+    assert "--debug-file" not in factory.spawns[0][0]
+
+
+def test_launch_appends_a_per_attempt_cli_debug_log_when_configured(
+    tmp_path: Path,
+) -> None:
+    """The CLI's own account of a launch that writes no transcript.
+
+    Mode A was undiagnosable from the registrar's side: the drawn screen at
+    timeout was 40 bytes of footer. The CLI's --debug-file records whether
+    [engine] turn 1 ever started, its config-lock waits against ~/.claude.json
+    (contended by every concurrent Claude process on the box) and its file
+    index refresh -- the stretch in which a healthy 2026-09-06 run spent 53s
+    before its first turn.
+    """
+
+    item = claim(attempt_ordinal=2)
+    factory = FakeFactory()
+    log_dir = tmp_path / "registrar"
+    registrar(
+        FakeSource([None, projection_for(item)]), factory, debug_log_dir=log_dir
+    ).process(item)
+
+    argv = factory.spawns[0][0]
+    assert argv[-2] == "--debug-file"
+    expected_stem = str(item.job_id).rsplit(":", 1)[-1][:12]
+    assert argv[-1] == str(log_dir / f"{expected_stem}-att2.log")
+    assert log_dir.is_dir(), "the directory is prepared before the CLI spawns"
+    # The registration argv proper is untouched ahead of the appended pair.
+    assert argv[:-2][-2:] == ["--permission-mode", "dontAsk"]
+
+
+def test_launch_debug_logs_are_capped_so_the_directory_cannot_grow_forever(
+    tmp_path: Path,
+) -> None:
+    log_dir = tmp_path / "registrar"
+    log_dir.mkdir()
+    for index in range(45):
+        stale = log_dir / f"old-{index:02d}.log"
+        stale.write_text("x", encoding="utf-8")
+        os.utime(stale, (1_700_000_000 + index, 1_700_000_000 + index))
+
+    item = claim()
+    registrar(
+        FakeSource([None, projection_for(item)]), FakeFactory(), debug_log_dir=log_dir
+    ).process(item)
+
+    remaining = sorted(p.name for p in log_dir.glob("*.log"))
+    assert len(remaining) <= ClaudeNativeRegistrar._DEBUG_LOGS_KEPT
+    # Oldest go first, newest survive.
+    assert "old-00.log" not in remaining
+    assert "old-44.log" in remaining
+
+
+def test_launch_degrades_to_no_debug_file_when_the_directory_is_unusable(
+    tmp_path: Path,
+) -> None:
+    """Evidence is optional; the launch is the product."""
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("", encoding="utf-8")
+
+    item = claim()
+    factory = FakeFactory()
+    result = registrar(
+        FakeSource([None, projection_for(item)]), factory, debug_log_dir=blocker
+    ).process(item)
+
+    assert result.status == "visible"
+    assert "--debug-file" not in factory.spawns[0][0]
+
+
+def test_registrar_rejects_a_non_path_debug_dir() -> None:
+    with pytest.raises(TypeError):
+        registrar(FakeSource(), FakeFactory(), debug_log_dir="C:/tmp")  # type: ignore[arg-type]
