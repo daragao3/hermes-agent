@@ -194,3 +194,33 @@ def test_run_min_interval_throttles(tmp_path, store) -> None:
 def test_worker_requires_registry_roots(store) -> None:
     with pytest.raises(ValueError):
         DesktopRegistrySyncWorker(store, registry_roots=(), run_min_interval_seconds=0)
+
+
+def test_unknown_key_record_is_replicated_and_verified(tmp_path, store) -> None:
+    # End-to-end pin of the 2026-09-06 live signature: a brand-new record carrying a
+    # key the planner cannot classify must still be replicated to the other roots,
+    # verify clean, advance its decided baselines, and leave the unknown group as a
+    # standing conflict rather than a growing verify_failed_files count.
+    a, b, c = _roots(tmp_path)
+    _write_record(a, "local_one", mtime_ns=100, futureDesktopField="x")
+    b.mkdir()
+    c.mkdir()
+
+    worker = _worker(store, (a, b, c))
+    counters = worker.run_once()
+
+    assert counters["created"] == 2
+    assert counters["raced"] == 0
+    assert counters["verify_failures"] == 0
+    assert counters["conflicts"] == 1
+    assert counters["baseline_rows_advanced"] > 0
+    for root in (b, c):
+        assert _read(root, "local_one")["futureDesktopField"] == "x"
+        assert _read(root, "local_one")["title"] == "Original"
+    assert store.pending_desktop_registry_run() is None
+
+    second = worker.run_once()
+    assert second["created"] == 0
+    assert second["patched"] == 0
+    assert second["verify_failures"] == 0
+    assert second["conflicts"] == 1

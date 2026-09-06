@@ -444,19 +444,111 @@ def test_missing_replica_is_create_only_from_composite(tmp_path: Path) -> None:
     assert json.loads(create.after_bytes)["title"] == "Newest"
 
 
-def test_missing_replica_is_not_created_when_any_group_conflicts(tmp_path: Path) -> None:
+def test_missing_replica_is_created_best_effort_when_a_group_conflicts(
+    tmp_path: Path,
+) -> None:
+    # Until 2026-09-06 a missing replica was created only when NO group
+    # conflicted, so a single undecidable field stranded the whole session in
+    # one account.  The replica is now built from the decided composite plus
+    # the newest extant copy's value for the undecidable group, which stays
+    # quarantined: no baseline, conflict still recorded, extant copies untouched.
     a, b, c = (tmp_path / name for name in ("a", "b", "c"))
-    _write_record(a, "local_one", mtime_ns=300, title="A")
-    _write_record(b, "local_one", mtime_ns=300, title="B")
+    _write_record(a, "local_one", mtime_ns=300, title="A", isArchived=True)
+    _write_record(b, "local_one", mtime_ns=300, title="B", isArchived=True)
     c.mkdir()
 
     plan = build_registry_sync_plan(_scan(a, b, c), baselines=())
 
-    assert plan.conflicts
-    assert all(
-        mutation.operation != "create"
-        for mutation in plan.records["local_one.json"].mutations
+    conflict = next(item for item in plan.conflicts if item.group_name == "field:title")
+    assert conflict.reason == "bootstrap_newest_tie"
+    record = plan.records["local_one.json"]
+    creates = [m for m in record.mutations if m.operation == "create"]
+    assert [m.root_id for m in creates] == [_root_id(plan.scan, c)]
+    created = json.loads(creates[0].after_bytes)
+    assert created["isArchived"] is True
+    assert created["title"] in {"A", "B"}
+    assert "title" in creates[0].changed_fields
+    assert "field:title" not in record.desired_groups
+    assert not any(
+        baseline.group_name == "field:title" for baseline in plan.proposed_baselines
     )
+    # extant copies are never patched toward the best-effort seed
+    assert all(m.operation == "create" for m in record.mutations)
+
+    again = build_registry_sync_plan(_scan(a, b, c), baselines=())
+    recreated = next(
+        m for m in again.records["local_one.json"].mutations if m.operation == "create"
+    )
+    assert json.loads(recreated.after_bytes)["title"] == created["title"]
+
+
+def test_unknown_key_does_not_block_replica_creation(tmp_path: Path) -> None:
+    # The live 2026-09-06 defect: the desktop app began writing a key this
+    # module had never classified (promptAppendSnapshot) on every new session
+    # record, and every such session stayed missing from the other accounts
+    # while verify_failed_files climbed one per session.
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    _write_record(a, "local_one", mtime_ns=100, futureDesktopField={"append": "x"})
+    b.mkdir()
+    c.mkdir()
+
+    plan = build_registry_sync_plan(_scan(a, b, c), baselines=())
+
+    conflict = next(
+        item for item in plan.conflicts if item.group_name == "unknown:futureDesktopField"
+    )
+    assert conflict.reason == "unknown_field_unclassified"
+    record = plan.records["local_one.json"]
+    creates = [m for m in record.mutations if m.operation == "create"]
+    assert {m.root_id for m in creates} == {_root_id(plan.scan, b), _root_id(plan.scan, c)}
+    for create in creates:
+        created = json.loads(create.after_bytes)
+        assert created["futureDesktopField"] == {"append": "x"}
+        assert created["title"] == "Original"
+        assert "futureDesktopField" in create.changed_fields
+    assert "unknown:futureDesktopField" not in record.desired_groups
+    assert not any(
+        baseline.group_name == "unknown:futureDesktopField"
+        for baseline in plan.proposed_baselines
+    )
+
+    for create in creates:
+        apply_registry_mutation(plan.scan, create)
+    assert verify_registry_sync_plan(plan, _scan(a, b, c)).verified
+
+    second = build_registry_sync_plan(_scan(a, b, c), baselines=plan.proposed_baselines)
+    assert not second.records["local_one.json"].mutations
+    standing = next(
+        item for item in second.conflicts if item.group_name == "unknown:futureDesktopField"
+    )
+    assert standing.reason == "unknown_field_unclassified"
+
+
+def test_prompt_append_snapshot_and_scheduled_run_continued_are_classified(
+    tmp_path: Path,
+) -> None:
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    _write_record(
+        a,
+        "local_one",
+        mtime_ns=100,
+        promptAppendSnapshot={"append": "x"},
+        scheduledRunContinued=True,
+    )
+    b.mkdir()
+    c.mkdir()
+
+    plan = build_registry_sync_plan(_scan(a, b, c), baselines=())
+
+    assert not plan.conflicts
+    record = plan.records["local_one.json"]
+    assert record.desired_groups["field:promptAppendSnapshot"]
+    assert record.desired_groups["field:scheduledRunContinued"]
+    creates = [m for m in record.mutations if m.operation == "create"]
+    assert len(creates) == 2
+    created = json.loads(creates[0].after_bytes)
+    assert created["promptAppendSnapshot"] == {"append": "x"}
+    assert created["scheduledRunContinued"] is True
 
 
 def test_protected_cli_session_id_divergence_is_quarantined(tmp_path: Path) -> None:

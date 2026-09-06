@@ -54,10 +54,21 @@ _GROUP_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     }
 )
 
-# All fields observed in the three enrolled Desktop stores on 2026-08-30.  Keys not
-# listed here are preserved in place but quarantined from convergence until their
-# semantics are classified.  Adding a field to a correlated group changes conflict
-# semantics and therefore requires a grouping-version bump.
+# All fields observed in the three enrolled Desktop stores on 2026-08-30, plus the
+# keys the desktop app has started writing since (2026-09-06: promptAppendSnapshot,
+# scheduledRunContinued).  Keys not listed here are preserved in place but quarantined
+# from convergence until their semantics are classified.  Adding a field to a
+# correlated group changes conflict semantics and therefore requires a
+# grouping-version bump; adding an INDEPENDENT field does not.
+#
+# An unclassified key must never strand a session.  Measured 2026-09-06: the app
+# began writing promptAppendSnapshot on every new session record, and because
+# replica creation used to require that no group conflict at all, 92 sessions over
+# four days existed in exactly one account's store while the run ledger reported
+# verify_failed_files climbing one per session.  Creation is now best effort for
+# undecidable groups (see build_registry_sync_plan); classifying a new key here is
+# hygiene that clears the standing conflict, not the thing that keeps sessions
+# visible.
 _OBSERVED_FIELDS = frozenset(
     {
         "alwaysAllowedReasons",
@@ -102,12 +113,14 @@ _OBSERVED_FIELDS = frozenset(
         "prState",
         "prUrl",
         "priorErrorMark",
+        "promptAppendSnapshot",
         "promptSuggestion",
         "prs",
         "remoteControlAutoEligible",
         "remoteMcpServersConfig",
         "reportFindingsCard",
         "resolvedBackgroundTaskSuggestions",
+        "scheduledRunContinued",
         "scheduledTaskId",
         "sessionId",
         "sessionPermissionUpdates",
@@ -565,6 +578,38 @@ def _changed_fields(group_name: str, value_json: str) -> dict[str, Mapping[str, 
     return {_fields_for_group(group_name)[0]: value}
 
 
+def _newest_observation(
+    observations: Mapping[str, RegistryRecordObservation],
+) -> RegistryRecordObservation:
+    """The extant copy that seeds an undecidable group on a NEW replica.
+
+    Newest mtime wins; an exact tie falls to the lowest root id so the seed is
+    deterministic across cycles.  This only seeds a missing replica -- it never
+    decides a group, never proposes a baseline, and never patches an extant file.
+    """
+    return min(
+        observations.values(),
+        key=lambda observation: (-observation.mtime_ns, observation.root_id),
+    )
+
+
+def _apply_group_best_effort(
+    record: dict[str, Any], group_name: str, value_json: str
+) -> None:
+    if group_name.startswith("unknown:"):
+        _apply_tagged_field(record, group_name.partition(":")[2], _decoded_tag(value_json))
+        return
+    _apply_group(record, group_name, value_json)
+
+
+def _changed_fields_best_effort(
+    group_name: str, value_json: str
+) -> dict[str, Mapping[str, Any]]:
+    if group_name.startswith("unknown:"):
+        return {group_name.partition(":")[2]: _decoded_tag(value_json)}
+    return _changed_fields(group_name, value_json)
+
+
 def _validate_baselines(
     scan: RegistryScan,
     baselines_by_record: Mapping[str, Mapping[str, Mapping[str, RegistryBaseline]]],
@@ -818,14 +863,32 @@ def build_registry_sync_plan(
                 )
 
         missing_roots = set(scan.roots) - set(observations)
-        if missing_roots and not group_conflicts:
+        if missing_roots:
+            # A missing replica is created from the accepted composite plus, for
+            # every group this cycle could NOT decide, the value on the newest
+            # extant copy.  Until 2026-09-06 creation required that NO group
+            # conflict, so one unclassified key the desktop app had started
+            # writing (promptAppendSnapshot) left every new session stranded in
+            # the account that created it: 92 records over four days, with the
+            # run ledger's verify_failed_files climbing one per session.  A
+            # best-effort value is strictly safer than an invisible session --
+            # the undecidable group stays quarantined (no baseline is proposed
+            # for it and its conflict is still recorded), so convergence never
+            # touches that field on any extant copy.
             composite: dict[str, Any] = {"sessionId": session_id}
-            for group_name, value_json in desired.items():
-                _apply_group(composite, group_name, value_json)
-            after_bytes = _canonical_json(composite)
             all_changed: dict[str, Mapping[str, Any]] = {}
             for group_name, value_json in desired.items():
+                _apply_group(composite, group_name, value_json)
                 all_changed.update(_changed_fields(group_name, value_json))
+            if group_conflicts:
+                donor = _newest_observation(observations)
+                for conflict in group_conflicts:
+                    value_json = _value_for_group(donor, conflict.group_name)
+                    _apply_group_best_effort(composite, conflict.group_name, value_json)
+                    all_changed.update(
+                        _changed_fields_best_effort(conflict.group_name, value_json)
+                    )
+            after_bytes = _canonical_json(composite)
             for root_id in sorted(missing_roots):
                 mutations.append(
                     RegistryMutation(
