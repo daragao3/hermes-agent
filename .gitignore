@@ -64,6 +64,23 @@ ignored/
 .worktrees/
 environments/benchmarks/evals/
 
+# Claude Code per-session worktrees. Already in .git/info/exclude, but that file is
+# invisible to codegraph: its buildDefaultIgnore() (extraction/index.js) seeds the
+# watcher's chokidar `ignored` predicate from the built-in defaults plus THIS file
+# only -- it never reads .git/info/exclude, nested .gitignores, or core.excludesFile.
+# The indexer, by contrast, enumerates via `git ls-files -o --exclude-standard`, which
+# DOES honor info/exclude. So watch scope and index scope diverged exactly here: on
+# 2026-09-06 the agent-src daemon was watching 20 live worktrees (20,224 dirs / ~104k
+# source files it could never index, plus each one's Electron release/win-unpacked
+# build output -- the root-anchored `apps/desktop/release/` rule does not match at
+# `.claude/worktrees/<name>/apps/desktop/release/`). Every file event in any worktree
+# schedules a FULL-project reconcile (CodeGraph.watch()'s syncFn calls sync() with no
+# changed-file argument), which cost 1.5-142s each against the 1.07 GB graph, and the
+# per-file chokidar watches leaked handles at ~3,750/min. Measured: one daemon at 91%
+# of a core and 174,304 handles over 4h. Only takes effect for daemons STARTED AFTER
+# this rule lands -- ignoreMatcher is built once, at watcher startup.
+**/.claude/worktrees/
+
 # Web UI build output
 hermes_cli/web_dist/
 apps/desktop/build/

@@ -12,6 +12,7 @@ from agent.display import (
     get_cute_tool_message,
     redact_tool_args_for_display,
     set_tool_preview_max_len,
+    summarize_shell_command,
     _render_inline_unified_diff,
     _summarize_rendered_diff_sections,
     render_edit_diff_with_delta,
@@ -84,6 +85,19 @@ class TestBuildToolPreview:
             {"code": 'cd /tmp/demo && python -m pytest -q 2>&1 | tail -5; echo "exit=$?"'},
         )
         assert result == "python -m pytest -q"
+
+    def test_terminal_preview_shows_where_output_was_written(self):
+        # A redirect to a real path is the one fact that attributes a written
+        # file to a command, so it must survive into the rendered transcript.
+        result = build_tool_preview("terminal", {"command": "python -m json.tool qa.json > out.txt"})
+        assert result == "python -m json.tool qa.json > out.txt"
+
+    def test_terminal_preview_shows_windows_device_redirect_target(self):
+        # Commands run under MSYS bash, where NUL is an ordinary relative
+        # filename: `> NUL` writes a real file and the transcript must say so.
+        device = "N" + "U" + "L"
+        result = build_tool_preview("terminal", {"command": f"python -m json.tool qa.json > {device}"})
+        assert result == f"python -m json.tool qa.json > {device}"
 
     def test_web_search_preview(self):
         result = build_tool_preview("web_search", {"query": "hello world"})
@@ -551,3 +565,72 @@ class TestBuildStatusPhrase:
         from agent.display import build_status_phrase
         phrase = build_status_phrase("skills_list", {"category": "devops"})
         assert phrase == "is listing skills…"
+
+
+class TestShellRedirectRendering:
+    """Redirects to a real destination are shown; discard sinks stay hidden.
+
+    Hiding every space-separated redirect once made a stray ``> NUL`` write
+    unattributable from the transcript, while the fused ``>/dev/null`` form
+    survived — an asymmetry with no reader value either way round.
+    """
+
+    DEVICE = "N" + "U" + "L"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cmd > out.txt",
+            "cmd >> log.txt",
+            "cmd < input.txt",
+            "cmd 2> errors.log",
+            "cmd > sub/dir/out.txt",
+        ],
+    )
+    def test_redirect_to_a_real_path_is_shown(self, command):
+        assert summarize_shell_command(command) == command
+
+    def test_windows_device_target_is_shown_spaced_and_fused(self):
+        # Under MSYS bash NUL is a plain relative filename, not a discard sink.
+        assert summarize_shell_command(f"cmd > {self.DEVICE}") == f"cmd > {self.DEVICE}"
+        assert summarize_shell_command(f"cmd >{self.DEVICE}") == f"cmd >{self.DEVICE}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cmd > /dev/null",
+            "cmd >/dev/null",
+            "cmd >> /dev/null",
+            "cmd 2> /dev/null",
+            "cmd 2>/dev/null",
+            'cmd > "/dev/null"',
+        ],
+    )
+    def test_discard_sink_stays_hidden_however_it_is_written(self, command):
+        assert summarize_shell_command(command) == "cmd"
+
+    def test_fd_duplication_still_elided(self):
+        assert summarize_shell_command("cmd 2>&1") == "cmd"
+        assert summarize_shell_command("cmd > out.txt 2>&1") == "cmd > out.txt"
+
+    def test_compound_segments_keep_their_own_redirects(self):
+        assert summarize_shell_command("a > x.txt && b > y.txt") == "a > x.txt + 1 command"
+
+    def test_silent_head_segment_is_still_dropped_with_a_redirect(self):
+        # Classification runs on the redirect-free form, so `cd` stays silent.
+        assert summarize_shell_command("cd /tmp > out.txt && real cmd") == "real cmd"
+
+    def test_boundary_echo_is_not_created_by_redirect_target_text(self):
+        # `--` inside the target must not make this look like a boundary echo.
+        summary = summarize_shell_command('echo hello > out--file.txt && real cmd')
+        assert summary == "echo hello > out--file.txt + 1 command"
+
+    def test_existing_plumbing_compaction_is_unchanged(self):
+        command = (
+            "cd /Users/brooklyn/www/bb-rainbows && pnpm run lint 2>&1 "
+            '| tail -20; echo "lint_exit=${PIPESTATUS[0]}"'
+        )
+        assert summarize_shell_command(command) == "pnpm run lint"
+
+    def test_bare_redirect_segment_falls_back_to_the_original(self):
+        assert summarize_shell_command("> only.txt") == "> only.txt"
