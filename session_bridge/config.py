@@ -227,6 +227,16 @@ class ClaudeVisibilityConfig:
     # times a day stacks eight records inside one 24h chip window, which is why
     # this is a separate, smaller number rather than a reuse of the chip one.
     idle_task_session_archive_seconds: int | None = None
+    # How long a max_attempts_exhausted job must sit terminal before the lane
+    # may clear it without an operator. ``None`` = axis OFF, so nobody inherits
+    # unattended dismissal by upgrading; set it to opt in. Only exhaustion is
+    # ever eligible -- conflict and lineage codes always wait for a human.
+    auto_dismiss_exhausted_after_seconds: int | None = None
+    # The reset condition on that clearance: a successful registration must
+    # have landed within this trailing window, or the job is HELD and reported
+    # instead of cleared. Without it a timer alone marches the whole backlog
+    # through paid attempts while the registration path is broken.
+    auto_dismiss_health_window_seconds: int = 86_400
 
 
 @dataclass(frozen=True)
@@ -330,6 +340,8 @@ class BridgeConfig:
                 "reconcile_desktop_registries",
                 "idle_chip_archive_seconds",
                 "idle_task_session_archive_seconds",
+                "auto_dismiss_exhausted_after_seconds",
+                "auto_dismiss_health_window_seconds",
             }),
             scope="session_bridge.claude_visibility",
         )
@@ -807,6 +819,24 @@ class BridgeConfig:
                 ),
                 "session_bridge.claude_visibility.idle_task_session_archive_seconds",
                 minimum=600,
+            ),
+            auto_dismiss_exhausted_after_seconds=_optional_toml_int(
+                claude_visibility.get(
+                    "auto_dismiss_exhausted_after_seconds",
+                    claude_visibility_defaults.auto_dismiss_exhausted_after_seconds,
+                ),
+                "session_bridge.claude_visibility."
+                "auto_dismiss_exhausted_after_seconds",
+                minimum=600,
+            ),
+            auto_dismiss_health_window_seconds=_toml_int(
+                claude_visibility.get(
+                    "auto_dismiss_health_window_seconds",
+                    claude_visibility_defaults.auto_dismiss_health_window_seconds,
+                ),
+                "session_bridge.claude_visibility."
+                "auto_dismiss_health_window_seconds",
+                minimum=3600,
             ),
         )
         # A launch is allowed process_timeout_seconds of driving the TUI and

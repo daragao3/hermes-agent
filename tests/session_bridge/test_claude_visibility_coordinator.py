@@ -77,6 +77,16 @@ class FakeStore:
         self.source_checks = 0
         self.cycle_records = []
         self.open_sources: set[str] = set()
+        self.auto_dismiss_calls: list[tuple[float, int, int]] = []
+        self.auto_dismiss_error: Exception | None = None
+        self.auto_dismiss_outcome: dict = {
+            "status": "idle",
+            "dismissed": [],
+            "held": [],
+            "newly_held": [],
+            "healthy": True,
+            "last_success_at": None,
+        }
         self.raw_status = {
             "counts": {
                 "claude_pending": 0,
@@ -97,6 +107,16 @@ class FakeStore:
     def claude_visibility_status(self, now: float):
         self.status_calls += 1
         return self.raw_status
+
+    def auto_dismiss_exhausted_claude_visibility_jobs(
+        self, now: float, *, min_age_seconds: int, health_window_seconds: int
+    ):
+        self.auto_dismiss_calls.append(
+            (now, min_age_seconds, health_window_seconds)
+        )
+        if self.auto_dismiss_error is not None:
+            raise self.auto_dismiss_error
+        return self.auto_dismiss_outcome
 
     def has_claude_visibility_source(self, source_session_id: str) -> bool:
         self.source_checks += 1
@@ -161,13 +181,16 @@ def _config(*, enabled: bool = True, continuous: bool = False) -> BridgeConfig:
     )
 
 
-def _coordinator(sources, *, store=None, registrar=None, config=None):
+def _coordinator(sources, *, store=None, registrar=None, config=None, notifier=None):
     calls = []
 
     def inventory(after: float):
         calls.append(after)
         return list(sources)
 
+    kwargs = {}
+    if notifier is not None:
+        kwargs["notifier"] = notifier
     value = ClaudeVisibilityCoordinator(
         config=config or _config(),
         store=store or FakeStore(),
@@ -175,8 +198,23 @@ def _coordinator(sources, *, store=None, registrar=None, config=None):
         registrar=registrar or FakeRegistrar(),
         marker_secret=SECRET,
         clock=lambda: NOW,
+        **kwargs,
     )
     return value, calls
+
+
+def _auto_dismiss_config(
+    *, after_seconds: int | None = 21_600, health_window: int = 86_400
+) -> BridgeConfig:
+    base = _config()
+    return replace(
+        base,
+        claude_visibility=replace(
+            base.claude_visibility,
+            auto_dismiss_exhausted_after_seconds=after_seconds,
+            auto_dismiss_health_window_seconds=health_window,
+        ),
+    )
 
 
 def test_discovery_is_stable_bounded_and_reports_fixed_exclusions() -> None:
@@ -1142,3 +1180,198 @@ def test_enqueue_gates_name_an_abandoned_repair_lease() -> None:
     _open_reasons, fatal_reasons = _claude_visibility_enqueue_gates(raw)
 
     assert fatal_reasons == ("reconciliation_repair_abandoned",)
+
+
+def test_auto_dismiss_axis_is_off_unless_configured() -> None:
+    """Nobody inherits unattended dismissal by upgrading."""
+
+    store = FakeStore()
+    coordinator, _calls = _coordinator([], store=store)
+
+    coordinator.run_once()
+
+    assert store.auto_dismiss_calls == []
+
+
+def test_auto_dismiss_runs_before_the_enqueue_gates_when_configured() -> None:
+    store = FakeStore()
+    coordinator, _calls = _coordinator(
+        [], store=store, config=_auto_dismiss_config()
+    )
+
+    coordinator.run_once(discover_continuous=True)
+
+    # Ordering is the point: a clearance has to reopen the gate in the SAME
+    # cycle, not the next one.
+    assert store.auto_dismiss_calls == [(NOW, 21_600, 86_400)]
+    assert store.status_calls >= 1
+
+
+def test_auto_dismiss_notifies_the_operator_about_each_cleared_job() -> None:
+    store = FakeStore()
+    store.auto_dismiss_outcome = {
+        "status": "dismissed",
+        "dismissed": [
+            {
+                "job_id": "claude-visibility-job:abc",
+                "attempts": 3,
+                "error_code": "max_attempts_exhausted",
+                "age_seconds": 30_000.0,
+                "terminal_at": NOW - 30_000.0,
+                "operator_cleared_at": NOW,
+                "last_success_at": NOW - 3_600.0,
+            }
+        ],
+        "held": [],
+        "newly_held": [],
+        "healthy": True,
+        "last_success_at": NOW - 3_600.0,
+    }
+    notes: list[tuple[str, str]] = []
+    coordinator, _calls = _coordinator(
+        [],
+        store=store,
+        config=_auto_dismiss_config(),
+        notifier=lambda headline, detail: notes.append((headline, detail)),
+    )
+
+    coordinator.run_once()
+
+    assert len(notes) == 1
+    headline, detail = notes[0]
+    assert "auto-cleared" in headline
+    assert "claude-visibility-job:abc" in detail
+    # The audit row survives, and the note has to say so.
+    assert "audit row is preserved" in detail
+
+
+def test_auto_dismiss_notifies_when_it_refuses_on_an_unhealthy_lane() -> None:
+    store = FakeStore()
+    store.auto_dismiss_outcome = {
+        "status": "held",
+        "dismissed": [],
+        "held": [
+            {
+                "job_id": "claude-visibility-job:def",
+                "attempts": 3,
+                "reason": "lane_unhealthy",
+                "age_seconds": 30_000.0,
+                "terminal_at": NOW - 30_000.0,
+                "last_success_at": None,
+            }
+        ],
+        "newly_held": [
+            {
+                "job_id": "claude-visibility-job:def",
+                "attempts": 3,
+                "reason": "lane_unhealthy",
+                "age_seconds": 30_000.0,
+                "terminal_at": NOW - 30_000.0,
+                "last_success_at": None,
+            }
+        ],
+        "healthy": False,
+        "last_success_at": None,
+    }
+    notes: list[tuple[str, str]] = []
+    coordinator, _calls = _coordinator(
+        [],
+        store=store,
+        config=_auto_dismiss_config(),
+        notifier=lambda headline, detail: notes.append((headline, detail)),
+    )
+
+    coordinator.run_once()
+
+    assert len(notes) == 1
+    headline, detail = notes[0]
+    assert "NOT auto-cleared" in headline
+    # The note has to hand over the exact recovery command, attempts included --
+    # --expected-attempts is required and is not guessable from the row.
+    assert "--expected-attempts 3" in detail
+    assert "--job-id claude-visibility-job:def" in detail
+
+
+def test_auto_dismiss_stays_quiet_about_a_job_that_is_merely_too_recent() -> None:
+    """too_recent resolves itself on a later cycle; it is not operator news."""
+
+    store = FakeStore()
+    store.auto_dismiss_outcome = {
+        "status": "held",
+        "dismissed": [],
+        "held": [],
+        "newly_held": [
+            {
+                "job_id": "claude-visibility-job:ghi",
+                "attempts": 3,
+                "reason": "too_recent",
+                "age_seconds": 60.0,
+                "terminal_at": NOW - 60.0,
+                "last_success_at": NOW - 100.0,
+            }
+        ],
+        "healthy": True,
+        "last_success_at": NOW - 100.0,
+    }
+    notes: list[tuple[str, str]] = []
+    coordinator, _calls = _coordinator(
+        [],
+        store=store,
+        config=_auto_dismiss_config(),
+        notifier=lambda headline, detail: notes.append((headline, detail)),
+    )
+
+    coordinator.run_once()
+
+    assert notes == []
+
+
+def test_auto_dismiss_failure_never_breaks_the_visibility_cycle() -> None:
+    """A broken courtesy must degrade to the fail-closed lane we already had."""
+
+    store = FakeStore()
+    store.auto_dismiss_error = RuntimeError("database is locked")
+    coordinator, _calls = _coordinator(
+        [], store=store, config=_auto_dismiss_config()
+    )
+
+    result = coordinator.run_once()
+
+    assert store.auto_dismiss_calls
+    assert result.enabled is True
+    # The cycle must reach its normal work, not bail at the front.
+    assert store.claim_calls == 1
+    assert result.status == "no_due_job"
+
+
+def test_auto_dismiss_notifier_failure_never_breaks_the_cycle() -> None:
+    store = FakeStore()
+    store.auto_dismiss_outcome = {
+        "status": "dismissed",
+        "dismissed": [
+            {
+                "job_id": "claude-visibility-job:jkl",
+                "attempts": 3,
+                "error_code": "max_attempts_exhausted",
+                "age_seconds": 30_000.0,
+                "terminal_at": NOW - 30_000.0,
+                "operator_cleared_at": NOW,
+                "last_success_at": NOW - 3_600.0,
+            }
+        ],
+        "held": [],
+        "newly_held": [],
+        "healthy": True,
+        "last_success_at": NOW - 3_600.0,
+    }
+
+    def explode(headline: str, detail: str) -> None:
+        raise RuntimeError("bus unreachable")
+
+    coordinator, _calls = _coordinator(
+        [], store=store, config=_auto_dismiss_config(), notifier=explode
+    )
+
+    result = coordinator.run_once()
+
+    assert result.enabled is True

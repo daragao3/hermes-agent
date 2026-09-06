@@ -104,6 +104,11 @@ _SIDEBAR_HYDRATION_LEASE_KEY = b"session-sidebar-hydration-lease-v1"
 _SIDEBAR_HYDRATION_COMPLETION_KEY = b"session-sidebar-hydration-completion-v1"
 _SIDEBAR_HYDRATION_MAX_ATTEMPTS = 5
 _CLAUDE_VISIBILITY_CYCLE_STATE_KEY = "session-bridge:claude-visibility:cycle"
+# Which exhausted jobs have already been reported as held, so the auto-dismiss
+# gate alerts once per job per reason instead of once per ~60s cycle.
+_CLAUDE_VISIBILITY_AUTO_DISMISS_STATE_KEY = (
+    "session-bridge:claude-visibility:auto-dismiss"
+)
 _CLAUDE_VISIBILITY_CYCLE_STATE_VERSION = 2
 # The detail marker that carries terminal-repair authority. Every ordinary
 # reclaim path excludes it on purpose, so a row wearing it is waiting on an
@@ -3361,6 +3366,204 @@ class SessionBridgeStore:
                 "job_id": normalized_job,
                 "error_code": normalized_code,
                 "operator_cleared_at": operation_time,
+            }
+
+        return self.db._execute_write(_write)
+
+    def auto_dismiss_exhausted_claude_visibility_jobs(
+        self,
+        now: float,
+        *,
+        min_age_seconds: int,
+        health_window_seconds: int,
+    ) -> dict[str, Any]:
+        """Retire aged-out max_attempts_exhausted rows, but only on a HEALTHY lane.
+
+        A terminally exhausted job fail-closes discovery until an operator
+        adjudicates it. Measured 2026-09-06 that had happened 18 times, mean
+        23.0h blocked and once 179.5h, so the human is the bottleneck on a
+        condition that recurs about weekly. This clears the common case
+        unattended.
+
+        WHY IT IS GATED ON LANE HEALTH RATHER THAN ON A TIMER ALONE. All 18
+        exhausted rows were 18 DISTINCT source sessions: the recurrence is not
+        one doomed job re-queuing, it is discovery resuming after each clear,
+        taking the next session off the backlog, and that one exhausting too.
+        So a plain timer does not converge -- it marches the backlog at
+        max_attempts * reserved_cost_per_attempt_usd per session for as long as
+        the registration path stays broken, and it does that silently, having
+        just removed the one standing signal that anything is wrong. On
+        2026-09-06 the path was failing 100% of the time (every attempt
+        'main_repl_without_prompt_echo', the open prompt-echo defect) with zero
+        successful registrations since 09-02, which is exactly the state in
+        which an unconditional auto-dismiss is most expensive and least useful.
+        Health is therefore the reset condition on what is otherwise a circuit
+        breaker with no reset.
+
+        HEALTH IS A TRAILING WINDOW ENDING AT *now*, NOT "a success after this
+        job failed", and that is load-bearing rather than sloppy: a fail-closed
+        lane runs no discovery, so it can produce no new success, so a rule
+        requiring one after the failure could never be satisfied and the gate
+        would deadlock closed forever. Do not "tighten" it that way.
+
+        Only ``max_attempts_exhausted`` is eligible. The conflict and lineage
+        codes stay fail-closed for a human, because those assert a contested
+        identity and clearing one unattended risks a wrong or duplicate
+        registration; exhaustion asserts only that paid attempts ran out.
+
+        The write is byte-identical to the operator CLI's: ``operator_cleared_at``
+        is stamped BESIDE the verdict, and state, attempts, error_code and
+        error_detail all survive verbatim, so the audit row is preserved and an
+        auto-clear is indistinguishable in shape from a hand-clear. Like the
+        CLI it also refreshes ``updated_at``, which overwrites the terminal
+        transition time -- the observed value is carried out in the report so
+        the caller can put it in its notification before it is lost.
+
+        Returns the dismissals, the rows held back with the reason, and which
+        of those are newly held (so a caller can alert once per job rather than
+        once per cycle).
+        """
+
+        check_time = _finite_number(now, "now")
+        _nonnegative_integer(min_age_seconds, "minimum Claude visibility dismiss age")
+        _nonnegative_integer(
+            health_window_seconds, "Claude visibility health window seconds"
+        )
+
+        def _write(conn):
+            # The SAME population claude_visibility_status counts, exclusion
+            # included. A row carrying a terminal characterization event is
+            # already invisible to the enqueue gate, so it is blocking nothing:
+            # clearing it would be pointless and, worse, HOLDING it would raise
+            # a "the lane is fail-closed" alert about a lane that is open.
+            candidates = conn.execute(
+                """SELECT id, attempts, error_code, updated_at
+                   FROM session_claude_visibility_jobs AS job
+                   WHERE job.state = 'claude_failed'
+                     AND job.error_code = 'max_attempts_exhausted'
+                     AND job.operator_cleared_at IS NULL
+                     AND NOT EXISTS (
+                         SELECT 1
+                         FROM session_claude_visibility_characterization_events
+                              AS event
+                         WHERE event.job_id = job.id
+                           AND event.event_kind IN (
+                               'cleanup_completed', 'launch_aborted'
+                           )
+                     )
+                   ORDER BY job.id"""
+            ).fetchall()
+            last_success_row = conn.execute(
+                """SELECT MAX(visible_at) AS last_success
+                   FROM session_claude_visibility_jobs
+                   WHERE state = 'claude_visible' AND visible_at IS NOT NULL"""
+            ).fetchone()
+            last_success = (
+                None
+                if last_success_row is None or last_success_row["last_success"] is None
+                else float(last_success_row["last_success"])
+            )
+            healthy = (
+                last_success is not None
+                and last_success >= check_time - float(health_window_seconds)
+            )
+
+            state_row = conn.execute(
+                "SELECT value_json FROM session_bridge_state WHERE key = ?",
+                (_CLAUDE_VISIBILITY_AUTO_DISMISS_STATE_KEY,),
+            ).fetchone()
+            already_held = _decode_claude_visibility_auto_dismiss_state(
+                state_row["value_json"] if state_row is not None else None
+            )
+
+            dismissed: list[dict[str, Any]] = []
+            held: list[dict[str, Any]] = []
+            newly_held: list[dict[str, Any]] = []
+            for row in candidates:
+                job_id = row["id"]
+                updated_at = row["updated_at"]
+                # A NULL terminal stamp has no measurable age. Treat it as not
+                # yet eligible rather than as infinitely old: the failure
+                # direction has to be "leave it for the human".
+                age = (
+                    None
+                    if updated_at is None
+                    else check_time - float(updated_at)
+                )
+                if age is None or age < float(min_age_seconds):
+                    reason = "too_recent"
+                elif not healthy:
+                    reason = "lane_unhealthy"
+                else:
+                    reason = None
+                if reason is not None:
+                    entry = {
+                        "job_id": job_id,
+                        "attempts": int(row["attempts"]),
+                        "reason": reason,
+                        "age_seconds": age,
+                        "terminal_at": (
+                            None if updated_at is None else float(updated_at)
+                        ),
+                        "last_success_at": last_success,
+                    }
+                    held.append(entry)
+                    if already_held.get(job_id) != reason:
+                        newly_held.append(entry)
+                    continue
+                cursor = conn.execute(
+                    """UPDATE session_claude_visibility_jobs
+                       SET operator_cleared_at = ?, updated_at = ?
+                       WHERE id = ? AND state = 'claude_failed'
+                         AND error_code = ? AND attempts = ?
+                         AND operator_cleared_at IS NULL""",
+                    (
+                        check_time,
+                        check_time,
+                        job_id,
+                        row["error_code"],
+                        row["attempts"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    # Someone cleared or mutated the row between the read and
+                    # the write. The operator won; say nothing and move on.
+                    continue
+                dismissed.append({
+                    "job_id": job_id,
+                    "attempts": int(row["attempts"]),
+                    "error_code": row["error_code"],
+                    "age_seconds": age,
+                    "terminal_at": float(updated_at),
+                    "operator_cleared_at": check_time,
+                    "last_success_at": last_success,
+                })
+
+            live_held = {entry["job_id"]: entry["reason"] for entry in held}
+            if live_held != already_held:
+                # Prune cleared jobs out of the dedup marker so a job that fails
+                # again later alerts again rather than being silently swallowed.
+                conn.execute(
+                    """INSERT INTO session_bridge_state (key, value_json, updated_at)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(key) DO UPDATE SET
+                           value_json = excluded.value_json,
+                           updated_at = excluded.updated_at""",
+                    (
+                        _CLAUDE_VISIBILITY_AUTO_DISMISS_STATE_KEY,
+                        json.dumps(
+                            live_held, sort_keys=True, separators=(",", ":")
+                        ),
+                        check_time,
+                    ),
+                )
+            return {
+                "status": "dismissed" if dismissed else "held" if held else "idle",
+                "dismissed": dismissed,
+                "held": held,
+                "newly_held": newly_held,
+                "healthy": healthy,
+                "last_success_at": last_success,
             }
 
         return self.db._execute_write(_write)
@@ -14810,6 +15013,30 @@ def _claude_status_token(value: Any, *, optional: bool = False) -> str | None:
             return "redacted"
         return value
     return "invalid"
+
+
+def _decode_claude_visibility_auto_dismiss_state(value_json: Any) -> dict[str, str]:
+    """Read the held-job alert marker, treating any damage as "nothing held".
+
+    The marker exists only to stop a repeated alert. Forgetting it re-alerts,
+    which is noisy but correct; trusting a malformed one could suppress the
+    alert for a job that is still blocking the lane, so every unexpected shape
+    fails toward re-alerting.
+    """
+
+    if value_json is None:
+        return {}
+    try:
+        value = json.loads(value_json)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: value_item
+        for key, value_item in value.items()
+        if type(key) is str and type(value_item) is str
+    }
 
 
 def _decode_claude_visibility_cycle_state(value_json: Any) -> dict[str, Any]:

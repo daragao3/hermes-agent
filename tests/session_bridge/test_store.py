@@ -15406,6 +15406,359 @@ def test_operator_dismissal_reopens_the_enqueue_gate(db: SessionDB) -> None:
     assert reopened == {"status": "inserted", "inserted": 1, "duplicates": 0}
 
 
+def _age_claude_visibility_failure(
+    db: SessionDB, job_id: str, *, terminal_at: float
+) -> None:
+    """Backdate the terminal transition so an age threshold can be crossed."""
+
+    with db._lock:
+        assert db._conn is not None
+        db._conn.execute(
+            "UPDATE session_claude_visibility_jobs SET updated_at = ? WHERE id = ?",
+            (terminal_at, job_id),
+        )
+        db._conn.commit()
+
+
+def _make_claude_visibility_job_visible(
+    db: SessionDB, job_id: str, *, visible_at: float
+) -> None:
+    """Record one successful registration, the lane-health signal."""
+
+    with db._lock:
+        assert db._conn is not None
+        db._conn.execute(
+            """UPDATE session_claude_visibility_jobs
+               SET state = 'claude_visible', completion_digest = 'digest',
+                   error_code = NULL, error_detail = NULL, visible_at = ?
+               WHERE id = ?""",
+            (visible_at, job_id),
+        )
+        db._conn.commit()
+
+
+def test_auto_dismiss_clears_an_aged_exhaustion_when_the_lane_is_healthy(
+    db: SessionDB,
+) -> None:
+    now = 1_000_000.0
+    store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
+    healthy = _claude_visibility_identity("healthy")
+    _enqueue_claude_visibility_job(store, *healthy)
+    _make_claude_visibility_job_visible(
+        db, healthy[1].job_id, visible_at=now - 3_600.0
+    )
+    stuck = _claude_visibility_identity("stuck")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id, attempts=3)
+    _age_claude_visibility_failure(db, stuck[1].job_id, terminal_at=now - 30_000.0)
+
+    blocked = store.claude_visibility_status(now)
+    outcome = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+    after = store.claude_visibility_status(now)
+
+    assert blocked["failed_codes"] == {"max_attempts_exhausted": 1}
+    assert outcome["status"] == "dismissed"
+    assert outcome["healthy"] is True
+    assert outcome["held"] == []
+    assert [entry["job_id"] for entry in outcome["dismissed"]] == [stuck[1].job_id]
+    assert outcome["dismissed"][0]["attempts"] == 3
+    # The gate this whole feature exists to reopen.
+    assert after["failed_codes"] == {}
+    assert after["counts"]["claude_failed"] == 0
+
+
+def test_auto_dismiss_holds_an_aged_exhaustion_when_the_lane_is_unhealthy(
+    db: SessionDB,
+) -> None:
+    """The measured 2026-09-06 state: old enough to clear, but nothing works.
+
+    Clearing here would resume discovery against a registration path failing
+    100% of the time and spend paid attempts on the next backlog session, so
+    the row must stay and the lane must stay closed.
+    """
+
+    now = 1_000_000.0
+    store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
+    stale = _claude_visibility_identity("stale")
+    _enqueue_claude_visibility_job(store, *stale)
+    _make_claude_visibility_job_visible(
+        db, stale[1].job_id, visible_at=now - 400_000.0
+    )
+    stuck = _claude_visibility_identity("stuck")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id, attempts=3)
+    _age_claude_visibility_failure(db, stuck[1].job_id, terminal_at=now - 30_000.0)
+
+    outcome = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+    after = store.claude_visibility_status(now)
+
+    assert outcome["status"] == "held"
+    assert outcome["healthy"] is False
+    assert outcome["dismissed"] == []
+    assert [entry["reason"] for entry in outcome["held"]] == ["lane_unhealthy"]
+    assert after["failed_codes"] == {"max_attempts_exhausted": 1}
+
+
+def test_auto_dismiss_holds_an_exhaustion_that_is_not_old_enough(
+    db: SessionDB,
+) -> None:
+    now = 1_000_000.0
+    store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
+    healthy = _claude_visibility_identity("healthy")
+    _enqueue_claude_visibility_job(store, *healthy)
+    _make_claude_visibility_job_visible(db, healthy[1].job_id, visible_at=now - 60.0)
+    stuck = _claude_visibility_identity("stuck")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id, attempts=3)
+    _age_claude_visibility_failure(db, stuck[1].job_id, terminal_at=now - 600.0)
+
+    outcome = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+
+    assert outcome["status"] == "held"
+    # Healthy lane, so the ONLY thing holding it back is the age threshold.
+    assert outcome["healthy"] is True
+    assert [entry["reason"] for entry in outcome["held"]] == ["too_recent"]
+    assert store.claude_visibility_status(now)["failed_codes"] == {
+        "max_attempts_exhausted": 1
+    }
+
+
+def test_auto_dismiss_never_touches_conflict_or_lineage_codes(
+    db: SessionDB,
+) -> None:
+    """Only exhaustion is eligible; a contested identity always waits."""
+
+    now = 1_000_000.0
+    store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
+    healthy = _claude_visibility_identity("healthy")
+    _enqueue_claude_visibility_job(store, *healthy)
+    _make_claude_visibility_job_visible(db, healthy[1].job_id, visible_at=now - 60.0)
+    conflicted = _claude_visibility_identity("conflicted")
+    _enqueue_claude_visibility_job(store, *conflicted)
+    _fail_claude_visibility_job(
+        db, conflicted[1].job_id, attempts=1, error_code="bridge_conflict"
+    )
+    _age_claude_visibility_failure(
+        db, conflicted[1].job_id, terminal_at=now - 900_000.0
+    )
+
+    outcome = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+    after = store.claude_visibility_status(now)
+
+    assert outcome["status"] == "idle"
+    assert outcome["dismissed"] == []
+    assert outcome["held"] == []
+    # Still fail-closed, which is the point.
+    assert after["failed_codes"] == {"bridge_conflict": 1}
+
+
+def test_auto_dismiss_preserves_the_audit_row_and_the_usage_ledger(
+    db: SessionDB,
+) -> None:
+    now = 1_000_000.0
+    store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
+    healthy = _claude_visibility_identity("healthy")
+    _enqueue_claude_visibility_job(store, *healthy)
+    _make_claude_visibility_job_visible(db, healthy[1].job_id, visible_at=now - 60.0)
+    stuck = _claude_visibility_identity("stuck")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id, attempts=3)
+    _age_claude_visibility_failure(db, stuck[1].job_id, terminal_at=now - 30_000.0)
+    with db._lock:
+        assert db._conn is not None
+        db._conn.executemany(
+            """INSERT INTO session_claude_registration_usage
+               (local_day, job_id, attempt_ordinal, reserved_estimated_cost_usd,
+                reserved_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            [
+                ("2026-09-06", stuck[1].job_id, ordinal, "0.020000", now - 40_000.0)
+                for ordinal in (1, 2, 3)
+            ],
+        )
+        db._conn.commit()
+
+    store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+
+    with db._lock:
+        assert db._conn is not None
+        row = db._conn.execute(
+            """SELECT state, attempts, error_code, error_detail, operator_cleared_at
+               FROM session_claude_visibility_jobs WHERE id = ?""",
+            (stuck[1].job_id,),
+        ).fetchone()
+        ledger = db._conn.execute(
+            "SELECT COUNT(*) AS n FROM session_claude_registration_usage WHERE job_id = ?",
+            (stuck[1].job_id,),
+        ).fetchone()
+
+    # Diego's standing rule: neutralize in place, never delete the audit row.
+    assert row["state"] == "claude_failed"
+    assert row["attempts"] == 3
+    assert row["error_code"] == "max_attempts_exhausted"
+    assert row["error_detail"] == "maximum paid launch attempts exhausted"
+    assert row["operator_cleared_at"] == now
+    # The paid-attempt ledger is the cost record and the re-spend guard.
+    assert ledger["n"] == 3
+
+
+def test_auto_dismiss_reports_a_held_job_once_not_once_per_cycle(
+    db: SessionDB,
+) -> None:
+    """The worker runs about every 60s; the human must not be paged every 60s."""
+
+    now = 1_000_000.0
+    store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
+    stale = _claude_visibility_identity("stale")
+    _enqueue_claude_visibility_job(store, *stale)
+    _make_claude_visibility_job_visible(
+        db, stale[1].job_id, visible_at=now - 400_000.0
+    )
+    stuck = _claude_visibility_identity("stuck")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id, attempts=3)
+    _age_claude_visibility_failure(db, stuck[1].job_id, terminal_at=now - 30_000.0)
+
+    first = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+    second = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now + 60.0, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+
+    assert [entry["job_id"] for entry in first["newly_held"]] == [stuck[1].job_id]
+    assert second["newly_held"] == []
+    # Still held on both passes -- only the ALERT is deduplicated.
+    assert [entry["job_id"] for entry in second["held"]] == [stuck[1].job_id]
+
+
+def test_auto_dismiss_realerts_when_a_held_job_changes_reason(
+    db: SessionDB,
+) -> None:
+    now = 1_000_000.0
+    store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
+    stale = _claude_visibility_identity("stale")
+    _enqueue_claude_visibility_job(store, *stale)
+    _make_claude_visibility_job_visible(
+        db, stale[1].job_id, visible_at=now - 400_000.0
+    )
+    stuck = _claude_visibility_identity("stuck")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id, attempts=3)
+    _age_claude_visibility_failure(db, stuck[1].job_id, terminal_at=now - 600.0)
+
+    too_recent = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+    _age_claude_visibility_failure(db, stuck[1].job_id, terminal_at=now - 30_000.0)
+    unhealthy = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+
+    assert [entry["reason"] for entry in too_recent["newly_held"]] == ["too_recent"]
+    assert [entry["reason"] for entry in unhealthy["newly_held"]] == ["lane_unhealthy"]
+
+
+def test_auto_dismiss_holds_when_the_lane_has_never_registered_anything(
+    db: SessionDB,
+) -> None:
+    """No success ever means no proof the path works, so hold rather than spend."""
+
+    now = 1_000_000.0
+    store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
+    stuck = _claude_visibility_identity("stuck")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id, attempts=3)
+    _age_claude_visibility_failure(db, stuck[1].job_id, terminal_at=now - 900_000.0)
+
+    outcome = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+
+    assert outcome["healthy"] is False
+    assert outcome["last_success_at"] is None
+    assert [entry["reason"] for entry in outcome["held"]] == ["lane_unhealthy"]
+
+
+def test_auto_dismiss_ignores_rows_the_enqueue_gate_already_ignores(
+    db: SessionDB,
+) -> None:
+    """Reason about the SAME population the gate counts, exclusion included.
+
+    A row carrying a terminal characterization event is invisible to
+    claude_visibility_status, so it blocks nothing. Holding it would alert that
+    the lane is fail-closed when it is open -- a false alarm about a row nobody
+    is waiting on.
+    """
+
+    now = 1_000_000.0
+    store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
+    stuck = _claude_visibility_identity("stuck")
+    _enqueue_claude_visibility_job(store, *stuck)
+    _fail_claude_visibility_job(db, stuck[1].job_id, attempts=3)
+    _age_claude_visibility_failure(db, stuck[1].job_id, terminal_at=now - 900_000.0)
+    with db._lock:
+        assert db._conn is not None
+        # launch_aborted is the terminal event reachable on exactly this
+        # population (claude_failed + max_attempts_exhausted); its trigger also
+        # demands a matching unconsumed 'absent' reconciliation, so satisfy it.
+        db._conn.execute(
+            """INSERT INTO session_claude_visibility_reconciliations (
+                   job_id, reserved_claude_uuid, attempt_ordinal, outcome,
+                   evidence_digest, checked_at, consumed_at
+               ) VALUES (?, ?, ?, 'absent', ?, ?, NULL)""",
+            (
+                stuck[1].job_id,
+                stuck[1].claude_uuid,
+                3,
+                "b" * 64,
+                now - 900_000.0,
+            ),
+        )
+        for kind in ("registered", "launch_aborted"):
+            db._conn.execute(
+                """INSERT INTO session_claude_visibility_characterization_events (
+                       job_id, event_kind, operation_id, source_session_id,
+                       bridge_id, idempotency_key, reserved_claude_uuid,
+                       evidence_digest, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    stuck[1].job_id,
+                    kind,
+                    "operation-1",
+                    stuck[0].source_session_id,
+                    stuck[1].bridge_id,
+                    stuck[1].idempotency_key,
+                    stuck[1].claude_uuid,
+                    "a" * 64,
+                    now - 900_000.0,
+                ),
+            )
+        db._conn.commit()
+
+    status = store.claude_visibility_status(now)
+    outcome = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+
+    # The gate does not see it, so neither does the auto-dismiss.
+    assert status["failed_codes"] == {}
+    assert outcome["status"] == "idle"
+    assert outcome["held"] == []
+    assert outcome["newly_held"] == []
+    assert outcome["dismissed"] == []
+
+
 def test_operator_dismissal_clears_the_status_open_and_fatal_signals(
     db: SessionDB,
 ) -> None:
