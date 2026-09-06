@@ -5,13 +5,17 @@ import bisect
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 import hashlib
 import inspect
+import json
 import logging
 import math
 import os
 import re
 from pathlib import Path
+import subprocess
+import sys
 import time
 import traceback
 from typing import Any, NoReturn, Protocol, cast
@@ -388,6 +392,90 @@ def _claude_visibility_enqueue_gates(
     return open_reasons, tuple(sorted(fatal))
 
 
+def _describe_seconds(value: object) -> str:
+    """Render an age for a human, without inventing precision it does not have."""
+
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "an unknown time"
+    seconds = float(value)
+    if seconds < 0:
+        return "an unknown time"
+    if seconds < 3600:
+        return f"{seconds / 60:.0f}m"
+    if seconds < 86_400:
+        return f"{seconds / 3600:.1f}h"
+    return f"{seconds / 86_400:.1f}d"
+
+
+def _describe_epoch(value: object) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "never"
+    try:
+        return datetime.fromtimestamp(float(value)).isoformat(timespec="seconds")
+    except (OSError, OverflowError, ValueError):  # pragma: no cover - defensive
+        return "never"
+
+
+def emit_claude_visibility_agent_note(headline: str, detail: str) -> None:
+    """Put one operator-facing note on the Hermes bus, and never raise.
+
+    The bridge runs OUTSIDE the gateway process and imports nothing from
+    ``events``; ``events.emit_external`` is the supported door for exactly that
+    caller, so this shells out rather than opening a new in-process dependency
+    on the bus (and its SQLite file) from a separate service.
+
+    Every failure is swallowed to a log line on purpose. This notification is a
+    courtesy attached to a state change that has ALREADY been committed -- if
+    the bus is down, the right outcome is a cleared job nobody was told about,
+    not a visibility cycle that crashes on its way out.
+    """
+
+    # NOT sys.executable unguarded. The service is launched through the
+    # console-script wrapper hermes-session-bridge.exe, and a pip wrapper can
+    # leave sys.executable pointing at the .exe rather than at python -- which
+    # would turn this into "hermes-session-bridge.exe -m events.emit_external"
+    # and fail every time, silently, since the whole call is best-effort.
+    # sys.prefix names the venv under either launcher.
+    interpreter = sys.executable
+    if not Path(interpreter).name.lower().startswith("python"):
+        derived = Path(sys.prefix) / "Scripts" / "python.exe"
+        if derived.exists():
+            interpreter = str(derived)
+
+    payload = json.dumps({"headline": headline, "detail": detail})
+    try:
+        completed = subprocess.run(
+            [
+                interpreter,
+                "-m",
+                "events.emit_external",
+                "--type",
+                "agent_note",
+                "--source",
+                "session-bridge-visibility",
+                "--priority",
+                "high",
+            ],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(Path(__file__).resolve().parent.parent),
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        _LOG.warning(
+            "claude_visibility_agent_note_failed stage=spawn exc=%s",
+            type(exc).__name__,
+        )
+        return
+    if completed.returncode != 0:
+        _LOG.warning(
+            "claude_visibility_agent_note_failed stage=emit rc=%s stderr=%r",
+            completed.returncode,
+            (completed.stderr or "")[:200],
+        )
+
+
 class _VisibilityCycleCancelled(RuntimeError):
     """Internal control flow for a stopped continuous visibility cycle."""
 
@@ -408,6 +496,7 @@ class ClaudeVisibilityCoordinator:
         marker_secret: bytes,
         continuous_inventory: _ClaudeVisibilityInventory | None = None,
         clock: Callable[[], float] = time.time,
+        notifier: Callable[[str, str], None] = emit_claude_visibility_agent_note,
     ) -> None:
         if not isinstance(config, BridgeConfig):
             raise TypeError("config must be a BridgeConfig")
@@ -420,6 +509,7 @@ class ClaudeVisibilityCoordinator:
         self._registrar = registrar
         self._marker_secret = marker_secret
         self._clock = clock
+        self._notifier = notifier
 
     def discover(self, *, days: int, limit: int) -> ClaudeVisibilityDiscoveryResult:
         return self._discover(days=days, limit=limit, manual=True)
@@ -727,6 +817,87 @@ class ClaudeVisibilityCoordinator:
             duplicates=duplicates,
         )
 
+    def _auto_dismiss_exhausted_jobs(self) -> None:
+        """Clear aged-out exhaustion on a healthy lane, and report either way.
+
+        Runs BEFORE both enqueue-gate evaluations so a clearance takes effect in
+        the same cycle rather than one cycle later.
+
+        Failures here are logged and swallowed. This is an unblocking courtesy
+        bolted onto the front of the cycle; if it breaks, the correct behaviour
+        is the fail-closed lane we already had, not a dead visibility worker.
+        """
+
+        policy = self._config.claude_visibility
+        after_seconds = policy.auto_dismiss_exhausted_after_seconds
+        if after_seconds is None:
+            return
+        try:
+            outcome = self._store.auto_dismiss_exhausted_claude_visibility_jobs(
+                float(self._clock()),
+                min_age_seconds=after_seconds,
+                health_window_seconds=policy.auto_dismiss_health_window_seconds,
+            )
+        except Exception as exc:
+            self._log_visibility_discovery_degraded("auto_dismiss", exc)
+            return
+
+        for entry in outcome.get("dismissed", ()):
+            _LOG.warning(
+                "claude_visibility_auto_dismissed job=%s attempts=%s age_seconds=%s",
+                entry.get("job_id"),
+                entry.get("attempts"),
+                entry.get("age_seconds"),
+            )
+            self._notify(
+                "Claude visibility: exhausted job auto-cleared",
+                (
+                    f"Job {entry.get('job_id')} exhausted "
+                    f"{entry.get('attempts')} paid attempts and sat terminal for "
+                    f"{_describe_seconds(entry.get('age_seconds'))}. The lane was "
+                    "healthy (last successful registration "
+                    f"{_describe_epoch(entry.get('last_success_at'))}), so the row "
+                    "was cleared automatically and discovery has resumed. The "
+                    "audit row is preserved: state, attempts and error_code are "
+                    "unchanged, only operator_cleared_at was stamped. Terminal "
+                    f"transition was {_describe_epoch(entry.get('terminal_at'))}."
+                ),
+            )
+        for entry in outcome.get("newly_held", ()):
+            if entry.get("reason") != "lane_unhealthy":
+                continue
+            _LOG.warning(
+                "claude_visibility_auto_dismiss_held job=%s reason=%s",
+                entry.get("job_id"),
+                entry.get("reason"),
+            )
+            self._notify(
+                "Claude visibility: lane fail-closed and NOT auto-cleared",
+                (
+                    f"Job {entry.get('job_id')} exhausted "
+                    f"{entry.get('attempts')} paid attempts and is old enough to "
+                    "clear, but the lane has produced no successful registration "
+                    f"within the health window (last success "
+                    f"{_describe_epoch(entry.get('last_success_at'))}). Clearing "
+                    "it would resume discovery against a registration path that "
+                    "is not working and spend paid attempts on the next session "
+                    "instead. Discovery stays blocked until a human looks. "
+                    "Dismiss with: hermes-session-bridge claude-visibility-dismiss "
+                    f"--job-id {entry.get('job_id')} --expected-error-code "
+                    f"max_attempts_exhausted --expected-attempts "
+                    f"{entry.get('attempts')} --confirm-terminal-failure"
+                ),
+            )
+
+    def _notify(self, headline: str, detail: str) -> None:
+        try:
+            self._notifier(headline, detail)
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOG.warning(
+                "claude_visibility_agent_note_failed stage=notifier exc=%s",
+                type(exc).__name__,
+            )
+
     def run_once(
         self, *, discover_continuous: bool = False, stop: Any = None
     ) -> ClaudeVisibilityRunResult:
@@ -756,6 +927,8 @@ class ClaudeVisibilityCoordinator:
                     discovery=result.discovery,
                 )
             return result
+
+        self._auto_dismiss_exhausted_jobs()
 
         status_before_discovery: Mapping[str, Any] | None = None
         if discover_continuous:
