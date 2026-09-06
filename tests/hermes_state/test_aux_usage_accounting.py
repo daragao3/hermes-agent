@@ -487,3 +487,56 @@ class TestAutoRoutedProviderIsResolved:
     def test_an_explicit_provider_is_never_second_guessed(self):
         row = self._record("openrouter", "https://chatgpt.com/backend-api/codex/")
         assert row["billing_provider"] == "openrouter"
+
+
+class TestUnknownCostSessionsIgnoresZeroUsage:
+    """unknown_cost_sessions counted sessions that consumed NOTHING (2026-09-06).
+
+    The counter exists to say "part of this total could not be priced". A cron
+    fire that completes without ever calling a model has no route to resolve and
+    no spend to price, so reporting it there is a false positive in the one
+    signal that should make a reader distrust the total. The three real
+    instances on this box were cron sessions with api_call_count 0, every token
+    bucket 0, and end_reason "cron_complete" — reported as unknown while
+    unpriced_tokens was simultaneously 0, which is the self-contradiction that
+    exposed it.
+    """
+
+    def _overview(self, db):
+        from agent.insights import InsightsEngine
+
+        return InsightsEngine(db).generate(days=30)["overview"]
+
+    def test_zero_usage_unpriceable_session_is_not_counted_unknown(self, db):
+        # Bare model, no provider, no base_url -> deliberately unpriceable
+        # (vendor inference is refused). No tokens, no api calls.
+        db.create_session("s-idle", source="cron")
+        db.update_token_counts(
+            "s-idle", input_tokens=0, output_tokens=0, model="deepseek/deepseek-v4-pro",
+        )
+        ov = self._overview(db)
+        assert ov["unknown_cost_sessions"] == 0
+        assert ov["unpriced_tokens"] == 0
+        assert ov["cost_is_partial"] is False
+
+    def test_a_session_that_actually_consumed_tokens_still_counts(self, db):
+        """The guard must not swallow the real signal it was built for."""
+        db.create_session("s-real", source="cron")
+        db.update_token_counts(
+            "s-real", input_tokens=5000, output_tokens=1000,
+            model="deepseek/deepseek-v4-pro", api_call_count=1,
+        )
+        ov = self._overview(db)
+        assert ov["unknown_cost_sessions"] == 1
+        assert ov["unpriced_tokens"] == 6000
+        assert ov["cost_is_partial"] is True
+
+    def test_api_call_with_no_tokens_still_counts_as_usage(self):
+        """A call that reported no tokens is usage, not free."""
+        from agent.insights import _has_billable_usage
+
+        assert _has_billable_usage({"api_call_count": 1}) is True
+        assert _has_billable_usage({"cache_read_tokens": 10}) is True
+        assert _has_billable_usage({"reasoning_tokens": 10}) is True
+        assert _has_billable_usage({"input_tokens": 0, "api_call_count": 0}) is False
+        assert _has_billable_usage({}) is False
