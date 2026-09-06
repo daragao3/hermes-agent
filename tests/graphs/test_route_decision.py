@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+from graphs import jobflow
 from graphs.jobflow import route_decision_node
 
 
@@ -118,3 +119,48 @@ class TestTheFloorIsTunable:
         monkeypatch.setenv("HERMES_JOBFLOW_COMP_FLOOR", "two")
         assert route_decision_node(_state(7.4, comp=2.0))["decision"] == "archive"
         assert route_decision_node(_state(7.4, comp=4.0))["decision"] == "review"
+
+
+class TestTheScoreBandsAreTunable:
+    """Band EDGES and env overrides, read from the constants the router shares.
+
+    Two gaps, both measured 2026-09-06. Nothing above touches a boundary --
+    every case sits well inside a band -- and neither threshold's env override
+    was ever exercised, while the comp floor's three were.
+
+    These follow the constants rather than pinning their values: moving
+    `_DEFAULT_PROCEED_THRESHOLD` to 9.0 leaves this class green, because the
+    edge it asserts moves with it. That is deliberate -- what must not drift
+    is the constant against the three places that restate it in prose, and
+    that is pinned in tests/graphs/test_critic_prompt_config.py, where the
+    same mutation fails three tests. Here the claim is narrower: whatever the
+    bands are, the edges are inclusive and an override actually moves them.
+    """
+
+    def test_the_proceed_boundary_is_inclusive(self):
+        proceed = jobflow._DEFAULT_PROCEED_THRESHOLD
+        assert route_decision_node(_state(proceed))["decision"] == "tailor"
+        assert route_decision_node(_state(proceed - 0.01))["decision"] == "review"
+
+    def test_the_review_boundary_is_inclusive(self):
+        review = jobflow._DEFAULT_REVIEW_THRESHOLD
+        assert route_decision_node(_state(review))["decision"] == "review"
+        assert route_decision_node(_state(review - 0.01))["decision"] == "archive"
+
+    def test_the_proceed_threshold_can_be_moved_by_env(self, monkeypatch):
+        monkeypatch.setenv("HERMES_JOBFLOW_PROCEED_THRESHOLD", "7.0")
+        assert route_decision_node(_state(7.4))["decision"] == "tailor"
+
+    def test_the_review_threshold_can_be_moved_by_env(self, monkeypatch):
+        monkeypatch.setenv("HERMES_JOBFLOW_REVIEW_THRESHOLD", "8.0")
+        assert route_decision_node(_state(7.4))["decision"] == "archive"
+
+    def test_a_malformed_threshold_raises_rather_than_routing_on_a_guess(self, monkeypatch):
+        """Deliberately unlike the comp floor, which falls back -- see `_comp_floor`.
+
+        A threshold that silently reverted to its default would route a
+        calibration run against a band nobody asked for and report nothing.
+        """
+        monkeypatch.setenv("HERMES_JOBFLOW_PROCEED_THRESHOLD", "eight")
+        with pytest.raises(ValueError):
+            route_decision_node(_state(7.4))

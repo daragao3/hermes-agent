@@ -342,6 +342,14 @@ def match_score_node(state: JobFlowState) -> dict:
 _COMP_DIMENSION = "comp_alignment"
 _DEFAULT_COMP_FLOOR = 2.0
 
+# The routing bands. Constants rather than inline literals because three other
+# readers restate them in prose -- the Critic configuration prompt, the Matcher
+# system prompt and the README -- and a literal duplicated across modules is
+# exactly how the prompt spent four months telling Critic the Matcher ran
+# gpt-4o-mini. `routing_thresholds()` below is the one seam every reader calls.
+_DEFAULT_PROCEED_THRESHOLD = 8.75
+_DEFAULT_REVIEW_THRESHOLD = 5.0
+
 
 def _comp_floor() -> float:
     """The veto's floor, tolerating a malformed env value instead of raising.
@@ -368,6 +376,22 @@ def _comp_floor() -> float:
             _DEFAULT_COMP_FLOOR,
         )
         return _DEFAULT_COMP_FLOOR
+
+
+def routing_thresholds() -> tuple[float, float, float]:
+    """The live (proceed, review, comp_floor) triple, resolved from the env NOW.
+
+    Read at call time, never snapshotted at import: `route_decision_node` and
+    Critic's configuration prompt must agree on the values an override is
+    actually routing with, and a module-level snapshot would report the value
+    that was live when the process started.
+
+    The two threshold reads raise on a malformed value while the comp floor
+    tolerates one -- see `_comp_floor`, where the asymmetry is deliberate.
+    """
+    proceed = float(os.environ.get("HERMES_JOBFLOW_PROCEED_THRESHOLD", _DEFAULT_PROCEED_THRESHOLD))
+    review = float(os.environ.get("HERMES_JOBFLOW_REVIEW_THRESHOLD", _DEFAULT_REVIEW_THRESHOLD))
+    return proceed, review, _comp_floor()
 
 
 def _comp_below_floor(state: JobFlowState, floor: float) -> bool:
@@ -415,9 +439,7 @@ def route_decision_node(state: JobFlowState) -> dict:
     """
     with _TRACER.start_as_current_span("jobflow.route_decision") as span:
         score = float(state.get("score") or 0.0)
-        proceed = float(os.environ.get("HERMES_JOBFLOW_PROCEED_THRESHOLD", "8.75"))
-        review = float(os.environ.get("HERMES_JOBFLOW_REVIEW_THRESHOLD", "5.0"))
-        comp_floor = _comp_floor()
+        proceed, review, comp_floor = routing_thresholds()
         comp_vetoed = _comp_below_floor(state, comp_floor)
         span.set_attribute("threshold.proceed", proceed)
         span.set_attribute("threshold.review", review)

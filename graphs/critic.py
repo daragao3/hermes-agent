@@ -397,12 +397,23 @@ def generate_proposals_node(state: CriticState) -> dict:
         # rather than restating the default here: a literal in the prompt drifted
         # to gpt-4o-mini while jobflow.DEFAULT_MODEL had been gpt-5.5 for months.
         # Lazy import, matching _llm_prompt_edit_replay below.
+        #
+        # The routing bands come from the same module by the same rule, through
+        # the one helper route_decision_node itself calls -- so an env override
+        # moves Critic's stated configuration and the Matcher's actual routing
+        # together, and neither can drift from the other by being re-typed.
         from .jobflow import DEFAULT_MODEL as matcher_model
+        from .jobflow import routing_thresholds
+
+        proceed_threshold, review_threshold, comp_floor = routing_thresholds()
 
         user = CRITIC_PROPOSAL_USER_TEMPLATE.format(
             clusters_json=json.dumps(clusters, indent=2),
             allowed_knobs_json=json.dumps(allowed_knobs, indent=2),
             matcher_model=matcher_model,
+            proceed_threshold=proceed_threshold,
+            review_threshold=review_threshold,
+            comp_floor=comp_floor,
         )
 
         span.set_attribute("gen_ai.system", "openai")
@@ -747,9 +758,12 @@ def reflexion_replay_node(state: CriticState) -> dict:
             span.set_attribute("replay.skipped", "no_proposals_or_pairs")
             return {"proposals_classified": proposals}
 
-        # Pull existing thresholds for status quo replay.
-        existing_proceed = float(os.environ.get("HERMES_JOBFLOW_PROCEED_THRESHOLD", "8.75"))
-        existing_review = float(os.environ.get("HERMES_JOBFLOW_REVIEW_THRESHOLD", "5.0"))
+        # Pull existing thresholds for status quo replay -- from the Matcher's own
+        # helper, so a status-quo replay can never be scored against a default the
+        # router stopped using.
+        from .jobflow import routing_thresholds
+
+        existing_proceed, existing_review, _ = routing_thresholds()
 
         def _decision_for(score: float, proceed: float, review: float) -> str:
             if score is None:

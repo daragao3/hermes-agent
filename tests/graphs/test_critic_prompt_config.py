@@ -16,9 +16,19 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from graphs import _critic_prompts, _prompts, critic, jobflow
 
 TEMPLATE = _critic_prompts.CRITIC_PROPOSAL_USER_TEMPLATE
+
+
+@pytest.fixture(autouse=True)
+def _deployed_thresholds(monkeypatch):
+    """Pin the deployed values so a host .env cannot move what gets rendered."""
+    monkeypatch.delenv("HERMES_JOBFLOW_PROCEED_THRESHOLD", raising=False)
+    monkeypatch.delenv("HERMES_JOBFLOW_REVIEW_THRESHOLD", raising=False)
+    monkeypatch.delenv("HERMES_JOBFLOW_COMP_FLOOR", raising=False)
 
 
 def _render_proposal_prompt(monkeypatch) -> str:
@@ -73,5 +83,56 @@ def test_dimension_weights_match_the_matcher_system_prompt():
     assert told == real
 
 
-def test_comp_floor_matches_the_route_decision_default():
-    assert f"comp_floor: {jobflow._DEFAULT_COMP_FLOOR} (env: HERMES_JOBFLOW_COMP_FLOOR)" in TEMPLATE
+def test_comp_floor_matches_the_route_decision_default(monkeypatch):
+    user = _render_proposal_prompt(monkeypatch)
+    assert f"comp_floor: {jobflow._DEFAULT_COMP_FLOOR} (env: HERMES_JOBFLOW_COMP_FLOOR)" in user
+
+
+def test_prompt_names_the_deployed_routing_bands(monkeypatch):
+    user = _render_proposal_prompt(monkeypatch)
+    assert f"proceed_threshold: {jobflow._DEFAULT_PROCEED_THRESHOLD} (env: " in user
+    assert f"review_threshold: {jobflow._DEFAULT_REVIEW_THRESHOLD} (env: " in user
+
+
+def test_thresholds_are_resolved_at_call_time_not_at_import(monkeypatch):
+    # route_decision_node reads the env inside the node, so an override moves
+    # the live routing. The prompt must report what the router would do now,
+    # not the value that was set when the Critic process started.
+    monkeypatch.setenv("HERMES_JOBFLOW_PROCEED_THRESHOLD", "9.25")
+    monkeypatch.setenv("HERMES_JOBFLOW_REVIEW_THRESHOLD", "4.5")
+    monkeypatch.setenv("HERMES_JOBFLOW_COMP_FLOOR", "3.5")
+    user = _render_proposal_prompt(monkeypatch)
+    assert "proceed_threshold: 9.25 (env: " in user
+    assert "review_threshold: 4.5 (env: " in user
+    assert "comp_floor: 3.5 (env: " in user
+
+
+def test_no_threshold_literal_survives_in_the_configuration_block():
+    # The block is rendered, so a re-typed number here would be a claim no
+    # override can move -- the defect this file exists to catch.
+    block = TEMPLATE.split("## Current Matcher configuration", 1)[1]
+    for literal in ("8.75", "5.0", "2.0"):
+        assert literal not in block, f"a hardcoded {literal} is back in the config block"
+
+
+def test_matcher_system_prompt_bands_match_the_routing_defaults():
+    # The Matcher LLM is told the bands in prose too. Same drift class, and
+    # this prompt is not rendered, so a test is the only thing watching it.
+    proceed = jobflow._DEFAULT_PROCEED_THRESHOLD
+    review = jobflow._DEFAULT_REVIEW_THRESHOLD
+    system = _prompts.MATCHER_SYSTEM_PROMPT
+    assert f"score >= {proceed} -> PROCEED" in system
+    assert f"{review} <= score < {proceed} -> REVIEW" in system
+    assert f"score < {review} -> ARCHIVE" in system
+
+
+def test_route_decision_docstring_defaults_match_the_constants():
+    doc = jobflow.route_decision_node.__doc__ or ""
+    assert f"HERMES_JOBFLOW_PROCEED_THRESHOLD  (default {jobflow._DEFAULT_PROCEED_THRESHOLD})" in doc
+    assert f"HERMES_JOBFLOW_REVIEW_THRESHOLD   (default {jobflow._DEFAULT_REVIEW_THRESHOLD})" in doc
+
+
+def test_readme_routing_diagram_matches_the_constants():
+    readme = (Path(jobflow.__file__).parent / "README.md").read_text(encoding="utf-8")
+    assert f"score >= {jobflow._DEFAULT_PROCEED_THRESHOLD}" in readme
+    assert f"score >= {jobflow._DEFAULT_REVIEW_THRESHOLD}" in readme
