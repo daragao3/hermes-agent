@@ -129,6 +129,43 @@ def _bash_safe_path(path: str) -> str:
     return path
 
 
+def _native_exec_path(path: str) -> str:
+    """Return *path* in native Windows form, for a NATIVE ``.exe`` run under bash.
+
+    :func:`_bash_safe_path` is the right translation for the MSYS coreutils
+    this codebase shells out to (``cat``, ``sed``, ``find``, ``grep``): they
+    are Git Bash binaries and understand ``/c/Users/x``.  A *native* Windows
+    executable invoked from bash does not — and because
+    :func:`_apply_windows_msys_bash_env_defaults` sets ``MSYS_NO_PATHCONV=1``,
+    MSYS does not convert the argument back on its way into argv either.  A
+    ``/c/...`` root therefore reaches the binary verbatim and it fails with
+    ``IO error ... (os error 3)``.
+
+    ``rg`` is exactly such a binary in every mainstream Windows install
+    (WinGet, scoop, choco all ship the MSVC build), which is why the search
+    tools need this and the read/write tools do not.  Cygwin- and
+    MSYS2-compiled tools accept native drive paths too, so the native form is
+    the correct choice for both kinds of binary.
+
+    Accepts either form as input and is idempotent.  Non-drive paths
+    (relative paths, and genuine POSIX roots like ``/tmp``) are returned
+    unchanged: there is no correct drive-letter answer for them, and a
+    relative path already resolves against the shell's cwd.
+
+    No-op off Windows.
+    """
+    if not _IS_WINDOWS or not path:
+        return path
+    # Handles /c/..., /cygdrive/c/... and /mnt/c/...; leaves /tmp, /home alone.
+    path = _msys_to_windows_path(path)
+    m = re.match(r'^([a-zA-Z]):[\\/]*(.*)$', path)
+    if not m:
+        return path
+    drive = m.group(1).upper()
+    tail = (m.group(2) or "").replace('/', '\\')
+    return f"{drive}:\\{tail}" if tail else f"{drive}:\\"
+
+
 def _quote_bash_path(path: str) -> str:
     """Quote *path* for safe interpolation into a Git Bash script on Windows."""
     import shlex

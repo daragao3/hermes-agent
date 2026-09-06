@@ -410,6 +410,38 @@ def _split_tool_diagnostics(output: str) -> tuple[str, str]:
     return '\n'.join(diagnostics), '\n'.join(payload)
 
 
+def _split_rg_files_output(output: str) -> tuple[str, list[str]]:
+    """Split merged ``rg --files`` output into ``(diagnostics, path lines)``.
+
+    ``_split_tool_diagnostics`` classifies by output *shape* because content
+    search output is genuinely ambiguous — a match line, a count line and a
+    context line all look different, and none carries a marker.  ``rg --files``
+    is not ambiguous: every line it writes to stdout is a path, and every line
+    it writes to stderr carries the ``rg: `` prefix (verified against a
+    missing root, a malformed ``-g`` glob and an unrecognized flag — all
+    single-line, all prefixed; ``--files`` takes no regex, so the multi-line
+    ``regex parse error`` block cannot occur here).
+
+    Splitting on the prefix alone is therefore exact for this command, and it
+    avoids the one way the shape classifier gets ``--files`` wrong: a path
+    containing a space matches none of the search-output shapes and would be
+    thrown away as a diagnostic.
+
+    ``_exec`` merges stderr into stdout (``stderr=subprocess.STDOUT``), which
+    is why the two streams have to be separated in Python at all.
+    """
+    diagnostics: list[str] = []
+    paths: list[str] = []
+    for line in output.split('\n'):
+        if not line.strip():
+            continue
+        if line.lstrip().startswith("rg: "):
+            diagnostics.append(line)
+        else:
+            paths.append(line)
+    return '\n'.join(diagnostics), paths
+
+
 # A real rg/grep output line starts with a path token and is followed by a
 # ``:`` (match/count), a ``-`` (context), or nothing (files_only). Tool
 # diagnostics ("rg: ...", "grep: ...", "error: ...", indented carets) never
@@ -995,6 +1027,31 @@ class ShellFileOperations(FileOperations):
         arg = _bash_safe_path(arg)
         # Use single quotes and escape any single quotes in the string
         return "'" + arg.replace("'", "'\"'\"'") + "'"
+
+    def _escape_shell_literal(self, arg: str) -> str:
+        r"""Quote *arg* for the shell verbatim — with no path translation.
+
+        ``_escape_shell_arg`` runs its input through ``_bash_safe_path``,
+        which is a *path* translator: on Windows it rewrites every backslash
+        to a forward slash.  That is correct for a path and destructive for
+        anything else — a search regex ``\d+`` becomes ``/d+`` and a glob
+        ``foo\.py`` becomes ``foo/.py``.  Patterns and globs are not paths,
+        so quote them literally and let the tool interpret them.
+        """
+        return "'" + arg.replace("'", "'\"'\"'") + "'"
+
+    def _escape_native_path_arg(self, path: str) -> str:
+        """Escape *path* for a NATIVE Windows executable run under Git Bash.
+
+        Same quoting as :meth:`_escape_shell_arg`, but the path keeps its
+        native ``C:\\Users\\x`` form instead of being rewritten to the MSYS
+        ``/c/Users/x`` form.  See ``_native_exec_path`` for why the two differ;
+        the short version is that MSYS coreutils understand ``/c/...`` and a
+        native ``.exe`` does not.  No-op off Windows.
+        """
+        from tools.environments.local import _native_exec_path
+
+        return "'" + _native_exec_path(path).replace("'", "'\"'\"'") + "'"
 
     def _atomic_write(self, path: str, content: str) -> "ExecuteResult":
         """Write ``content`` to ``path`` atomically via temp-file + rename.
@@ -2796,6 +2853,14 @@ class ShellFileOperations(FileOperations):
         default, and uses parallel directory traversal for ~200x speedup
         over find on wide trees.  Results are sorted by modification time
         (most recently edited first) when rg >= 13.0 supports --sortr.
+
+        stderr is deliberately NOT discarded here.  It used to be
+        (``2>/dev/null``), which made a search that *could not run*
+        byte-identical to a search that *found nothing*: on Windows the MSYS
+        root handed to a native rg.exe failed with ``os error 3`` and this
+        returned ``{"total_count": 0}``.  A caller cannot tell those apart,
+        and at least one cron correctly concluded "no work" from it for a
+        week.  A search that fails must say so.
         """
         # rg --files -g uses glob patterns; wrap bare names so they match
         # at any depth (equivalent to find -name).
@@ -2805,26 +2870,40 @@ class ShellFileOperations(FileOperations):
             glob_pattern = pattern
 
         fetch_limit = limit + offset
-        # Try mtime-sorted first (rg 13+); fall back to unsorted if not supported.
-        cmd_sorted = (
-            f"rg --files --sortr=modified -g {self._escape_shell_arg(glob_pattern)} "
-            f"{self._escape_shell_arg(path)} 2>/dev/null "
-            f"| head -n {fetch_limit}"
-        )
-        result = self._exec(cmd_sorted, timeout=60)
-        stdout, limit_reason = _search_stdout_and_limit(result)
-        all_files = [_native_result_path(f) for f in stdout.strip().split('\n') if f]
+        # The glob is a pattern, not a path — quote it literally so a
+        # backslash in it survives.  The search root goes to a native Windows
+        # rg.exe, which cannot resolve the MSYS ``/c/...`` form.
+        q_glob = self._escape_shell_literal(glob_pattern)
+        q_path = self._escape_native_path_arg(path)
 
-        if not all_files and not limit_reason:
-            # --sortr may have failed on older rg; retry without it.
-            cmd_plain = (
-                f"rg --files -g {self._escape_shell_arg(glob_pattern)} "
-                f"{self._escape_shell_arg(path)} 2>/dev/null "
+        def _run(sort_flag: str):
+            # ``set -o pipefail`` so rg's exit status survives ``| head``;
+            # without it the pipeline reports head's 0 and the error guard
+            # below can never fire.  rg exits 0 when head truncates it
+            # (SIGPIPE), so this does not turn a truncated-but-successful
+            # search into a false error.
+            cmd = (
+                f"set -o pipefail; rg --files {sort_flag}-g {q_glob} {q_path} "
                 f"| head -n {fetch_limit}"
             )
-            result = self._exec(cmd_plain, timeout=60)
-            stdout, limit_reason = _search_stdout_and_limit(result)
-            all_files = [_native_result_path(f) for f in stdout.strip().split('\n') if f]
+            res = self._exec(cmd, timeout=60)
+            out, reason = _search_stdout_and_limit(res)
+            diags, lines = _split_rg_files_output(out)
+            return res, [_native_result_path(f) for f in lines], reason, diags
+
+        # Try mtime-sorted first (rg 13+); fall back to unsorted if not supported.
+        result, all_files, limit_reason, diagnostics = _run("--sortr=modified ")
+        if not all_files and not limit_reason:
+            # --sortr may have failed on older rg; retry without it.
+            result, all_files, limit_reason, diagnostics = _run("")
+
+        # rg exit codes: 0=files listed, 1=nothing matched, 2=error.  Only
+        # surface an error when rg failed AND produced nothing usable: rg also
+        # exits 2 on a partial failure (one unreadable directory in a tree
+        # that otherwise listed fine) and those results are real.
+        if result.exit_code == 2 and not all_files:
+            error_msg = diagnostics.strip() or result.stdout.strip() or "Search error"
+            return SearchResult(error=f"Search failed: {error_msg}", total_count=0)
 
         page = all_files[offset:offset + limit]
 
@@ -2863,9 +2942,11 @@ class ShellFileOperations(FileOperations):
         if context > 0:
             cmd_parts.extend(["-C", str(context)])
         
-        # Add file glob filter (must be quoted to prevent shell expansion)
+        # Add file glob filter (must be quoted to prevent shell expansion).
+        # A glob is a pattern, not a path: _escape_shell_literal so a
+        # backslash in it is not rewritten to a forward slash.
         if file_glob:
-            cmd_parts.extend(["--glob", self._escape_shell_arg(file_glob)])
+            cmd_parts.extend(["--glob", self._escape_shell_literal(file_glob)])
         
         # Output mode handling
         if output_mode == "files_only":
@@ -2873,9 +2954,11 @@ class ShellFileOperations(FileOperations):
         elif output_mode == "count":
             cmd_parts.append("-c")  # Count per file
         
-        # Add pattern and path
-        cmd_parts.append(self._escape_shell_arg(pattern))
-        cmd_parts.append(self._escape_shell_arg(path))
+        # Add pattern and path. The pattern is a regex — quote it literally
+        # or ``\d+`` arrives as ``/d+``. The path goes to a native Windows
+        # rg.exe, which cannot resolve the MSYS ``/c/...`` form.
+        cmd_parts.append(self._escape_shell_literal(pattern))
+        cmd_parts.append(self._escape_native_path_arg(path))
         
         # Fetch extra rows so we can report the true total before slicing.
         # For context mode, rg emits separator lines ("--") between groups,
@@ -2993,9 +3076,10 @@ class ShellFileOperations(FileOperations):
         if context > 0:
             cmd_parts.extend(["-C", str(context)])
         
-        # Add file pattern filter (must be quoted to prevent shell expansion)
+        # Add file pattern filter (must be quoted to prevent shell expansion).
+        # Literal quoting: a glob is a pattern, not a path.
         if file_glob:
-            cmd_parts.extend(["--include", self._escape_shell_arg(file_glob)])
+            cmd_parts.extend(["--include", self._escape_shell_literal(file_glob)])
         
         # Output mode handling
         if output_mode == "files_only":
@@ -3003,8 +3087,10 @@ class ShellFileOperations(FileOperations):
         elif output_mode == "count":
             cmd_parts.append("-c")
         
-        # Add pattern and path
-        cmd_parts.append(self._escape_shell_arg(pattern))
+        # Add pattern and path. The pattern is a regex — quote it literally
+        # so ``\d+`` is not rewritten to ``/d+``. The path keeps the MSYS
+        # form: grep here is a Git Bash binary and understands ``/c/...``.
+        cmd_parts.append(self._escape_shell_literal(pattern))
         cmd_parts.append(self._escape_shell_arg(path))
         
         # Fetch generously so we can compute total before slicing
