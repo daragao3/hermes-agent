@@ -923,3 +923,60 @@ def test_claude_visibility_config_rejects_unsafe_values(
             monkeypatch,
             {**_CLAUDE_VISIBILITY_DEFAULTS, field: value},
         )
+
+
+@pytest.mark.parametrize(
+    ("lease", "process", "discovery"),
+    [
+        (300, 200, 100),  # equal -- the 2026-09-01 shape, zero headroom
+        (300, 240, 100),  # below
+        (480, 360, 120),  # the budget this fix ships, under the OLD lease
+    ],
+)
+def test_claude_visibility_lease_must_exceed_the_launch_budget(
+    monkeypatch: pytest.MonkeyPatch, lease: int, process: int, discovery: int
+) -> None:
+    """A lease that cannot outlive the work it authorises is a livelock.
+
+    Measured 2026-09-01: lease 300 against process 180 + discovery 120 meant
+    every full-budget attempt expired its own lease before it could report,
+    and was recorded as lease_expired instead of its real cause. Three timing
+    values chosen independently and never checked against each other; this
+    pins the relation so a budget change cannot silently reopen it.
+    """
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "session_bridge.claude_visibility.lease_seconds must exceed "
+            "process_timeout_seconds + discovery_timeout_seconds "
+            f"({lease} <= {process + discovery})"
+        ),
+    ):
+        _load_with_claude_visibility(
+            monkeypatch,
+            {
+                **_CLAUDE_VISIBILITY_DEFAULTS,
+                "lease_seconds": lease,
+                "process_timeout_seconds": process,
+                "discovery_timeout_seconds": discovery,
+            },
+        )
+
+
+def test_claude_visibility_accepts_a_lease_with_headroom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _load_with_claude_visibility(
+        monkeypatch,
+        {
+            **_CLAUDE_VISIBILITY_DEFAULTS,
+            "lease_seconds": 660,
+            "process_timeout_seconds": 360,
+            "discovery_timeout_seconds": 120,
+        },
+    )
+
+    assert config.claude_visibility.lease_seconds == 660
+    assert config.claude_visibility.process_timeout_seconds == 360
+    assert config.claude_visibility.discovery_timeout_seconds == 120
