@@ -15,8 +15,19 @@ Flow:
 Phase C v1 scope:
   * Auto-apply: ONLY items that map to existing allowed_knobs.json categories.
     Threshold tweaks (PROCEED/REVIEW) currently DO NOT match any knob, so they
-    land as propose_only until Diego adds an explicit knob. Skill ranking + Matcher
-    temperature (under reasoning_effort umbrella) ARE auto-applicable.
+    land as propose_only until Diego adds an explicit knob. KIND_TO_KNOB below
+    is the ground truth and holds exactly three: skill.ranking,
+    agent.reasoning_effort and cron.cadence (the last only within +/-50%).
+  * matcher.temperature is NOT auto-applicable, and this docstring claimed it
+    was -- 'under the reasoning_effort umbrella' -- until 2026-09-06. There is
+    no temperature knob in allowed_knobs.json v1.1, no matcher.temperature key
+    in KIND_TO_KNOB, and no temperature anywhere in the Matcher path: it calls
+    the Codex Responses endpoint through obs/oauth_llm.py, which sends none
+    because that endpoint rejects the parameter (HTTP 400). The KIND is kept
+    deliberately (Diego, 2026-09-06) as taxonomy -- a future backend may accept
+    a temperature, and historical proposals carrying the kind must keep
+    validating -- so it stays in the Proposal Literal and in the system prompt,
+    where a proposal naming it classifies propose_only like any unmapped kind.
   * Reflexion replay (re-score with proposed change to verify) deferred to iter2.
   * WhatsApp routing of propose-only items: writes to mailbox/main/inbox +
     appends to whatsapp_queue.jsonl. Real WA send happens via existing notifier.

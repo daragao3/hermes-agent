@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -130,6 +131,21 @@ def test_route_decision_docstring_defaults_match_the_constants():
     doc = jobflow.route_decision_node.__doc__ or ""
     assert f"HERMES_JOBFLOW_PROCEED_THRESHOLD  (default {jobflow._DEFAULT_PROCEED_THRESHOLD})" in doc
     assert f"HERMES_JOBFLOW_REVIEW_THRESHOLD   (default {jobflow._DEFAULT_REVIEW_THRESHOLD})" in doc
+
+
+def test_matcher_temperature_is_taxonomy_not_an_auto_apply_route():
+    """Kept as a kind, but nothing may claim it can be applied.
+
+    Diego's call, 2026-09-06: a future backend may accept a temperature and
+    historical proposals must keep validating, so the kind stays -- but the
+    module docstring claimed it was auto-applicable 'under the
+    reasoning_effort umbrella' while KIND_TO_KNOB never held it and the
+    constitution has no temperature knob.
+    """
+    kinds = get_args(critic.Proposal.model_fields["kind"].annotation)
+    assert "matcher.temperature" in kinds
+    assert "matcher.temperature" not in critic.KIND_TO_KNOB
+    assert "under reasoning_effort umbrella" not in (critic.__doc__ or "")
 
 
 def test_readme_routing_diagram_matches_the_constants():
