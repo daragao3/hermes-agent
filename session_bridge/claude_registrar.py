@@ -1093,11 +1093,107 @@ class _WinPtyProcess:
         if self._direct_native_pty and self._reader_thread is not None:
             self._reader_thread.join(2.0)
 
+    # A write that makes no progress this many consecutive times is treated as
+    # a dead input pipe rather than a slow one; 10ms apart, so ~0.5s of
+    # patience -- generous for a pipe the CLI drains continuously.
+    _WRITE_STALL_RETRIES = 50
+
     def write(self, data: str) -> None:
-        if self._direct_native_pty:
-            self._process.pty.write(data)  # type: ignore[attr-defined]
-        else:
-            self._process.write(data)  # type: ignore[attr-defined]
+        """Deliver EVERY byte of ``data`` to the pseudoterminal, or raise.
+
+        pywinpty's ``PTY.write`` returns the number of bytes actually written
+        and may return SHORT. The registration prompt travels as one ~1.1 KB
+        bracketed-paste frame followed by a separate Return, so a dropped tail
+        loses the paste-END marker and the Return then lands INSIDE the paste as
+        literal text: the CLI sits in paste mode at an idle REPL, starts no
+        turn, writes no transcript, redraws only its footer. Measured in
+        production 2026-09-06 (job 9bc9deab, three attempts): 40-byte footer
+        frames, CLI debug logs with a clean startup and no
+        "[engine] turn 1 start", 543s burned each under a 360s budget.
+
+        Encoding here rather than passing ``str`` through makes the count the
+        return value describes the same count we compare against. A failure
+        raises RuntimeError, which _launch already maps to creation_ambiguous /
+        "interactive PTY unavailable" -- a RETRYABLE, NAMED outcome instead of a
+        silent full-budget burn.
+        """
+
+        text = data if isinstance(data, str) else bytes(data).decode("utf-8")
+        payload = text.encode("utf-8")
+        total = len(payload)
+        if total == 0:
+            return
+        target = (
+            self._process.pty  # type: ignore[attr-defined]
+            if self._direct_native_pty
+            else self._process
+        )
+        offset = 0  # bytes accepted so far
+        stalls = 0
+        while offset < total:
+            self._raise_if_cancelled()
+            # MEASURED against pywinpty 2.0.15, not its type stub: both the
+            # native PTY and the PtyProcess wrapper take TEXT and return the
+            # number of BYTES accepted. winpty.pyi annotates ``to_write: bytes``
+            # and that is wrong at runtime -- passing bytes raises
+            # TypeError("'bytes' object cannot be converted to 'PyString'").
+            written = target.write(  # type: ignore[attr-defined]
+                payload[offset:].decode("utf-8")
+            )
+            if written is None:
+                # A wrapper that reports no count is taken at its word for the
+                # whole remainder -- there is nothing else to compare against.
+                return
+            count = int(written)
+            if count < 0:
+                raise RuntimeError("PTY write returned a negative count")
+            if count == 0:
+                stalls += 1
+                if stalls >= self._WRITE_STALL_RETRIES:
+                    raise RuntimeError(
+                        f"PTY write stalled: {offset} of {total} bytes delivered"
+                    )
+                time.sleep(0.01)
+                continue
+            if count < total - offset:
+                _LOG.warning(
+                    "PTY short write: %d of %d bytes accepted at offset %d; "
+                    "continuing",
+                    count,
+                    total,
+                    offset,
+                )
+            # Advance only to a character boundary the accepted bytes cover:
+            # the next slice is text, so it cannot resume mid-character. The
+            # registration frame is ASCII (base64 marker + JSON), where byte and
+            # character boundaries coincide, so this rounding is a guard for
+            # other callers rather than a live case.
+            accepted = payload[offset : offset + count]
+            while accepted:
+                try:
+                    accepted.decode("utf-8")
+                    break
+                except UnicodeDecodeError:
+                    accepted = accepted[:-1]
+            if not accepted:
+                # The accepted bytes cover no COMPLETE character, so the next
+                # text slice would begin mid-sequence and decode() would raise --
+                # turning a short write into a crash. Resend from the character
+                # start and count it as NO PROGRESS, so a device that keeps
+                # splitting the same character cannot spin here forever.
+                stalls += 1
+                if stalls >= self._WRITE_STALL_RETRIES:
+                    raise RuntimeError(
+                        f"PTY write stalled: {offset} of {total} bytes delivered"
+                    )
+                time.sleep(0.01)
+                continue
+            # Reset ONLY on real forward progress. Resetting on any non-zero
+            # count let a device that always splits the same character spin
+            # here forever: count > 0 cleared the counter every pass while the
+            # boundary rounding advanced nothing.
+            stalls = 0
+            offset += len(accepted)
 
     def wait(self, timeout: float) -> int | None:
         deadline = time.monotonic() + timeout
@@ -1298,7 +1394,11 @@ def _redacted_launch_frame(output: object) -> str:
 
 
 def _log_claude_visibility_launch_failed(
-    claim: Any, code: object, detail: object, frame: object = None
+    claim: Any,
+    code: object,
+    detail: object,
+    frame: object = None,
+    prompt_frame: object = None,
 ) -> None:
     """Name the cause of a failed launch, at the moment it fails.
 
@@ -1329,6 +1429,20 @@ def _log_claude_visibility_launch_failed(
             code,
             str(detail)[:200],
         )
+        rendered_prompt = _redacted_launch_frame(prompt_frame)
+        if rendered_prompt:
+            # What the CLI drew in response to the PASTE, before Return. A
+            # footer-only response frame cannot distinguish "the paste never
+            # reached the CLI" from "the CLI accepted it and started no turn";
+            # this can.
+            _LOG.warning(
+                "claude_visibility_launch_failed_prompt_frame job=%s attempt=%s"
+                " code=%s frame:\n%s",
+                getattr(claim, "job_id", None),
+                getattr(claim, "attempt_ordinal", None),
+                code,
+                rendered_prompt,
+            )
         rendered = _redacted_launch_frame(frame)
         if rendered:
             # A SECOND record on purpose. The one-line summary above stays
@@ -1884,6 +1998,7 @@ class ClaudeNativeRegistrar:
         pending: tuple[str, str, str] | None = None
         lifecycle_verified = False
         failure_frame = ""
+        prompt_frame = ""
         try:
             process = self._factory.spawn(argv, cwd=candidate.source_cwd)
             launched = True
@@ -1926,7 +2041,9 @@ class ClaudeNativeRegistrar:
                         ),
                         prompt=prompt,
                     )
+                    prompt_frame = prompt_input
                 except _PtyResponseTimeout as exc:
+                    prompt_frame = exc.output
                     if exc.reason != "terminal_input_disabled":
                         raise
                     # The last-resort branch of _prompt_input_timeout_reason,
@@ -2090,7 +2207,7 @@ class ClaudeNativeRegistrar:
         ):
             transition, code, detail = pending
             _log_claude_visibility_launch_failed(
-                claim, code, detail, failure_frame
+                claim, code, detail, failure_frame, prompt_frame
             )
             if transition == "fail":
                 return self._fail(claim, code, detail)
@@ -2123,7 +2240,7 @@ class ClaudeNativeRegistrar:
                     )
                 if pending is not None:
                     _log_claude_visibility_launch_failed(
-                        claim, pending[1], pending[2], failure_frame
+                        claim, pending[1], pending[2], failure_frame, prompt_frame
                     )
                     return self._retry(claim, pending[1], pending[2])
                 _log_claude_visibility_launch_failed(
