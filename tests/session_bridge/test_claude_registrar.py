@@ -5337,3 +5337,276 @@ def test_launch_degrades_to_no_debug_file_when_the_directory_is_unusable(
 def test_registrar_rejects_a_non_path_debug_dir() -> None:
     with pytest.raises(TypeError):
         registrar(FakeSource(), FakeFactory(), debug_log_dir="C:/tmp")  # type: ignore[arg-type]
+
+
+class _ShortWritingProcess:
+    """A pty wrapper whose write() accepts a bounded slice per call, like a
+    real pipe under pressure: pywinpty documents PTY.write as returning the
+    number of bytes written, which may be fewer than offered."""
+
+    def __init__(self, accept: list[int]) -> None:
+        self.accept = list(accept)
+        self.received = bytearray()
+        self.calls = 0
+
+    def write(self, data: str) -> int:
+        # pywinpty takes TEXT and reports the BYTE count it accepted (measured
+        # on 2.0.15: 5 x U+00E9 -> 10). A text API cannot accept HALF a
+        # character, so a byte limit landing mid-character is rounded down --
+        # modelling a device that splits one would be modelling an impossible
+        # one, and would let the loop appear broken for a case that cannot
+        # occur.
+        self.calls += 1
+        encoded = data.encode("utf-8")
+        limit = self.accept.pop(0) if self.accept else len(encoded)
+        taken = encoded[:limit]
+        while taken:
+            try:
+                taken.decode("utf-8")
+                break
+            except UnicodeDecodeError:
+                taken = taken[:-1]
+        self.received += taken
+        return len(taken)
+
+
+def test_winpty_write_delivers_every_byte_across_short_writes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The registration prompt is one ~1.1 KB paste frame followed by a Return.
+
+    A dropped tail loses the paste-END marker and the Return then lands INSIDE
+    the paste as literal text: idle REPL, no turn, no transcript, footer-only
+    frame -- byte-for-byte the Mode A capture of 2026-09-06. The old write()
+    discarded the count pywinpty returns.
+    """
+
+    target = _ShortWritingProcess(accept=[100, 7, 300])
+    process = _WinPtyProcess(target)
+    frame = "\x1b[200~" + ("x" * 1000) + "\x1b[201~"
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        process.write(frame)
+
+    assert bytes(target.received) == frame.encode("utf-8")
+    assert target.calls == 4
+    shorts = [r for r in caplog.records if "PTY short write" in r.getMessage()]
+    assert len(shorts) == 3, "each short acceptance is named in the log"
+
+
+def test_winpty_write_raises_when_the_pipe_makes_no_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stalled pipe is a named, retryable failure, not a silent budget burn."""
+
+    class Stalled:
+        def write(self, data: str) -> int:
+            return 0
+
+    import session_bridge.claude_registrar as module
+
+    monkeypatch.setattr(module.time, "sleep", lambda _s: None)
+    process = _WinPtyProcess(Stalled())
+
+    with pytest.raises(RuntimeError, match="PTY write stalled: 0 of 5 bytes"):
+        process.write("hello")
+
+
+def test_winpty_write_accepts_a_wrapper_that_reports_no_count() -> None:
+    class Countless:
+        def __init__(self) -> None:
+            self.received: list[bytes] = []
+
+        def write(self, data: str) -> None:
+            self.received.append(data.encode("utf-8"))
+
+    target = Countless()
+    _WinPtyProcess(target).write("abc")
+
+    assert target.received == [b"abc"]
+
+
+def test_winpty_write_direct_path_delivers_multibyte_text_in_full() -> None:
+    """Production uses the direct native path.
+
+    MEASURED against pywinpty 2.0.15: PTY.write takes TEXT and returns a BYTE
+    count (5 x U+00E9 -> 10). winpty.pyi annotates bytes, which is wrong at
+    runtime; sending bytes raises TypeError and broke 26 real-ConPTY tests
+    against a 0-failure baseline. This pins text-in / bytes-counted.
+    """
+
+    class Native:
+        def __init__(self) -> None:
+            self.pty = _ShortWritingProcess(accept=[2])
+
+    native = Native()
+    _WinPtyProcess(native, direct_native_pty=True).write("héllo")  # 6 UTF-8 bytes
+
+    assert bytes(native.pty.received) == "héllo".encode("utf-8")
+    assert native.pty.calls > 1, "a short write must be resumed, not dropped"
+
+
+def test_launch_logs_the_pre_return_screen_beside_the_response_frame(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A footer-only response frame cannot say whether the paste ever arrived.
+
+    The prompt-input capture -- what the CLI drew in response to the PASTE,
+    before Return -- can. Both now travel with the failure.
+    """
+
+    item = claim()
+    process = FakePty(
+        prompt_input_output="[Pasted text #1 +12 lines]\r\n",
+        read_error=_PtyResponseTimeout("main_repl_without_prompt_echo", "> \n"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(FakeSource([None]), FakeFactory(process)).process(item)
+
+    assert result.error_code == "creation_ambiguous"
+    prompt_frames = [
+        r.getMessage()
+        for r in caplog.records
+        if "claude_visibility_launch_failed_prompt_frame" in r.getMessage()
+    ]
+    assert len(prompt_frames) == 1
+    assert "Pasted text #1" in prompt_frames[0]
+    assert any(
+        "claude_visibility_launch_failed_frame" in r.getMessage()
+        for r in caplog.records
+    ), "the response frame is still logged alongside"
+
+
+def test_launch_logs_no_prompt_frame_when_the_paste_drew_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    item = claim()
+    process = FakePty(
+        prompt_input_output="",
+        read_error=_PtyResponseTimeout("main_repl_without_prompt_echo", "> \n"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        registrar(FakeSource([None]), FakeFactory(process)).process(item)
+
+    assert not [
+        r
+        for r in caplog.records
+        if "claude_visibility_launch_failed_prompt_frame" in r.getMessage()
+    ]
+
+
+class _CharacterSplittingPty:
+    """A device that accepts a byte count landing INSIDE a character.
+
+    Whether the native binding can do this is not established -- it takes text
+    and reports bytes, so it need not respect character boundaries. The loop
+    must survive it either way: the next slice is produced by decoding the
+    remaining bytes, so resuming mid-sequence would raise UnicodeDecodeError
+    and turn a short write into a crash.
+    """
+
+    def __init__(self) -> None:
+        self.received = bytearray()
+        self.calls = 0
+
+    def write(self, data: str) -> int:
+        self.calls += 1
+        encoded = data.encode("utf-8")
+        if self.calls == 1:
+            # Split the 2-byte U+00E9 that starts this payload.
+            self.received += encoded[:1]
+            return 1
+        self.received += encoded
+        return len(encoded)
+
+
+def test_winpty_write_survives_a_count_landing_inside_a_character() -> None:
+    target = _CharacterSplittingPty()
+
+    _WinPtyProcess(target).write("éllo")  # 5 UTF-8 bytes
+
+    # It completes rather than raising UnicodeDecodeError, and every character
+    # arrives; the split character's first byte is re-sent, which is the only
+    # thing a text API can do.
+    assert target.calls == 2
+    assert bytes(target.received).endswith("éllo".encode("utf-8"))
+
+
+def test_winpty_write_raises_rather_than_spinning_on_an_always_splitting_pty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device that never completes a character must not hang the launch.
+
+    Rounding down to a character boundary means zero forward progress, so
+    without counting that as a stall the loop would resend the same slice
+    forever and burn the whole process budget with no diagnosis -- the exact
+    silent-hang shape this work exists to remove.
+    """
+
+    class AlwaysSplits:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def write(self, data: str) -> int:
+            self.calls += 1
+            return 1  # always the first byte of the 2-byte character
+
+    import session_bridge.claude_registrar as module
+
+    monkeypatch.setattr(module.time, "sleep", lambda _s: None)
+    target = AlwaysSplits()
+
+    with pytest.raises(RuntimeError, match="PTY write stalled: 0 of 5 bytes"):
+        _WinPtyProcess(target).write("éllo")
+
+    assert target.calls == _WinPtyProcess._WRITE_STALL_RETRIES
+
+
+def test_winpty_write_completes_a_payload_needing_more_writes_than_the_stall_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Many small ACCEPTED writes are progress, not a stall.
+
+    The 1.1 KB registration frame can need far more than _WRITE_STALL_RETRIES
+    passes on a slow pipe. The counter must reset on real forward progress, or
+    a healthy-but-slow write raises after 50 chunks and the launch fails for no
+    reason -- trading a silent truncation for a spurious refusal.
+    """
+
+    class SplitsThenProgresses:
+        """Splits each 2-byte character once, then completes it.
+
+        Interleaves no-progress and progress, which is the ONLY shape that
+        exercises the reset: a device that never stalls never increments the
+        counter, and one that always stalls raises on the first character.
+        """
+
+        def __init__(self) -> None:
+            self.received = bytearray()
+            self.calls = 0
+            self.split_next = True
+
+        def write(self, data: str) -> int:
+            self.calls += 1
+            encoded = data.encode("utf-8")
+            if self.split_next:
+                self.split_next = False
+                self.received += encoded[:1]
+                return 1  # half of the leading character -- no usable progress
+            self.split_next = True
+            self.received += encoded[:2]
+            return 2  # one whole character
+
+    import session_bridge.claude_registrar as module
+
+    monkeypatch.setattr(module.time, "sleep", lambda _s: None)
+    target = SplitsThenProgresses()
+    characters = _WinPtyProcess._WRITE_STALL_RETRIES + 10
+    payload = "é" * characters
+
+    _WinPtyProcess(target).write(payload)
+
+    assert bytes(target.received).endswith(payload[-1].encode("utf-8"))
+    assert target.calls == characters * 2, "one split plus one completion each"
