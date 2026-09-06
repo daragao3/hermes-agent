@@ -42,3 +42,19 @@ def test_registrar_does_not_hardcode_a_developer_home():
 
     assert "$env:USERPROFILE" in script
     assert "C:\\Users\\diego" not in script
+
+
+def test_registrar_launches_through_the_hidden_job_host():
+    """The action must be bin/run-hidden-job.exe, never powershell.exe directly.
+
+    A task action that is a console executable launched visibly gets its console
+    delegated into Windows Terminal, and dies with CTRL_CLOSE (0xC000013A) when
+    that terminal closes -- which is how this task died on 2026-09-04 at 18:30:22
+    EDT. The live task was converted the same day; this pins the registrar so a
+    re-registration cannot quietly revert it.
+    """
+    script = _script_text()
+
+    assert "run-hidden-job.exe" in script
+    assert "-Execute $HostExe" in script
+    assert "-Execute 'powershell.exe'" not in script

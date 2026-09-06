@@ -12,6 +12,7 @@
 [CmdletBinding()]
 param(
     [string]$Runner = (Join-Path $env:USERPROFILE '.hermes\bin\ai_usage_collector_run.ps1'),
+    [string]$HostExe = (Join-Path $env:USERPROFILE '.hermes\bin\run-hidden-job.exe'),
     [string]$TaskName = 'AIUsageCollector'
 )
 
@@ -21,8 +22,22 @@ if (-not (Test-Path $Runner)) {
     throw "Runner script not found at '$Runner'. Pass -Runner <path> to override."
 }
 
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Runner`""
+# Launch through bin\run-hidden-job.exe, never powershell.exe directly (2026-09-06).
+# A console the task creates VISIBLY is delegated into Windows Terminal, and when
+# that terminal closes every console it hosts gets CTRL_CLOSE: on 2026-09-04
+# 18:30:22 EDT this task died 0xC000013A that way, 13 seconds into a run, along
+# with four other task actions (loops task-console-wt-hosting-harden-20260906).
+# The wrapper is a GUI-subsystem host that creates powershell.exe with
+# CREATE_NO_WINDOW -- hidden from birth, so conhost never delegates -- and holds
+# the tree in a kill-on-close job object, so the 6-minute limit now reaps the
+# python child too instead of orphaning it. Same contract as every other hidden
+# task on the box (ops\convert-task-to-jobhost.ps1 in ~/.hermes). The
+# -WindowStyle Hidden argument stays: harmless, and it documents the intent.
+if (-not (Test-Path $HostExe)) {
+    throw "Hidden launcher not found at '$HostExe'. Pass -HostExe <path> to override."
+}
+$action = New-ScheduledTaskAction -Execute $HostExe `
+    -Argument "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Runner`""
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes 15)
 # ExecutionTimeLimit stays at 6 minutes. It is NOT derived from the repetition
