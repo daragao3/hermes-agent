@@ -33,6 +33,7 @@ from session_bridge.claude_registrar import (
     _PtyReadinessTimeout,
     _RegistrarCancelled,
     _PtyResponseTimeout,
+    _redacted_launch_frame,
     _WinPtyProcess,
     _claude_main_repl_ready,
     _known_claude_input_modal_visible,
@@ -5098,3 +5099,157 @@ def test_swallowed_fail_store_failure_is_logged(
     ]
     assert len(messages) == 1
     assert "operation=fail_claude_visibility_job" in messages[0]
+
+
+_FRAME_MARKER = (
+    "Signed marker: HERMES_SESSION_BRIDGE_V1:eyJicmlkZ2VfaWQiOiJ4In0.AbCd-_1"
+)
+
+
+def test_redacted_launch_frame_removes_the_signed_marker_token() -> None:
+    """The marker authenticates the bridge; it must never reach a log."""
+
+    frame = _redacted_launch_frame(
+        "This is a Hermes Session Bridge Claude visibility registration.\n"
+        + _FRAME_MARKER
+        + "\nBounded metadata: {\"source_cwd\":\"C:\\\\x\"}\n> \n"
+    )
+
+    assert "eyJicmlkZ2VfaWQiOiJ4In0" not in frame
+    assert "HERMES_SESSION_BRIDGE_V1:<redacted>" in frame
+    assert "source_cwd" not in frame
+    assert "Bounded metadata: <redacted>" in frame
+    # The preamble is the single most informative bit -- whether the prompt
+    # reached the screen at all -- so it is deliberately kept.
+    assert "Hermes Session Bridge Claude visibility registration" in frame
+
+
+def test_redacted_launch_frame_bounds_a_huge_frame_and_says_how_much() -> None:
+    frame = _redacted_launch_frame("A" * 12000)
+
+    assert len(frame) < 12000
+    assert "chars elided" in frame
+
+
+def test_redacted_launch_frame_is_empty_for_no_output() -> None:
+    assert _redacted_launch_frame("") == ""
+    assert _redacted_launch_frame(None) == ""
+    assert _redacted_launch_frame(b"bytes") == ""
+
+
+def test_response_timeout_carries_the_screen_its_reason_came_from() -> None:
+    """Without this the reason is computed and the evidence discarded."""
+
+    error = _PtyResponseTimeout("main_repl_without_prompt_echo", "drawn screen")
+
+    assert error.reason == "main_repl_without_prompt_echo"
+    assert error.output == "drawn screen"
+    # Default keeps every existing construction valid.
+    assert _PtyResponseTimeout("no_response_output").output == ""
+
+
+def test_launch_logs_the_frame_a_response_timeout_failed_on(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The production Mode A shape: a timeout whose screen must reach the log.
+
+    Job d488ac51...614a723abf48 failed three times on 2026-09-04 with
+    creation_ambiguous / main_repl_without_prompt_echo and wrote no transcript.
+    The service log carried the reason and nothing else, so four sessions could
+    not tell which upstream produced it. This pins that the screen now lands
+    beside the reason.
+    """
+
+    item = claim()
+    process = FakePty(
+        read_error=_PtyResponseTimeout(
+            "main_repl_without_prompt_echo",
+            "Signed marker: HERMES_SESSION_BRIDGE_V1:secrettoken\n> \n",
+        )
+    )
+    source = FakeSource([None])
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(source, FakeFactory(process)).process(item)
+
+    assert result.status == "retry"
+    assert result.error_code == "creation_ambiguous"
+    frames = [
+        record.getMessage()
+        for record in caplog.records
+        if "claude_visibility_launch_failed_frame" in record.getMessage()
+    ]
+    assert len(frames) == 1, "exactly one frame record per failed launch"
+    assert "main_repl_without_prompt_echo" in frames[0]
+    assert "secrettoken" not in frames[0], "marker must be redacted in the log"
+    assert "HERMES_SESSION_BRIDGE_V1:<redacted>" in frames[0]
+    # The one-line summary must survive alongside it, unchanged and greppable.
+    summaries = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("claude_visibility_launch_failed job=")
+    ]
+    assert len(summaries) == 1
+
+
+def test_launch_failure_without_a_frame_still_logs_the_summary_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failure with no captured screen must not gain an empty frame record."""
+
+    item = claim()
+    process = FakePty(ready_error=_PtyReadinessTimeout("known_input_modal"))
+    source = FakeSource([None])
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        registrar(source, FakeFactory(process)).process(item)
+
+    assert not [
+        record
+        for record in caplog.records
+        if "claude_visibility_launch_failed_frame" in record.getMessage()
+    ]
+
+
+def test_response_read_raise_site_attaches_the_screen_it_classified() -> None:
+    """Drive the REAL raise site, not an injected exception.
+
+    Caught by mutation-testing: deleting the `joined` argument at
+    _read_until_cancellable's raise left every other frame test green, because
+    they inject _PtyResponseTimeout through FakePty and never reach the site
+    that actually constructs it in production. This is the only test that fails
+    if the production raise site stops carrying its screen.
+    """
+
+    class Process:
+        def __init__(self) -> None:
+            self.chunks = iter(["a drawn but unregistered screen\r\n"])
+
+        def read_with_timeout(self, _size: int, _timeout: float) -> str | None:
+            return next(self.chunks, None)
+
+    process = _WinPtyProcess(Process())
+
+    with pytest.raises(_PtyResponseTimeout) as exc_info:
+        process.read_until(0.05, prompt="a multiline registration prompt")
+
+    assert exc_info.value.reason
+    assert "a drawn but unregistered screen" in exc_info.value.output
+
+
+def test_prompt_input_raise_site_attaches_the_screen_it_classified() -> None:
+    """Same wiring, the prompt-input phase's own raise site."""
+
+    class Process:
+        def __init__(self) -> None:
+            self.chunks = iter(["an unsettled paste screen\r\n"])
+
+        def read_with_timeout(self, _size: int, _timeout: float) -> str | None:
+            return next(self.chunks, None)
+
+    process = _WinPtyProcess(Process())
+
+    with pytest.raises(_PtyResponseTimeout) as exc_info:
+        process.read_until_prompt_input(0.05, prompt="a registration prompt")
+
+    assert "an unsettled paste screen" in exc_info.value.output
