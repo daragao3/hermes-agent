@@ -313,11 +313,17 @@ class _RegistrarCancelled(RuntimeError):
 
 
 class _PtyResponseTimeout(TimeoutError):
-    """Bounded, non-transcript diagnostic for a Claude response timeout."""
+    """Bounded, non-transcript diagnostic for a Claude response timeout.
 
-    def __init__(self, reason: str) -> None:
+    Carries the terminal output the reason was DERIVED from. The reason names
+    which branch of _response_timeout_reason won; it cannot say what the screen
+    showed, and that gap is the whole of Mode A.
+    """
+
+    def __init__(self, reason: str, output: str = "") -> None:
         super().__init__(f"Claude PTY response timed out: {reason}")
         self.reason = reason
+        self.output = output if isinstance(output, str) else ""
 
 
 def _canonical_claude_startup_settings(theme: object) -> str:
@@ -873,7 +879,7 @@ class _WinPtyProcess:
                 reason = _prompt_input_timeout_reason(joined, prompt=prompt)
                 if reason == "terminal_input_disabled":
                     self._prompt_input_buffer = joined
-                raise _PtyResponseTimeout(reason)
+                raise _PtyResponseTimeout(reason, joined)
             try:
                 value = timed_read(4096, remaining)
             except (EOFError, StopIteration) as exc:
@@ -1043,7 +1049,7 @@ class _WinPtyProcess:
                 if candidate_seen:
                     return _normalized_terminal_output(joined, prompt)
                 raise _PtyResponseTimeout(
-                    _response_timeout_reason(joined, prompt=prompt)
+                    _response_timeout_reason(joined, prompt=prompt), joined
                 )
             try:
                 value = timed_read(4096, remaining)
@@ -1245,8 +1251,54 @@ class _WinPtyProcess:
         return value if type(value) is int else None
 
 
+_MAX_LOGGED_FRAME_CHARS = 4000
+_MARKER_TOKEN_RE = re.compile(r"(HERMES_SESSION_BRIDGE_V1:)[A-Za-z0-9_\-.]+")
+_BOUNDED_METADATA_RE = re.compile(r"Bounded metadata: \{.*?\}", re.DOTALL)
+
+
+def _redacted_launch_frame(output: object) -> str:
+    """The drawn screen a launch failed on, safe to put in a log.
+
+    WHY THE FRAME AND NOT JUST THE REASON. _response_timeout_reason collapses
+    the screen to one of six words, and main_repl_without_prompt_echo means
+    only "REPL ready, no paste visible, prompt not echoed" -- a description of
+    an EMPTY screen. Several different upstreams end there: a paste that never
+    landed, a submit into an already-cleared box, a turn that never started,
+    and a turn whose output was drawn and then erased. Four sessions have tried
+    to tell those apart from the reason alone and none could, because the
+    screen the reason was computed from was discarded in the same breath.
+
+    Redaction, in order: the signed marker's token, which is the one real
+    secret on the frame and authenticates the bridge; then the bounded-metadata
+    JSON, which is the bulkiest thing on screen and carries source_cwd, git
+    head and session ids that are already on the job row. The prompt's fixed
+    preamble is deliberately KEPT -- whether it is on screen at all is the
+    single most informative bit in the whole capture.
+    """
+
+    if not isinstance(output, str) or not output:
+        return ""
+    try:
+        rendered = _stripped_terminal_text(output)
+    except Exception:
+        rendered = output
+    rendered = _MARKER_TOKEN_RE.sub(r"\1<redacted>", rendered)
+    rendered = _BOUNDED_METADATA_RE.sub("Bounded metadata: <redacted>", rendered)
+    if len(rendered) > _MAX_LOGGED_FRAME_CHARS:
+        half = _MAX_LOGGED_FRAME_CHARS // 2
+        elided = len(rendered) - _MAX_LOGGED_FRAME_CHARS
+        rendered = "".join((
+            rendered[:half],
+            "\n<... ",
+            str(elided),
+            " chars elided ...>\n",
+            rendered[-half:],
+        ))
+    return rendered
+
+
 def _log_claude_visibility_launch_failed(
-    claim: Any, code: object, detail: object
+    claim: Any, code: object, detail: object, frame: object = None
 ) -> None:
     """Name the cause of a failed launch, at the moment it fails.
 
@@ -1277,6 +1329,20 @@ def _log_claude_visibility_launch_failed(
             code,
             str(detail)[:200],
         )
+        rendered = _redacted_launch_frame(frame)
+        if rendered:
+            # A SECOND record on purpose. The one-line summary above stays
+            # greppable and single-line, and a frame that fails to render can
+            # never take the summary down with it.
+            _LOG.warning(
+                "claude_visibility_launch_failed_frame job=%s attempt=%s"
+                " code=%s detail=%r frame:\n%s",
+                getattr(claim, "job_id", None),
+                getattr(claim, "attempt_ordinal", None),
+                code,
+                str(detail)[:200],
+                rendered,
+            )
     except Exception:
         pass
 
@@ -1801,6 +1867,7 @@ class ClaudeNativeRegistrar:
         provider_limit_observed = False
         pending: tuple[str, str, str] | None = None
         lifecycle_verified = False
+        failure_frame = ""
         try:
             process = self._factory.spawn(argv, cwd=candidate.source_cwd)
             launched = True
@@ -1944,6 +2011,7 @@ class ClaudeNativeRegistrar:
                 f"Claude TUI readiness blocked: {exc.reason}",
             )
         except _PtyResponseTimeout as exc:
+            failure_frame = exc.output
             pending = (
                 "retry",
                 "creation_ambiguous",
@@ -2005,7 +2073,9 @@ class ClaudeNativeRegistrar:
             provider_limit_observed or ambiguous_reconciliation
         ):
             transition, code, detail = pending
-            _log_claude_visibility_launch_failed(claim, code, detail)
+            _log_claude_visibility_launch_failed(
+                claim, code, detail, failure_frame
+            )
             if transition == "fail":
                 return self._fail(claim, code, detail)
             return self._retry(claim, code, detail)
@@ -2037,7 +2107,7 @@ class ClaudeNativeRegistrar:
                     )
                 if pending is not None:
                     _log_claude_visibility_launch_failed(
-                        claim, pending[1], pending[2]
+                        claim, pending[1], pending[2], failure_frame
                     )
                     return self._retry(claim, pending[1], pending[2])
                 _log_claude_visibility_launch_failed(
