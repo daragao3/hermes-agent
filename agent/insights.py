@@ -33,6 +33,28 @@ from agent.usage_pricing import (
 
 
 
+_USAGE_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "reasoning_tokens",
+)
+
+
+def _has_billable_usage(session: Dict[str, Any]) -> bool:
+    """True when a session actually consumed something worth pricing.
+
+    Counts every token bucket, not just input/output: a cache-read-only turn
+    is real billable usage. ``api_call_count`` is included as well so a call
+    that somehow reported no tokens still registers as usage rather than
+    being silently written off as free.
+    """
+    if any(session.get(field) for field in _USAGE_TOKEN_FIELDS):
+        return True
+    return bool(session.get("api_call_count"))
+
+
 def _estimate_cost(
     session_or_model: Dict[str, Any] | str,
     input_tokens: int = 0,
@@ -455,7 +477,21 @@ class InsightsEngine:
             display = model.split("/")[-1] if "/" in model else (model or "unknown")
             if status == "included":
                 included_cost_sessions += 1
-            elif status == "unknown":
+            elif status == "unknown" and _has_billable_usage(s):
+                # A session that consumed NOTHING is not unpriced spend, it is
+                # NO spend, and counting it here is a false positive in the one
+                # counter that exists to raise suspicion about the total.
+                # Measured 2026-09-06: the only three sessions this counter was
+                # reporting were cron fires that completed without ever calling
+                # a model (api_call_count 0, every token bucket 0,
+                # end_reason "cron_complete"), so they have no route to resolve
+                # and never will. Reporting them trains the reader to ignore a
+                # signal that is otherwise exact -- unpriced_tokens was already
+                # 0 alongside them, which is the contradiction that gave it away.
+                # Note the deliberate asymmetry with included_cost_sessions
+                # above, which is NOT gated: that one is descriptive rather than
+                # a warning, so a zero-usage session inflates it harmlessly, and
+                # gating it would move a headline number with no defect behind it.
                 unknown_cost_sessions += 1
             if has_known_pricing(model, s.get("billing_provider"), s.get("billing_base_url")):
                 models_with_pricing.add(display)

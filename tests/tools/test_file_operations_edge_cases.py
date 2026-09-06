@@ -306,7 +306,7 @@ class TestPaginationBounds:
             commands.append(command)
             if command.startswith("test -e"):
                 return MagicMock(exit_code=0, stdout="exists")
-            if command.startswith("rg --files"):
+            if "rg --files" in command:
                 return MagicMock(exit_code=0, stdout="a.py\n")
             return MagicMock(exit_code=0, stdout="")
 
@@ -315,7 +315,9 @@ class TestPaginationBounds:
             result = ops.search("*.py", target="files", path=".", offset=-4, limit=-2)
 
         assert result.files == ["a.py"]
-        rg_commands = [cmd for cmd in commands if cmd.startswith("rg --files")]
+        # Match on a substring, not a prefix: the command is now wrapped in
+        # ``set -o pipefail; `` so rg's exit code survives the ``| head``.
+        rg_commands = [cmd for cmd in commands if "rg --files" in cmd]
         assert rg_commands
         assert "| head -n 1" in rg_commands[0]
 

@@ -410,6 +410,12 @@ class BaseEnvironment(ABC):
     # Snapshot creation timeout (override for slow cold-starts).
     _snapshot_timeout: int = 30
 
+    # True only where commands run under MSYS bash on Windows, which treats a
+    # Windows reserved device name (`NUL`, `CON`, `COM1`…) as an ordinary
+    # filename. LocalEnvironment sets it per-host; every sandboxed backend
+    # keeps it False because their shells are genuinely POSIX.
+    _msys_windows_device_redirects: bool = False
+
     def get_temp_dir(self) -> str:
         """Return the backend temp directory used for session artifacts.
 
@@ -1114,6 +1120,19 @@ class BaseEnvironment(ABC):
         if rewrite_compound_background:
             from tools.terminal_tool import _rewrite_compound_background
             exec_command = _rewrite_compound_background(exec_command)
+        # `> NUL` discards on Windows but writes a real, Win32-unreachable file
+        # under the MSYS bash the local backend shells out to. Only backends
+        # that actually run through MSYS opt in — on a Linux container `NUL` is
+        # an ordinary filename and rewriting it would destroy the caller's
+        # intent.
+        if self._msys_windows_device_redirects:
+            from tools.terminal_tool import _rewrite_windows_device_redirects
+            exec_command, _devices = _rewrite_windows_device_redirects(exec_command)
+            if _devices:
+                logger.debug(
+                    "Repointed %d Windows device redirect target(s) at /dev/null",
+                    _devices,
+                )
         effective_timeout = timeout or self.timeout
         effective_cwd = cwd or self.cwd
 
