@@ -190,6 +190,17 @@ def _truncate_preview(text: str, max_len: int | None) -> str:
 _SHELL_SILENT_HEADS = {"cd", "pushd", "popd", "export", "set", "unset", "source", ".", "true", "false", ":"}
 _SHELL_PIPE_TAIL_HEADS = {"head", "tail", "wc", "sort", "uniq"}
 
+# Redirect targets that genuinely throw output away, so hiding them costs the
+# reader nothing.  Commands run under a POSIX shell (MSYS bash on Windows), so
+# this list is deliberately POSIX-only: a Windows device name like ``NUL`` is an
+# ordinary relative filename there and a redirect to it writes a real file --
+# exactly the case a transcript has to show.
+_SHELL_DISCARD_REDIRECT_TARGETS = {"/dev/null"}
+
+_SHELL_REDIRECT_OPERATOR_RE = re.compile(r"^\d*(?:>>?|<)$")
+_SHELL_FD_DUP_RE = re.compile(r"^\d*(?:>&|<&)\d+$")
+_SHELL_FUSED_REDIRECT_RE = re.compile(r"^(\d*(?:>>?|<))(\S+)$")
+
 
 def _shell_basename(head: str) -> str:
     return head.rsplit("/", 1)[-1] if head else ""
@@ -287,16 +298,44 @@ def _shell_head_word(segment: str) -> str:
     return _shell_basename(words[index] if index < len(words) else "")
 
 
-def _clean_shell_segment(segment: str) -> str:
+def _strip_shell_quotes(word: str) -> str:
+    if len(word) >= 2 and word[0] == word[-1] and word[0] in {"'", '"'}:
+        return word[1:-1]
+    return word
+
+
+def _is_discard_redirect_target(target: str) -> bool:
+    return _strip_shell_quotes(target) in _SHELL_DISCARD_REDIRECT_TARGETS
+
+
+def _clean_shell_segment(segment: str, *, keep_redirects: bool = True) -> str:
+    """Drop shell plumbing from a segment for display.
+
+    File-descriptor duplications (``2>&1``) and redirects to a discard sink
+    (``> /dev/null``) are pure noise and always go.  Every other redirect is
+    kept by default: where a command's output landed is the single fact a
+    reader needs to attribute a written file, and hiding it once made a stray
+    ``> NUL`` write unattributable from the transcript.  ``keep_redirects=False``
+    yields the fully-stripped form used for classifying a segment, so that
+    classification is unaffected by text inside a redirect target.
+    """
     words = _split_shell_words(segment)
     out: list[str] = []
     i = 0
     while i < len(words):
         word = words[i]
-        if re.match(r"^\d*(?:>>?|<)$", word):
+        if _SHELL_REDIRECT_OPERATOR_RE.match(word):
+            target = words[i + 1] if i + 1 < len(words) else ""
+            if keep_redirects and target and not _is_discard_redirect_target(target):
+                out.append(word)
+                out.append(target)
             i += 2
             continue
-        if re.match(r"^\d*(?:>&|<&)\d+$", word) or re.match(r"^\d*>&\d+$", word):
+        if _SHELL_FD_DUP_RE.match(word):
+            i += 1
+            continue
+        fused = _SHELL_FUSED_REDIRECT_RE.match(word)
+        if fused and (not keep_redirects or _is_discard_redirect_target(fused.group(2))):
             i += 1
             continue
         out.append(word)
@@ -325,8 +364,11 @@ def summarize_shell_command(command: str) -> str:
     core: list[str] = []
     for segment in segments:
         cleaned = _clean_shell_segment(segment)
-        head = _shell_head_word(cleaned)
-        if cleaned and head not in _SHELL_SILENT_HEADS and not _is_shell_boundary_echo(cleaned):
+        # Classify on the redirect-free form so that a segment is never judged
+        # silent (or a boundary echo) because of text inside a redirect target.
+        classified = _clean_shell_segment(segment, keep_redirects=False)
+        head = _shell_head_word(classified)
+        if cleaned and head not in _SHELL_SILENT_HEADS and not _is_shell_boundary_echo(classified):
             core.append(cleaned)
 
     if not core:
