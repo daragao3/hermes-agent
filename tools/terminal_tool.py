@@ -703,6 +703,121 @@ def _sudo_nopasswd_works() -> bool:
         return False
 
 
+# Windows reserved DOS device names. Win32 resolves a path whose final
+# component is one of these — with or without an extension, in any directory —
+# to the device rather than to a file on disk. That is why `> NUL` discards
+# output in cmd.exe and PowerShell, and why no Win32 caller can ever open,
+# stat or delete a file that happens to carry one of these names.
+_WINDOWS_DEVICE_NAMES = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{d}" for d in range(1, 10)}
+    | {f"lpt{d}" for d in range(1, 10)}
+)
+
+# A bare redirect operator: `>`, `>>`, `2>`, `1>>`. Matched as a whole word,
+# so `>/dev/null` (operator and target fused) is not one of these.
+_REDIRECT_OPERATOR_RE = re.compile(r"^\d*>>?$")
+
+# The same operator with its target fused onto it: `>NUL`, `2>>nul`.
+_REDIRECT_ATTACHED_RE = re.compile(r"^(\d*>>?)(\S+)$")
+
+
+def _is_windows_device_word(word: str) -> bool:
+    """True when *word* is an unquoted, bare Windows reserved device name.
+
+    Quoted or path-qualified targets are deliberately rejected: quoting is how
+    a caller says it means a literal filename, and a directory-qualified target
+    is specific enough to be taken at face value. The idiom this exists to
+    catch is the bare one a model actually writes — `> NUL`.
+    """
+    if not word or any(c in word for c in "'\"\\/$`"):
+        return False
+    return word.split(".", 1)[0].lower() in _WINDOWS_DEVICE_NAMES
+
+
+def _rewrite_windows_device_redirects(command: str) -> tuple[str, int]:
+    """Point output redirects at ``/dev/null`` when they name a Windows device.
+
+    ``> NUL`` is the cmd.exe/PowerShell idiom for discarding output, and it is
+    what a model reaches for on Windows. But the local backend runs commands
+    under MSYS bash (Git Bash), which resolves paths itself instead of handing
+    them to Win32 DOS-device parsing — so there ``NUL`` is an ordinary relative
+    filename and the redirect writes a REAL file into the cwd.
+
+    That file is then unreachable to every Win32 caller (``del``,
+    ``Remove-Item``, ``os.remove``), because those DO resolve ``NUL`` to the
+    null device: they no-op or fail against the device while the directory
+    entry survives. Only an MSYS tool (``rm``) or an extended-length
+    ``\\\\?\\`` path can remove it. Rewriting the target to ``/dev/null`` gives
+    the redirect the discard meaning it was written to have.
+
+    Commands containing a heredoc are skipped wholesale: rewriting inside a
+    heredoc body would corrupt the document being written, which is a worse
+    outcome than the stray file this guards against.
+
+    Returns the rewritten command and the number of targets rewritten.
+    """
+    if "<<" in command:
+        return command, 0
+
+    out: list[str] = []
+    i = 0
+    n = len(command)
+    rewritten = 0
+    expect_target = False
+
+    while i < n:
+        ch = command[i]
+
+        if ch.isspace():
+            out.append(ch)
+            if ch == "\n":
+                expect_target = False
+            i += 1
+            continue
+
+        # `#` opens a comment only at the start of a word.
+        if ch == "#" and (i == 0 or command[i - 1].isspace()):
+            end = command.find("\n", i)
+            if end == -1:
+                out.append(command[i:])
+                break
+            out.append(command[i:end])
+            i = end
+            expect_target = False
+            continue
+
+        if ch in ";|&()":
+            out.append(ch)
+            i += 1
+            # `&` before `>` is bash's `&>`; the operator branch below still
+            # sees the `>` token, so this does not need to preserve state.
+            expect_target = False
+            continue
+
+        token, next_i = _read_shell_token(command, i)
+
+        if expect_target and _is_windows_device_word(token):
+            out.append("/dev/null")
+            rewritten += 1
+            expect_target = False
+        elif _REDIRECT_OPERATOR_RE.match(token):
+            out.append(token)
+            expect_target = True
+        elif (attached := _REDIRECT_ATTACHED_RE.match(token)) and \
+                _is_windows_device_word(attached.group(2)):
+            out.append(f"{attached.group(1)}/dev/null")
+            rewritten += 1
+            expect_target = False
+        else:
+            out.append(token)
+            expect_target = False
+
+        i = next_i
+
+    return "".join(out), rewritten
+
+
 def _rewrite_compound_background(command: str) -> str:
     """Wrap `A && B &` (or `A || B &`) to `A && { B & }` at depth 0.
 
