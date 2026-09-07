@@ -59,6 +59,70 @@ class TestResolveJobIdForActivity:
         assert resolve_job_id_for_activity("no.such.activity") is None
 
 
+class TestMatcherLaneFollowsPhaseBMarker:
+    """The Matcher activity resolves to whichever lane the Phase-B cutover
+    marker names live, not to "the one enabled job" — the graph lane is enabled
+    in BOTH cutover states, so enablement alone cannot disambiguate.
+    """
+
+    MATCHER = "cron.jobflow.matcher"
+    MAILBOX_ID = "b74186b2eaa5"  # jobflow-matcher (paused at cutover)
+    GRAPH_ID = "449bc1b6665c"    # jobflow-matcher-shadow (promoted lane)
+
+    def _both_lanes(self, *, mailbox_enabled, graph_enabled):
+        return [
+            _job("jobflow-matcher", self.MAILBOX_ID, enabled=mailbox_enabled),
+            _job("jobflow-matcher-shadow", self.GRAPH_ID, enabled=graph_enabled),
+        ]
+
+    def test_resolves_to_the_graph_lane_while_marker_present(self, monkeypatch):
+        """Post-cutover: mailbox paused, graph enabled, marker present."""
+        monkeypatch.setattr(
+            "cron.jobs.load_jobs",
+            lambda: self._both_lanes(mailbox_enabled=False, graph_enabled=True),
+        )
+        monkeypatch.setattr(
+            "jobflow_dispatch.activate._phase_b_shadow_is_live", lambda: True
+        )
+        assert resolve_job_id_for_activity(self.MATCHER) == self.GRAPH_ID
+
+    def test_resolves_to_the_mailbox_lane_when_marker_absent(self, monkeypatch):
+        """Pre-cutover or rolled back: the graph lane stays enabled on its own
+        schedule and MUST NOT be picked; the resumed mailbox lane wins."""
+        monkeypatch.setattr(
+            "cron.jobs.load_jobs",
+            lambda: self._both_lanes(mailbox_enabled=True, graph_enabled=True),
+        )
+        monkeypatch.setattr(
+            "jobflow_dispatch.activate._phase_b_shadow_is_live", lambda: False
+        )
+        assert resolve_job_id_for_activity(self.MATCHER) == self.MAILBOX_ID
+
+    def test_marker_present_but_graph_lane_disabled_fails_closed(self, monkeypatch):
+        """The live lane being down is a wake-the-agent miss, never a fallback
+        to the paused mailbox lane."""
+        monkeypatch.setattr(
+            "cron.jobs.load_jobs",
+            lambda: self._both_lanes(mailbox_enabled=False, graph_enabled=False),
+        )
+        monkeypatch.setattr(
+            "jobflow_dispatch.activate._phase_b_shadow_is_live", lambda: True
+        )
+        assert resolve_job_id_for_activity(self.MATCHER) is None
+
+    def test_a_non_matcher_activity_ignores_the_marker(self, monkeypatch):
+        """Only marker-governed activities consult the marker; everything else
+        resolves purely from its policy aliases even when the marker is set."""
+        monkeypatch.setattr(
+            "cron.jobs.load_jobs",
+            lambda: [_job("jobflow-tailor", "b95c7eba034a")],
+        )
+        monkeypatch.setattr(
+            "jobflow_dispatch.activate._phase_b_shadow_is_live", lambda: True
+        )
+        assert resolve_job_id_for_activity("jobflow.tailor.generate") == "b95c7eba034a"
+
+
 def test_dispatcher_still_exposes_the_resolver():
     """The subscriber's import must survive the move — it is its default arg."""
     from events.subscribers import jobflow_dispatcher
