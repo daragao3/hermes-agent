@@ -46,7 +46,7 @@ from .claude_visibility_codes import (
     CLAUDE_VISIBILITY_RETRY_CODES,
     CLAUDE_VISIBILITY_STATUS_FATAL_CODES,
 )
-from .codex_adapter import SidebarVerificationError
+from .codex_adapter import ConflictingCodexBridgeMarkers, SidebarVerificationError
 from .config import BridgeConfig
 from .context_pack import ContextPackRequest
 from .mirror import (
@@ -1151,6 +1151,7 @@ _CODEX_SCAN_FAILURE_CODE = "codex_scan_failed"
 _CODEX_SCAN_LOCAL_OWNER_CODE = "codex_local_session_owns_id"
 _CLAUDE_SCAN_LOCAL_OWNER_CODE = "claude_local_session_owns_id"
 _CLAUDE_MARKER_CONFLICT_CODE = "claude_conflicting_bridge_markers"
+_CODEX_MARKER_CONFLICT_CODE = "codex_conflicting_bridge_markers"
 _CODEX_SCAN_STAGES = frozenset({
     "full_history_project",
     "immediate_project",
@@ -4726,6 +4727,7 @@ class SessionBridgeCoordinator:
         failed = 0
         locally_owned = 0
         deferred = 0
+        marker_conflicts: list[str] = []
         for thread_summary in summaries:
             try:
                 projection = await self._provider_call(
@@ -4768,6 +4770,38 @@ class SessionBridgeCoordinator:
                     adapter=adapter,
                 )
                 continue
+            except ConflictingCodexBridgeMarkers:
+                # 2026-09-07. A thread whose origin cannot be decided is
+                # UNADOPTABLE, not a scan failure -- the same call the clauses
+                # above already make. Mirrors the three claude paths, which were
+                # fixed the same day (agent-src 9bb9461e29) after ONE such
+                # transcript held `degraded_reason=scan_failed` on the whole
+                # claude provider for hours: `failed` is nonzero, `_scan_provider`
+                # turns that into a provider degradation on an axis carrying
+                # `required_for_service_impact=true`, and because a failure
+                # re-stages the item, a restart does not clear it.
+                #
+                # Codex is not failing this way TODAY -- the class has existed in
+                # `codex_adapter` all along and no scan path caught it, so this
+                # closes a live gap rather than a live incident. That is exactly
+                # the 2026-08-13 asymmetry in the other direction: one provider
+                # carries a handler the other lacks, and nobody notices until it
+                # fires.
+                #
+                # Deliberately NOT reclassifying the origin. Deciding such a
+                # thread is really NATIVE would let it index, but origin is
+                # HMAC-authenticated provenance feeding the visibility and
+                # registration lanes; skipping leaves that judgement to a human
+                # and costs only what today already costs -- the thread stays out
+                # of the catalog.
+                #
+                # Counted, never silent. Aggregated after the loop rather than
+                # logged per occurrence: this scan runs every few seconds and the
+                # condition is permanent, so a per-occurrence line would flood.
+                marker_conflicts.append(
+                    str(getattr(thread_summary, "native_id", "") or "")
+                )
+                continue
             except Exception as exc:
                 self._record_codex_scan_diagnostic(
                     stage="full_history_project",
@@ -4790,6 +4824,7 @@ class SessionBridgeCoordinator:
                 )
             except Exception:
                 pass
+        self._log_codex_marker_conflicts("full_history_project", marker_conflicts)
         if locally_owned:
             # Counted, never silent: these threads stay outside the bridge
             # catalog by design.
@@ -4946,6 +4981,7 @@ class SessionBridgeCoordinator:
         failed = 0
         locally_owned = 0
         deferred = 0
+        marker_conflicts: list[str] = []
         for thread_summary in summaries:
             try:
                 projection = await self._provider_call(
@@ -4981,6 +5017,15 @@ class SessionBridgeCoordinator:
                     adapter=adapter,
                 )
                 continue
+            except ConflictingCodexBridgeMarkers:
+                # Unadoptable, not a failure -- see `_scan_all_codex_history`.
+                # This path is the MORE exposed of the two ungated ones: it
+                # re-projects every thread the inventory returns on every cycle
+                # with no fingerprint filter, so a conflict here recurs forever.
+                marker_conflicts.append(
+                    str(getattr(thread_summary, "native_id", "") or "")
+                )
+                continue
             except Exception as exc:
                 self._record_codex_scan_diagnostic(
                     stage="immediate_project",
@@ -5001,6 +5046,7 @@ class SessionBridgeCoordinator:
                 )
             except Exception:
                 pass
+        self._log_codex_marker_conflicts("immediate_project", marker_conflicts)
         if locally_owned:
             try:
                 _LOG.info(
@@ -5578,6 +5624,7 @@ class SessionBridgeCoordinator:
         locally_owned = 0
         deferred = 0
         vanished = 0
+        marker_conflicts: list[str] = []
         # Ids that reached a state they can never leave: committed, unresolvable
         # at the source, or permanently refused because a local session owns the
         # canonical id. ONLY these may enter the durable seen-set -- see the save
@@ -5662,6 +5709,24 @@ class SessionBridgeCoordinator:
                     adapter=adapter,
                 )
                 continue
+            except ConflictingCodexBridgeMarkers:
+                # 2026-09-07, and this path had the WORST shape of the three: its
+                # generic handler below RETURNS rather than continuing, so one
+                # undecidable thread aborted the whole batch AND left the id
+                # staged, to be re-selected and re-abandoned every cycle forever.
+                # Same reasoning as `LocalSessionOwnsCanonicalId` above, including
+                # the `terminal_ids` membership -- and it is TERMINAL, not
+                # deferred: two authenticated bridge ids inside one thread is a
+                # permanent property of that thread's content, so a retry can
+                # only reproduce it. Leaving it out of `terminal_ids` would also
+                # pin the continuous frontier (`drained` below), which is the
+                # 2026-09-01 residue defect the deferral comments describe.
+                #
+                # Origin is deliberately NOT reclassified -- see the clause in
+                # `_scan_all_codex_history` and the class docstring.
+                marker_conflicts.append(native_id)
+                terminal_ids.add(native_id)
+                continue
             except Exception as exc:
                 self._record_codex_scan_diagnostic(
                     stage="persistent_project",
@@ -5699,6 +5764,7 @@ class SessionBridgeCoordinator:
                 )
             except Exception:
                 pass
+        self._log_codex_marker_conflicts("persistent_project", marker_conflicts)
         if vanished:
             # Counted, never silent. Unlike the timeout branch these ids are DROPPED
             # from staged rather than retried: the source cannot resolve them at all.
@@ -6053,6 +6119,49 @@ class SessionBridgeCoordinator:
     def _record_error_code(self, code: str) -> None:
         self._recent_error_codes.append(code)
         del self._recent_error_codes[:-_RECENT_ERROR_LIMIT]
+
+    def _log_codex_marker_conflicts(
+        self,
+        stage: str,
+        native_ids: Sequence[str],
+    ) -> None:
+        """Report threads skipped for conflicting bridge markers.
+
+        Deliberately NOT routed through ``_record_codex_scan_diagnostic``, which
+        hardcodes ``_CODEX_SCAN_FAILURE_CODE`` and calls ``_record_error_code``
+        with it: a marker conflict is an unadoptable thread, not a scan failure,
+        and pushing ``codex_scan_failed`` into ``recent_error_codes`` for it
+        would re-create in the health surface exactly the false alarm the catch
+        clauses remove from ``ScanSummary.failed``.
+
+        Shape mirrors the claude persistent path's aggregate block: one line per
+        scan carrying the count and up to eight ids, because the condition is
+        permanent and this scan runs every few seconds. Ids are redacted with the
+        same helper the codex diagnostics already use. Best-effort throughout --
+        instrumentation must never itself fail a scan.
+        """
+
+        if not native_ids:
+            return
+        try:
+            tokens = []
+            for native_id in sorted(native_ids)[:8]:
+                try:
+                    tokens.append(redact_codex_thread_id(native_id) or "unknown")
+                except Exception:
+                    tokens.append("unknown")
+            safe_stage = (
+                stage if stage in _CODEX_SCAN_STAGES else "diagnostic_unavailable"
+            )
+            _LOG.warning(
+                "codex_scan_diagnostic stage=%s code=%s skipped=%d native=%s",
+                safe_stage,
+                _CODEX_MARKER_CONFLICT_CODE,
+                len(native_ids),
+                ",".join(tokens),
+            )
+        except Exception:
+            pass
 
     def _record_codex_scan_diagnostic(
         self,

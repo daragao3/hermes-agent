@@ -1509,7 +1509,7 @@ def _canonical_json(value: Any) -> str:
 class ConflictingClaudeBridgeMarkers(ValueError):
     """Two different bridge ids authenticate inside one claude transcript.
 
-    Mirrors ``_ConflictingCodexBridgeMarkers`` in ``codex_adapter``; the claude
+    Mirrors ``ConflictingCodexBridgeMarkers`` in ``codex_adapter``; the claude
     side raised a bare ``ValueError`` until 2026-09-07, which is why nothing
     could catch it narrowly and it fell to the scan paths' generic handler.
 

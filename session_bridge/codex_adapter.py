@@ -250,7 +250,29 @@ class SidebarVerificationError(RuntimeError):
         super().__init__(code)
 
 
-class _ConflictingCodexBridgeMarkers(ValueError):
+class ConflictingCodexBridgeMarkers(ValueError):
+    """Two different bridge ids authenticate inside one codex thread.
+
+    Public since 2026-09-07 because ``coordinator`` now imports it: the three
+    codex scan paths must catch it narrowly, exactly as they already catch
+    ``LocalSessionOwnsCanonicalId``, and exactly as the three claude paths catch
+    ``ConflictingClaudeBridgeMarkers``. The name lost its leading underscore for
+    that reason and nothing else -- it was module-private only because the two
+    sidebar call sites below were its only consumers.
+
+    THIS IS NOT NECESSARILY CORRUPTION, and that is why it must not be fatal.
+    ``_detect_origin`` harvests markers from the text of ANY user record, so a
+    thread that merely PRINTS or quotes marker strings collects them as if they
+    were its own provenance -- and on this machine agent sessions work on the
+    bridge itself constantly. The claude twin records the measurement that
+    established this (three distinct markers on one transcript, one of them
+    first appearing at record 356, which is the signature of a DISPLAYED marker
+    rather than a second bridging).
+
+    Subclasses ``ValueError`` so every existing caller and test that matches on
+    the type or the message is unaffected; the message is unchanged.
+    """
+
     def __init__(self, payloads: tuple[BridgeMarkerPayload, ...]) -> None:
         self.payloads = payloads
         super().__init__("Codex thread has conflicting bridge markers")
@@ -405,7 +427,7 @@ class SidebarThreadVerifier:
                         summary,
                         deadline=self._read_deadline(),
                     )
-                except _ConflictingCodexBridgeMarkers:
+                except ConflictingCodexBridgeMarkers:
                     raise SidebarVerificationError("marker_conflict") from None
                 except (KeyboardInterrupt, SystemExit):
                     raise
@@ -692,7 +714,7 @@ class SidebarThreadVerifier:
                     summary,
                     deadline=deadline,
                 )
-            except _ConflictingCodexBridgeMarkers as exc:
+            except ConflictingCodexBridgeMarkers as exc:
                 projection = _conflicting_marker_projection(
                     summary,
                     exc.payloads,
@@ -3376,7 +3398,7 @@ def _detect_origin(
 
     marker_ids = {payload.bridge_id for _, payload in marker_occurrences}
     if len(marker_ids) > 1:
-        raise _ConflictingCodexBridgeMarkers(
+        raise ConflictingCodexBridgeMarkers(
             tuple(payload for _, payload in marker_occurrences)
         )
     if not marker_ids:
