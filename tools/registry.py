@@ -24,6 +24,8 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
+from tools.inflight_call import inflight_call
+
 logger = logging.getLogger(__name__)
 
 
@@ -690,11 +692,18 @@ class ToolRegistry:
         if not entry:
             return json.dumps({"error": f"Unknown tool: {name}"})
         try:
-            if entry.is_async:
-                from model_tools import _run_async
-                result = _run_async(entry.handler(args, **kwargs))
-            else:
-                result = entry.handler(args, **kwargs)
+            # The frame marks this thread as "inside tool `name`" for exactly
+            # the handler's lifetime, so an operator stop or timeout on the
+            # cron scheduler can cancel it (tools.inflight_call) without a
+            # thread bit that could outlive the call. Inside the try: a
+            # cancel surfaces as InterruptedError and becomes a normal
+            # {"error": ...} result rather than escaping the tool loop.
+            with inflight_call(name):
+                if entry.is_async:
+                    from model_tools import _run_async
+                    result = _run_async(entry.handler(args, **kwargs))
+                else:
+                    result = entry.handler(args, **kwargs)
             return self._normalize_handler_result(name, result)
         except Exception as e:
             logger.exception("Tool %s dispatch error: %s", name, e)

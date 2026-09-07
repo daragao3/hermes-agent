@@ -149,8 +149,25 @@ def _run_async(coro):
         from tools.thread_context import propagate_context_to_thread
 
         future = pool.submit(propagate_context_to_thread(_run_in_worker))
+
+        def _abort_worker_tasks() -> None:
+            # Same shape as the timeout branch below: cancel inside the
+            # worker's own loop so the coroutine observes it at its next
+            # await. Runs on the cancelling thread (tools.inflight_call).
+            if loop_ready.wait(timeout=1.0) and worker_loop is not None:
+                try:
+                    for t in asyncio.all_tasks(worker_loop):
+                        worker_loop.call_soon_threadsafe(t.cancel)
+                except RuntimeError:
+                    pass
+
+        _add_abort_hook(_abort_worker_tasks)
         try:
             return future.result(timeout=300)
+        except asyncio.CancelledError:
+            if _is_call_cancelled():
+                raise InterruptedError(_cancelled_call_message()) from None
+            raise
         except concurrent.futures.TimeoutError:
             # Cancel the coroutine inside its own loop so the worker thread
             # can wind down instead of running forever.
@@ -174,11 +191,56 @@ def _run_async(coro):
     # httpx/AsyncOpenAI clients bound to a live loop for the thread's
     # lifetime — preventing "Event loop is closed" on GC cleanup.
     if threading.current_thread() is not threading.main_thread():
-        worker_loop = _get_worker_loop()
-        return worker_loop.run_until_complete(coro)
+        return _run_on_persistent_loop(_get_worker_loop(), coro)
 
-    tool_loop = _get_tool_loop()
-    return tool_loop.run_until_complete(coro)
+    return _run_on_persistent_loop(_get_tool_loop(), coro)
+
+
+def _run_on_persistent_loop(loop: asyncio.AbstractEventLoop, coro):
+    """``loop.run_until_complete(coro)`` that an in-flight-call cancel can abort.
+
+    The coroutine is wrapped in a Task up front so a cancel from another
+    thread -- the cron scheduler's operator stop or timeout, via
+    ``tools.inflight_call.cancel_inflight_calls`` -- can
+    ``call_soon_threadsafe(task.cancel)`` and wake this blocking call at the
+    coroutine's next await. A cancel that was ours surfaces as
+    ``InterruptedError`` (a plain Exception, so ``ToolRegistry.dispatch``
+    turns it into a normal ``{"error": ...}`` result); any other
+    ``CancelledError`` propagates unchanged.
+    """
+    task = loop.create_task(coro)
+
+    def _abort_task() -> None:
+        try:
+            loop.call_soon_threadsafe(task.cancel)
+        except RuntimeError:
+            # Loop closed between the call returning and the frame popping.
+            pass
+
+    _add_abort_hook(_abort_task)
+    try:
+        return loop.run_until_complete(task)
+    except asyncio.CancelledError:
+        if task.cancelled() and _is_call_cancelled():
+            raise InterruptedError(_cancelled_call_message()) from None
+        raise
+
+
+def _add_abort_hook(hook) -> bool:
+    from tools.inflight_call import add_abort_hook
+    return add_abort_hook(hook)
+
+
+def _is_call_cancelled() -> bool:
+    from tools.inflight_call import is_call_cancelled
+    return is_call_cancelled()
+
+
+def _cancelled_call_message() -> str:
+    from tools.inflight_call import current_call
+    frame = current_call()
+    reason = getattr(frame, "cancel_reason", None) if frame is not None else None
+    return "tool call cancelled" + (f": {reason}" if reason else "")
 
 
 # =============================================================================
