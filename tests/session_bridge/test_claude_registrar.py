@@ -42,6 +42,8 @@ from session_bridge.claude_registrar import (
     _is_exact_registered_text,
     _is_provider_limit_failure,
     _normalized_terminal_output,
+    _pasted_input_indicator,
+    _pasted_input_visible,
     _prompt_input_registered_response,
     _registrar_pywinpty_process_type,
     _stripped_terminal_text,
@@ -5610,3 +5612,51 @@ def test_winpty_write_completes_a_payload_needing_more_writes_than_the_stall_cap
 
     assert bytes(target.received).endswith(payload[-1].encode("utf-8"))
     assert target.calls == characters * 2, "one split plus one completion each"
+
+
+# The pre-Return screen claude 2.1.260 drew in production on 2026-09-06, taken
+# verbatim from the claude_visibility_launch_failed_prompt_frame log line for
+# job ...b6b9fa34d908e54d attempts 2 and 3. The hint sits on its OWN row.
+_PRODUCTION_TWO_ROW_PASTE_CHIP = (
+    "\n\n  [Pasted text #1 +6 lines] \n  paste again to expand"
+)
+
+
+def test_pasted_input_indicator_matches_a_lone_hint_row() -> None:
+    assert _pasted_input_indicator("paste again to expand")
+    assert _pasted_input_indicator("[Pasted text #1 +6 lines]")
+    assert _pasted_input_indicator("[Pasted text #1 +6 lines] paste again to expand")
+    assert not _pasted_input_indicator("REGISTERED")
+
+
+def test_two_row_paste_chip_is_not_scored_as_a_response() -> None:
+    """The frame that broke the lane must read as "nothing has answered yet".
+
+    Scoring it as a response set paste_auto_submitted, which suppressed the
+    registrar's own Return; the CLI then sat at an idle REPL with the paste
+    still in the box and no turn ever started -- Mode A.
+    """
+
+    value = candidate()
+    identity = derive_claude_visibility_identity(value, SECRET)
+    prompt = build_claude_registration_prompt(value, identity, SECRET)
+
+    assert _normalized_terminal_output(_PRODUCTION_TWO_ROW_PASTE_CHIP, prompt) == ""
+    assert _prompt_input_registered_response(
+        _PRODUCTION_TWO_ROW_PASTE_CHIP, prompt=prompt
+    ) == (False, None)
+    assert _pasted_input_visible(_PRODUCTION_TWO_ROW_PASTE_CHIP)
+
+
+def test_launch_presses_return_for_a_two_row_paste_chip() -> None:
+    item = claim()
+    process = FakePty(
+        prompt_input_output=_PRODUCTION_TWO_ROW_PASTE_CHIP,
+        read_error=_PtyResponseTimeout("main_repl_without_prompt_echo"),
+    )
+    source = FakeSource([None])
+
+    result = registrar(source, FakeFactory(process)).process(item)
+
+    assert result.status == "retry"
+    assert "\r" in process.writes
