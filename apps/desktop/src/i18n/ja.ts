@@ -1429,7 +1429,7 @@ export const ja = defineLocale({
     emptyDescSearch: '検索キーワードを広げてください。',
     emptyTitleNew: 'スケジュールされたジョブがまだありません',
     emptyTitleSearch: '一致なし',
-    last: '前回',
+    last: '前回完了',
     next: '次回',
     noRuns: 'まだ実行されていません',
     manage: '管理',

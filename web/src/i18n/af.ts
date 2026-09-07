@@ -266,7 +266,7 @@ export const af: Translations = {
     deliverTo: "Lewer aan",
     scheduledJobs: "Geskeduleerde Take",
     noJobs: "Geen cron-take gekonfigureer nie. Skep een hierbo.",
-    last: "Laaste",
+    last: "Laas voltooi",
     next: "Volgende",
     pause: "Pouse",
     resume: "Hervat",

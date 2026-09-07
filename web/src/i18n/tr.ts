@@ -266,7 +266,7 @@ export const tr: Translations = {
     deliverTo: "Şuraya teslim et",
     scheduledJobs: "Zamanlanmış Görevler",
     noJobs: "Yapılandırılmış cron görevi yok. Yukarıdan bir tane oluşturun.",
-    last: "Son",
+    last: "Son tamamlanan",
     next: "Sonraki",
     pause: "Duraklat",
     resume: "Devam ettir",

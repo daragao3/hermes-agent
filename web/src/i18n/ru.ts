@@ -266,7 +266,7 @@ export const ru: Translations = {
     deliverTo: "Доставить в",
     scheduledJobs: "Запланированные задачи",
     noJobs: "Cron-задачи не настроены. Создайте задачу выше.",
-    last: "Последний",
+    last: "Последнее завершение",
     next: "Следующий",
     pause: "Пауза",
     resume: "Возобновить",

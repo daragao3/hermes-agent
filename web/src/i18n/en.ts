@@ -281,7 +281,7 @@ export const en: Translations = {
     deliverTo: "Deliver to",
     scheduledJobs: "Scheduled Jobs",
     noJobs: "No cron jobs configured. Create one above.",
-    last: "Last",
+    last: "Last completed",
     next: "Next",
     pause: "Pause",
     resume: "Resume",

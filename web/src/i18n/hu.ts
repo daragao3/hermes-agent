@@ -266,7 +266,7 @@ export const hu: Translations = {
     deliverTo: "Kézbesítés ide",
     scheduledJobs: "Ütemezett feladatok",
     noJobs: "Nincs beállított cron-feladat. Hozzon létre egyet fent.",
-    last: "Utolsó",
+    last: "Utolsó befejezett",
     next: "Következő",
     pause: "Szüneteltetés",
     resume: "Folytatás",
