@@ -2760,6 +2760,10 @@ def _prompt_input_visible(output: str, *, prompt: str) -> bool:
     return _compact_terminal_text(prompt) in compact
 
 
+# The hint the CLI draws with a collapsed paste chip, compacted and folded.
+_CLAUDE_PASTE_CHIP_HINT = "pasteagaintoexpand"
+
+
 def _pasted_input_visible(output: str) -> bool:
     cleaned = _stripped_terminal_text(output)
     if re.search(r"\[Pasted text #\d+(?: \+\d+ lines)?\]", cleaned):
@@ -2771,7 +2775,30 @@ def _pasted_input_visible(output: str) -> bool:
 
 
 def _pasted_input_indicator(value: str) -> bool:
+    """True for a row the CLI draws to describe a collapsed paste chip.
+
+    The chip and its "paste again to expand" hint are ONE artefact, but the CLI
+    is free to draw them on one row or on two, and the row split is what broke
+    this lane. Measured verbatim from production 2026-09-06, claude 2.1.260
+    drew the hint on its OWN row:
+
+        [Pasted text #1 +6 lines]
+        paste again to expand
+
+    A lone hint row matched nothing here, so _normalized_terminal_output kept
+    it as "meaningful" output, _prompt_input_registered_response scored the
+    frame as a response the paste had auto-submitted, and _launch then SKIPPED
+    its own Return. The key was never pressed: the CLI sat at an idle REPL with
+    the paste still in the box, no turn started, no transcript was written, and
+    the attempt burned its whole budget as creation_ambiguous /
+    main_repl_without_prompt_echo -- Mode A. Three sessions failed to reproduce
+    it in a harness because a probe writes the Return unconditionally, so the
+    skipped-write branch was never exercised.
+    """
+
     compact = _compact_terminal_text(value).casefold()
+    if compact == _CLAUDE_PASTE_CHIP_HINT:
+        return True
     return (
         re.fullmatch(
             r"\[pastedtext#\d+(?:\+\d+lines)?\](?:pasteagaintoexpand)?",
