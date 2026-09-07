@@ -729,6 +729,9 @@ _CLAUDE_VISIBILITY_DEFAULTS = {
     # safe one on purpose: nothing inherits a new reaping axis it did not ask
     # for, so a box that never opts in keeps byte-identical behaviour.
     "idle_task_session_archive_seconds": None,
+    # None = the mirror re-archiving axis is disarmed, same reason again: an
+    # upgrade must not start archiving desktop records that used to stay put.
+    "archive_idle_mirror_seconds": None,
     # None = unattended dismissal of an exhausted job is disarmed, for the same
     # reason as the axis above: upgrading must never start clearing rows that
     # used to wait for a human.
@@ -804,6 +807,7 @@ def test_claude_visibility_config_parses_every_valid_override(
         "reconcile_desktop_registries": True,
         "idle_chip_archive_seconds": 43_200,
         "idle_task_session_archive_seconds": 14_400,
+        "archive_idle_mirror_seconds": 259_200,
         "auto_dismiss_exhausted_after_seconds": 21_600,
         "auto_dismiss_health_window_seconds": 43_200,
     }

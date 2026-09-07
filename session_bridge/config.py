@@ -227,6 +227,20 @@ class ClaudeVisibilityConfig:
     # times a day stacks eight records inside one 24h chip window, which is why
     # this is a separate, smaller number rather than a reuse of the chip one.
     idle_task_session_archive_seconds: int | None = None
+    # How long a visibility MIRROR's source may sit idle before the float
+    # worker archives the mirror's desktop record. ``None`` = axis OFF, so
+    # nobody inherits a new reaping axis by upgrading; set it to opt in.
+    #
+    # This is the creation-time recency rule (_RECENT_UNARCHIVED_SECONDS) made
+    # continuous. Mirrors are excluded from IdleChipArchiveWorker on purpose --
+    # they belong to the float worker -- so before this axis existed a mirror
+    # registered while its source was active stayed unarchived forever and the
+    # sidebar grew until a human swept it by hand.
+    #
+    # Auto-archiving happens AT MOST ONCE per record, tracked in bridge state,
+    # so an operator who unarchives a mirror keeps it: the worker tidies up
+    # after itself, it does not overrule the user.
+    archive_idle_mirror_seconds: int | None = None
     # How long a max_attempts_exhausted job must sit terminal before the lane
     # may clear it without an operator. ``None`` = axis OFF, so nobody inherits
     # unattended dismissal by upgrading; set it to opt in. Only exhaustion is
@@ -340,6 +354,7 @@ class BridgeConfig:
                 "reconcile_desktop_registries",
                 "idle_chip_archive_seconds",
                 "idle_task_session_archive_seconds",
+                "archive_idle_mirror_seconds",
                 "auto_dismiss_exhausted_after_seconds",
                 "auto_dismiss_health_window_seconds",
             }),
@@ -819,6 +834,14 @@ class BridgeConfig:
                 ),
                 "session_bridge.claude_visibility.idle_task_session_archive_seconds",
                 minimum=600,
+            ),
+            archive_idle_mirror_seconds=_optional_toml_int(
+                claude_visibility.get(
+                    "archive_idle_mirror_seconds",
+                    claude_visibility_defaults.archive_idle_mirror_seconds,
+                ),
+                "session_bridge.claude_visibility.archive_idle_mirror_seconds",
+                minimum=3600,
             ),
             auto_dismiss_exhausted_after_seconds=_optional_toml_int(
                 claude_visibility.get(

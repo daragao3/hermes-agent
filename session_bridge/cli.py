@@ -4111,6 +4111,14 @@ class ProductionBackend:
                 ClaudeMirrorFloatWorker(
                     self._require_store(),
                     registry_roots=discover_ccd_registry_roots(),
+                    archive_idle_seconds=(
+                        None
+                        if effective_config.claude_visibility.archive_idle_mirror_seconds
+                        is None
+                        else float(
+                            effective_config.claude_visibility.archive_idle_mirror_seconds
+                        )
+                    ),
                 )
                 if (
                     not catalog_only
