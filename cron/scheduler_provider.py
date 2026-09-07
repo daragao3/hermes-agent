@@ -19,10 +19,23 @@ selected via the `cron.provider` config key (empty = built-in).
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 from abc import ABC, abstractmethod
 from typing import Any
+
+#: Shape of the state.db session id ``cron/scheduler.py::run_job`` creates:
+#: ``cron_<job_id>_<YYYYmmdd_HHMMSS>``. Only ids of this shape are ever
+#: considered by the orphan-session recovery below; anything else is left alone.
+_CRON_SESSION_ID_RE = re.compile(r"^cron_(?P<job_id>.+)_\d{8}_\d{6}$")
+
+#: ``end_reason`` stamped on a cron session whose owning process died before
+#: ``run_job``'s own ``end_session(..., "cron_complete")`` could run. Distinct
+#: from ``cron_complete`` (the run finished) and from the 24h
+#: ``reaped_stale`` reaper (``scripts/hermes-postgres-bridge.py``), so a
+#: consumer can tell "interrupted, closed by the successor" from either.
+CRON_SESSION_INTERRUPTED_REASON = "cron_interrupted"
 
 from jobflow_dispatch.quarantine_control import (
     default_control_store,
@@ -125,7 +138,83 @@ class CronScheduler(ABC):
             # Independent of the stamp above: an unwritable jobs.json must not
             # also cost the notification layer its only record of the kill.
             self._emit_interrupted_cron_stale(record, ran_at=ran_at)
+        # The ledger and jobs.json now say the run is over; state.db must not
+        # keep reporting its session as RUNNING for the next 24h (see below).
+        self._close_orphaned_cron_sessions()
         return len(records)
+
+    @classmethod
+    def _close_orphaned_cron_sessions(cls) -> int:
+        """End state.db cron sessions that no process is running any more.
+
+        ``run_job`` ends its session only in its own ``finally``
+        (``end_session(..., "cron_complete")``, ``cron/scheduler.py``), so a
+        process that dies mid-run -- a force-killed gateway, a ``hermes cron
+        run`` whose terminal closed -- leaves the row ``ended_at NULL``.
+        Nothing else closed it: the execution ledger got its ``unknown`` verdict
+        and jobs.json its stamp at the next scheduler start, but the session
+        row read RUNNING until ``hermes-postgres-bridge.py``'s 24h idle reaper
+        stamped it ``reaped_stale`` (measured 2026-09-06/07: a 12:00 run whose
+        gateway was replaced at 12:10 stayed open until 12:15 the next day).
+
+        WHY "no non-terminal ledger row for the job" IS PROOF OF ORPHANHOOD.
+        Every run claims its execution row BEFORE ``run_job`` creates the
+        session (``create_execution`` precedes dispatch on both the builtin
+        path, ``_submit_with_guard``, and the direct path, ``run_one_job``),
+        and the row stays ``claimed``/``running`` until the run's own teardown
+        -- which ends the session first. So while any process is inside a run
+        of job J, the ledger holds a non-terminal row for J. This runs AFTER
+        :func:`recover_interrupted_execution_records` has flipped every
+        dead-owner row to ``unknown``; what is still non-terminal is owned by a
+        live process, an unprovable one, or this very process, and every such
+        job is left alone -- a live run elsewhere (e.g. the desktop ticker or a
+        CLI run) keeps its session open. The check is per JOB rather than per
+        session, so in the rare case where a job has both an orphan and a live
+        run, the orphan waits for the next pass rather than risk the live one.
+
+        Only ids of the ``cron_<job>_<stamp>`` shape are touched, only rows with
+        ``source='cron'``, and only through :meth:`SessionDB.end_session`, which
+        is first-reason-wins and no-ops on an already-ended row. Never raises:
+        this sits on the ticker's startup path, where an exception would cost
+        the gateway its scheduler (the 2026-08-11 outage); a failure here only
+        costs the rows their prompt close.
+        """
+        import logging
+
+        logger = logging.getLogger("cron.scheduler_provider")
+        try:
+            from cron.executions import nonterminal_execution_job_ids
+            from hermes_state import SessionDB
+
+            protected = nonterminal_execution_job_ids()
+            db = SessionDB()
+            closed: list[str] = []
+            try:
+                for session_id in db.list_open_session_ids("cron"):
+                    match = _CRON_SESSION_ID_RE.match(session_id)
+                    if match is None or match.group("job_id") in protected:
+                        continue
+                    db.end_session(session_id, CRON_SESSION_INTERRUPTED_REASON)
+                    closed.append(session_id)
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            if closed:
+                logger.warning(
+                    "Closed %d orphaned cron session(s) whose run no longer "
+                    "exists (end_reason=%s): %s",
+                    len(closed), CRON_SESSION_INTERRUPTED_REASON,
+                    ", ".join(closed[:10]) + (" ..." if len(closed) > 10 else ""),
+                )
+            return len(closed)
+        except Exception:
+            logger.warning(
+                "Orphaned cron session close failed; rows stay open until the "
+                "stale-session reaper", exc_info=True,
+            )
+            return 0
 
     @staticmethod
     def _shutdown_attribution_exists(bus: Any, job_id: str, ran_at: str) -> bool:

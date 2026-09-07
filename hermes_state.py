@@ -6326,6 +6326,23 @@ class SessionDB:
             row = cursor.fetchone()
         return dict(row) if row else None
 
+    def list_open_session_ids(self, source: str) -> List[str]:
+        """IDs of ``source`` sessions still open (``ended_at IS NULL``), oldest first.
+
+        A read for recovery passes that need to find rows whose owner never
+        reached its own ``end_session()`` -- e.g. cron runs whose process died
+        mid-run (``cron/scheduler_provider.py`` closes those at scheduler
+        start). Deliberately id-only: the caller decides per row, through
+        :meth:`end_session`, never through a hand-written UPDATE.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM sessions WHERE source = ? AND ended_at IS NULL "
+                "ORDER BY started_at, id",
+                (source,),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
     def get_inheritable_local_child_cwd(
         self, parent_session_id: str, child_source: str
     ) -> Optional[str]:

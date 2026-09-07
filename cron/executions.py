@@ -338,6 +338,25 @@ def nonterminal_execution_census() -> List[Dict[str, Any]]:
     return _nonterminal_execution_census_path(EXECUTIONS_FILE, create=True)
 
 
+def nonterminal_execution_job_ids() -> set:
+    """Storage-only set of job ids that still hold a claimed/running row.
+
+    Like :func:`nonterminal_execution_counts`, this never probes an owner
+    process: it answers "which jobs does the ledger still consider in flight",
+    not "which of those owners are alive". Run it AFTER
+    :func:`recover_interrupted_execution_records` and the answer is exactly the
+    set of jobs whose run may still be live somewhere (a live owner, an
+    unprovable one, or this very process) -- the set a recovery pass must not
+    touch. Descriptive only, never admission or recovery authority.
+    """
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            """SELECT DISTINCT job_id FROM executions
+               WHERE status IN ('claimed','running')"""
+        ).fetchall()
+    return {str(row["job_id"]) for row in rows}
+
+
 def nonterminal_execution_counts() -> Dict[str, int]:
     """Storage-only claimed/running counts for scheduler observability.
 
