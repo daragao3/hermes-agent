@@ -191,6 +191,7 @@ def test_floats_mirror_to_source_activity(db, tmp_path) -> None:
         "floated": 1,
         "skipped": 0,
         "registered": 0,
+        "archived": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(5_000.0)
@@ -314,6 +315,138 @@ def test_float_update_preserves_manual_unarchive(db, tmp_path) -> None:
     # recency rule's) unarchived state must survive subsequent cycles.
     assert record["lastActivityAt"] == 5_000_000
     assert record["isArchived"] is False
+
+
+def _seed_unarchived_record(registry: Path, identity, *, last_activity: int) -> Path:
+    registry.mkdir(exist_ok=True)
+    record_path = registry / f"local_{identity.claude_uuid}.json"
+    record_path.write_text(
+        json.dumps(
+            {
+                "sessionId": f"local_{identity.claude_uuid}",
+                "cliSessionId": identity.claude_uuid,
+                "lastActivityAt": last_activity,
+                "isArchived": False,
+                "title": "[Codex] a mirror",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return record_path
+
+
+_FOUR_DAYS_AFTER = 5_000.0 + 4 * 86_400
+_ONE_HOUR_AFTER = 5_000.0 + 3_600
+
+
+def test_idle_mirror_is_auto_archived_when_axis_enabled(db, tmp_path) -> None:
+    """The creation-time recency rule, applied continuously instead of once.
+
+    A mirror whose source has gone idle past the threshold is archived on a
+    later cycle. Without this the rule fires only at creation, so mirrors of
+    sources that were active at registration stay unarchived forever and the
+    sidebar fills until a human sweeps it.
+    """
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, _ = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    record_path = _seed_unarchived_record(
+        tmp_path / "registry", identity, last_activity=5_000_000
+    )
+
+    ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        registry_root=tmp_path / "registry",
+        archive_idle_seconds=3 * 86_400,
+        wall_clock=lambda: _FOUR_DAYS_AFTER,
+    ).run_once()
+
+    assert json.loads(record_path.read_text(encoding="utf-8"))["isArchived"] is True
+
+
+def test_idle_mirror_is_left_alone_when_axis_is_off(db, tmp_path) -> None:
+    """Default is OFF: nobody inherits a new reaping axis by upgrading."""
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, _ = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    record_path = _seed_unarchived_record(
+        tmp_path / "registry", identity, last_activity=5_000_000
+    )
+
+    ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        registry_root=tmp_path / "registry",
+        wall_clock=lambda: _FOUR_DAYS_AFTER,
+    ).run_once()
+
+    assert json.loads(record_path.read_text(encoding="utf-8"))["isArchived"] is False
+
+
+def test_active_mirror_is_not_auto_archived(db, tmp_path) -> None:
+    """Liveness is read from the SOURCE session, not the record's own stamp."""
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, _ = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    record_path = _seed_unarchived_record(
+        tmp_path / "registry", identity, last_activity=5_000_000
+    )
+
+    ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        registry_root=tmp_path / "registry",
+        archive_idle_seconds=3 * 86_400,
+        wall_clock=lambda: _ONE_HOUR_AFTER,
+    ).run_once()
+
+    assert json.loads(record_path.read_text(encoding="utf-8"))["isArchived"] is False
+
+
+def test_auto_archive_never_overrides_a_manual_unarchive(db, tmp_path) -> None:
+    """Each record is auto-archived AT MOST ONCE, so a human's undo is final.
+
+    test_float_update_preserves_manual_unarchive pins that the float path may
+    not flip an operator's unarchived state. This axis must not smuggle that
+    flip back in: once a record has been auto-archived, the worker records it
+    and never touches its archive flag again, whatever the operator does next.
+    """
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, _ = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    registry = tmp_path / "registry"
+    record_path = _seed_unarchived_record(registry, identity, last_activity=5_000_000)
+
+    def _worker() -> ClaudeMirrorFloatWorker:
+        return ClaudeMirrorFloatWorker(
+            store,
+            min_interval_seconds=900.0,
+            registry_root=registry,
+            archive_idle_seconds=3 * 86_400,
+            wall_clock=lambda: _FOUR_DAYS_AFTER,
+            run_min_interval_seconds=0.0,
+        )
+
+    _worker().run_once()
+    assert json.loads(record_path.read_text(encoding="utf-8"))["isArchived"] is True
+
+    # The operator brings it back deliberately.
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["isArchived"] = False
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+
+    _worker().run_once()
+
+    assert json.loads(record_path.read_text(encoding="utf-8"))["isArchived"] is False
 
 
 def test_float_update_retries_and_preserves_concurrent_archive_change(
@@ -538,6 +671,7 @@ def test_run_once_is_internally_throttled(db, tmp_path) -> None:
         "floated": 0,
         "skipped": 0,
         "registered": 0,
+        "archived": 0,
         "throttled": 1,
     }
     assert third["examined"] == 1
@@ -571,6 +705,7 @@ def test_skips_bump_within_min_interval(db, tmp_path) -> None:
         "floated": 0,
         "skipped": 0,
         "registered": 0,
+        "archived": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(1_000.0)
@@ -588,6 +723,7 @@ def test_skips_missing_mirror_file_without_raising(db, tmp_path) -> None:
         "floated": 0,
         "skipped": 1,
         "registered": 0,
+        "archived": 0,
         "throttled": 0,
     }
 
@@ -609,6 +745,7 @@ def test_refuses_mirror_with_foreign_origin(db, tmp_path) -> None:
         "floated": 0,
         "skipped": 1,
         "registered": 0,
+        "archived": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(1_000.0)
@@ -898,6 +1035,7 @@ def test_hermes_source_resolves_via_canonical_fallback(db, tmp_path) -> None:
         "floated": 1,
         "skipped": 0,
         "registered": 0,
+        "archived": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(5_000.0)

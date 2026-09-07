@@ -21,6 +21,16 @@ _CLI_SESSION_ID_PATTERN = re.compile(r'"cliSessionId"\s*:\s*"([^"]+)"')
 # backfill and lands archived (an unarchived default once buried the user's
 # real sidebar under thousands of visible imports).
 _RECENT_UNARCHIVED_SECONDS = 3 * 86_400
+# cliSessionIds this worker has already auto-archived. Read and written whole,
+# exactly like the auto-dismiss lane's state key.
+#
+# It exists to make auto-archiving happen AT MOST ONCE per record, which is what
+# keeps this axis compatible with the invariant
+# test_float_update_preserves_manual_unarchive pins: an operator's unarchived
+# state must survive later cycles. Without the ledger a human who unarchives an
+# idle mirror would simply lose it again on the next pass, and the worker would
+# be fighting the user rather than tidying up after itself.
+_MIRROR_AUTO_ARCHIVE_STATE_KEY = "session-bridge:claude-visibility:mirror-auto-archive"
 
 
 def default_ccd_sessions_base() -> Path | None:
@@ -315,12 +325,21 @@ class ClaudeMirrorFloatWorker:
         registry_roots: Iterable[Path] | None = None,
         id_factory: Callable[[], str] | None = None,
         run_min_interval_seconds: float = 300.0,
+        archive_idle_seconds: float | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
     ) -> None:
         interval = float(min_interval_seconds)
         if not math.isfinite(interval) or interval <= 0:
             raise ValueError("min_interval_seconds must be finite and positive")
+        archive_idle: float | None = None
+        if archive_idle_seconds is not None:
+            archive_idle = float(archive_idle_seconds)
+            if not math.isfinite(archive_idle) or archive_idle <= 0:
+                raise ValueError(
+                    "archive_idle_seconds must be finite and positive, or None "
+                    "to leave the axis off"
+                )
         run_interval = float(run_min_interval_seconds)
         if not math.isfinite(run_interval) or run_interval < 0:
             raise ValueError("run_min_interval_seconds must be finite and non-negative")
@@ -339,6 +358,7 @@ class ClaudeMirrorFloatWorker:
         self._registry_roots = tuple(roots)
         self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
         self._run_min_interval_seconds = run_interval
+        self._archive_idle_seconds = archive_idle
         self._monotonic = monotonic
         self._wall_clock = wall_clock
         self._last_run_at: float | None = None
@@ -354,15 +374,25 @@ class ClaudeMirrorFloatWorker:
                 "floated": 0,
                 "skipped": 0,
                 "registered": 0,
+                "archived": 0,
                 "throttled": 1,
             }
         self._last_run_at = now
-        examined = floated = skipped = registered = 0
+        examined = floated = skipped = registered = archived = 0
         registry_index = self._load_registry_index()
+        already_archived = self._load_auto_archived_ids()
+        newly_archived: set[str] = set()
+        live_ids: set[str] = set()
         for row in self._store.list_visible_claude_visibility_mirrors():
             examined += 1
             try:
-                mirror_floated, mirror_registered = self._float_one(row, registry_index)
+                live_ids.add(str(row["claude_uuid"]))
+            except (KeyError, TypeError):
+                pass
+            try:
+                mirror_floated, mirror_registered, mirror_archived = self._float_one(
+                    row, registry_index, already_archived, newly_archived
+                )
             except (
                 _MirrorFloatSkip,
                 _RecordWriteConflict,
@@ -375,20 +405,69 @@ class ClaudeMirrorFloatWorker:
                 continue
             floated += int(mirror_floated)
             registered += int(mirror_registered)
+            archived += int(mirror_archived)
+        if newly_archived:
+            # Prune to mirrors still visible: a record that has left the visible
+            # set can no longer be archived by this worker, so remembering it
+            # only grows the key. Pruned against live_ids rather than against
+            # the ids examined WITHOUT error, so a mirror that merely skipped
+            # this cycle keeps its entry and is not re-archived later.
+            # Stored as a MAPPING because set_state refuses anything else; the
+            # value carries the reason so the key reads like the auto-dismiss
+            # one rather than an opaque id list.
+            self._store.set_state(
+                _MIRROR_AUTO_ARCHIVE_STATE_KEY,
+                {
+                    claude_uuid: "auto_archived"
+                    for claude_uuid in sorted(
+                        (already_archived | newly_archived) & live_ids
+                    )
+                },
+            )
         return {
             "examined": examined,
             "floated": floated,
             "skipped": skipped,
             "registered": registered,
+            "archived": archived,
             "throttled": 0,
         }
+
+    def _load_auto_archived_ids(self) -> set[str]:
+        """cliSessionIds already auto-archived once; unreadable state = empty.
+
+        An unreadable ledger reads as "nothing archived yet", which is the
+        FORGIVING direction here and deliberately so: the worst case is that one
+        idle mirror is archived a second time after an operator revived it,
+        which they can undo. The alternative default -- treating an unreadable
+        ledger as "everything already archived" -- would silently disable the
+        axis, which is the failure this whole change exists to end.
+        """
+
+        if self._archive_idle_seconds is None:
+            return set()
+        try:
+            stored = self._store.get_state(_MIRROR_AUTO_ARCHIVE_STATE_KEY)
+        except Exception:
+            return set()
+        if not isinstance(stored, Mapping):
+            return set()
+        return {entry for entry in stored if isinstance(entry, str)}
 
     def _float_one(
         self,
         row: Mapping[str, Any],
         registry_index: dict[str, Path],
-    ) -> tuple[bool, bool]:
+        already_archived: frozenset[str] | set[str] = frozenset(),
+        newly_archived: set[str] | None = None,
+    ) -> tuple[bool, bool, bool]:
         claude_uuid = str(row["claude_uuid"])
+        # _resolve_source_activity RAISES _MirrorFloatSkip when the source's
+        # activity is unavailable, so an unknown-liveness mirror is skipped
+        # before any archive decision is reached. That is the fail-CLOSED
+        # direction, and it is the property that keeps this axis honest: we
+        # archive on a positive measurement of idleness, never on the absence
+        # of evidence of life.
         activity = self._resolve_source_activity(str(row["source_session_id"]))
         canonical_id = canonical_session_id(Provider.CLAUDE, claude_uuid)
         mirror = self._store.get_external_session(canonical_id)
@@ -411,12 +490,18 @@ class ClaudeMirrorFloatWorker:
             floated = True
 
         registered = False
+        archived = False
         if self._registry_roots:
-            registered, record_floated = self._ensure_registry_record(
-                canonical_id, claude_uuid, activity, registry_index
+            registered, record_floated, archived = self._ensure_registry_record(
+                canonical_id,
+                claude_uuid,
+                activity,
+                registry_index,
+                already_archived,
+                newly_archived,
             )
             floated = floated or record_floated
-        return floated, registered
+        return floated, registered, archived
 
     @property
     def _registry_root(self) -> Path | None:
@@ -429,11 +514,23 @@ class ClaudeMirrorFloatWorker:
         claude_uuid: str,
         activity: float,
         registry_index: dict[Path, dict[str, Path]],
-    ) -> tuple[bool, bool]:
+        already_archived: frozenset[str] | set[str] = frozenset(),
+        newly_archived: set[str] | None = None,
+    ) -> tuple[bool, bool, bool]:
         activity_ms = int(activity * 1000)
         session_row: Mapping[str, Any] | None = None
         registered = False
         floated = False
+        archived = False
+        # Same rule the creation branch below applies via
+        # _RECENT_UNARCHIVED_SECONDS, only evaluated on EVERY cycle instead of
+        # once. A mirror registered while its source was active previously kept
+        # its unarchived flag forever, because nothing re-ran the decision --
+        # IdleChipArchiveWorker skips mirrors by design (they belong to this
+        # worker), so the sidebar grew until a human swept it by hand.
+        archive_floor: float | None = None
+        if self._archive_idle_seconds is not None:
+            archive_floor = self._wall_clock() - self._archive_idle_seconds
         # Deterministic record id derived from the session's own Claude UUID so
         # every harness store holds the SAME record id for one logical session.
         # A per-harness random id produced cross-harness duplicates once the
@@ -483,7 +580,15 @@ class ClaudeMirrorFloatWorker:
                 registered = registered or published
                 continue
 
-            def advance_activity(record: MutableMapping[str, Any]) -> bool:
+            archive_due = (
+                archive_floor is not None
+                and claude_uuid not in already_archived
+                and activity <= archive_floor
+            )
+            outcome = {"floated": False, "archived": False}
+
+            def settle(record: MutableMapping[str, Any]) -> bool:
+                changed = False
                 recorded_ms = record.get("lastActivityAt")
                 if (
                     not isinstance(recorded_ms, (int, float))
@@ -493,18 +598,41 @@ class ClaudeMirrorFloatWorker:
                     recorded_ms = 0
                 if (
                     activity_ms - float(recorded_ms)
-                    < self._min_interval_seconds * 1000
+                    >= self._min_interval_seconds * 1000
                 ):
-                    return False
-                record["lastActivityAt"] = activity_ms
-                return True
+                    record["lastActivityAt"] = activity_ms
+                    outcome["floated"] = True
+                    changed = True
+                if archive_due and not record.get("isArchived"):
+                    # Re-read liveness from the record INSIDE the transform
+                    # rather than trusting the sample taken before it. The
+                    # desktop app stamps lastActivityAt when a session is
+                    # actually used, so a record fresher than the floor is
+                    # evidence of life that post-dates our source reading, and
+                    # archiving on a stale sample is exactly the mistake that
+                    # hid 16 live sessions in the 2026-08-24 sweep.
+                    current_ms = record.get("lastActivityAt")
+                    if not (
+                        isinstance(current_ms, (int, float))
+                        and not isinstance(current_ms, bool)
+                        and math.isfinite(float(current_ms))
+                        and float(current_ms) / 1000.0 > archive_floor
+                    ):
+                        record["isArchived"] = True
+                        outcome["archived"] = True
+                        changed = True
+                return changed
 
-            if not _optimistic_transform_record(existing, advance_activity):
+            if not _optimistic_transform_record(existing, settle):
                 # False means either no update was due or every fresh-byte retry
                 # conflicted. In both cases the current target remains authoritative.
                 continue
-            floated = True
-        return registered, floated
+            floated = floated or bool(outcome["floated"])
+            if outcome["archived"]:
+                archived = True
+                if newly_archived is not None:
+                    newly_archived.add(claude_uuid)
+        return registered, floated, archived
 
     def _publish_record(self, path: Path, record: Mapping[str, Any]) -> bool:
         return _publish_record_create_only(path, record)
