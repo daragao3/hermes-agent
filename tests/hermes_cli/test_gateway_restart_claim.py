@@ -54,39 +54,39 @@ class TestPreflight:
         assert pf.render() == []
 
     def test_other_sessions_young_open_claim_blocks(self, registry):
-        _write_registry(registry, [_rec("gateway-restart-1", status="active", age_s=120)])
+        _write_registry(registry, [_rec("gateway-restart-20260907-140000", status="active", age_s=120)])
         pf = grc.preflight()
-        assert pf.blocking is not None and pf.blocking["id"] == "gateway-restart-1"
+        assert pf.blocking is not None and pf.blocking["id"] == "gateway-restart-20260907-140000"
         text = "\n".join(pf.render())
         assert "IN PROGRESS" in text and "ccd:other" in text and "deploy x" in text
         assert "--ignore-restart-claim" in text
 
     def test_my_own_open_claim_does_not_block(self, registry):
         _write_registry(
-            registry, [_rec("gateway-restart-1", status="active", age_s=60, session="ccd:me")]
+            registry, [_rec("gateway-restart-20260907-140000", status="active", age_s=60, session="ccd:me")]
         )
         pf = grc.preflight()
         assert pf.blocking is None
-        assert [r["id"] for r in pf.recent] == ["gateway-restart-1"]
+        assert [r["id"] for r in pf.recent] == ["gateway-restart-20260907-140000"]
 
     def test_stale_open_claim_is_reported_not_blocking(self, registry):
         _write_registry(
-            registry, [_rec("gateway-restart-1", status="active", age_s=grc.OPEN_WINDOW_S + 60)]
+            registry, [_rec("gateway-restart-20260907-140000", status="active", age_s=grc.OPEN_WINDOW_S + 60)]
         )
         pf = grc.preflight()
         assert pf.blocking is None
-        assert [r["id"] for r in pf.recent] == ["gateway-restart-1"]
+        assert [r["id"] for r in pf.recent] == ["gateway-restart-20260907-140000"]
 
     def test_recent_done_claims_are_reported_and_old_ones_dropped(self, registry):
         _write_registry(registry, [
-            _rec("gateway-restart-old", status="done", age_s=grc.RECENT_WINDOW_S + 1),
-            _rec("gateway-restart-1h", status="done", age_s=3600),
-            _rec("gateway-restart-30s", status="done", age_s=30),
+            _rec("gateway-restart-20260907-100000", status="done", age_s=grc.RECENT_WINDOW_S + 1),
+            _rec("gateway-restart-20260907-130000", status="done", age_s=3600),
+            _rec("gateway-restart-20260907-145900", status="done", age_s=30),
             _rec("cron-something-else", status="active", age_s=10),
         ])
         pf = grc.preflight()
         assert pf.blocking is None
-        assert [r["id"] for r in pf.recent] == ["gateway-restart-30s", "gateway-restart-1h"]
+        assert [r["id"] for r in pf.recent] == ["gateway-restart-20260907-145900", "gateway-restart-20260907-130000"]
         text = "\n".join(pf.render())
         assert "still booting" in text  # the 30s one
         assert "already live" in text  # the 1h one
@@ -100,12 +100,23 @@ class TestPreflight:
         assert pf.error and "JSONDecodeError" in pf.error
         assert any("unreadable" in line for line in pf.render())
 
+    def test_only_stamp_shaped_ids_are_bounce_records(self, registry):
+        """A task claim that merely STARTS with the prefix is not a bounce."""
+        _write_registry(registry, [
+            _rec("gateway-restart-claim-coordination-20260907", status="active", age_s=60),
+            _rec("gateway-restart-runbook-whatsapp-field-20260902", status="active", age_s=60),
+            _rec("gateway-restart-20260907-140000", status="done", age_s=60),
+        ])
+        pf = grc.preflight()
+        assert pf.blocking is None
+        assert [r["id"] for r in pf.recent] == ["gateway-restart-20260907-140000"]
+
     def test_youngest_blocking_claim_is_the_one_reported(self, registry):
         _write_registry(registry, [
-            _rec("gateway-restart-a", status="active", age_s=600, session="ccd:a"),
-            _rec("gateway-restart-b", status="active", age_s=30, session="ccd:b"),
+            _rec("gateway-restart-20260907-140001", status="active", age_s=600, session="ccd:a"),
+            _rec("gateway-restart-20260907-140002", status="active", age_s=30, session="ccd:b"),
         ])
-        assert grc.preflight().blocking["id"] == "gateway-restart-b"
+        assert grc.preflight().blocking["id"] == "gateway-restart-20260907-140002"
 
 
 def _loops_available():
@@ -166,7 +177,7 @@ class TestDegradation:
         assert not registry.exists()
 
     def test_guard_and_open_refuses_over_a_blocking_claim(self, registry, monkeypatch):
-        _write_registry(registry, [_rec("gateway-restart-1", status="active", age_s=60)])
+        _write_registry(registry, [_rec("gateway-restart-20260907-140000", status="active", age_s=60)])
         out = []
         with pytest.raises(SystemExit) as exc:
             grc.guard_and_open(
@@ -176,10 +187,10 @@ class TestDegradation:
         assert any("IN PROGRESS" in line for line in out)
         # Nothing was opened.
         records, _ = grc.load_restart_records()
-        assert [r["id"] for r in records] == ["gateway-restart-1"]
+        assert [r["id"] for r in records] == ["gateway-restart-20260907-140000"]
 
     def test_guard_and_open_override_proceeds(self, registry, monkeypatch):
-        _write_registry(registry, [_rec("gateway-restart-1", status="active", age_s=60)])
+        _write_registry(registry, [_rec("gateway-restart-20260907-140000", status="active", age_s=60)])
         monkeypatch.setenv("HERMES_LOOPS_PY", str(registry.parent / "nope.py"))  # inert write
         out = []
         claim = grc.guard_and_open(
@@ -191,13 +202,13 @@ class TestDegradation:
         assert any("Could not record a restart claim" in line for line in out)
 
     def test_child_of_a_claiming_parent_opens_nothing(self, registry, monkeypatch):
-        monkeypatch.setenv(grc.CLAIM_ENV, "gateway-restart-parent")
-        _write_registry(registry, [_rec("gateway-restart-1", status="active", age_s=60)])
+        monkeypatch.setenv(grc.CLAIM_ENV, "gateway-restart-20260907-140003")
+        _write_registry(registry, [_rec("gateway-restart-20260907-140000", status="active", age_s=60)])
         out = []
         claim = grc.guard_and_open(
             reason="x", surface="cli:run --replace", incumbent_pids=[1], printer=out.append
         )
-        assert claim.claim_id == "gateway-restart-parent" and claim.opened is False
+        assert claim.claim_id == "gateway-restart-20260907-140003" and claim.opened is False
         assert out == []  # no preflight either: the parent is the one bouncing
 
 
@@ -252,7 +263,7 @@ class TestRestartCommandIntegration:
         assert "Restart claim gateway-restart-" in out
 
     def test_restart_refuses_over_another_sessions_open_claim(self, registry, monkeypatch, capsys):
-        _write_registry(registry, [_rec("gateway-restart-1", status="active", age_s=90)])
+        _write_registry(registry, [_rec("gateway-restart-20260907-140000", status="active", age_s=90)])
         called = []
         with pytest.raises(SystemExit) as exc:
             self._drive(monkeypatch, restart_impl=lambda: called.append(1), pids_after=[222])

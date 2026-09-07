@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -51,6 +52,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 CLAIM_PREFIX = "gateway-restart-"
+# A bounce record is EXACTLY prefix + YYYYMMDD-HHMMSS. Matching on the prefix
+# alone caught the task claim `gateway-restart-claim-coordination-20260907`
+# that built this module -- an open record another session would have read as
+# a bounce in progress for 20 minutes after every note written to it.
+_CLAIM_ID_RE = re.compile(r"^gateway-restart-\d{8}-\d{6}$")
 CLAIM_KEYWORDS = "gateway restart bounce replace relaunch deploy"
 
 # Another session's OPEN claim younger than this means a bounce is in progress.
@@ -174,7 +180,7 @@ def load_restart_records() -> tuple[List[Dict[str, Any]], Optional[str]]:
         return [], f"{path}: unexpected shape {type(records).__name__}"
     out = []
     for rec in records:
-        if isinstance(rec, dict) and str(rec.get("id", "")).startswith(CLAIM_PREFIX):
+        if isinstance(rec, dict) and _CLAIM_ID_RE.match(str(rec.get("id", ""))):
             out.append(rec)
     return out, None
 
