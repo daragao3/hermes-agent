@@ -1506,6 +1506,33 @@ def _canonical_json(value: Any) -> str:
         return str(value)
 
 
+class ConflictingClaudeBridgeMarkers(ValueError):
+    """Two different bridge ids authenticate inside one claude transcript.
+
+    Mirrors ``_ConflictingCodexBridgeMarkers`` in ``codex_adapter``; the claude
+    side raised a bare ``ValueError`` until 2026-09-07, which is why nothing
+    could catch it narrowly and it fell to the scan paths' generic handler.
+
+    THIS IS NOT NECESSARILY CORRUPTION, and that is why it must not be fatal.
+    ``_detect_origin`` harvests markers from the text of ANY user or assistant
+    record, so a session that merely PRINTS or quotes marker strings collects
+    them as if they were its own provenance. On this machine, agent sessions
+    work on the bridge itself constantly. Measured 2026-09-07 on
+    fae9aa0d-0eb4-4fee-a488-f9be05f7b540: three distinct marker strings, two
+    first appearing in record 1 and one first appearing in record 356 -- a
+    mid-conversation first appearance is the signature of a transcript that
+    DISPLAYED a marker, not one that was bridged twice, since a genuine
+    continuation stamps its marker at the start.
+
+    Subclasses ``ValueError`` so every existing caller and test that matches on
+    the type or the message is unaffected; the message is unchanged.
+    """
+
+    def __init__(self, bridge_ids: tuple[str, ...] = ()) -> None:
+        self.bridge_ids = bridge_ids
+        super().__init__("Claude transcript has conflicting bridge markers")
+
+
 def _detect_origin(
     records: list[dict[str, Any]],
     marker_secret: bytes,
@@ -1541,7 +1568,7 @@ def _detect_origin(
 
     marker_ids = {bridge_id for _, bridge_id in marker_occurrences}
     if len(marker_ids) > 1:
-        raise ValueError("Claude transcript has conflicting bridge markers")
+        raise ConflictingClaudeBridgeMarkers(tuple(sorted(marker_ids)))
     marker_bridge_id = next(iter(marker_ids), None)
 
     if prior_bridge_id is not None:

@@ -27,6 +27,7 @@ from agent.redact import redact_sensitive_text
 from .claude_adapter import (
     AmbiguousPlaceholderCreation,
     ClaudeCursor,
+    ConflictingClaudeBridgeMarkers,
     PlaceholderCreationError,
     decode_claude_cursor,
     encode_claude_cursor,
@@ -1149,6 +1150,7 @@ _RECENT_ERROR_LIMIT = 20
 _CODEX_SCAN_FAILURE_CODE = "codex_scan_failed"
 _CODEX_SCAN_LOCAL_OWNER_CODE = "codex_local_session_owns_id"
 _CLAUDE_SCAN_LOCAL_OWNER_CODE = "claude_local_session_owns_id"
+_CLAUDE_MARKER_CONFLICT_CODE = "claude_conflicting_bridge_markers"
 _CODEX_SCAN_STAGES = frozenset({
     "full_history_project",
     "immediate_project",
@@ -4623,6 +4625,7 @@ class SessionBridgeCoordinator:
         indexed = 0
         rebuilt = 0
         failed = len(unavailable_paths)
+        marker_conflicts = 0
         locally_owned = 0
         for path in paths:
             try:
@@ -4660,6 +4663,10 @@ class SessionBridgeCoordinator:
                 # a stale projection is not a canonical-id collision and
                 # folding it in would make `locally_owned` overstate them.
                 continue
+            except ConflictingClaudeBridgeMarkers:
+                # Unadoptable, not a failure -- see the persistent path.
+                marker_conflicts += 1
+                continue
             except Exception as exc:
                 # Instrumented 2026-09-07 alongside the persistent path. All
                 # three codex twins already reported here; all three claude
@@ -4676,6 +4683,16 @@ class SessionBridgeCoordinator:
                 continue
             indexed += 1
             rebuilt += int(not result.first_seen)
+        if marker_conflicts:
+            try:
+                _LOG.warning(
+                    "claude_scan_diagnostic stage=%s code=%s skipped=%d",
+                    "full_history_project",
+                    _CLAUDE_MARKER_CONFLICT_CODE,
+                    marker_conflicts,
+                )
+            except Exception:
+                pass
         if locally_owned:
             # Counted, never silent -- the rule the other five scan paths follow.
             try:
@@ -4810,6 +4827,7 @@ class SessionBridgeCoordinator:
         indexed = 0
         rebuilt = 0
         failed = 0
+        marker_conflicts = 0
         locally_owned = 0
         incremental = self._claude_incremental_reads(adapter)
         cursors = self._claude_immediate_cursors
@@ -4858,6 +4876,10 @@ class SessionBridgeCoordinator:
                 # other two claude paths: identical behaviour, but a stale
                 # projection must not inflate the collision count.
                 continue
+            except ConflictingClaudeBridgeMarkers:
+                # Unadoptable, not a failure -- see the persistent path.
+                marker_conflicts += 1
+                continue
             except Exception as exc:
                 # Instrumented 2026-09-07; see the persistent path for why.
                 failed += 1
@@ -4874,6 +4896,16 @@ class SessionBridgeCoordinator:
             # Only a committed upsert may advance the cursor: an offset moved
             # past bytes the store never accepted would skip them forever.
             _remember_claude_cursor(cursors, cursor_key, parsed)
+        if marker_conflicts:
+            try:
+                _LOG.warning(
+                    "claude_scan_diagnostic stage=%s code=%s skipped=%d",
+                    "immediate_project",
+                    _CLAUDE_MARKER_CONFLICT_CODE,
+                    marker_conflicts,
+                )
+            except Exception:
+                pass
         if locally_owned:
             # Counted, never silent -- the rule the other five scan paths follow.
             try:
@@ -5061,6 +5093,7 @@ class SessionBridgeCoordinator:
         rebuilt = 0
         failed_ids: list[str] = []
         succeeded_ids: list[str] = []
+        marker_conflicts: list[str] = []
         locally_owned = 0
         for native_id in selected_ids:
             try:
@@ -5186,6 +5219,32 @@ class SessionBridgeCoordinator:
                 # real canonical-id collisions. Folding a stale projection in
                 # would make the new ScanSummary field overstate them.
                 continue
+            except ConflictingClaudeBridgeMarkers as exc:
+                # 2026-09-07. A transcript whose origin cannot be decided is
+                # UNADOPTABLE, not a scan failure -- the same call the two
+                # clauses above already make. Before this it fell to the generic
+                # handler, and because a failure re-stages the transcript, ONE
+                # such transcript kept `failed` nonzero on every cycle and held
+                # degraded_reason=scan_failed on the whole provider
+                # indefinitely: session-bridge-service, -catalog and
+                # -continuity were red for hours on 2026-09-07 and a restart did
+                # not clear it.
+                #
+                # Deliberately NOT reclassifying the origin here. Deciding that
+                # a conflicting-marker transcript is really NATIVE would let it
+                # index, but origin is HMAC-authenticated provenance feeding the
+                # visibility and registration lanes, and the evidence does not
+                # settle whether these markers were quoted or genuine. Skipping
+                # leaves that judgement to a human and costs only what today
+                # already costs: the transcript stays out of the catalog.
+                #
+                # Counted, never silent -- the rule the sibling clauses follow.
+                # Aggregated after the loop rather than logged per occurrence,
+                # because this scan runs every few seconds and the condition is
+                # permanent: a per-occurrence line would be a log flood.
+                del exc
+                marker_conflicts.append(native_id)
+                continue
             except Exception as exc:
                 # 2026-09-07: this clause DISCARDED the exception, which is the
                 # reason a permanent claude degradation was undiagnosable. The
@@ -5262,6 +5321,20 @@ class SessionBridgeCoordinator:
             discovery_mode,
             succeeded_ids,
         )
+        if marker_conflicts:
+            try:
+                _LOG.warning(
+                    "claude_scan_diagnostic stage=persistent_project code=%s "
+                    "skipped=%d native=%s",
+                    _CLAUDE_MARKER_CONFLICT_CODE,
+                    len(marker_conflicts),
+                    ",".join(
+                        _safe_native_token(native_id)
+                        for native_id in sorted(marker_conflicts)[:8]
+                    ),
+                )
+            except Exception:
+                pass
         if locally_owned:
             # Counted, never silent -- the same rule the three codex paths
             # follow. Added 2026-09-02: this path incremented the counter and
