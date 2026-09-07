@@ -171,7 +171,56 @@ def _machine_gateway_alive(threshold_seconds: float = _GATEWAY_HEARTBEAT_FRESH_S
         return False
 
 
-def _start_desktop_cron_ticker(stop_event: "threading.Event", interval: int = 60) -> None:
+# A stale heartbeat whose WRITER PID is still alive is not proof the gateway is
+# gone. After a host suspend (Modern Standby) every process wakes with the same
+# hours-old file, and whichever 60s loop resumes first reads it. On 2026-09-07
+# (suspend 02:12-08:53 EDT) the desktop ticker woke 78s before the gateway, saw
+# a 6.7h-old heartbeat, and ran the 48-job missed-run burst inside the process
+# serving the dashboard -- no live delivery adapters -- while the gateway's own
+# next 28 fires were duplicate-blocked against it. So while the heartbeat's pid
+# is alive the ticker HOLDS instead of taking over, for at most this many of
+# its own loop iterations. A gateway that is alive but genuinely silent (hung
+# poll loop, not suspended) still gets fallback coverage once the ticker has
+# itself observed the silence for that long. The budget is counted in
+# iterations, not wall-clock seconds, precisely so that a suspend the ticker
+# slept through does not count as observed silence.
+_GATEWAY_SILENT_OWNER_HOLD_TICKS = 5
+
+
+def _gateway_heartbeat_owner_alive() -> bool:
+    """Whether the pid recorded IN the gateway heartbeat file is still running.
+
+    The heartbeat payload (``events.gateway_integration._write_heartbeat``)
+    carries the writer's pid. Liveness is probed the way
+    ``cron/executions.py::_owner_is_live`` does, through
+    ``gateway.status._pid_exists`` -- never ``os.kill(pid, 0)``, which sends
+    Ctrl+C to the target's console group on Windows.
+
+    Missing file, non-JSON payload (older writers; tests that only touch the
+    mtime), a missing or invalid ``pid``, or any probe error all count as NOT
+    alive, so the ticker then behaves exactly as it did before this check
+    existed: a stale heartbeat means take over. Failing toward "dead" keeps
+    the legacy fallback reachable; it can never make the ticker defer to a
+    gateway that is not there.
+    """
+    try:
+        from events.paths import gateway_heartbeat_path
+        from gateway.status import _pid_exists
+
+        payload = json.loads(gateway_heartbeat_path().read_text(encoding="utf-8"))
+        pid = payload.get("pid") if isinstance(payload, dict) else None
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+            return False
+        return bool(_pid_exists(pid))
+    except Exception:
+        return False
+
+
+def _start_desktop_cron_ticker(
+    stop_event: "threading.Event",
+    interval: int = 60,
+    owner_hold_ticks: int = _GATEWAY_SILENT_OWNER_HOLD_TICKS,
+) -> None:
     """Tick the cron scheduler from inside the desktop dashboard backend.
 
     The scheduler tick loop normally lives in ``hermes gateway run`` — but the
@@ -193,6 +242,17 @@ def _start_desktop_cron_ticker(stop_event: "threading.Event", interval: int = 60
     heartbeat is fresh we skip the tick entirely and let the gateway own cron;
     a stale/missing heartbeat restores the historical behavior (desktop-only
     installs, and fallback coverage during gateway downtime/restarts).
+
+    Stale-but-alive hold: "stale" alone cannot tell a dead gateway from a
+    host resuming from suspend, where the gateway is alive and about to write
+    a fresh heartbeat but this loop happened to wake first. So a stale
+    heartbeat whose recorded writer pid is still running
+    (``_gateway_heartbeat_owner_alive``) makes the loop HOLD -- no tick, no
+    ticker-heartbeat write -- for up to ``owner_hold_ticks`` iterations. A
+    fresh heartbeat returns it to deferring and resets the budget; the pid
+    dying, a payload with no usable pid, or the budget running out makes it
+    active, as before. Once active it stays active until the heartbeat is
+    fresh again, so it cannot oscillate against a silent gateway.
 
     ``HERMES_DESKTOP_CRON`` overrides the guard: ``0`` = never tick, ``1`` =
     legacy always-tick, unset/anything else = auto (heartbeat guard). The
@@ -220,17 +280,30 @@ def _start_desktop_cron_ticker(stop_event: "threading.Event", interval: int = 60
         "Desktop cron scheduler started (provider=builtin, interval=%ds, defer-to-gateway guard on)",
         interval,
     )
-    deferring: "bool | None" = None  # unknown → log the first state either way
+    state: "str | None" = None  # unknown → log the first state either way
+    silent_owner_ticks = 0  # iterations spent holding on a stale-but-alive owner
     while not stop_event.is_set():
         if _machine_gateway_alive():
-            if deferring is not True:
+            silent_owner_ticks = 0
+            if state != "defer":
                 _log.info("Machine gateway heartbeat is fresh — desktop cron ticker deferring to the gateway")
-                deferring = True
+                state = "defer"
             # No tick and no ticker-heartbeat write: the gateway owns both.
+        elif silent_owner_ticks < owner_hold_ticks and _gateway_heartbeat_owner_alive():
+            silent_owner_ticks += 1
+            if state != "hold":
+                _log.info(
+                    "Gateway heartbeat stale but its writer pid is alive (host resuming "
+                    "from suspend?) — desktop cron ticker holding for up to %d iterations",
+                    owner_hold_ticks,
+                )
+                state = "hold"
+            # Neither tick nor ticker-heartbeat write: a hold must look like
+            # deferral to the cron-stale monitors, not like a live ticker.
         else:
-            if deferring is not False:
+            if state != "active":
                 _log.info("Gateway heartbeat stale or missing — desktop cron ticker active")
-                deferring = False
+                state = "active"
             ok = False
             try:
                 cron_tick(verbose=False, sync=False)
