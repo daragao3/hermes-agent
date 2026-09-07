@@ -4,9 +4,36 @@ Tests _wrap_command(), _extract_cwd_from_output(), _embed_stdin_heredoc(),
 init_session() failure handling, and the CWD marker contract.
 """
 
+import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 from tools.environments.base import BaseEnvironment, _BoundedOutputCollector
+
+_IS_WINDOWS = sys.platform == "win32"
+
+
+def _test_bash() -> str:
+    """The bash binary the behavioral tests below should spawn, or skip.
+
+    Resolved through the product's own ``_find_bash`` rather than a literal
+    ``/bin/bash``: that path is not something Windows ``CreateProcess`` can
+    open (``FileNotFoundError: [WinError 2]``) even though Git Bash is on
+    PATH, and ``shutil.which("bash")`` alone may return the WSL launcher,
+    which cannot see ``tmp_path``.  On POSIX ``_find_bash`` is
+    ``shutil.which("bash")``, i.e. the same binary ``/bin/bash`` was.
+    """
+    import shutil
+
+    if not shutil.which("bash"):
+        pytest.skip("bash required")
+    from tools.environments.local import _find_bash
+
+    try:
+        return _find_bash()
+    except RuntimeError as exc:  # Git Bash absent on Windows
+        pytest.skip(f"bash required: {exc}")
 
 
 class _TestableEnv(BaseEnvironment):
@@ -251,13 +278,20 @@ class TestAtomicSnapshotConcurrencyBehavioral:
 
     def _run(self, script):
         import subprocess
-        return subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True)
+        return subprocess.run([_test_bash(), "-c", script], capture_output=True, text=True)
 
+    @pytest.mark.skipif(
+        _IS_WINDOWS,
+        reason=(
+            "Passes under Git Bash but cannot fit the 30s per-test cap: every "
+            "subshell/head/tr/mv in the 3 rounds x (4 writers x 80 + 4 readers x "
+            "160) loop is an MSYS fork emulation (~15ms each), measured 90.5s on "
+            "2026-09-07 with no tear. The atomicity is a bash property, not an OS "
+            "one; POSIX CI covers it."
+        ),
+    )
     def test_concurrent_writes_never_tear_the_snapshot(self, tmp_path):
-        import shutil
-        if not shutil.which("bash"):
-            import pytest
-            pytest.skip("bash required")
+        _test_bash()
         import shlex
         snap = str(tmp_path / "hermes-snap-x.sh")
         _q = shlex.quote
@@ -292,10 +326,7 @@ class TestAtomicSnapshotConcurrencyBehavioral:
     def test_failed_export_does_not_destroy_good_snapshot(self, tmp_path):
         """If ``export -p`` fails, the ``&&``-chained mv must NOT clobber the
         existing good snapshot."""
-        import shutil
-        if not shutil.which("bash"):
-            import pytest
-            pytest.skip("bash required")
+        _test_bash()
         import shlex
         snap = str(tmp_path / "snap.sh")
         _q = shlex.quote
@@ -315,15 +346,22 @@ class TestAtomicSnapshotConcurrencyBehavioral:
 class TestSnapshotFileModes:
     """Snapshot metadata files are private without changing user command umask."""
 
+    @pytest.mark.skipif(
+        _IS_WINDOWS,
+        reason=(
+            "Asserts POSIX permission bits (0o644 user file, 0o600 snapshot) that "
+            "NTFS does not have: os.stat reports 0o666 for every writable file "
+            "regardless of umask or chmod (measured 2026-09-07: touch, umask 077 "
+            "redirect and os.chmod(0o600) all read 0o666), and os.umask is inert. "
+            "Neither assertion is representable here."
+        ),
+    )
     def test_snapshot_and_cwd_files_are_0600(self, tmp_path):
         import os
         from pathlib import Path
-        import shutil
         import stat
         import subprocess
-        if not shutil.which("bash"):
-            import pytest
-            pytest.skip("bash required")
+        bash = _test_bash()
 
         class ExecutableEnv(BaseEnvironment):
             def __init__(self, temp_dir):
@@ -335,7 +373,7 @@ class TestSnapshotFileModes:
 
             def _run_bash(self, cmd_string, *, login=False, timeout=120, stdin_data=None):
                 proc = subprocess.Popen(
-                    ["/bin/bash", "-lc", cmd_string],
+                    [bash, "-lc", cmd_string],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL,
