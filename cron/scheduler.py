@@ -528,6 +528,7 @@ from cron.jobs import (
 from cron.inflight import (
     CronRunStoppedByOperator,
     clear_stop_request,
+    cancel_run_tool_calls,
     consume_stop_request,
     kill_run_tool_subprocesses,
 )
@@ -5868,6 +5869,14 @@ def _run_job_impl(
                 agent, _run_thread.get("ident"),
                 label=f"Job '{job_name}' operator stop",
             )
+            # ...and a tool call that is neither polling the interrupt bit
+            # nor in a subprocess (HTTP, MCP, async handler): cancel it by
+            # call frame (no-op when none is in flight).
+            cancel_run_tool_calls(
+                agent, _run_thread.get("ident"),
+                reason=f"operator stop (by={_stop_by})",
+                label=f"Job '{job_name}' operator stop",
+            )
             _stop_msg = (
                 f"Cron job '{job_name}' stopped by operator "
                 f"(session {_cron_session_id}, requested by {_stop_by} at {_stop_at}"
@@ -5913,6 +5922,11 @@ def _run_job_impl(
                 agent, _run_thread.get("ident"),
                 label=f"Job '{job_name}' wall-clock timeout",
             )
+            cancel_run_tool_calls(
+                agent, _run_thread.get("ident"),
+                reason="wall-clock timeout",
+                label=f"Job '{job_name}' wall-clock timeout",
+            )
             raise TimeoutError(
                 f"Cron job '{job_name}' exceeded wall-clock limit "
                 f"{_cron_hard_limit:g}s (elapsed {_wc_elapsed:g}s) "
@@ -5946,6 +5960,11 @@ def _run_job_impl(
                 agent.interrupt("Cron job timed out (inactivity)")
             kill_run_tool_subprocesses(
                 agent, _run_thread.get("ident"),
+                label=f"Job '{job_name}' inactivity timeout",
+            )
+            cancel_run_tool_calls(
+                agent, _run_thread.get("ident"),
+                reason="inactivity timeout",
                 label=f"Job '{job_name}' inactivity timeout",
             )
             raise TimeoutError(

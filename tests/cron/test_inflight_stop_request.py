@@ -421,3 +421,213 @@ class TestStopKillsInflightToolSubprocess:
         agent._execution_thread_id = None
         agent._tool_worker_threads = MagicMock()  # not a set: ignored
         assert run_tool_thread_ids(agent, 10) == {10}
+
+
+# ---------------------------------------------------------------------------
+# The stop (and the two timeouts) must also abort a tool call that is NEITHER
+# polling the interrupt bit NOR blocked in a subprocess -- an HTTP request, an
+# MCP call, an async handler, a plugin loop (2026-09-07, third leg).
+#
+# The 2026-09-06 shape: job b74186b2eaa5 paused at 18:14 kept publishing until
+# 18:58. ``agent.interrupt()`` is a MagicMock here, i.e. the agent's own route
+# is absent; what these prove is the scheduler-owned cancel by CALL FRAME
+# (cron.inflight.cancel_run_tool_calls -> tools.inflight_call), reaching a
+# real ``ToolRegistry.dispatch`` on the run's pool worker thread, and that the
+# cancel dies with the call (no recycled-tid poisoning).
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+
+from cron.inflight import cancel_run_tool_calls  # noqa: E402
+from tools.inflight_call import (  # noqa: E402
+    inflight_call,
+    inflight_call_threads,
+    is_call_cancelled,
+)
+from tools.interrupt import is_interrupted  # noqa: E402
+from tools.registry import ToolRegistry  # noqa: E402
+
+
+def _wait_until(pred, timeout=10.0, step=0.02) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(step)
+    return pred()
+
+
+def _blocking_call_registry(entered: threading.Event) -> ToolRegistry:
+    """A registry with one tool that blocks until its call is cancelled.
+
+    Stands in for a publish loop / HTTP client: it does not know about cron
+    and polls nothing but ``is_interrupted()``, which now reports the
+    scheduler's per-call cancel on this thread.
+    """
+    reg = ToolRegistry()
+
+    def _publish(args, **kwargs):
+        entered.set()
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if is_interrupted():
+                return json.dumps({"aborted": True})
+            time.sleep(0.02)
+        return json.dumps({"aborted": False})
+
+    reg.register(
+        name="fake_publish_batch", toolset="t",
+        schema={"name": "fake_publish_batch"}, handler=_publish,
+    )
+    return reg
+
+
+class TestStopCancelsInflightToolCall:
+    JOB = {"id": "stopjob", "name": "stop me", "prompt": "hello"}
+
+    def _agent_blocked_in_tool(self, reg, state):
+        agent = MagicMock()
+        agent.get_activity_summary.side_effect = _active_summary
+
+        def _run_conversation(prompt):
+            state["tid"] = threading.current_thread().ident
+            state["result"] = reg.dispatch("fake_publish_batch", {})
+            state["returned_at"] = time.monotonic()
+            return {"final_response": "should not be trusted"}
+
+        agent.run_conversation.side_effect = _run_conversation
+        return agent
+
+    def test_operator_stop_cancels_the_call_the_run_is_blocked_in(self, tmp_cron_dir):
+        entered = threading.Event()
+        state = {}
+        reg = _blocking_call_registry(entered)
+        agent = self._agent_blocked_in_tool(reg, state)
+
+        def _stop_once_in_tool():
+            assert entered.wait(timeout=10), "tool never entered"
+            request_stop("stopjob", by="hermes_cli:cron_pause", reason="abort it")
+            state["stop_at"] = time.monotonic()
+
+        stopper = threading.Thread(target=_stop_once_in_tool, daemon=True)
+        stopper.start()
+        success, output, _final, error = _run(self.JOB, agent, tmp_cron_dir)
+        stopper.join(timeout=15)
+
+        assert success is False
+        assert "CronRunStoppedByOperator" in error
+        # The tool call itself unwound -- not merely the run recorded failed.
+        assert _wait_until(lambda: "result" in state), "dispatch never returned"
+        assert json.loads(state["result"]) == {"aborted": True}
+        assert state["returned_at"] - state["stop_at"] < 10
+        # The agent's own route was a MagicMock; the scheduler's cancel did it.
+        agent.interrupt.assert_called_once_with("Cron run stopped by operator")
+        # And the cancel died with the call: the worker tid is clean.
+        assert state["tid"] not in inflight_call_threads()
+        assert not is_call_cancelled(state["tid"])
+        assert "FAILED" in output
+
+    @pytest.mark.parametrize(
+        "env_var, value, expected_error",
+        [
+            ("HERMES_CRON_HARD_TIMEOUT", "1", "wall-clock"),
+            ("HERMES_CRON_TIMEOUT", "1", "idle for"),
+        ],
+    )
+    def test_timeouts_cancel_the_call_too(
+        self, tmp_cron_dir, monkeypatch, env_var, value, expected_error
+    ):
+        monkeypatch.delenv("HERMES_CRON_HARD_TIMEOUT", raising=False)
+        monkeypatch.delenv("HERMES_CRON_TIMEOUT", raising=False)
+        monkeypatch.setenv(env_var, value)
+        entered = threading.Event()
+        state = {}
+        reg = _blocking_call_registry(entered)
+        agent = self._agent_blocked_in_tool(reg, state)
+        if env_var == "HERMES_CRON_TIMEOUT":
+            def _idle_summary():
+                s = _active_summary()
+                s["seconds_since_activity"] = 999.0
+                return s
+            agent.get_activity_summary.side_effect = _idle_summary
+
+        t0 = time.monotonic()
+        success, _output, _final, error = _run(self.JOB, agent, tmp_cron_dir)
+        assert entered.is_set(), "tool never entered"
+        assert success is False
+        assert expected_error in error
+        assert _wait_until(lambda: "result" in state), "dispatch never returned"
+        assert json.loads(state["result"]) == {"aborted": True}
+        assert state["returned_at"] - t0 < 15
+        assert state["tid"] not in inflight_call_threads()
+
+    def test_stop_does_not_cancel_another_threads_call(self, tmp_cron_dir):
+        """Scoping: a call in flight on some OTHER thread -- another session
+        in the same gateway -- must not see this run's stop."""
+        other_in = threading.Event()
+        release = threading.Event()
+        other_seen = {}
+
+        def _other_session():
+            with inflight_call("other_sessions_tool"):
+                other_in.set()
+                release.wait(timeout=30)
+                other_seen["cancelled"] = is_call_cancelled()
+                other_seen["interrupted"] = is_interrupted()
+
+        other = threading.Thread(target=_other_session, daemon=True)
+        other.start()
+        assert other_in.wait(timeout=5)
+        try:
+            agent = MagicMock()
+            agent.get_activity_summary.side_effect = _active_summary
+            released = threading.Event()
+            agent.interrupt.side_effect = lambda msg: released.set()
+
+            def _run_conversation(prompt):
+                request_stop("stopjob", by="test")
+                released.wait(timeout=10)
+                return {"final_response": "x"}
+
+            agent.run_conversation.side_effect = _run_conversation
+            success, _o, _f, error = _run(self.JOB, agent, tmp_cron_dir)
+            assert success is False and "CronRunStoppedByOperator" in error
+            assert not is_call_cancelled(other.ident)
+        finally:
+            release.set()
+            other.join(timeout=10)
+        assert other_seen == {"cancelled": False, "interrupted": False}
+
+    def test_cancel_helper_is_a_noop_with_nothing_in_flight(self):
+        agent = MagicMock()
+        assert cancel_run_tool_calls(agent, None) == 0
+        me = threading.current_thread().ident
+        assert cancel_run_tool_calls(agent, me) == 0
+        assert not is_call_cancelled(me)
+
+    def test_cancel_helper_reaches_a_frame_on_the_named_thread(self):
+        entered = threading.Event()
+        release = threading.Event()
+        seen = {}
+
+        def _worker():
+            with inflight_call("some_tool") as frame:
+                entered.set()
+                release.wait(timeout=10)
+                seen["reason"] = frame.cancel_reason
+                seen["interrupted"] = is_interrupted()
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        assert entered.wait(timeout=5)
+        try:
+            agent = MagicMock()  # no int attributes: only the worker tid counts
+            assert cancel_run_tool_calls(
+                agent, t.ident, reason="operator stop (by=test)", label="unit"
+            ) == 1
+            assert is_call_cancelled(t.ident)
+        finally:
+            release.set()
+            t.join(timeout=5)
+        assert seen == {"reason": "operator stop (by=test)", "interrupted": True}
+        assert not is_call_cancelled(t.ident)

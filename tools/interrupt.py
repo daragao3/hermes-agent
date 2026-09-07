@@ -18,6 +18,8 @@ import logging
 import os
 import threading
 
+from tools.inflight_call import is_call_cancelled as _is_call_cancelled
+
 logger = logging.getLogger(__name__)
 
 # Opt-in debug tracing — pairs with HERMES_DEBUG_INTERRUPT in
@@ -64,10 +66,21 @@ def is_interrupted() -> bool:
 
     Safe to call from any thread — each thread only sees its own
     interrupt state.
+
+    Two signals feed this (2026-09-07): the per-thread bit above, which only
+    the owning agent sets and clears, and the per-CALL cancel in
+    ``tools.inflight_call`` -- set by the cron scheduler's operator-stop and
+    timeout paths on the run's threads, and swept automatically when the
+    cancelled tool call unwinds. Folding the second in here means every
+    existing poll site (terminal wait loop, MCP wait loop, code execution,
+    web providers) honours a scheduler cancel with no per-tool change, and
+    without anyone but the agent ever touching ``_interrupted_threads``.
     """
     tid = threading.current_thread().ident
     with _lock:
-        return tid in _interrupted_threads
+        if tid in _interrupted_threads:
+            return True
+    return _is_call_cancelled(tid)
 
 
 def clear_current_thread_interrupt() -> None:

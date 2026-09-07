@@ -242,6 +242,53 @@ def kill_run_tool_subprocesses(
     return killed
 
 
+def cancel_run_tool_calls(
+    agent: Any,
+    worker_thread_id: Optional[int] = None,
+    *,
+    reason: str = "",
+    label: str = "",
+) -> int:
+    """Cancel the NON-subprocess tool call(s) a cron run is blocked in.
+
+    Third leg of the stop, after ``agent.interrupt()`` and
+    :func:`kill_run_tool_subprocesses`. Those two cover a tool that polls
+    ``is_interrupted()`` and a tool blocked in a subprocess; this covers the
+    rest -- an HTTP request, an MCP call, an async handler awaiting a
+    socket, a plugin loop -- through the per-CALL registry in
+    ``tools.inflight_call``: every frame on the run's threads is marked
+    cancelled (which ``is_interrupted()`` now reports on those threads) and
+    its abort hooks run (``model_tools._run_async`` cancels the awaited
+    asyncio task; opted-in HTTP clients get their sockets shut down). The
+    frame dies with the call, so nothing here can leak onto the thread's
+    next occupant -- the reason this is not ``tools.interrupt.set_interrupt``,
+    which the scheduler must never call on a recycled worker tid.
+
+    Same scoping as the subprocess kill: by THREAD (pool worker, agent
+    execution thread, concurrent-tool workers), so other sessions' calls are
+    never reached. Returns the number of calls cancelled; 0 when nothing is
+    in flight. Reads ``sys.modules`` rather than importing: if the module was
+    never loaded in this process, no tool has been dispatched. Never raises.
+    """
+    try:
+        call_mod = sys.modules.get("tools.inflight_call")
+        if call_mod is None:
+            return 0
+        tids = run_tool_thread_ids(agent, worker_thread_id)
+        if not tids:
+            return 0
+        cancelled = int(call_mod.cancel_inflight_calls(tids, reason=reason) or 0)
+    except Exception:
+        logger.debug("cancel_run_tool_calls failed", exc_info=True)
+        return 0
+    if cancelled:
+        logger.warning(
+            "%scancelled %d in-flight tool call(s) on thread(s) %s",
+            f"{label}: " if label else "", cancelled, sorted(tids),
+        )
+    return cancelled
+
+
 def current_inflight_correlation_ids() -> List[str]:
     """``cron_started`` event ids for every cron currently in flight.
 
