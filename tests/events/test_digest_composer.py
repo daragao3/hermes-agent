@@ -48,6 +48,39 @@ class TestDigestComposer:
         assert "Acme" in digest
         assert "Deloitte" in digest
 
+    def test_open_backlog_is_listed_from_the_latest_run(self, bus):
+        """The bounded-slice matcher publisher drains an oversized inbox
+        across runs and reports counters.remaining on each AGENT_ITERATION
+        (reserved key, events/schema.py). The digest names the backlog as of
+        the agent's LATEST run in the window and counts the partial runs."""
+        bus.emit(EventType.AGENT_ITERATION, "matcher",
+                 {"agent": "matcher", "summary": "slice 1-4", "reason": "partial",
+                  "counters": {"slices": 4, "published": 100, "remaining": 84}})
+        bus.emit(EventType.AGENT_ITERATION, "matcher",
+                 {"agent": "matcher", "summary": "slice 5-8", "reason": "partial",
+                  "counters": {"slices": 4, "published": 100, "remaining": 15}})
+        bus.emit(EventType.AGENT_ITERATION, "scout",
+                 {"agent": "scout", "summary": "ok", "reason": "success",
+                  "counters": {"discovered": 3}})
+
+        digest = DigestComposer(bus).compose()
+
+        assert "Backlog: matcher still had 15 queued after its last run (2 partial runs)" in digest
+        assert "No activity" not in digest
+        assert "scout still had" not in digest
+
+    def test_backlog_that_drained_by_the_last_run_is_not_listed(self, bus):
+        bus.emit(EventType.AGENT_ITERATION, "matcher",
+                 {"agent": "matcher", "summary": "slice", "reason": "partial",
+                  "counters": {"remaining": 15}})
+        bus.emit(EventType.AGENT_ITERATION, "matcher",
+                 {"agent": "matcher", "summary": "drained", "reason": "success",
+                  "counters": {"remaining": 0}})
+
+        digest = DigestComposer(bus).compose()
+
+        assert "Backlog:" not in digest
+
 
 class TestNotifierSnapshotHandshake:
     """Spec §7: jobflow-notifier writes digest-data.json, DigestComposer reads it."""

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from events.bus import EventBus
+from events.outcomes import agent_iteration_backlog
 from events.paths import digest_state_path
 from events.schema import Event, EventType, Priority
 from events.state import load_state, save_state
@@ -299,10 +300,23 @@ class DigestComposer(BaseSubscriber):
         highlights: List[str] = []
         error_groups: Counter = Counter()
         eventbus_worst_lag: Dict[str, int] = {}
+        # agent -> (backlog its LATEST run reported, runs in the window that
+        # reported one). Events arrive in rowid order, so the last write wins
+        # and a backlog that drained to 0 by the final run drops out.
+        backlogs: Dict[str, tuple] = {}
 
         for e in events:
             type_counts[e.event_type] += 1
             source_counts[e.source] += 1
+
+            if e.event_type == EventType.AGENT_ITERATION:
+                agent = str(e.payload.get("agent") or e.source or "?").strip()
+                remaining = agent_iteration_backlog(e.payload.get("counters"))
+                runs = backlogs.get(agent, (0, 0))[1]
+                if remaining is not None:
+                    backlogs[agent] = (remaining, runs + 1)
+                elif runs:
+                    backlogs[agent] = (0, runs)
 
             if e.event_type == EventType.APPLICATION_READY:
                 action_items.append(
@@ -382,7 +396,22 @@ class DigestComposer(BaseSubscriber):
             lines.append(f"  Applier: {submitted} submitted")
         if transitions:
             lines.append(f"  Tracker: {transitions} stage transitions")
-        if not any([discovered, scored, tailored, submitted, transitions]):
+        # Backlogs still open at the agent's latest run (counters.remaining,
+        # reserved on AGENT_ITERATION -- events/schema.py). The bounded-slice
+        # matcher publisher drains an oversized inbox across runs; a digest
+        # that showed only "N scored" hid that the queue was not empty.
+        open_backlogs = {
+            agent: (remaining, runs)
+            for agent, (remaining, runs) in backlogs.items()
+            if remaining
+        }
+        for agent in sorted(open_backlogs):
+            remaining, runs = open_backlogs[agent]
+            lines.append(
+                f"  Backlog: {agent} still had {remaining:g} queued after its "
+                f"last run ({runs} partial run{'s' if runs != 1 else ''})"
+            )
+        if not any([discovered, scored, tailored, submitted, transitions, open_backlogs]):
             lines.append("  No activity since last digest")
 
         # Highlights

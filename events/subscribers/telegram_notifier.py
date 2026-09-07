@@ -32,6 +32,7 @@ from events.noise_guards import (
     normalize_for_fingerprint,
     strip_agent_iteration_json,
 )
+from events.outcomes import agent_iteration_backlog
 from events.paths import notifier_batch_path
 from events.routing_policy import (
     Attention,
@@ -740,17 +741,29 @@ class TelegramNotifier(BaseSubscriber):
             # human-readable surface and counters remain on the event payload.
             anomalies = p.get("anomalies") or []
             brief = p.get("brief")
+            counters = p.get("counters") or {}
             if isinstance(brief, str) and brief.strip():
                 lines = [brief.strip()]
             else:
                 # Legacy path: agent name + summary, then compact counters.
                 agent = (p.get("agent") or "?").strip()
                 summary = (p.get("summary") or "").strip()
-                counters = p.get("counters") or {}
                 lines = [f"{agent}: {summary}" if summary else f"{agent}: (no summary)"]
                 if isinstance(counters, dict) and counters:
                     compact = " · ".join(f"{k}={v}" for k, v in counters.items())
                     lines.append(compact)
+            remaining = agent_iteration_backlog(counters)
+            if remaining is not None:
+                # A backlog being drained across runs (counters.remaining is
+                # reserved for that -- events/schema.py). `remaining=N` inside
+                # the counter soup above is technically visible and practically
+                # not; this is the one line an operator can read at a glance.
+                # Rendered on the brief path too: a brief describes this run,
+                # the backlog is what this run did NOT get to.
+                lines.append(
+                    f"⏳ backlog: {remaining:g} still queued after this run "
+                    "— draining across runs"
+                )
             if isinstance(anomalies, list) and anomalies:
                 # Anomalies are short (we expect 0-3). Take first 3 to
                 # keep the message bounded.

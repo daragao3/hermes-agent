@@ -5,6 +5,7 @@ import pytest
 from events.outcomes import (
     FailureKind,
     OutcomeState,
+    agent_iteration_backlog,
     evaluate_outcome,
     marker_for_verdict,
 )
@@ -277,6 +278,72 @@ def test_cron_completed_historical_failed_inventory_is_not_current_failure():
 def test_failure_and_degradation_have_high_priority_floor():
     assert evaluate_outcome(_event({"exit_code": 1})).priority_floor is Priority.HIGH
     assert evaluate_outcome(_event({"status": "partial"})).priority_floor is Priority.HIGH
+
+
+class TestAgentIterationBacklog:
+    """``counters.remaining`` is reserved on AGENT_ITERATION for work still
+    queued at run end (events/schema.py). A positive value is DEGRADED evidence
+    keyed on the NUMBER, so a footer whose reason drifted to "success" while
+    the matcher's bounded-slice publisher still reported a backlog cannot fall
+    back to the batched firehose."""
+
+    def test_positive_remaining_is_degraded_even_when_reason_says_success(self):
+        verdict = evaluate_outcome(_event(
+            {"agent": "matcher", "reason": "success",
+             "counters": {"published": 25, "remaining": 15, "exit_code": 0}},
+        ))
+
+        assert verdict.state is OutcomeState.DEGRADED
+        assert verdict.priority_floor is Priority.HIGH
+        assert [(e.code, e.path, e.value) for e in verdict.evidence
+                if e.code == "backlog_remaining"] == [
+            ("backlog_remaining", "payload.counters.remaining", 15),
+        ]
+
+    def test_partial_with_remaining_carries_both_evidence_lines(self):
+        verdict = evaluate_outcome(_event(
+            {"agent": "matcher", "reason": "partial", "counters": {"remaining": 3}},
+        ))
+
+        assert verdict.state is OutcomeState.DEGRADED
+        assert {e.code for e in verdict.evidence} == {
+            "explicit_degradation", "backlog_remaining",
+        }
+
+    @pytest.mark.parametrize("counters", [
+        {"remaining": 0},
+        {"remaining": -1},
+        {"remaining": "15"},      # an LLM footer may quote the number
+        {"remaining": True},      # bool is an int subclass; not a count
+        {"remaining": None},
+        {"published": 25},        # key absent
+        "remaining=15",           # counters not a dict
+    ])
+    def test_non_backlog_shapes_are_not_evidence(self, counters):
+        verdict = evaluate_outcome(_event(
+            {"agent": "matcher", "reason": "success", "counters": counters},
+        ))
+
+        assert verdict.state is OutcomeState.SUCCEEDED
+        assert not [e for e in verdict.evidence if e.code == "backlog_remaining"]
+
+    def test_remaining_means_nothing_on_other_event_types(self):
+        verdict = evaluate_outcome(_event(
+            {"status": "ok", "counters": {"remaining": 15}},
+            event_type=EventType.CRON_COMPLETED,
+        ))
+
+        assert verdict.state is OutcomeState.SUCCEEDED
+        assert not [e for e in verdict.evidence if e.code == "backlog_remaining"]
+
+    def test_helper_is_the_single_definition_of_a_backlog(self):
+        assert agent_iteration_backlog({"remaining": 15}) == 15
+        assert agent_iteration_backlog({"remaining": 2.0}) == 2.0
+        assert agent_iteration_backlog({"remaining": 0}) is None
+        assert agent_iteration_backlog({"remaining": True}) is None
+        assert agent_iteration_backlog({"remaining": "15"}) is None
+        assert agent_iteration_backlog(None) is None
+        assert agent_iteration_backlog([15]) is None
 
 
 def _burst(transitions, priority: Priority = Priority.HIGH) -> Event:

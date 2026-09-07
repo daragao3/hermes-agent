@@ -303,6 +303,43 @@ def test_degraded_trace_wrapper_promotes_to_warn_alerts():
     assert route.topic_key == ALERTS
 
 
+def test_matcher_backlog_promotes_to_warn_alerts_even_when_reason_drifted():
+    """The bounded-slice matcher publisher (~/.hermes c52d1cfd3) reports
+    ``counters.remaining``; its cron prompt pairs remaining>0 with
+    reason="partial", but that pairing is prose. Keyed on the number, a run
+    that left a backlog is a HIGH, unbatched alert whatever the reason says --
+    before this it was a LOW batched firehose line with `remaining=15` buried
+    in the counters."""
+    from events.routing_policy import JOBFLOW
+
+    drifted = classify(make_event(
+        EventType.AGENT_ITERATION,
+        {"agent": "matcher", "reason": "success",
+         "counters": {"slices": 4, "published": 100, "remaining": 15,
+                      "exit_code": 0}},
+    ))
+
+    assert drifted.verdict.state is OutcomeState.DEGRADED
+    assert drifted.attention is Attention.WARN
+    assert drifted.topic_key == ALERTS
+    assert drifted.priority is Priority.HIGH
+    assert drifted.batch is False
+
+    # The control: the same run with nothing left behind stays where an
+    # ordinary successful iteration belongs.
+    drained = classify(make_event(
+        EventType.AGENT_ITERATION,
+        {"agent": "matcher", "reason": "success",
+         "counters": {"slices": 1, "published": 12, "remaining": 0,
+                      "exit_code": 0}},
+    ))
+
+    assert drained.verdict.state is OutcomeState.SUCCEEDED
+    assert drained.attention is Attention.TRACE
+    assert drained.topic_key == JOBFLOW
+    assert drained.batch is True
+
+
 def test_critical_failure_without_human_gate_is_not_act():
     route = classify(make_event(
         EventType.AGENT_ITERATION,

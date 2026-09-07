@@ -8,10 +8,12 @@ protocol.md, 17 new tests (71 total, 54 baseline unchanged; the sibling
 rescore/reconcile file's 26 also pass after follow-up `2bc529a14`, which keeps
 an unreadable request out of preflight `propose`). The paused
 `jobflow-matcher` cron prompt was updated to the slice loop; the lane stays
-paused (Phase-B). The telemetry items in section 4 (an event on
-`remaining > 0`, a Tracker counter above K) are NOT built.
+paused (Phase-B). The telemetry items in section 4 were built later the same
+day under loops claim `matcher-publisher-slice-telemetry-20260907`; see the
+"Telemetry, as built" note under section 4.
 **Date:** 2026-09-07
 **Loops claim:** `matcher-publisher-batch-bound-design-20260907`
+(telemetry: `matcher-publisher-slice-telemetry-20260907`)
 **Incident records:** loops `search-files-rg-msys-path-20260906`,
 `matcher-republish-82-graph-scores-20260906`,
 `publisher-capped-score-contract-20260906`; MemPalace wing `jobflow`.
@@ -196,6 +198,40 @@ Failure modes:
 - Sequencing: land the publisher change and its tests FIRST, then the prose,
   then and only then consider resuming the mailbox lane. Resuming first
   replays the incident on the requests already queued.
+
+**Telemetry, as built (2026-09-07, claim
+`matcher-publisher-slice-telemetry-20260907`).** No new EventType was added,
+and this was measured rather than assumed: the cron wrapper already lifts
+the run footer onto the bus as `AGENT_ITERATION`, `events.outcomes` already
+reads `reason=partial` as DEGRADED, and `routing_policy.classify` promotes a
+DEGRADED wrapper to a HIGH, unbatched WARN on the alerts topic. A probe of
+the live classifier with the slice-loop footer (`reason=partial`,
+`counters.remaining=15`) routed exactly that way before any change. What was
+missing, and what landed in agent-src:
+
+- **Drift-proofing.** The `partial` <-> `remaining>0` pairing lives only in
+  the cron prompt, and the 2026-09-06 18:59 footer already shows a mismatched
+  counters set. `counters.remaining` is now a RESERVED AGENT_ITERATION key
+  (schema.py); a positive value is DEGRADED evidence (`backlog_remaining`) in
+  `events.outcomes` whatever `reason` says, so `reason=success, remaining=15`
+  is the same HIGH alert instead of a LOW batched firehose line.
+- **Rendering.** The Telegram body appends one explicit line ("⏳ backlog: N
+  still queued after this run — draining across runs"), on the brief path
+  too, instead of relying on `remaining=N` inside the counter soup.
+- **Digest.** SINCE LAST DIGEST lists `Backlog: <agent> still had N queued
+  after its last run (k partial runs)`, from the agent's LATEST run in the
+  window; a backlog that drained to 0 by the last run drops out.
+
+And in `~/.hermes` (Tracker, section 3(c)'s telemetry half):
+`send_score_request` reads the live inbox once
+(`unconsumed_score_request_census`, shared with the twin guard) and records
+the gauge `matcher_inbox_unconsumed_score_requests` plus the counter
+`score_requests_sent_into_oversized_inbox` when the inbox already holds more
+than `OVERSIZED_MATCHER_INBOX_THRESHOLD = 50` (2 x `DEFAULT_SLICE_SIZE`,
+pinned by a test that reads the publisher's constant from source). The send
+is never refused. No Tracker-side bus event was added: the matcher-side
+alert above is the visible signal, and the counters reach the run's audit
+envelope through `expected_counter_keys`.
 
 Optional hardening, not recommended as the primary control: a publisher check
 that rejects a batch where more than X proposals share identical dimensions

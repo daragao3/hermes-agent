@@ -274,6 +274,27 @@ def _exit_code_failure(value: Any) -> bool:
         return False
 
 
+def agent_iteration_backlog(counters: Any) -> int | float | None:
+    """Return the backlog an AGENT_ITERATION's counters report, or None.
+
+    ``counters.remaining`` is the one counter key reserved across agents
+    (events/schema.py, AGENT_ITERATION): work still queued when the run ended.
+    A positive number is a backlog; zero, a missing key, a bool, a string or a
+    non-dict ``counters`` all mean "no backlog reported" -- the producer is an
+    LLM footer, so the shape is checked rather than trusted. Shared by the
+    outcome verdict, the Telegram body and the digest so the three surfaces
+    cannot disagree about what counts as a backlog.
+    """
+    if not isinstance(counters, dict):
+        return None
+    remaining = counters.get("remaining")
+    if isinstance(remaining, bool) or not isinstance(remaining, (int, float)):
+        return None
+    if remaining > 0:
+        return remaining
+    return None
+
+
 def _evidence(code: str, path: str, value: object) -> OutcomeEvidence:
     return OutcomeEvidence(code=code, path=path, value=value)
 
@@ -379,6 +400,26 @@ def evaluate_outcome(event: Event) -> OutcomeVerdict:
                 counters["exit_code"],
             )
         )
+
+    # A run that ended with work it did not get to is a DEGRADED run, whatever
+    # its own `reason` says. AGENT_ITERATION reserves `counters.remaining` for
+    # exactly that (events/schema.py): the bounded-slice matcher publisher
+    # (~/.hermes c52d1cfd3) reports how many SCORE_REQUESTs are still queued
+    # after a run, and its cron prompt pairs remaining>0 with reason="partial".
+    # That pairing is PROSE, and prompt drift is measured, not hypothetical:
+    # the 2026-09-06 18:59 run emitted a counters set from an older prompt
+    # generation and a reason it had not filled in. Keyed on the number rather
+    # than the enum, a backlog being drained across runs stays visible even
+    # when the reason reads "success" -- without this a drifted footer fell to
+    # the LOW batched firehose with `remaining=N` buried in the counter line.
+    # Scoped to AGENT_ITERATION on purpose: "remaining" carries no agreed
+    # meaning on any other type (a remaining BUDGET would read as a backlog).
+    if event.event_type is EventType.AGENT_ITERATION:
+        remaining = agent_iteration_backlog(counters)
+        if remaining is not None:
+            degraded.append(
+                _evidence("backlog_remaining", "payload.counters.remaining", remaining)
+            )
 
     if payload.get("timeout") is True:
         failed.append(_evidence("timeout", "payload.timeout", True))

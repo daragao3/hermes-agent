@@ -163,6 +163,57 @@ class TestAgentIterationBriefFormatting:
         assert "⚠" in body
         assert "audit_gap" in body
 
+    def test_backlog_remaining_renders_its_own_line(
+        self, bus, topics_config, verbosity_config,
+    ):
+        """counters.remaining is reserved for work left queued at run end
+        (events/schema.py). `remaining=15` inside the compact counter line is
+        not a signal an operator reads; the backlog gets one explicit line."""
+        notifier = self._notifier(bus, topics_config, verbosity_config)
+        event = Event.create(
+            EventType.AGENT_ITERATION, "matcher",
+            {"agent": "matcher", "summary": "scored 25 of 40",
+             "counters": {"slices": 1, "published": 25, "remaining": 15},
+             "reason": "partial"},
+            priority=Priority.LOW,
+        )
+        body = notifier._format_payload(event)
+        lines = body.split("\n")
+        assert lines[0] == "matcher: scored 25 of 40"
+        assert "remaining=15" in lines[1]
+        assert lines[2] == (
+            "⏳ backlog: 15 still queued after this run — draining across runs"
+        )
+
+    def test_backlog_line_also_follows_a_brief(
+        self, bus, topics_config, verbosity_config,
+    ):
+        """A brief describes what the run did; the backlog is what it did NOT
+        get to, so it is appended even when the counter line is suppressed."""
+        notifier = self._notifier(bus, topics_config, verbosity_config)
+        event = Event.create(
+            EventType.AGENT_ITERATION, "matcher",
+            {"agent": "matcher", "summary": "x", "brief": NO_WORK_BRIEF,
+             "counters": {"remaining": 3}},
+            priority=Priority.LOW,
+        )
+        body = notifier._format_payload(event)
+        assert body.startswith(NO_WORK_BRIEF)
+        assert "⏳ backlog: 3 still queued" in body
+        assert "remaining=3" not in body
+
+    def test_no_backlog_line_when_nothing_remains(
+        self, bus, topics_config, verbosity_config,
+    ):
+        notifier = self._notifier(bus, topics_config, verbosity_config)
+        for counters in ({"published": 12, "remaining": 0}, {"published": 12}):
+            event = Event.create(
+                EventType.AGENT_ITERATION, "matcher",
+                {"agent": "matcher", "summary": "drained", "counters": counters},
+                priority=Priority.LOW,
+            )
+            assert "backlog" not in notifier._format_payload(event)
+
 
 class TestTopicRouting:
     def test_all_event_types_have_routing(self):

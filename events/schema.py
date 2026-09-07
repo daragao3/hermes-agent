@@ -302,6 +302,16 @@ class EventType(Enum):
     #   counters (dict, optional) — agent-specific metrics
     #   anomalies (list, optional)— flagged issues for Critic triage
     #   reason (str, optional)    — categorical reason like "no_work"
+    # One counter key is RESERVED across agents (2026-09-07):
+    #   counters.remaining (number) — work still queued when the run ended,
+    #     i.e. a backlog being drained across runs. The matcher's bounded-
+    #     slice publisher (~/.hermes c52d1cfd3) reports it; any agent that
+    #     adopts it gets the same treatment. A positive value is DEGRADED
+    #     evidence in events.outcomes regardless of `reason`, which promotes
+    #     the wrapper to a WARN alert, renders a backlog line in the Telegram
+    #     body, and lists the agent under BACKLOG in the digest. Do not reuse
+    #     the key for anything that is not undone work (a remaining budget
+    #     would read as a backlog).
     # Telegram routing is per-agent (see AGENT_TOPIC_MAP in
     # telegram_notifier.py) so jobflow agents land in jobflow_firehose,
     # platform agents in their own topics. LOW priority => batched 5-min
