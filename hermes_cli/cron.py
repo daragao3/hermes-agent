@@ -6,9 +6,12 @@ pause/resume/run/remove, status, and tick.
 """
 
 import json
+import sqlite3
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -553,6 +556,197 @@ def _clean_reason(raw: Optional[str]) -> Optional[str]:
     return (raw or "").strip() or None
 
 
+# --- In-flight run reporting for `hermes cron pause` (2026-09-07) -----------
+#
+# Pause sets enabled=False and stops SCHEDULING. It does not touch a run that
+# is already executing inside the gateway: on 2026-09-06 job b74186b2eaa5 was
+# paused at 18:14:34 while its 18:00 run was 14 minutes in, and that run kept
+# calling tools for 44 more minutes and published 184 proposals -- 116 of
+# them fabricated -- an hour after the operator believed the lane was stopped.
+# The pausing session had no way to know. These helpers make the pause say so,
+# from the one place the CLI can see a live run without the gateway's help:
+# the sessions table, where a cron run holds a row `cron_<job>_<stamp>` with
+# ended_at NULL for as long as it executes.
+
+_LIKE_ESCAPE = "!"
+
+
+def _like_escape(text: str) -> str:
+    """Escape LIKE metacharacters in ``text`` using ``_LIKE_ESCAPE``."""
+    out = []
+    for ch in text:
+        if ch in (_LIKE_ESCAPE, "%", "_"):
+            out.append(_LIKE_ESCAPE)
+        out.append(ch)
+    return "".join(out)
+
+
+def _inflight_sessions(job_id: str) -> List[Dict[str, Any]]:
+    """Open session rows (``ended_at IS NULL``) for runs of ``job_id``.
+
+    Reads ``state.db`` through a plain read-only sqlite connection: no schema
+    setup, no write lock, no contention with the gateway that owns the file.
+    Never raises -- a report that cannot be produced must not turn a
+    successful pause into a failure -- and an unreadable database yields an
+    empty list, which the caller renders as "nothing in flight". That is a
+    known failure-toward-quiet: it is why the report also names the owning
+    execution from the cron executions store when one is running.
+    """
+    try:
+        import hermes_state
+
+        db_path = Path(hermes_state._default_db_path())
+        if not db_path.exists():
+            return []
+        conn = sqlite3.connect(
+            f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=1.0
+        )
+        try:
+            conn.row_factory = sqlite3.Row
+            pattern = f"cron{_LIKE_ESCAPE}_{_like_escape(str(job_id))}{_LIKE_ESCAPE}_%"
+            rows = conn.execute(
+                "SELECT id, started_at, tool_call_count, message_count "
+                "FROM sessions "
+                f"WHERE id LIKE ? ESCAPE '{_LIKE_ESCAPE}' AND ended_at IS NULL "
+                "ORDER BY started_at DESC",
+                (pattern,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+    except Exception:
+        return []
+
+
+def _inflight_execution(job_id: str) -> Optional[Dict[str, Any]]:
+    """Newest ``claimed``/``running`` execution record for ``job_id``, if any.
+
+    The executions store carries the owning process's pid, which the sessions
+    row does not. Best effort; None on any failure.
+    """
+    try:
+        from cron.executions import list_executions
+
+        for record in list_executions(job_id=job_id, limit=5):
+            if record.get("status") in {"claimed", "running"}:
+                return record
+    except Exception:
+        pass
+    return None
+
+
+def _format_age(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{sec:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
+
+
+def _format_started(started_at: Any) -> str:
+    try:
+        ts = float(started_at)
+    except (TypeError, ValueError):
+        return f"started {started_at!r}"
+    local = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+    return f"started {local} ({_format_age(time.time() - ts)} ago)"
+
+
+def _stop_inflight_command(job_id: str, reason: Optional[str]) -> str:
+    cmd = f"hermes cron pause {job_id} --stop-inflight"
+    if reason:
+        cmd += f' --reason "{reason}"'
+    return cmd
+
+
+def _report_inflight(
+    job_id: str,
+    *,
+    reason: Optional[str],
+    stop_inflight: bool,
+    caller: str,
+) -> List[Dict[str, Any]]:
+    """After a successful pause, say whether a run is still executing.
+
+    Prints nothing when no run is in flight and ``stop_inflight`` is off, so
+    the ordinary pause output is unchanged. With ``stop_inflight`` a stop
+    request is filed for each open session (``cron.inflight.request_stop``);
+    the scheduler honours it on its next watchdog poll. Returns the open rows.
+    """
+    sessions = _inflight_sessions(job_id)
+    if not sessions:
+        if stop_inflight:
+            print(color("  No run in flight for this job; nothing to stop.", Colors.DIM))
+        return []
+
+    print(color(
+        "  WARNING: a run of this job is STILL EXECUTING. Pause stops future "
+        "fires; it does not stop a run already in flight.",
+        Colors.YELLOW,
+    ))
+    for row in sessions:
+        print(color(
+            f"    session {row.get('id')}  {_format_started(row.get('started_at'))}  "
+            f"tool calls {row.get('tool_call_count') or 0}  "
+            f"messages {row.get('message_count') or 0}",
+            Colors.YELLOW,
+        ))
+    execution = _inflight_execution(job_id)
+    if execution:
+        print(color(
+            f"    owner: execution {execution.get('id')}  pid {execution.get('pid')}  "
+            f"status {execution.get('status')}  claimed {execution.get('claimed_at')}",
+            Colors.DIM,
+        ))
+
+    if not stop_inflight:
+        print(color(
+            "  It will keep calling tools and publishing until it finishes on its own.",
+            Colors.YELLOW,
+        ))
+        print(f"  To stop it now:  {_stop_inflight_command(job_id, reason)}")
+        return sessions
+
+    from cron.inflight import request_stop
+
+    for row in sessions:
+        try:
+            request_stop(job_id, session_id=row.get("id"), by=caller, reason=reason)
+        except Exception as exc:  # pragma: no cover - filesystem failure
+            print(color(f"  Failed to file a stop request: {exc}", Colors.RED))
+            continue
+        print(color(f"  Stop requested for session {row.get('id')}.", Colors.GREEN))
+    print(color(
+        "  The scheduler honours it on its next watchdog poll (a few seconds): "
+        "the agent is interrupted and the run is recorded as failed with "
+        "'stopped by operator'.",
+        Colors.DIM,
+    ))
+    print(color(f"  Verify with:  hermes cron runs {job_id}", Colors.DIM))
+    return sessions
+
+
+def _existing_paused_reason(job_id: str) -> Optional[str]:
+    """The reason already recorded on a paused job, if any.
+
+    ``pause_job`` overwrites ``paused_reason`` with whatever is passed, so a
+    second ``hermes cron pause <id> --stop-inflight`` issued without
+    ``--reason`` -- the exact command the in-flight report prints -- would
+    otherwise wipe the reason the first pause recorded.
+    """
+    try:
+        result = _cron_api(action="list", include_disabled=True)
+        for job in result.get("jobs") or []:
+            if job_id in {job.get("job_id"), job.get("name")}:
+                return (job.get("paused_reason") or "").strip() or None
+    except Exception:
+        pass
+    return None
+
+
 def _job_action(
     action: str,
     job_id: str,
@@ -560,6 +754,7 @@ def _job_action(
     *,
     reason: Optional[str] = None,
     caller: Optional[str] = None,
+    stop_inflight: bool = False,
 ) -> int:
     kwargs = {"action": action, "job_id": job_id}
     if reason is not None:
@@ -578,6 +773,12 @@ def _job_action(
             print(f"  Reason: {paused_reason}")
         else:
             print(color("  Reason: (none recorded - pass --reason next time)", Colors.DIM))
+        _report_inflight(
+            job.get("job_id") or job_id,
+            reason=paused_reason,
+            stop_inflight=stop_inflight,
+            caller=caller or "hermes_cli:cron_pause",
+        )
     if action in {"resume", "run"} and result.get("job", {}).get("next_run_at"):
         print(f"  Next run: {result['job']['next_run_at']}")
     if action == "run":
@@ -691,12 +892,19 @@ def cron_command(args):
         return cron_edit(args)
 
     if subcmd == "pause":
+        stop_inflight = bool(getattr(args, "stop_inflight", False))
+        reason = _clean_reason(getattr(args, "reason", None))
+        if stop_inflight and reason is None:
+            # Re-pausing to stop a run must not erase the reason the first
+            # pause recorded (see _existing_paused_reason).
+            reason = _existing_paused_reason(args.job_id)
         return _job_action(
             "pause",
             args.job_id,
             "Paused",
-            reason=_clean_reason(getattr(args, "reason", None)),
+            reason=reason,
             caller="hermes_cli:cron_pause",
+            stop_inflight=stop_inflight,
         )
 
     if subcmd == "resume":

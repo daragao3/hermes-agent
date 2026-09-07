@@ -938,3 +938,198 @@ class TestCronShow:
         assert args.cron_command == "show"
         assert cron_command(args) == 0
         assert "held" in capsys.readouterr().out
+
+
+# --- `hermes cron pause` in-flight run report (2026-09-07) -------------------
+#
+# On 2026-09-06 job b74186b2eaa5 was paused at 18:14:34 while its 18:00 run was
+# 14 minutes in; the run kept calling tools for 44 more minutes and published
+# 184 proposals (116 fabricated). The pausing session had no way to know a run
+# was in flight. Pause now reports any open sessions row for the job and prints
+# the exact command to stop it; nothing is stopped unless --stop-inflight.
+
+
+def _seed_state_db(path, rows):
+    """Minimal ``sessions`` table: only the columns the report reads."""
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, "
+            "started_at REAL NOT NULL, ended_at REAL, "
+            "tool_call_count INTEGER DEFAULT 0, message_count INTEGER DEFAULT 0)"
+        )
+        conn.executemany(
+            "INSERT INTO sessions (id, source, started_at, ended_at, "
+            "tool_call_count, message_count) VALUES (?, 'cron', ?, ?, ?, ?)",
+            rows,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.fixture()
+def inflight_env(tmp_cron_dir, monkeypatch):
+    """Pin state.db, the executions store and the event bus under tmp."""
+    from events.bus import EventBus
+
+    db = tmp_cron_dir / "state.db"
+    monkeypatch.setattr("hermes_state.DEFAULT_DB_PATH", db)
+    monkeypatch.setattr(
+        "cron.executions.EXECUTIONS_FILE", tmp_cron_dir / "cron" / "executions.db"
+    )
+    bus = EventBus(db_path=tmp_cron_dir / "events.db")
+    monkeypatch.setattr("cron.jobs._get_event_bus", lambda: bus)
+    return db
+
+
+def _stop_request_file(tmp_cron_dir, job_id):
+    return tmp_cron_dir / "cron" / "stop-requests" / f"{job_id}.json"
+
+
+class TestPauseReportsInflightRun:
+    def test_open_session_row_prints_warning_and_exact_stop_command(
+        self, tmp_cron_dir, inflight_env, capsys
+    ):
+        import time
+
+        job = create_job(prompt="score the inbox", schedule="0 */6 * * *")
+        open_id = f"cron_{job['id']}_20260906_180036"
+        closed_id = f"cron_{job['id']}_20260906_160710"
+        _seed_state_db(inflight_env, [
+            (open_id, time.time() - 14 * 60, None, 27, 40),
+            (closed_id, time.time() - 3600, time.time() - 3500, 4, 9),
+        ])
+
+        rc = cron_command(_parse_cron_args(
+            ["cron", "pause", job["id"], "--reason", "cutover 2026-09-06"]
+        ))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert get_job(job["id"])["state"] == "paused"
+        assert "STILL EXECUTING" in out
+        assert open_id in out
+        assert closed_id not in out
+        assert "tool calls 27" in out
+        assert "messages 40" in out
+        assert "started 2026-09-" not in out or "ago)" in out  # local-time render
+        assert "14m" in out
+        assert (
+            f'hermes cron pause {job["id"]} --stop-inflight --reason "cutover 2026-09-06"'
+            in out
+        )
+        # REPORT only: nothing was filed against the run.
+        assert not _stop_request_file(tmp_cron_dir, job["id"]).exists()
+
+    def test_no_open_session_row_prints_nothing_extra(
+        self, tmp_cron_dir, inflight_env, capsys
+    ):
+        import time
+
+        job = create_job(prompt="score the inbox", schedule="0 */6 * * *")
+        _seed_state_db(inflight_env, [
+            (f"cron_{job['id']}_20260906_160710", time.time() - 3600, time.time() - 3500, 4, 9),
+        ])
+
+        rc = cron_command(_parse_cron_args(["cron", "pause", job["id"]]))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "STILL EXECUTING" not in out
+        assert "stop-inflight" not in out
+        lines = [line for line in out.splitlines() if line.strip()]
+        assert len(lines) == 2  # "Paused job ..." + "Reason: ..." only
+        assert lines[0].startswith("Paused job") or "Paused job" in lines[0]
+
+    def test_stop_inflight_files_a_request_naming_the_open_session(
+        self, tmp_cron_dir, inflight_env, capsys
+    ):
+        import time
+
+        from cron.inflight import read_stop_request
+
+        job = create_job(prompt="score the inbox", schedule="0 */6 * * *")
+        open_id = f"cron_{job['id']}_20260906_180036"
+        _seed_state_db(inflight_env, [(open_id, time.time() - 60, None, 3, 5)])
+
+        rc = cron_command(_parse_cron_args(
+            ["cron", "pause", job["id"], "--stop-inflight", "--reason", "runaway"]
+        ))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert f"Stop requested for session {open_id}" in out
+        assert "STILL EXECUTING" in out
+        request = read_stop_request(job["id"])
+        assert request is not None
+        assert request["session_id"] == open_id
+        assert request["by"] == "hermes_cli:cron_pause"
+        assert request["reason"] == "runaway"
+
+    def test_stop_inflight_with_nothing_in_flight_writes_nothing(
+        self, tmp_cron_dir, inflight_env, capsys
+    ):
+        job = create_job(prompt="score the inbox", schedule="0 */6 * * *")
+        _seed_state_db(inflight_env, [])
+
+        rc = cron_command(_parse_cron_args(["cron", "pause", job["id"], "--stop-inflight"]))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "No run in flight" in out
+        assert not _stop_request_file(tmp_cron_dir, job["id"]).exists()
+
+    def test_stop_inflight_without_reason_keeps_the_recorded_paused_reason(
+        self, tmp_cron_dir, inflight_env, capsys
+    ):
+        """The printed stop command may be re-issued bare; it must not wipe the WHY."""
+        import time
+
+        job = create_job(prompt="score the inbox", schedule="0 */6 * * *")
+        _seed_state_db(inflight_env, [
+            (f"cron_{job['id']}_20260906_180036", time.time() - 60, None, 3, 5),
+        ])
+        cron_command(_parse_cron_args(
+            ["cron", "pause", job["id"], "--reason", "cutover 2026-09-06"]
+        ))
+        assert get_job(job["id"])["paused_reason"] == "cutover 2026-09-06"
+
+        cron_command(_parse_cron_args(["cron", "pause", job["id"], "--stop-inflight"]))
+
+        assert get_job(job["id"])["paused_reason"] == "cutover 2026-09-06"
+        out = capsys.readouterr().out
+        assert "Stop requested for session" in out
+
+    def test_missing_state_db_degrades_to_no_report(
+        self, tmp_cron_dir, inflight_env, capsys
+    ):
+        job = create_job(prompt="score the inbox", schedule="0 */6 * * *")
+        assert not inflight_env.exists()
+
+        rc = cron_command(_parse_cron_args(["cron", "pause", job["id"]]))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "STILL EXECUTING" not in out
+
+    def test_inflight_lookup_does_not_match_another_job_sharing_a_prefix(
+        self, tmp_cron_dir, inflight_env
+    ):
+        """LIKE metacharacters in the id must be literal: ab_c must not match abxc."""
+        import time
+
+        _seed_state_db(inflight_env, [
+            ("cron_abcd_20260906_180036", time.time(), None, 1, 1),
+            ("cron_abxc_20260906_180036", time.time(), None, 1, 1),
+            ("cron_ab_c_20260906_180036", time.time(), None, 7, 7),
+        ])
+        assert cron_cli._inflight_sessions("abc") == []
+        assert [r["id"] for r in cron_cli._inflight_sessions("ab_c")] == [
+            "cron_ab_c_20260906_180036"
+        ]
+        assert [r["id"] for r in cron_cli._inflight_sessions("abcd")] == [
+            "cron_abcd_20260906_180036"
+        ]

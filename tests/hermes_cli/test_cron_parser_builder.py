@@ -103,6 +103,15 @@ def test_cron_pause_accepts_an_optional_reason():
     assert parser.parse_args(["cron", "pause", "jid"]).reason is None
 
 
+def test_cron_pause_accepts_stop_inflight_and_defaults_to_report_only():
+    parser = _build()
+    ns = parser.parse_args(["cron", "pause", "jid", "--stop-inflight"])
+    assert ns.cron_command == "pause"
+    assert ns.stop_inflight is True
+    # Default is REPORT, never stop: a bare pause must not kill anything.
+    assert parser.parse_args(["cron", "pause", "jid"]).stop_inflight is False
+
+
 def test_cron_run_accepts_an_optional_reason():
     parser = _build()
     ns = parser.parse_args(["cron", "run", "jid", "--reason", "manual retry"])

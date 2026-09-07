@@ -173,7 +173,22 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
     )
 
     # lifecycle actions
-    cron_pause = cron_subparsers.add_parser("pause", help="Pause a scheduled job")
+    cron_pause = cron_subparsers.add_parser(
+        "pause",
+        help=(
+            "Pause a scheduled job (stops future fires; a run already "
+            "executing is reported, not stopped)"
+        ),
+        description=(
+            "Pause a scheduled job. Pause sets enabled=False and stops SCHEDULING: "
+            "a run that is already executing keeps going until it finishes on its "
+            "own. If such a run exists (a sessions row cron_<id>_<stamp> with "
+            "ended_at NULL), the command prints it -- session id, start time, tool "
+            "and message counts, owning execution/pid -- together with the exact "
+            "command to stop it. Nothing is stopped unless --stop-inflight is "
+            "passed."
+        ),
+    )
     cron_pause.add_argument("job_id", help="Job ID to pause")
     cron_pause.add_argument(
         "--reason",
@@ -181,6 +196,20 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
             "Why the job is being paused. Persisted as the job's paused_reason "
             "so a later reader can tell a deliberate pause from a broken job. "
             "Moved to paused_history on resume."
+        ),
+    )
+    cron_pause.add_argument(
+        "--stop-inflight",
+        dest="stop_inflight",
+        action="store_true",
+        help=(
+            "Also stop the run currently executing, if any: files a stop request "
+            "the scheduler honours on its next watchdog poll (a few seconds), "
+            "interrupting the agent and recording the run as failed with "
+            "'stopped by operator'. Targets the session seen in flight, so it "
+            "cannot hit a later run. Without this flag the run is only REPORTED. "
+            "When issued without --reason on an already-paused job, the recorded "
+            "paused_reason is kept."
         ),
     )
 
