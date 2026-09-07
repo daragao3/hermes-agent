@@ -537,3 +537,41 @@ def test_find_targets_returns_ids_and_skips_non_aistudio_pages():
         urllib.request.urlopen = orig
 
     assert found == [("b", "ws://b")]
+
+
+# --- zero-spend truncation (2026-09-07) -------------------------------------------
+# JSPB omits trailing default-valued fields, so a month with no spend arrives with the
+# amount absent: ["USD"] instead of ["USD", null, 0]. The parser required
+# len(spent_cell) >= 3, skipped the row, and returned None -- which, combined with
+# unbounded carry-forward in ai_usage/collector.py, left the panel showing a
+# twelve-day-old "mo 15%" as if it were current.
+
+_LIVE_ZERO_SPEND_BODY = '[[["projects/612559014061",null,["USD"],["USD","250"]]]]'
+
+
+def test_parse_usage_limits_zero_spend_is_zero_percent_not_none():
+    """The exact body captured off the wire on 2026-09-07."""
+    assert gs._parse_usage_limits(_LIVE_ZERO_SPEND_BODY) == (0.0, 250.0)
+
+
+def test_parse_usage_limits_explicit_null_amount_is_also_zero():
+    body = '[[["projects/x",null,["USD",null,null],["USD","250"]]]]'
+    assert gs._parse_usage_limits(body) == (0.0, 250.0)
+
+
+def test_parse_usage_limits_still_reads_a_populated_amount():
+    """Backward compatibility: the pre-truncation shape must be unchanged."""
+    body = '[[["projects/x",null,["USD",null,12500000],["USD","250"]]]]'
+    assert gs._parse_usage_limits(body) == (5.0, 250.0)
+
+
+def test_parse_usage_limits_stays_strict_about_everything_else():
+    """Widening one case must not make the parser permissive."""
+    # spent cell not a list
+    assert gs._parse_usage_limits('[[["projects/x",null,"USD",["USD","250"]]]]') is None
+    # empty spent cell -- no currency, so not a credible zero
+    assert gs._parse_usage_limits('[[["projects/x",null,[],["USD","250"]]]]') is None
+    # budget missing
+    assert gs._parse_usage_limits('[[["projects/x",null,["USD"],["USD"]]]]') is None
+    # budget zero
+    assert gs._parse_usage_limits('[[["projects/x",null,["USD"],["USD","0"]]]]') is None

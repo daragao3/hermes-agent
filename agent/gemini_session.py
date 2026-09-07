@@ -186,6 +186,19 @@ def _parse_usage_limits(jspb_text: str) -> Optional[tuple[float, float]]:
 
     Wire shape (2026-08-23):
       [["projects/<id>",null,["USD",null,<spent_micros>],["USD","<budget>"]]]
+
+    ZERO SPEND TRUNCATES THE ROW, and that is not a parse failure. JSPB omits
+    trailing default-valued fields, so a month with no spend arrives as
+      [["projects/<id>",null,["USD"],["USD","250"]]]
+    -- currency present, amount simply absent. Observed live 2026-09-07, and it
+    made the row unreadable: the old guard required len(spent_cell) >= 3, skipped
+    the only row, and returned None. Combined with unbounded carry-forward in
+    ai_usage/collector.py, the panel then showed a twelve-day-old "mo 15%" as if
+    current. An absent amount beside a present currency means ZERO, not unknown.
+
+    Deliberately still strict everywhere else: the row must carry a list spent
+    cell and a budget that parses to > 0. A malformed cell is skipped as before,
+    so this widens exactly one case rather than making the parser permissive.
     """
     try:
         data = json.loads(jspb_text)
@@ -197,9 +210,12 @@ def _parse_usage_limits(jspb_text: str) -> Optional[tuple[float, float]]:
         if not isinstance(row, list) or len(row) < 4:
             continue
         spent_cell, budget_cell = row[2], row[3]
-        if not (isinstance(spent_cell, list) and len(spent_cell) >= 3):
+        if not isinstance(spent_cell, list) or not spent_cell:
             continue
-        raw_spent = spent_cell[2]
+        # Absent or null amount next to a present currency == zero spent.
+        raw_spent = spent_cell[2] if len(spent_cell) >= 3 else 0
+        if raw_spent is None:
+            raw_spent = 0
         raw_budget = budget_cell[1] if isinstance(budget_cell, list) and len(budget_cell) >= 2 else None
         try:
             spent_usd = float(raw_spent) / 1_000_000.0
