@@ -15,6 +15,7 @@ so desktop-only installs and gateway-downtime fallback are unchanged.
 HERMES_DESKTOP_CRON overrides: "0" = never tick, "1" = legacy always-tick,
 unset/other = the auto heartbeat guard.
 """
+import json
 import logging
 import os
 import threading
@@ -256,3 +257,204 @@ class TestNonBuiltinProvider:
 
         assert not t.is_alive()
         assert fake.started == [{"interval": 7}]
+
+
+# ── Stale-but-alive hold (2026-09-07 post-suspend wake race) ─────────────────
+#
+# The box was in Modern Standby 02:12-08:53 EDT. On wake the desktop ticker's
+# 60s wait expired 78s before the gateway's; it read a 6.7h-old heartbeat as
+# "gateway gone" and ran missed-run recovery for 48 jobs inside the process
+# serving the dashboard, so the gateway's next 28 fires were duplicate-blocked
+# against it. "Stale" alone cannot tell a dead gateway from a suspended one.
+# The heartbeat payload carries the writer's pid; while that pid is alive the
+# ticker now HOLDS for a bounded number of its own iterations.
+
+
+def _write_gateway_heartbeat_json(payload, age_seconds=0):
+    """Write the heartbeat the way the gateway does: a JSON payload with pid."""
+    from events.paths import gateway_heartbeat_path
+
+    path = gateway_heartbeat_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    if age_seconds:
+        stamp = time.time() - age_seconds
+        os.utime(path, (stamp, stamp))
+    return path
+
+
+class TestGatewayHeartbeatOwnerAlive:
+    def test_missing_file_is_not_alive(self):
+        from events.paths import gateway_heartbeat_path
+        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+
+        assert not gateway_heartbeat_path().exists()
+        assert _gateway_heartbeat_owner_alive() is False
+
+    def test_legacy_non_json_payload_is_not_alive(self):
+        """Older writers (and the mtime-only helper above) carry no pid: the
+        ticker must fall back to the pre-hold behaviour, not defer."""
+        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+
+        _write_gateway_heartbeat(age_seconds=600)
+        assert _gateway_heartbeat_owner_alive() is False
+
+    def test_payload_without_usable_pid_is_not_alive(self):
+        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+
+        for payload in ({"ts": "x"}, {"pid": "abc"}, {"pid": True}, {"pid": 0}, {"pid": -5}, ["pid"]):
+            _write_gateway_heartbeat_json(payload, age_seconds=600)
+            assert _gateway_heartbeat_owner_alive() is False, payload
+
+    def test_live_pid_is_alive(self):
+        """Real probe, no patch: the test process itself is provably alive."""
+        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+
+        _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=600)
+        assert _gateway_heartbeat_owner_alive() is True
+
+    def test_dead_pid_is_not_alive(self):
+        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+
+        _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=600)
+        with patch("gateway.status._pid_exists", return_value=False):
+            assert _gateway_heartbeat_owner_alive() is False
+
+    def test_probe_error_is_not_alive(self):
+        """Fail toward 'dead' (= legacy take-over), never toward deferring to
+        a gateway nobody could prove is there."""
+        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+
+        _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=600)
+        with patch("gateway.status._pid_exists", side_effect=RuntimeError("psutil gone")):
+            assert _gateway_heartbeat_owner_alive() is False
+
+
+class TestStaleHeartbeatOwnerHold:
+    def test_holds_while_stale_heartbeat_owner_pid_alive(self, caplog):
+        """The measured case: stale heartbeat, writer pid alive. No tick, no
+        ticker-heartbeat write, one 'holding' log line."""
+        _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=6.7 * 3600)
+        calls = []
+        stop = threading.Event()
+
+        with caplog.at_level(logging.INFO, logger="hermes_cli.web_server"):
+            with patch("cron.scheduler.tick", side_effect=lambda *a, **k: calls.append(k) or 0):
+                t = _run_ticker(stop, owner_hold_ticks=10_000)
+                time.sleep(0.3)
+                stop.set()
+                t.join(timeout=5)
+
+        assert not t.is_alive()
+        assert calls == [], "ticker took over from a gateway whose pid is still alive"
+        assert not _ticker_heartbeat_file().exists(), (
+            "a holding ticker must not write the cron ticker heartbeat"
+        )
+        hold_lines = [r for r in caplog.records if "holding" in r.getMessage()]
+        assert len(hold_lines) == 1, "hold must be logged exactly once per transition"
+        assert not [r for r in caplog.records if "ticker active" in r.getMessage()]
+
+    def test_ticks_when_stale_heartbeat_owner_pid_dead(self):
+        """Same file, only liveness differs: a dead writer pid is the real
+        'gateway gone' and the ticker takes over immediately, as before."""
+        _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=6.7 * 3600)
+        calls = []
+        stop = threading.Event()
+
+        with patch("gateway.status._pid_exists", return_value=False), \
+             patch("cron.scheduler.tick", side_effect=lambda *a, **k: calls.append(k) or 0):
+            t = _run_ticker(stop, owner_hold_ticks=10_000)
+            assert _wait_until(lambda: len(calls) >= 1), (
+                "stale heartbeat with a dead writer pid must tick"
+            )
+            stop.set()
+            t.join(timeout=5)
+
+        assert not t.is_alive()
+        assert calls[0].get("sync") is False
+        assert _ticker_heartbeat_file().exists()
+
+    def test_stale_json_heartbeat_without_pid_ticks(self):
+        """A writer that records no pid gets the pre-hold behaviour."""
+        _write_gateway_heartbeat_json({"ts": "2026-09-07T06:12:00+00:00"}, age_seconds=600)
+        calls = []
+        stop = threading.Event()
+
+        with patch("cron.scheduler.tick", side_effect=lambda *a, **k: calls.append(k) or 0):
+            t = _run_ticker(stop, owner_hold_ticks=10_000)
+            assert _wait_until(lambda: len(calls) >= 1)
+            stop.set()
+            t.join(timeout=5)
+
+        assert not t.is_alive()
+
+    def test_takes_over_once_hold_budget_is_exhausted(self, caplog):
+        """A gateway that is alive but genuinely silent (hung loop) still gets
+        fallback coverage: after owner_hold_ticks iterations the ticker goes
+        active and stays active (no oscillation while the pid lives on)."""
+        _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=600)
+        calls = []
+        stop = threading.Event()
+
+        with caplog.at_level(logging.INFO, logger="hermes_cli.web_server"):
+            with patch("cron.scheduler.tick", side_effect=lambda *a, **k: calls.append(k) or 0):
+                t = _run_ticker(stop, owner_hold_ticks=3)
+                assert _wait_until(lambda: len(calls) >= 3), (
+                    "ticker never took over from a silent-but-alive gateway"
+                )
+                stop.set()
+                t.join(timeout=5)
+
+        assert not t.is_alive()
+        hold_lines = [r for r in caplog.records if "holding" in r.getMessage()]
+        active_lines = [r for r in caplog.records if "ticker active" in r.getMessage()]
+        assert len(hold_lines) == 1
+        assert len(active_lines) == 1, "active must be entered once, not per tick"
+
+    def test_hold_budget_counts_iterations_and_resets_on_fresh_heartbeat(self):
+        """Scripted liveness, no wall clock: a fresh heartbeat mid-hold resets
+        the budget. With owner_hold_ticks=3 and the sequence
+        stale,stale,FRESH,stale,stale,stale,stale the first tick lands on the
+        7th iteration; without the reset it would land on the 5th."""
+        script = iter([False, False, True, False, False, False, False] + [False] * 50)
+        seen = []
+        calls = []
+        stop = threading.Event()
+
+        def scripted_alive():
+            value = next(script)
+            seen.append(value)
+            return value
+
+        with patch("hermes_cli.web_server._machine_gateway_alive", side_effect=scripted_alive), \
+             patch("hermes_cli.web_server._gateway_heartbeat_owner_alive", return_value=True), \
+             patch("cron.scheduler.tick", side_effect=lambda *a, **k: calls.append(len(seen)) or 0):
+            t = _run_ticker(stop, owner_hold_ticks=3)
+            assert _wait_until(lambda: len(calls) >= 1)
+            stop.set()
+            t.join(timeout=5)
+
+        assert not t.is_alive()
+        assert calls[0] == 7, f"first tick on iteration {calls[0]}, expected 7 (budget not reset)"
+
+    def test_returns_to_deferring_when_heartbeat_goes_fresh_during_hold(self, caplog):
+        _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=600)
+        calls = []
+        stop = threading.Event()
+
+        with caplog.at_level(logging.INFO, logger="hermes_cli.web_server"):
+            with patch("cron.scheduler.tick", side_effect=lambda *a, **k: calls.append(k) or 0):
+                t = _run_ticker(stop, owner_hold_ticks=10_000)
+                assert _wait_until(
+                    lambda: any("holding" in r.getMessage() for r in caplog.records)
+                )
+                _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=0)
+                assert _wait_until(
+                    lambda: any("deferring" in r.getMessage() for r in caplog.records)
+                ), "fresh heartbeat did not return the ticker to deferring"
+                stop.set()
+                t.join(timeout=5)
+
+        assert not t.is_alive()
+        assert calls == []
+        assert not _ticker_heartbeat_file().exists()
