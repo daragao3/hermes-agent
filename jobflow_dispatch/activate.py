@@ -26,6 +26,64 @@ from jobflow_dispatch.quarantine_control import default_control_store
 logger = logging.getLogger(__name__)
 
 
+#: Activities whose LIVE cron lane is chosen by a runtime marker rather than by
+#: which alias happens to be enabled. Maps activity ID -> the cron NAME that is
+#: the live lane WHILE the Phase-B cutover marker exists; when the marker is
+#: absent the activity falls back to its normal ``policies.yaml`` aliases.
+#:
+#: The matcher needs this because the two lanes cannot be told apart by
+#: enablement alone: the promoted graph lane (``jobflow-matcher-shadow``) runs
+#: its own ``15 */2`` schedule and is enabled in BOTH cutover states, while the
+#: mailbox lane (``jobflow-matcher``) is paused at cutover and resumed on
+#: rollback. So "the one enabled matcher job" is ambiguous exactly when it
+#: matters. The cutover marker is the single source of truth for which lane is
+#: live — ``bin/matcher_shadow_run.py`` keys its own SCORE_RESULT write-target
+#: on the same file — so reconcile follows it, and a rollback (delete the marker
+#: and ``hermes cron resume jobflow-matcher``) re-points reconcile back to the
+#: mailbox lane with no code change. The override is deliberately kept here and
+#: NOT added to the policy aliases: ``cron/scheduler.py`` resolves a job's
+#: policy from its name via that alias map, so listing the graph lane there
+#: would silently rebind its budgets/models to the matcher policy.
+_MARKER_LIVE_ALIAS: dict[str, str] = {
+    "cron.jobflow.matcher": "jobflow-matcher-shadow",
+}
+
+
+def _phase_b_shadow_is_live() -> bool:
+    """True while the Phase-B cutover marker exists.
+
+    Read through this function (rather than inlined) so tests can select the
+    lane without touching the real filesystem. Any failure reading the marker
+    is treated as "not live" — that falls back to the configured alias, which
+    fails closed (the paused mailbox lane resolves to zero enabled jobs) rather
+    than waking the wrong lane.
+    """
+    try:
+        from hermes_constants import get_default_hermes_root
+
+        marker = (
+            get_default_hermes_root() / "infra" / "phase-b" / "shadow_is_live.json"
+        )
+        return marker.exists()
+    except Exception:
+        logger.exception("dispatch: could not read Phase-B cutover marker")
+        return False
+
+
+def _effective_aliases(activity_id: str, policy_aliases: Sequence[str]) -> set[str]:
+    """The cron names that may serve ``activity_id`` right now.
+
+    For a marker-governed activity the live lane is the marker override while
+    the cutover marker exists; otherwise the activity's normal policy aliases
+    apply. Narrowing to a single name keeps the "exactly one enabled job"
+    invariant below intact in every cutover state.
+    """
+    live = _MARKER_LIVE_ALIAS.get(activity_id)
+    if live is not None and _phase_b_shadow_is_live():
+        return {live}
+    return set(policy_aliases)
+
+
 def resolve_job_id_for_activity(activity_id: str) -> Optional[str]:
     """Map a policy activity ID to exactly one enabled cron job ID.
 
@@ -41,7 +99,7 @@ def resolve_job_id_for_activity(activity_id: str) -> Optional[str]:
         logger.warning("dispatch: no policy/alias for activity %s", activity_id)
         return None
 
-    names = {alias for alias in policy.aliases}
+    names = _effective_aliases(activity_id, policy.aliases)
     # Intentional asymmetry: a legacy record with no "enabled" key is treated
     # as not-enabled HERE (fails closed), even though the due scan defaults
     # missing "enabled" to True (`job.get("enabled", True)`). A record like
