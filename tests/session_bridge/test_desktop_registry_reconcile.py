@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,9 @@ from session_bridge.desktop_registry import (
     scan_desktop_registry_roots,
     verify_registry_sync_plan,
 )
+
+
+_ABSENT = object()
 
 
 def _write_record(
@@ -517,6 +521,53 @@ def test_standing_protected_quarantine_is_filled_when_one_pointer_remains(
         baseline.group_name == "protected:cliSessionId"
         for baseline in plan.proposed_baselines
     )
+
+
+def test_fill_can_only_ever_target_a_copy_with_no_pointer(tmp_path: Path) -> None:
+    """Exhaustive: the fill NEVER writes into a copy that already holds a pointer.
+
+    This is the property that answers "could a scheduled update path undo the
+    desktop app".  It cannot: the fill's precondition is that exactly one distinct
+    non-null pointer exists, so every root it patches is one that holds none, and
+    a copy holding a real pointer is either the donor or grounds for refusing
+    outright.  The app therefore always writes last on any record it has open --
+    the worst case is that a patch is silently undone, never that a pointer the
+    app wrote is replaced.
+
+    Asserted over all 64 three-root arrangements of {pointer V, pointer W, null,
+    absent} rather than a chosen example, because the dangerous case is precisely
+    the one nobody thought to write down.
+    """
+    states: dict[str, object] = {
+        "V": "cli-V",
+        "W": "cli-W",
+        "null": None,
+        "absent": _ABSENT,
+    }
+    patched_at_least_once = 0
+    for combination in itertools.product(states, repeat=3):
+        roots = []
+        for index, (name, state) in enumerate(zip("abc", combination)):
+            root = tmp_path / f"{'_'.join(combination)}_{index}_{name}"
+            fields = {} if states[state] is _ABSENT else {"cliSessionId": states[state]}
+            _write_record(root, "local_one", mtime_ns=100 + index, **fields)
+            roots.append(root)
+        scan = _scan(*roots)
+        plan = build_registry_sync_plan(scan, baselines=())
+        mutations = [
+            mutation
+            for mutation in plan.records["local_one.json"].mutations
+            if "cliSessionId" in mutation.changed_fields
+        ]
+        patched_at_least_once += bool(mutations)
+        for mutation in mutations:
+            target = Path(scan.roots[mutation.root_id].path) / "local_one.json"
+            before = json.loads(target.read_text(encoding="utf-8")).get("cliSessionId")
+            assert before is None, (
+                f"{combination}: fill would overwrite the live pointer {before!r}"
+            )
+    # Guard against the assertion above passing vacuously by never firing at all.
+    assert patched_at_least_once >= 24
 
 
 def test_fill_is_refused_when_the_desktop_app_wins_the_race(tmp_path: Path) -> None:
