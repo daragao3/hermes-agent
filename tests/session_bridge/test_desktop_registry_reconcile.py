@@ -408,6 +408,168 @@ def test_steady_state_protected_linkage_change_is_quarantined(
     assert "protected:cliSessionId" not in plan.records["local_one.json"].desired_groups
 
 
+def test_steady_state_fills_a_pointer_the_replica_never_learned(
+    tmp_path: Path,
+) -> None:
+    """The exact live failure: replicated while null, then run in one account."""
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, cliSessionId=None)
+    initial = build_registry_sync_plan(_scan(a, b, c), baselines=())
+    assert any(
+        baseline.group_name == "protected:cliSessionId"
+        for baseline in initial.proposed_baselines
+    )
+
+    path = a / "local_one.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["cliSessionId"] = "cli-learned"
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    plan = build_registry_sync_plan(_scan(a, b, c), baselines=initial.proposed_baselines)
+
+    assert not any(
+        item.group_name == "protected:cliSessionId" for item in plan.conflicts
+    )
+    desired = plan.records["local_one.json"].desired_groups["protected:cliSessionId"]
+    assert json.loads(desired)["value"] == "cli-learned"
+    assert {
+        mutation.root_id for mutation in plan.records["local_one.json"].mutations
+    } == {_root_id(plan.scan, b), _root_id(plan.scan, c)}
+
+
+def test_steady_state_never_re_asserts_a_pointer_the_desktop_app_cleared(
+    tmp_path: Path,
+) -> None:
+    """The terminator, and the reason the fill consults the baseline at all.
+
+    Measured 2026-09-07: the desktop app rewrites its own in-memory copy over a
+    record it holds open, and two of ten hand-repaired records went back to their
+    stale value nine hours later that way -- one of them back to null.  Deciding
+    the fill on current values alone would refill it on the next cycle, and the
+    app would clear it again, forever.
+
+    An accepted baseline is the memory that stops that: once a real pointer has
+    converged for this group, a copy that has gone back to empty is the app
+    asserting a value, not a replica lagging behind one.  Quarantine, do not
+    refill -- the operator-facing repair path (which can read transcript lengths)
+    is where that case belongs.
+    """
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, cliSessionId="cli-base")
+    initial = build_registry_sync_plan(_scan(a, b, c), baselines=())
+
+    path = b / "local_one.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["cliSessionId"] = None
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    plan = build_registry_sync_plan(_scan(a, b, c), baselines=initial.proposed_baselines)
+
+    conflict = next(
+        item for item in plan.conflicts if item.group_name == "protected:cliSessionId"
+    )
+    assert conflict.reason == "protected_linkage_divergence"
+    assert (
+        "protected:cliSessionId"
+        not in plan.records["local_one.json"].desired_groups
+    )
+    assert all(
+        "cliSessionId" not in mutation.changed_fields
+        for mutation in plan.records["local_one.json"].mutations
+    )
+
+
+def test_standing_protected_quarantine_is_filled_when_one_pointer_remains(
+    tmp_path: Path,
+) -> None:
+    """A group already in quarantine still reaches the fill on a later cycle.
+
+    Quarantined groups never receive a baseline, so they take the unaccepted-group
+    path rather than the steady-state one.  Wiring the fill into only one of the
+    two would leave every record that was already standing in quarantine on
+    2026-09-07 stuck there.
+    """
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    _write_record(a, "local_one", mtime_ns=100, cliSessionId="cli-a")
+    _write_record(b, "local_one", mtime_ns=300, cliSessionId="cli-b")
+    _write_record(c, "local_one", mtime_ns=200, cliSessionId="cli-a")
+    initial = build_registry_sync_plan(_scan(a, b, c), baselines=())
+    assert not any(
+        baseline.group_name == "protected:cliSessionId"
+        for baseline in initial.proposed_baselines
+    )
+    for mutation in initial.records["local_one.json"].mutations:
+        root = initial.scan.roots[mutation.root_id].path
+        (root / mutation.filename).write_text(mutation.after_bytes, encoding="utf-8")
+
+    path = b / "local_one.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["cliSessionId"] = None
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    plan = build_registry_sync_plan(_scan(a, b, c), baselines=initial.proposed_baselines)
+
+    desired = plan.records["local_one.json"].desired_groups["protected:cliSessionId"]
+    assert json.loads(desired)["value"] == "cli-a"
+    assert any(
+        baseline.group_name == "protected:cliSessionId"
+        for baseline in plan.proposed_baselines
+    )
+
+
+def test_fill_is_refused_when_the_desktop_app_wins_the_race(tmp_path: Path) -> None:
+    """The read-then-write race, closed by the existing expected-hash precondition.
+
+    If the app fills the field itself between the scan that planned the fill and
+    the write that applies it, the planned patch is stale and would overwrite a
+    real pointer with a different one.  It must be refused, not applied.
+    """
+    a, b = (tmp_path / name for name in ("a", "b"))
+    _write_record(a, "local_one", mtime_ns=100, cliSessionId="cli-a")
+    _write_record(b, "local_one", mtime_ns=200, cliSessionId=None)
+    plan = build_registry_sync_plan(_scan(a, b), baselines=())
+    mutation = next(
+        item
+        for item in plan.records["local_one.json"].mutations
+        if "cliSessionId" in item.changed_fields
+    )
+
+    path = b / "local_one.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["cliSessionId"] = "cli-the-app-just-started"
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    with pytest.raises(RegistryMutationConflict):
+        apply_registry_mutation(plan.scan, mutation)
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["cliSessionId"]
+        == "cli-the-app-just-started"
+    )
+
+
+def test_second_cycle_after_a_fill_plans_nothing(tmp_path: Path) -> None:
+    """The fill converges once; it does not churn a patch every cycle."""
+    a, b = (tmp_path / name for name in ("a", "b"))
+    _write_record(a, "local_one", mtime_ns=100, cliSessionId="cli-a")
+    _write_record(b, "local_one", mtime_ns=200, cliSessionId=None)
+    first = build_registry_sync_plan(_scan(a, b), baselines=())
+    for mutation in first.records["local_one.json"].mutations:
+        apply_registry_mutation(first.scan, mutation)
+
+    second = build_registry_sync_plan(_scan(a, b), baselines=first.proposed_baselines)
+
+    assert not second.records["local_one.json"].mutations
+    assert not any(
+        item.group_name == "protected:cliSessionId" for item in second.conflicts
+    )
+    assert (
+        json.loads((b / "local_one.json").read_text(encoding="utf-8"))["cliSessionId"]
+        == "cli-a"
+    )
+
+
 def test_steady_state_conflicting_same_group_changes_are_quarantined(
     tmp_path: Path,
 ) -> None:
@@ -566,9 +728,22 @@ def test_protected_cli_session_id_divergence_is_quarantined(tmp_path: Path) -> N
     assert "protected:cliSessionId" not in plan.records["local_one.json"].desired_groups
 
 
-def test_missing_cli_session_id_is_distinct_protected_linkage_value(
+def test_absent_cli_session_id_is_filled_from_the_one_copy_that_learned_it(
     tmp_path: Path,
 ) -> None:
+    """REVERSED 2026-09-07; until then this asserted a quarantine.
+
+    The old assertion was that a copy with no ``cliSessionId`` is just another
+    distinct protected value, so the group quarantines.  That was the correct
+    reading of "never clobber the app" right up until the 2026-09-07 measurement
+    showed what it costs: both sync legs are create-only, so a record replicated
+    while it is young keeps its empty pointer in every copy but the one whose
+    account later ran it, and opening such a copy starts a fresh session instead
+    of showing the transcript.  Fifteen of 4288 shared records were in that state.
+
+    Filling an EMPTY pointer cannot clobber anything -- it reaches no transcript --
+    which is what separates this from the divergence case pinned directly below.
+    """
     a, b, c = (tmp_path / name for name in ("a", "b", "c"))
     _write_record(a, "local_one", mtime_ns=100, cliSessionId="cli-a")
     _write_record(b, "local_one", mtime_ns=300)
@@ -576,10 +751,97 @@ def test_missing_cli_session_id_is_distinct_protected_linkage_value(
 
     plan = build_registry_sync_plan(_scan(a, b, c), baselines=())
 
+    assert not any(
+        item.group_name == "protected:cliSessionId" for item in plan.conflicts
+    )
+    desired = plan.records["local_one.json"].desired_groups["protected:cliSessionId"]
+    assert json.loads(desired)["value"] == "cli-a"
+    mutations = plan.records["local_one.json"].mutations
+    assert {mutation.root_id for mutation in mutations} == {_root_id(plan.scan, b)}
+    assert mutations[0].changed_fields["cliSessionId"] == {
+        "state": "present",
+        "value": "cli-a",
+    }
+
+
+def test_null_cli_session_id_is_filled_the_same_as_an_absent_one(
+    tmp_path: Path,
+) -> None:
+    """The live failure writes an explicit null, not a missing key.
+
+    A chip-spawned record is created with ``"cliSessionId": null``.  A fill rule
+    that recognised only the absent form would read as working -- the test above
+    would pass -- while never firing on the shape that actually occurs.
+    """
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    _write_record(a, "local_one", mtime_ns=100, cliSessionId="cli-a")
+    _write_record(b, "local_one", mtime_ns=300, cliSessionId=None)
+    _write_record(c, "local_one", mtime_ns=200, cliSessionId="cli-a")
+
+    plan = build_registry_sync_plan(_scan(a, b, c), baselines=())
+
+    desired = plan.records["local_one.json"].desired_groups["protected:cliSessionId"]
+    assert json.loads(desired)["value"] == "cli-a"
+    assert {
+        mutation.root_id for mutation in plan.records["local_one.json"].mutations
+    } == {_root_id(plan.scan, b)}
+
+
+def test_fill_never_merges_two_real_cli_session_ids(tmp_path: Path) -> None:
+    """The quiet direction, and the whole reason the fill is narrow.
+
+    Two non-null pointers mean the record was run independently under each
+    account and each side legitimately has its own transcript.  An empty third
+    copy must NOT be filled from either of them: there is no evidence here which
+    one it belongs to, and writing either would assert a fork that is not ours to
+    resolve.  ``claude_session_store_repair.py`` settles that case under a human,
+    by comparing transcript lengths, which is evidence this module cannot see.
+    """
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    _write_record(a, "local_one", mtime_ns=100, cliSessionId="cli-a")
+    _write_record(b, "local_one", mtime_ns=300, cliSessionId=None)
+    _write_record(c, "local_one", mtime_ns=200, cliSessionId="cli-c")
+
+    plan = build_registry_sync_plan(_scan(a, b, c), baselines=())
+
     conflict = next(
         item for item in plan.conflicts if item.group_name == "protected:cliSessionId"
     )
     assert conflict.reason == "protected_linkage_divergence"
+    assert (
+        "protected:cliSessionId"
+        not in plan.records["local_one.json"].desired_groups
+    )
+    assert all(
+        "cliSessionId" not in mutation.changed_fields
+        for mutation in plan.records["local_one.json"].mutations
+    )
+
+
+def test_copies_that_all_lack_a_pointer_are_left_exactly_as_they_are(
+    tmp_path: Path,
+) -> None:
+    """Absent is still distinct from null; the fill invents nothing.
+
+    With no copy holding a pointer there is nothing to propagate, so the group
+    stays quarantined rather than picking one empty encoding over the other.
+    This is what remains true of the assertion this file used to make.
+    """
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    _write_record(a, "local_one", mtime_ns=100, cliSessionId=None)
+    _write_record(b, "local_one", mtime_ns=300)
+    _write_record(c, "local_one", mtime_ns=200, cliSessionId=None)
+
+    plan = build_registry_sync_plan(_scan(a, b, c), baselines=())
+
+    conflict = next(
+        item for item in plan.conflicts if item.group_name == "protected:cliSessionId"
+    )
+    assert conflict.reason == "protected_linkage_divergence"
+    assert all(
+        "cliSessionId" not in mutation.changed_fields
+        for mutation in plan.records["local_one.json"].mutations
+    )
 
 
 def test_unknown_future_key_is_quarantined_without_bootstrap_winner(

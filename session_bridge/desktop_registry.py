@@ -631,6 +631,49 @@ def _validate_baselines(
                 )
 
 
+_NULL_PROTECTED_JSON = _canonical_json({"state": "present", "value": None})
+# "This copy has no pointer" has TWO encodings and both must count: the key absent,
+# and the key present as an explicit null.  The live failure writes the null form -- a
+# chip-spawned record is created with ``"cliSessionId": null`` -- so a rule that
+# recognised only the absent form would pass a hand-written test while never firing on
+# the shape that actually occurs.
+_UNSET_PROTECTED_VALUES = frozenset({_ABSENT_JSON, _NULL_PROTECTED_JSON})
+
+
+def _protected_fill_value(values: Mapping[str, str]) -> str | None:
+    """The pointer a replica has not learned yet, or None when this is a real fork.
+
+    Both sync legs are create-only by design, so they replicate a record's EXISTENCE
+    and never refresh its body.  A record replicated while it is young keeps its empty
+    ``cliSessionId`` in every copy except the one whose account later ran it; opening
+    such a copy finds no transcript and starts a fresh session, which is what "the
+    session is empty" means.  Measured 2026-09-07: 15 of 4288 shared records.
+
+    Filling an EMPTY pointer is information-preserving by construction -- it reaches no
+    transcript, so there is nothing there to lose.  TWO DIFFERENT non-null pointers are
+    the opposite case: the record was run independently under each account and each
+    side legitimately has its own transcript, so this returns None and the group stays
+    quarantined.  A third, empty copy alongside two real pointers is left alone for the
+    same reason -- nothing here says which of the two it belongs to.
+
+    That boundary is deliberately the same one ``bin/claude_session_store_drift.py``
+    draws (an unfilled copy is drift; two divergent pointers are a warning only) and
+    the same one ``bin/claude_session_store_repair.py`` starts from.  The repair tool
+    settles the divergent case by asking which pointer reaches the fuller transcript,
+    which is evidence this module cannot see and a human authorises; this is exactly
+    the subset of that rule decidable without reading a transcript, and on the empty
+    case the two rules agree trivially, since an empty pointer reaches zero lines.
+    """
+    if not any(value in _UNSET_PROTECTED_VALUES for value in values.values()):
+        return None
+    filled = {
+        value for value in values.values() if value not in _UNSET_PROTECTED_VALUES
+    }
+    if len(filled) != 1:
+        return None
+    return next(iter(filled))
+
+
 def _bootstrap_decision(
     filename: str,
     group_name: str,
@@ -683,6 +726,13 @@ def _unaccepted_group_decision(
         )
     if len(set(values.values())) == 1:
         return next(iter(values.values())), None
+    if group_name.startswith("protected:"):
+        # A group already standing in quarantine has no baseline and so never
+        # reaches the steady-state path; without this, every record that was
+        # already quarantined would stay stuck even once only one pointer is left.
+        fill = _protected_fill_value(values)
+        if fill is not None:
+            return fill, None
     reason = (
         "protected_linkage_divergence"
         if group_name.startswith("protected:")
@@ -729,6 +779,25 @@ def _steady_state_decision(
 
     if group_name.startswith("protected:"):
         if changed:
+            # A replica that never learned the pointer may still be filled in --
+            # see _protected_fill_value for why that cannot clobber anything.
+            #
+            # The BASELINE is what stops this becoming a fight with the desktop
+            # app.  Measured 2026-09-07: the app rewrites its own in-memory copy
+            # over a record it holds open, and two of ten hand-repaired records
+            # went back to their stale value nine hours later that way, one of
+            # them back to null.  So once a real pointer has converged for this
+            # group, a copy that is empty again is the app asserting a value, not
+            # a replica lagging behind one: quarantine it and let the
+            # operator-facing repair path, which can weigh transcript lengths,
+            # decide.  Deciding on current values alone would refill it every
+            # cycle and never terminate.
+            fill = _protected_fill_value(current)
+            if fill is not None and all(
+                baseline.value_json in _UNSET_PROTECTED_VALUES
+                for baseline in baseline_rows.values()
+            ):
+                return fill, None
             return None, RegistryConflict(
                 filename=filename,
                 group_name=group_name,
@@ -817,8 +886,14 @@ def build_registry_sync_plan(
                     root_id: _value_for_group(observation, group_name)
                     for root_id, observation in observations.items()
                 }
-                if group_name.startswith("protected:") and len(set(values.values())) == 1:
-                    decision, conflict = next(iter(values.values())), None
+                accepted: str | None = None
+                if group_name.startswith("protected:"):
+                    if len(set(values.values())) == 1:
+                        accepted = next(iter(values.values()))
+                    else:
+                        accepted = _protected_fill_value(values)
+                if accepted is not None:
+                    decision, conflict = accepted, None
                 else:
                     reason = (
                         "protected_linkage_divergence"
