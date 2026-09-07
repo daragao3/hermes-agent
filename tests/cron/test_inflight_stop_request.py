@@ -188,3 +188,236 @@ class TestSchedulerHonoursStopRequest:
 
     def test_exception_type_is_a_runtime_error(self):
         assert issubclass(CronRunStoppedByOperator, RuntimeError)
+
+
+# ---------------------------------------------------------------------------
+# The stop (and the two timeouts) must also kill the tool SUBPROCESS the run
+# is blocked in -- independently of the agent (2026-09-07 follow-up).
+#
+# ``agent.interrupt()`` sets a per-thread flag that the terminal tool's wait
+# loop polls and honours by killing its process tree; live fire on
+# 2026-09-07 measured ~1.2s from stop to ``[Command interrupted]``. These
+# tests use a fake agent whose ``interrupt`` is a MagicMock -- i.e. that
+# route is absent -- and block in a REAL subprocess, so what they prove is
+# the scheduler's own kill (cron.inflight.kill_run_tool_subprocesses via the
+# per-thread registry in tools.environments.base).
+# ---------------------------------------------------------------------------
+
+import shlex  # noqa: E402
+
+from cron.inflight import kill_run_tool_subprocesses, run_tool_thread_ids  # noqa: E402
+
+
+def _python_for_bash() -> str:
+    # Forward slashes: the local backend runs commands under bash (MSYS on
+    # Windows), where a backslashed path is an escape sequence.
+    return shlex.quote(sys.executable.replace("\\", "/"))
+
+
+def _sleeper_command(pid_file: Path, seconds: int = 120) -> str:
+    pid_path = str(pid_file).replace("\\", "/")
+    code = (
+        "import os,time,sys; "
+        f"open({pid_path!r},'w').write(str(os.getpid())); "
+        f"time.sleep({seconds})"
+    )
+    return f"{_python_for_bash()} -c {shlex.quote(code)}"
+
+
+def _wait_for_file(path: Path, timeout: float = 30.0) -> int:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            text = path.read_text().strip()
+            if text:
+                return int(text)
+        time.sleep(0.05)
+    raise AssertionError(f"{path} never appeared")
+
+
+def _pid_alive(psutil, pid: int) -> bool:
+    try:
+        p = psutil.Process(pid)
+        return p.is_running() and p.status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+
+
+def _wait_dead(psutil, pid: int, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _pid_alive(psutil, pid):
+            return True
+        time.sleep(0.05)
+    return not _pid_alive(psutil, pid)
+
+
+def _reap(psutil, pid):
+    try:
+        psutil.Process(pid).kill()
+    except Exception:
+        pass
+
+
+@pytest.fixture()
+def local_env(tmp_path):
+    from tools.environments.local import LocalEnvironment
+
+    env = LocalEnvironment(cwd=str(tmp_path), timeout=120)
+    try:
+        yield env
+    finally:
+        try:
+            env.cleanup()
+        except Exception:
+            pass
+
+
+class TestStopKillsInflightToolSubprocess:
+    JOB = {"id": "stopjob", "name": "stop me", "prompt": "hello"}
+
+    def _blocking_agent(self, env, pid_file, state):
+        """A fake agent that blocks in a real subprocess and cannot be
+        interrupted -- its ``interrupt`` is a plain MagicMock."""
+        agent = MagicMock()
+        agent.get_activity_summary.side_effect = _active_summary
+
+        def _run_conversation(prompt):
+            state["result"] = env.execute(_sleeper_command(pid_file), timeout=120)
+            return {"final_response": "should not be trusted"}
+
+        agent.run_conversation.side_effect = _run_conversation
+        return agent
+
+    def test_operator_stop_kills_the_subprocess_the_run_is_blocked_in(
+        self, tmp_cron_dir, local_env
+    ):
+        psutil = pytest.importorskip("psutil")
+        pid_file = tmp_cron_dir / "child.pid"
+        state = {}
+        agent = self._blocking_agent(local_env, pid_file, state)
+        child = {}
+
+        def _stop_once_child_is_up():
+            child["pid"] = _wait_for_file(pid_file)
+            # Filed only once the subprocess is provably running, the way an
+            # operator's request arrives mid-tool-call.
+            request_stop("stopjob", by="hermes_cli:cron_pause", reason="kill it")
+
+        stopper = threading.Thread(target=_stop_once_child_is_up, daemon=True)
+        stopper.start()
+        try:
+            success, output, _final, error = _run(self.JOB, agent, tmp_cron_dir)
+            stopper.join(timeout=30)
+            assert "pid" in child, "child never started"
+            assert success is False
+            assert "CronRunStoppedByOperator" in error
+            # The subprocess is gone -- not merely the run recorded as failed.
+            assert _wait_dead(psutil, child["pid"]), (
+                f"child {child['pid']} survived the operator stop"
+            )
+            # And the tool call itself unwound (the wait loop saw the kill).
+            deadline = time.monotonic() + 10
+            while "result" not in state and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert "result" in state, "env.execute never returned after the kill"
+            assert state["result"]["returncode"] != 0
+            agent.interrupt.assert_called_once_with("Cron run stopped by operator")
+        finally:
+            if "pid" in child:
+                _reap(psutil, child["pid"])
+
+    @pytest.mark.parametrize(
+        "env_var, value, expected_error",
+        [
+            ("HERMES_CRON_HARD_TIMEOUT", "1", "wall-clock"),
+            ("HERMES_CRON_TIMEOUT", "1", "idle for"),
+        ],
+    )
+    def test_timeouts_kill_the_subprocess_too(
+        self, tmp_cron_dir, local_env, monkeypatch, env_var, value, expected_error
+    ):
+        psutil = pytest.importorskip("psutil")
+        monkeypatch.delenv("HERMES_CRON_HARD_TIMEOUT", raising=False)
+        monkeypatch.delenv("HERMES_CRON_TIMEOUT", raising=False)
+        monkeypatch.setenv(env_var, value)
+        pid_file = tmp_cron_dir / "child.pid"
+        state = {}
+        agent = self._blocking_agent(local_env, pid_file, state)
+        if env_var == "HERMES_CRON_TIMEOUT":
+            # Report the run as idle past the limit; the wall-clock limit is
+            # off, so only the inactivity branch can fire.
+            def _idle_summary():
+                s = _active_summary()
+                s["seconds_since_activity"] = 999.0
+                return s
+            agent.get_activity_summary.side_effect = _idle_summary
+        child = {}
+        try:
+            success, _output, _final, error = _run(self.JOB, agent, tmp_cron_dir)
+            child["pid"] = _wait_for_file(pid_file, timeout=5)
+            assert success is False
+            assert expected_error in error
+            assert _wait_dead(psutil, child["pid"]), (
+                f"child {child['pid']} survived the {env_var} timeout"
+            )
+        finally:
+            if "pid" in child:
+                _reap(psutil, child["pid"])
+
+    def test_stop_does_not_kill_another_threads_subprocess(
+        self, tmp_cron_dir, local_env
+    ):
+        """Scoping: a command in flight on some OTHER thread -- another
+        session sharing the same LocalEnvironment, as every top-level agent
+        in the gateway does -- must survive this run's stop."""
+        psutil = pytest.importorskip("psutil")
+        other_pid_file = tmp_cron_dir / "other.pid"
+        other_state = {}
+
+        def _other_session():
+            other_state["result"] = local_env.execute(
+                _sleeper_command(other_pid_file), timeout=120
+            )
+
+        other = threading.Thread(target=_other_session, daemon=True)
+        other.start()
+        other_pid = _wait_for_file(other_pid_file)
+        try:
+            agent = MagicMock()
+            agent.get_activity_summary.side_effect = _active_summary
+            released = threading.Event()
+            agent.interrupt.side_effect = lambda msg: released.set()
+
+            def _run_conversation(prompt):
+                request_stop("stopjob", by="test")
+                released.wait(timeout=10)
+                return {"final_response": "x"}
+
+            agent.run_conversation.side_effect = _run_conversation
+            success, _o, _f, error = _run(self.JOB, agent, tmp_cron_dir)
+            assert success is False and "CronRunStoppedByOperator" in error
+            time.sleep(0.5)
+            assert _pid_alive(psutil, other_pid), "sibling thread's command was killed"
+            assert "result" not in other_state
+        finally:
+            _reap(psutil, other_pid)
+            other.join(timeout=10)
+
+    def test_kill_helper_is_a_noop_with_nothing_in_flight(self):
+        agent = MagicMock()  # every attribute a mock, none of them an int
+        assert run_tool_thread_ids(agent, None) == set()
+        assert kill_run_tool_subprocesses(agent, None) == 0
+        me = threading.current_thread().ident
+        assert run_tool_thread_ids(agent, me) == {me}
+        assert kill_run_tool_subprocesses(agent, me) == 0
+
+    def test_thread_ids_include_agent_execution_and_worker_threads(self):
+        agent = MagicMock()
+        agent._execution_thread_id = 11
+        agent._tool_worker_threads = {12, 13}
+        agent._tool_worker_threads_lock = threading.Lock()
+        assert run_tool_thread_ids(agent, 10) == {10, 11, 12, 13}
+        agent._execution_thread_id = None
+        agent._tool_worker_threads = MagicMock()  # not a set: ignored
+        assert run_tool_thread_ids(agent, 10) == {10}

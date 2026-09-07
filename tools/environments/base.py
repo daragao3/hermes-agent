@@ -53,6 +53,96 @@ _activity_callback_local = threading.local()
 # path for both bounded and unbounded modes.
 _UNBOUNDED_CAPTURE_CHARS = 2**63 - 1
 
+# ---------------------------------------------------------------------------
+# In-flight foreground subprocess registry (added 2026-09-07)
+#
+# ``execute()`` records the subprocess it is waiting on, keyed by the ident of
+# the thread doing the waiting, for exactly as long as ``_wait_for_process``
+# runs. The cron scheduler's operator-stop / timeout path uses it to kill a
+# run's in-flight tool subprocess WITHOUT depending on the agent: the normal
+# route is ``AIAgent.interrupt()`` -> ``set_interrupt(tid)`` -> the poll loop
+# in ``_wait_for_process`` sees ``is_interrupted()`` and kills the tree
+# itself, and the 2026-09-07 live fire proved that route lands in ~1.2s. But
+# that route only works when the interrupt bit reaches the thread that is
+# actually blocked in ``execute()``, and only for an agent whose ``interrupt``
+# propagates it; the scheduler wants a guarantee that holds when neither is
+# true. Keying by THREAD (not by environment) matters because every
+# top-level agent in the gateway shares the single ``"default"``
+# LocalEnvironment (``_resolve_container_task_id``), so "kill everything this
+# env is running" would reach into other sessions' commands.
+#
+# Background processes (``terminal(background=true)``) are NOT here: they are
+# detached by design and tracked by ``tools.process_registry``, which keys
+# them by the same collapsed task id and so cannot attribute them to one run.
+# ---------------------------------------------------------------------------
+_inflight_lock = threading.Lock()
+# thread ident -> list of (environment, process handle) currently being waited on
+_inflight_procs: dict[int, list[tuple["BaseEnvironment", "ProcessHandle"]]] = {}
+
+
+def _register_inflight(env: "BaseEnvironment", proc: "ProcessHandle") -> int:
+    tid = threading.current_thread().ident
+    with _inflight_lock:
+        _inflight_procs.setdefault(tid, []).append((env, proc))
+    return tid
+
+
+def _unregister_inflight(tid: int, env: "BaseEnvironment", proc: "ProcessHandle") -> None:
+    with _inflight_lock:
+        entries = _inflight_procs.get(tid)
+        if not entries:
+            return
+        for i, (e, p) in enumerate(entries):
+            if e is env and p is proc:
+                del entries[i]
+                break
+        if not entries:
+            _inflight_procs.pop(tid, None)
+
+
+def inflight_process_threads() -> frozenset[int]:
+    """Thread idents that currently have a foreground tool subprocess in flight."""
+    with _inflight_lock:
+        return frozenset(_inflight_procs)
+
+
+def kill_inflight_processes(thread_ids) -> int:
+    """Kill every foreground tool subprocess in flight on the given threads.
+
+    Returns the number of subprocesses a kill was issued for. A no-op (0)
+    when none of the threads is inside ``execute()``. Each kill goes through
+    the owning environment's ``_kill_process`` (process-group / ``taskkill
+    /T`` semantics), so the shell wrapper's children die with it. The
+    waiting ``_wait_for_process`` loop then sees ``proc.poll()`` return and
+    unwinds on its own; the entry is removed by ``execute()``'s ``finally``,
+    not here.
+    """
+    wanted = set()
+    for tid in thread_ids or ():
+        if isinstance(tid, int) and not isinstance(tid, bool):
+            wanted.add(tid)
+    if not wanted:
+        return 0
+    with _inflight_lock:
+        targets = [
+            (env, proc)
+            for tid in wanted
+            for (env, proc) in _inflight_procs.get(tid, ())
+        ]
+    killed = 0
+    for env, proc in targets:
+        try:
+            if proc.poll() is not None:
+                continue
+        except Exception:
+            pass
+        try:
+            env._kill_process(proc)
+            killed += 1
+        except Exception:
+            logger.debug("kill_inflight_processes: _kill_process failed", exc_info=True)
+    return killed
+
 
 class _BoundedOutputCollector:
     """Retain a bounded 40/60 head-tail window of streamed text."""
@@ -1158,9 +1248,14 @@ class BaseEnvironment(ABC):
         proc = self._run_bash(
             wrapped, login=login, timeout=effective_timeout, stdin_data=effective_stdin
         )
-        result = self._wait_for_process(
-            proc, timeout=effective_timeout, bounded_capture=bounded_capture
-        )
+        # Visible to kill_inflight_processes() for exactly the wait window.
+        _tid = _register_inflight(self, proc)
+        try:
+            result = self._wait_for_process(
+                proc, timeout=effective_timeout, bounded_capture=bounded_capture
+            )
+        finally:
+            _unregister_inflight(_tid, self, proc)
         self._update_cwd(result)
 
         return result

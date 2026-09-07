@@ -520,3 +520,73 @@ class TestCwdMarker:
         env1 = _TestableEnv()
         env2 = _TestableEnv()
         assert env1._cwd_marker != env2._cwd_marker
+
+
+class TestInflightProcessRegistry:
+    """Per-thread registry of foreground subprocesses (2026-09-07), used by
+    the cron scheduler to kill a run's in-flight tool subprocess by thread."""
+
+    def _fake(self, exited=False):
+        env = MagicMock()
+        proc = MagicMock()
+        proc.poll.return_value = 0 if exited else None
+        return env, proc
+
+    def test_register_kill_unregister_on_own_thread(self):
+        import threading
+        from tools.environments import base
+
+        env, proc = self._fake()
+        tid = base._register_inflight(env, proc)
+        try:
+            assert tid == threading.current_thread().ident
+            assert tid in base.inflight_process_threads()
+            assert base.kill_inflight_processes([tid]) == 1
+            env._kill_process.assert_called_once_with(proc)
+        finally:
+            base._unregister_inflight(tid, env, proc)
+        assert tid not in base.inflight_process_threads()
+        assert base.kill_inflight_processes([tid]) == 0
+
+    def test_only_the_named_threads_are_killed(self):
+        from tools.environments import base
+
+        env, proc = self._fake()
+        tid = base._register_inflight(env, proc)
+        try:
+            assert base.kill_inflight_processes([tid + 1_000_003]) == 0
+            env._kill_process.assert_not_called()
+        finally:
+            base._unregister_inflight(tid, env, proc)
+
+    def test_exited_process_and_non_int_ids_are_skipped(self):
+        from tools.environments import base
+
+        env, proc = self._fake(exited=True)
+        tid = base._register_inflight(env, proc)
+        try:
+            assert base.kill_inflight_processes([tid, None, "x", MagicMock(), True]) == 0
+            env._kill_process.assert_not_called()
+        finally:
+            base._unregister_inflight(tid, env, proc)
+        assert base.kill_inflight_processes(None) == 0
+
+    def test_execute_registers_for_the_wait_window_only(self, monkeypatch):
+        import threading
+        from tools.environments import base
+
+        env = _TestableEnv()
+        proc = MagicMock()
+        seen = {}
+
+        def _wait(p, timeout=120, *, bounded_capture=False):
+            seen["during"] = threading.current_thread().ident in base.inflight_process_threads()
+            return {"output": "", "returncode": 0}
+
+        monkeypatch.setattr(env, "_run_bash", lambda *a, **k: proc)
+        monkeypatch.setattr(env, "_wait_for_process", _wait)
+        monkeypatch.setattr(env, "_update_cwd", lambda r: None)
+        monkeypatch.setattr(env, "_before_execute", lambda: None)
+        env.execute("true")
+        assert seen["during"] is True
+        assert threading.current_thread().ident not in base.inflight_process_threads()
