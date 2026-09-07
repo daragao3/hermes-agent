@@ -98,6 +98,26 @@ def build_gateway_parser(
     add_accept_hooks_flag(gateway_run)
     add_accept_hooks_flag(gateway_parser)
 
+    gateway_run.add_argument(
+        "--reason",
+        help=(
+            "Why the gateway is being bounced (e.g. the commit being deployed). "
+            "Recorded on the loops restart claim gateway-restart-<stamp> that this "
+            "command opens before stopping the incumbent, so other sessions can "
+            "see who bounced it, when, and why."
+        ),
+    )
+    gateway_run.add_argument(
+        "--ignore-restart-claim",
+        dest="ignore_restart_claim",
+        action="store_true",
+        help=(
+            "Proceed even when another session's restart claim is still open "
+            "(a bounce in progress). Only for a claim whose holder died "
+            "mid-restart; otherwise wait for :8642 and re-check your deploy."
+        ),
+    )
+
     # gateway start
     gateway_start = gateway_subparsers.add_parser(
         "start", help="Start the installed systemd/launchd background service"
@@ -140,6 +160,25 @@ def build_gateway_parser(
         "--all",
         action="store_true",
         help="Kill ALL gateway processes across all profiles before restarting",
+    )
+    gateway_restart.add_argument(
+        "--reason",
+        help=(
+            "Why the gateway is being bounced (e.g. the commit being deployed). "
+            "Recorded on the loops restart claim gateway-restart-<stamp> that this "
+            "command opens before stopping the incumbent, so other sessions can "
+            "see who bounced it, when, and why."
+        ),
+    )
+    gateway_restart.add_argument(
+        "--ignore-restart-claim",
+        dest="ignore_restart_claim",
+        action="store_true",
+        help=(
+            "Proceed even when another session's restart claim is still open "
+            "(a bounce in progress). Only for a claim whose holder died "
+            "mid-restart; otherwise wait for :8642 and re-check your deploy."
+        ),
     )
     _add_compat_platform_flag(gateway_restart)
 
