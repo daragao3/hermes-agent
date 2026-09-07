@@ -266,7 +266,7 @@ export const it: Translations = {
     deliverTo: "Consegna a",
     scheduledJobs: "Attività pianificate",
     noJobs: "Nessuna attività cron configurata. Creane una sopra.",
-    last: "Ultima",
+    last: "Ultima completata",
     next: "Prossima",
     pause: "Pausa",
     resume: "Riprendi",

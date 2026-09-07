@@ -265,7 +265,7 @@ export const ko: Translations = {
     deliverTo: "전달 대상",
     scheduledJobs: "예약된 작업",
     noJobs: "구성된 cron 작업이 없습니다. 위에서 하나 만드세요.",
-    last: "마지막",
+    last: "마지막 완료",
     next: "다음",
     pause: "일시 정지",
     resume: "재개",

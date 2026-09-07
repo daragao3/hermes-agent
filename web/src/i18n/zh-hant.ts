@@ -265,7 +265,7 @@ export const zhHant: Translations = {
     deliverTo: "傳送至",
     scheduledJobs: "已排程任務",
     noJobs: "尚未設定排程任務。請於上方建立。",
-    last: "上次",
+    last: "上次完成",
     next: "下次",
     pause: "暫停",
     resume: "繼續",

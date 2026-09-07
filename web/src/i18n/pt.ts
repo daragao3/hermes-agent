@@ -266,7 +266,7 @@ export const pt: Translations = {
     deliverTo: "Entregar a",
     scheduledJobs: "Tarefas agendadas",
     noJobs: "Sem tarefas cron configuradas. Crie uma acima.",
-    last: "Última",
+    last: "Última concluída",
     next: "Próxima",
     pause: "Pausar",
     resume: "Retomar",

@@ -600,10 +600,11 @@ function CronJobDetail({
         </div>
 
         <PanelMeta
+          className="grid-cols-[7rem_1fr]"
           rows={[
             { label: c.frequencyLabel, value: jobScheduleDisplay(job) },
-            { label: c.last.replace(/:$/, ''), value: formatTime(job.last_run_at) },
-            { label: c.next.replace(/:$/, ''), value: formatTime(job.next_run_at) },
+            { label: c.last, value: formatTime(job.last_run_at) },
+            { label: c.next, value: formatTime(job.next_run_at) },
             { label: c.deliverLabel, value: c.deliveryLabels[deliver] ?? deliver },
             ...(modelOverride ? [{ label: c.modelLabel, value: modelOverride }] : [])
           ]}

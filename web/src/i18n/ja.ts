@@ -265,7 +265,7 @@ export const ja: Translations = {
     deliverTo: "配信先",
     scheduledJobs: "スケジュール済みジョブ",
     noJobs: "Cron ジョブが設定されていません。上で作成してください。",
-    last: "前回",
+    last: "前回完了",
     next: "次回",
     pause: "一時停止",
     resume: "再開",

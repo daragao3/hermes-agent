@@ -274,7 +274,7 @@ export const ga: Translations = {
     deliverTo: "Seachadadh chuig",
     scheduledJobs: "Poist sceidealta",
     noJobs: "Níl poist cron cumraithe. Cruthaigh ceann thuas.",
-    last: "Deireanach",
+    last: "Críochnaithe go deireanach",
     next: "Ar aghaidh",
     pause: "Sos",
     resume: "Lean ar aghaidh",

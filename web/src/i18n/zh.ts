@@ -262,7 +262,7 @@ export const zh: Translations = {
     deliverTo: "投递至",
     scheduledJobs: "已调度任务",
     noJobs: "暂无定时任务。在上方创建一个。",
-    last: "上次",
+    last: "上次完成",
     next: "下次",
     pause: "暂停",
     resume: "恢复",

@@ -266,7 +266,7 @@ export const uk: Translations = {
     deliverTo: "Надіслати на",
     scheduledJobs: "Заплановані завдання",
     noJobs: "Cron-завдань не налаштовано. Створіть одне вище.",
-    last: "Останнє",
+    last: "Останнє завершення",
     next: "Наступне",
     pause: "Призупинити",
     resume: "Відновити",
