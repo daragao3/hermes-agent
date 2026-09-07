@@ -4660,8 +4660,19 @@ class SessionBridgeCoordinator:
                 # a stale projection is not a canonical-id collision and
                 # folding it in would make `locally_owned` overstate them.
                 continue
-            except Exception:
+            except Exception as exc:
+                # Instrumented 2026-09-07 alongside the persistent path. All
+                # three codex twins already reported here; all three claude
+                # clauses were silent, and leaving one path uninstrumented is
+                # the 2026-08-13 gap this file's own docstring warns about.
                 failed += 1
+                self._record_scan_diagnostic(
+                    Provider.CLAUDE,
+                    stage="full_history_project",
+                    exc=exc,
+                    summary=None,
+                    native_id=path.stem,
+                )
                 continue
             indexed += 1
             rebuilt += int(not result.first_seen)
@@ -4847,8 +4858,16 @@ class SessionBridgeCoordinator:
                 # other two claude paths: identical behaviour, but a stale
                 # projection must not inflate the collision count.
                 continue
-            except Exception:
+            except Exception as exc:
+                # Instrumented 2026-09-07; see the persistent path for why.
                 failed += 1
+                self._record_scan_diagnostic(
+                    Provider.CLAUDE,
+                    stage="immediate_project",
+                    exc=exc,
+                    summary=None,
+                    native_id=path.stem,
+                )
                 continue
             indexed += 1
             rebuilt += int(should_rebuild or result.rebuilt)
@@ -5167,8 +5186,35 @@ class SessionBridgeCoordinator:
                 # real canonical-id collisions. Folding a stale projection in
                 # would make the new ScanSummary field overstate them.
                 continue
-            except Exception:
+            except Exception as exc:
+                # 2026-09-07: this clause DISCARDED the exception, which is the
+                # reason a permanent claude degradation was undiagnosable. The
+                # provider-level reporter added by c12e361b3c already says so in
+                # its own docstring ("Both `except Exception` call sites also
+                # discarded the exception object entirely") -- it was built and
+                # never wired to the per-item sites, so the summary line it
+                # emits reads `exc=none detail='' tb=()` and names nothing.
+                #
+                # A failure here re-stages the transcript (failed_ids ->
+                # remaining_ids -> _save_pending), so ONE transcript that can
+                # never be indexed keeps `failed` nonzero on EVERY cycle, and
+                # _scan_provider turns any nonzero failed into
+                # degraded_reason=scan_failed for the whole provider. Measured
+                # 2026-09-07: fae9aa0d-0eb4-4fee-a488-f9be05f7b540 had no
+                # `sessions` row and no `external_sessions` row at all -- it had
+                # never indexed once -- and it held session-bridge-service,
+                # -catalog and -continuity red for hours with nothing in the log
+                # naming it or saying why. Identifying it took intersecting the
+                # persisted pending set across eight samples; this makes the
+                # next one a grep.
                 failed_ids.append(native_id)
+                self._record_scan_diagnostic(
+                    provider,
+                    stage="persistent_project",
+                    exc=exc,
+                    summary=None,
+                    native_id=native_id,
+                )
                 continue
             indexed += 1
             rebuilt += int(should_rebuild or result.rebuilt)
@@ -5870,6 +5916,7 @@ class SessionBridgeCoordinator:
         stage: str,
         exc: BaseException | None,
         summary: object,
+        native_id: object = None,
     ) -> None:
         """Emit a diagnostic for ANY provider scan failure.
 
@@ -5900,11 +5947,12 @@ class SessionBridgeCoordinator:
                 else ""
             )
             _LOG.warning(
-                "provider_scan_diagnostic provider=%s stage=%s code=%s exc=%s "
-                "detail=%r summary=%r tb=%r",
+                "provider_scan_diagnostic provider=%s stage=%s code=%s native=%s "
+                "exc=%s detail=%r summary=%r tb=%r",
                 provider.value,
                 stage,
                 f"{provider.value}_scan_failed",
+                _safe_native_token(native_id),
                 exc_type,
                 detail,
                 summary_text,
@@ -5970,6 +6018,26 @@ class SessionBridgeCoordinator:
 
     def _elapsed_ms(self, started: float) -> float:
         return max(0.0, (float(self._monotonic()) - started) * 1000.0)
+
+
+def _safe_native_token(value: object) -> str:
+    """A log-safe form of a transcript / thread id.
+
+    Bounded and stripped to an identifier alphabet so a strange filename stem
+    cannot break the log line into pieces a reader would misparse. Claude native
+    ids are the transcript filename stems (uuids), which carry no path and no
+    secret -- and naming one is the whole point of the diagnostic, because
+    without it the operator can only learn WHICH transcript is failing by
+    intersecting the persisted pending set across several samples.
+    """
+    if value is None:
+        return ""
+    try:
+        text = str(value)
+    except Exception:
+        return "unknown"
+    cleaned = "".join(char for char in text if char.isalnum() or char in "._-")
+    return cleaned[:64] or "unknown"
 
 
 def _redacted_codex_diagnostic_text(value: object) -> str:
