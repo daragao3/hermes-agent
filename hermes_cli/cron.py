@@ -226,7 +226,7 @@ def cron_list(show_all: bool = False):
                 status_display = color("ok", Colors.GREEN)
             else:
                 status_display = color(f"{last_status}: {job.get('last_error', '?')}", Colors.RED)
-            print(f"    Last run:  {last_run}  {status_display}")
+            print(f"    Completed: {last_run}  {status_display}")
 
         latest_execution = job.get("latest_execution")
         if latest_execution:
