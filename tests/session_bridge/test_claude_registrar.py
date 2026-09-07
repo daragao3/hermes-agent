@@ -5685,3 +5685,177 @@ def test_launch_presses_return_for_a_two_row_paste_chip(frame: str) -> None:
 
     assert result.status == "retry"
     assert "\r" in process.writes
+
+
+# A row the normalizer has never seen, sitting under the paste chip. Stands in
+# for whatever the CLI draws next under its input box -- a tip banner, a mode
+# hint, a reworded chip -- none of which is an answer to the prompt.
+_UNSEEN_CLI_BANNER_ROW = "  ✻ Tip: press ctrl+g to open the prompt in your editor"
+_PROMPT_FRAME_WITH_UNSEEN_BANNER = (
+    "\n\n  [Pasted text #1 +6 lines] \n  paste again to expand\n"
+    + _UNSEEN_CLI_BANNER_ROW
+)
+
+
+def test_unrecognised_prompt_frame_residue_is_not_an_answer() -> None:
+    """Residue the normalizer cannot name is the ABSENCE of evidence.
+
+    Until 2026-09-07 any non-empty residue scored as "the paste self-submitted
+    and this is the reply", which set paste_auto_submitted and withheld the
+    registrar's own Return -- Mode A, every time the CLI drew a row under the
+    input box that the normalizer had not been taught. Only an answer signal
+    counts now: a REGISTERED-bearing line, or the reply bullet.
+    """
+
+    value = candidate()
+    identity = derive_claude_visibility_identity(value, SECRET)
+    prompt = build_claude_registration_prompt(value, identity, SECRET)
+
+    assert _normalized_terminal_output(_PROMPT_FRAME_WITH_UNSEEN_BANNER, prompt)
+    assert _prompt_input_registered_response(
+        _PROMPT_FRAME_WITH_UNSEEN_BANNER, prompt=prompt
+    ) == (False, None)
+    assert _prompt_input_registered_response(
+        _PROMPT_FRAME_WITH_UNSEEN_BANNER + "\r\n", prompt=prompt
+    ) == (False, None)
+
+
+@pytest.mark.parametrize(
+    ("frame", "expected"),
+    [
+        ("REGISTERED", (True, None)),
+        ("REGISTERED\r\n", (True, "REGISTERED\n")),
+        ("NOT REGISTERED\r\n", (True, "NOT REGISTERED\n")),
+        ("● REGISTERED\r\n", (True, "● REGISTERED\n")),
+        ("● Sure, I can help with that.\r\n", (True, "● Sure, I can help with that.\n")),
+        ("[Pasted text #1 +12 lines]\r\nREGISTERED\r\n", (True, "REGISTERED\n")),
+        ("Registered!\r\n", (False, None)),
+        ("UNREGISTERED\r\n", (False, None)),
+        ("Ruminating…\r\n", (False, None)),
+    ],
+)
+def test_prompt_input_answer_evidence_is_positive_only(
+    frame: str, expected: tuple[bool, str | None]
+) -> None:
+    prompt = "a multiline registration prompt"
+
+    assert _prompt_input_registered_response(frame, prompt=prompt) == expected
+
+
+def test_launch_presses_return_for_prompt_frame_residue_it_cannot_name() -> None:
+    """The next unrecognised row under the input box must not skip Return."""
+
+    item = claim()
+    process = FakePty(
+        prompt_input_output=_PROMPT_FRAME_WITH_UNSEEN_BANNER,
+        read_error=_PtyResponseTimeout("main_repl_without_prompt_echo"),
+    )
+    source = FakeSource([None])
+
+    result = registrar(source, FakeFactory(process)).process(item)
+
+    assert result.status == "retry"
+    assert result.error_code == "creation_ambiguous"
+    assert "\r" in process.writes
+
+
+def test_launch_registers_through_unrecognised_prompt_frame_residue() -> None:
+    item = claim()
+    process = FakePty(
+        prompt_input_output=_PROMPT_FRAME_WITH_UNSEEN_BANNER,
+        output="REGISTERED\r\n",
+    )
+    source = FakeSource([None, projection_for(item)])
+
+    result = registrar(source, FakeFactory(process)).process(item)
+
+    assert result.status == "visible"
+    assert "\r" in process.writes
+    assert process.writes[-1] == "/exit\r"
+
+
+def test_launch_keeps_malformed_answer_after_unrecognised_residue_retryable() -> None:
+    """Residue no longer withholds Return, but it still withholds CERTAINTY.
+
+    A frame with unrecognised residue is one the registrar cannot fully read,
+    so a malformed answer after its Return stays creation_ambiguous (retry)
+    exactly as the auto-submitted and unverified cases do -- never the fatal
+    bridge_conflict reserved for a clean frame the registrar submitted itself.
+    """
+
+    item = claim()
+    process = FakePty(
+        prompt_input_output=_PROMPT_FRAME_WITH_UNSEEN_BANNER,
+        output="Registered!\r\n",
+    )
+    source = FakeSource([None])
+
+    result = registrar(source, FakeFactory(process)).process(item)
+
+    assert result.status == "retry"
+    assert result.error_code == "creation_ambiguous"
+    assert "\r" in process.writes
+
+
+def test_launch_clean_frame_malformed_answer_is_still_fatal() -> None:
+    """Control for the test above: the fatal branch is untouched."""
+
+    item = claim()
+    process = FakePty(
+        prompt_input_output=_PRODUCTION_TWO_ROW_PASTE_CHIP,
+        output="Registered!\r\n",
+    )
+    source = FakeSource([None])
+
+    result = registrar(source, FakeFactory(process)).process(item)
+
+    assert result.status == "failed"
+    assert result.error_code == "bridge_conflict"
+    assert "\r" in process.writes
+
+
+def _auth_recovery_record(item, prompt: str) -> dict:
+    return {
+        "status": "claimed",
+        "job_id": item.job_id,
+        "reserved_claude_uuid": item.reserved_claude_uuid,
+        "lease_digest": "b" * 64,
+        "attempt_ordinal": 4,
+        "operation_id": "6ae1c4de-0000-4000-8000-000000000001",
+        "prompt_digest": hashlib.sha256(prompt.encode()).hexdigest(),
+        "source_cwd": item.source_cwd,
+    }
+
+
+def test_auth_recovery_presses_return_for_prompt_frame_residue_it_cannot_name() -> None:
+    item = claim()
+    prompt = "bounded same-UUID authentication recovery prompt"
+    process = FakePty(
+        prompt_input_output=_PROMPT_FRAME_WITH_UNSEEN_BANNER,
+        read_error=_PtyResponseTimeout("main_repl_without_prompt_echo"),
+    )
+
+    outcome = registrar(FakeSource(), FakeFactory(process)).resume_auth_recovery(
+        _auth_recovery_record(item, prompt), prompt
+    )
+
+    assert outcome.status == "retry"
+    assert outcome.error_code == "creation_ambiguous"
+    assert "\r" in process.writes
+
+
+def test_auth_recovery_keeps_malformed_answer_after_unrecognised_residue_retryable() -> None:
+    item = claim()
+    prompt = "bounded same-UUID authentication recovery prompt"
+    process = FakePty(
+        prompt_input_output=_PROMPT_FRAME_WITH_UNSEEN_BANNER,
+        output="Registered!\r\n",
+    )
+
+    outcome = registrar(FakeSource(), FakeFactory(process)).resume_auth_recovery(
+        _auth_recovery_record(item, prompt), prompt
+    )
+
+    assert outcome.status == "retry"
+    assert outcome.error_code == "creation_ambiguous"
+    assert "\r" in process.writes
