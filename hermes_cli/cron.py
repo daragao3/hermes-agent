@@ -168,25 +168,25 @@ def cron_list(show_all: bool = False):
             status = color("[disabled]", Colors.RED)
 
         print(f"  {color(job_id, Colors.YELLOW)} {status}")
-        print(f"    Name:      {name}")
+        print(f"    Name:           {name}")
         if state == "paused":
             raw_reason = job.get("paused_reason")
             paused_at = job.get("paused_at")
             suffix = f" (since {paused_at})" if paused_at else ""
             if raw_reason:
                 shown, clipped = _clip_pause_reason(raw_reason)
-                print(f"    Paused:    {shown}{suffix}")
+                print(f"    Paused:         {shown}{suffix}")
                 if clipped:
                     print(color(
                         f"               full reason: hermes cron show {job_id}",
                         Colors.DIM,
                     ))
             else:
-                print(f"    Paused:    (no reason recorded){suffix}")
-        print(f"    Schedule:  {schedule}")
-        print(f"    Repeat:    {repeat_str}")
-        print(f"    Next run:  {next_run}")
-        print(f"    Deliver:   {deliver_str}")
+                print(f"    Paused:         (no reason recorded){suffix}")
+        print(f"    Schedule:       {schedule}")
+        print(f"    Repeat:         {repeat_str}")
+        print(f"    Next run:       {next_run}")
+        print(f"    Deliver:        {deliver_str}")
 
         # The per-job inference pin. This is the highest-precedence and most
         # durable model override on the box — it beats HERMES_MODEL and
@@ -201,22 +201,22 @@ def cron_list(show_all: bool = False):
         provider = job.get("provider")
         base_url = job.get("base_url")
         if model:
-            print(f"    Model:     {model}")
+            print(f"    Model:          {model}")
         if provider:
-            print(f"    Provider:  {provider}")
+            print(f"    Provider:       {provider}")
         if base_url:
-            print(f"    Base URL:  {base_url}")
+            print(f"    Base URL:       {base_url}")
 
         if skills:
-            print(f"    Skills:    {', '.join(skills)}")
+            print(f"    Skills:         {', '.join(skills)}")
         script = job.get("script")
         if script:
-            print(f"    Script:    {script}")
+            print(f"    Script:         {script}")
         if job.get("no_agent"):
-            print(f"    Mode:      {color('no-agent', Colors.DIM)} (script stdout delivered directly)")
+            print(f"    Mode:           {color('no-agent', Colors.DIM)} (script stdout delivered directly)")
         workdir = job.get("workdir")
         if workdir:
-            print(f"    Workdir:   {workdir}")
+            print(f"    Workdir:        {workdir}")
 
         # Execution history
         last_status = job.get("last_status")
@@ -226,12 +226,12 @@ def cron_list(show_all: bool = False):
                 status_display = color("ok", Colors.GREEN)
             else:
                 status_display = color(f"{last_status}: {job.get('last_error', '?')}", Colors.RED)
-            print(f"    Completed: {last_run}  {status_display}")
+            print(f"    Last completed: {last_run}  {status_display}")
 
         latest_execution = job.get("latest_execution")
         if latest_execution:
             print(
-                f"    Execution: {latest_execution.get('status', '?')}  "
+                f"    Execution:      {latest_execution.get('status', '?')}  "
                 f"{latest_execution.get('id', '?')}"
             )
 
