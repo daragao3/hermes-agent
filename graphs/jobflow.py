@@ -85,6 +85,16 @@ logger = logging.getLogger(__name__)
 # obs.oauth_llm.get_codex_chat_model() bridges langchain to chatgpt.com/backend-api/codex
 # (Responses API). Per-graph override via HERMES_JOBFLOW_MODEL.
 DEFAULT_MODEL = os.environ.get("HERMES_JOBFLOW_MODEL", "gpt-5.5")
+
+
+def _error_kind(exc: BaseException) -> str:
+    """Classify an LLM-node failure for `JobFlowState.error_kind`.
+
+    `TimeoutError` covers obs.oauth_llm.CodexTimeoutError (the per-call bound)
+    without importing it here, so a stubbed client in tests can raise the
+    builtin and be classified the same way.
+    """
+    return "timeout" if isinstance(exc, TimeoutError) else "llm"
 # On-disk locations. FUNCTIONS, not module constants, and resolved through
 # get_default_hermes_root() rather than Path.home() -- both halves are load-bearing:
 #
@@ -208,8 +218,12 @@ class JobFlowState(TypedDict, total=False):
     # After tracker_update
     tracker_stage: str
 
-    # Error path
+    # Error path. `error_kind` classifies `error` for batch drivers that must
+    # tell a hung provider ("timeout": the per-call bound in obs/oauth_llm.py
+    # fired) from a model failure ("llm": empty/unparseable output, retries
+    # exhausted) without parsing the message. Absent when there is no error.
     error: Optional[str]
+    error_kind: Optional[str]
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +279,12 @@ def match_score_node(state: JobFlowState) -> dict:
             span.record_exception(exc)
             from opentelemetry.trace import Status, StatusCode
             span.set_status(Status(StatusCode.ERROR, str(exc)[:200]))
-            return {"error": f"match_score LLM failed: {exc}"}
+            kind = _error_kind(exc)
+            span.set_attribute("error.kind", kind)
+            return {
+                "error": f"match_score LLM failed: {type(exc).__name__}: {exc}",
+                "error_kind": kind,
+            }
 
         span.set_attribute("gen_ai.response.model", DEFAULT_MODEL)
         span.set_attribute("matcher.score", result.score)
@@ -508,7 +527,12 @@ def tailor_node(state: JobFlowState) -> dict:
             span.record_exception(exc)
             from opentelemetry.trace import Status, StatusCode
             span.set_status(Status(StatusCode.ERROR, str(exc)[:200]))
-            return {"error": f"tailor_node LLM failed: {exc}"}
+            kind = _error_kind(exc)
+            span.set_attribute("error.kind", kind)
+            return {
+                "error": f"tailor_node LLM failed: {type(exc).__name__}: {exc}",
+                "error_kind": kind,
+            }
 
         span.set_attribute("tailor.cover_chars", len(draft.cover_paragraph))
         span.set_attribute("tailor.resume_hints_count", len(draft.resume_hints))
