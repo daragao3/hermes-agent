@@ -269,6 +269,73 @@ class TestReaping:
         assert len(sub._inflight) <= MAX_TRACKED_RETROS + 10
 
 
+# --- the capture directory must never be the developer's live one ----------
+
+class TestLogDirIsolation:
+    """A test run must not write into ~/.hermes/logs/critic-retro.
+
+    THE DEFECT, measured 2026-09-07. The default was a module-level
+    ``Path.home() / ".hermes" / ...`` constant. The pre-existing
+    test_critic_trigger.py suite constructs CriticSubscriber WITHOUT
+    retro_log_dir, and ``_open_retro_log`` runs BEFORE the (mocked) Popen -- so
+    every such test created a real zero-byte file in the DEVELOPER'S LIVE log
+    directory, and the mocked returncode then made the reaper drop the record
+    without cleaning up. 25 files had accumulated by the time it was noticed.
+
+    tests/conftest.py isolates HERMES_HOME per test and states the rule
+    outright: code using ``Path.home() / ".hermes"`` instead of the canonical
+    helper is a bug to fix at the callsite. Import-time capture defeats that
+    isolation a second way, because the constant freezes before conftest runs.
+    Both halves are fixed; these pin both.
+    """
+
+    def test_default_dir_follows_the_isolated_hermes_home(self, monkeypatch, tmp_path):
+        """Resolved at CALL time, so per-test isolation actually takes."""
+        from events.subscribers.critic_trigger import default_retro_log_dir
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "isolated"))
+        resolved = default_retro_log_dir()
+        assert str(tmp_path / "isolated") in str(resolved), (
+            "default_retro_log_dir ignored HERMES_HOME -- it is import-time "
+            "captured or still Path.home()-based, and tests will write to the "
+            "developer's live ~/.hermes"
+        )
+        assert Path.home() / ".hermes" not in resolved.parents
+
+    def test_a_subscriber_built_without_a_log_dir_stays_inside_hermes_home(
+        self, bus, critic_script, monkeypatch, tmp_path,
+    ):
+        """The exact construction the pre-existing suite uses."""
+        from events.subscribers.critic_trigger import CriticSubscriber
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "isolated"))
+        s = CriticSubscriber(bus, critic_script_path=critic_script)
+        assert str(tmp_path / "isolated") in str(s.retro_log_dir)
+
+    def test_a_failed_spawn_leaves_no_orphan_log(
+        self, sub, bus, tmp_path, monkeypatch,
+    ):
+        """A real production leak, not only a test artifact.
+
+        On OSError there is no child, so nothing will ever reap the invocation
+        and its capture file would sit at zero bytes forever.
+        """
+        _emit_cluster(bus)
+        with patch("subprocess.Popen", side_effect=OSError("no exec")):
+            sub.poll()
+        leftover = list((tmp_path / "retro-logs").glob("*.log"))
+        assert leftover == [], f"orphaned capture file after a failed spawn: {leftover}"
+
+    def test_an_unjudgeable_record_does_not_leave_its_log_behind(
+        self, sub, bus, tmp_path,
+    ):
+        log = _track(sub, rc=None, log_text="", tmp_path=tmp_path)
+        sub._inflight[-1]["proc"] = MagicMock()   # non-int returncode
+        sub._reap_finished_retros()
+        assert sub._inflight == []
+        assert not log.exists(), "dropped the record but kept its log"
+
+
 # --- the handshake: one crash pages once -----------------------------------
 
 class TestHandshakeWithTheChild:
