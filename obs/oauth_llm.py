@@ -82,6 +82,102 @@ _CACHED_TOKEN: Optional[str] = None
 _CACHED_AT: float = 0.0
 _TOKEN_TTL_S: float = 600.0  # re-resolve every 10 minutes; SDK refresh is auto
 
+# Wall-clock bound on ONE Codex request made by codex_structured_invoke().
+#
+# Added 2026-09-07 after a measured 24,158.8 s (6.7 h) single call: during a
+# provider outage (~02:10-08:53 local) one of 34 sequential graphs.invoke()
+# calls blocked for the whole outage and then returned a VALID verdict, so the
+# batch reported 34/34 scored with 0 errors. The other 33 took 12.9-34.1 s.
+#
+# The SDK's own default (httpx read timeout 600 s, 2 retries) did NOT bound it,
+# and the arithmetic says why: 3 outer attempts x 3 SDK attempts x 600 s is at
+# most 90 min, well short of 6.7 h. A read timeout only fires on SILENCE; a
+# stream that keeps trickling bytes (SSE keepalives, a slow body) resets it
+# forever. So the bound here is enforced twice: an httpx timeout for the silent
+# case AND a watchdog timer that closes the stream at the deadline for the
+# trickling case. Per-call means per-call -- the SDK's internal retries are
+# disabled (max_retries=0) so the outer loop in codex_structured_invoke() is
+# the only retry layer, and a timeout is terminal there (never retried), so a
+# caller sees a result or an exception within ~timeout_s of calling.
+#
+# Env override HERMES_JOBFLOW_LLM_TIMEOUT_S applies to every caller of this
+# module (Matcher, Tailor, Critic -- all one code path). A malformed or
+# non-positive value falls back to the default and is logged: a typo must
+# never DISARM the bound, which is the same asymmetry graphs/jobflow.py keeps
+# for the comp floor.
+LLM_TIMEOUT_ENV = "HERMES_JOBFLOW_LLM_TIMEOUT_S"
+DEFAULT_LLM_TIMEOUT_S: float = 120.0
+# Connecting should never need the whole budget; cap it so a black-holed
+# SYN fails fast and the rest of the budget is spent waiting on a real reply.
+_CONNECT_TIMEOUT_CAP_S: float = 10.0
+
+
+class CodexTimeoutError(TimeoutError):
+    """One Codex request exceeded its wall-clock bound.
+
+    Subclasses TimeoutError so callers can catch the builtin generically.
+    Raised by codex_structured_invoke() WITHOUT retrying: the bound is per
+    call, and a provider that has already hung for the full budget is not a
+    transient the 0.5 s retry sleep can heal.
+    """
+
+
+def resolve_llm_timeout_s(explicit: Optional[float] = None) -> float:
+    """The per-request bound: explicit argument > env > DEFAULT_LLM_TIMEOUT_S.
+
+    Never returns a non-positive number. An explicit non-positive value and a
+    malformed or non-positive env value both fall back to the default, with a
+    warning, so misconfiguration cannot remove the bound.
+    """
+    if explicit is not None:
+        try:
+            val = float(explicit)
+        except (TypeError, ValueError):
+            val = 0.0
+        if val > 0:
+            return val
+        logger.warning(
+            "oauth_llm: ignoring non-positive explicit timeout %r; using %.0fs",
+            explicit,
+            DEFAULT_LLM_TIMEOUT_S,
+        )
+        return DEFAULT_LLM_TIMEOUT_S
+    raw = os.environ.get(LLM_TIMEOUT_ENV)
+    if raw is None or not raw.strip():
+        return DEFAULT_LLM_TIMEOUT_S
+    try:
+        val = float(raw)
+    except ValueError:
+        val = 0.0
+    if val > 0:
+        return val
+    logger.warning(
+        "oauth_llm: %s=%r is not a positive number; using default %.0fs",
+        LLM_TIMEOUT_ENV,
+        raw,
+        DEFAULT_LLM_TIMEOUT_S,
+    )
+    return DEFAULT_LLM_TIMEOUT_S
+
+
+def _build_codex_client(token: str, timeout_s: float):
+    """One OpenAI client bounded at ``timeout_s`` with SDK retries OFF.
+
+    Separate function so tests can assert the two load-bearing kwargs without
+    driving a request: ``timeout`` (connect capped, read/write/pool at the
+    budget) and ``max_retries=0`` (the SDK would otherwise multiply the bound
+    by three, and codex_structured_invoke() already owns retrying).
+    """
+    import httpx
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=token,
+        base_url=CODEX_BASE_URL,
+        timeout=httpx.Timeout(timeout_s, connect=min(_CONNECT_TIMEOUT_CAP_S, timeout_s)),
+        max_retries=0,
+    )
+
 
 def _get_oauth_token() -> str:
     """Return a fresh OAuth access_token, mirroring auxiliary_client's resolution chain.
@@ -283,6 +379,7 @@ def codex_structured_invoke(
     user: str,
     model: Optional[str] = None,
     max_retries: int = 2,
+    timeout_s: Optional[float] = None,
 ):
     """Direct call to Codex Responses API with structured-JSON-output prompting.
 
@@ -304,14 +401,20 @@ def codex_structured_invoke(
       * Output is collected from streamed deltas (the non-streaming
         `output_text` is sometimes empty even when the stream had content).
 
+    Bound: every request is wall-clock limited to ``timeout_s`` (default from
+    HERMES_JOBFLOW_LLM_TIMEOUT_S, else 120 s; see resolve_llm_timeout_s). A
+    request that exceeds it raises CodexTimeoutError immediately -- timeouts
+    are NOT retried, so the caller is back within about one budget. Other
+    failures keep the existing retry loop (max_retries + 1 attempts).
+
     Returns: an instance of `schema` (e.g. MatcherScore) parsed from JSON.
-    Raises: RuntimeError on parse failure with the raw text in the message.
+    Raises: CodexTimeoutError when a request exceeds the bound; RuntimeError
+    on parse failure (raw text in the message) or after retries are exhausted.
     """
     import json as _json
 
-    from openai import OpenAI
-
     model_name = model or os.environ.get("HERMES_OAUTH_MODEL") or DEFAULT_CODEX_MODEL
+    bound_s = resolve_llm_timeout_s(timeout_s)
 
     # Generate JSON Schema from the Pydantic model for prompt grounding.
     try:
@@ -329,31 +432,12 @@ def codex_structured_invoke(
     last_err: Optional[Exception] = None
     for attempt in range(max_retries + 1):
         try:
-            token = _get_oauth_token()
-            client = OpenAI(api_key=token, base_url=CODEX_BASE_URL)
-            text_parts: list[str] = []
-            with client.responses.stream(
-                model=model_name,
+            text = _codex_stream_text_bounded(
+                model_name=model_name,
                 instructions=full_instructions,
-                input=[{"role": "user", "content": user}],
-                store=False,
-            ) as stream:
-                for event in stream:
-                    et = getattr(event, "type", "")
-                    if et == "response.output_text.delta":
-                        delta = getattr(event, "delta", "")
-                        if delta:
-                            text_parts.append(delta)
-                    elif et == "response.error":
-                        raise RuntimeError(
-                            f"Codex stream error: {getattr(event, 'error', None)}"
-                        )
-                final_response = stream.get_final_response()
-            text = "".join(text_parts).strip()
-            if not text and final_response is not None:
-                text = (getattr(final_response, "output_text", "") or "").strip()
-            if not text:
-                raise RuntimeError("Codex returned empty response text")
+                user=user,
+                timeout_s=bound_s,
+            )
             # Some models still wrap in fences; tolerate.
             if text.startswith("```"):
                 text = text.strip("`")
@@ -361,6 +445,10 @@ def codex_structured_invoke(
                     text = text[4:]
                 text = text.strip()
             return schema.model_validate_json(text)
+        except CodexTimeoutError:
+            # Terminal by design: the bound is per call. See the module comment
+            # above LLM_TIMEOUT_ENV for why a retry here would be wrong.
+            raise
         except Exception as e:
             last_err = e
             if attempt >= max_retries:
@@ -369,9 +457,113 @@ def codex_structured_invoke(
     raise RuntimeError(f"codex_structured_invoke failed after retries: {last_err}")
 
 
+def _codex_stream_text_bounded(
+    *,
+    model_name: str,
+    instructions: str,
+    user: str,
+    timeout_s: float,
+) -> str:
+    """ONE streamed Codex request, returned as its collected text, within ``timeout_s``.
+
+    Two bounds cooperate, because each covers a failure the other cannot:
+
+    * The client's httpx timeout (set in _build_codex_client) fires when the
+      connection or a single read goes SILENT for ``timeout_s``. The SDK
+      surfaces that as openai.APITimeoutError, translated here.
+    * A watchdog threading.Timer fires at the wall-clock deadline regardless
+      of traffic and closes the stream from outside. That is what bounds a
+      stream that keeps trickling bytes -- the 6.7 h case -- which never
+      trips a read timeout. Closing the response makes the iterating thread's
+      next read fail; whatever exception that produces is translated to
+      CodexTimeoutError because the flag was set first. If the reading thread
+      is blocked in recv when the socket closes and the platform does not
+      wake it, the read timeout still does within another ``timeout_s``, so
+      the worst case is two budgets, never unbounded.
+
+    A response that completed before the deadline is returned even if the
+    timer fires during parsing: the flag only converts FAILURES.
+    """
+    import openai as _openai
+
+    token = _get_oauth_token()
+    client = _build_codex_client(token, timeout_s)
+    text_parts: list[str] = []
+    timed_out = threading.Event()
+    started = time.monotonic()
+    timer: Optional[threading.Timer] = None
+
+    def _bound_exceeded(cause: Optional[BaseException] = None) -> CodexTimeoutError:
+        elapsed = time.monotonic() - started
+        err = CodexTimeoutError(
+            f"Codex request exceeded {timeout_s:g}s bound (elapsed {elapsed:.1f}s, "
+            f"model={model_name}, partial_chars={sum(len(t) for t in text_parts)})"
+        )
+        if cause is not None:
+            err.__cause__ = cause
+        return err
+
+    try:
+        with client.responses.stream(
+            model=model_name,
+            instructions=instructions,
+            input=[{"role": "user", "content": user}],
+            store=False,
+        ) as stream:
+
+            def _expire() -> None:
+                timed_out.set()
+                try:
+                    stream.close()
+                except Exception:  # noqa: BLE001 -- best effort; the flag is what matters
+                    logger.debug("oauth_llm: stream.close() on timeout raised", exc_info=True)
+
+            timer = threading.Timer(timeout_s, _expire)
+            timer.daemon = True
+            timer.start()
+            for event in stream:
+                if timed_out.is_set():
+                    raise _bound_exceeded()
+                et = getattr(event, "type", "")
+                if et == "response.output_text.delta":
+                    delta = getattr(event, "delta", "")
+                    if delta:
+                        text_parts.append(delta)
+                elif et == "response.error":
+                    raise RuntimeError(
+                        f"Codex stream error: {getattr(event, 'error', None)}"
+                    )
+            final_response = stream.get_final_response()
+    except CodexTimeoutError:
+        raise
+    except _openai.APITimeoutError as e:
+        # httpx connect/read timeout: the silent-hang half of the bound.
+        raise _bound_exceeded(e) from e
+    except Exception as e:
+        if timed_out.is_set():
+            raise _bound_exceeded(e) from e
+        raise
+    finally:
+        if timer is not None:
+            timer.cancel()
+
+    text = "".join(text_parts).strip()
+    if not text and final_response is not None:
+        text = (getattr(final_response, "output_text", "") or "").strip()
+    if not text:
+        if timed_out.is_set():
+            raise _bound_exceeded()
+        raise RuntimeError("Codex returned empty response text")
+    return text
+
+
 __all__ = [
     "get_codex_chat_model",
     "codex_structured_invoke",
+    "resolve_llm_timeout_s",
+    "CodexTimeoutError",
     "DEFAULT_CODEX_MODEL",
+    "DEFAULT_LLM_TIMEOUT_S",
+    "LLM_TIMEOUT_ENV",
     "CODEX_BASE_URL",
 ]

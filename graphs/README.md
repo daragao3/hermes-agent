@@ -437,3 +437,26 @@ to the Codex Responses endpoint through
 endpoint serves under the OAuth mandate above. There is no `OPENAI_API_KEY`
 or Anthropic side path to switch to, and no temperature knob: the endpoint
 rejects the parameter, so none is sent.
+
+## Bounding a hung LLM call
+
+Every request `codex_structured_invoke` makes is wall-clock bounded. The
+default is 120 s per request; override with `HERMES_JOBFLOW_LLM_TIMEOUT_S` in
+`~/.hermes/.env` (it applies to Matcher, Tailor and Critic alike, since they
+share the one call path). A request that exceeds the bound raises
+`obs.oauth_llm.CodexTimeoutError` (a `TimeoutError`) and is NOT retried, so
+`invoke()` returns within about one budget with `error_kind="timeout"` and
+`score=None`; `route_decision` then routes it to `review` as it does any
+error. A malformed or non-positive value falls back to the default rather
+than disabling the bound.
+
+Why two mechanisms (an httpx timeout AND a watchdog timer that closes the
+stream): measured 2026-09-07, one call blocked 24,158.8 s (6.7 h) through a
+provider outage and then returned a valid verdict. The SDK's default 600 s
+read timeout never fired because a read timeout only measures SILENCE, and a
+stream that keeps trickling bytes resets it forever; the watchdog is what
+bounds that case. Batch drivers (`bin/matcher_shadow_run.py`) count a
+timed-out job as an error, write nothing for it, leave it unprocessed so the
+next run retries it, and stop the batch after a run of consecutive timeouts
+(`--max-consecutive-timeouts`, default 3) so an outage cannot hold a cron
+tick for `N x 120 s`.
