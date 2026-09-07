@@ -66,31 +66,56 @@ _CODEX_INJECTED_USER_PREFIXES = (
     "# AGENTS.md instructions for ",
     "<skill>\n",
 )
+# These prefixes stop at the "Signed marker: " LABEL and deliberately do not
+# pin the marker SCHEME that follows it.
+#
+# Keying the exclusion on the scheme token made this guard weakest exactly
+# where the traffic is synthetic, because a diagnostic harness fakes that one
+# token BY DESIGN -- it must not mint something mistakable for a signed marker.
+# Measured 2026-09-07 on the live store: an A/B probe
+# (session-bridge/probes/registrar-modea/submit_ab.py) wrote the canonical
+# preamble verbatim but signed it "PROBE_MARKER_NOT_REAL:", every prefix here
+# missed, and 10 registration prompts were classified as genuine user requests
+# and paid for as sidebar registrations -- 20 such rows out of 101 lifetime.
+# The same miss would follow any scheme rotation (V2), which is the more
+# durable reason to stop pinning it.
+#
+# The two opening sentences plus the marker LABEL already identify a
+# registration prompt; no ordinary user request opens that way. The scheme
+# stays exact where it is actually load-bearing -- decode_bridge_marker and the
+# identity binding -- which this does not touch.
+#
+# Join style is still matched EXACTLY, one entry per shape observed in the
+# wild. That is what keeps the structural near-misses visible
+# (test_current_registration_structural_near_misses_remain_meaningful): a
+# preamble welded with a different mix of newlines and spaces is NOT assumed to
+# be ours, because wrongly excluding a real session hides a user's work, while
+# wrongly including one costs a stray sidebar row.
+_MARKER_SCHEME = "HERMES_SESSION_BRIDGE_V1:"
 _CURRENT_CODEX_REGISTRATION_PREAMBLE = "\n".join((
     "This is a Hermes Session Bridge Claude visibility registration.",
     "Do not perform project work or use tools.",
-    "Signed marker: HERMES_SESSION_BRIDGE_V1:",
+    f"Signed marker: {_MARKER_SCHEME}",
 ))
 _CODEX_REGISTRATION_PREFIXES = (
-    _CURRENT_CODEX_REGISTRATION_PREAMBLE,
+    # Derived from the preamble the builder actually emits, minus the scheme,
+    # so the exclusion cannot drift from the prompt it is meant to recognise.
+    _CURRENT_CODEX_REGISTRATION_PREAMBLE.removesuffix(_MARKER_SCHEME),
     # Same preamble with single-space joins -- some launch wrappers collapse
     # newlines, and those variants slipped past this exclusion and became
     # visible "[Codex] This is a Hermes..." sidebar records.
     "This is a Hermes Session Bridge Claude visibility registration. "
     "Do not perform project work or use tools. "
-    "Signed marker: HERMES_SESSION_BRIDGE_V1:",
+    "Signed marker: ",
     (
         "Hermes Session Bridge registration only. "
         "Hermes Session Bridge placeholder.\n"
-        "Signed marker: HERMES_SESSION_BRIDGE_V1:"
+        "Signed marker: "
     ),
-    (
-        "Hermes Session Bridge registration only. Signed marker: "
-        "HERMES_SESSION_BRIDGE_V1:"
-    ),
+    "Hermes Session Bridge registration only. Signed marker: ",
     (
         "Hermes registration diagnostic. Hermes Session Bridge diagnostic "
-        "placeholder.\nSigned marker: HERMES_SESSION_BRIDGE_V1:"
+        "placeholder.\nSigned marker: "
     ),
 )
 
@@ -368,9 +393,7 @@ def build_claude_registration_prompt(
         sort_keys=True,
         separators=(",", ":"),
     )
-    marker_suffix = identity.signed_marker.removeprefix(
-        "HERMES_SESSION_BRIDGE_V1:"
-    )
+    marker_suffix = identity.signed_marker.removeprefix(_MARKER_SCHEME)
     prompt = "\n".join((
         f"{_CURRENT_CODEX_REGISTRATION_PREAMBLE}{marker_suffix}",
         f"Bounded metadata: {serialized}",

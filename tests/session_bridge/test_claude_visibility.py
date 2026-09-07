@@ -301,6 +301,44 @@ def test_current_registration_structural_near_misses_remain_meaningful(
     )
 
 
+@pytest.mark.parametrize(
+    "scheme",
+    [
+        # The exact token a registrar A/B probe used on 2026-09-06. It is
+        # deliberately not the real scheme -- a diagnostic must not mint a
+        # marker that could be mistaken for a signed one.
+        "PROBE_MARKER_NOT_REAL:PROBE_ONLY_NOT_A_REAL_MARKER_aaaa",
+        # A future or rotated scheme generation.
+        "HERMES_SESSION_BRIDGE_V2:payload",
+        "HERMES_SESSION_BRIDGE_V1_TEST:payload",
+    ],
+)
+def test_registration_preamble_is_excluded_whatever_marker_scheme_it_carries(
+    scheme: str,
+) -> None:
+    """A registration prompt stays excluded when only the marker SCHEME differs.
+
+    The structural near-misses above must stay visible, so this fixes the join
+    style exactly as the canonical prompt writes it and varies only the token
+    after "Signed marker: ". Keying the exclusion on the scheme made the guard
+    weakest precisely where traffic is synthetic: measured 2026-09-07, a probe
+    substituting its own scheme put 10 registration prompts through discovery
+    as genuine user work and each was paid for and registered.
+    """
+
+    content = (
+        "This is a Hermes Session Bridge Claude visibility registration.\n"
+        "Do not perform project work or use tools.\n"
+        f"Signed marker: {scheme}\n"
+        'Bounded metadata: {"bridge_id":"probe-bridge-bbbb"}\n'
+        "You must reply exactly REGISTERED."
+    )
+
+    assert evaluate_claude_visibility(
+        _projection(Provider.CODEX, content=content)
+    ) == "bridge_placeholder"
+
+
 def test_codex_injected_context_does_not_hide_a_real_user_request() -> None:
     projection = replace(
         _projection(Provider.CODEX),
