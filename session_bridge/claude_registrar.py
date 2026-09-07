@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, NamedTuple, Protocol, Sequence
 
 _LOG = logging.getLogger(__name__)
 
@@ -1677,13 +1677,15 @@ class ClaudeNativeRegistrar:
                     # box is a no-op. So submit, and stay retryable below.
                     submission_unverified = True
                     prompt_input = ""
-                prompt_response_observed, prompt_response = (
-                    _prompt_input_registered_response(
-                        prompt_input, prompt=prompt
-                    )
-                )
-                if prompt_response_observed:
+                prompt_verdict = _classify_prompt_input(prompt_input, prompt=prompt)
+                prompt_response = prompt_verdict.response
+                if prompt_verdict.answered:
                     paste_auto_submitted = True
+                elif prompt_verdict.residue:
+                    # Rows the normalizer could not name are not a reply. Press
+                    # Return -- withholding it is Mode A -- but keep a malformed
+                    # answer retryable: the screen was never fully read.
+                    submission_unverified = True
                 if _is_authentication_failure(prompt_input):
                     pending = (
                         "claude_authentication_unavailable",
@@ -2055,13 +2057,15 @@ class ClaudeNativeRegistrar:
                     # box is a no-op. So submit, and stay retryable below.
                     submission_unverified = True
                     prompt_input = ""
-                prompt_response_observed, prompt_response = (
-                    _prompt_input_registered_response(
-                        prompt_input, prompt=prompt
-                    )
-                )
-                if prompt_response_observed:
+                prompt_verdict = _classify_prompt_input(prompt_input, prompt=prompt)
+                prompt_response = prompt_verdict.response
+                if prompt_verdict.answered:
                     paste_auto_submitted = True
+                elif prompt_verdict.residue:
+                    # Rows the normalizer could not name are not a reply. Press
+                    # Return -- withholding it is Mode A -- but keep a malformed
+                    # answer retryable: the screen was never fully read.
+                    submission_unverified = True
                 if _is_authentication_failure(prompt_input):
                     pending = (
                         "retry",
@@ -3095,16 +3099,73 @@ def _has_exact_registered_response(output: str, prompt: str) -> bool:
     return _is_registered_only(meaningful)
 
 
+# The one token the registration prompt asks for. A drawn line that carries it
+# as a whole word -- "REGISTERED", "REGISTERED.", "NOT REGISTERED" -- is a line
+# the model wrote in answer to the prompt, however wrong the wording. It is NOT
+# proof the answer is acceptable; _has_exact_registered_response still decides
+# that. It is proof that SOMETHING answered, which is the only question the
+# prompt-input frame is asked.
+_REGISTERED_TOKEN_RE = re.compile(r"(?<![A-Za-z])REGISTERED(?![A-Za-z])")
+
+
+def _is_answer_evidence_line(line: str) -> bool:
+    """True for one normalized row that only a reply to the prompt can draw."""
+
+    if line.startswith(_CLAUDE_RESPONSE_BULLET):
+        return True
+    return _REGISTERED_TOKEN_RE.search(line) is not None
+
+
+class _PromptInputVerdict(NamedTuple):
+    """What the prompt-input frame proves about the submission.
+
+    ``answered``: the frame carries POSITIVE evidence of a reply -- a
+    REGISTERED-bearing line or the reply bullet -- so the paste self-submitted
+    and the registrar must not press Return again.
+    ``response``: that reply, once the stream has settled on a line break;
+    ``None`` while it is still arriving.
+    ``residue``: the normalizer left rows it could not name. That is the
+    ABSENCE of evidence, not evidence of a submission: the registrar presses
+    Return (a redundant Return into an emptied box is a measured no-op,
+    2026-08-24) and stays retryable rather than fatal on a malformed answer,
+    because it never fully read the screen it submitted from.
+    """
+
+    answered: bool
+    response: str | None
+    residue: bool
+
+
+def _classify_prompt_input(output: str, *, prompt: str) -> _PromptInputVerdict:
+    """Score the prompt-input frame on positive evidence only.
+
+    Until 2026-09-07 ANY non-empty residue after _normalized_terminal_output
+    counted as "the paste auto-submitted and this is the reply". That made the
+    Return gate in _launch and resume_auth_recovery a function of how much of
+    the CLI's chrome the normalizer had been taught: each new row the CLI drew
+    under its input box -- the two-row paste chip on 2026-09-06 being the
+    measured one -- was scored as an answer, the registrar withheld its own
+    Return, no turn ever started, and the attempt burned its budget as
+    creation_ambiguous / main_repl_without_prompt_echo with no transcript (Mode
+    A). Teaching the normalizer that row fixed that row; this fixes the class.
+    """
+
+    normalized = _normalized_terminal_output(output, prompt)
+    lines = [line for line in normalized.splitlines() if line.strip()]
+    if not lines:
+        return _PromptInputVerdict(False, None, False)
+    if not any(_is_answer_evidence_line(line) for line in lines):
+        return _PromptInputVerdict(False, None, True)
+    if not output.endswith(("\r", "\n")):
+        return _PromptInputVerdict(True, None, False)
+    return _PromptInputVerdict(True, normalized, False)
+
+
 def _prompt_input_registered_response(
     output: str, *, prompt: str
 ) -> tuple[bool, str | None]:
-    normalized = _normalized_terminal_output(output, prompt)
-    response_observed = bool(normalized.strip())
-    if not response_observed:
-        return False, None
-    if not output.endswith(("\r", "\n")):
-        return True, None
-    return True, normalized
+    verdict = _classify_prompt_input(output, prompt=prompt)
+    return verdict.answered, verdict.response
 
 
 def _exact_registered_suffix(output: str) -> str | None:
