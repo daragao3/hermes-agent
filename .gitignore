@@ -75,10 +75,16 @@ environments/benchmarks/evals/
 # build output -- the root-anchored `apps/desktop/release/` rule does not match at
 # `.claude/worktrees/<name>/apps/desktop/release/`). Every file event in any worktree
 # schedules a FULL-project reconcile (CodeGraph.watch()'s syncFn calls sync() with no
-# changed-file argument), which cost 1.5-142s each against the 1.07 GB graph, and the
-# per-file chokidar watches leaked handles at ~3,750/min. Measured: one daemon at 91%
-# of a core and 174,304 handles over 4h. Only takes effect for daemons STARTED AFTER
-# this rule lands -- ignoreMatcher is built once, at watcher startup.
+# changed-file argument), which cost 1.5-142s each against the 1.07 GB graph. Handles
+# climbed ~3,750/min to a ~174,300 ceiling. That is NOT a leak: ~3,750/min is just
+# chokidar's normal crawl rate, and the crawl never CONVERGED, because 20 worktrees
+# churned (Electron rebuilds, git ops, 20 agents writing) faster than it could settle.
+# Measured: one daemon at 91% of a core and 174,304 handles over 4h. Post-fix the same
+# code converges to ~8,720 handles in ~4min and holds -- verified flat over 13h at 0.26%
+# of a core (2026-09-07). Diagnose this class by CONVERGENCE (sample repeatedly, ask
+# whether the count goes FLAT), never by comparing one snapshot against a directory
+# count. Only takes effect for daemons STARTED AFTER this rule lands -- ignoreMatcher
+# is built once, at watcher startup.
 **/.claude/worktrees/
 
 # Web UI build output
