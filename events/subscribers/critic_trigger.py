@@ -46,7 +46,7 @@ from typing import Dict, List, Optional
 from events.bus import EventBus
 from events.schema import Event, EventType, Priority
 from events.subscribers.base import BaseSubscriber
-from hermes_constants import real_executable
+from hermes_constants import get_default_hermes_root, real_executable
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,21 @@ DEFAULT_DEBOUNCE_SECONDS = 300
 # Per-invocation stdout+stderr capture for spawned retros.  Kept only for a run
 # that FAILED: a successful run's artifact is the retro file itself, and an
 # unbounded log directory is its own operational problem.
-DEFAULT_RETRO_LOG_DIR = Path.home() / ".hermes" / "logs" / "critic-retro"
+#
+# RESOLVED AT CALL TIME, NEVER AT IMPORT, and via get_default_hermes_root()
+# rather than Path.home().  tests/conftest.py isolates HERMES_HOME per test and
+# says so explicitly: "Code using Path.home() / '.hermes' instead of the
+# canonical helper is a bug to fix at the callsite."  A module-level
+# Path.home() constant is ALSO frozen before that isolation runs -- the
+# import-time HERMES_HOME snapshot defect class.  Both halves bit on
+# 2026-09-07: the pre-existing test_critic_trigger.py suite constructs
+# CriticSubscriber without retro_log_dir, and left 25 zero-byte logs in the
+# DEVELOPER'S LIVE ~/.hermes/logs/critic-retro.  get_default_hermes_root() is
+# the root-scoped helper events/paths.py already uses, so the live path is
+# unchanged while an HERMES_HOME pointing outside ~/.hermes (pytest's tempdir)
+# is returned as-is.
+def default_retro_log_dir() -> Path:
+    return get_default_hermes_root() / "logs" / "critic-retro"
 
 # Ceiling on tracked children, so a pathological spawn rate cannot grow this
 # list without bound.  Well above any realistic concurrency: retros take
@@ -96,7 +110,7 @@ class CriticSubscriber(BaseSubscriber):
         super().__init__(bus)
         self.critic_script_path = Path(critic_script_path or DEFAULT_CRITIC_SCRIPT)
         self.debounce_seconds = debounce_seconds
-        self.retro_log_dir = Path(retro_log_dir or DEFAULT_RETRO_LOG_DIR)
+        self.retro_log_dir = Path(retro_log_dir or default_retro_log_dir())
         # cluster_key -> monotonic timestamp of last invocation
         self._last_invoked: Dict[str, float] = {}
         # Spawned retros still running, reaped by poll().  Without this the
@@ -138,7 +152,11 @@ class CriticSubscriber(BaseSubscriber):
                 continue
             if not isinstance(rc, int):
                 # A real Popen.returncode is int or None.  Anything else is a
-                # test double; judging it would invent a failure.
+                # test double; judging it would invent a failure.  Stop
+                # tracking it AND drop its capture file -- keeping a log for a
+                # record we refuse to judge is how the directory grows without
+                # anything ever reading it.
+                self._discard_log(rec)
                 continue
             if rc == 0:
                 self._discard_log(rec)
@@ -255,6 +273,7 @@ class CriticSubscriber(BaseSubscriber):
             f"agent={source},type={failure_type}",
         ]
         log_path, log_handle = self._open_retro_log(cluster_key)
+        spawned = False
         try:
             # Non-blocking subprocess (NOT fully detached on Windows).
             # Popen returns immediately; poll() reaps the exit code later.
@@ -284,6 +303,7 @@ class CriticSubscriber(BaseSubscriber):
             })
             if len(self._inflight) > MAX_TRACKED_RETROS:
                 del self._inflight[:-MAX_TRACKED_RETROS]
+            spawned = True
             logger.info(
                 "CriticSubscriber: invoked Critic for cluster %s (log %s)",
                 cluster_key, log_path,
@@ -296,6 +316,10 @@ class CriticSubscriber(BaseSubscriber):
             # Do NOT re-raise — base subscriber would count it toward the
             # circuit breaker.  Subprocess spawn failure is observable via
             # the log; the next cluster event will retry.
+            #
+            # There is no child, so nothing will ever reap this invocation and
+            # its capture file would sit at zero bytes forever.  It is dropped
+            # in the finally below, AFTER the handle is closed.
         finally:
             # The child holds its own duplicate of the handle; the parent must
             # let go or the log file stays open for the gateway's lifetime.
@@ -304,3 +328,9 @@ class CriticSubscriber(BaseSubscriber):
                     log_handle.close()
                 except OSError:
                     pass
+            # ORDER MATTERS AND THE FAILURE IS SILENT: Windows refuses to
+            # unlink an open file, and _discard_log swallows the OSError, so
+            # discarding before the close above leaves the orphan behind with
+            # no error anywhere.  Caught by the regression test on 2026-09-07.
+            if not spawned:
+                self._discard_log({"log_path": log_path})
