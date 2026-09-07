@@ -1361,7 +1361,7 @@ class CLICommandsMixin:
                     print(f"  Skills: {', '.join(job['skills'])}")
                 print(f"  Prompt: {job.get('prompt_preview', '')}")
                 if job.get("last_run_at"):
-                    print(f"  Completed: {job['last_run_at']} ({job.get('last_status', '?')})")
+                    print(f"  Last completed: {job['last_run_at']} ({job.get('last_status', '?')})")
                 print()
             return
 

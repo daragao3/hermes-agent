@@ -131,7 +131,7 @@ class TestCronCommandLifecycle:
 
         out = capsys.readouterr().out
         assert "[paused]" in out
-        assert "Paused:    host CPU-saturated 2026-08-23 (since " in out
+        assert "Paused:         host CPU-saturated 2026-08-23 (since " in out
 
     def test_list_flags_a_pause_with_no_reason(self, tmp_cron_dir, capsys):
         job = create_job(prompt="Check server status", schedule="every 1h")
@@ -140,7 +140,7 @@ class TestCronCommandLifecycle:
 
         cron_command(Namespace(cron_command="list", all=True))
 
-        assert "Paused:    (no reason recorded)" in capsys.readouterr().out
+        assert "Paused:         (no reason recorded)" in capsys.readouterr().out
 
     def test_list_clips_a_long_reason_and_says_where_the_rest_is(
         self, tmp_cron_dir, capsys
@@ -185,7 +185,7 @@ class TestCronCommandLifecycle:
         cron_command(Namespace(cron_command="list", all=True))
         out = capsys.readouterr().out
 
-        assert "Paused:    host saturated (since " in out
+        assert "Paused:         host saturated (since " in out
         assert "full reason:" not in out
         assert "…" not in out
 
@@ -205,7 +205,7 @@ class TestCronCommandLifecycle:
         cron_command(Namespace(cron_command="list", all=True))
         out = capsys.readouterr().out
 
-        assert "Paused:    barrier held resume after Gate 2 (since " in out
+        assert "Paused:         barrier held resume after Gate 2 (since " in out
 
 
     def test_run_reason_from_the_real_parser_reaches_the_audit_event(
@@ -393,9 +393,9 @@ class TestCronCommandLifecycle:
         cron_command(Namespace(cron_command="list"))
 
         out = capsys.readouterr().out
-        assert "Model:     claude-opus-5" in out
-        assert "Provider:  anthropic" in out
-        assert "Base URL:  https://api.anthropic.com" in out
+        assert "Model:          claude-opus-5" in out
+        assert "Provider:       anthropic" in out
+        assert "Base URL:       https://api.anthropic.com" in out
 
     def test_list_omits_the_pin_lines_for_an_unpinned_job(self, tmp_cron_dir, capsys):
         """No pin, no line — an empty label would read as a pin to nothing."""
@@ -579,7 +579,7 @@ class TestCronCommandLifecycle:
         cron_command(Namespace(cron_command="list", all=True))
 
         out = capsys.readouterr().out
-        assert "Repeat:    ∞" in out
+        assert "Repeat:         ∞" in out
 
     def test_list_does_not_crash_when_deliver_is_null(self, tmp_cron_dir, capsys):
         """A job can be persisted with ``"deliver": null`` (present-but-null).
@@ -596,7 +596,7 @@ class TestCronCommandLifecycle:
         cron_command(Namespace(cron_command="list", all=True))
 
         out = capsys.readouterr().out
-        assert "Deliver:   local" in out
+        assert "Deliver:        local" in out
 
 
 class TestGatewayNotRunningWarning:
