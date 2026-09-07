@@ -101,7 +101,10 @@ _TOKEN_TTL_S: float = 600.0  # re-resolve every 10 minutes; SDK refresh is auto
 # caller sees a result or an exception within ~timeout_s of calling.
 #
 # Env override HERMES_JOBFLOW_LLM_TIMEOUT_S applies to every caller of this
-# module (Matcher, Tailor, Critic -- all one code path). A malformed or
+# module (Matcher, Tailor, Critic -- all one code path), and since 2026-09-07
+# also to get_codex_chat_model() as its default per-attempt timeout (that
+# langchain path keeps SDK retries on and has no stream watchdog; see its
+# docstring for the resulting worst case). A malformed or
 # non-positive value falls back to the default and is logged: a typo must
 # never DISARM the bound, which is the same asymmetry graphs/jobflow.py keeps
 # for the comp floor.
@@ -327,6 +330,7 @@ def get_codex_chat_model(
     *,
     temperature: Optional[float] = None,
     max_retries: int = 2,
+    timeout: Optional[float] = None,
     **kwargs: Any,
 ):
     """Return a ChatOpenAI instance wired to the Codex OAuth endpoint.
@@ -336,9 +340,44 @@ def get_codex_chat_model(
         temperature: SILENTLY DROPPED — Codex endpoint rejects it (400).
             Kept in the signature for drop-in compatibility with langchain_openai
             callers; logged at DEBUG when discarded.
-        max_retries: passed through to ChatOpenAI.
-        **kwargs: forwarded to ChatOpenAI (e.g. timeout). Watch for codex-incompatible
-            params like max_output_tokens.
+        max_retries: passed through to ChatOpenAI (default 2, the SDK's own
+            default). See "Bound" below for why this path keeps SDK retries ON
+            while codex_structured_invoke() turns them off.
+        timeout: per-ATTEMPT bound in seconds, passed to ChatOpenAI as its
+            ``timeout`` (alias of ``request_timeout``). None resolves through
+            resolve_llm_timeout_s(): HERMES_JOBFLOW_LLM_TIMEOUT_S, else 120 s.
+            A non-positive value falls back the same way, with a warning, so a
+            caller cannot disarm the bound by mistake. A ``request_timeout``
+            key in ``**kwargs`` is accepted as the same argument (langchain's
+            field name) and never forwarded alongside ``timeout``.
+        **kwargs: forwarded to ChatOpenAI. Watch for codex-incompatible params
+            like max_output_tokens.
+
+    Bound (added 2026-09-07, preventive -- this path had no callers at the
+    time; see the comment above LLM_TIMEOUT_ENV for the 6.7 h incident on the
+    direct path). Before this, a caller that omitted ``timeout`` got the
+    openai SDK defaults through langchain: 600 s read timeout x 3 attempts.
+    Now the default is resolve_llm_timeout_s() per attempt. Unlike
+    codex_structured_invoke(), which owns its own retry loop and therefore
+    builds its client with ``max_retries=0``, a ChatOpenAI instance has NO
+    outer retry layer: the SDK's retries are the only ones a transient 5xx or
+    rate limit ever gets. So they stay on. The SDK retries on timeouts too, so
+    the TOTAL worst case for one ``.invoke()`` is::
+
+        (max_retries + 1) * timeout  +  SDK backoff  (~0.5-8 s per retry)
+
+    i.e. about 6 min with the defaults (3 x 120 s), not the ~30 min the SDK
+    defaults allowed. Pass ``max_retries=0`` for exactly one budget.
+
+    NOT bounded here, deliberately: the langchain STREAMING path (``.stream()``
+    / ``.astream()``). A read timeout measures silence between bytes, so a
+    stream that keeps trickling (SSE keepalives) is not bounded by ``timeout``
+    at all -- the same shape that produced the 6.7 h call. The direct path
+    closes the stream from a watchdog timer; doing that for ChatOpenAI means
+    wrapping langchain's generator internals, which is neither small nor
+    testable here (langchain_openai is not installed in the agent-src venv),
+    so it is left out. Callers that need a bounded stream should use
+    codex_structured_invoke() or wrap the iteration in their own deadline.
 
     Usage:
         from obs.oauth_llm import get_codex_chat_model
@@ -362,12 +401,22 @@ def get_codex_chat_model(
             temperature,
         )
 
+    # langchain names the field request_timeout and aliases it as timeout;
+    # sending both would make pydantic pick one silently. Fold the field name
+    # into the keyword so the explicit-wins rule below sees it.
+    if "request_timeout" in kwargs:
+        alias_val = kwargs.pop("request_timeout")
+        if timeout is None:
+            timeout = alias_val
+    bound_s = resolve_llm_timeout_s(timeout)
+
     return ChatOpenAI(
         model=model_name,
         api_key=token,
         base_url=CODEX_BASE_URL,
         use_responses_api=True,
         max_retries=max_retries,
+        timeout=bound_s,
         **kwargs,
     )
 

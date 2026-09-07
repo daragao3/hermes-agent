@@ -358,3 +358,116 @@ def test_invoke_reads_the_env_when_no_explicit_bound(monkeypatch):
     oauth_llm.codex_structured_invoke(_Out, instructions="i", user="u")
 
     assert _FakeOpenAI.instances[0].kwargs["timeout"].read == 33.0
+
+
+# --- the langchain path: get_codex_chat_model ------------------------------
+#
+# Preventive (2026-09-07): no caller in agent-src, ~/.hermes/bin or the plugins
+# uses get_codex_chat_model() today, and langchain_openai is NOT installed in
+# the agent-src venv. So the whole module is stubbed in sys.modules -- the
+# function imports ``from langchain_openai import ChatOpenAI`` lazily, which is
+# exactly what makes that possible. What is pinned: a caller that omits
+# ``timeout`` no longer inherits the SDK's 600 s read timeout, the env override
+# reaches this path too, an explicit ``timeout=`` wins, and SDK retries stay on
+# (the ONLY retry layer this path has), so the worst case is
+# (max_retries + 1) x timeout, never unbounded.
+
+
+class _FakeChatOpenAI:
+    instances: list["_FakeChatOpenAI"] = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        _FakeChatOpenAI.instances.append(self)
+
+
+@pytest.fixture
+def chat_model(monkeypatch):
+    """Install the langchain_openai stub and pin the model env; yield the
+    constructor's recorded kwargs after each call via a helper."""
+    import sys
+    import types
+
+    fake_mod = types.ModuleType("langchain_openai")
+    fake_mod.ChatOpenAI = _FakeChatOpenAI
+    monkeypatch.setitem(sys.modules, "langchain_openai", fake_mod)
+    monkeypatch.delenv("HERMES_OAUTH_MODEL", raising=False)
+    monkeypatch.delenv(oauth_llm.LLM_TIMEOUT_ENV, raising=False)
+    _FakeChatOpenAI.instances.clear()
+
+    def _call(*args, **kwargs):
+        llm = oauth_llm.get_codex_chat_model(*args, **kwargs)
+        assert isinstance(llm, _FakeChatOpenAI), "the stub was not what got constructed"
+        assert len(_FakeChatOpenAI.instances) == 1
+        return llm.kwargs
+
+    yield _call
+    _FakeChatOpenAI.instances.clear()
+
+
+def test_chat_model_defaults_timeout_to_the_shared_bound(chat_model):
+    """The load-bearing kwarg: without it langchain hands the SDK timeout=None,
+    i.e. a 600 s read timeout per attempt."""
+    kwargs = chat_model()
+
+    assert kwargs["timeout"] == 120.0
+    assert kwargs["timeout"] == oauth_llm.DEFAULT_LLM_TIMEOUT_S
+    # The wiring that must not regress alongside it.
+    assert kwargs["api_key"] == "tok"
+    assert kwargs["base_url"] == oauth_llm.CODEX_BASE_URL
+    assert kwargs["use_responses_api"] is True
+    assert kwargs["model"] == oauth_llm.DEFAULT_CODEX_MODEL
+
+
+def test_chat_model_reads_the_env_override(chat_model, monkeypatch):
+    monkeypatch.setenv(oauth_llm.LLM_TIMEOUT_ENV, "33")
+
+    assert chat_model()["timeout"] == 33.0
+
+
+def test_chat_model_explicit_timeout_wins_over_env(chat_model, monkeypatch):
+    monkeypatch.setenv(oauth_llm.LLM_TIMEOUT_ENV, "33")
+
+    assert chat_model(timeout=7)["timeout"] == 7.0
+
+
+def test_chat_model_request_timeout_alias_is_the_same_argument(chat_model):
+    """langchain's field is request_timeout, aliased timeout. A caller using
+    the field name must get its value, and ChatOpenAI must never receive both
+    keys (pydantic would pick one silently)."""
+    kwargs = chat_model(request_timeout=9)
+
+    assert kwargs["timeout"] == 9.0
+    assert "request_timeout" not in kwargs
+
+
+def test_chat_model_non_positive_timeout_never_disarms_the_bound(chat_model, caplog):
+    with caplog.at_level(logging.WARNING, logger="obs.oauth_llm"):
+        kwargs = chat_model(timeout=0)
+
+    assert kwargs["timeout"] == 120.0
+    assert any("non-positive explicit timeout" in r.getMessage() for r in caplog.records)
+
+
+def test_chat_model_keeps_sdk_retries_on_by_default(chat_model):
+    """Unlike codex_structured_invoke() there is no outer retry loop here, so
+    the SDK's 2 retries stay: worst case 3 x timeout, documented, bounded."""
+    kwargs = chat_model()
+
+    assert kwargs["max_retries"] == 2
+    assert (kwargs["max_retries"] + 1) * kwargs["timeout"] == 360.0
+
+
+def test_chat_model_explicit_max_retries_zero_is_one_budget(chat_model):
+    kwargs = chat_model(max_retries=0, timeout=50)
+
+    assert kwargs["max_retries"] == 0
+    assert kwargs["timeout"] == 50.0
+
+
+def test_chat_model_forwards_other_kwargs_and_drops_temperature(chat_model):
+    kwargs = chat_model("gpt-5.5", temperature=0.2, reasoning={"effort": "low"})
+
+    assert "temperature" not in kwargs
+    assert kwargs["reasoning"] == {"effort": "low"}
+    assert kwargs["timeout"] == 120.0
