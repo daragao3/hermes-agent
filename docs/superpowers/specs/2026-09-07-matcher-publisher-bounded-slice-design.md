@@ -4,7 +4,9 @@
 `~/.hermes` commit `c52d1cfd3`: publisher slice (`DEFAULT_SLICE_SIZE = 25`),
 `remaining` / `slice.next_slice` in the result, read-only tool
 `matcher_preflight_score_batch`, SKILL.md loop with a 4-slice budget,
-protocol.md, 16 new tests (70 total, 54 baseline unchanged). The paused
+protocol.md, 17 new tests (71 total, 54 baseline unchanged; the sibling
+rescore/reconcile file's 26 also pass after follow-up `2bc529a14`, which keeps
+an unreadable request out of preflight `propose`). The paused
 `jobflow-matcher` cron prompt was updated to the slice loop; the lane stays
 paused (Phase-B). The telemetry items in section 4 (an event on
 `remaining > 0`, a Tracker counter above K) are NOT built.
