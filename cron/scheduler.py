@@ -529,6 +529,7 @@ from cron.inflight import (
     CronRunStoppedByOperator,
     clear_stop_request,
     consume_stop_request,
+    kill_run_tool_subprocesses,
 )
 from cron.executions import (
     amend_execution_after_abandon,
@@ -5740,7 +5741,16 @@ def _run_job_impl(
         # env passthrough registrations) when the cron run hops into the worker
         # thread used for inactivity timeout monitoring.
         _cron_context = contextvars.copy_context()
-        _cron_future = _cron_pool.submit(_cron_context.run, agent.run_conversation, prompt)
+        # Record the worker's thread ident so an operator stop or timeout can
+        # kill a tool subprocess blocked on it (kill_run_tool_subprocesses)
+        # without relying on the agent to propagate its interrupt there.
+        _run_thread: dict = {}
+
+        def _run_conversation_on_worker():
+            _run_thread["ident"] = threading.current_thread().ident
+            return agent.run_conversation(prompt)
+
+        _cron_future = _cron_pool.submit(_cron_context.run, _run_conversation_on_worker)
         _inactivity_timeout = False
         _wallclock_timeout = False
         _operator_stop: Optional[dict] = None
@@ -5852,6 +5862,12 @@ def _run_job_impl(
             )
             if hasattr(agent, "interrupt"):
                 agent.interrupt("Cron run stopped by operator")
+            # interrupt() only flags the agent; make sure the tool subprocess
+            # it may be blocked in dies too (no-op when none is in flight).
+            kill_run_tool_subprocesses(
+                agent, _run_thread.get("ident"),
+                label=f"Job '{job_name}' operator stop",
+            )
             _stop_msg = (
                 f"Cron job '{job_name}' stopped by operator "
                 f"(session {_cron_session_id}, requested by {_stop_by} at {_stop_at}"
@@ -5893,6 +5909,10 @@ def _run_job_impl(
             )
             if hasattr(agent, "interrupt"):
                 agent.interrupt("Cron job timed out (wall-clock)")
+            kill_run_tool_subprocesses(
+                agent, _run_thread.get("ident"),
+                label=f"Job '{job_name}' wall-clock timeout",
+            )
             raise TimeoutError(
                 f"Cron job '{job_name}' exceeded wall-clock limit "
                 f"{_cron_hard_limit:g}s (elapsed {_wc_elapsed:g}s) "
@@ -5924,6 +5944,10 @@ def _run_job_impl(
             )
             if hasattr(agent, "interrupt"):
                 agent.interrupt("Cron job timed out (inactivity)")
+            kill_run_tool_subprocesses(
+                agent, _run_thread.get("ident"),
+                label=f"Job '{job_name}' inactivity timeout",
+            )
             raise TimeoutError(
                 f"Cron job '{job_name}' idle for "
                 f"{_secs_ago:g}s (limit {_cron_inactivity_limit:g}s) "

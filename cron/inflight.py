@@ -171,6 +171,77 @@ def consume_stop_request(job_id: str, session_id: str) -> Optional[Dict[str, Any
     return request
 
 
+def run_tool_thread_ids(agent: Any, worker_thread_id: Optional[int] = None) -> set:
+    """Thread idents on which a cron run's tools can be blocked.
+
+    The scheduler's pool worker (where ``run_conversation`` executes), the
+    agent's own recorded execution thread, and any concurrent-tool worker
+    threads it is tracking. Anything that is not a plain int is ignored, so
+    a test double whose attributes are mocks contributes nothing.
+    """
+    tids: set = set()
+
+    def _add(value: Any) -> None:
+        if isinstance(value, int) and not isinstance(value, bool):
+            tids.add(value)
+
+    _add(worker_thread_id)
+    _add(getattr(agent, "_execution_thread_id", None))
+    workers = getattr(agent, "_tool_worker_threads", None)
+    if isinstance(workers, (set, frozenset, list, tuple)):
+        lock = getattr(agent, "_tool_worker_threads_lock", None)
+        try:
+            if lock is not None and hasattr(lock, "__enter__"):
+                with lock:
+                    snapshot = list(workers)
+            else:
+                snapshot = list(workers)
+        except Exception:
+            snapshot = []
+        for w in snapshot:
+            _add(w)
+    return tids
+
+
+def kill_run_tool_subprocesses(
+    agent: Any, worker_thread_id: Optional[int] = None, *, label: str = ""
+) -> int:
+    """Kill the foreground tool subprocess(es) a cron run is blocked in.
+
+    Companion to ``agent.interrupt()`` on the operator-stop and timeout
+    paths. ``interrupt()`` sets a per-thread flag that the terminal tool's
+    wait loop polls and honours by killing its process tree -- that route
+    works (live-fired 2026-09-07: ~1.2s from stop to ``[Command
+    interrupted]``) but only for an agent that propagates the flag to the
+    thread actually blocked in ``execute()``. This kills by THREAD through
+    ``tools.environments.base.kill_inflight_processes``, so the guarantee
+    holds independently of the agent, and stays scoped to this run: other
+    sessions' commands, and the gateway itself, run on other threads.
+
+    Returns the number of subprocesses killed; 0 when nothing is in flight.
+    Reads ``sys.modules`` rather than importing ``tools.environments.base``:
+    if it was never imported in this process, no tool subprocess can exist.
+    Never raises.
+    """
+    try:
+        base_mod = sys.modules.get("tools.environments.base")
+        if base_mod is None:
+            return 0
+        tids = run_tool_thread_ids(agent, worker_thread_id)
+        if not tids:
+            return 0
+        killed = int(base_mod.kill_inflight_processes(tids) or 0)
+    except Exception:
+        logger.debug("kill_run_tool_subprocesses failed", exc_info=True)
+        return 0
+    if killed:
+        logger.warning(
+            "%skilled %d in-flight tool subprocess(es) on thread(s) %s",
+            f"{label}: " if label else "", killed, sorted(tids),
+        )
+    return killed
+
+
 def current_inflight_correlation_ids() -> List[str]:
     """``cron_started`` event ids for every cron currently in flight.
 
