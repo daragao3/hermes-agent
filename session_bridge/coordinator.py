@@ -1285,6 +1285,7 @@ class SessionBridgeCoordinator:
         self._scan_batch_size = scan_batch_size
         self._claude_projects_root = claude_projects_root
         self._claude_stat_cache = _ClaudeStatCache(monotonic=monotonic)
+        self._claude_sort_memo = _ClaudeSortMemo()
         self._watch_debounce_seconds = float(watch_debounce_seconds)
         self._refresh_timeout = float(refresh_timeout)
         self._sidebar_verifier = sidebar_verifier
@@ -4993,6 +4994,7 @@ class SessionBridgeCoordinator:
                 _sort_claude_paths,
                 discovered_paths,
                 self._claude_stat_cache,
+                self._claude_sort_memo,
             )
         )
         paths_by_native_id: dict[str, Path] = {}
@@ -6359,9 +6361,98 @@ def _stat_claude_paths(
     return stats, unavailable
 
 
+class _ClaudeSortMemo:
+    """Reuse the per-path work ``_sort_claude_paths`` redoes on every scan.
+
+    2026-09-06: with the 2026-08-19 stat cache in place, statting is no longer
+    the expensive part of a scan -- it is the SMALLEST part. py-spy on the live
+    :7484 worker put 72% of GIL-holding time (58.6% on one line) inside
+    ``_sort_claude_paths``, and timing the real function against the real
+    corpus split its 195 ms/scan at n=5,421 as::
+
+        Path(p) construction over all paths ... 52.6 ms
+        cache.stat_paths ...................... 27.5 ms
+        loop+sort with WARM Path objects ...... 29.1 ms
+        build+loop+sort COLD, as production ... 116.0 ms
+
+    Two wastes, both fixed here.
+
+    FIRST, the Path objects were rebuilt every scan and immediately thrown
+    away. ``ClaudeSourceAdapter.discover`` already caches its walk behind a TTL
+    and hands back ``list(cached)`` -- the SAME ``Path`` objects -- so wrapping
+    each one in ``Path(path)`` produced an equal but empty-cached copy and
+    discarded the lazy parse pathlib had already done. Reusing the object it
+    was given keeps ``_str`` and ``_tail`` warm, so ``str()`` and ``.stem``
+    stop re-parsing the whole corpus.
+
+    SECOND, the derived ordering was rebuilt from scratch to discover that
+    almost nothing had moved. Measured at the production cadence of ~1.1
+    scans/s: 21% of consecutive scans see a byte-identical stat signature, and
+    when the signature DOES change the median is 2 changed files out of 5,424.
+    So this memoises the whole result for the 21%, and reuses cached stems for
+    the rest.
+
+    The 21% hit is a real measurement and NOT the ">99% unchanged" this was
+    first scoped against -- the hot transcripts are written continuously, so a
+    plain memo alone would idle. The stem/Path reuse is what carries the other
+    79%.
+
+    STALENESS GUARANTEE. The memo is keyed on the stat signature the caller
+    just observed, so it can only ever return a result the un-memoised function
+    would have returned for those same stats. It therefore inherits
+    ``_ClaudeStatCache``'s guarantee exactly and weakens it by nothing: a cold
+    transcript that gains a write is picked up when the rotation next stats it,
+    at which point the signature changes and the memo misses.
+    """
+
+    def __init__(self) -> None:
+        self._stems: dict[str, str] = {}
+        self._stats: dict[str, tuple[int, int]] | None = None
+        self._unavailable: list[Path] = []
+        self._ordered: list[Path] = []
+        self._fingerprints: dict[str, dict[str, int]] = {}
+
+    def stem_for(self, key: str, path: Path) -> str:
+        """``path.stem``, computed once per path instead of twice per scan."""
+        stem = self._stems.get(key)
+        if stem is None:
+            stem = path.stem
+            self._stems[key] = stem
+        return stem
+
+    def reusable(
+        self,
+        stats: dict[str, tuple[int, int]],
+        unavailable: list[Path],
+    ) -> bool:
+        return self._stats == stats and self._unavailable == unavailable
+
+    def store(
+        self,
+        stats: dict[str, tuple[int, int]],
+        unavailable: list[Path],
+        ordered: list[Path],
+        fingerprints: dict[str, dict[str, int]],
+    ) -> None:
+        self._stats = dict(stats)
+        self._unavailable = list(unavailable)
+        self._ordered = ordered
+        self._fingerprints = fingerprints
+        if len(self._stems) > len(stats):
+            # Sessions come and go; do not let the stem table grow forever.
+            self._stems = {
+                key: stem for key, stem in self._stems.items() if key in stats
+            }
+
+    def result(self) -> tuple[list[Path], list[Path], dict[str, dict[str, int]]]:
+        """Hand back COPIES so a caller cannot corrupt the retained result."""
+        return list(self._ordered), list(self._unavailable), dict(self._fingerprints)
+
+
 def _sort_claude_paths(
     paths: object,
     cache: _ClaudeStatCache | None = None,
+    memo: _ClaudeSortMemo | None = None,
 ) -> tuple[list[Path], list[Path], dict[str, dict[str, int]]]:
     """Order transcripts newest-first, and hand back their fingerprints.
 
@@ -6373,27 +6464,41 @@ def _sort_claude_paths(
 
     With no ``cache`` this stats every path, which is what the full-history
     rebuild wants. The periodic scan passes a ``_ClaudeStatCache`` so the cold
-    83% of the corpus is statted on a rotation instead of on every cycle.
+    83% of the corpus is statted on a rotation instead of on every cycle, and a
+    ``_ClaudeSortMemo`` so the per-path work is not redone every cycle either.
+    Both are optional and the function is unchanged in their absence.
     """
     try:
-        normalized = [Path(path) for path in paths]  # type: ignore[union-attr]
+        normalized = [
+            path if isinstance(path, Path) else Path(path)
+            for path in paths  # type: ignore[union-attr]
+        ]
     except TypeError as exc:
         raise RuntimeError("Claude discovery returned no path list") from exc
     if cache is None:
         stats, unavailable = _stat_claude_paths(normalized)
     else:
         stats, unavailable = cache.stat_paths(normalized)
+    if memo is not None and memo.reusable(stats, unavailable):
+        return memo.result()
     sortable: list[tuple[int, str, str, Path]] = []
     fingerprints: dict[str, dict[str, int]] = {}
     for path in normalized:
-        entry = stats.get(str(path))
+        key = str(path)
+        entry = stats.get(key)
         if entry is None:
             continue
         mtime_ns, size = entry
-        sortable.append((-mtime_ns, path.stem, str(path), path))
-        fingerprints.setdefault(path.stem, {"mtime_ns": mtime_ns, "size": size})
+        stem = path.stem if memo is None else memo.stem_for(key, path)
+        sortable.append((-mtime_ns, stem, key, path))
+        if stem not in fingerprints:
+            fingerprints[stem] = {"mtime_ns": mtime_ns, "size": size}
     sortable.sort()
-    return [entry[3] for entry in sortable], unavailable, fingerprints
+    ordered = [entry[3] for entry in sortable]
+    if memo is None:
+        return ordered, unavailable, fingerprints
+    memo.store(stats, unavailable, ordered, fingerprints)
+    return memo.result()
 
 
 def _claude_path_fingerprint(path: Path) -> dict[str, int]:
