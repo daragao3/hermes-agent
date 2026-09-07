@@ -525,6 +525,11 @@ from cron.jobs import (
     amend_late_outcome_after_abandon,
     save_job_output,
 )
+from cron.inflight import (
+    CronRunStoppedByOperator,
+    clear_stop_request,
+    consume_stop_request,
+)
 from cron.executions import (
     amend_execution_after_abandon,
     create_execution,
@@ -1002,6 +1007,12 @@ def _dup_guard_timeout_seconds() -> float:
 # loop wakes every _POLL_INTERVAL, so a gap orders of magnitude larger means the
 # loop was not running.
 _CRON_SUSPEND_GAP_SECS = 60.0
+
+# Watchdog poll cadence for a running cron agent. Module-level (2026-09-07)
+# rather than a local of _run_job_impl so tests can patch it; it also bounds
+# how long an operator stop request (cron.inflight.request_stop) waits before
+# the run is interrupted.
+_CRON_RUN_POLL_INTERVAL_S = 5.0
 
 
 def suspended_seconds(gap: float, poll_interval: float,
@@ -5133,6 +5144,17 @@ def _run_job_impl(
         )
         return True, "", SILENT_MARKER, None
     _cron_session_id = f"cron_{job_id}_{_hermes_now().strftime('%Y%m%d_%H%M%S')}"
+    # A stop request on disk at this point was aimed at an EARLIER run (the CLI
+    # only files one against a session it saw open). Drop it so it cannot fire
+    # on this run; consume_stop_request's session match is the second guard.
+    try:
+        if clear_stop_request(job_id):
+            logger.info(
+                "Job '%s': discarded a stale operator stop request from a previous run",
+                job_name,
+            )
+    except Exception:
+        logger.debug("Job '%s': stale stop request check failed", job_name, exc_info=True)
 
     # Inference is about to start, so this run now crosses the wake/prompt
     # boundary and has a real session. Deterministic and no-work branches
@@ -5680,7 +5702,7 @@ def _run_job_impl(
         _cron_hard_limit = _cron_hard_timeout if _cron_hard_timeout > 0 else None
         import time as _time
         _cron_start_time = _time.monotonic()
-        _POLL_INTERVAL = 5.0
+        _POLL_INTERVAL = _CRON_RUN_POLL_INTERVAL_S
         # Keep the one-shot run_claim fresh while the run is alive (#62002):
         # the claim TTL is a dead-owner detector, but without a heartbeat a
         # run that legitimately outlives it (stream stall, laptop asleep
@@ -5721,85 +5743,122 @@ def _run_job_impl(
         _cron_future = _cron_pool.submit(_cron_context.run, agent.run_conversation, prompt)
         _inactivity_timeout = False
         _wallclock_timeout = False
+        _operator_stop: Optional[dict] = None
         try:
-            if (
-                _cron_inactivity_limit is None
-                and _cron_hard_limit is None
-                and not _is_oneshot
-            ):
-                # No inactivity watchdog, no wall-clock limit, and no
-                # one-shot run_claim to keep fresh — just wait.
-                result = _cron_future.result()
-            else:
-                # Poll so the loop can service, per iteration: the one-shot
-                # run_claim heartbeat (upstream #62002), the inactivity
-                # watchdog, and the fork's HERMES_CRON_HARD_TIMEOUT
-                # wall-clock limit.
-                result = None
-                _last_poll = _time.monotonic()
-                _suspended_total = 0.0
-                _suspend_since_activity = 0.0
-                _prev_idle = None
-                while True:
-                    done, _ = concurrent.futures.wait(
-                        {_cron_future}, timeout=_POLL_INTERVAL,
+            # Always poll (2026-09-07). This used to short-circuit to a
+            # bare future.result() when no inactivity limit, no wall-clock
+            # limit and no one-shot run_claim applied; but the operator
+            # stop request (cron.inflight) is serviced from this loop too,
+            # and a run with every limit disabled is exactly the one an
+            # operator most needs to be able to stop. Per iteration the
+            # loop services: the one-shot run_claim heartbeat (upstream
+            # #62002), the inactivity watchdog, the fork's
+            # HERMES_CRON_HARD_TIMEOUT wall-clock limit, and a pending
+            # `hermes cron pause <id> --stop-inflight` request.
+            result = None
+            _last_poll = _time.monotonic()
+            _suspended_total = 0.0
+            _suspend_since_activity = 0.0
+            _prev_idle = None
+            while True:
+                done, _ = concurrent.futures.wait(
+                    {_cron_future}, timeout=_POLL_INTERVAL,
+                )
+                _now = _time.monotonic()
+                # A gap far larger than the poll interval means THIS LOOP did
+                # not run — host suspend, VM pause, severe starvation. That
+                # time is not the job's to pay for (see suspended_seconds).
+                _gap_suspend = suspended_seconds(
+                    _now - _last_poll, _POLL_INTERVAL
+                )
+                if _gap_suspend > 0:
+                    _suspended_total += _gap_suspend
+                    _suspend_since_activity += _gap_suspend
+                    logger.warning(
+                        "Job '%s': poll loop stalled %gs (host suspend or "
+                        "starvation) — not charging it to the run budget "
+                        "(total discounted %gs)",
+                        job_name, _gap_suspend, _suspended_total,
                     )
-                    _now = _time.monotonic()
-                    # A gap far larger than the poll interval means THIS LOOP did
-                    # not run — host suspend, VM pause, severe starvation. That
-                    # time is not the job's to pay for (see suspended_seconds).
-                    _gap_suspend = suspended_seconds(
-                        _now - _last_poll, _POLL_INTERVAL
-                    )
-                    if _gap_suspend > 0:
-                        _suspended_total += _gap_suspend
-                        _suspend_since_activity += _gap_suspend
-                        logger.warning(
-                            "Job '%s': poll loop stalled %gs (host suspend or "
-                            "starvation) — not charging it to the run budget "
-                            "(total discounted %gs)",
-                            job_name, _gap_suspend, _suspended_total,
-                        )
-                    _last_poll = _now
-                    if done:
-                        result = _cron_future.result()
-                        break
-                    _heartbeat_run_claim_if_due()
-                    # Agent still running — check inactivity.
-                    if _cron_inactivity_limit is not None:
-                        _idle_secs = 0.0
-                        if hasattr(agent, "get_activity_summary"):
-                            try:
-                                _act = agent.get_activity_summary()
-                                _idle_secs = _act.get("seconds_since_activity", 0.0)
-                            except Exception:
-                                pass
-                        # Fresh activity retires the suspend credit: only a
-                        # suspend that happened SINCE the last activity can be
-                        # inflating this idle reading.
-                        if _prev_idle is not None and _idle_secs < _prev_idle:
-                            _suspend_since_activity = 0.0
-                        _prev_idle = _idle_secs
-                        if inactivity_exceeded(
-                            _idle_secs,
-                            _suspend_since_activity,
-                            _cron_inactivity_limit,
-                        ):
-                            _inactivity_timeout = True
-                            break
-                    # Wall-clock (hard) limit check — fork.
-                    if wallclock_exceeded(
-                        _now - _cron_start_time,
-                        _suspended_total,
-                        _cron_hard_limit,
+                _last_poll = _now
+                if done:
+                    result = _cron_future.result()
+                    break
+                _heartbeat_run_claim_if_due()
+                # Operator stop request (cron.inflight): honoured only
+                # when it names THIS session (or none), see
+                # consume_stop_request. Checked before the limits so a
+                # stop lands within one poll interval.
+                _operator_stop = consume_stop_request(job_id, _cron_session_id)
+                if _operator_stop is not None:
+                    break
+                # Agent still running — check inactivity.
+                if _cron_inactivity_limit is not None:
+                    _idle_secs = 0.0
+                    if hasattr(agent, "get_activity_summary"):
+                        try:
+                            _act = agent.get_activity_summary()
+                            _idle_secs = _act.get("seconds_since_activity", 0.0)
+                        except Exception:
+                            pass
+                    # Fresh activity retires the suspend credit: only a
+                    # suspend that happened SINCE the last activity can be
+                    # inflating this idle reading.
+                    if _prev_idle is not None and _idle_secs < _prev_idle:
+                        _suspend_since_activity = 0.0
+                    _prev_idle = _idle_secs
+                    if inactivity_exceeded(
+                        _idle_secs,
+                        _suspend_since_activity,
+                        _cron_inactivity_limit,
                     ):
-                        _wallclock_timeout = True
+                        _inactivity_timeout = True
                         break
+                # Wall-clock (hard) limit check — fork.
+                if wallclock_exceeded(
+                    _now - _cron_start_time,
+                    _suspended_total,
+                    _cron_hard_limit,
+                ):
+                    _wallclock_timeout = True
+                    break
         except Exception:
             _cron_pool.shutdown(wait=False, cancel_futures=True)
             raise
         finally:
             _cron_pool.shutdown(wait=False, cancel_futures=True)
+
+        if _operator_stop is not None:
+            # Same kill mechanism as the two timeouts: interrupt the agent so
+            # its worker thread unwinds, then raise so the generic failure
+            # path records the run as failed with a legible reason.
+            _activity = {}
+            if hasattr(agent, "get_activity_summary"):
+                try:
+                    _activity = agent.get_activity_summary()
+                except Exception:
+                    pass
+            _stop_by = _operator_stop.get("by") or "unknown"
+            _stop_at = _operator_stop.get("requested_at") or "?"
+            _stop_reason = _operator_stop.get("reason")
+            logger.warning(
+                "Job '%s' (session %s) stopped by operator request "
+                "(by=%s at=%s reason=%s) | last_activity=%s | iteration=%s/%s | tool=%s",
+                job_name, _cron_session_id, _stop_by, _stop_at, _stop_reason,
+                _activity.get("last_activity_desc", "unknown"),
+                _activity.get("api_call_count", 0),
+                _activity.get("max_iterations", 0),
+                _activity.get("current_tool") or "none",
+            )
+            if hasattr(agent, "interrupt"):
+                agent.interrupt("Cron run stopped by operator")
+            _stop_msg = (
+                f"Cron job '{job_name}' stopped by operator "
+                f"(session {_cron_session_id}, requested by {_stop_by} at {_stop_at}"
+            )
+            if _stop_reason:
+                _stop_msg += f", reason: {_stop_reason}"
+            raise CronRunStoppedByOperator(_stop_msg + ")")
 
         if _wallclock_timeout:
             # Build diagnostic summary from the agent's activity tracker.
