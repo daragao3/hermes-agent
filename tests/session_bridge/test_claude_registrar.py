@@ -5621,12 +5621,33 @@ _PRODUCTION_TWO_ROW_PASTE_CHIP = (
     "\n\n  [Pasted text #1 +6 lines] \n  paste again to expand"
 )
 
+# The same frame as production drew it 20 minutes later, with the redraw
+# having blanked the "o" out of the hint row.
+_PRODUCTION_TWO_ROW_PASTE_CHIP_REDRAWN = (
+    "\n\n  [Pasted text #1 +6 lines] \n  paste again t  expand"
+)
+
 
 def test_pasted_input_indicator_matches_a_lone_hint_row() -> None:
     assert _pasted_input_indicator("paste again to expand")
     assert _pasted_input_indicator("[Pasted text #1 +6 lines]")
     assert _pasted_input_indicator("[Pasted text #1 +6 lines] paste again to expand")
     assert not _pasted_input_indicator("REGISTERED")
+
+
+def test_pasted_input_indicator_survives_a_dropped_character() -> None:
+    """ConPTY blanks the cell a redraw lands on, so the row loses a letter.
+
+    Taken from production 2026-09-06 23:25, job ...c20997bec5e23ab0 attempt 1,
+    which reached the prompt frame as "paste again t  expand" -- one letter
+    short -- and defeated an exact-match on the hint. Rendering can DROP
+    characters from a row; it cannot invent new ones.
+    """
+
+    assert _pasted_input_indicator("paste again t  expand")
+    assert _pasted_input_indicator("paste  gain to expand")
+    assert not _pasted_input_indicator("please expand")
+    assert not _pasted_input_indicator("pasting a note to expand on")
 
 
 def test_two_row_paste_chip_is_not_scored_as_a_response() -> None:
@@ -5648,10 +5669,14 @@ def test_two_row_paste_chip_is_not_scored_as_a_response() -> None:
     assert _pasted_input_visible(_PRODUCTION_TWO_ROW_PASTE_CHIP)
 
 
-def test_launch_presses_return_for_a_two_row_paste_chip() -> None:
+@pytest.mark.parametrize(
+    "frame",
+    [_PRODUCTION_TWO_ROW_PASTE_CHIP, _PRODUCTION_TWO_ROW_PASTE_CHIP_REDRAWN],
+)
+def test_launch_presses_return_for_a_two_row_paste_chip(frame: str) -> None:
     item = claim()
     process = FakePty(
-        prompt_input_output=_PRODUCTION_TWO_ROW_PASTE_CHIP,
+        prompt_input_output=frame,
         read_error=_PtyResponseTimeout("main_repl_without_prompt_echo"),
     )
     source = FakeSource([None])
