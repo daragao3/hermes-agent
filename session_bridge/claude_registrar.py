@@ -2762,6 +2762,13 @@ def _prompt_input_visible(output: str, *, prompt: str) -> bool:
 
 # The hint the CLI draws with a collapsed paste chip, compacted and folded.
 _CLAUDE_PASTE_CHIP_HINT = "pasteagaintoexpand"
+# ConPTY draws a run of blank cells as a cursor-forward escape, and a redraw
+# that lands mid-word blanks the character under it: the hint row reached
+# production on 2026-09-06 as "paste again t  expand", one letter short of
+# itself. Rendering can DROP characters from a row; it cannot invent new ones.
+# So a row is the hint when its letters are a subsequence of the hint and
+# enough of them survive to make a collision with real content implausible.
+_CLAUDE_PASTE_CHIP_HINT_MIN_LETTERS = 12
 
 
 def _pasted_input_visible(output: str) -> bool:
@@ -2772,6 +2779,18 @@ def _pasted_input_visible(output: str) -> bool:
     return (
         re.search(r"\[pastedtext#\d+(?:\+\d+lines)?\]", compact) is not None
     )
+
+
+def _is_paste_chip_hint_row(compact: str) -> bool:
+    """True for a row that is the paste-chip hint, however badly it was drawn."""
+
+    letters = "".join(char for char in compact if char.isalpha())
+    if len(letters) < _CLAUDE_PASTE_CHIP_HINT_MIN_LETTERS:
+        return False
+    if len(letters) > len(_CLAUDE_PASTE_CHIP_HINT):
+        return False
+    cursor = iter(_CLAUDE_PASTE_CHIP_HINT)
+    return all(char in cursor for char in letters)
 
 
 def _pasted_input_indicator(value: str) -> bool:
@@ -2797,7 +2816,7 @@ def _pasted_input_indicator(value: str) -> bool:
     """
 
     compact = _compact_terminal_text(value).casefold()
-    if compact == _CLAUDE_PASTE_CHIP_HINT:
+    if _is_paste_chip_hint_row(compact):
         return True
     return (
         re.fullmatch(
