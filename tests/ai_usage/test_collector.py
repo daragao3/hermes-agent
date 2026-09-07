@@ -2,12 +2,13 @@ import itertools
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pytest
 
 import ai_usage.collector as collector_module
+from ai_usage import collector
 from ai_usage.collector import collect, write_atomic
 
 NOW = datetime(2026, 8, 4, 15, 0, tzinfo=timezone.utc)
@@ -787,3 +788,65 @@ def test_collect_pays_the_warmup_when_the_task_has_slack(tmp_path, monkeypatch):
     )
 
     assert hits == [1]
+
+
+# --- bounded carry-forward (2026-09-07) ------------------------------------------
+# Carry-forward used to be unbounded: a value was re-carried every cycle for as long
+# as collection kept failing, with only `state` flipped to "stale". Live consequence,
+# measured 2026-09-07: gemini's row read "mo 15%" from a reading fetched
+# 2026-08-26T19:50:18Z -- twelve days stale -- because the automation Chrome profile
+# was signed out of Google. The scraper was correct; the presentation hid the failure.
+
+def _prev_with(fetched_at, used_pct=55.0):
+    row = {"key": "anthropic", "label": "Claude", "mode": "budget", "state": "ok",
+           "windows": [{"id": "5h", "label": "5h", "used_pct": used_pct}],
+           "detail": f"5h {used_pct:.0f}%"}
+    if fetched_at is not None:
+        row["fetched_at"] = fetched_at
+    return {"generated_at": "x", "providers": [row]}
+
+
+def test_carry_forward_keeps_a_recent_value():
+    """Just inside the bound: the number is still a fair stand-in."""
+    prev = _prev_with((NOW - timedelta(hours=23, minutes=59)).isoformat().replace("+00:00", "Z"))
+    row = collector._carry_forward(prev, "anthropic", NOW)
+    assert row["state"] == "stale"
+    assert row["windows"][0]["used_pct"] == 55.0
+    assert "stale_value_dropped" not in row
+
+
+def test_carry_forward_drops_the_value_past_the_bound():
+    """Just outside it: the row survives, the number does not."""
+    prev = _prev_with((NOW - timedelta(hours=24, minutes=1)).isoformat().replace("+00:00", "Z"))
+    row = collector._carry_forward(prev, "anthropic", NOW)
+    assert row is not None, "the row must survive -- dropping it reads as 'not configured'"
+    assert row["state"] == "stale"
+    assert row["windows"] == []
+    assert row["stale_value_dropped"] is True
+    assert "%" not in row["detail"], "a percentage here is the very thing being fixed"
+
+
+def test_carry_forward_drops_an_undated_reading():
+    """No fetched_at means unknown age, which must fail toward showing less."""
+    row = collector._carry_forward(_prev_with(None), "anthropic", NOW)
+    assert row["windows"] == []
+    assert row["stale_value_dropped"] is True
+
+
+def test_carry_forward_drops_an_unparseable_timestamp():
+    row = collector._carry_forward(_prev_with("not-a-timestamp"), "anthropic", NOW)
+    assert row["windows"] == []
+    assert row["stale_value_dropped"] is True
+
+
+def test_the_real_gemini_incident_would_now_show_no_number():
+    """The exact shape observed live: a twelve-day-old reading rendering as 'mo 15%'."""
+    prev = {"generated_at": "x", "providers": [
+        {"key": "gemini", "label": "Gemini", "mode": "budget", "state": "stale",
+         "fetched_at": "2026-08-26T19:50:18Z",
+         "windows": [{"id": "mo", "label": "Monthly", "used_pct": 15.0}],
+         "detail": "mo 15%", "source": "official"}]}
+    row = collector._carry_forward(prev, "gemini", datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc))
+    assert row["windows"] == []
+    assert row["detail"] != "mo 15%"
+    assert "15" not in row["detail"]

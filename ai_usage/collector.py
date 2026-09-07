@@ -25,7 +25,49 @@ def _default_source(key: str) -> str:
     return "hermes"
 
 
-def _carry_forward(prev: Optional[dict], key: str) -> Optional[dict]:
+# A carried-forward reading keeps its VALUE for at most this long. Beyond it the
+# row is still emitted -- the provider is still configured, and dropping it would
+# read as "not set up" -- but its windows and detail are cleared so the panel shows
+# absence instead of a number.
+#
+# WHY THIS EXISTS. Carry-forward was unbounded, so a value was re-carried every
+# cycle for as long as collection kept failing, with only `state` flipped to
+# "stale". Measured 2026-09-07: gemini's panel row read "mo 15%" from a reading
+# fetched 2026-08-26T19:50:18Z -- TWELVE DAYS earlier -- because the automation
+# Chrome profile had been signed out of Google that whole time. Nothing was
+# broken in the scraper; it returned None exactly as designed. The damage was
+# purely in presentation: a twelve-day-old percentage rendered indistinguishably
+# from a fresh one, so the failure was invisible for twelve days.
+#
+# WHY 24 HOURS. The windows these rows carry are 5-hourly, weekly and monthly. A
+# reading under a day old is still a fair approximation of any of them; past that
+# a 5h window has turned over entirely and even a monthly figure has drifted by a
+# day's spend. It is deliberately generous -- the goal is to catch a lane that has
+# silently died, not to blank a row over one missed cycle.
+_MAX_CARRY_FORWARD_SECONDS = 24 * 60 * 60
+
+
+def _carry_age_seconds(row: dict, now: Optional[datetime] = None) -> Optional[float]:
+    """Age of a row's reading, or None when it carries no usable timestamp.
+
+    An unparseable or absent fetched_at returns None, and the caller then treats
+    the row as UNBOUNDED-AGE rather than fresh -- failing toward showing less, not
+    toward showing a number nobody can date.
+    """
+    raw = row.get("fetched_at")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return ((now or datetime.now(timezone.utc)) - stamp).total_seconds()
+
+
+def _carry_forward(prev: Optional[dict], key: str,
+                   now: Optional[datetime] = None) -> Optional[dict]:
     if not prev:
         return None
     for p in prev.get("providers", []):
@@ -35,6 +77,16 @@ def _carry_forward(prev: Optional[dict], key: str) -> Optional[dict]:
             carried = dict(p)
             carried["state"] = "stale"
             carried.setdefault("source", _default_source(key))
+            age = _carry_age_seconds(carried, now)
+            if age is None or age > _MAX_CARRY_FORWARD_SECONDS:
+                # Too old to stand in for a current reading. Keep the row, drop
+                # the number: an empty windows list is the same shape the error
+                # rows already use, so consumers need no change.
+                carried["windows"] = []
+                carried["detail"] = (
+                    f"no data for {age / 3600:.0f}h" if age is not None
+                    else "no data (undated reading)")
+                carried["stale_value_dropped"] = True
             return carried
     return None
 
@@ -66,7 +118,7 @@ def _state_db_row(
         make = spend_provider if mode == "spend" else tokensum_provider
         row = make(key, label, conn, now)
     except sqlite3.Error:
-        return _carry_forward(prev, key) or _hermes_error_row(key, label, mode)
+        return _carry_forward(prev, key, now) or _hermes_error_row(key, label, mode)
     row["source"] = "hermes"
     return row
 
@@ -416,12 +468,12 @@ def collect(
                 if mode in ("budget", "balance"):
                     make = budget_provider if mode == "budget" else balance_provider
                     providers.append(
-                        _carry_forward(prev, key)
+                        _carry_forward(prev, key, now)
                         or {**make(key, label, None), "source": "official"}
                     )
                 else:
                     providers.append(
-                        _carry_forward(prev, key)
+                        _carry_forward(prev, key, now)
                         or _hermes_error_row(key, label, mode)
                     )
                 attempts.append(_diagnostic(key, "deadline_exhausted", 0.0, share))
@@ -445,7 +497,7 @@ def collect(
                     outcome = "ok"
 
                 if snapshot is None or not getattr(snapshot, "available", False):
-                    row = _carry_forward(prev, key)
+                    row = _carry_forward(prev, key, now)
                     if row is None:
                         row = make(key, label, snapshot)
                         row["source"] = "official"
