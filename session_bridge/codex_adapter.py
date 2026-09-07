@@ -269,6 +269,30 @@ class ConflictingCodexBridgeMarkers(ValueError):
     first appearing at record 356, which is the signature of a DISPLAYED marker
     rather than a second bridging).
 
+    THERE ARE NOW THREE BEHAVIOURS FOR THIS CONDITION IN THIS CODEBASE, and
+    which one applies is a property of the SURFACE, not of the thread. Say which
+    one you mean before adding a fourth:
+
+    * SIDEBAR VERIFICATION (``_verified_sidebar_projection`` path, ~line 430) is
+      STRICT -- it converts this into ``SidebarVerificationError("marker_conflict")``
+      and refuses. A binding oracle must not guess between two valid markers.
+    * SIDEBAR INVENTORY (``_read_inventory_projections``, ~line 717) is
+      PERMISSIVE -- it substitutes ``_conflicting_marker_projection``, a synthetic
+      projection re-encoding both payloads so the thread still LISTS. Note it
+      sets no origin at all: that is a display accommodation, NOT codex having
+      answered the origin question.
+    * SCAN / INDEX (the three ``coordinator`` codex paths, 2026-09-07) SKIPS,
+      matching the three claude paths. The thread stays out of the catalog,
+      ``ScanSummary.failed`` is untouched, and the skip is reported under
+      ``codex_conflicting_bridge_markers``.
+
+    Origin is deliberately NOT decided here on any of the three. Diego closed
+    that question on 2026-09-07 for the claude side -- a NATIVE fallback was
+    offered and DECLINED, as was a fourth ``origin_kind`` -- because
+    native-with-no-bridge-id is the PERMISSIVE state in every consumer
+    (``mirror.py`` and ``claude_visibility.py`` both gate on exactly "is not
+    NATIVE or origin_bridge_id set"). The codex side follows that decision.
+
     Subclasses ``ValueError`` so every existing caller and test that matches on
     the type or the message is unaffected; the message is unchanged.
     """

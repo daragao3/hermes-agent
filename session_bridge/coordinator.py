@@ -4793,7 +4793,17 @@ class SessionBridgeCoordinator:
                 # HMAC-authenticated provenance feeding the visibility and
                 # registration lanes; skipping leaves that judgement to a human
                 # and costs only what today already costs -- the thread stays out
-                # of the catalog.
+                # of the catalog. Diego closed that question on 2026-09-07 for
+                # the claude side, declining both a NATIVE fallback and a fourth
+                # `origin_kind`; this follows that decision.
+                #
+                # THIS IS THE SCAN BEHAVIOUR, one of three. Codex already had two
+                # others on the SIDEBAR surface and they disagree by design --
+                # verification is STRICT (SidebarVerificationError
+                # "marker_conflict") and inventory is PERMISSIVE (a synthetic
+                # `_conflicting_marker_projection` so the thread still lists).
+                # The class docstring in `codex_adapter` enumerates all three;
+                # read it before adding a fourth.
                 #
                 # Counted, never silent. Aggregated after the loop rather than
                 # logged per occurrence: this scan runs every few seconds and the
