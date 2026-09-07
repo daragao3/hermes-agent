@@ -43,7 +43,7 @@ import { requestModelOptions } from '@/lib/model-options'
 import { asText } from '@/lib/text'
 import { $cronFocusJobId, $cronJobs, setCronFocusJobId, setCronJobs, updateCronJobs } from '@/store/cron'
 import { notify, notifyError } from '@/store/notifications'
-import { $profileScope, ALL_PROFILES } from '@/store/profile'
+import { $profileScope, cronListScope } from '@/store/profile'
 
 import { useRefreshHotkey } from '../hooks/use-refresh-hotkey'
 import {
@@ -301,7 +301,7 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
 
   const refresh = useCallback(async () => {
     try {
-      setCronJobs(await getCronJobs(profileScope === ALL_PROFILES ? 'all' : profileScope))
+      setCronJobs(await getCronJobs(cronListScope(profileScope)))
     } catch (err) {
       notifyError(err, c.failedLoad)
     } finally {

@@ -313,6 +313,30 @@ export async function ensureGatewayProfile(profile: string | null | undefined): 
 
 export const ALL_PROFILES = '__all__'
 
+// Scope to send to the cron LIST endpoint for a given sidebar profile scope.
+//
+// 'default' is the sentinel normalizeProfileKey() returns when no profile has
+// been explicitly selected (no active-profile.json preference) — it means "no
+// preference", NOT "the root ~/.hermes profile". Those are different homes:
+// the desktop's backend honours the sticky ~/.hermes/active_profile and so
+// commonly runs as a NAMED profile while this scope still reads 'default'.
+// Forwarding it as ?profile=default then asks for a profile whose cron store
+// is usually absent, and an absent store is byte-identical to an empty one —
+// the endpoint returns [] and the overlay renders a confident "no jobs yet"
+// over a machine with a full crontab. Send no scope instead and let the
+// endpoint apply its own aggregate default, which is what this call did before
+// scoping was introduced.
+//
+// Deliberately cron-only. Sessions live in the ROOT store, so 'default' is the
+// CORRECT scope for the session list and must keep being forwarded there.
+export function cronListScope(scope: string): string | undefined {
+  if (scope === ALL_PROFILES) {
+    return 'all'
+  }
+
+  return scope === normalizeProfileKey(null) ? undefined : scope
+}
+
 const SHOW_ALL_PROFILES_STORAGE_KEY = 'hermes.desktop.showAllProfiles'
 
 // Opt-in unified view. When false, scope follows the live gateway profile, so

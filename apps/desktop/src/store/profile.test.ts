@@ -19,8 +19,15 @@ vi.mock('@/hermes', () => ({
 vi.mock('@/lib/query-client', () => ({ invalidateProfileScopedQueries: vi.fn() }))
 vi.mock('@/store/starmap', () => ({ resetStarmapGraph }))
 
-const { $activeGatewayProfile, $profiles, ensureGatewayProfile, prewarmProfileBackend, refreshProfiles } =
-  await import('./profile')
+const {
+  $activeGatewayProfile,
+  $profiles,
+  ALL_PROFILES,
+  cronListScope,
+  ensureGatewayProfile,
+  prewarmProfileBackend,
+  refreshProfiles
+} = await import('./profile')
 
 const { $connection } = await import('./session')
 const { invalidateProfileScopedQueries } = await import('@/lib/query-client')
@@ -170,5 +177,27 @@ describe('refreshProfiles shared rail list (#49289)', () => {
     await expect(refreshProfiles()).rejects.toThrow('backend unavailable')
 
     expect($profiles.get().map(profile => profile.name)).toEqual(['default', 'test1'])
+  })
+})
+
+describe('cronListScope', () => {
+  // Regression: the cron overlay and the sidebar cron group forwarded the
+  // 'default' sentinel straight to ?profile=, which asks the endpoint for the
+  // ROOT ~/.hermes profile. On a box whose backend runs as a NAMED profile
+  // (the sticky ~/.hermes/active_profile case) the jobs live elsewhere, so the
+  // endpoint returned [] and the overlay rendered "no scheduled jobs yet" over
+  // a full crontab. Measured 2026-09-07: ?profile=default -> 0, ?profile=main
+  // -> 85, no scope -> 85.
+  it('sends NO scope for the unselected-profile sentinel', () => {
+    expect(cronListScope('default')).toBeUndefined()
+  })
+
+  it('sends the aggregate scope for the all-profiles view', () => {
+    expect(cronListScope(ALL_PROFILES)).toBe('all')
+  })
+
+  it('forwards a concrete profile unchanged so real scoping still works', () => {
+    expect(cronListScope('worker_alpha')).toBe('worker_alpha')
+    expect(cronListScope('main')).toBe('main')
   })
 })

@@ -18,7 +18,7 @@ import {
   SIDEBAR_SESSIONS_PAGE_SIZE
 } from '@/store/layout'
 import { notify } from '@/store/notifications'
-import { ALL_PROFILES, normalizeProfileKey, setShowAllProfiles } from '@/store/profile'
+import { ALL_PROFILES, cronListScope, normalizeProfileKey, setShowAllProfiles } from '@/store/profile'
 import {
   $messagingSessions,
   $selectedStoredSessionId,
@@ -141,7 +141,7 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
   // own jobs; ALL_PROFILES keeps the unified view.
   const refreshCronJobs = useCallback(async () => {
     try {
-      const jobs = await getCronJobs(profileScope === ALL_PROFILES ? 'all' : profileScope)
+      const jobs = await getCronJobs(cronListScope(profileScope))
 
       setCronJobs(jobs)
     } catch {
