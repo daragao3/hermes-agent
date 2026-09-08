@@ -8,6 +8,16 @@ description: "通过内置 Baileys 桥接将 Hermes Agent 设置为 WhatsApp 机
 
 Hermes 通过基于 **Baileys** 的内置桥接连接到 WhatsApp。其工作原理是模拟 WhatsApp Web 会话——**而非**通过官方 WhatsApp Business API。无需 Meta 开发者账号或 Business 认证。
 
+> 运行 `hermes gateway setup` 并选择 **WhatsApp**，可获得引导式配置流程。
+
+:::tip 两种 WhatsApp 集成方式
+本页介绍的是 **Baileys 桥接**——配置快捷、适用于个人账号、无需公网 URL，但存在封号风险。
+
+如果你运行的是真正的商业机器人并希望获得稳定性，请改为参阅 **[WhatsApp Business Cloud API 指南](./whatsapp-cloud.md)**。那是 Meta 官方支持的路径：没有账号封禁风险，但需要 Meta Business 账号和一个公网 webhook URL。
+
+如果你有需要，这两个适配器也可以针对不同的手机号并行运行。
+:::
+
 :::warning 非官方 API — 封号风险
 WhatsApp **不**官方支持 Business API 以外的第三方机器人。使用第三方桥接存在账号受限的小概率风险。为降低风险：
 - **为机器人使用专用手机号**（而非个人号码）
@@ -195,6 +205,22 @@ AI 响应中的标准 Markdown 会自动转换为 WhatsApp 的原生格式：
 ### 工具进度
 
 当 Agent 调用工具（网页搜索、文件操作等）时，WhatsApp 会显示实时进度指示器，显示正在运行的工具。此功能默认启用，无需配置。
+
+### 消息批处理（防抖）
+
+WhatsApp 会逐条投递消息，因此一次快速连发（转发的批量消息、粘贴拆分、多行文本）原本会为每个片段触发一次独立的 agent 调用——既浪费 token，又会产生多条互不连贯的回复。适配器会缓冲来自同一聊天的连续文本消息，并在一段短暂的静默期后将它们合并为一个请求分发（默认 **5 秒**，对超长片段延长到 **10 秒**）。可通过 `config.yaml` 调整：
+
+```yaml
+# ~/.hermes/config.yaml
+gateway:
+  platforms:
+    whatsapp:
+      extra:
+        text_batch_delay_seconds: 5.0         # 刷新批次前的静默期
+        text_batch_split_delay_seconds: 10.0  # 接近拆分阈值时的延长延迟
+```
+
+将 `text_batch_delay_seconds` 设为 `0` 可立即分发每条消息（即禁用批处理）。
 
 ---
 

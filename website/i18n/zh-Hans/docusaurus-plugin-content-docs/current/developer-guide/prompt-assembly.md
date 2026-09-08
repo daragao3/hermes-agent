@@ -26,18 +26,18 @@ Hermes 刻意将以下内容分离：
 
 ## 已缓存的系统 prompt 层
 
-已缓存的系统 prompt 大致按以下顺序组装：
+已缓存的系统 prompt 按三个有序层级组装（参见 `agent/system_prompt.py`）：
 
-1. agent 身份 — 优先使用 `HERMES_HOME` 中的 `SOUL.md`，否则回退到 `prompt_builder.py` 中的 `DEFAULT_AGENT_IDENTITY`
-2. 工具感知行为指导
-3. Honcho 静态块（激活时）
-4. 可选系统消息
-5. 冻结的 MEMORY 快照
-6. 冻结的 USER 配置文件快照
-7. skills 索引
-8. 上下文文件（`AGENTS.md`、`.cursorrules`、`.cursor/rules/*.mdc`）— 若 SOUL.md 已在第 1 步作为身份加载，则此处**不**再包含它
-9. 时间戳 / 可选会话 ID
-10. 平台提示
+1. **stable（稳定层）** — 身份（`SOUL.md` 或回退值）、工具/模型指导、skills prompt、环境提示、平台提示
+2. **context（上下文层）** — 调用方提供的 `system_message` 以及项目上下文文件（`.hermes.md` / `AGENTS.md` / `CLAUDE.md` / `.cursorrules`）
+3. **volatile（易变层）** — 内置记忆快照（`MEMORY.md`）、用户配置文件快照（`USER.md`）、外部记忆提供方块、时间戳/会话/模型/提供方行
+
+最终的系统 prompt 按此顺序拼接：`stable` → `context` → `volatile`。
+
+这一顺序对优先级讨论很重要：
+- skills 属于 **stable** 层
+- 记忆/配置文件快照属于 **volatile** 层
+- 两者仍都在已缓存的系统 prompt 中（它们并非以临时的轮次中覆盖层形式注入）
 
 当设置了 `skip_context_files`（例如子 agent 委托）时，不会加载 SOUL.md，而是使用硬编码的 `DEFAULT_AGENT_IDENTITY`。
 
@@ -115,6 +115,31 @@ Session: abc123
 You are a CLI AI Agent. Try not to use markdown but simple text
 renderable inside a terminal.
 ```
+
+## 自定义平台提示
+
+平台提示（上文的 Layer 10）是 Hermes 为 Telegram、WhatsApp、Slack、CLI 等各个平台注入的针对性指导——例如"你正处于终端环境，请避免使用 Markdown"。内置默认值位于 `PLATFORM_HINTS`（`agent/system_prompt.py`）；插件提供的平台则通过平台注册表提供自己的提示。
+
+管理员可以通过顶层的 `platform_hints` 配置键，从 `config.yaml` 中追加或替换单个平台的提示，而不影响其他任何平台：
+
+```yaml
+platform_hints:
+  whatsapp:
+    append: >
+      When tabular output would be useful, invoke the table_formatting
+      skill instead of emitting a Markdown table.
+  slack:
+    replace: "You are on Slack. Keep responses tight and avoid wide tables."
+  telegram: "Prefer short messages; split long answers."   # shorthand = append
+```
+
+- `append` — 保留内置提示，并在其后追加额外文本。
+- `replace` — 完全替换内置提示。
+- 裸字符串 — `append` 的简写形式。
+- 当 `append` 与 `replace` 同时存在时，`replace` 优先。
+- 格式错误的条目会被防御性地忽略并回退到未修改的默认值，因此错误的配置值绝不会破坏 prompt 组装，也不会跨平台泄漏。
+
+该覆盖在构建系统 prompt 时解析（会话开始时，以及压缩时——因为压缩会重建 prompt）。对于固定的配置，它产生字节稳定的提示，因此与内置提示一同位于 **stable（稳定）层**，不会破坏 prompt 缓存——它并不是对已冻结 prompt 的会话中途实时变更。
 
 ## SOUL.md 在 prompt 中的位置
 
@@ -205,13 +230,15 @@ def build_context_files_prompt(cwd=None, skip_soul=False):
 - `ephemeral_system_prompt`
 - prefill 消息
 - gateway 派生的会话上下文覆盖层
-- 注入当前轮次用户消息的后续轮次 Honcho 召回内容
+- 注入当前轮次用户消息的后续轮次 Honcho/外部召回内容
+
+`pre_llm_call` 插件上下文同样走这条 API 调用时路径：它会被追加到当前轮次的**用户消息**中，而不会写入已缓存的系统 prompt。当多个插件返回上下文时，Hermes 会把这些上下文块拼接起来（参见 [Hooks → `pre_llm_call`](../user-guide/features/hooks.md#pre_llm_call)）。
 
 这种分离使稳定前缀保持稳定，从而有效缓存。
 
 ## 记忆快照
 
-本地记忆和用户配置文件数据在会话开始时作为冻结快照注入。会话中途的写入操作会更新磁盘状态，但不会修改已构建的系统 prompt，直到新会话开始或强制重建时才生效。
+本地记忆和用户配置文件数据被捕获在系统 prompt 的 **volatile（易变）层**中。会话中途的写入操作会更新磁盘状态，但不会修改已构建的缓存系统 prompt，直到某个重建路径运行（新会话，或显式失效/重建流程，例如压缩触发的重建）。
 
 ## 上下文文件
 
