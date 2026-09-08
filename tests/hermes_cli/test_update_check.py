@@ -113,20 +113,36 @@ def test_check_for_updates_official_ssh_origin_uses_https_probe(tmp_path):
             return MagicMock(returncode=0, stdout="git@github.com:NousResearch/hermes-agent.git\n")
         if cmd == ["git", "rev-parse", "HEAD"]:
             return MagicMock(returncode=0, stdout="local-sha\n")
-        if cmd == [
-            "git",
-            "ls-remote",
-            "https://github.com/NousResearch/hermes-agent.git",
-            "refs/heads/main",
-        ]:
-            return MagicMock(returncode=0, stdout="upstream-sha\trefs/heads/main\n")
         raise AssertionError(f"unexpected git command: {cmd!r}")
 
-    with patch("hermes_cli.banner.subprocess.run", side_effect=fake_run):
+    # The ls-remote probe does NOT go through banner.subprocess.run. _check_via_rev
+    # imports run_text_capture from hermes_cli._subprocess_compat inside the function
+    # body, so the name is resolved on THAT module at call time; patching it on
+    # `banner` is inert and a real `git ls-remote` then goes out to github.com on
+    # every run (a live HTTP 429 made this test fail after ~63s on 2026-09-08).
+    # Patch the module the lazy import actually reads.
+    probe_calls = []
+    expected_probe = [
+        "git",
+        "ls-remote",
+        "https://github.com/NousResearch/hermes-agent.git",
+        "refs/heads/main",
+    ]
+
+    def fake_probe(argv, **kwargs):
+        probe_calls.append(list(argv))
+        return MagicMock(returncode=0, stdout="upstream-sha\trefs/heads/main\n")
+
+    with patch("hermes_cli.banner.subprocess.run", side_effect=fake_run), patch(
+        "hermes_cli._subprocess_compat.run_text_capture", side_effect=fake_probe
+    ):
         result = banner._check_via_local_git(repo_dir)
 
     assert result == 1
     assert ["git", "fetch", "origin", "--quiet"] not in calls
+    # Pin the probe: an inert patch would leave this empty while the assertions
+    # above still passed, by reaching the real network. That is the regression.
+    assert probe_calls == [expected_probe]
 
 
 def test_check_via_local_git_shallow_clone_behind_reports_no_count(tmp_path):
