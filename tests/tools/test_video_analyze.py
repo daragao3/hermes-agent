@@ -2,7 +2,10 @@
 
 import asyncio
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 from tools.vision_tools import (
@@ -206,7 +209,20 @@ class TestVideoAnalyzeTool:
         secret = tmp_path / ".env"
         secret.write_text("OPENAI_API_KEY=sk-super-secret\n", encoding="utf-8")
         disguised = tmp_path / "video.mp4"
-        disguised.symlink_to(secret)
+        try:
+            os.symlink(secret, disguised)
+        except (OSError, NotImplementedError) as exc:
+            # Windows grants symlink creation only under Developer Mode or to
+            # an elevated process (WinError 1314). Skip rather than fail -- and
+            # rather than changing the host to suit a test. The chokepoint stays
+            # covered here by test_local_file_read_guard_blocks_direct_env_path;
+            # the symlink-resolution half is a property of
+            # agent.file_safety.get_read_block_error, covered by
+            # tests/agent/test_file_safety_credentials.py. Same inline-skip shape
+            # as test_symlink_to_auth_json_blocked there and
+            # test_native_content_parts_blocks_image_symlink_to_read_denied_file
+            # in tests/agent/test_image_routing.py.
+            pytest.skip(f"symlinks unavailable: {exc}")
 
         with patch("tools.vision_tools.async_call_llm", new_callable=AsyncMock) as mock_llm:
             result = self._run(video_analyze_tool(str(disguised), "What is this?"))
@@ -214,6 +230,31 @@ class TestVideoAnalyzeTool:
         data = json.loads(result)
         assert data["success"] is False
         assert "secret-bearing environment file" in data["error"]
+        mock_llm.assert_not_awaited()
+
+    def test_local_file_read_guard_blocks_direct_env_path(self, tmp_path):
+        """The read guard must fire on a plain ``.env`` local path.
+
+        Symlink-free companion to the test above, so the
+        ``agent.file_safety`` chokepoint in ``video_analyze_tool``'s
+        local-file branch keeps a real assertion running on hosts that
+        cannot create symlinks (Windows without Developer Mode).
+
+        It also pins the ORDERING that makes the guard useful: the guard
+        runs before ``_detect_video_mime_type``, so a credential file is
+        rejected as a blocked read rather than falling through to the
+        softer "unsupported video format" path.
+        """
+        secret = tmp_path / ".env"
+        secret.write_text("OPENAI_API_KEY=sk-super-secret\n", encoding="utf-8")
+
+        with patch("tools.vision_tools.async_call_llm", new_callable=AsyncMock) as mock_llm:
+            result = self._run(video_analyze_tool(str(secret), "What is this?"))
+
+        data = json.loads(result)
+        assert data["success"] is False
+        assert "secret-bearing environment file" in data["error"]
+        assert "unsupported video format" not in json.dumps(data).lower()
         mock_llm.assert_not_awaited()
 
     def test_local_file_not_found(self, tmp_path):
