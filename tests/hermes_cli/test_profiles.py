@@ -25,6 +25,7 @@ from hermes_cli.profiles import (
     get_profile_dir,
     create_profile,
     delete_profile,
+    list_profile_targets,
     list_profiles,
     set_active_profile,
     get_active_profile,
@@ -703,6 +704,78 @@ class TestListProfiles:
         profiles = list_profiles()
         assert profiles[0].name == "default"
         assert profiles[0].is_default is True
+
+
+# ===================================================================
+# TestListProfileTargets
+# ===================================================================
+
+class TestListProfileTargets:
+    """``list_profile_targets()`` is the enumeration half of ``list_profiles()``.
+
+    Callers that only need to know which profiles exist use it to skip the
+    per-profile metadata gathering (``yaml.safe_load`` of every ``config.yaml``,
+    a ``psutil`` process probe per profile for gateway liveness, a skills-tree
+    scan). Those callers are correct ONLY while the two enumerate the same
+    profiles in the same order, so that identity is pinned here rather than
+    left to coincidence.
+    """
+
+    def test_matches_list_profiles_enumeration(self, profile_env):
+        create_profile("zebra", no_alias=True)
+        create_profile("alpha", no_alias=True)
+        create_profile("middle", no_alias=True)
+        assert list_profile_targets() == [(p.name, p.path) for p in list_profiles()]
+
+    def test_matches_list_profiles_enumeration_with_no_named_profiles(self, profile_env):
+        assert list_profile_targets() == [(p.name, p.path) for p in list_profiles()]
+
+    def test_skips_invalid_profile_ids_like_list_profiles(self, profile_env):
+        create_profile("alpha", no_alias=True)
+        # Not a valid profile id, and not a directory: both must be ignored by
+        # BOTH functions, or a caller on the cheap one sees a phantom profile.
+        (profile_env / ".hermes" / "profiles" / "not a profile").mkdir(parents=True)
+        (profile_env / ".hermes" / "profiles" / "stray.txt").write_text("x", encoding="utf-8")
+        assert [n for n, _ in list_profile_targets()] == ["default", "alpha"]
+        assert list_profile_targets() == [(p.name, p.path) for p in list_profiles()]
+
+    def test_reads_no_config_yaml_and_probes_no_processes(self, profile_env, monkeypatch):
+        """The whole point: none of ``list_profiles``' expensive metadata work.
+
+        Mutation check -- pointing this at ``list_profiles`` fails on both
+        counters, which is what makes this a behaviour claim and not a line
+        claim.
+        """
+        create_profile("alpha", no_alias=True)
+        calls = {"config": 0, "gateway": 0, "skills": 0}
+
+        def _boom_config(profile_dir):
+            calls["config"] += 1
+            return None, None
+
+        def _boom_gateway(profile_dir):
+            calls["gateway"] += 1
+            return False
+
+        def _boom_skills(profile_dir):
+            calls["skills"] += 1
+            return 0
+
+        monkeypatch.setattr(profiles, "_read_config_model", _boom_config)
+        monkeypatch.setattr(profiles, "_check_gateway_running", _boom_gateway)
+        monkeypatch.setattr(profiles, "_count_skills", _boom_skills)
+
+        targets = list_profile_targets()
+
+        assert [n for n, _ in targets] == ["default", "alpha"]
+        assert calls == {"config": 0, "gateway": 0, "skills": 0}
+
+        # Positive control: the same counters DO fire for list_profiles(), so a
+        # zero above means "not called", not "monkeypatch missed the target".
+        list_profiles()
+        assert calls["config"] == 2
+        assert calls["gateway"] == 2
+        assert calls["skills"] == 2
 
 
 # ===================================================================

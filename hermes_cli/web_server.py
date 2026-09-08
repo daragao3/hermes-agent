@@ -4691,11 +4691,14 @@ def get_profiles_sessions(
         name, home = _cron_profile_home(profile)
         targets.append((name, home))
     else:
+        # Enumeration only -- this endpoint consumes exactly (name, path), never
+        # a ProfileInfo's model/provider/skill_count/gateway_running. Same
+        # profiles in the same order for ~1/100th the cost; see the note on the
+        # sidebar route below and list_profile_targets()'s docstring.
         try:
-            infos = profiles_mod.list_profiles()
-            targets = [(info.name, info.path) for info in infos]
+            targets = list(profiles_mod.list_profile_targets())
         except Exception:
-            _log.exception("GET /api/profiles/sessions: list_profiles failed")
+            _log.exception("GET /api/profiles/sessions: list_profile_targets failed")
             targets = []
         if not targets:
             targets.append(("default", profiles_mod.get_profile_dir("default")))
@@ -4823,11 +4826,21 @@ def get_profiles_sessions_sidebar(
 
     # cron + messaging are cross-profile; recents is scoped to recents_profile.
     # Scan every profile once regardless (each DB opened a single time).
+    #
+    # ENUMERATION ONLY -- deliberately not list_profiles(). This handler consumes
+    # exactly (name, path); it never reads a ProfileInfo's model, provider,
+    # skill_count or gateway_running. Gathering those cost 0.37-0.70s per request
+    # on a surface the desktop sidebar POLLS -- per call roughly 0.26s parsing 14
+    # config.yaml files with yaml.safe_load plus 0.20s of psutil process-status
+    # probes at ~10.5ms each, i.e. a session-LIST endpoint was running gateway
+    # liveness probes on every refresh. list_profile_targets() is the same profiles in
+    # the same order (list_profiles is defined in terms of it) for 0.0042-0.0058s.
+    # Measured 2026-09-08, 20 profiles, 5 reps; loops
+    # list-profiles-per-request-memo-20260908.
     try:
-        infos = profiles_mod.list_profiles()
-        targets: List[Tuple[str, Path]] = [(info.name, info.path) for info in infos]
+        targets: List[Tuple[str, Path]] = list(profiles_mod.list_profile_targets())
     except Exception:
-        _log.exception("GET /api/profiles/sessions/sidebar: list_profiles failed")
+        _log.exception("GET /api/profiles/sessions/sidebar: list_profile_targets failed")
         targets = []
     if not targets:
         targets.append(("default", profiles_mod.get_profile_dir("default")))
