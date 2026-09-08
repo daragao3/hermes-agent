@@ -24,7 +24,7 @@
 #    which is the point of the fix. Recording the launcher is still worth
 #    doing; recording it wrongly is how a harness note becomes a trap. **
 #
-# STABLE CORE: 224 failures across 57 files. DIFF AGAINST THIS.
+# STABLE CORE: 223 failures across 56 files. DIFF AGAINST THIS.
 #   226 failed, 9282 passed, 102 skipped, 12 warnings in 2204.10s (0:36:44)
 #   9610 collected. ZERO errors. ZERO STATUS_DLL_INIT_FAILED / 3221225794 /
 #   0xC0000142. Worktree clean and HEAD unmoved across the run; no other
@@ -145,7 +145,8 @@
 # version-gated skips move with it. Not separately measured -- do not quote a
 # number for that, only the direction.
 #
-# THE 13th ROW IS NEITHER FACTOR -- IT IS THE NETWORK. It stays in the list:
+# THE 13th ROW IS NEITHER FACTOR -- IT WAS THE NETWORK. NOW FIXED (third
+# amendment, 2026-09-08); its row is GONE from the list below:
 #     test_update_check.py::test_check_for_updates_official_ssh_origin_uses_https_probe
 #   The test patches `hermes_cli.banner.subprocess.run`, but the ls-remote it
 #   means to intercept is issued by `_check_via_rev` through
@@ -158,12 +159,39 @@
 #   is visible in the call log), _check_via_rev returned None, and the test's
 #   `assert result == 1` failed. So this row flips on transient upstream
 #   availability, under BOTH interpreters and BOTH launchers.
-#   NOT FIXED -- out of scope for the 2026-09-08 second amendment, which was
-#   scoped to the two bash rows. It is a real test defect (unmocked network in
-#   a unit suite, plus up to ~60s of wall clock) and is the obvious next fix:
-#   patch run_text_capture at `hermes_cli.banner`'s import site, or at
-#   hermes_cli._subprocess_compat.run_text_capture. Compare agent memory
+#   FIXED 2026-09-08 (third amendment). banner imports run_text_capture with a
+#   function-local `from hermes_cli._subprocess_compat import run_text_capture`
+#   inside _check_via_rev, so the name is resolved on THAT module at call time
+#   and there is no `banner.run_text_capture` attribute to patch. The test now
+#   patches hermes_cli._subprocess_compat.run_text_capture and asserts the
+#   recorded probe argv, so an inert patch can no longer pass by reaching the
+#   real network. Compare agent memory
 #   `run-text-capture-mock-target-varies-by-import-style`.
+#
+# --- THIRD AMENDMENT 2026-09-08: 224 -> 223 ---------------------------------
+#
+# Removed exactly one row -- the network row above -- after fixing the test:
+#     test_update_check.py::test_check_for_updates_official_ssh_origin_uses_https_probe
+# 224 -> 223 rows, 57 -> 56 files (it was that file's only row). The test's
+# intent is unchanged: it still proves a passive update check on an official
+# SSH origin does not trigger SSH auth, still asserts
+# ["git", "fetch", "origin", "--quiet"] is never called, and still asserts the
+# https probe is what gets used -- now by pinning the recorded probe argv
+# instead of by letting a real request reach github.com.
+#
+# NO FULL SWEEP WAS RUN FOR THIS AMENDMENT, deliberately. The change is one
+# test function in one file; the product is untouched. Verified instead by:
+#   * the row standalone: FAILS before at 12.97s (the real 10s ls-remote
+#     timeout firing), PASSES after at 1.02s -- the wall-clock collapse is
+#     itself the evidence the network call is gone;
+#   * a NEGATIVE CONTROL, because "it passes now" is exactly what an inert
+#     patch also produces. A copy of the fixed test with the probe patch
+#     pointed back at `hermes_cli.banner.run_text_capture` (create=True) fails
+#     in 11.15s, i.e. straight back out to the network. Both directions.
+#   * the whole file: 15 passed in 1.52s;
+#   * ruff check . -- All checks passed.
+# Harness for all of the above: C:/Users/diego/.hermes/agent-src/.venv/Scripts/
+# python.exe -m pytest ... -q -p no:randomly -p no:cacheprovider, absolute path.
 #
 # --- SECOND AMENDMENT 2026-09-08: 226 -> 224 --------------------------------
 #
@@ -204,9 +232,10 @@
 #   go. If it ever fails STANDALONE, that is a real regression; check that
 #   first before treating it as this artifact.
 #
-# WHOEVER RUNS THE NEXT FULL SWEEP: expect 224 core rows, plus or minus that
-# one pollution row. If you get 226 with the two bash rows back, you are on a
-# commit before this amendment, not looking at a regression.
+# WHOEVER RUNS THE NEXT FULL SWEEP: expect 223 core rows, plus or minus that
+# one pollution row. If you get 224 with the update-check network row back,
+# or 226 with the two bash rows as well, you are on a commit before the
+# amendment that removed them, not looking at a regression.
 #
 # THIS IS A BASELINE, NOT A REGRESSION LIST. The largest families are platform
 # failures (POSIX-only APIs on Windows), not defects from any recent change:
@@ -459,7 +488,6 @@ tests/hermes_cli/test_uninstall_node_symlinks.py::test_removes_dangling_symlink_
 tests/hermes_cli/test_uninstall_node_symlinks.py::test_removes_fhs_symlinks_in_usr_local_bin
 tests/hermes_cli/test_uninstall_node_symlinks.py::test_removes_symlinks_pointing_into_hermes_node
 tests/hermes_cli/test_update_autostash.py::test_non_interactive_discard_throws_changes_away
-tests/hermes_cli/test_update_check.py::test_check_for_updates_official_ssh_origin_uses_https_probe
 tests/hermes_cli/test_update_hangup_protection.py::TestInstallHangupProtection::test_wraps_stdout_and_stderr_with_mirror
 tests/hermes_cli/test_update_post_pull_syntax_guard.py::test_validate_critical_files_syntax_detects_break_in_main_py
 tests/hermes_cli/test_update_post_pull_syntax_guard.py::test_validate_critical_files_syntax_detects_break_in_web_server
