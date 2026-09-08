@@ -358,18 +358,18 @@ async def test_cron_profile_scan_runs_off_event_loop(isolated_profiles, monkeypa
     event_loop_thread = threading.get_ident()
     profile_scan_threads = SimpleQueue()
     worker_threads = SimpleQueue()
-    original_profile_dicts = web_server._cron_profile_dicts
+    original_profile_names = web_server._cron_profile_names
     original_find = web_server._find_cron_job_profile
 
-    def tracking_profile_dicts():
+    def tracking_profile_names():
         profile_scan_threads.put(threading.get_ident())
-        return original_profile_dicts()
+        return original_profile_names()
 
     def tracking_find(job_id):
         worker_threads.put(threading.get_ident())
         return original_find(job_id)
 
-    monkeypatch.setattr(web_server, "_cron_profile_dicts", tracking_profile_dicts)
+    monkeypatch.setattr(web_server, "_cron_profile_names", tracking_profile_names)
     monkeypatch.setattr(web_server, "_find_cron_job_profile", tracking_find)
 
     jobs = (await web_server.list_cron_jobs(profile="all"))["jobs"]
@@ -867,3 +867,98 @@ async def test_list_cron_jobs_all_reports_an_unreadable_profile(
     assert listing["errors"] == [
         {"profile": "worker_alpha", "error": "no such table: sessions"}
     ]
+
+
+class TestCronProfileNames:
+    """``_cron_profile_names`` is the cron dashboard's enumeration chokepoint.
+
+    Both consumers scope a cron store by profile *name* and read nothing else
+    off a profile, and ``/api/cron/jobs?profile=all`` is polled by the desktop
+    sidebar every 30s -- so this must stay enumeration-only. See the function's
+    docstring for the measurement that motivated it.
+    """
+
+    def test_matches_the_names_list_profiles_would_produce(self, isolated_profiles):
+        """Pins the no-drift contract against the expensive path it replaced."""
+        from hermes_cli import profiles as profiles_mod
+        from hermes_cli import web_server
+
+        assert web_server._cron_profile_names() == [
+            p.name for p in profiles_mod.list_profiles()
+        ]
+
+    def test_returns_every_profile_in_enumeration_order(self, isolated_profiles):
+        """Absolute expectation -- the identity test above cannot catch drift
+        inside the shared enumerator, because both sides move together."""
+        from hermes_cli import web_server
+
+        assert web_server._cron_profile_names() == ["default", "worker_alpha"]
+
+    def test_reads_no_config_yaml_and_probes_no_gateway(
+        self, isolated_profiles, monkeypatch
+    ):
+        """The whole point: no yaml parse, no process-table probe, per poll."""
+        from hermes_cli import profiles as profiles_mod
+        from hermes_cli import web_server
+
+        calls = {"config": 0, "gateway": 0}
+        real_config = profiles_mod._read_config_model
+        real_gateway = profiles_mod._check_gateway_running
+
+        def counting_config(profile_dir):
+            calls["config"] += 1
+            return real_config(profile_dir)
+
+        def counting_gateway(profile_dir):
+            calls["gateway"] += 1
+            return real_gateway(profile_dir)
+
+        monkeypatch.setattr(profiles_mod, "_read_config_model", counting_config)
+        monkeypatch.setattr(profiles_mod, "_check_gateway_running", counting_gateway)
+
+        names = web_server._cron_profile_names()
+
+        assert names == ["default", "worker_alpha"]
+        assert calls == {"config": 0, "gateway": 0}
+
+        # POSITIVE CONTROL. Without this a zero above is equally consistent
+        # with "the monkeypatch missed its target" -- prove the same counters
+        # DO fire for the metadata-gathering path this function replaced.
+        profiles_mod.list_profiles()
+        assert calls["config"] == 2
+        assert calls["gateway"] == 2
+
+    def test_falls_back_to_directory_scan_when_enumeration_raises(
+        self, isolated_profiles, monkeypatch
+    ):
+        """A broken enumerator must not blank the cross-profile cron view."""
+        from hermes_cli import profiles as profiles_mod
+        from hermes_cli import web_server
+
+        def boom():
+            raise RuntimeError("enumeration exploded")
+
+        monkeypatch.setattr(profiles_mod, "list_profile_targets", boom)
+
+        names = web_server._cron_profile_names()
+
+        assert "default" in names
+        assert "worker_alpha" in names
+
+    @pytest.mark.asyncio
+    async def test_aggregate_still_reaches_every_profile(self, isolated_profiles):
+        """End-to-end: the name-only fan-out still finds a named profile's job."""
+        from hermes_cli import web_server
+
+        job = web_server._call_cron_for_profile(
+            "worker_alpha",
+            "create_job",
+            prompt="reached via the enumeration fan-out",
+            schedule="every 1h",
+            name="enumeration-fanout-job",
+        )
+
+        listing = await web_server.list_cron_jobs(profile="all")
+
+        assert job["id"] in {row["id"] for row in listing["jobs"]}
+        assert listing["errors"] == []
