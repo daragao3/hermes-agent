@@ -66,6 +66,11 @@ metadata:
         description: "What this setting controls"
         default: "sensible-default"
         prompt: "Display prompt for setup"
+    blueprint:                              # Optional — marks this skill a runnable automation
+      schedule: "0 9 * * *"              #   cron expr / "every 2h" / ISO timestamp
+      deliver: origin                    #   optional (default origin)
+      prompt: "Task instruction for each run"  # optional
+      no_agent: false                    # optional
 required_environment_variables:          # Optional — env vars the skill needs
   - name: MY_API_KEY
     prompt: "Enter your API key"
@@ -244,7 +249,10 @@ required_credential_files:
 ```
 
 每个条目支持：
-- `path`（必需）——相对于 `~/.hermes/` 的文件路径
+- `path`（必需）——相对于 `~/.hermes/` 的文件路径，在所有宿主平台上都必须使用
+  `/` 分隔符书写。同一字符串会被用作 Linux 沙箱*内部*的路径，因此 Windows 风格的
+  `creds\token.json` 会被拒绝并记录一条警告，而不会被自动规范化——请声明为
+  `creds/token.json`。
 - `description`（可选）——说明该文件的用途及创建方式
 
 加载时，Hermes 会检查这些文件是否存在。缺少文件会触发 `setup_needed`。已存在的文件会自动：
@@ -333,6 +341,64 @@ hermes chat --toolsets skills -q "Use the X skill to do Y"
 如果你的 skill 是官方的且有用，但并非所有人都需要（例如付费服务集成、重量级依赖），请放入 **`optional-skills/`**——它随仓库一起发布，可通过 `hermes skills browse` 发现（标记为"official"），并以内置信任级别安装。
 
 如果你的 skill 是专业化的、社区贡献的或小众的，更适合放在 **Skills Hub**——将其上传到注册表并通过 `hermes skills install` 分享。
+
+## Blueprint：同时也是自动化任务的 Skill
+
+**Blueprint** 就是一个普通的 skill，只是额外在 frontmatter 中声明了调度计划。加上一个 `metadata.hermes.blueprint` 块，该 skill 就变成了可分享、可运行的自动化任务：
+
+```yaml
+metadata:
+  hermes:
+    tags: [blueprint, email]
+    blueprint:
+      schedule: "0 8 * * *"     # presence of `blueprint:` marks it runnable
+      deliver: telegram          # optional (default: origin)
+      prompt: "Summarize my unread email and today's calendar."  # optional
+      no_agent: false            # optional
+```
+
+由于 blueprint **本身就是**一个 skill，它会原封不动地流经整个 skills 流水线——搜索、检查、安装、安全扫描、来源溯源、tap、集中式索引，以及用于分享的 `hermes skills publish`。没有任何新概念需要学习。
+
+**安装 blueprint。** 当你安装一个带有 `blueprint:` 块的 skill 时，Hermes 会将其注册为**建议的 cron 任务**，而不是直接排定计划。排定计划是**需要手动确认的**——安装绝不会悄悄创建一个周期性任务。你可以通过 `/suggestions` 审阅并接受它：
+
+```bash
+hermes skills install owner/morning-brief
+# → Blueprint: 'morning-brief' is an automation (schedule 0 8 * * *).
+#   Added to your suggestions — run /suggestions to schedule or dismiss it.
+
+# then, in a session:
+/suggestions             # lists pending suggestions, numbered
+/suggestions accept 1    # creates the cron job
+/suggestions dismiss 1   # never offer it again
+```
+
+Blueprint 是统一的「建议 Cron 任务」界面的**来源**之一——精选的入门自动化任务，以及（后续的）使用习惯建议和集成建议，都会出现在同一个地方。参见下文的[建议 Cron 任务](#建议-cron-任务)。
+
+**分享你自己搭建的自动化任务。** 由 cron 任务加载的 blueprint（`hermes cron create --skill <name> ...`）可以被导出回 SKILL.md，并像其他任何 skill 一样发布，因此你为自己调优的自动化任务，对别人来说就成了一条命令即可安装的东西。
+
+Blueprint 这一层没有引入任何新的对象类型、存储或传输方式——blueprint 就是 skill，调度计划就是 cron 任务，分享走的就是既有的 publish/tap/索引路径。
+
+## 建议 Cron 任务
+
+Hermes 可以*主动提议*自动化任务，让你一键接受，而不必手工拼装 cron 任务。无论建议来自何处，所有提议都会汇入同一个界面——`/suggestions` 命令：
+
+| 来源 | 触发方式 |
+|--------|---------|
+| `catalog` | 精选的入门自动化任务（`/suggestions catalog`）——每日简报、重要邮件监控、每周回顾、工作日开始提醒 |
+| `blueprint` | 你安装了一个带有 `blueprint:` 块的 skill |
+| `usage` | 后台回顾发现了某个反复出现、适合用调度计划来满足的需求 |
+| `integration` | 你连接了某个账号（Gmail、GitHub 等），系统会提供显而易见的自动化任务 |
+
+```bash
+/suggestions             # list pending
+/suggestions accept N    # schedule suggestion N (creates the cron job)
+/suggestions dismiss N   # dismiss it — latched, never re-offered
+/suggestions catalog     # add the curated starter automations
+```
+
+接受一条建议时，调用的是 `cronjob` 工具所使用的同一个 `cron.jobs.create_job`——不存在第二套任务引擎。建议**绝不会**自动创建任务；接受始终是显式的。已忽略的建议会按稳定的键锁定，因此同一条提议不会被再次提出。待处理列表有数量上限，因此它不会变成一堵烦人的提醒墙。
+
+**重要邮件监控**这条 catalog 条目体现了「轮询→分类→呈现」的模式：它用一个廉价的分类模型（`config.yaml` 中的 `auxiliary.monitor`）为收件箱条目打分，只投递超过紧急度阈值的条目，其余情况保持静默。
 
 ## 发布 Skill
 
