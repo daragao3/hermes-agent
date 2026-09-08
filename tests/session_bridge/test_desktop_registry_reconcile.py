@@ -1224,6 +1224,32 @@ def test_baseline_requires_every_root_and_group(tmp_path: Path) -> None:
         build_registry_sync_plan(scan, baselines=incomplete)
 
 
+def test_absent_record_does_not_relax_torn_baseline_guard(tmp_path):
+    roots = tuple(tmp_path / name for name in ("a", "b", "c"))
+    for root in roots:
+        _write_record(root, "local_absent", mtime_ns=100)
+        _write_record(root, "local_present", mtime_ns=100)
+    initial = build_registry_sync_plan(_scan(*roots), baselines=())
+    for root in roots:
+        (root / "local_absent.json").unlink()
+    omitted = next(row for row in initial.proposed_baselines
+                   if row.filename == "local_absent.json")
+    with pytest.raises(ValueError, match="incomplete baseline"):
+        build_registry_sync_plan(_scan(*roots), baselines=tuple(
+            row for row in initial.proposed_baselines if row != omitted))
+
+
+def test_all_previously_known_records_missing_remains_fail_closed(tmp_path):
+    roots = tuple(tmp_path / name for name in ("a", "b", "c"))
+    for root in roots:
+        _write_record(root, "local_absent", mtime_ns=100)
+    initial = build_registry_sync_plan(_scan(*roots), baselines=())
+    for root in roots:
+        (root / "local_absent.json").unlink()
+    with pytest.raises(ValueError, match="missing record"):
+        build_registry_sync_plan(_scan(*roots), baselines=initial.proposed_baselines)
+
+
 def test_scan_cache_reuses_unchanged_observations(tmp_path, monkeypatch) -> None:
     from session_bridge import desktop_registry as module
     from session_bridge.desktop_registry import RegistryScanCache

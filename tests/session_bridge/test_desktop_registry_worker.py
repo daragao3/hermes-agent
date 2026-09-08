@@ -245,6 +245,48 @@ def _heartbeat(store):
     return store.get_state(WORKER_HEARTBEAT_STATE_KEY)
 
 
+def test_absent_record_is_quarantined_without_stopping_other_records(tmp_path, store, db):
+    roots = _roots(tmp_path)
+    for root in roots:
+        _write_record(root, "local_absent", mtime_ns=100)
+        _write_record(root, "local_present", mtime_ns=100)
+    worker = _worker(store, roots)
+    worker.run_once()
+    retained = [row for row in store.load_desktop_registry_baselines()
+                if row["filename"] == "local_absent.json"]
+    assert retained
+    for root in roots:
+        (root / "local_absent.json").unlink()
+    _write_record(roots[0], "local_present", mtime_ns=200, title="Changed")
+    store.set_state(WORKER_HEARTBEAT_STATE_KEY, {"at": 0.0})
+
+    counters = worker.run_once()
+
+    assert counters["patched"] == 2
+    assert counters["conflicts"] == 1
+    assert counters["verify_failures"] == 0
+    assert all(_read(root, "local_present")["title"] == "Changed" for root in roots)
+    assert all(not (root / "local_absent.json").exists() for root in roots)
+    assert [row for row in store.load_desktop_registry_baselines()
+            if row["filename"] == "local_absent.json"] == retained
+    assert _heartbeat(store)["at"] > 0
+    with db._lock:
+        conflict = db._conn.execute(
+            "SELECT filename, reason, candidates_json FROM desktop_registry_conflicts"
+        ).fetchone()
+    assert conflict["filename"] == "local_absent.json"
+    assert conflict["reason"] == "baseline_record_absent"
+    assert json.loads(conflict["candidates_json"]) == {}
+    assert worker.run_once()["conflicts"] == 1  # persists, not silently forgotten
+
+    # A genuine surviving record can rejoin later against the retained baseline.
+    _write_record(roots[0], "local_absent", mtime_ns=300, title="Returned")
+    recovered = worker.run_once()
+    assert recovered["created"] == 2
+    assert recovered["conflicts"] == 0
+    assert all(_read(root, "local_absent")["title"] == "Returned" for root in roots)
+
+
 def test_converged_cycle_still_beats_though_it_stages_no_run(
     tmp_path, store
 ) -> None:
