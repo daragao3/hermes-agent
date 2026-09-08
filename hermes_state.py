@@ -2982,6 +2982,47 @@ class SessionDB:
                 return False
             raise
 
+    def has_session_schema(self) -> bool:
+        """True when this file is actually a session store.
+
+        ``state.db`` is a filename shared by two INDEPENDENT schema owners.
+        ``SessionDB`` creates the full session schema (which happens to include
+        ``async_delegations``), but ``tools/async_delegation.py::_connect``
+        opens the SAME path and creates ONLY its own ``async_delegations``
+        table. Whichever runs first in a given profile decides what the file
+        contains, so a profile that has run an async delegation but never
+        recorded a session holds a valid, non-empty SQLite database with no
+        ``sessions`` table -- and a bare ``db_path.exists()`` guard passes it
+        straight through to a query that raises ``no such table: sessions``.
+
+        Measured on this box 2026-09-08: ``profiles/matcher/state.db`` is
+        12,288 bytes and holds exactly one table, ``async_delegations``, with
+        zero rows. It is the only such profile today; 17 of the 20 have no
+        ``state.db`` at all.
+
+        DELIBERATELY NOT a byte-length or SQLite-header test. The same file is
+        0 bytes between ``sqlite3.connect()`` and its first checkpoint -- under
+        WAL the schema lives in the ``-wal`` until then -- so length measures
+        WHEN you looked, not what the file is. At 0 bytes, 4,096 bytes and
+        12,288 bytes the failing query is byte-identical, which is why an
+        earlier report of this same file as "zero-byte" and today's 12KB
+        reading describe one defect, not two.
+
+        Distinguishes "never initialised as a session store" from "cannot be
+        read": a corrupt, locked or I/O-failing database raises out of here
+        rather than returning False, so callers keep reporting it and the
+        cross-profile error channel added in 8ca1e62d64 stays intact.
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sessions' LIMIT 1"
+            )
+            return cursor.fetchone() is not None
+        finally:
+            cursor.close()
+
     def _ensure_fts_schema(
         self,
         cursor: sqlite3.Cursor,
