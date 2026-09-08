@@ -6,6 +6,7 @@ so each gateway user gets their own memory bucket instead of sharing a static on
 
 import json
 import os
+import pytest
 from unittest.mock import MagicMock, patch
 
 from agent.memory_provider import MemoryProvider
@@ -154,10 +155,42 @@ class TestMemoryManagerUserIdThreading:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def no_lazy_install():
+    """Close the lazy-install seam ``Mem0MemoryProvider._create_backend`` opens.
+
+    ``_create_backend`` does a function-local ``from tools.lazy_deps import
+    ensure`` and calls it for ``memory.mem0``, which runs the real
+    ``uv pip install mem0ai==<pin>`` ladder (second tier:
+    ``python -m ensurepip --upgrade --default-pip``) against the LIVE venv this
+    checkout and the hermes gateway run from. Because the name is resolved at
+    call time, the target is ``tools.lazy_deps.ensure``.
+
+    ``_create_backend`` swallows the failure in ``except Exception: pass``, so
+    the attempt was invisible -- these tests passed while attempting a package
+    install on every run, and only ``tests/conftest.py``'s live-system guard
+    (which raises at ``subprocess.Popen``, below the helper) stopped it. Found
+    2026-09-08 by the runtime tripwire; loops record
+    ``run-text-capture-inert-mock-sweep-20260908``.
+
+    Yields the recorded feature names so a caller can put a LOWER BOUND on the
+    seam; without one this fixture is indistinguishable from a dead patch.
+    """
+    from tools import lazy_deps
+
+    called: list[str] = []
+
+    def _record(feature, **kwargs):
+        called.append(feature)
+
+    with patch.object(lazy_deps, "ensure", _record):
+        yield called
+
+
 class TestMem0UserIdScoping:
     """Verify Mem0 plugin uses gateway user_id when provided."""
 
-    def test_gateway_user_id_overrides_default(self):
+    def test_gateway_user_id_overrides_default(self, no_lazy_install):
         """When user_id is passed via kwargs, it should override the config default."""
         from plugins.memory.mem0 import Mem0MemoryProvider
 
@@ -171,9 +204,14 @@ class TestMem0UserIdScoping:
         }):
             provider.initialize(session_id="test-sess", user_id="tg_user_99")
 
+        # LOWER BOUND FIRST: prove the lazy-install seam was reached and
+        # intercepted. Without it the fixture could be patching a dead name and
+        # the user_id assertion below would still pass -- the vacuity that lets
+        # this defect class survive.
+        assert no_lazy_install == ["memory.mem0"]
         assert provider._user_id == "tg_user_99"
 
-    def test_no_user_id_falls_back_to_config(self):
+    def test_no_user_id_falls_back_to_config(self, no_lazy_install):
         """Without user_id in kwargs, should use config default."""
         from plugins.memory.mem0 import Mem0MemoryProvider
 
@@ -188,7 +226,7 @@ class TestMem0UserIdScoping:
 
         assert provider._user_id == "custom-default"
 
-    def test_no_user_id_no_config_uses_hermes_user(self):
+    def test_no_user_id_no_config_uses_hermes_user(self, no_lazy_install):
         """Without user_id or config override, should default to 'hermes-user'."""
         from plugins.memory.mem0 import Mem0MemoryProvider
 
@@ -202,7 +240,7 @@ class TestMem0UserIdScoping:
 
         assert provider._user_id == "hermes-user"
 
-    def test_different_users_get_different_ids(self):
+    def test_different_users_get_different_ids(self, no_lazy_install):
         """Two providers initialized with different user_ids should be scoped differently."""
         from plugins.memory.mem0 import Mem0MemoryProvider
 
