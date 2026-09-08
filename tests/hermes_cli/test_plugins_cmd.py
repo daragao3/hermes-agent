@@ -422,10 +422,19 @@ class TestCmdInstall:
     @patch("hermes_cli.plugins_cmd.shutil.rmtree")
     @patch("hermes_cli.plugins_cmd._plugins_dir")
     @patch("hermes_cli.plugins_cmd._read_manifest")
-    @patch("hermes_cli.plugins_cmd.subprocess.run")
+    # `_install_plugin_core` clones via `run_text_capture`, NOT `subprocess.run`.
+    # plugins_cmd binds that name at module scope (line 24), so the patch target
+    # is `hermes_cli.plugins_cmd.run_text_capture`. Patching
+    # `hermes_cli.plugins_cmd.subprocess.run` here — as this test used to —
+    # intercepts nothing: a real `git clone https://github.com/owner/repo.git`
+    # went out to github.com on every run, failed, and raised
+    # PluginOperationError from the CLONE. That produced the same SystemExit(1)
+    # this test asserts, so it passed while never once reaching the
+    # `_sanitize_plugin_name(".")` guard it exists to cover.
+    @patch("hermes_cli.plugins_cmd.run_text_capture")
     def test_install_rejects_manifest_name_pointing_at_plugins_root(
         self,
-        mock_run,
+        mock_clone,
         mock_read_manifest,
         mock_plugins_dir,
         mock_rmtree,
@@ -438,13 +447,37 @@ class TestCmdInstall:
         plugins_dir = tmp_path / "plugins"
         plugins_dir.mkdir()
         mock_plugins_dir.return_value = plugins_dir
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         mock_read_manifest.return_value = {"name": "."}
+
+        clone_calls = []
+
+        def fake_clone(argv, **kwargs):
+            clone_calls.append(list(argv))
+            # Materialise the clone destination so the flow proceeds past the
+            # clone and actually reaches the name-sanitising guard.
+            Path(argv[-1]).mkdir(parents=True, exist_ok=True)
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_clone.side_effect = fake_clone
 
         with pytest.raises(SystemExit) as exc_info:
             cmd_install("owner/repo", force=True)
 
+        # Lower bound on the recorded collection FIRST: without this the three
+        # negative assertions below are all satisfied by an empty call list, so
+        # an inert patch would pass silently — which is exactly how this test
+        # spent its life before the target was corrected.
+        assert len(clone_calls) == 1, clone_calls
+        assert clone_calls[0][1:5] == [
+            "clone",
+            "--depth",
+            "1",
+            "https://github.com/owner/repo.git",
+        ], clone_calls[0]
+
         assert exc_info.value.code == 1
+        # The guard under test: a manifest `name` of "." resolves to the plugins
+        # root itself, and force=True would rmtree it.
         assert plugins_dir not in [call.args[0] for call in mock_rmtree.call_args_list]
         mock_move.assert_not_called()
         mock_display_after_install.assert_not_called()
