@@ -145,7 +145,12 @@ class TestSkillsDirectoryMount:
         # Create a symlink pointing outside the skills tree
         secret = tmp_path / "secret.txt"
         secret.write_text("TOP SECRET")
-        (skills_dir / "evil_link").symlink_to(secret)
+        try:
+            (skills_dir / "evil_link").symlink_to(secret)
+        except (OSError, NotImplementedError) as exc:
+            # Windows grants symlink creation only under Developer Mode or to an
+            # elevated process.  Detect by attempting, not by checking for admin.
+            pytest.skip(f"symlinks unavailable: {exc}")
 
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
             mounts = get_skills_directory_mount()
@@ -185,7 +190,10 @@ class TestIterSkillsFiles:
         # Add a symlink that should be filtered
         secret = tmp_path / "secret"
         secret.write_text("nope")
-        (skills_dir / "cat" / "myskill" / "evil").symlink_to(secret)
+        try:
+            (skills_dir / "cat" / "myskill" / "evil").symlink_to(secret)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
 
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
             files = iter_skills_files()
@@ -195,6 +203,30 @@ class TestIterSkillsFiles:
         assert "/root/.hermes/skills/cat/myskill/scripts/run.sh" in paths
         # Symlink should be excluded
         assert not any("evil" in f["container_path"] for f in files)
+
+    def test_nested_container_paths_use_posix_separators(self, tmp_path):
+        """Enumeration half of test_returns_files_skipping_symlinks, symlink-free.
+
+        That test skips wherever symlinks are unprivileged (Windows without
+        Developer Mode), taking its container_path assertions with it.  Those
+        assertions need no symlink and are the ones that catch a host-separator
+        leak: ``container_path`` is a path *inside the Linux container* (Modal
+        passes it straight to ``Mount.from_local_file(remote_path=...)``), so a
+        nested file must join with "/" even when the host is Windows.
+        """
+        hermes_home = tmp_path / ".hermes"
+        skills_dir = hermes_home / "skills"
+        (skills_dir / "cat" / "myskill" / "scripts").mkdir(parents=True)
+        (skills_dir / "cat" / "myskill" / "SKILL.md").write_text("# skill")
+        (skills_dir / "cat" / "myskill" / "scripts" / "run.sh").write_text("#!/bin/bash")
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
+            files = iter_skills_files()
+
+        paths = {f["container_path"] for f in files}
+        assert "/root/.hermes/skills/cat/myskill/SKILL.md" in paths
+        assert "/root/.hermes/skills/cat/myskill/scripts/run.sh" in paths
+        assert not any("\\" in p for p in paths)
 
     def test_empty_when_no_skills_dir(self, tmp_path):
         hermes_home = tmp_path / ".hermes"
@@ -502,7 +534,10 @@ class TestIterCacheFiles:
         doc_dir.mkdir(parents=True)
         real_file = doc_dir / "real.txt"
         real_file.write_text("content")
-        (doc_dir / "link.txt").symlink_to(real_file)
+        try:
+            (doc_dir / "link.txt").symlink_to(real_file)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         entries = iter_cache_files()
