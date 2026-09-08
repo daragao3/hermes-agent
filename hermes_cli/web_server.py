@@ -4737,6 +4737,15 @@ def get_profiles_sessions(
             errors.append({"profile": name, "error": str(exc)})
             continue
         try:
+            if not db.has_session_schema():
+                # Not a session store at all -- treat it exactly like a missing
+                # file (the `continue` on db_path.exists() above) instead of
+                # reporting a per-poll error. See SessionDB.has_session_schema:
+                # `state.db` is a filename shared with async_delegation, which
+                # creates the file with only its own table. A store that
+                # genuinely cannot be READ still raises out of the probe and is
+                # still reported below.
+                continue
             rows = db.list_sessions_rich(
                 source=source_filter,
                 exclude_sources=exclude_list or None,
@@ -4897,6 +4906,15 @@ def get_profiles_sessions_sidebar(
             errors.append({"profile": name, "error": str(exc)})
             continue
         try:
+            if not db.has_session_schema():
+                # Not a session store at all -- see the twin guard in
+                # get_profiles_sessions above and
+                # SessionDB.has_session_schema. This is the one that was
+                # firing on this box: profiles/matcher put a permanent
+                # {"profile": "matcher", "error": "no such table: sessions"}
+                # into every poll of this endpoint, which 8ca1e62d64 then
+                # surfaced as a desktop warning toast.
+                continue
             # Counted for EVERY profile, in-scope or not, and reported in the
             # SEPARATE `all_profile_totals` field below. A scoped request that
             # legitimately returns zero (a real, recognized, populated profile
