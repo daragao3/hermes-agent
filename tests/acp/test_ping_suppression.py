@@ -150,8 +150,16 @@ async def test_bare_ping_request_produces_proper_response_and_no_stderr_noise(
         address = server.sockets[0].getsockname()
         client_input, client_output = await asyncio.open_connection(*address[:2])
         agent_input, agent_output = await agent_streams.get()
+        # `close()` alone is what this needs: it stops the listener accepting.
+        # Do NOT `await server.wait_closed()` here. Since CPython 3.12.1 it
+        # blocks until every ACCEPTED connection has been dropped as well, and
+        # this test deliberately keeps the accepted (agent-side) connection
+        # open for the rest of the body -- so the wait can never be satisfied
+        # and the whole pytest process hard-hangs inside the event loop, past
+        # any per-test timeout (the watchdog cannot interrupt a blocking C
+        # call). On 3.11 and earlier `wait_closed()` returned immediately when
+        # the server was already closed, which is why this read as harmless.
         server.close()
-        await server.wait_closed()
 
         agent_task = asyncio.create_task(
             acp.run_agent(
