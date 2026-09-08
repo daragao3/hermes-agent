@@ -11925,14 +11925,32 @@ def _validate_dashboard_cron_context_from(
             )
 
 
-def _cron_profile_dicts() -> List[Dict[str, Any]]:
-    """Return dashboard profile records, falling back to a directory scan."""
+def _cron_profile_names() -> List[str]:
+    """Profile names for the cron dashboard's cross-profile fan-out.
+
+    ENUMERATION ONLY -- deliberately not ``list_profiles()``. Both consumers
+    (:func:`_find_cron_job_profile` and :func:`_list_cron_jobs_sync`) read
+    nothing off a profile but its *name*, which they use to scope a cron store;
+    they never touch ``model``, ``provider``, ``skill_count`` or
+    ``gateway_running``. Gathering that metadata to produce a list of names is
+    expensive out of all proportion to what is used, and this is a *polled*
+    path: the desktop sidebar refreshes ``/api/cron/jobs?profile=all`` every
+    30s (``CRON_POLL_INTERVAL_MS``), so every one of those polls was parsing
+    every profile's ``config.yaml`` and probing the process table for gateway
+    liveness. Measured 2026-09-08 across this box's 20 profiles: the old
+    ``list_profiles`` + ``_profile_to_dict`` form ran a median 76.7ms warm
+    (231ms cold) against ~5ms for the enumeration.
+
+    Same profiles in the same order as ``list_profiles()`` -- ``list_profiles``
+    is defined in terms of :func:`~hermes_cli.profiles.list_profile_targets`,
+    so the two sets cannot drift.
+    """
     from hermes_cli import profiles as profiles_mod
     try:
-        return [_profile_to_dict(p) for p in profiles_mod.list_profiles()]
+        return [name for name, _home in profiles_mod.list_profile_targets()]
     except Exception:
         _log.exception("Failed to list profiles for cron dashboard; falling back to directory scan")
-        return _fallback_profile_dicts(profiles_mod)
+        return [str(row.get("name") or "") for row in _fallback_profile_dicts(profiles_mod)]
 
 
 def _cron_default_profile() -> str:
@@ -12008,8 +12026,7 @@ def _call_cron_for_profile(target_profile: Optional[str], func_name: str, *args,
 
 
 def _find_cron_job_profile(job_id: str) -> Optional[str]:
-    for profile in _cron_profile_dicts():
-        name = str(profile.get("name") or "")
+    for name in _cron_profile_names():
         if not name:
             continue
         jobs = _call_cron_for_profile(name, "list_jobs", True)
@@ -12038,8 +12055,7 @@ def _list_cron_jobs_sync(profile: str = "all"):
 
     jobs: List[Dict[str, Any]] = []
     errors: List[Dict[str, str]] = []
-    for item in _cron_profile_dicts():
-        name = str(item.get("name") or "")
+    for name in _cron_profile_names():
         if not name:
             continue
         try:

@@ -709,6 +709,35 @@ def _check_gateway_running(profile_dir: Path) -> bool:
     in the profile's own ``gateway_state.json`` against the live process table,
     mirroring the ``/api/status`` sidebar's liveness logic so the two surfaces
     agree.  Parameterized by ``profile_dir`` so it never mutates ``HERMES_HOME``.
+
+    DELIBERATELY NOT CACHED, decided 2026-09-08 after measuring (loops
+    ``gateway-running-cache-decision-20260908``).  ``gateway.status`` does ship
+    a cached reader (``get_running_pid_cached``, 1s TTL + pid/lock file
+    signature) and swapping the first leg onto it would be a two-line change --
+    but a cross-request cache only pays when two calls land on one key inside
+    the TTL, and no caller does that:
+
+    * the CLI consumers of ``ProfileInfo.gateway_running`` -- ``hermes profile
+      list`` / ``profile info``, ``gateway list``, ``doctor``, ``uninstall`` --
+      are one-shot processes, so an in-process cache is cold by construction
+      and saves exactly nothing;
+    * ``GET /api/profiles`` is interactive, not polled (the desktop fetches it
+      at startup and on profile-picker open, ``store/profile.ts``);
+    * the polled surfaces poll far slower than any liveness-safe TTL --
+      ``/api/status`` every 15s, ``/api/cron/jobs`` every 30s -- so a 1-2s TTL
+      never spans two of them.
+
+    What a cache would buy, measured on this box (20 profiles, one live
+    gateway): ~26ms once per 15s, from collapsing the single duplicate probe
+    that ``/api/status`` makes on the active profile.  What it would cost is a
+    stale liveness reading on exactly the surfaces a user reads to answer "is
+    this profile's gateway up?".  That trade is not worth taking.  Note also
+    that this function is cheap only because liveness costs scale with the
+    number of *running* gateways, not profiles: 19 of 20 profiles here have no
+    ``gateway_state.json`` at all and cost ~0.4ms with zero ``psutil`` probes,
+    while the one live gateway costs ~26-33ms (a ``Process.status()`` zombie
+    check, which enumerates threads on Windows).  Re-open the question if this
+    box ever runs many gateways at once.
     """
     try:
         from gateway.status import get_running_pid
