@@ -526,6 +526,8 @@ terminal:
 
 Paths are relative to `~/.hermes/`. Files are mounted to `/root/.hermes/` inside the container. This list is read by `tools/credential_files.py` (`terminal.credential_files`) — it lives under the `terminal:` block but is loaded by the credential-files module, not the core terminal backend, so it isn't part of the bundled `DEFAULT_CONFIG` snapshot.
 
+**Declared paths are POSIX-relative on every host.** Write them with `/` separators — the same string is reused as the path *inside* the Linux sandbox. A Windows-style separator (`creds\token.json`) is rejected with a logged warning rather than normalised, on both routes above: skill frontmatter and `terminal.credential_files`. Repairing it silently would be the riskier behaviour — on POSIX a backslash is an ordinary filename character, so normalising `..\..\.ssh\id_rsa` would convert an inert string into a live traversal attempt. The malformed declaration is refused instead.
+
 ### What Each Sandbox Filters
 
 | Sandbox | Default Filter | Passthrough Override |
