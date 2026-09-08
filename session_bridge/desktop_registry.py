@@ -616,9 +616,6 @@ def _validate_baselines(
 ) -> None:
     expected_roots = set(scan.roots)
     for filename, groups in baselines_by_record.items():
-        observations = scan.records.get(filename)
-        if observations is None:
-            raise ValueError(f"baseline references missing record {filename}")
         # A group entirely absent from the baselines was never accepted (for
         # example a standing quarantine); that is legitimate.  Only PARTIAL
         # root coverage is evidence of a torn or foreign write.
@@ -629,6 +626,8 @@ def _validate_baselines(
                     f"incomplete baseline for {filename} {group_name}: "
                     f"expected {len(expected_roots)} roots, found {len(covered)}"
                 )
+    if baselines_by_record and not scan.records:
+        raise ValueError("baseline references missing records: all stores are empty")
 
 
 _NULL_PROTECTED_JSON = _canonical_json({"state": "present", "value": None})
@@ -850,7 +849,19 @@ def build_registry_sync_plan(
     _validate_baselines(scan, baselines_by_record)
 
     record_plans: dict[str, RegistryRecordPlan] = {}
-    conflicts: list[RegistryConflict] = []
+    # A record can disappear from every account while its accepted baseline
+    # remains. Retain that evidence and quarantine the record; it cannot seed a
+    # replica. One absent record must not abort reconciliation of every other
+    # record. Validation above still rejects torn/foreign baseline coverage.
+    conflicts: list[RegistryConflict] = [
+        RegistryConflict(
+            filename=filename,
+            group_name="record",
+            reason="baseline_record_absent",
+            candidates=MappingProxyType({}),
+        )
+        for filename in sorted(set(baselines_by_record) - set(scan.records))
+    ]
     proposed: list[RegistryBaseline] = []
 
     for filename in sorted(scan.records):
