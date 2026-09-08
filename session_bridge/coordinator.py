@@ -1148,6 +1148,36 @@ class _SidebarExecutor(Protocol):
 _ProviderHealth = dict[str, float | str | None]
 _RECENT_ERROR_LIMIT = 20
 _CODEX_SCAN_FAILURE_CODE = "codex_scan_failed"
+# 2026-09-07: the two BENIGN conditions that share the failure helper's log
+# shape but are not failures. A deferral is retried next cycle; a vanished
+# staged thread is terminal but expected (deleted, archived, pruned). Both were
+# reporting themselves as `codex_scan_failed` -- see `_CODEX_SCAN_ERROR_CODES`.
+_CODEX_SCAN_DEFERRED_CODE = "codex_scan_deferred"
+_CODEX_SCAN_VANISHED_CODE = "codex_scan_thread_vanished"
+_CODEX_SCAN_DIAGNOSTIC_CODES = frozenset({
+    _CODEX_SCAN_FAILURE_CODE,
+    _CODEX_SCAN_DEFERRED_CODE,
+    _CODEX_SCAN_VANISHED_CODE,
+})
+# Only a GENUINE scan failure belongs in `recent_error_codes`. That list is not
+# advisory: `health.py` admits it as a `mirror_jobs` failure and its registry
+# maps ("mirror_jobs", "codex_scan_failed") -> ("provider",
+# "index_refresh_blocked", "retryable"), so a benign app-server timeout would
+# publish "the index refresh is blocked" about a healthy service. It is also a
+# 20-slot UN-deduped FIFO admitted FIRST against MAX_FAILURES=32, so a
+# recurring benign condition crowds sidebar/hydration/visibility evidence out
+# of the envelope entirely -- the displacement is the real cost, not the label.
+#
+# Deliberately NOT solved by minting a registered failure code for the benign
+# states: that needs a coordinated two-sided vocabulary deploy of a surface
+# this exact pair has already blinded once (see the comments at
+# scripts/session_bridge_health_report.py `_FAILURE_IMPACTS`), and it would
+# still be publishing a FAILURE record for a non-failure. The diagnostic
+# `code=` below is free text that nothing outside this module consumes, so the
+# benign states stay fully visible in the log while leaving the health surface
+# alone. Same reasoning as `_log_codex_marker_conflicts`, which routes around
+# this helper for exactly this.
+_CODEX_SCAN_ERROR_CODES = frozenset({_CODEX_SCAN_FAILURE_CODE})
 _CODEX_SCAN_LOCAL_OWNER_CODE = "codex_local_session_owns_id"
 _CLAUDE_SCAN_LOCAL_OWNER_CODE = "claude_local_session_owns_id"
 _CLAUDE_MARKER_CONFLICT_CODE = "claude_conflicting_bridge_markers"
@@ -4768,6 +4798,7 @@ class SessionBridgeCoordinator:
                     native_id=getattr(thread_summary, "native_id", None),
                     exc=exc,
                     adapter=adapter,
+                    code=_CODEX_SCAN_DEFERRED_CODE,
                 )
                 continue
             except ConflictingCodexBridgeMarkers:
@@ -5025,6 +5056,7 @@ class SessionBridgeCoordinator:
                     native_id=getattr(thread_summary, "native_id", None),
                     exc=exc,
                     adapter=adapter,
+                    code=_CODEX_SCAN_DEFERRED_CODE,
                 )
                 continue
             except ConflictingCodexBridgeMarkers:
@@ -5674,6 +5706,7 @@ class SessionBridgeCoordinator:
                         native_id=native_id,
                         exc=RuntimeError("staged Codex thread is unavailable"),
                         adapter=adapter,
+                        code=_CODEX_SCAN_VANISHED_CODE,
                     )
                     continue
                 projection = await self._provider_call(
@@ -5717,6 +5750,7 @@ class SessionBridgeCoordinator:
                     native_id=native_id,
                     exc=exc,
                     adapter=adapter,
+                    code=_CODEX_SCAN_DEFERRED_CODE,
                 )
                 continue
             except ConflictingCodexBridgeMarkers:
@@ -6180,8 +6214,14 @@ class SessionBridgeCoordinator:
         native_id: object,
         exc: BaseException,
         adapter: object,
+        code: str = _CODEX_SCAN_FAILURE_CODE,
     ) -> None:
         safe_stage = stage if stage in _CODEX_SCAN_STAGES else "diagnostic_unavailable"
+        # An unrecognised code degrades to the FAILURE code, not to a benign one:
+        # this must fail toward reporting, never toward silence.
+        safe_code = (
+            code if code in _CODEX_SCAN_DIAGNOSTIC_CODES else _CODEX_SCAN_FAILURE_CODE
+        )
         try:
             native_tag = redact_codex_thread_id(native_id) or "unknown"
         except Exception:
@@ -6198,7 +6238,7 @@ class SessionBridgeCoordinator:
             _LOG.warning(
                 "codex_scan_diagnostic stage=%s code=%s native=%s detail=%r stderr=%r stderr_lines=%d",
                 safe_stage,
-                _CODEX_SCAN_FAILURE_CODE,
+                safe_code,
                 native_tag,
                 exception_detail,
                 stderr,
@@ -6206,7 +6246,8 @@ class SessionBridgeCoordinator:
             )
         except Exception:
             pass
-        self._record_error_code(_CODEX_SCAN_FAILURE_CODE)
+        if safe_code in _CODEX_SCAN_ERROR_CODES:
+            self._record_error_code(safe_code)
 
     def _elapsed_ms(self, started: float) -> float:
         return max(0.0, (float(self._monotonic()) - started) * 1000.0)
