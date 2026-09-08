@@ -19,6 +19,36 @@ from agent.trace_upload import (
 )
 
 
+@pytest.fixture
+def no_lazy_install():
+    """Close the lazy-install seam ``_do_upload`` opens before it imports HfApi.
+
+    ``trace_upload._do_upload`` calls ``tools.lazy_deps.ensure("tool.trace_upload")``,
+    which runs the real ``uv pip install huggingface-hub==<pin>`` ladder (and, on
+    its second tier, ``python -m ensurepip --upgrade --default-pip``) against the
+    LIVE venv this checkout and the hermes gateway run from. ``ensure`` is imported
+    function-locally inside ``_do_upload``, so it resolves on ``tools.lazy_deps``
+    at call time -- that is the name to patch. ``_do_upload`` wraps the call in a
+    bare ``except Exception: pass``, so the attempt was completely invisible: these
+    tests passed while attempting a package install on every run, and only
+    ``tests/conftest.py``'s live-system guard (which raises at ``subprocess.Popen``,
+    below the helper) stopped it. Found 2026-09-08 by the runtime tripwire; see the
+    loops record ``run-text-capture-inert-mock-sweep-20260908``.
+
+    Yields the recorded feature names so a caller can assert the seam is LIVE --
+    without that lower bound this fixture is indistinguishable from a dead patch.
+    """
+    from tools import lazy_deps
+
+    called: list[str] = []
+
+    def _record(feature, **kwargs):
+        called.append(feature)
+
+    with patch.object(lazy_deps, "ensure", _record):
+        yield called
+
+
 # ---------------------------------------------------------------------------
 # Converter
 # ---------------------------------------------------------------------------
@@ -180,7 +210,7 @@ def test_upload_empty_transcript(monkeypatch):
     assert "No transcript" in msg
 
 
-def test_upload_happy_path_mocked(monkeypatch):
+def test_upload_happy_path_mocked(monkeypatch, no_lazy_install):
     """Full upload path with a mocked HfApi — verifies repo id / path / content."""
     pytest.importorskip("huggingface_hub")  # optional dep; runtime degrades gracefully
     monkeypatch.setenv("HF_TOKEN", "hf_test")
@@ -193,6 +223,12 @@ def test_upload_happy_path_mocked(monkeypatch):
                       return_value=(messages, {"model": "claude-x"})), \
          patch("huggingface_hub.HfApi", return_value=fake_api):
         msg = upload_session_trace("20260531_abc", cwd="/tmp")
+
+    # LOWER BOUND FIRST: the lazy-install seam was reached and intercepted.
+    # Without this the fixture could be patching a dead name and every
+    # assertion below would still pass -- the same vacuity that let this
+    # whole defect class survive. See the fixture docstring.
+    assert no_lazy_install == ["tool.trace_upload"]
 
     # Returned a viewer URL
     assert "huggingface.co/datasets/alice/hermes-traces" in msg
@@ -218,7 +254,7 @@ def test_upload_happy_path_mocked(monkeypatch):
     assert first["sessionId"] == "20260531_abc"
 
 
-def test_upload_public_flag(monkeypatch):
+def test_upload_public_flag(monkeypatch, no_lazy_install):
     pytest.importorskip("huggingface_hub")  # optional dep
     monkeypatch.setenv("HF_TOKEN", "hf_test")
     fake_api = MagicMock()
@@ -231,7 +267,7 @@ def test_upload_public_flag(monkeypatch):
     assert kwargs["private"] is False
 
 
-def test_upload_whoami_failure(monkeypatch):
+def test_upload_whoami_failure(monkeypatch, no_lazy_install):
     pytest.importorskip("huggingface_hub")  # optional dep
     monkeypatch.setenv("HF_TOKEN", "hf_bad")
     fake_api = MagicMock()
