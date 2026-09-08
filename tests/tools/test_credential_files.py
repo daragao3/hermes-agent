@@ -397,6 +397,154 @@ class TestConfigPathTraversal:
         assert "oauth.json" in mounts[0]["container_path"]
 
 
+BS = chr(92)  # a literal backslash, spelled so the escaping stays readable
+
+
+class TestDeclaredPathSeparators:
+    """Declared credential paths must be POSIX-relative; ``\\`` is refused.
+
+    ``container_path`` is a path inside the *Linux* sandbox — modal.py hands it
+    straight to ``Mount.from_local_file(remote_path=...)`` — while the same
+    declared string is joined against HERMES_HOME on the *host*. A backslash
+    satisfies neither end on any host, and the two hosts fail differently:
+
+      * Windows: ``creds\\x.json`` finds the real nested file and emits the
+        corrupt container path ``/root/.hermes/creds\\x.json``.
+      * POSIX: ``creds\\x.json`` is one ordinary filename, matches nothing,
+        and registers silently at debug level.
+
+    It is REJECTED rather than normalised. On POSIX ``..\\..\\.ssh\\id_rsa`` is
+    inert today (one contained filename); rewriting ``\\`` to ``/`` would make
+    it a live traversal attempt. See ``_reject_backslash``.
+    """
+
+    def test_backslash_separator_rejected(self, tmp_path, monkeypatch):
+        """The nested file exists, so only the separator rule can reject it."""
+        hermes_home = tmp_path / ".hermes"
+        (hermes_home / "creds").mkdir(parents=True)
+        (hermes_home / "creds" / "x.json").write_text("{}")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        # Control: the POSIX spelling of the very same file is accepted.
+        assert register_credential_file("creds/x.json") is True
+        assert get_credential_file_mounts()[0]["container_path"] == (
+            "/root/.hermes/creds/x.json"
+        )
+        clear_credential_files()
+
+        assert register_credential_file("creds" + BS + "x.json") is False
+        assert get_credential_file_mounts() == []
+
+    def test_backslash_rejection_is_logged(self, tmp_path, monkeypatch, caplog):
+        """Refusal is visible, matching the absolute/traversal warnings."""
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        with caplog.at_level("WARNING", logger="tools.credential_files"):
+            assert register_credential_file("creds" + BS + "x.json") is False
+
+        assert any(
+            "must use '/' separators" in r.getMessage() for r in caplog.records
+        ), caplog.text
+
+    def test_backslash_traversal_is_refused_by_the_separator_rule(self):
+        """The traversal form must be refused BY THIS RULE, not incidentally.
+
+        Asserted at the rule rather than end-to-end on purpose: an end-to-end
+        ``register_credential_file(r'..\\..\\.ssh\\id_rsa') is False`` cannot
+        fail on any host, so it would be vacuous coverage. Windows refuses it
+        at ``validate_within_dir`` (backslash is a separator there) and POSIX
+        refuses it at ``is_file()`` (it is one inert filename that does not
+        exist) — both measured. What is worth pinning is that the separator
+        rule catches it FIRST, because that is what stops a future refactor
+        from normalising ``\\`` to ``/`` and handing the containment check a
+        live ``../../.ssh/id_rsa`` instead of inert data.
+        """
+        from tools.credential_files import _reject_backslash
+
+        assert _reject_backslash(BS.join(["..", "..", ".ssh", "id_rsa"]), "declared") is True
+        assert _reject_backslash("creds" + BS + "x.json", "config") is True
+        # Control: POSIX-relative declarations, traversal included, pass this
+        # rule untouched and go on to the containment check that owns them.
+        assert _reject_backslash("creds/x.json", "declared") is False
+        assert _reject_backslash("../../.ssh/id_rsa", "declared") is False
+
+    def test_batch_reports_backslash_entry_as_missing(self, tmp_path, monkeypatch):
+        """A refused entry lands in ``missing`` and does not stop the batch."""
+        hermes_home = tmp_path / ".hermes"
+        (hermes_home / "creds").mkdir(parents=True)
+        (hermes_home / "creds" / "x.json").write_text("{}")
+        (hermes_home / "ok.json").write_text("{}")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        bad = "creds" + BS + "x.json"
+        missing = register_credential_files([bad, "ok.json"])
+
+        assert missing == [bad]
+        mounts = get_credential_file_mounts()
+        assert [m["container_path"] for m in mounts] == ["/root/.hermes/ok.json"]
+
+    def test_no_registered_container_path_contains_a_backslash(self, tmp_path, monkeypatch):
+        """Whole-surface invariant: nothing reaches remote_path with a ``\\``."""
+        hermes_home = tmp_path / ".hermes"
+        (hermes_home / "creds").mkdir(parents=True)
+        (hermes_home / "creds" / "x.json").write_text("{}")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        register_credential_files([
+            "creds/x.json",
+            "creds" + BS + "x.json",
+            {"path": "creds" + BS + "x.json"},
+        ])
+
+        paths = [m["container_path"] for m in get_credential_file_mounts()]
+        assert paths == ["/root/.hermes/creds/x.json"]
+        assert all(BS not in p for p in paths)
+
+
+class TestConfigPathSeparators:
+    """``terminal.credential_files`` gets the same separator rule."""
+
+    def _write_config(self, hermes_home: Path, cred_files: list):
+        import yaml
+        config_path = hermes_home / "config.yaml"
+        config_path.write_text(yaml.dump({"terminal": {"credential_files": cred_files}}))
+
+    def test_config_backslash_rejected(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / ".hermes"
+        (hermes_home / "creds").mkdir(parents=True)
+        (hermes_home / "creds" / "x.json").write_text("{}")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        self._write_config(hermes_home, ["creds" + BS + "x.json"])
+
+        assert get_credential_file_mounts() == []
+
+    def test_config_backslash_entry_does_not_block_the_rest(self, tmp_path, monkeypatch):
+        """A refused config entry must not abort the whole config list."""
+        hermes_home = tmp_path / ".hermes"
+        (hermes_home / "creds").mkdir(parents=True)
+        (hermes_home / "creds" / "x.json").write_text("{}")
+        (hermes_home / "ok.json").write_text("{}")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        self._write_config(hermes_home, ["creds" + BS + "x.json", "ok.json"])
+
+        paths = [m["container_path"] for m in get_credential_file_mounts()]
+        assert paths == ["/root/.hermes/ok.json"]
+
+    def test_config_posix_nested_path_still_works(self, tmp_path, monkeypatch):
+        """Control: the same nested file spelled with '/' still mounts."""
+        hermes_home = tmp_path / ".hermes"
+        (hermes_home / "creds").mkdir(parents=True)
+        (hermes_home / "creds" / "x.json").write_text("{}")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        self._write_config(hermes_home, ["creds/x.json"])
+
+        mounts = get_credential_file_mounts()
+        assert len(mounts) == 1
+        assert mounts[0]["container_path"] == "/root/.hermes/creds/x.json"
+
+
 # ---------------------------------------------------------------------------
 # Cache directory mounts
 # ---------------------------------------------------------------------------

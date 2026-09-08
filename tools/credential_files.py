@@ -59,6 +59,49 @@ def _resolve_hermes_home() -> Path:
     return get_hermes_home()
 
 
+def _reject_backslash(relative_path: str, source: str) -> bool:
+    """Return True when *relative_path* must be refused for containing ``\\``.
+
+    Declared credential paths — skill frontmatter ``required_credential_files``
+    and ``terminal.credential_files`` in config.yaml — are POSIX-relative by
+    contract. They are joined against HERMES_HOME on the *host* and also
+    interpolated into ``container_path``, which is a path inside the *Linux*
+    sandbox (``tools/environments/modal.py`` hands it to
+    ``Mount.from_local_file(remote_path=...)``). A backslash cannot satisfy
+    both ends on any host:
+
+      * On Windows ``creds\\x.json`` resolves to the real nested host file and
+        then yields the container path ``/root/.hermes/creds\\x.json`` — one
+        oddly-named file at the sandbox root instead of ``creds/x.json``. That
+        is the same corrupt-container-path class fixed at the host-separator
+        sites in 15036dd134, arriving through the declaration instead.
+      * On POSIX ``creds\\x.json`` is a single ordinary filename, so it never
+        matches the nested file and the declaration silently registers nothing
+        (``is_file()`` fails, logged only at debug level).
+
+    So one declaration is broken differently on the two hosts and correct on
+    neither. This refuses it loudly rather than normalising it, because
+    normalisation is the riskier change: on POSIX ``..\\..\\.ssh\\id_rsa`` is
+    currently inert data — one contained filename that ``validate_within_dir``
+    passes and ``is_file()`` then rejects. Rewriting ``\\`` to ``/`` would turn
+    it into a live traversal attempt whose safety rests entirely on the
+    containment check running first and being correct. Rejecting removes the
+    input class instead of adding that ordering coupling.
+
+    Matches the existing reject-and-warn style at these sites (absolute paths,
+    traversal) rather than silently repairing a security-relevant declaration.
+    """
+    if "\\" in relative_path:
+        logger.warning(
+            "credential_files: rejected %s path %r — declared paths must use "
+            "'/' separators; container_path is a POSIX path inside the sandbox",
+            source,
+            relative_path,
+        )
+        return True
+    return False
+
+
 def register_credential_file(
     relative_path: str,
     container_base: str = "/root/.hermes",
@@ -82,6 +125,11 @@ def register_credential_file(
     — the same guard that stops the agent reading them with ``read_file``, so
     the mount surface cannot hand a skill what the read surface denies it.
     """
+    # Reject Windows-style separators before any path work — see
+    # _reject_backslash for why this is refused rather than normalised.
+    if _reject_backslash(relative_path, "declared"):
+        return False
+
     hermes_home = _resolve_hermes_home()
 
     # Reject absolute paths — they bypass the HERMES_HOME sandbox entirely.
@@ -191,6 +239,8 @@ def _load_config_files() -> List[Dict[str, str]]:
             for item in cred_files:
                 if isinstance(item, str) and item.strip():
                     rel = item.strip()
+                    if _reject_backslash(rel, "config"):
+                        continue
                     if os.path.isabs(rel):
                         logger.warning(
                             "credential_files: rejected absolute config path %r", rel,

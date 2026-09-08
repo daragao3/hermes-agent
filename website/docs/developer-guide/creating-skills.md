@@ -249,7 +249,10 @@ required_credential_files:
 ```
 
 Each entry supports:
-- `path` (required) — file path relative to `~/.hermes/`
+- `path` (required) — file path relative to `~/.hermes/`, always written with
+  `/` separators, on every host. The same string is used as the path *inside*
+  the Linux sandbox, so a Windows-style `creds\token.json` is rejected with a
+  logged warning rather than normalised — declare `creds/token.json`.
 - `description` (optional) — explains what the file is and how it's created
 
 When loaded, Hermes checks if these files exist. Missing files trigger `setup_needed`. Existing files are automatically:
