@@ -559,13 +559,38 @@ async def test_sessions_api_fails_closed_for_errors_on_active_sidebar_states(
         assert forbidden not in serialized
 
 
+def _patch_profile_enumeration(
+    monkeypatch: pytest.MonkeyPatch,
+    profiles_mod: object,
+    targets: Sequence[tuple[str, Path]],
+) -> None:
+    """Pin the session-list handlers to ``targets``, whichever seam they read.
+
+    Those handlers consume exactly ``(name, path)``, and which function they get
+    it from has already moved once: 19bdb3dd7d pointed them at the cheap
+    enumeration-only ``list_profile_targets`` instead of ``list_profiles``. A
+    stub that misses its target does not raise here -- the handler enumerates
+    the REAL box, finds no seeded state.db, and returns an empty session list,
+    so the move showed up as a bare ``set() == {...}`` rather than as anything
+    naming the seam. Stubbing both keeps these tests on the fixture profiles
+    either way.
+    """
+    pairs = [(name, path) for name, path in targets]
+    monkeypatch.setattr(profiles_mod, "list_profile_targets", lambda: list(pairs))
+    monkeypatch.setattr(
+        profiles_mod,
+        "list_profiles",
+        lambda: [SimpleNamespace(name=name, path=path) for name, path in pairs],
+    )
+
+
 def test_profiles_sessions_api_preserves_rows_and_batches_once_per_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from hermes_cli import profiles as profiles_mod
 
-    profiles: list[SimpleNamespace] = []
+    targets: list[tuple[str, Path]] = []
     expected_by_profile: dict[str, tuple[str, ...]] = {}
     baseline_by_profile: dict[str, dict[str, dict[str, object]]] = {}
     for name in ("default", "work"):
@@ -574,7 +599,7 @@ def test_profiles_sessions_api_preserves_rows_and_batches_once_per_profile(
         db_path = home / "state.db"
         expected_by_profile[name] = _seed_profile(db_path, name)
         baseline_by_profile[name] = _baseline_rows(db_path)
-        profiles.append(SimpleNamespace(name=name, path=home))
+        targets.append((name, home))
 
     calls: list[tuple[str, ...]] = []
     original = SessionBridgeStore.get_bridge_summaries
@@ -585,7 +610,7 @@ def test_profiles_sessions_api_preserves_rows_and_batches_once_per_profile(
         calls.append(tuple(session_ids))
         return original(store, session_ids)
 
-    monkeypatch.setattr(profiles_mod, "list_profiles", lambda: profiles)
+    _patch_profile_enumeration(monkeypatch, profiles_mod, targets)
     monkeypatch.setattr(
         SessionBridgeStore,
         "get_bridge_summaries",
@@ -641,11 +666,7 @@ async def test_bridge_metadata_failure_is_sanitized_and_preserves_original_rows(
         "_open_session_db_for_profile",
         lambda _profile: SessionDB(db_path=db_path),
     )
-    monkeypatch.setattr(
-        profiles_mod,
-        "list_profiles",
-        lambda: [SimpleNamespace(name="default", path=home)],
-    )
+    _patch_profile_enumeration(monkeypatch, profiles_mod, [("default", home)])
 
     def fail_summaries(
         _store: SessionBridgeStore, _session_ids: Sequence[str]
