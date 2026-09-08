@@ -112,7 +112,14 @@ function summarizeErrorMessage(message: string, fallback: string) {
   return message.length > 180 ? fallback : message || fallback
 }
 
-function readableError(error: unknown, fallback: string): { message: string; detail?: string } {
+/** Human-readable form of a thrown/rejected value: unwraps the Electron IPC
+ *  wrapper, pulls FastAPI's `detail`, and falls back to `fallback`. Exported so
+ *  an inline error surface (e.g. the cron run-history panel) shows the same
+ *  text a toast would, rather than a raw remote-method string. */
+export function readableError(
+  error: unknown,
+  fallback: string
+): { message: string; detail?: string } {
   const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : fallback
   const unwrapped = raw.match(/Error invoking remote method '[^']+': Error: (.+)$/)?.[1] ?? raw
   const cleaned = cleanErrorText(unwrapped)

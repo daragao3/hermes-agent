@@ -230,7 +230,7 @@ class TestCronJobSkills:
         assert job["skills"] == ["dashboard-skill"]
 
         # Round-trip: the list endpoint carries the skills field too.
-        listed = client.get("/api/cron/jobs", params={"profile": "default"}).json()
+        listed = client.get("/api/cron/jobs", params={"profile": "default"}).json()["jobs"]
         match = [j for j in listed if j["id"] == job["id"]]
         assert match and match[0]["skills"] == ["dashboard-skill"]
 

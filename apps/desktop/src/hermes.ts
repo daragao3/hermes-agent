@@ -12,6 +12,7 @@ import type {
   ConfigSchemaResponse,
   CronJob,
   CronJobCreatePayload,
+  CronJobListing,
   CronJobUpdates,
   CuratorStatusResponse,
   CustomEndpointsResponse,
@@ -135,8 +136,10 @@ export type {
   ConfigSchemaResponse,
   CronJob,
   CronJobCreatePayload,
+  CronJobListing,
   CronJobSchedule,
   CronJobUpdates,
+  CronProfileError,
   CuratorStatusResponse,
   CustomEndpoint,
   CustomEndpointsResponse,
@@ -1119,14 +1122,25 @@ export function testMessagingPlatform(platformId: string): Promise<MessagingPlat
 // list just that profile's jobs, or 'all' for the unified cross-profile view.
 // Omitting the arg keeps the legacy 'all' default for non-profile callers.
 // profileScoped() still rides along for backend-process routing.
-export function getCronJobs(profile?: string): Promise<CronJob[]> {
+//
+// Returns { jobs, errors } so a partially-failed aggregate is distinguishable
+// from an empty crontab. A backend that predates that shape answers with a bare
+// array; normalize it rather than crashing, because the packaged renderer and
+// the gateway go live independently and either can be the older half.
+export async function getCronJobs(profile?: string): Promise<CronJobListing> {
   const suffix = profile ? `?profile=${encodeURIComponent(profile)}` : ''
 
-  return window.hermesDesktop.api<CronJob[]>({
+  const body = await window.hermesDesktop.api<CronJob[] | CronJobListing>({
     ...profileScoped(),
     path: `/api/cron/jobs${suffix}`,
     timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
   })
+
+  if (Array.isArray(body)) {
+    return { jobs: body, errors: [] }
+  }
+
+  return { jobs: body?.jobs ?? [], errors: body?.errors ?? [] }
 }
 
 export function getCronJob(jobId: string): Promise<CronJob> {
@@ -1148,6 +1162,7 @@ export async function getCronJobRuns(
   profile?: null | string
 ): Promise<SessionInfo[]> {
   const suffix = profile ? `&profile=${encodeURIComponent(profile)}` : ''
+
   const { runs } = await window.hermesDesktop.api<{ runs: SessionInfo[] }>({
     ...(profile ? { profile } : profileScoped()),
     path: `/api/cron/jobs/${encodeURIComponent(jobId)}/runs?limit=${limit}${suffix}`

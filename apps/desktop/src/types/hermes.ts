@@ -657,6 +657,25 @@ export interface CronJob {
   state?: null | string
 }
 
+/** One profile the cron aggregate could not read, e.g. a locked or corrupt
+ *  jobs.json. The list endpoint keeps going and returns everyone else's rows,
+ *  so without this the caller cannot tell a partial result from an empty
+ *  crontab -- exactly the indistinguishability behind the 2026-09-07
+ *  profile-scope bugs, each of which presented as a confident empty state. */
+export interface CronProfileError {
+  error: string
+  profile: string
+}
+
+/** `GET /api/cron/jobs` response. Older backends answer with a bare
+ *  `CronJob[]`; the client normalizes that to `{ jobs, errors: [] }` because the
+ *  packaged renderer and the gateway are deployed independently and either can
+ *  be the older half. */
+export interface CronJobListing {
+  errors: CronProfileError[]
+  jobs: CronJob[]
+}
+
 export interface CronJobCreatePayload {
   deliver?: string
   model?: string

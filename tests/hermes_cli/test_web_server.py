@@ -5207,7 +5207,12 @@ class TestNewEndpoints:
     def test_cron_list(self):
         resp = self.client.get("/api/cron/jobs")
         assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
+        body = resp.json()
+        # {"jobs", "errors"} rather than a bare list: a per-profile read failure
+        # in the aggregate has to be distinguishable from an empty crontab.
+        assert isinstance(body, dict)
+        assert isinstance(body["jobs"], list)
+        assert isinstance(body["errors"], list)
 
     def test_cron_job_not_found(self):
         resp = self.client.get("/api/cron/jobs/nonexistent-id")

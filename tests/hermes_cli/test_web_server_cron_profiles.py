@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+import sqlite3
 from queue import Empty, SimpleQueue
 import threading
 
@@ -248,8 +249,10 @@ async def test_list_cron_jobs_all_includes_default_and_named_profiles(isolated_p
         name="worker-alpha-heartbeat",
     )
 
-    jobs = await web_server.list_cron_jobs(profile="all")
-    by_id = {job["id"]: job for job in jobs}
+    listing = await web_server.list_cron_jobs(profile="all")
+    by_id = {job["id"]: job for job in listing["jobs"]}
+
+    assert listing["errors"] == []
 
     assert set(by_id) >= {default_job["id"], worker_job["id"]}
     assert by_id[default_job["id"]]["profile"] == "default"
@@ -279,10 +282,12 @@ async def test_list_cron_jobs_specific_profile_filters_results(isolated_profiles
         name="worker-only",
     )
 
-    jobs = await web_server.list_cron_jobs(profile="worker_alpha")
+    listing = await web_server.list_cron_jobs(profile="worker_alpha")
+    jobs = listing["jobs"]
 
     assert [job["id"] for job in jobs] == [worker_job["id"]]
     assert jobs[0]["profile"] == "worker_alpha"
+    assert listing["errors"] == []
 
 
 @pytest.mark.asyncio
@@ -329,8 +334,8 @@ async def test_cron_mutation_without_profile_finds_named_profile_job(isolated_pr
     assert paused["profile"] == "worker_alpha"
     assert paused["enabled"] is False
 
-    default_jobs = await web_server.list_cron_jobs(profile="default")
-    worker_jobs = await web_server.list_cron_jobs(profile="worker_alpha")
+    default_jobs = (await web_server.list_cron_jobs(profile="default"))["jobs"]
+    worker_jobs = (await web_server.list_cron_jobs(profile="worker_alpha"))["jobs"]
 
     assert default_jobs == []
     assert len(worker_jobs) == 1
@@ -367,7 +372,7 @@ async def test_cron_profile_scan_runs_off_event_loop(isolated_profiles, monkeypa
     monkeypatch.setattr(web_server, "_cron_profile_dicts", tracking_profile_dicts)
     monkeypatch.setattr(web_server, "_find_cron_job_profile", tracking_find)
 
-    jobs = await web_server.list_cron_jobs(profile="all")
+    jobs = (await web_server.list_cron_jobs(profile="all"))["jobs"]
     paused = await web_server.pause_cron_job(worker_job["id"])
 
     assert any(job["id"] == worker_job["id"] for job in jobs)
@@ -728,7 +733,7 @@ async def test_update_cron_job_rejects_id_mutation(isolated_profiles):
 
     assert exc.value.status_code == 400
     assert "id" in exc.value.detail
-    worker_jobs = await web_server.list_cron_jobs(profile="worker_alpha")
+    worker_jobs = (await web_server.list_cron_jobs(profile="worker_alpha"))["jobs"]
     assert [job["id"] for job in worker_jobs] == [worker_job["id"]]
 
 
@@ -754,8 +759,8 @@ async def test_cron_delete_with_profile_deletes_only_target_profile(isolated_pro
     deleted = await web_server.delete_cron_job(worker_job["id"], profile="worker_alpha")
     assert deleted == {"ok": True}
 
-    remaining_default = await web_server.list_cron_jobs(profile="default")
-    remaining_worker = await web_server.list_cron_jobs(profile="worker_alpha")
+    remaining_default = (await web_server.list_cron_jobs(profile="default"))["jobs"]
+    remaining_worker = (await web_server.list_cron_jobs(profile="worker_alpha"))["jobs"]
     assert [job["id"] for job in remaining_default] == [default_job["id"]]
     assert remaining_worker == []
 
@@ -821,3 +826,44 @@ async def test_create_cron_job_without_profile_defaults_when_unscoped(
 
     assert job["profile"] == "default"
     assert (isolated_profiles["default"] / "cron" / "jobs.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_list_cron_jobs_all_reports_an_unreadable_profile(
+    isolated_profiles, monkeypatch
+):
+    """A profile whose cron store cannot be read is REPORTED, not dropped.
+
+    Before this, the aggregate swallowed the exception into the log and
+    returned the surviving rows as a bare list, so the desktop rendered
+    "No scheduled jobs yet" over a partial failure with nothing to
+    distinguish it from an genuinely empty crontab. That indistinguishability
+    is what made the 2026-09-07 profile-scope bugs expensive to find.
+    """
+    from hermes_cli import web_server
+
+    healthy_job = web_server._call_cron_for_profile(
+        "default",
+        "create_job",
+        prompt="default heartbeat",
+        schedule="every 2h",
+        name="default-heartbeat",
+    )
+
+    real_call = web_server._call_cron_for_profile
+
+    def failing_for_worker(profile, action, *args, **kwargs):
+        if profile == "worker_alpha" and action == "list_jobs":
+            raise sqlite3.OperationalError("no such table: sessions")
+        return real_call(profile, action, *args, **kwargs)
+
+    monkeypatch.setattr(web_server, "_call_cron_for_profile", failing_for_worker)
+
+    listing = await web_server.list_cron_jobs(profile="all")
+
+    # The healthy profile's rows still come back...
+    assert healthy_job["id"] in {job["id"] for job in listing["jobs"]}
+    # ...and the broken one is named rather than silently missing.
+    assert listing["errors"] == [
+        {"profile": "worker_alpha", "error": "no such table: sessions"}
+    ]
