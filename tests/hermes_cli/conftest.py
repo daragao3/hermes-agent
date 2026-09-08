@@ -460,3 +460,51 @@ def _stub_bundled_skills_sync(request, monkeypatch):
         },
         raising=False,
     )
+
+
+@pytest.fixture(scope="session")
+def bash_syntax_check():
+    r"""Return ``check(source) -> CompletedProcess`` running ``bash -n`` portably.
+
+    The obvious form -- write a tempfile, then ``subprocess.run(["bash", "-n",
+    path])`` -- is not portable on Windows, and its verdict depends on *how the
+    sweep was launched* rather than on the code under test.  ``bash`` resolves
+    through ``PATH``: a run started from Git-Bash finds
+    ``C:\Program Files\Git\usr\bin\bash.exe`` (Cygwin, which understands a
+    ``C:\...`` argument) and passes, while a run started from PowerShell finds
+    ``C:\WINDOWS\system32\bash.exe`` (WSL, a POSIX bash) which eats the
+    backslashes and reports ``C:UsersdiegoAppData...: No such file or
+    directory`` with rc=127.  Same commit, same code, opposite verdict -- which
+    is a portability bug in the test, not in the product.
+
+    Feeding the script on stdin (``bash -n -``) takes the path out of the
+    picture entirely.  Both bashes then agree, and both still return rc=2 on a
+    genuine syntax error, so the check keeps its teeth.
+    """
+    import shutil
+    import subprocess
+
+    exe = shutil.which("bash")
+    if exe is None:
+        pytest.skip("no bash on PATH; cannot run a `bash -n` syntax check")
+
+    def check(source: str) -> "subprocess.CompletedProcess[bytes]":
+        return subprocess.run(
+            [exe, "-n", "-"], input=source.encode("utf-8"), capture_output=True
+        )
+
+    # A WSL `bash.exe` with no distribution installed, or a shim that cannot
+    # actually run, is present on PATH but useless.  Prove the pipe works on
+    # trivially valid input before letting a failure be reported as the
+    # product's fault.
+    try:
+        probe = check("true\n")
+    except OSError as exc:  # pragma: no cover - depends on host shell install
+        pytest.skip(f"bash at {exe} is not runnable: {exc}")
+    if probe.returncode != 0:  # pragma: no cover - depends on host shell install
+        pytest.skip(
+            f"bash at {exe} cannot syntax-check stdin "
+            f"(rc={probe.returncode}): {probe.stderr.decode('utf-8', 'replace').strip()}"
+        )
+
+    return check

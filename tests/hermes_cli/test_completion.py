@@ -107,17 +107,16 @@ class TestGenerateBash:
         assert "start" in out
         assert "stop" in out
 
-    def test_valid_bash_syntax(self):
-        """Script must pass `bash -n` syntax check."""
+    def test_valid_bash_syntax(self, bash_syntax_check):
+        """Script must pass `bash -n` syntax check.
+
+        Fed on stdin by the fixture rather than via a tempfile path: a Windows
+        path argument makes the result depend on which ``bash`` is first on
+        PATH.  See ``bash_syntax_check`` in ``conftest.py``.
+        """
         out = generate_bash(_make_parser())
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".bash", delete=False) as f:
-            f.write(out)
-            path = f.name
-        try:
-            result = subprocess.run(["bash", "-n", path], capture_output=True)
-            assert result.returncode == 0, result.stderr.decode()
-        finally:
-            os.unlink(path)
+        result = bash_syntax_check(out)
+        assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
 
 
 # ---------------------------------------------------------------------------
