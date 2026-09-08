@@ -625,7 +625,7 @@ function CronJobDetail({
         </section>
       ) : null}
 
-      <CronJobRuns c={c} jobId={job.id} onOpenSession={onOpenSession} />
+      <CronJobRuns c={c} jobId={job.id} jobProfile={job.profile} onOpenSession={onOpenSession} />
     </PanelDetail>
   )
 }
@@ -648,10 +648,12 @@ const RUNS_POLL_INTERVAL_MS = 8000
 function CronJobRuns({
   c,
   jobId,
+  jobProfile,
   onOpenSession
 }: {
   c: Translations['cron']
   jobId: string
+  jobProfile?: null | string
   onOpenSession?: (sessionId: string) => void
 }) {
   const [runs, setRuns] = useState<null | SessionInfo[]>(null)
@@ -660,7 +662,7 @@ function CronJobRuns({
     let cancelled = false
 
     const load = () =>
-      getCronJobRuns(jobId)
+      getCronJobRuns(jobId, undefined, jobProfile)
         .then(result => {
           if (!cancelled) {
             setRuns(result)
@@ -693,7 +695,7 @@ function CronJobRuns({
       window.clearInterval(intervalId)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [jobId])
+  }, [jobId, jobProfile])
 
   return (
     <div>

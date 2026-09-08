@@ -1136,10 +1136,21 @@ export function getCronJob(jobId: string): Promise<CronJob> {
   })
 }
 
-export async function getCronJobRuns(jobId: string, limit = 20): Promise<SessionInfo[]> {
+// Run history for ONE job. `profile` is the job's OWNING profile (CronJob.profile
+// from the list endpoint), not the sidebar's ambient scope: a job listed from the
+// cross-profile aggregate lives wherever it lives, and both the backend route and
+// the endpoint filter have to agree with that or the lookup answers for the wrong
+// home and comes back empty. Omitted -> previous behavior (ambient route, backend
+// resolves the owner itself).
+export async function getCronJobRuns(
+  jobId: string,
+  limit = 20,
+  profile?: null | string
+): Promise<SessionInfo[]> {
+  const suffix = profile ? `&profile=${encodeURIComponent(profile)}` : ''
   const { runs } = await window.hermesDesktop.api<{ runs: SessionInfo[] }>({
-    ...profileScoped(),
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/runs?limit=${limit}`
+    ...(profile ? { profile } : profileScoped()),
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/runs?limit=${limit}${suffix}`
   })
 
   return runs ?? []

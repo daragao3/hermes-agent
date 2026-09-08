@@ -636,6 +636,13 @@ export interface CronJob {
   deliver?: null | string
   enabled: boolean
   id: string
+  /** Profile that OWNS this job. The list endpoint aggregates across profiles
+   *  and stamps every row with its source, so a job reached from an aggregate
+   *  list knows its own home. Follow-up reads (run history, detail) must key
+   *  off THIS, never off the sidebar's ambient profile scope -- the ambient
+   *  scope is a UI mode, not a fact about where the data lives, and using it
+   *  is what makes a wrongly-scoped read render as "nothing here". */
+  profile?: null | string
   last_error?: null | string
   last_run_at?: null | string
   model?: null | string

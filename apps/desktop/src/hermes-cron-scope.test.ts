@@ -57,6 +57,29 @@ describe('cron helpers are profile-scoped', () => {
     }
   })
 
+  it('runs key off the OWNING profile, not the ambient scope', () => {
+    // Regression: run history sent only profileScoped() -- the sidebar's ambient
+    // profile -- so a job listed from the cross-profile aggregate had its runs
+    // looked up against whatever profile the UI happened to be showing. The
+    // panel's catch renders a failed/empty result as "No runs yet", so a
+    // wrongly-scoped lookup was indistinguishable from a job that never ran.
+    setApiRequestProfile('default')
+
+    void getCronJobRuns('job-1', 5, 'main')
+
+    expect(api.mock.calls.at(-1)?.[0].profile).toBe('main')
+    expect(api.mock.calls.at(-1)?.[0].path).toBe('/api/cron/jobs/job-1/runs?limit=5&profile=main')
+  })
+
+  it('falls back to the ambient route when a job carries no owning profile', () => {
+    setApiRequestProfile('coder')
+
+    void getCronJobRuns('job-1', 5)
+
+    expect(api.mock.calls.at(-1)?.[0].profile).toBe('coder')
+    expect(api.mock.calls.at(-1)?.[0].path).toBe('/api/cron/jobs/job-1/runs?limit=5')
+  })
+
   it('list accepts an explicit ?profile= for endpoint-level filtering', () => {
     // profileScoped() routes the backend process; the list endpoint ALSO
     // aggregates 'all' by default, so callers pass an explicit profile to
