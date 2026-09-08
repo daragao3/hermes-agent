@@ -106,6 +106,10 @@ echo 'HONCHO_API_KEY=***' >> ~/.hermes/.env
 
 Honcho 在 `~/.honcho/config.json`（全局）或 `$HERMES_HOME/honcho.json`（profile 本地）中配置。设置向导会自动处理。
 
+### 带认证的自托管 Honcho
+
+当让 Hermes 指向自托管的 Honcho 服务器时，`hermes honcho setup`（以及 `hermes memory setup`）会在询问 base URL 之后询问一个**本地 JWT / bearer token**。粘贴一个用服务器的 `AUTH_JWT_SECRET`（Honcho compose 的环境变量）签名的 JWT 即可启用认证访问；对于以 `AUTH_USE_AUTH=false` 运行的服务器则留空。该本地 token 存储在主机块下（`honcho.json` 中的 `hosts.<host>.apiKey`），与任何云端 `apiKey` 分开，因此你之后可以把 `Cloud or local?` 提示切回 `cloud` 而不会丢失任一凭据。
+
 ### 完整配置参考
 
 | 键 | 默认值 | 说明 |
@@ -125,6 +129,9 @@ Honcho 在 `~/.honcho/config.json`（全局）或 `$HERMES_HOME/honcho.json`（p
 | `messageMaxChars` | `25000` | 通过 `add_messages()` 发送的每条消息最大字符数，超出时分块 |
 | `dialecticMaxInputChars` | `10000` | 传入 `peer.chat()` 的辩证查询输入最大字符数 |
 | `sessionStrategy` | `'per-directory'` | `per-directory`、`per-repo`、`per-session` 或 `global` |
+| `pinUserPeer` | `false` | 仅限 gateway。为 `true` 时，所有平台用户都归并到 `peerName` |
+| `userPeerAliases` | `{}` | 仅限 gateway。运行时 ID 到 peer 的映射（`{"7654321": "alice"}`）。多对一 |
+| `runtimePeerPrefix` | `""` | 仅限 gateway。在没有别名匹配时为未知运行时 ID 加命名空间（`telegram_7654321`） |
 
 **会话策略**控制 Honcho 会话与工作内容的映射方式：
 - `per-session` — 每次 `hermes` 运行获得一个新会话。干净启动，通过 tools 访问记忆。推荐新用户使用。
@@ -149,6 +156,30 @@ Honcho 在 `~/.honcho/config.json`（全局）或 `$HERMES_HOME/honcho.json`（p
 | `dialecticDynamic` | 控制模型覆盖 | 不适用（无 tools） | 控制模型覆盖 |
 
 在 `tools` 模式下，模型完全自主——它在需要时调用 `honcho_reasoning`，并自行选择 `reasoning_level`。Cadence 和预算设置仅适用于有自动注入的模式（`hybrid` 和 `context`）。
+
+## Gateway 身份映射
+
+这些设置仅在你运行 [Hermes gateway](../../developer-guide/gateway-internals.md) 时才有意义——那是用户携带平台原生运行时 ID（Telegram UID、Discord snowflake、Slack user）到达的唯一入口。CLI、TUI 和桌面会话没有运行时 ID，始终解析为 `peerName`，因此在 gateway 之外这些键不起任何作用。
+
+设置向导会检测是否连接了 gateway 平台，若未连接则完全跳过该步骤。运行时，它只问一个问题——*谁在与这个 gateway 对话？*——并据此推导出这些键：
+
+| 回答 | 结果 |
+|--------|--------|
+| **只有我** | `pinUserPeer: true` —— 每个非 agent 的 gateway 用户都归并到你的 peer。固定（pin）会覆盖所有别名，因此只有在没有任何用户侧身份需要独立 peer 时才选它。如果有多个独立 agent 接入 gateway 且各自需要不同的 peer，请**不要**固定——保持 `pinUserPeer: false`，改用 `userPeerAliases`（`[e]` 编辑器）来映射它们 |
+| **我 + 其他人**（合并） | `pinUserPeer: false` + `userPeerAliases` 将你的运行时 ID 映射到 `peerName`——你保留自己的共享历史，其他人各自拥有独立 peer |
+| **只有其他人** | `pinUserPeer: false`，可选 `runtimePeerPrefix` —— 每个用户获得自己的 peer |
+
+在提示处选择 `[e]` 可直接设置这三个键。
+
+解析器自上而下依次尝试，首个匹配生效：`pinUserPeer` → `userPeerAliases[id]` → `runtimePeerPrefix + id` → 原始运行时 ID → `peerName` → 会话键回退。
+
+:::warning 取消固定会遗弃合并后的记忆
+把 `pinUserPeer` 从 `true` 改为 `false` 并不会迁移数据——在 `peerName` 下积累的记忆会留在原处，而平台用户会解析到全新的空 peer。若要保持你自己的连续性，请选择**合并**路径，让你的运行时 ID 别名回 `peerName`。向导在检测到该转变时会自动给出这一引导。
+:::
+
+:::note 已弃用的键
+`pinPeerName` 是 `pinUserPeer` 的遗留别名——出于向后兼容仍会被读取（两者同时设置时以 `pinUserPeer` 为准），但不再写入。重新运行 setup 会将其迁移到规范键上。
+:::
 
 ## 观察模式（定向 vs. 统一）
 
@@ -199,11 +230,12 @@ Honcho 将对话建模为 peer 之间的消息交换。每个 peer 有两个观�
 
 ## CLI 命令
 
-`hermes honcho` 子命令**仅在 Honcho 为当前活跃 memory provider 时注册**（`config.yaml` 中 `memory.provider: honcho`）。先运行 `hermes memory setup` 并选择 Honcho，子命令将在下次调用时出现。
+`hermes honcho` 子命令**仅在 Honcho 为当前活跃 memory provider 时注册**（`config.yaml` 中 `memory.provider: honcho`）。在全新安装时，可用 `hermes memory setup honcho` 直接配置 Honcho（或运行 `hermes memory setup` 并从列表中选择）；此后 `hermes honcho` 子命令将在下次调用时出现。
 
 ```bash
+hermes memory setup honcho    # 直接配置 Honcho（激活前即可使用）
 hermes honcho status          # 连接状态、配置及关键设置
-hermes honcho setup           # 重定向到 `hermes memory setup`
+hermes honcho setup           # 重定向到 `hermes memory setup`（激活后的别名）
 hermes honcho strategy        # 查看或设置会话策略（per-session/per-directory/per-repo/global）
 hermes honcho peer            # 查看或更新 peer 名称及辩证推理级别
 hermes honcho mode            # 查看或设置 recall 模式（hybrid/context/tools）

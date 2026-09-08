@@ -81,6 +81,9 @@ compression:
   threshold: 0.50            # Fraction of context window (default: 0.50 = 50%)
   target_ratio: 0.20         # How much of threshold to keep as tail (default: 0.20)
   protect_last_n: 20         # Minimum protected tail messages (default: 20)
+  codex_gpt55_autoraise: true  # gpt-5.5 on Codex OAuth: raise trigger to 85% (default: true)
+  codex_gpt55_autoraise_notice: true  # Show the one-time autoraise notice (default: true)
+  codex_app_server_auto: native  # native|hermes|off for Codex app-server thread compaction
 
 # Summarization model/provider configured under auxiliary:
 auxiliary:
@@ -98,6 +101,32 @@ auxiliary:
 | `target_ratio` | `0.20` | 0.10-0.80 | 控制尾部保护 token 预算：`threshold_tokens × target_ratio` |
 | `protect_last_n` | `20` | ≥1 | 始终保留的最近消息最小数量 |
 | `protect_first_n` | `3` | （硬编码）| 系统提示词 + 首次交互始终保留 |
+| `codex_gpt55_autoraise` | `true` | bool | 在 ChatGPT Codex OAuth 路由上为 gpt-5.5 将触发阈值提升到 85%（见下文）。设为 `false` 可保持全局 `threshold` |
+| `codex_gpt55_autoraise_notice` | `true` | bool | 显示一次性的 Codex gpt-5.5 自动提升提示。设为 `false` 可保留 85% 自动提升但隐藏该横幅 |
+| `codex_app_server_auto` | `native` | `native`、`hermes`、`off` | Codex app-server 会话的线程压缩模式（见下文） |
+
+### Codex gpt-5.5 阈值自动提升
+
+ChatGPT Codex OAuth 后端将 gpt-5.5 的上下文窗口硬性限制为 **272K**（同一 slug 在 OpenAI 直连 API 和 OpenRouter 上暴露为 1.05M，在 GitHub Copilot 上为 400K）。在默认的 50% 触发阈值下，压缩会在约 136K 时触发——只有模型实际可用窗口的一半。当活跃路由是 Codex OAuth（`provider: openai-codex`）且模型为 gpt-5.5 时，Hermes 会将触发阈值提升到 **85%**（约 231K），并显示一条带有退出命令的提示。该提示每个 profile 只显示一次——`$HERMES_HOME` 下的一个标记文件（`.codex_gpt55_autoraise_notice`）记录它已经运行过，因此重复的 agent/会话初始化（例如每条入站网关消息）不会重复发出；如果提升后的阈值之后发生变化，则会再次提示一次。只有这一条精确路由会受影响；在任何其他提供商上的 gpt-5.5 仍使用你的全局 `threshold`。若要退回到全局值：
+
+```bash
+hermes config set compression.codex_gpt55_autoraise false
+```
+
+若要保留 85% 自动提升但仅隐藏这条一次性提示：
+
+```bash
+hermes config set compression.codex_gpt55_autoraise_notice false
+```
+
+### Codex app-server 线程压缩
+
+Codex app-server 会话（`api_mode: codex_app_server`——即 codex CLI/agent 运行时）与其他所有路由都不同：codex agent 拥有背后的线程上下文，因此 Hermes 的辅助摘要器无法压缩它——重写本地转录镜像只会让真实线程无限增长，直到发生一次硬性上下文重置。对于该运行时，压缩改为走 app-server 自身的机制：
+
+- 手动压缩（`/compress`）会请求 app-server 压缩线程（`thread/compact/start`）并等待压缩轮次完成。
+- 自动压缩由 `compression.codex_app_server_auto` 控制：默认值 `native` 让 app-server 自行决定何时压缩，Hermes 只记录由此产生的压缩事件（压缩计数器、会话事件）。设为 `hermes` 可让 Hermes 的压缩阈值发起 app-server 压缩，设为 `off` 则完全禁用由 Hermes 发起的自动压缩（codex 仍可能原生压缩）。
+
+在该运行时上，Hermes 的本地转录永远不会被重写——state.db 记录压缩边界，而可见的转录保持完整。所有其他路由（包括 Codex OAuth 聊天会话）仍使用 Hermes 的摘要压缩器。
 
 ### 计算值（200K 上下文模型，默认参数）
 
@@ -107,6 +136,10 @@ threshold_tokens     = 200,000 × 0.50 = 100,000
 tail_token_budget    = 100,000 × 0.20 = 20,000
 max_summary_tokens   = min(200,000 × 0.05, 12,000) = 10,000
 ```
+
+:::note 阈值由**主**模型的上下文窗口推导得出
+`threshold_tokens` 始终等于 `threshold × context_length`，其中 `context_length` 是**主 agent 模型的**上下文窗口——绝不是辅助/摘要模型的。对于一个 262,144 token 的模型，在默认 `0.50` 下，阈值为 `262,144 × 0.50 = 131,072`。这个数字接近常见的「128K 上下文」只是百分比造成的巧合，并不意味着辅助模型的窗口是触发条件。辅助模型的上下文窗口是另一个独立问题——参见下文「摘要模型上下文长度」警告，它影响的是能否生成摘要，而不是压缩何时触发。
+:::
 
 
 ## 压缩算法
@@ -302,6 +335,8 @@ marker = {"type": "ephemeral", "ttl": "1h"}
 3. **压缩与缓存的交互**：压缩后，被压缩区域的缓存失效，但系统提示词缓存保留。滚动 3 消息窗口在 1-2 轮内重新建立缓存。
 
 4. **TTL 选择**：默认为 `5m`（5 分钟）。对于用户在轮次之间有较长间隔的长时间会话，使用 `1h`。
+
+5. **模型身份是缓存键的一部分**：提供商侧的缓存作用域限定在服务该请求的模型（以及账号/API key）上。任何在对话中途更换模型的行为——显式的 `/model` 切换、主模型回退，或凭据池轮换到另一个账号——都意味着下一次请求的缓存命中率为零，并会以未打折的输入价格重新读取整段对话。这是提供商缓存的固有机制，不是 Hermes 能够规避的；正因如此，`/model`、回退提供商和凭据池的面向用户文档都带有成本警告。不要添加会在会话中途静默切换模型或凭据的功能。
 
 ### 启用 Prompt 缓存
 

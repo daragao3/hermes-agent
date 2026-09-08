@@ -6,74 +6,36 @@ description: "在 Linux、macOS、WSL2、原生 Windows 或通过 Termux 在 And
 
 # 安装
 
-使用一行安装命令，两分钟内即可启动并运行 Hermes Agent。
+使用 Hermes Agent，两分钟内即可启动并运行！
+
+:::tip 平台支持
+如需完整的平台支持矩阵（支持哪些操作系统、分发方式以及受平台限制的功能），
+请参阅 **[平台支持](./platform-support.md)**。
+:::
 
 ## 快速安装
+### 在 macOS 或 Windows 上使用 Hermes Desktop 安装程序（推荐）
+如需便捷地安装命令行应用和桌面应用，请从我们的网站[下载 Hermes Desktop 安装程序](https://hermes-agent.nousresearch.com/)并运行。
 
-### 一行安装命令（Linux / macOS / WSL2）
+### 不使用 Hermes Desktop：
+如需不含 Hermes Desktop 的纯命令行安装，请运行：
 
-基于 git 的安装方式，跟踪 `main` 分支，可立即获取最新变更：
-
+#### Linux / macOS / WSL2 / Android（Termux）
 ```bash
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 ```
 
-### Windows（原生，PowerShell）
+#### Windows（原生）
 
-原生 Windows 无需 WSL 即可运行 Hermes——CLI、gateway、TUI 和工具均可原生运行。（原生安装与 WSL2 安装可干净共存；唯一仅限 WSL2 的功能见下方功能说明。）遇到 bug 请[提交 issue](https://github.com/NousResearch/hermes-agent/issues)。
-
-打开 PowerShell 并运行：
-
+在 PowerShell 中运行：
 ```powershell
-iex (irm https://hermes-agent.nousresearch.com/install.ps1)
+iex (irm https://hermes-agent.nousresearch.com/install.ps1) 
 ```
 
-安装程序处理**一切**：`uv`、Python 3.11、Node.js 22、`ripgrep`、`ffmpeg`，**以及一个便携式 Git Bash**（PortableGit——一个自包含的 Git-for-Windows 发行版，附带 `bash.exe` 和 Hermes 用于 shell 命令的完整 POSIX 工具链；在 32 位 Windows 上安装程序会回退到 MinGit，后者缺少 bash，终端工具和 agent 浏览器功能将被禁用）。它将仓库克隆到 `%LOCALAPPDATA%\hermes\hermes-agent`，创建虚拟环境，并将 `hermes` 添加到**用户 PATH**。安装完成后请重启终端（或打开新的 PowerShell 窗口）以使 PATH 生效。
-
-**Git 的处理方式：**
-
-1. 如果 `git` 已在你的 PATH 中，安装程序将使用现有安装。
-2. 否则，它会下载便携式 **PortableGit**（约 50MB，来自官方 `git-for-windows` GitHub 发布页）并解压到 `%LOCALAPPDATA%\hermes\git`。无需管理员权限，完全隔离——不会干扰任何系统 Git 安装，无论其状态如何。（在 32 位 Windows 上会回退到 MinGit，因为 PortableGit 仅提供 64 位和 ARM64 资产；依赖 bash 的 Hermes 功能在 32 位主机上无法使用。）
-
-**为什么不使用 winget？** 早期设计通过 `winget install Git.Git` 自动安装 Git，但当系统 Git 安装处于部分损坏状态时，winget 会严重失败（而这恰恰是用户最需要安装程序正常工作的时候）。便携式 Git 方案绕过了 winget、Windows 安装程序注册表以及任何现有系统 Git。如果 Hermes 的 Git 安装本身出现问题，执行 `Remove-Item %LOCALAPPDATA%\hermes\git` 并重新运行安装程序即可——对系统无影响，无需卸载操作。
-
-安装程序还会将 `HERMES_GIT_BASH_PATH` 设置为找到的 `bash.exe` 路径，以便 Hermes 在新 shell 中确定性地解析它。
-
-如果你偏好 WSL2，上方的 Linux 安装程序可在其中运行；原生安装和 WSL 安装可以共存而不冲突（原生数据位于 `%LOCALAPPDATA%\hermes`，WSL 数据位于 `~/.hermes`）。
-
-**桌面安装程序（替代方案）：** 也提供一个轻量 GUI 安装程序——下载 Hermes Desktop，运行 `.exe`，首次启动时它会在后台调用 `install.ps1` 来配置 Python（通过 `uv`）、Node、PortableGit 及其余依赖。桌面应用和 PowerShell 安装的 CLI 共享相同的安装目录和数据目录，可以单独或同时使用。详见 [Windows（原生）指南](../user-guide/windows-native#desktop-installer-alternative)。
-
-### Android / Termux
-
-Hermes 现在也提供 Termux 感知的安装路径：
-
+如果你在完成纯命令行安装后想要安装并运行 Hermes Desktop，只需运行
 ```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+hermes desktop
 ```
-
-安装程序会自动检测 Termux 并切换到经过测试的 Android 流程：
-
-- 使用 Termux `pkg` 安装系统依赖（`git`、`python`、`nodejs`、`ripgrep`、`ffmpeg`、构建工具）
-- 使用 `python -m venv` 创建虚拟环境
-- 自动导出 `ANDROID_API_LEVEL` 以用于 Android wheel 构建
-- 优先使用较宽泛的 `.[termux-all]` extra，若首次编译失败则回退到较小的 `.[termux]` extra（最终回退到基础安装）
-- 默认跳过未经测试的浏览器 / WhatsApp 引导
-
-如需完整的显式步骤，请参阅专门的 [Termux 指南](./termux.md)。
-
-:::note Windows 功能对等性
-
-除基于浏览器的 dashboard 聊天终端外，其余功能均可在 Windows 上原生运行：
-
-- **CLI（`hermes chat`、`hermes setup`、`hermes gateway` 等）** — 原生，使用默认终端
-- **Gateway（Telegram、Discord、Slack 等）** — 原生，作为后台 PowerShell 进程运行
-- **Cron 调度器** — 原生
-- **浏览器工具** — 原生（通过 Node.js 使用 Chromium）
-- **MCP 服务器** — 原生（stdio 和 HTTP 传输均支持）
-- **Dashboard `/chat` 终端面板** — **仅限 WSL2**（使用 POSIX PTY（伪终端），原生 Windows 无等效实现）。Dashboard 的其余部分（会话、任务、指标）可原生运行——仅嵌入式 PTY 终端标签页受限。
-
-如果遇到编码相关的 bug 并希望回退到旧版 cp1252 stdio 路径（用于问题定位），请在环境中设置 `HERMES_DISABLE_WINDOWS_UTF8=1`。
-:::
 
 ### 安装程序做了什么
 
@@ -85,7 +47,6 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 
 | 安装方式                                | 代码位置                       | `hermes` 二进制                          | 数据目录                              |
 | --------------------------------------- | ------------------------------ | ---------------------------------------- | ------------------------------------- |
-| pip install                             | Python site-packages           | `~/.local/bin/hermes`（console_scripts） | `~/.hermes/`                          |
 | 用户级（git 安装程序）                  | `~/.hermes/hermes-agent/`      | `~/.local/bin/hermes`（符号链接）        | `~/.hermes/`                          |
 | Root 模式（`sudo curl … \| sudo bash`） | `/usr/local/lib/hermes-agent/` | `/usr/local/bin/hermes`                  | `/root/.hermes/`（或 `$HERMES_HOME`） |
 
@@ -107,6 +68,7 @@ hermes model          # 选择 LLM 提供商和模型
 hermes tools          # 配置启用的工具
 hermes gateway setup  # 配置消息平台
 hermes config set     # 设置单个配置项
+hermes config get     # 查看单个配置项
 hermes setup          # 或运行完整的设置向导一次性配置所有内容
 ```
 
@@ -124,9 +86,7 @@ hermes setup --portal
 
 ## 前置条件
 
-**pip install：** 除 Python 3.11+ 外无其他前置条件，其余均自动处理。
-
-**Git 安装程序：** 唯一的前置条件是 **Git**。安装程序自动处理其余一切：
+**安装程序：** 在非 Windows 平台上，唯一的前置条件是 **Git**。在 Linux 上，还需确保 `curl` 和 `xz-utils` 可用（安装程序会以 `.tar.xz` 归档形式下载 Node.js）。桌面应用还额外需要 `g++`（在 Debian/Ubuntu 上为 `build-essential`）来编译原生模块。安装程序自动处理其余一切：
 
 - **uv**（快速 Python 包管理器）
 - **Python 3.11**（通过 uv，无需 sudo）
@@ -135,11 +95,11 @@ hermes setup --portal
 - **ffmpeg**（TTS 的音频格式转换）
 
 :::info
-你**无需**手动安装 Python、Node.js、ripgrep 或 ffmpeg。安装程序会检测缺失的依赖并自动安装。只需确保 `git` 可用（`git --version`）。
+你**无需**手动安装 Python、Node.js、ripgrep 或 ffmpeg。安装程序会检测缺失的依赖并自动安装。只需确保 `git` 可用（`git --version`）。在 Linux 上，请确保已安装 `curl` 和 `xz-utils`（在 Debian/Ubuntu 上执行 `sudo apt install curl xz-utils`）。对于桌面应用，还需安装 `build-essential`（`sudo apt install build-essential`）。
 :::
 
 :::tip Nix 用户
-如果你使用 Nix（在 NixOS、macOS 或 Linux 上），有专门的配置路径，包含 Nix flake、声明式 NixOS 模块和可选容器模式。请参阅 **[Nix & NixOS 配置](./nix-setup.md)** 指南。
+Nix **不再是明确支持的安装路径**（仅尽力而为）。如果你已经在使用 Nix（在 NixOS、macOS 或 Linux 上），有专门的配置路径，包含 Nix flake、声明式 NixOS 模块和可选容器模式。请参阅 **[Nix & NixOS 配置](./nix-setup.md)** 指南。
 :::
 
 ---

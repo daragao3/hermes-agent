@@ -8,6 +8,10 @@ description: "将 OpenClaw / Clawdbot 配置迁移到 Hermes Agent 的完整指�
 
 `hermes claw migrate` 将你的 OpenClaw（或旧版 Clawdbot/Moldbot）配置导入 Hermes。本指南详细说明迁移内容、配置键映射以及迁移后的验证步骤。
 
+:::tip
+如果你的 OpenClaw 配置使用了多个提供商，`hermes setup --portal` 可将其收敛为单一 OAuth——一次登录即可获得 300+ 模型以及 Tool Gateway。参见 [Nous Portal](/integrations/nous-portal)。
+:::
+
 ## 快速开始
 
 ```bash
@@ -156,7 +160,7 @@ TTS 设置从 OpenClaw 配置的**两个**位置读取，优先级如下：
 | 浏览器无头模式 | `browser.headless` | `config.yaml` → `browser.headless` | |
 | Brave 搜索密钥 | `tools.web.search.brave.apiKey` | `.env` → `BRAVE_API_KEY` | 需要 `--migrate-secrets` |
 | Gateway 认证 token | `gateway.auth.token` | `.env` → `HERMES_GATEWAY_TOKEN` | 需要 `--migrate-secrets` |
-| 工作目录 | `agents.defaults.workspace` | `.env` → `MESSAGING_CWD` | |
+| 工作目录 | `agents.defaults.workspace` | `config.yaml` → `terminal.cwd` | 旧版迁移可能仍会作为兼容回退写出 `MESSAGING_CWD` |
 
 ### 已归档（无对应 Hermes 等效项）
 
@@ -225,7 +229,7 @@ OpenClaw 配置中 token 和 API 密钥的值支持三种格式：
 
 5. **测试消息平台** — 若迁移了平台 token，重启 gateway：`systemctl --user restart hermes-gateway`
 
-6. **检查会话策略** — 验证 `hermes config get session_reset` 是否符合预期。
+6. **检查会话策略** — 运行 `hermes config show` 并验证其中的 `session_reset` 值是否符合预期。
 
 7. **重新配对 WhatsApp** — WhatsApp 使用二维码配对（Baileys），不支持 token 迁移。运行 `hermes whatsapp` 进行配对。
 

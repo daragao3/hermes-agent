@@ -1,13 +1,13 @@
 ---
 title: 文生图（Image Generation）
-description: 通过 FAL.ai 文生图；支持 8 个模型，含 FLUX 2、GPT-Image、Nano Banana Pro、Ideogram、Recraft V4 Pro 等，可用 hermes tools 切换。
+description: 通过 FAL.ai 文生图；支持 11 个模型，含 FLUX 2、GPT Image（1.5 与 2）、Nano Banana Pro、Ideogram、Recraft V4 Pro、Krea 2 等，可用 hermes tools 切换。
 sidebar_label: 文生图
 sidebar_position: 6
 ---
 
 # 文生图（Image Generation）
 
-Hermes Agent 通过 FAL.ai 根据文字提示生成图像。默认内置 8 个模型，在速度、画质与成本上各有取舍。当前模型可通过 `hermes tools` 配置，并持久化在 `config.yaml`。
+Hermes Agent 通过 FAL.ai 根据文字提示生成图像。默认内置 11 个模型，在速度、画质与成本上各有取舍。当前模型可通过 `hermes tools` 配置，并持久化在 `config.yaml`。
 
 ## 支持的模型
 
@@ -18,9 +18,12 @@ Hermes Agent 通过 FAL.ai 根据文字提示生成图像。默认内置 8 个�
 | `fal-ai/z-image/turbo` | ~2s | 中英双语，6B | $0.005/MP |
 | `fal-ai/nano-banana-pro` | ~8s | Gemini 3 Pro、推理与文字渲染 | $0.15/张（1K） |
 | `fal-ai/gpt-image-1.5` | ~15s | 强指令遵循 | $0.034/张 |
+| `fal-ai/gpt-image-2` | ~20s | SOTA 级文字渲染 + 中日韩文字、具世界认知的写实 | $0.04–0.06/张 |
 | `fal-ai/ideogram/v3` | ~5s | 排版最佳 | $0.03–0.09/张 |
 | `fal-ai/recraft/v4/pro/text-to-image` | ~8s | 设计 / 品牌系统 / 可交付生产 | $0.25/张 |
 | `fal-ai/qwen-image` | ~12s | 偏 LLM 式、复杂文字 | $0.02/MP |
+| `fal-ai/krea/v2/medium/text-to-image` | ~15-25s | 插画、动漫、绘画、富有表现力的艺术风格 | $0.030–0.035/张 |
+| `fal-ai/krea/v2/large/text-to-image` | ~25-60s | 写实、粗粝质感（运动模糊、颗粒、胶片） | $0.060–0.065/张 |
 
 价格为撰写时的 FAL 官方口径；最新计费请以 [fal.ai](https://fal.ai/) 为准。
 
@@ -82,6 +85,37 @@ Create a square portrait of a wise old owl — use the typography model
 ```
 Make me a futuristic cityscape, landscape orientation
 ```
+
+## 图生图 / 编辑
+
+当所选模型支持时，同一个 `image_generate` 工具也能**编辑已有图像**——传入一张源图，后端会自动路由到其编辑端点（与 `video_generate` 处理图生视频的方式一致）。不传源图时，就是普通的文生图。
+
+```
+Take this photo and make it a rainy Tokyo street at night → <image>
+```
+
+```
+Blend these two product shots into one hero image → <image1> <image2>
+```
+
+有两个输入驱动编辑：
+
+- **`image_url`** —— 要编辑 / 变换的主源图（公开 URL 或本地路径）。
+- **`reference_image_urls`** —— 额外的风格 / 构图参考图（按模型设有上限）。
+
+### 哪些后端支持编辑
+
+| 后端 | 图生图 | 参考图上限 | 方式 |
+|---|---|---|---|
+| **FAL.ai**（下列支持编辑的模型） | ✓ | 最多 9 张 | 路由到该模型的 `/edit` 端点 |
+| **OpenAI**（`gpt-image-2`） | ✓ | 最多 16 张 | `images.edit()` |
+| **xAI**（Grok Imagine） | ✓ | 1 张 | `/v1/images/edits`（`grok-imagine-image-quality`） |
+| **Krea**（`Krea 2`） | ✓ | 最多 10 张 | 参考图引导生成（`image_style_references`） |
+| **OpenAI（Codex 认证）** | ✓ | 最多 16 张 | Codex Responses 的 `image_generation` 工具，配合 `input_image` 内容块 |
+
+具备编辑端点的 FAL 模型：`flux-2/klein/9b`、`flux-2-pro`、`nano-banana-pro`、`gpt-image-1.5`、`gpt-image-2`、`ideogram/v3` 和 `qwen-image`。纯文生图的 FAL 模型（`z-image/turbo`、`recraft`、`krea/*`）会拒绝图像输入，并给出明确错误提示，引导你换用支持编辑的模型。
+
+当前模型的编辑能力会在运行时体现在工具描述中，因此智能体在调用工具之前就知道 `image_url` 是否会被接受。
 
 ## 宽高比
 
@@ -147,7 +181,7 @@ export IMAGE_TOOLS_DEBUG=true
 
 ## 限制
 
-- **需要 FAL 凭据**（直连 `FAL_KEY` 或 Nous 订阅网关）  
-- **仅文生图** — 不支持局部重绘、图生图或编辑类工作流  
-- **临时 URL** — FAL 托管链接会在数小时至数天后过期；请自行落盘保存  
-- **按模型能力裁剪** — 部分模型不支持 `seed`、`num_inference_steps` 等；`supports` 会静默丢弃不支持的参数，属预期行为  
+- **需要当前后端对应的凭据**（FAL `FAL_KEY` / Nous 订阅、`OPENAI_API_KEY`、xAI OAuth、`KREA_API_KEY`）  
+- **编辑能力取决于模型** — 图生图仅在支持编辑的模型上可用（见上表）；纯文生图模型会拒绝图像输入并给出明确错误  
+- **临时 URL** — 后端返回的托管链接会在数小时至数天后过期；Hermes 会将其落盘到本地缓存，因此过期后仍可正常投递  
+- **按模型能力裁剪** — 部分模型不支持 `seed`、`num_inference_steps` 等；`supports` / `edit_supports` 会静默丢弃不支持的参数，属预期行为  

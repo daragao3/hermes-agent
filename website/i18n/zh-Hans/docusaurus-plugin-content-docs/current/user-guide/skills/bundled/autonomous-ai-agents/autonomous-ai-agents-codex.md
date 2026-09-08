@@ -21,7 +21,7 @@ description: "将编码任务委托给 OpenAI Codex CLI（功能开发、PR）"
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `Coding-Agent`, `Codex`, `OpenAI`, `Code-Review`, `Refactoring` |
-| 相关 skill | [`claude-code`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-claude-code), [`hermes-agent`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent) |
+| 相关 skill | [`claude-code`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-claude-code), [`hermes-agent`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent) |
 
 ## 参考：完整 SKILL.md
 
@@ -87,6 +87,23 @@ process(action="kill", session_id="<id>")
 | `exec "prompt"` | 单次执行，完成后退出 |
 | `--full-auto` | 沙箱模式，自动批准工作区内的文件变更 |
 | `--yolo` | 无沙箱，无需审批（最快，风险最高） |
+| `--sandbox danger-full-access` | 不使用 Codex 沙箱；当宿主服务上下文导致 bubblewrap 失效时很有用 |
+
+## Hermes Gateway 注意事项
+
+当从 Hermes gateway/服务上下文（例如由 Telegram 驱动的 agent 会话）调用 Codex CLI 时，
+即使同一条命令在用户的交互式 shell 中可以正常工作，Codex 的 `workspace-write` 沙箱仍可能失败。
+典型症状是 bubblewrap/用户命名空间错误，例如 `setting up uid map: Permission denied`
+或 `loopback: Failed RTM_NEWADDR: Operation not permitted`。
+
+在该上下文中，建议使用：
+
+```
+codex exec --sandbox danger-full-access "<task>"
+```
+
+改用进程边界作为安全层：显式指定 `workdir`、启动前保持 git 状态干净、收窄任务提示、
+审查 `git diff`、运行针对性测试，并在提交大范围变更前经过人工/agent 确认。
 
 ## PR 审查
 

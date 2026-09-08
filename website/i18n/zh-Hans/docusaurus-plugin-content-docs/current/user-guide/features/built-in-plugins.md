@@ -56,7 +56,10 @@ hermes plugins disable disk-cleanup
 | 插件 | 类型 | 用途 |
 |---|---|---|
 | `disk-cleanup` | hook + 斜杠命令 | 自动追踪临时文件并在会话结束时清理 |
+| `security-guidance` | hook | 对 `write_file`/`patch` 的危险代码进行模式匹配并追加安全告警（或阻断）——共 25 条规则（Anthropic 的 `claude-plugins-official` 模式的 Apache-2.0 分支） |
 | `observability/langfuse` | hook | 将轮次 / LLM 调用 / 工具追踪到 [Langfuse](https://langfuse.com) |
+| `observability/nemo_relay` | hook | 将可观测性事件（轮次 / LLM 调用 / 工具）转发到 NVIDIA NeMo 端点 |
+| `teams_pipeline` | 独立插件 | Microsoft Teams 会议流水线——基于 Graph、以转录稿为先的会议摘要 |
 | `spotify` | 后端（7 个工具） | 原生 Spotify 播放、队列、搜索、播放列表、专辑、曲库 |
 | `google_meet` | 独立插件 | 加入 Meet 通话、实时字幕转录、可选实时双工音频 |
 | `image_gen/openai` | 图像后端 | OpenAI `gpt-image-2` 图像生成后端（FAL 的替代方案） |
@@ -115,20 +118,50 @@ hermes plugins disable disk-cleanup
 
 **再次禁用：** `hermes plugins disable disk-cleanup`。
 
+### security-guidance
+
+对文件写入进行快速的模式匹配安全告警。当 agent 的 `write_file` / `patch` / `skill_manage` 调用所携带的内容匹配已知的危险代码模式时——`pickle.load`、未使用 `SafeLoader` 的 `yaml.load`、`eval(`、`os.system`、`subprocess(...,  shell=True)`、JS 的 `child_process.exec`、React 的 `dangerouslySetInnerHTML`、裸的 `.innerHTML =` / `.outerHTML =` / `document.write`、Node 的 `crypto.createCipher`、AES ECB 模式、禁用 TLS 校验、易受 XXE 影响的 `xml.etree` / `minidom` 解析器、缺少 SRI 的 `<script src="//..." >`、未带 `weights_only=True` 的 `torch.load`、GitHub Actions 的 `${{ github.event.* }}` 注入——插件会在该工具的结果后追加一个 `⚠️ Security guidance` 区块。
+
+文件仍然会被写入。模型会在下一轮的工具消息中读到该告警，可以选择修正代码，或说明为何该写法在当前上下文中是安全的。模式匹配的误报率不低，因此默认是告警（warn）而非阻断（block）。
+
+**覆盖范围：** 共 25 条规则，涵盖不安全的反序列化、命令注入、XSS sink、加密陷阱、XXE、供应链（SRI）以及 CI/CD 工作流注入。模式数据是 [Anthropic 的 `claude-plugins-official`](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/security-guidance/hooks) 的逐字 Apache-2.0 分支——署名信息见该插件的 `LICENSE` 与 `NOTICE` 文件。
+
+**模式：**
+
+| 环境变量 | 效果 |
+|---|---|
+| （未设置） | **warn 模式**（默认）——文件被写入，结果后追加告警 |
+| `SECURITY_GUIDANCE_BLOCK=1` | **block 模式**——拒绝写入，告警作为阻断原因返回 |
+| `SECURITY_GUIDANCE_DISABLE=1` | 总开关——插件仍会加载但不做任何事 |
+
+**启用：** `hermes plugins enable security-guidance`（或在 `hermes plugins` 中勾选复选框）。
+
+**再次禁用：** `hermes plugins disable security-guidance`。
+
+**尚未实现的部分：** 上游 Anthropic 插件还有另外两层——对每个改动过文件的 agent 轮次进行 LLM diff 审查，以及在提交时进行跨文件追踪数据流的 agent 化审查。两者均未移植。agent 已经可以通过 `delegate_task` 按需运行这些审查。
+
 ### observability/langfuse
 
 将 Hermes 的轮次、LLM 调用和工具调用追踪到 [Langfuse](https://langfuse.com)——一个开源 LLM 可观测性平台。每轮一个 span，每次 API 调用一个 generation，每次工具调用一个 tool observation。用量总计、各类型 token 数量和成本估算来自 Hermes 的标准 `agent.usage_pricing` 数据，因此 Langfuse 仪表盘看到的分类（input / output / `cache_read_input_tokens` / `cache_creation_input_tokens` / `reasoning_tokens`）与 `hermes logs` 中显示的一致。
 
 该插件采用失败开放（fail-open）策略：未安装 SDK、无凭据或 Langfuse 出现瞬时错误——所有情况都会在 hook 中静默处理为无操作。agent 循环不受任何影响。
 
-**设置：**
+**设置（交互式——推荐）：**
+
+```bash
+hermes tools          # → Langfuse Observability → Cloud 或 Self-Hosted
+```
+
+该向导会收集你的密钥、`pip install` 安装 `langfuse` SDK，并为你将 `observability/langfuse` 添加到 `plugins.enabled`。重启 Hermes 后，下一轮就会上报 trace。
+
+**设置（手动）：**
 
 ```bash
 pip install langfuse
 hermes plugins enable observability/langfuse
 ```
 
-或在交互式 `hermes plugins` UI 中勾选复选框。然后将凭据写入 `~/.hermes/.env`：
+然后将凭据写入 `~/.hermes/.env`：
 
 ```bash
 HERMES_LANGFUSE_PUBLIC_KEY=pk-lf-...
