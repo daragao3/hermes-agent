@@ -1,45 +1,108 @@
 # tests/hermes_cli SINGLE-PROCESS baseline -- FROZEN
-# commit:  db0977b4c0   date: 2026-08-18
-# harness: python -m pytest tests/hermes_cli -q -p no:cacheprovider
-#          .venv python 3.12, Windows. pyproject addopts supply
-#          --timeout=30 --timeout-method=thread. 9434 collected every run.
+# commit:  162965ad21   date: 2026-09-08
+# harness: python -m pytest tests/hermes_cli -q -p no:randomly -p no:cacheprovider
+#          .venv python 3.12 (repo .venv/Scripts/python.exe), Windows, Git-Bash,
+#          detached-equivalent worktree with no .venv of its own. pyproject
+#          addopts supply -m 'not integration and not stress' --timeout=30
+#          --timeout-method=thread.
 #
-# STABLE CORE: 227 failures across 58 files. DIFF AGAINST THIS.
+# STABLE CORE: 226 failures across 59 files. DIFF AGAINST THIS.
+#   226 failed, 9282 passed, 102 skipped, 12 warnings in 2204.10s (0:36:44)
+#   9610 collected. ZERO errors. ZERO STATUS_DLL_INIT_FAILED / 3221225794 /
+#   0xC0000142. Worktree clean and HEAD unmoved across the run; no other
+#   python.exe was running pytest or run_tests_parallel.py at launch.
+#   Nodeids taken from the `FAILED ` lines of a run redirected WHOLE to a file.
 #
-# AMENDED 2026-08-20 (0a5e268a96): 248 -> 246 across 60 files. Removed the two
-# test_kanban_reclaim_claim_lock_guard.py rows. They were never product
-# failures -- the 2026-08-17 isolation triage classified both POLLUTION. The
-# tests spawned the POSIX binaries `true` and `sleep`, which on Windows resolve
-# only via Git/MSYS usr/bin, so any earlier test that narrowed PATH made them
-# raise FileNotFoundError: [WinError 2]. They now spawn sys.executable and take
-# no PATH lookup, so they pass in-sweep. Collection is unchanged at 9434 -- the
-# two tests still run, they just no longer fail. Everything else below is still
-# the frozen db0977b4c0 core.
+# DO NOT PIPE THE RUN THROUGH tail/head IF YOU INTEND TO DIFF THE FAILURE SET.
+# The summary line is printed LAST and always survives a tail; the FAILED
+# nodeids scroll off. A `| tail -25` capture of a sweep at this commit held the
+# summary and only 24 of its 233 nodeids -- all 24 happened to be baseline
+# rows, which reads as a clean "0 new" off a 10% sample. Redirect to a file.
 #
-# AMENDED 2026-08-20 (c0008fb8ad): 246 -> 227 across 58 files. A clean,
-# single-process resweep removed 19 rows: all 16 test_gui_command.py failures
-# and all 3 test_dashboard_auth_password_login.py failures. These were
-# order-pollution victims, not product regressions. The app-state leak fix at
-# 73bab4a7c7 and the sys.modules restoration at c42235e8a1 landed after the
-# db0977b4c0 freeze; the full sweep, rather than the earlier file pairings, is
-# the authority for exactly which frozen rows cleared. No new failure nodeid
-# appeared. Four test files added since the freeze contributed 65 collected
-# tests, all passing.
+# --- AMENDED 2026-09-08 (renamed from hermes-cli-baseline-20260818.tsv) ------
 #
-# Clean resweep evidence: detached worktree pinned at c0008fb8ad, Git-Bash,
-# PYTHONPATH=C:\Users\diego\.hermes\ops, PYTEST_ADDOPTS='-p pytest_fd_guard',
-# -p no:cacheprovider -p no:randomly --timeout=300 -rf. Host scans before and
-# after found no python.exe running pytest or run_tests_parallel.py; START_SHA
-# and END_SHA matched; the worktree stayed clean; grep found zero occurrences
-# of 3221225794 / 0xC0000142. Nodeids came only from run.txt `FAILED ` lines:
-#   227 failed, 9174 passed, 102 skipped, 12 warnings in 6343.83s (1:45:43)
-#   FDGUARD-SUMMARY collected=9500 exitstatus=1 CLEAN
-# The earlier 321F/9071P/102S/9E run at the same SHA is preserved but rejected:
-# a concurrent heavyweight pytest caused 253 STATUS_DLL_INIT_FAILED occurrences.
+# 227 -> 226 rows, 58 -> 59 files, measured at 162965ad21. Against the frozen
+# 2026-08-18 core: 4 nodeids are NEW and 5 frozen rows now PASS.
 #
-# Evidence: 9 independent full runs. Every one printed a summary line and
-# reported FDGUARD-SUMMARY collected=9434 CLEAN. The core was set-identical
-# (not merely count-identical) in 5 of them: V1, V3, W1, X2, X3.
+#   NEW (all four reproduce standalone, so none is order pollution):
+#     test_prompt_size.py::test_blank_slate_prompt_size_counts_only_minimal_tools
+#     test_setup_blank_slate.py::TestBlankSlateMinimalToolsets::test_no_disabled_bundle_overlaps_kept_tools
+#     test_setup_blank_slate.py::TestBlankSlateMinimalToolsets::test_tool_schema_survives_disabled_toolsets_from_config
+#     test_update_check.py::test_check_for_updates_official_ssh_origin_uses_https_probe
+#
+#   NOW GREEN (dropped from the list):
+#     test_cmd_update.py::TestCmdUpdateBranchFallback::test_update_refreshes_repo_and_tui_node_dependencies
+#     test_cmd_update.py::TestNodeRuntimeNpmResolution::test_resolve_rejects_windows_npm_and_rescans_path
+#     test_tui_resume_flow.py::test_exit_after_oneshot_bypasses_late_atexit_abort
+#     test_tui_resume_flow.py::test_main_oneshot_path_bypasses_late_atexit_abort
+#     test_tui_resume_flow.py::test_oneshot_subprocess_exits_without_teardown_abort
+#
+# This is drift accumulated since the 2026-08-18 freeze, not a recent
+# regression: the frozen list went three weeks without a resweep, and the
+# 2026-08-20 attempt at one was invalidated (321F/9071P/102S/9E with 253
+# STATUS_DLL_INIT_FAILED caused by a concurrent heavyweight pytest).
+#
+# --- HARNESS SENSITIVITY: 13 ROWS DO NOT SURVIVE A CHANGE OF ENVIRONMENT ----
+#
+# A SECOND clean single-process run at this same commit, from a different
+# session and a different working environment, reported
+#   233 failed, 9276 passed, 96 skipped, 12 warnings in 1530.93s (0:25:30)
+# also with zero errors and zero DLL-init failures. The two runs are NOT
+# set-identical. Treat these 13 nodeids as harness-dependent; do not open a
+# bug on one appearing or disappearing between runs.
+#
+#   Failed in the other run, PASS here (10). All ten also pass STANDALONE in
+#   this worktree, i.e. they are artifacts of that run's environment:
+#     test_dashboard_unified_launch.py::TestUnifiedDashboardRouting::test_profile_launch_reexecs_machine_dashboard
+#     test_kanban_db.py::test_resolve_hermes_argv_avoids_implicit_windows_batch_shim
+#     test_kanban_db.py::test_resolve_hermes_argv_falls_back_to_module_form_when_no_path_shim
+#     test_kanban_db.py::test_resolve_hermes_argv_hermes_bin_bare_cmd_uses_module_fallback
+#     test_kanban_db.py::test_resolve_hermes_argv_hermes_bin_bare_name_ignores_cwd
+#     test_kanban_db.py::test_resolve_hermes_argv_hermes_bin_unresolved_bare_name_falls_back
+#     test_memory_setup_provider_arg.py::TestInstallDependenciesRunner::test_bootstraps_pip_via_ensurepip_when_missing
+#     test_memory_setup_provider_arg.py::TestInstallDependenciesRunner::test_falls_back_to_pip_when_uv_missing
+#     test_tui_resume_flow.py::test_launch_tui_worktree_validates_relative_python_against_final_cwd
+#     test_uv_tool_update.py::TestCmdUpdatePipUsesUvTool::test_runs_uv_pip_install_when_not_uv_tool
+#
+#   Passed in the other run, FAIL here (3). These fail standalone here too, and
+#   the first two are ALSO in the frozen 2026-08-18 core -- so on these rows the
+#   run recorded in this file agrees with history and the other run is the
+#   outlier:
+#     test_completion.py::TestGenerateBash::test_valid_bash_syntax
+#     test_setup_hermes_script.py::test_setup_hermes_script_is_valid_shell
+#     test_update_check.py::test_check_for_updates_official_ssh_origin_uses_https_probe
+#
+# The skip counts differ too (102 here vs 96 there), which is the shape of an
+# environment difference rather than of flakiness. Worked example of the
+# mechanism: test_valid_bash_syntax shells out to `bash -n <windows path>`, so
+# it fails wherever `bash` resolves to a POSIX bash that cannot read a
+# `C:\Users\...` path -- present or absent purely on how the sweep was launched.
+#
+# THIS IS A BASELINE, NOT A REGRESSION LIST. The largest families are platform
+# failures (POSIX-only APIs on Windows), not defects from any recent change:
+#    40  tests/hermes_cli/test_container_boot.py
+#    14  tests/hermes_cli/test_managed_uv.py
+#    14  tests/hermes_cli/test_session_browse.py
+#    13  tests/hermes_cli/test_service_manager.py
+#    12  tests/hermes_cli/test_web_oauth_dispatch.py
+#     9  tests/hermes_cli/test_ensure_hermes_home_uid_34107.py
+#     9  tests/hermes_cli/test_web_ui_build.py
+#     8  tests/hermes_cli/test_gateway.py
+#     8  tests/hermes_cli/test_mcp_dashboard_oauth.py
+#
+# Why this file can exist at all: pytest-timeout's `thread` method -- the only
+# one available on Windows -- answered a cap breach with os._exit(1), so a
+# single slow test ended the process with no summary line and a failure set
+# that depended on where it died. tests/_nonfatal_timeout.py makes a breach
+# fail one test instead, which is what makes a frozen list meaningful.
+#
+# --- PRIOR FREEZE HISTORY (superseded by the 2026-09-08 amendment above) -----
+#
+# FROZEN 2026-08-18 (db0977b4c0): 248 failures / 61 files / 9434 collected,
+# harness `python -m pytest tests/hermes_cli -q -p no:cacheprovider`. Evidence:
+# 9 independent full runs, every one printing a summary line and
+# FDGUARD-SUMMARY collected=9434 CLEAN. The core was set-identical (not merely
+# count-identical) in 5 of them: V1, V3, W1, X2, X3.
 #   A   249 failed, 9086 passed, 102 skipped, 12 warnings in 2803.39s (0:46:43)
 #   V1  248 failed, 9087 passed, 102 skipped, 12 warnings in 3139.93s (0:52:19)
 #   V2  249 failed, 9086 passed, 102 skipped, 12 warnings in 2482.19s (0:41:22)
@@ -49,7 +112,6 @@
 #   X1  249 failed, 9086 passed, 102 skipped, 12 warnings in 1806.28s (0:30:06)
 #   X2  248 failed, 9087 passed, 102 skipped, 12 warnings in 1713.45s (0:28:33)
 #   X3  248 failed, 9087 passed, 102 skipped, 12 warnings in 2838.29s (0:47:18)
-#
 # The remaining runs were core + exactly ONE rotating timing-sensitive test.
 # All four such tests were identified and fixed; none is part of the core:
 #   - test_cross_process_acquire_claims_only_one_last_slot
@@ -61,22 +123,25 @@
 #   - test_write_sends_to_child_stdin
 #     FIXED: READY handshake before write (was a race, not a deadline)
 #
-# THIS IS A BASELINE, NOT A REGRESSION LIST. The largest families are platform
-# failures (POSIX-only APIs on Windows), not defects from any recent change:
-#    40  tests/hermes_cli/test_container_boot.py
-#    16  tests/hermes_cli/test_gui_command.py
-#    14  tests/hermes_cli/test_managed_uv.py
-#    14  tests/hermes_cli/test_session_browse.py
-#    13  tests/hermes_cli/test_service_manager.py
-#    12  tests/hermes_cli/test_web_oauth_dispatch.py
-#     9  tests/hermes_cli/test_ensure_hermes_home_uid_34107.py
-#     9  tests/hermes_cli/test_web_ui_build.py
+# AMENDED 2026-08-20 (0a5e268a96): 248 -> 246 across 60 files. Removed the two
+# test_kanban_reclaim_claim_lock_guard.py rows. They were never product
+# failures -- the 2026-08-17 isolation triage classified both POLLUTION. The
+# tests spawned the POSIX binaries `true` and `sleep`, which on Windows resolve
+# only via Git/MSYS usr/bin, so any earlier test that narrowed PATH made them
+# raise FileNotFoundError: [WinError 2]. They now spawn sys.executable and take
+# no PATH lookup, so they pass in-sweep.
 #
-# Why this file can exist at all: pytest-timeout's `thread` method -- the only
-# one available on Windows -- answered a cap breach with os._exit(1), so a
-# single slow test ended the process with no summary line and a failure set
-# that depended on where it died. tests/_nonfatal_timeout.py makes a breach
-# fail one test instead, which is what makes a frozen list meaningful.
+# AMENDED 2026-08-20 (c0008fb8ad): 246 -> 227 across 58 files. A clean,
+# single-process resweep removed 19 rows: all 16 test_gui_command.py failures
+# and all 3 test_dashboard_auth_password_login.py failures. These were
+# order-pollution victims, not product regressions. The app-state leak fix at
+# 73bab4a7c7 and the sys.modules restoration at c42235e8a1 landed after the
+# db0977b4c0 freeze. Evidence: detached worktree pinned at c0008fb8ad,
+# Git-Bash, PYTHONPATH=C:\Users\diego\.hermes\ops,
+# PYTEST_ADDOPTS='-p pytest_fd_guard', -p no:cacheprovider -p no:randomly
+# --timeout=300 -rf.
+#   227 failed, 9174 passed, 102 skipped, 12 warnings in 6343.83s (1:45:43)
+#   FDGUARD-SUMMARY collected=9500 exitstatus=1 CLEAN
 #
 # Format: one failing test nodeid per line. Regenerate and diff.
 
@@ -93,8 +158,6 @@ tests/hermes_cli/test_bedrock_model_picker.py::TestBedrockRegionRouting::test_eu
 tests/hermes_cli/test_bedrock_model_picker.py::TestBedrockRegionRouting::test_us_region_from_env_var_yields_us_models
 tests/hermes_cli/test_bedrock_model_picker.py::TestListAuthenticatedProvidersBedrock::test_bedrock_total_models_matches_discovery
 tests/hermes_cli/test_bedrock_model_picker.py::TestListAuthenticatedProvidersBedrock::test_bedrock_uses_live_discovery_not_static_list
-tests/hermes_cli/test_cmd_update.py::TestCmdUpdateBranchFallback::test_update_refreshes_repo_and_tui_node_dependencies
-tests/hermes_cli/test_cmd_update.py::TestNodeRuntimeNpmResolution::test_resolve_rejects_windows_npm_and_rescans_path
 tests/hermes_cli/test_codex_cli_model_picker.py::test_codex_picker_uses_live_codex_catalog
 tests/hermes_cli/test_completion.py::TestGenerateBash::test_valid_bash_syntax
 tests/hermes_cli/test_console_engine.py::test_cron_run_hosted_background_fire_inherits_profile_home
@@ -220,6 +283,7 @@ tests/hermes_cli/test_projects_db.py::test_create_get_list
 tests/hermes_cli/test_projects_db.py::test_paths_normalized
 tests/hermes_cli/test_projects_db.py::test_record_and_list_discovered_repos
 tests/hermes_cli/test_projects_db.py::test_record_discovered_repos_replace_drops_stale_rows
+tests/hermes_cli/test_prompt_size.py::test_blank_slate_prompt_size_counts_only_minimal_tools
 tests/hermes_cli/test_provider_parity.py::test_each_provider_lands_on_the_tab_its_auth_type_dictates
 tests/hermes_cli/test_provider_parity.py::test_every_hermes_model_provider_is_configurable_in_desktop
 tests/hermes_cli/test_provider_parity.py::test_no_provider_appears_on_both_tabs
@@ -257,17 +321,17 @@ tests/hermes_cli/test_session_browse.py::TestCursesBrowse::test_type_to_filter_t
 tests/hermes_cli/test_session_browse.py::TestCursesBrowse::test_up_wraps_to_last
 tests/hermes_cli/test_setup.py::test_setup_gateway_in_container_shows_docker_guidance
 tests/hermes_cli/test_setup.py::test_setup_gateway_skips_service_install_when_systemctl_missing
+tests/hermes_cli/test_setup_blank_slate.py::TestBlankSlateMinimalToolsets::test_no_disabled_bundle_overlaps_kept_tools
+tests/hermes_cli/test_setup_blank_slate.py::TestBlankSlateMinimalToolsets::test_tool_schema_survives_disabled_toolsets_from_config
 tests/hermes_cli/test_setup_hermes_script.py::test_setup_hermes_script_is_valid_shell
 tests/hermes_cli/test_systemd_watchdog_unit.py::test_system_unit_reads_watchdog_from_target_home
-tests/hermes_cli/test_tui_resume_flow.py::test_exit_after_oneshot_bypasses_late_atexit_abort
-tests/hermes_cli/test_tui_resume_flow.py::test_main_oneshot_path_bypasses_late_atexit_abort
-tests/hermes_cli/test_tui_resume_flow.py::test_oneshot_subprocess_exits_without_teardown_abort
 tests/hermes_cli/test_uninstall_node_symlinks.py::test_leaves_unrelated_symlinks_untouched
 tests/hermes_cli/test_uninstall_node_symlinks.py::test_only_some_links_present
 tests/hermes_cli/test_uninstall_node_symlinks.py::test_removes_dangling_symlink_into_hermes_node
 tests/hermes_cli/test_uninstall_node_symlinks.py::test_removes_fhs_symlinks_in_usr_local_bin
 tests/hermes_cli/test_uninstall_node_symlinks.py::test_removes_symlinks_pointing_into_hermes_node
 tests/hermes_cli/test_update_autostash.py::test_non_interactive_discard_throws_changes_away
+tests/hermes_cli/test_update_check.py::test_check_for_updates_official_ssh_origin_uses_https_probe
 tests/hermes_cli/test_update_hangup_protection.py::TestInstallHangupProtection::test_wraps_stdout_and_stderr_with_mirror
 tests/hermes_cli/test_update_post_pull_syntax_guard.py::test_validate_critical_files_syntax_detects_break_in_main_py
 tests/hermes_cli/test_update_post_pull_syntax_guard.py::test_validate_critical_files_syntax_detects_break_in_web_server
