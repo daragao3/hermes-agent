@@ -1178,6 +1178,24 @@ _CODEX_SCAN_DIAGNOSTIC_CODES = frozenset({
 # alone. Same reasoning as `_log_codex_marker_conflicts`, which routes around
 # this helper for exactly this.
 _CODEX_SCAN_ERROR_CODES = frozenset({_CODEX_SCAN_FAILURE_CODE})
+# The CAUSE tags for the aggregate `if deferred:` lines. The per-occurrence
+# line says `codex_scan_deferred` -- a CATEGORY -- and the aggregate names the
+# cause; that pair is what an operator reads during an incident.
+#
+# 2026-09-08: the aggregate asserted `app_server_timeout` unconditionally, but
+# the branch that increments `deferred` catches TWO disjoint types.
+# `TimeoutError` says the app-server did not answer inside its bound -- a
+# statement about the HOST. `StaleExternalProjection` is a no-op: the incoming
+# projection is older than the persisted activity watermark, and nothing is
+# wrong with the host at all. Those have opposite remediations, so naming the
+# wrong one sends the reader at the wrong subsystem at the worst moment.
+_CODEX_DEFERRAL_TIMEOUT_CAUSE = "app_server_timeout"
+_CODEX_DEFERRAL_STALE_CAUSE = "stale_projection"
+_CODEX_DEFERRAL_MIXED_CAUSE = "mixed_deferral_causes"
+# Reachable only if a THIRD exception type joins the deferral catch without a
+# counter for it. Deliberately NOT defaulted to the timeout tag: that default
+# is the original defect, and this names the drift instead of resurrecting it.
+_CODEX_DEFERRAL_UNKNOWN_CAUSE = "deferral_cause_unknown"
 _CODEX_SCAN_LOCAL_OWNER_CODE = "codex_local_session_owns_id"
 _CLAUDE_SCAN_LOCAL_OWNER_CODE = "claude_local_session_owns_id"
 _CLAUDE_MARKER_CONFLICT_CODE = "claude_conflicting_bridge_markers"
@@ -4757,6 +4775,8 @@ class SessionBridgeCoordinator:
         failed = 0
         locally_owned = 0
         deferred = 0
+        deferred_timeouts = 0
+        deferred_stale = 0
         marker_conflicts: list[str] = []
         for thread_summary in summaries:
             try:
@@ -4793,6 +4813,10 @@ class SessionBridgeCoordinator:
                 # two app-server timeouts and none of the persistent path's deferral
                 # lines, because the timeout was landing HERE instead.
                 deferred += 1
+                if isinstance(exc, TimeoutError):
+                    deferred_timeouts += 1
+                elif isinstance(exc, StaleExternalProjection):
+                    deferred_stale += 1
                 self._record_codex_scan_diagnostic(
                     stage="full_history_project",
                     native_id=getattr(thread_summary, "native_id", None),
@@ -4859,8 +4883,11 @@ class SessionBridgeCoordinator:
             try:
                 _LOG.warning(
                     "codex_scan_diagnostic stage=full_history_project "
-                    "code=app_server_timeout deferred=%d indexed=%d",
+                    "code=%s deferred=%d timeouts=%d stale=%d indexed=%d",
+                    _codex_deferral_cause(deferred_timeouts, deferred_stale),
                     deferred,
+                    deferred_timeouts,
+                    deferred_stale,
                     indexed,
                 )
             except Exception:
@@ -5022,6 +5049,8 @@ class SessionBridgeCoordinator:
         failed = 0
         locally_owned = 0
         deferred = 0
+        deferred_timeouts = 0
+        deferred_stale = 0
         marker_conflicts: list[str] = []
         for thread_summary in summaries:
             try:
@@ -5051,6 +5080,10 @@ class SessionBridgeCoordinator:
                 # Host-side timeout or a no-op stale projection: retried next cycle,
                 # never a provider-degrading failure. Mirrors _scan_codex_persistent.
                 deferred += 1
+                if isinstance(exc, TimeoutError):
+                    deferred_timeouts += 1
+                elif isinstance(exc, StaleExternalProjection):
+                    deferred_stale += 1
                 self._record_codex_scan_diagnostic(
                     stage="immediate_project",
                     native_id=getattr(thread_summary, "native_id", None),
@@ -5082,8 +5115,11 @@ class SessionBridgeCoordinator:
             try:
                 _LOG.warning(
                     "codex_scan_diagnostic stage=immediate_project "
-                    "code=app_server_timeout deferred=%d indexed=%d",
+                    "code=%s deferred=%d timeouts=%d stale=%d indexed=%d",
+                    _codex_deferral_cause(deferred_timeouts, deferred_stale),
                     deferred,
+                    deferred_timeouts,
+                    deferred_stale,
                     indexed,
                 )
             except Exception:
@@ -5665,6 +5701,8 @@ class SessionBridgeCoordinator:
         indexed = 0
         locally_owned = 0
         deferred = 0
+        deferred_timeouts = 0
+        deferred_stale = 0
         vanished = 0
         marker_conflicts: list[str] = []
         # Ids that reached a state they can never leave: committed, unresolvable
@@ -5745,6 +5783,10 @@ class SessionBridgeCoordinator:
                 # the id staged -- observed as one thread
                 # (task:92a4c43cd63cdbff) failing every cycle with 22 items left.
                 deferred += 1
+                if isinstance(exc, TimeoutError):
+                    deferred_timeouts += 1
+                elif isinstance(exc, StaleExternalProjection):
+                    deferred_stale += 1
                 self._record_codex_scan_diagnostic(
                     stage="persistent_project",
                     native_id=native_id,
@@ -5802,8 +5844,11 @@ class SessionBridgeCoordinator:
             try:
                 _LOG.warning(
                     "codex_scan_diagnostic stage=persistent_project "
-                    "code=app_server_timeout deferred=%d indexed=%d",
+                    "code=%s deferred=%d timeouts=%d stale=%d indexed=%d",
+                    _codex_deferral_cause(deferred_timeouts, deferred_stale),
                     deferred,
+                    deferred_timeouts,
+                    deferred_stale,
                     indexed,
                 )
             except Exception:
@@ -6251,6 +6296,28 @@ class SessionBridgeCoordinator:
 
     def _elapsed_ms(self, started: float) -> float:
         return max(0.0, (float(self._monotonic()) - started) * 1000.0)
+
+
+def _codex_deferral_cause(timeouts: int, stale: int) -> str:
+    """The cause tag for an aggregate deferral line.
+
+    Single-sourced because the three codex scan paths must agree: they each
+    count their own deferrals, and a tag that meant different things in
+    `full_history_project` and `persistent_project` would be worse than the
+    unconditional one this replaces.
+
+    The counts are logged alongside the tag, so `mixed_deferral_causes` is a
+    headline rather than a dead end -- without the breakdown the mixed case
+    would leave the reader no better off than the old unconditional line.
+    """
+
+    if timeouts and stale:
+        return _CODEX_DEFERRAL_MIXED_CAUSE
+    if timeouts:
+        return _CODEX_DEFERRAL_TIMEOUT_CAUSE
+    if stale:
+        return _CODEX_DEFERRAL_STALE_CAUSE
+    return _CODEX_DEFERRAL_UNKNOWN_CAUSE
 
 
 def _safe_native_token(value: object) -> str:
