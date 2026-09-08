@@ -307,6 +307,19 @@ def _is_codex_automation_envelope(value: object) -> bool:
             and "<instructions>" in value
             and value.endswith("</heartbeat>")
         )
+    if value.startswith("<scheduled-task "):
+        # A scheduled-task fire is the scheduler's session, not one the user is
+        # working in, so it earns no sidebar mirror -- the same reasoning that
+        # already excludes <heartbeat> and "Automation: " above. Measured
+        # 2026-09-07: these were 21 of 45 registrations that day, and Diego
+        # named them specifically as records that should not be in his sidebar.
+        #
+        # Structural, and an OPENER test rather than a substring search, for
+        # the same reason the two envelopes above are: his real sessions
+        # discuss scheduled tasks constantly, and matching the phrase anywhere
+        # would hide the cross-harness visibility he asked for. That failure
+        # direction costs him WORK; this one only costs a sidebar row.
+        return '" file="' in value and value[16:].startswith('name="')
     return (
         value.startswith("Automation: ")
         and "\nAutomation ID: " in value

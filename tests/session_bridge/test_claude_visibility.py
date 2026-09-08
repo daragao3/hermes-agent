@@ -339,6 +339,48 @@ def test_registration_preamble_is_excluded_whatever_marker_scheme_it_carries(
     ) == "bridge_placeholder"
 
 
+_SCHEDULED_TASK_OPENER = (
+    '<scheduled-task name="repo-test-gate-first-green-0430-verify" '
+    'file="C:\\Users\\diego\\.claude\\scheduled-tasks\\repo-test-gate-first-green'
+    '-0430-verify\\SKILL.md">\n'
+    "This is an automated run. Report what you measured."
+)
+
+
+def test_scheduled_task_codex_session_is_automation_not_user_work() -> None:
+    """A scheduled-task fire is automation, so it earns no sidebar mirror.
+
+    These are Codex sessions the scheduler starts, not sessions Diego is
+    working in. They were 21 of 45 registrations on 2026-09-07 and he named
+    them specifically as records that should not appear. The sibling envelopes
+    (<heartbeat>, "Automation: ") were already excluded on exactly this
+    reasoning; this closes the third shape.
+    """
+
+    assert evaluate_claude_visibility(
+        _projection(Provider.CODEX, content=_SCHEDULED_TASK_OPENER)
+    ) == "automation_only"
+
+
+def test_a_real_request_mentioning_a_scheduled_task_stays_eligible() -> None:
+    """The exclusion is an OPENER test, never a substring search.
+
+    Diego's own sessions discuss scheduled tasks constantly. Matching the
+    phrase anywhere would silently hide the cross-harness visibility he asked
+    for -- the failure direction that costs him work rather than clutter.
+    """
+
+    assert evaluate_claude_visibility(
+        _projection(
+            Provider.CODEX,
+            content=(
+                "Investigate why the <scheduled-task> wrapper strands prompt "
+                "dirs, then propose a fix."
+            ),
+        )
+    ) == "eligible"
+
+
 def test_codex_injected_context_does_not_hide_a_real_user_request() -> None:
     projection = replace(
         _projection(Provider.CODEX),
