@@ -10,15 +10,16 @@ Hermes Agent 采用纵深防御安全模型。本页涵盖所有安全边界—�
 
 ## 概述
 
-安全模型共有七层：
+安全模型共有八层：
 
 1. **用户授权** — 谁可以与 Agent 通信（允许列表、DM 配对）
 2. **危险命令审批** — 针对破坏性操作的人工审核环节
-3. **容器隔离** — Docker/Singularity/Modal 沙箱及加固配置
-4. **MCP 凭据过滤** — MCP 子进程的环境变量隔离
-5. **上下文文件扫描** — 检测项目文件中的 prompt（提示词）注入
-6. **跨会话隔离** — 会话之间无法访问彼此的数据或状态；cron 任务存储路径已针对路径遍历攻击进行加固
-7. **输入清理** — 终端工具后端中的工作目录参数会经过允许列表验证，以防止 shell 注入
+3. **文件写入安全** — 针对 `write_file`/`patch` 的拒绝列表与可选的写入沙箱
+4. **容器隔离** — Docker/Singularity/Modal 沙箱及加固配置
+5. **MCP 凭据过滤** — MCP 子进程的环境变量隔离
+6. **上下文文件扫描** — 检测项目文件中的 prompt（提示词）注入
+7. **跨会话隔离** — 会话之间无法访问彼此的数据或状态；cron 任务存储路径已针对路径遍历攻击进行加固
+8. **输入清理** — 终端工具后端中的工作目录参数会经过允许列表验证，以防止 shell 注入
 
 ## 危险命令审批
 
@@ -30,9 +31,22 @@ Hermes Agent 采用纵深防御安全模型。本页涵盖所有安全边界—�
 
 ```yaml
 approvals:
-  mode: smart     # smart | manual | off
-  timeout: 60     # 等待用户响应的秒数（默认：60）
+  mode: smart                     # smart | manual | off
+  timeout: 60                     # 等待用户响应的秒数（默认：60）
+  cron_mode: deny                 # deny | approve — cron 任务遇到危险命令时的行为
+  mcp_reload_confirm: true        # /reload-mcp 在使 MCP 工具缓存失效前先询问
+  destructive_slash_confirm: true # /clear、/new、/reset、/undo 在丢弃状态前先提示
 ```
+
+完整的配置项集合：
+
+| 配置项 | 默认值 | 控制内容 |
+|---|---|---|
+| `mode` | `smart` | 危险 shell 命令的审批策略——参见下方表格。 |
+| `timeout` | `60` | Hermes 等待审批回复的秒数，超时后判定为超时。 |
+| `cron_mode` | `deny` | [cron 任务](./features/cron.md)在无人值守情况下触发危险命令提示时的行为。`deny` 会阻止该命令（Agent 必须另寻他法）；`approve` 则在 cron 上下文中自动批准一切。 |
+| `mcp_reload_confirm` | `true` | 为 true 时，`/reload-mcp` 会在重建 MCP 工具集前先询问。重建会使供应商的 prompt 缓存失效（工具 schema 位于系统 prompt 中），因此下一条消息会重新发送完整的输入 token。点击 **Always Approve** 的用户会将此项翻转为 `false`。 |
+| `destructive_slash_confirm` | `true` | 为 true 时，破坏性的会话斜杠命令（`/clear`、`/new`、`/reset`、`/undo`）会在丢弃对话状态前先提示。三选项对话框（Approve Once / Always Approve / Cancel）在 Telegram、Discord 和 Slack 上通过原生的是/否按钮路由，其他平台回退为文本形式。点击 **Always Approve** 的用户会将此项翻转为 `false`。TUI 使用自己的模态浮层（设置 `HERMES_TUI_NO_CONFIRM=1` 可在此处退出该行为）。 |
 
 | 模式 | 行为 |
 |------|----------|
@@ -73,7 +87,7 @@ YOLO 模式在 CLI 和 gateway 会话中均可使用。在内部，它会设置 
 YOLO 模式会禁用会话中**所有**危险命令安全检查——**但硬性黑名单除外**（见下文）。仅在完全信任所生成命令的情况下使用（例如，在一次性环境中经过充分测试的自动化脚本）。
 :::
 
-对于破坏性会话斜杠命令（`/clear`、`/new` / `/reset`、`/undo`、`/exit --delete`），CLI 在执行前也会提示确认。参见[斜杠命令——破坏性命令的确认提示](../reference/slash-commands.md#confirmation-prompts-for-destructive-commands)。
+对于破坏性会话斜杠命令（`/clear`、`/new` / `/reset`、`/undo`、`/quit --delete`——`/exit --delete` 是其别名），CLI 在执行前也会提示确认。参见[斜杠命令——破坏性命令的确认提示](../reference/slash-commands.md#confirmation-prompts-for-destructive-commands)。
 
 ### 硬性黑名单（始终生效的底线）
 
@@ -96,6 +110,32 @@ YOLO 模式会禁用会话中**所有**危险命令安全检查——**但硬性
 | 将不受信任的 URL 通过管道传给 `sh`（作用于根文件系统顶层） | 远程代码执行攻击面过大，无法批准 |
 
 若触发黑名单，工具调用会向 Agent 返回一条说明性错误，且不执行任何操作。如果某个合法工作流确实需要这些命令（例如，你是一个清除并重装流水线的操作者），请在 Agent 外部运行。
+
+### 用户自定义拒绝规则（`approvals.deny`）
+
+硬性黑名单是固定的、随代码发布的。`approvals.deny` 是它的用户可编辑对应物：一组 glob 模式，会无条件阻止匹配的终端命令——在 `--yolo`、`/yolo` 和 `approvals.mode: off` 被纳入考虑**之前**就生效。可用它实现"带例外的 yolo"：让 Agent 什么都能做，唯独这几件事永远不行。
+
+```yaml
+approvals:
+  deny:
+    - "git push --force*"
+    - "*curl*|*sh*"
+    - "dd if=* of=/dev/*"
+```
+
+细节：
+
+- 模式是 [fnmatch](https://docs.python.org/3/library/fnmatch.html) glob（`*`、`?`、`[...]`），以**不区分大小写**的方式匹配整条命令文本。`git push --force*` 匹配 `git push --force origin main`，但不匹配 `git push origin main`。
+- 匹配运行在与危险模式检测器相同的规范化/去混淆命令变体之上，因此简单的引号技巧（`git pu""sh --force`）无法绕过规则。
+- **YAML 引号：** 请始终为模式加引号。裸的前导 `*` 会被当作 YAML 别名而解析失败；`{`、`!` 和 `: ` 在 YAML 中也各有含义。对于类 shell 的内容，单引号最为稳妥。
+- 拒绝规则适用于可触及宿主机的后端（本地、SSH、挂载宿主目录的 Docker）。隔离的容器后端一如既往地完全跳过整个防护栈——它们运行的任何内容都无法触及宿主机。
+- 被拒绝的命令会向 Agent 返回一条 BLOCKED 错误，告知其不要重试或改写。不执行任何操作。
+
+与审批配置的其余部分一样，改动会立即生效（配置缓存以 mtime 为键）——无需重启会话。
+
+:::note 威胁模型
+拒绝规则是针对"诚实但犯错"的 Agent 的护栏，与危险模式检测器的威胁模型相同。它们并不是针对刻意与你为敌的进程的沙箱——若需如此，请使用隔离后端（Docker、Modal）或出口受限的环境。
+:::
 
 ### 审批超时
 
@@ -193,6 +233,48 @@ command_allowlist:
 使用 `hermes config edit` 查看或删除永久允许列表中的模式。
 :::
 
+## 文件写入安全 {#file-write-safety}
+
+在 `write_file` 或 `patch` 接触磁盘之前，Hermes 会将目标路径与一份拒绝列表以及一个可选的沙箱进行比对。被阻止的写入会立即向 Agent 返回错误——**不会出现审批提示**，也无法从聊天界面覆盖。模型仍可能声称编辑已成功；当 `display.file_mutation_verifier` 开启时（默认开启），请相信[文件变更验证器页脚](./configuration.md#file-mutation-verifier)，而非助手的收尾总结。
+
+### 受保护路径（始终阻止）
+
+以下类别始终会被拒绝，即便 `HERMES_WRITE_SAFE_ROOT` 未设置：
+
+| 类别 | 示例 |
+|----------|----------|
+| 操作系统凭据存储 | `~/.ssh/`、`~/.aws/`、`~/.kube/`、`/etc/sudoers`、`~/.netrc` |
+| Hermes 凭据存储 | HERMES_HOME 下（当前 profile 及全局根目录）的 `auth.json`、`.env`、`.anthropic_oauth.json`、`mcp-tokens/`、`pairing/` |
+| 项目密钥文件 | 磁盘上任何位置的 `.env`、`.env.local`、`.env.production`、`.envrc` |
+
+安全根目录内部的敏感路径同样会被阻止——把 `HERMES_WRITE_SAFE_ROOT` 指向 `$HOME` 并不会允许写入 `~/.ssh/id_rsa`。
+
+安全根目录违规会返回 `Write denied: '…' is outside HERMES_WRITE_SAFE_ROOT (…)`。凭据路径阻止则使用 `Write denied: '…' is a protected system/credential file.`
+
+### HERMES_WRITE_SAFE_ROOT（可选沙箱）
+
+设置后，`write_file` 和 `patch` 只能指向所列目录前缀内部的路径。任何位于外部的路径都会被**硬性阻止**——不会走危险命令审批流程。
+
+- 在[官方 Docker 镜像](https://github.com/NousResearch/hermes-agent)中自动设置（`HERMES_WRITE_SAFE_ROOT=/opt/data`）
+- 支持多个根目录，在 Unix 上以 `:` 分隔，在 Windows 上以 `;` 分隔
+- **不要随意将其加入 `~/.hermes/.env`。** 如果你把它设为某个项目目录，Agent 将无法写入 `~/.hermes/cron/jobs.json`、profile skill，或该前缀之外的其他 Hermes 状态
+
+若要同时允许一个工作区和 Hermes home：
+
+```bash
+export HERMES_WRITE_SAFE_ROOT=/path/to/project:/home/you/.hermes
+```
+
+取消设置该变量即可恢复不受限的写入（仍受受保护路径拒绝列表的约束）。完整参考：[HERMES_WRITE_SAFE_ROOT](../reference/environment-variables.md#hermes_write_safe_root)。
+
+### Cron 及其他 Hermes 状态
+
+不要让 Agent 直接 `patch` `~/.hermes/cron/jobs.json`。请使用 `cronjob` 工具、[`hermes cron`](./features/cron.md) 或 `/cron`——它们会通过受支持的 API 更新任务存储。当写入安全阻止直接编辑时，其他 Hermes 控制文件同理。
+
+:::note 纵深防御，而非硬边界
+写入防护仅适用于 `write_file` 和 `patch`。`terminal` 工具以同一操作系统用户身份运行，仍可通过 shell 命令 `cat` 或覆盖被拒绝的路径。拒绝列表可减少意外损害，并向模型给出明确的停止信号；它并不能沙箱化一个怀有敌意或已被攻陷的 Agent。
+:::
+
 ## 用户授权（Gateway）
 
 运行消息 gateway 时，Hermes 通过分层授权系统控制谁可以与机器人交互。
@@ -259,8 +341,9 @@ whatsapp:
   unauthorized_dm_behavior: ignore
 ```
 
-- `pair` 为默认值。未授权的 DM 会收到配对码回复。
+- 对于聊天类 DM 平台，`pair` 为默认值。未授权的 DM 会收到配对码回复。
 - `ignore` 静默丢弃未授权的 DM。
+- 电子邮件默认为 `ignore`，除非设置了 `platforms.email.unauthorized_dm_behavior: pair`，因为收件箱中可能包含无关的未读邮件。
 - 平台部分会覆盖全局默认值，因此可以在 Telegram 上保持配对，同时让 WhatsApp 保持静默。
 
 **安全特性**（基于 OWASP + NIST SP 800-63-4 指南）：
@@ -292,6 +375,24 @@ hermes pairing revoke telegram 123456789
 hermes pairing clear-pending
 ```
 
+:::tip Docker 用户：请以 `hermes` 用户身份运行配对命令
+官方 Docker 镜像通过 `gosu` 以非特权的 `hermes` 用户（uid 10000）
+运行 gateway，但 `docker exec` 默认使用 root。由 root 创建的
+审批文件会以 `0600 root:root` 的权限写入，gateway 无法读取——
+该审批会被静默忽略（[#10270][i10270]）。
+
+请始终传入 `-u hermes`：
+
+```bash
+docker exec -u hermes hermes-agent hermes pairing approve telegram ABC12DEF
+```
+
+如果你已经以 root 身份运行过该命令，且用户仍未获授权，
+请重启容器——入口点会在下次启动时修复所有权。
+
+[i10270]: https://github.com/NousResearch/hermes-agent/issues/10270
+:::
+
 **存储：** 配对数据存储于 `~/.hermes/pairing/`，按平台分为独立的 JSON 文件：
 - `{platform}-pending.json` — 待处理的配对请求
 - `{platform}-approved.json` — 已批准的用户
@@ -306,7 +407,7 @@ hermes pairing clear-pending
 每个容器均使用以下标志运行（定义于 `tools/environments/docker.py`）：
 
 ```python
-_SECURITY_ARGS = [
+_BASE_SECURITY_ARGS = [
     "--cap-drop", "ALL",                          # 丢弃所有 Linux capabilities
     "--cap-add", "DAC_OVERRIDE",                  # root 可写入绑定挂载目录
     "--cap-add", "CHOWN",                         # 包管理器需要文件所有权
@@ -315,9 +416,10 @@ _SECURITY_ARGS = [
     "--pids-limit", "256",                         # 限制进程数量
     "--tmpfs", "/tmp:rw,nosuid,size=512m",         # 有大小限制的 /tmp
     "--tmpfs", "/var/tmp:rw,noexec,nosuid,size=256m",  # 禁止执行的 /var/tmp
-    "--tmpfs", "/run:rw,noexec,nosuid,size=64m",   # 禁止执行的 /run
 ]
 ```
+
+`SETUID`/`SETGID` **不在**基础列表中——它们只在容器以 root 启动、且 init/入口点必须放弃特权时（即 s6 特权放弃路径）才会被有条件地加上。当容器已经以非 root 的 `--user` 运行时，它们会被跳过。`/run` tmpfs 同样从基础列表中拆出，改为按镜像挂载（默认加固为 `noexec`，仅对需要从 `/run` 执行的 s6-overlay 镜像才使用 `exec`）。
 
 ### 资源限制
 
@@ -422,7 +524,9 @@ terminal:
     - my_custom_oauth_token.json
 ```
 
-路径相对于 `~/.hermes/`。文件在容器内挂载到 `/root/.hermes/`。
+路径相对于 `~/.hermes/`。文件在容器内挂载到 `/root/.hermes/`。该列表由 `tools/credential_files.py` 读取（`terminal.credential_files`）——它位于 `terminal:` 块之下，但由凭证文件模块加载，而非核心终端后端，因此它不属于内置的 `DEFAULT_CONFIG` 快照。
+
+**声明的路径在所有宿主平台上都是 POSIX 相对路径。** 请使用 `/` 分隔符书写——同一字符串会被复用为 Linux 沙箱*内部*的路径。Windows 风格的分隔符（`creds\token.json`）会被拒绝并记录一条警告，而不会被自动规范化；上述两条路径皆是如此：skill frontmatter 和 `terminal.credential_files`。默默地修复它反而是更危险的行为——在 POSIX 上反斜杠是普通的文件名字符，因此把 `..\..\.ssh\id_rsa` 规范化，会把一个本无危害的字符串变成一次真实的路径遍历尝试。系统选择直接拒绝这个格式错误的声明。
 
 ### 各沙箱的过滤规则
 
@@ -573,7 +677,7 @@ Tirith 的判定与审批流程集成：安全命令直接通过，可疑和被�
 4. **安全存储密钥** — 将 API 密钥保存在具有适当文件权限的 `~/.hermes/.env` 中
 5. **启用 DM 配对** — 尽可能使用配对码，而非硬编码用户 ID
 6. **审查命令允许列表** — 定期审计 config.yaml 中的 `command_allowlist`
-7. **设置 `MESSAGING_CWD`** — 不要让 Agent 在敏感目录中操作
+7. **设置 `terminal.cwd`** — 不要让 Agent 在敏感目录中操作
 8. **以非 root 用户运行** — 切勿以 root 身份运行 gateway
 9. **监控日志** — 检查 `~/.hermes/logs/` 中的未授权访问尝试
 10. **保持更新** — 定期运行 `hermes update` 以获取安全补丁
