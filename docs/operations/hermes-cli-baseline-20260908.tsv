@@ -6,7 +6,25 @@
 #          addopts supply -m 'not integration and not stress' --timeout=30
 #          --timeout-method=thread.
 #
-# STABLE CORE: 226 failures across 59 files. DIFF AGAINST THIS.
+# ** THE INTERPRETER IS PART OF THE HARNESS, NOT A DETAIL. Run this sweep with
+#    an interpreter that is (a) NOT the Microsoft-Store MSIX python and (b)
+#    inside a virtualenv -- concretely, invoke
+#      C:\Users\diego\.hermes\agent-src\.venv\Scripts\python.exe -m pytest ...
+#    by absolute path. Do NOT rely on bare `python`: on this box that resolves
+#    to the Store alias, which is neither, and it moves 10 rows on its own.
+#    See "WHAT DISCRIMINATES" below for the measurement. **
+#
+# ** THE `Git-Bash` IN THE HARNESS LINE ABOVE IS WRONG for the run that
+#    produced the 226-row core, and is left in place only as the record of
+#    what was written. Measured 2026-09-08: under Git-Bash,
+#    test_valid_bash_syntax PASSED on both interpreters -- so the run that
+#    recorded it as a FAILURE cannot have been launched from Git-Bash. It was
+#    a PowerShell (WSL bash) launch. This mattered for exactly the two rows
+#    now fixed, and after that fix the launcher no longer moves any row --
+#    which is the point of the fix. Recording the launcher is still worth
+#    doing; recording it wrongly is how a harness note becomes a trap. **
+#
+# STABLE CORE: 224 failures across 57 files. DIFF AGAINST THIS.
 #   226 failed, 9282 passed, 102 skipped, 12 warnings in 2204.10s (0:36:44)
 #   9610 collected. ZERO errors. ZERO STATUS_DLL_INIT_FAILED / 3221225794 /
 #   0xC0000142. Worktree clean and HEAD unmoved across the run; no other
@@ -42,14 +60,16 @@
 # 2026-08-20 attempt at one was invalidated (321F/9071P/102S/9E with 253
 # STATUS_DLL_INIT_FAILED caused by a concurrent heavyweight pytest).
 #
-# --- HARNESS SENSITIVITY: 13 ROWS DO NOT SURVIVE A CHANGE OF ENVIRONMENT ----
+# --- HARNESS SENSITIVITY: 13 ROWS -- NOW DIAGNOSED, SEE "WHAT DISCRIMINATES"
 #
 # A SECOND clean single-process run at this same commit, from a different
 # session and a different working environment, reported
 #   233 failed, 9276 passed, 96 skipped, 12 warnings in 1530.93s (0:25:30)
 # also with zero errors and zero DLL-init failures. The two runs are NOT
-# set-identical. Treat these 13 nodeids as harness-dependent; do not open a
-# bug on one appearing or disappearing between runs.
+# set-identical. As of the 2026-09-08 second amendment the cause of every one
+# of these 13 is known and named below -- 2 are FIXED and gone from the list,
+# 10 are the interpreter, 1 is the network. This section is kept as the record
+# of what was observed; do not read it as "unexplained flakiness" any more.
 #
 #   Failed in the other run, PASS here (10). All ten also pass STANDALONE in
 #   this worktree, i.e. they are artifacts of that run's environment:
@@ -73,10 +93,120 @@
 #     test_update_check.py::test_check_for_updates_official_ssh_origin_uses_https_probe
 #
 # The skip counts differ too (102 here vs 96 there), which is the shape of an
-# environment difference rather than of flakiness. Worked example of the
-# mechanism: test_valid_bash_syntax shells out to `bash -n <windows path>`, so
-# it fails wherever `bash` resolves to a POSIX bash that cannot read a
-# `C:\Users\...` path -- present or absent purely on how the sweep was launched.
+# environment difference rather than of flakiness.
+#
+# --- WHAT DISCRIMINATES (measured 2026-09-08, second amendment) -------------
+#
+# All 13 were run as a controlled experiment: SAME worktree, SAME cwd, SAME
+# commit, varying one factor at a time. Two independent factors account for
+# all of them. Neither is flakiness -- each is deterministic given its factor.
+#
+# FACTOR 1 -- WHICH `bash` IS FIRST ON PATH.  Affects 2 rows. NOW FIXED; both
+# rows are GONE from the list below (226 -> 224 rows, 59 -> 57 files):
+#     test_completion.py::TestGenerateBash::test_valid_bash_syntax
+#     test_setup_hermes_script.py::test_setup_hermes_script_is_valid_shell
+#   Both shelled out to `bash -n <windows path>`. A sweep launched from
+#   Git-Bash finds C:\Program Files\Git\usr\bin\bash.exe (Cygwin, which reads a
+#   `C:\...` argument) and PASSES; a sweep launched from PowerShell finds
+#   C:\WINDOWS\system32\bash.exe (WSL, POSIX), which eats the backslashes and
+#   returns rc=127 `/bin/bash: C:UsersdiegoAppData...: No such file or
+#   directory`, so it FAILS. Same commit, opposite verdict, on launcher alone.
+#   That is a portability bug in the TEST. Both now feed the script on stdin
+#   via the `bash_syntax_check` fixture in tests/hermes_cli/conftest.py
+#   (`bash -n -`), which removes the path from the picture; the fixture skips
+#   with a reason when no usable bash is present. Verified green in all four
+#   cells of {Git-Bash, PowerShell} x {Store python, repo .venv python}, and
+#   `bash -n -` still returns rc=2 on genuinely broken shell under both bashes,
+#   so the check keeps its teeth.
+#
+# FACTOR 2 -- WHICH INTERPRETER RUNS PYTEST.  Accounts for all 10 rows in the
+# "Failed in the other run, PASS here" list above. Measured, same worktree and
+# cwd, only argv[0] changed:
+#     bare `python`  (C:\Users\diego\AppData\Local\Microsoft\WindowsApps\
+#                     ...\python.exe -- the MSIX Store alias)  -> 11 failed
+#     .venv\Scripts\python.exe  (uv cpython-3.12, in a virtualenv) -> 10 passed
+#   Mechanism, two facets of the same factor:
+#     * hermes_constants.real_executable() deliberately de-aliases the
+#       Microsoft-Store MSIX app-execution alias, returning the real packaged
+#       `python3.11.exe` under sys.base_prefix. The 9 argv-shape tests assert
+#       against raw `sys.executable`, which under the Store alias is the
+#       0-byte reparse point -- so product and test disagree by construction.
+#       test_launch_tui_worktree_validates_relative_python_against_final_cwd is
+#       the same fact in a louder form: it does shutil.copy2(sys.executable,
+#       ...) and dies with OSError [Errno 22] because you cannot read the alias.
+#     * test_uv_tool_update.py::...::test_runs_uv_pip_install_when_not_uv_tool
+#       turns on `in_venv` (hermes_cli/main.py ~10188): outside a virtualenv
+#       the product inserts `--system`, which the test does not expect. The
+#       Store alias is not in a venv; the repo .venv is.
+#   These are NOT product regressions and NOT order pollution. They are the
+#   reason the harness block above now pins the interpreter by absolute path.
+#
+# FACTOR 2 ALSO EXPLAINS THE SKIP DELTA in shape (102 vs 96): interpreter- and
+# version-gated skips move with it. Not separately measured -- do not quote a
+# number for that, only the direction.
+#
+# THE 13th ROW IS NEITHER FACTOR -- IT IS THE NETWORK. It stays in the list:
+#     test_update_check.py::test_check_for_updates_official_ssh_origin_uses_https_probe
+#   The test patches `hermes_cli.banner.subprocess.run`, but the ls-remote it
+#   means to intercept is issued by `_check_via_rev` through
+#   hermes_cli._subprocess_compat.run_text_capture -- a DIFFERENT name, so the
+#   patch is inert and a REAL `git ls-remote https://github.com/NousResearch/
+#   hermes-agent.git` goes out over the network on every run. It passes when
+#   that call succeeds within its 10s timeout and fails otherwise. Measured
+#   2026-09-08: github.com answered HTTP 429 (rate-limited) after 63s, the 10s
+#   timeout fired, run_text_capture killed the tree (`taskkill /PID .. /T /F`
+#   is visible in the call log), _check_via_rev returned None, and the test's
+#   `assert result == 1` failed. So this row flips on transient upstream
+#   availability, under BOTH interpreters and BOTH launchers.
+#   NOT FIXED -- out of scope for the 2026-09-08 second amendment, which was
+#   scoped to the two bash rows. It is a real test defect (unmocked network in
+#   a unit suite, plus up to ~60s of wall clock) and is the obvious next fix:
+#   patch run_text_capture at `hermes_cli.banner`'s import site, or at
+#   hermes_cli._subprocess_compat.run_text_capture. Compare agent memory
+#   `run-text-capture-mock-target-varies-by-import-style`.
+#
+# --- SECOND AMENDMENT 2026-09-08: 226 -> 224 --------------------------------
+#
+# Removed exactly the two FACTOR 1 rows, after fixing the tests, and CONFIRMED
+# BY A FRESH FULL SINGLE-PROCESS SWEEP at the fix commit:
+#   225 failed, 9283 passed, 102 skipped, 12 warnings in 2517.52s (0:41:57)
+#   ZERO errors. ZERO STATUS_DLL_INIT_FAILED / 3221225794 / 0xC0000142.
+#   No other pytest process on the box at launch (checked, and the sweep was
+#   deferred ~10 min until three concurrent ones had drained -- launching into
+#   those is what invalidated the 2026-08-20 attempt). Output redirected WHOLE
+#   to a file and set-diffed; never piped through tail/head.
+#   Harness: C:\Users\diego\.hermes\agent-src\.venv\Scripts\python.exe -m
+#   pytest tests/hermes_cli -q -p no:randomly -p no:cacheprovider, from
+#   Git-Bash, in a worktree with no .venv of its own.
+#
+# Set-diff of that sweep against the 224 rows below: ZERO rows missing, ONE
+# extra. Both bash rows are confirmed absent from the failure set by full
+# sweep, not merely by targeted rerun. Also note the skip count came back at
+# 102, matching the 226-row core -- consistent with FACTOR 2, since both runs
+# used the repo .venv interpreter.
+#
+# When set-diffing a `-q` sweep, STRIP THE ` - <message>` SUFFIX from each
+# `FAILED ` line before comparing. pytest -q appends a truncated failure
+# message to the nodeid; comparing raw lines reports every one of those rows
+# as simultaneously added and removed. A first pass here did exactly that and
+# read as 4 added / 3 removed against a true delta of 1 added / 0 removed.
+#
+#   THE ONE EXTRA ROW -- NOT ADDED TO THE CORE, deliberately:
+#     test_kanban_cli.py::test_failed_lifecycle_command_exits_nonzero[command1-cannot complete t_missing-console-script]
+#   It PASSES STANDALONE (4 passed) and passes when run alongside both files
+#   touched by this amendment, so it is an in-sweep ORDER-POLLUTION artifact,
+#   not a product failure and not attributable to the fix -- the conftest
+#   change is purely additive (one session-scoped fixture, instantiated only by
+#   the two tests above), so it cannot move another row. It is left OUT of the
+#   frozen core for the same reason the 2026-08-20 amendment removed 19 such
+#   rows: a baseline of pollution victims is not a tripwire. Recorded here so
+#   the next sweep does not open a bug when it appears -- expect it to come and
+#   go. If it ever fails STANDALONE, that is a real regression; check that
+#   first before treating it as this artifact.
+#
+# WHOEVER RUNS THE NEXT FULL SWEEP: expect 224 core rows, plus or minus that
+# one pollution row. If you get 226 with the two bash rows back, you are on a
+# commit before this amendment, not looking at a regression.
 #
 # THIS IS A BASELINE, NOT A REGRESSION LIST. The largest families are platform
 # failures (POSIX-only APIs on Windows), not defects from any recent change:
@@ -159,7 +289,6 @@ tests/hermes_cli/test_bedrock_model_picker.py::TestBedrockRegionRouting::test_us
 tests/hermes_cli/test_bedrock_model_picker.py::TestListAuthenticatedProvidersBedrock::test_bedrock_total_models_matches_discovery
 tests/hermes_cli/test_bedrock_model_picker.py::TestListAuthenticatedProvidersBedrock::test_bedrock_uses_live_discovery_not_static_list
 tests/hermes_cli/test_codex_cli_model_picker.py::test_codex_picker_uses_live_codex_catalog
-tests/hermes_cli/test_completion.py::TestGenerateBash::test_valid_bash_syntax
 tests/hermes_cli/test_console_engine.py::test_cron_run_hosted_background_fire_inherits_profile_home
 tests/hermes_cli/test_container_boot.py::test_corrupt_state_file_treated_as_no_prior_state
 tests/hermes_cli/test_container_boot.py::test_default_slot_always_registered_on_empty_home
@@ -323,7 +452,6 @@ tests/hermes_cli/test_setup.py::test_setup_gateway_in_container_shows_docker_gui
 tests/hermes_cli/test_setup.py::test_setup_gateway_skips_service_install_when_systemctl_missing
 tests/hermes_cli/test_setup_blank_slate.py::TestBlankSlateMinimalToolsets::test_no_disabled_bundle_overlaps_kept_tools
 tests/hermes_cli/test_setup_blank_slate.py::TestBlankSlateMinimalToolsets::test_tool_schema_survives_disabled_toolsets_from_config
-tests/hermes_cli/test_setup_hermes_script.py::test_setup_hermes_script_is_valid_shell
 tests/hermes_cli/test_systemd_watchdog_unit.py::test_system_unit_reads_watchdog_from_target_home
 tests/hermes_cli/test_uninstall_node_symlinks.py::test_leaves_unrelated_symlinks_untouched
 tests/hermes_cli/test_uninstall_node_symlinks.py::test_only_some_links_present
