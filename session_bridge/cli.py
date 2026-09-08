@@ -1172,6 +1172,44 @@ class RolloutGateBlocked(RuntimeError):
         self.gate = gate
 
 
+def should_run_idle_chip_archiver(
+    config: BridgeConfig, *, catalog_only: bool
+) -> bool:
+    """Whether IdleChipArchiveWorker should run this process.
+
+    Deliberately NOT gated on ``claude_visibility.enabled``.  This worker
+    ARCHIVES chip and scheduled-task records the desktop app creates on its
+    own (20-45/day on this host); it produces no visibility mirrors and spends
+    nothing.  Coupling it to the mirror lane meant that turning visibility off
+    to REDUCE sidebar clutter also switched off the sidebar's own de-spammer.
+    """
+    return bool(not catalog_only and config.claude_visibility.archive_idle_chips)
+
+
+def should_run_desktop_registry_sync(
+    config: BridgeConfig, *, catalog_only: bool, roots: Sequence[Path]
+) -> bool:
+    """Whether DesktopRegistrySyncWorker should run this process.
+
+    Deliberately NOT gated on ``claude_visibility.enabled``.  Reconciling the
+    per-account session-record replicas is pure store convergence: it reads
+    the state database and the registry files and writes nothing to the
+    sidebar.  It has its own switch, and that switch is the only one that
+    should govern it.
+
+    This is the coordinator's own rule applied one level up -- "pausing the
+    Codex sidebar is a supported state and must not silently stop desktop
+    registry records".  Measured 2026-09-07: ``enabled: false``, set for
+    sidebar spam, silently stopped this leg for hours while
+    ``reconcile_desktop_registries`` still read true.
+    """
+    return bool(
+        not catalog_only
+        and config.claude_visibility.reconcile_desktop_registries
+        and roots
+    )
+
+
 class ProductionBackend:
     """Lazy production composition; tests inject a small fake backend."""
 
@@ -4152,23 +4190,21 @@ class ProductionBackend:
                         default_capture_miss_log_path()
                     ),
                 )
-                if (
-                    not catalog_only
-                    and effective_config.claude_visibility.enabled
-                    and effective_config.claude_visibility.archive_idle_chips
+                if should_run_idle_chip_archiver(
+                    effective_config, catalog_only=catalog_only
                 )
                 else None
             )
+            convergence_roots = tuple(discover_ccd_convergence_roots())
             registry_sync = (
                 DesktopRegistrySyncWorker(
                     self._require_store(),
-                    registry_roots=tuple(discover_ccd_convergence_roots()),
+                    registry_roots=convergence_roots,
                 )
-                if (
-                    not catalog_only
-                    and effective_config.claude_visibility.enabled
-                    and effective_config.claude_visibility.reconcile_desktop_registries
-                    and discover_ccd_convergence_roots()
+                if should_run_desktop_registry_sync(
+                    effective_config,
+                    catalog_only=catalog_only,
+                    roots=convergence_roots,
                 )
                 else None
             )

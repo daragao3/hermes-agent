@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 from hermes_state import SessionDB
-from session_bridge.desktop_registry_worker import DesktopRegistrySyncWorker
+from session_bridge.desktop_registry import RegistryScanError
+from session_bridge.desktop_registry_worker import (
+    WORKER_HEARTBEAT_STATE_KEY,
+    DesktopRegistrySyncWorker,
+)
 from session_bridge.store import SessionBridgeStore
 
 
@@ -224,3 +228,152 @@ def test_unknown_key_record_is_replicated_and_verified(tmp_path, store) -> None:
     assert second["patched"] == 0
     assert second["verify_failures"] == 0
     assert second["conflicts"] == 1
+
+
+# --------------------------------------------------------- liveness heartbeat
+#
+# 2026-09-07: the drift monitor could not tell a STOPPED worker from a
+# CONVERGED one, because both signals it had -- ``desktop_registry_runs``
+# (staged only ``if mutations``) and ``desktop_registry_conflicts.last_seen_at``
+# (moves only while conflicts stand) -- go stale on a healthy idle worker.
+# Measured over a week of healthy operation the newest-run age passed an hour
+# 18 times and reached 26.1h overnight.  The heartbeat is the unambiguous
+# signal; these pin the property that makes it one.
+
+
+def _heartbeat(store):
+    return store.get_state(WORKER_HEARTBEAT_STATE_KEY)
+
+
+def test_converged_cycle_still_beats_though_it_stages_no_run(
+    tmp_path, store
+) -> None:
+    """THE load-bearing property: a cycle with nothing to do must still beat.
+
+    Asserts the absence of a run row in the same breath, because that absence
+    is exactly what used to read as "the worker stopped".
+    """
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_same", mtime_ns=100, title="Same")
+    worker = DesktopRegistrySyncWorker(
+        store,
+        registry_roots=(a, b, c),
+        run_min_interval_seconds=0.0,
+        wall_clock=lambda: 5_000.0,
+    )
+    worker.run_once()  # bootstrap baselines
+    store.set_state(WORKER_HEARTBEAT_STATE_KEY, {"at": 0.0})
+
+    counters = worker.run_once()
+
+    assert counters["patched"] == 0 and counters["created"] == 0
+    assert store.pending_desktop_registry_run() is None
+    beat = _heartbeat(store)
+    assert beat is not None and beat["at"] == 5_000.0
+
+
+def test_throttled_call_does_not_beat(tmp_path, store) -> None:
+    """A throttled call did no work; letting it beat would forge liveness."""
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, title="One")
+    clock = iter([1_000.0, 2_000.0])
+    worker = DesktopRegistrySyncWorker(
+        store,
+        registry_roots=(a, b, c),
+        run_min_interval_seconds=10_000.0,
+        wall_clock=lambda: next(clock),
+    )
+    counters = worker.run_once()
+    assert counters["throttled"] == 0
+    first = _heartbeat(store)
+    assert first is not None and first["at"] == 1_000.0
+
+    counters = worker.run_once()
+
+    assert counters["throttled"] == 1
+    assert _heartbeat(store)["at"] == 1_000.0  # unmoved
+
+
+def test_scan_failure_does_not_beat(tmp_path, store, monkeypatch) -> None:
+    """A leg that is alive but converging nothing must go stale, not read OK."""
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, title="One")
+    worker = DesktopRegistrySyncWorker(
+        store,
+        registry_roots=(a, b, c),
+        run_min_interval_seconds=0.0,
+        wall_clock=lambda: 7_000.0,
+    )
+    monkeypatch.setattr(
+        "session_bridge.desktop_registry_worker.scan_desktop_registry_roots",
+        _raise_scan_error,
+    )
+
+    counters = worker.run_once()
+
+    assert counters["scan_failed"] == 1
+    assert _heartbeat(store) is None
+
+
+def _raise_scan_error(*args, **kwargs):
+    raise RegistryScanError("unstable")
+
+
+def test_beat_advances_across_cycles(tmp_path, store) -> None:
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, title="One")
+    clock = iter([100.0, 200.0, 300.0])
+    worker = DesktopRegistrySyncWorker(
+        store,
+        registry_roots=(a, b, c),
+        run_min_interval_seconds=0.0,
+        wall_clock=lambda: next(clock),
+    )
+    seen = []
+    for _ in range(3):
+        worker.run_once()
+        seen.append(_heartbeat(store)["at"])
+    assert seen == [100.0, 200.0, 300.0]
+
+
+def test_a_failing_beat_never_costs_a_reconciliation(tmp_path, store) -> None:
+    """Telemetry is not allowed to break the work it is reporting on."""
+    a, b, c = _roots(tmp_path)
+    _write_record(a, "local_one", mtime_ns=100, title="Wanted")
+    _write_record(b, "local_one", mtime_ns=100, title="Wanted")
+    _write_record(c, "local_one", mtime_ns=50, title="Stale")
+    worker = DesktopRegistrySyncWorker(
+        store,
+        registry_roots=(a, b, c),
+        run_min_interval_seconds=0.0,
+    )
+
+    def _explode(*args, **kwargs):
+        raise RuntimeError("state write failed")
+
+    worker._store = _StoreWithBrokenSetState(store, _explode)
+
+    counters = worker.run_once()
+
+    assert counters["examined"] >= 1
+    assert counters["scan_failed"] == 0
+    # The convergence itself still happened and committed.
+    assert _read(c, "local_one")["title"] == "Wanted"
+
+
+class _StoreWithBrokenSetState:
+    """Delegates everything except ``set_state``, which raises."""
+
+    def __init__(self, inner, explode):
+        self._inner = inner
+        self._explode = explode
+
+    def set_state(self, *args, **kwargs):
+        self._explode()
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)

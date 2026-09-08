@@ -36,6 +36,17 @@ from .desktop_registry import (
     verify_registry_sync_plan,
 )
 
+#: Written at the end of every cycle that completes reconciliation, whether or
+#: not that cycle had anything to change.  This is the leg's only unambiguous
+#: liveness signal: ``desktop_registry_runs`` rows are staged ONLY ``if
+#: mutations``, and ``desktop_registry_conflicts.last_seen_at`` only moves while
+#: conflicts stand, so BOTH go stale on a healthy, fully converged worker.
+#: Measured 2026-09-07 over a week of healthy operation: the newest-run age
+#: exceeded an hour 18 times and reached 26.1h overnight.  A monitor that gates
+#: on either of those cannot tell "converged" from "stopped"; it can tell that
+#: from this.
+WORKER_HEARTBEAT_STATE_KEY = "session-bridge:desktop-registry:worker-heartbeat"
+
 
 class DesktopRegistrySyncWorker:
     """Reconcile enrolled Desktop registry roots against durable baselines."""
@@ -47,6 +58,7 @@ class DesktopRegistrySyncWorker:
         registry_roots: Iterable[Path],
         run_min_interval_seconds: float = 300.0,
         monotonic: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
         id_factory: Callable[[], str] | None = None,
     ) -> None:
         roots = tuple(registry_roots)
@@ -64,6 +76,7 @@ class DesktopRegistrySyncWorker:
         self._registry_roots = roots
         self._run_min_interval_seconds = interval
         self._monotonic = monotonic
+        self._wall_clock = wall_clock
         self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
         self._last_run_at: float | None = None
         # Persistent across cycles and shared by both scans of one cycle:
@@ -224,4 +237,35 @@ class DesktopRegistrySyncWorker:
             self._store.finish_desktop_registry_run(
                 run_id, "committed", resolution=resolution
             )
+        self._beat(counters)
         return counters
+
+    def _beat(self, counters: dict[str, int]) -> None:
+        """Record that a cycle reached the end of reconciliation.
+
+        Deliberately NOT written for a throttled call (it did no work) nor for
+        a cycle that bailed on ``scan_failed`` (it converged nothing).  A scan
+        that keeps failing is a leg that is alive but not doing its job, and
+        letting the beat go stale is how that becomes visible instead of
+        sitting silent -- which is exactly how the 2026-09-06 ``scan_failed``
+        class stranded records for days.
+
+        Telemetry must never cost a reconciliation, so a failed write is
+        swallowed: the cycle's real work is already committed by this point.
+        The cost of swallowing is a stale beat, i.e. an alert, which is the
+        safe direction to fail in.
+        """
+        try:
+            self._store.set_state(
+                WORKER_HEARTBEAT_STATE_KEY,
+                {
+                    "at": float(self._wall_clock()),
+                    "examined": int(counters.get("examined", 0)),
+                    "patched": int(counters.get("patched", 0)),
+                    "created": int(counters.get("created", 0)),
+                    "conflicts": int(counters.get("conflicts", 0)),
+                    "verify_failures": int(counters.get("verify_failures", 0)),
+                },
+            )
+        except Exception:
+            pass
