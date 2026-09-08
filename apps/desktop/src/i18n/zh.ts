@@ -1799,6 +1799,10 @@ export const zh: Translations = {
     groupTitleGrouped: '取消分组',
     groupTitleUngrouped: '按工作区分组',
     allPinned: '这里的全部已置顶。取消置顶某个对话即可在最近中显示。',
+    noSessionsInProfile: (profile, elsewhere) =>
+      `“${profile}”中没有对话 — 其他配置档案中有 ${elsewhere} 个。`,
+    showAllProfilesAction: '显示所有配置档案',
+    sessionsPartial: profiles => `部分对话无法读取 (${profiles})`,
     dateSections: {
       today: '今天',
       yesterday: '昨天',
@@ -2757,6 +2761,8 @@ export const zh: Translations = {
     noProfileNamed: (target, available) => `没有名为“${target}”的配置档案。可用：${available}`,
     profileScopeMissingTitle: '未找到配置档案',
     profileScopeMissingMessage: profile => `名为“${profile}”的配置档案已不存在——已改为显示所有配置档案。`,
+    sessionsPartialTitle: '部分对话无法加载',
+    sessionsPartialMessage: profiles => `无法读取以下配置档案的会话存储: ${profiles}。下面的列表不完整。`,
     newChatsProfile: name => `新对话将使用配置档案 ${name}。`,
     setProfileFailed: '设置配置档案失败',
     sttDisabled: '设置中已禁用语音转文字。',

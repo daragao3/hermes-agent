@@ -244,6 +244,11 @@ export const $messagingTruncated = atom<boolean>(false)
 // huge default profile doesn't keep "Load more" visible while browsing a small
 // one. Empty for single-profile users (fall back to $sessionsTotal).
 export const $sessionProfileTotals = atom<Record<string, number>>({})
+// EVERY profile's showable count, regardless of the active scope. Distinct from
+// $sessionProfileTotals (which is scoped, and is iterated to drive catalog
+// hydration): this one exists so a scope that matched, succeeded, and returned
+// zero can say where the chats actually are rather than rendering blank.
+export const $sessionAllProfileTotals = atom<Record<string, number>>({})
 export const $sessionsLoading = atom(true)
 export const $activeSessionId = atom<string | null>(null)
 export const $selectedStoredSessionId = atom<string | null>(null)
@@ -329,6 +334,8 @@ export const setMessagingPlatformTotals = (next: Updater<Record<string, number>>
 export const setMessagingTruncated = (next: Updater<boolean>) => updateAtom($messagingTruncated, next)
 export const setSessionProfileTotals = (next: Updater<Record<string, number>>) =>
   updateAtom($sessionProfileTotals, next)
+export const setSessionAllProfileTotals = (next: Updater<Record<string, number>>) =>
+  updateAtom($sessionAllProfileTotals, next)
 export const setSessionsLoading = (next: Updater<boolean>) => updateAtom($sessionsLoading, next)
 export const setActiveSessionId = (next: Updater<string | null>) => updateAtom($activeSessionId, next)
 export const setActiveSessionStoredIdRotation = (next: Updater<ActiveSessionStoredIdRotation | null>) =>

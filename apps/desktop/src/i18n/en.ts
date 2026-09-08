@@ -1616,6 +1616,10 @@ export const en: Translations = {
     groupTitleGrouped: 'Ungroup sessions',
     groupTitleUngrouped: 'Group by workspace',
     allPinned: 'Everything here is pinned. Unpin a chat to show it in recents.',
+    noSessionsInProfile: (profile, elsewhere) =>
+      `No chats in "${profile}" — ${elsewhere} in other profiles.`,
+    showAllProfilesAction: 'Show all profiles',
+    sessionsPartial: profiles => `Some chats could not be read (${profiles})`,
     dateSections: {
       today: 'Today',
       yesterday: 'Yesterday',
@@ -2607,6 +2611,9 @@ export const en: Translations = {
     profileScopeMissingTitle: 'Profile not found',
     profileScopeMissingMessage: profile =>
       `No profile named “${profile}” exists anymore — showing all profiles instead.`,
+    sessionsPartialTitle: 'Some chats could not be loaded',
+    sessionsPartialMessage: profiles =>
+      `Could not read the session store for: ${profiles}. The list below is incomplete.`,
     newChatsProfile: name => `New chats will use profile ${name}.`,
     setProfileFailed: 'Failed to set profile',
     sttDisabled: 'Speech-to-text is disabled in settings.',

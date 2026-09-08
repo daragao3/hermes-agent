@@ -62,7 +62,14 @@ import {
   toggleSidebarMessagingOpen,
   unpinSession
 } from '@/store/layout'
-import { $newChatProfile, $profiles, $profileScope, ALL_PROFILES, normalizeProfileKey } from '@/store/profile'
+import {
+  $newChatProfile,
+  $profiles,
+  $profileScope,
+  ALL_PROFILES,
+  normalizeProfileKey,
+  setShowAllProfiles
+} from '@/store/profile'
 import {
   $activeProjectId,
   $projects,
@@ -89,6 +96,7 @@ import {
   $messagingPlatformTotals,
   $messagingSessions,
   $messagingTruncated,
+  $sessionAllProfileTotals,
   $sessionProfileTotals,
   $sessions,
   $sessionsLoading,
@@ -301,6 +309,7 @@ export function ChatSidebar({
   const sessionsLoading = useStore($sessionsLoading)
   const sessionsTotal = useStore($sessionsTotal)
   const sessionProfileTotals = useStore($sessionProfileTotals)
+  const sessionAllProfileTotals = useStore($sessionAllProfileTotals)
   const workingSessionIds = useStore($workingSessionIds)
   const profiles = useStore($profiles)
   const profileScope = useStore($profileScope)
@@ -959,6 +968,31 @@ export function ChatSidebar({
   const loadedSessionCount = showAllProfiles ? sessions.length : visibleSessions.length
   const scopedProfileTotal = showAllProfiles ? undefined : sessionProfileTotals[profileScope]
 
+  // THE THIRD EMPTY STATE. A scope that MATCHES, a request that SUCCEEDS, and a
+  // result that is legitimately ZERO. The ghost-scope fallback fires only on
+  // profile_matched === false, and the failed-request states fire only on a
+  // rejection; between them sits a real, recognized, populated profile that
+  // simply holds none of the session class this slice shows (recents excludes
+  // cron/subagent/tool/messaging, and a profile can be 100% those). That
+  // renders a confident empty sidebar over a machine with thousands of chats.
+  // Say where they actually are, and offer the way to them.
+  // Read the ALL-profiles map, not the scoped one: under a concrete scope
+  // `profile_totals` carries only that profile's own key, so the comparison
+  // number is absent from it by construction. Older backends omit
+  // all_profile_totals entirely, leaving this 0 and the state inert.
+  const elsewhereTotal = showAllProfiles
+    ? 0
+    : Object.entries(sessionAllProfileTotals).reduce(
+        (sum, [key, count]) => (normalizeProfileKey(key) === profileScope ? sum : sum + (count || 0)),
+        0
+      )
+
+  const scopedEmptyWithRowsElsewhere =
+    !showAllProfiles &&
+    displayAgentSessions.length === 0 &&
+    (sessionAllProfileTotals[profileScope] ?? scopedProfileTotal) === 0 &&
+    elsewhereTotal > 0
+
   const knownSessionTotal = Math.max(
     showAllProfiles ? sessionsTotal : (scopedProfileTotal ?? loadedSessionCount),
     loadedSessionCount
@@ -1404,8 +1438,25 @@ export function ChatSidebar({
                   showSessionSkeletons ? (
                     <SidebarSessionSkeletons />
                   ) : (
-                    <div className="grid min-h-16 place-items-center rounded-lg px-2 text-center text-xs text-(--ui-text-tertiary)">
-                      {pinnedSessions.length > 0 ? s.allPinned : s.noSessions}
+                    <div className="grid min-h-16 place-items-center gap-1.5 rounded-lg px-2 text-center text-xs text-(--ui-text-tertiary)">
+                      {scopedEmptyWithRowsElsewhere ? (
+                        <>
+                          <span className="break-words">
+                            {s.noSessionsInProfile(profileScope, elsewhereTotal)}
+                          </span>
+                          <button
+                            className="underline underline-offset-2 hover:text-foreground hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                            onClick={() => setShowAllProfiles(true)}
+                            type="button"
+                          >
+                            {s.showAllProfilesAction}
+                          </button>
+                        </>
+                      ) : pinnedSessions.length > 0 ? (
+                        s.allPinned
+                      ) : (
+                        s.noSessions
+                      )}
                     </div>
                   )
                 }

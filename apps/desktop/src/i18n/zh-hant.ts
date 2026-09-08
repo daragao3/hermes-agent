@@ -1496,6 +1496,10 @@ export const zhHant = defineLocale({
     groupTitleGrouped: '取消分組',
     groupTitleUngrouped: '依工作區分組',
     allPinned: '這裡的全部已釘選。取消釘選某個聊天即可在最近中顯示。',
+    noSessionsInProfile: (profile, elsewhere) =>
+      `「${profile}」中沒有聊天 — 其他設定檔中有 ${elsewhere} 個。`,
+    showAllProfilesAction: '顯示所有設定檔',
+    sessionsPartial: profiles => `部分聊天無法讀取 (${profiles})`,
     dateSections: {
       today: '今天',
       yesterday: '昨天',
@@ -2445,6 +2449,8 @@ export const zhHant = defineLocale({
     noProfileNamed: (target, available) => `沒有名為「${target}」的設定檔。可用的：${available}`,
     profileScopeMissingTitle: '找不到設定檔',
     profileScopeMissingMessage: profile => `名為「${profile}」的設定檔已不存在——已改為顯示所有設定檔。`,
+    sessionsPartialTitle: '部分聊天無法載入',
+    sessionsPartialMessage: profiles => `無法讀取以下設定檔的工作階段儲存: ${profiles}。下面的列表不完整。`,
     newChatsProfile: name => `新聊天將使用設定檔 ${name}。`,
     setProfileFailed: '設定設定檔失敗',
     sttDisabled: '設定中已停用語音轉文字。',

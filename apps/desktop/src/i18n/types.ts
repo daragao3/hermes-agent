@@ -1347,6 +1347,15 @@ export interface Translations {
     groupTitleGrouped: string
     groupTitleUngrouped: string
     allPinned: string
+    /** Scope MATCHED, request SUCCEEDED, and this profile genuinely holds no
+     *  showable chats while other profiles do. Distinct from `noSessions`
+     *  (nothing anywhere) and from the ghost-scope fallback (unrecognized
+     *  profile): without it, a real-but-empty scope renders a confident blank
+     *  sidebar over a machine with thousands of chats. */
+    noSessionsInProfile: (profile: string, elsewhere: number) => string
+    showAllProfilesAction: string
+    /** One or more profile stores could not be read, so the list is partial. */
+    sessionsPartial: (profiles: string) => string
     dateSections: {
       today: string
       yesterday: string
@@ -2195,6 +2204,12 @@ export interface Translations {
     noProfileNamed: (target: string, available: string) => string
     profileScopeMissingTitle: string
     profileScopeMissingMessage: (profile: string) => string
+    /** One or more profile stores could not be read, so the session list is
+     *  partial. The aggregate drops the failing profile and returns the rest as
+     *  if complete, which is byte-indistinguishable from those chats not
+     *  existing. */
+    sessionsPartialTitle: string
+    sessionsPartialMessage: (profiles: string) => string
     newChatsProfile: (name: string) => string
     setProfileFailed: string
     sttDisabled: string

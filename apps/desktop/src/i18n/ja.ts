@@ -1545,6 +1545,10 @@ export const ja = defineLocale({
     groupTitleGrouped: 'セッションのグループ化を解除',
     groupTitleUngrouped: 'ワークスペースでグループ化',
     allPinned: 'ここにあるものはすべてピン留めされています。チャットのピン留めを解除すると最近のものに表示されます。',
+    noSessionsInProfile: (profile, elsewhere) =>
+      `「${profile}」にチャットはありません — 他のプロファイルに ${elsewhere} 件あります。`,
+    showAllProfilesAction: 'すべてのプロファイルを表示',
+    sessionsPartial: profiles => `一部のチャットを読み込めませんでした (${profiles})`,
     dateSections: {
       today: '今日',
       yesterday: '昨日',
@@ -2544,6 +2548,9 @@ export const ja = defineLocale({
     profileScopeMissingTitle: 'プロファイルが見つかりません',
     profileScopeMissingMessage: profile =>
       `"${profile}" という名前のプロファイルはもう存在しません。すべてのプロファイルを表示します。`,
+    sessionsPartialTitle: '一部のチャットを読み込めませんでした',
+    sessionsPartialMessage: profiles =>
+      `次のセッションストアを読み取れませんでした: ${profiles}。以下の一覧は不完全です。`,
     newChatsProfile: name => `新しいチャットはプロファイル ${name} を使用します。`,
     setProfileFailed: 'プロファイルの設定に失敗しました',
     sttDisabled: '音声認識は設定で無効になっています。',

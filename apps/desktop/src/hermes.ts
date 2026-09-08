@@ -416,6 +416,12 @@ export interface SidebarSessionSlice {
    *  zero DBs and would otherwise be indistinguishable from an empty profile.
    *  Absent on older backends and on the legacy per-slice fallback. */
   profile_matched?: boolean
+  /** Recents only: EVERY profile's showable count, regardless of the applied
+   *  scope -- a superset of `profile_totals`, which stays scoped because the
+   *  sidebar ITERATES that one to decide which profile catalogs to hydrate.
+   *  Lets a scoped-and-genuinely-empty view say where the chats actually are
+   *  instead of rendering a confident blank list. Absent on older backends. */
+  all_profile_totals?: Record<string, number>
 }
 
 export interface SidebarSessionsResponse {
