@@ -100,13 +100,50 @@ def matrix_env(tmp_path, monkeypatch):
     async def _no_sleep(*a, **k): return None
     monkeypatch.setattr(asyncio, "sleep", _no_sleep)
 
-    # Reset FAL plugin's lazy fal_client cache so it picks up the stub
-    from plugins.video_gen import fal as fal_plugin
-    fal_plugin._fal_client = None
+    # Neutralise the lazy-install gate, then clear the FAL plugin's SDK
+    # cache on EVERY loaded copy of the module.
+    #
+    # Two separate things bite here:
+    #
+    # 1. The gate. _load_fal_client() -> tools.fal_common.import_fal_client
+    #    -> tools.lazy_deps.ensure("image.fal") resolves availability with
+    #    importlib.metadata.version() -- distribution METADATA, never
+    #    sys.modules. fal-client is an optional extra (pyproject
+    #    [project.optional-dependencies] fal) and is not installed in the
+    #    test venv, so the stub below is never consulted: the gate attempts
+    #    a real `uv pip install fal-client==0.13.1` into the live venv, is
+    #    blocked by _live_system_guard in tests/conftest.py, and
+    #    import_fal_client re-raises it as ImportError. The tool then
+    #    reports "fal_client Python package not installed" and every FAL
+    #    routing assertion below fails naming the wrong subsystem.
+    #
+    # 2. Module identity. The plugin is loaded TWICE under two names --
+    #    "plugins.video_gen.fal" and "hermes_plugins.video_gen__fal" -- as
+    #    distinct module objects. The registered tool handler runs the
+    #    hermes_plugins copy, so patching attributes on the plugins copy
+    #    alone is a no-op for the code under test. Clearing the cache on
+    #    only one copy also lets a previous test's stub survive on the
+    #    other, which would record fal_calls into a stale list.
+    import sys as _sys
+    monkeypatch.setattr("tools.lazy_deps.ensure", lambda *a, **k: None)
 
     # Force discovery
     from hermes_cli.plugins import _ensure_plugins_discovered
     _ensure_plugins_discovered(force=True)
+
+    # Seed AFTER discovery: a copy first imported by discovery would be
+    # missed if we seeded beforehand.
+    import plugins.video_gen.fal  # noqa: F401 -- ensure that copy is loaded
+    _seeded = 0
+    for _name, _mod in list(_sys.modules.items()):
+        if _mod is not None and hasattr(_mod, "_fal_client") and (
+            _name.endswith("video_gen.fal") or _name.endswith("video_gen__fal")
+        ):
+            monkeypatch.setattr(_mod, "_fal_client", fake_fal)
+            _seeded += 1
+    # Fail loudly rather than silently reverting to the gate path if the
+    # plugin's module naming ever changes.
+    assert _seeded >= 2, f"expected both FAL plugin copies, seeded {_seeded}"
 
     return tmp_path, fal_calls, xai_calls
 
