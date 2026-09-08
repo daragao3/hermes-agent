@@ -1410,14 +1410,37 @@ class TestNodeRuntimeNpmResolution:
             "find_node_executable",
             lambda command: windows_npm if command == "npm" else None,
         )
-        monkeypatch.setattr(
-            hm.shutil,
-            "which",
-            lambda command, path=None: windows_npm if command == "npm" else "/usr/bin/uv",
-        )
+        def _which(command, path=None):
+            if command == "npm":
+                return windows_npm
+            # Answer "cua-driver" honestly. The blanket "/usr/bin/uv" this used
+            # to return for every other command opened cmd_update's cua-driver
+            # refresh gate (main.py ~11100, which is `shutil.which("cua-driver")`
+            # truthy), and that refresh shells out
+            # `powershell ... -Command "irm https://.../cua-driver/scripts/
+            # install.ps1 | iex"` via tools_config._run_install ->
+            # run_text_capture -- a seam `patch("subprocess.run")` below does
+            # NOT intercept. Only tests/conftest.py's _is_powershell_remote_exec
+            # guard stopped it (added in 01bfd60419 after this exact argv really
+            # installed cua-driver on 2026-08-16), and tools_config swallows the
+            # guard's RuntimeError, so the attempt was invisible and the test
+            # still passed. Nothing here wants a Computer Use driver.
+            if command == "cua-driver":
+                return None
+            return "/usr/bin/uv"
+
+        monkeypatch.setattr(hm.shutil, "which", _which)
         monkeypatch.setenv("PATH", "/mnt/c/Program Files/nodejs")
 
+        # Fail-closed second line of defence behind the `which` fix above: even
+        # if that gate reopens, no installer runs. cmd_update imports
+        # install_cua_driver FUNCTION-LOCALLY, so the name resolves on
+        # hermes_cli.tools_config at call time -- patching
+        # `hermes_cli.main.install_cua_driver` would need create=True and be a
+        # silent no-op.
         with patch("subprocess.run") as mock_run, \
+             patch("hermes_cli.tools_config.install_cua_driver",
+                   return_value=True) as mock_cua_refresh, \
              patch.object(hm, "_web_ui_build_needed", return_value=True), \
              patch.object(hm, "_desktop_packaged_executable", return_value=None), \
              patch.object(hm, "_desktop_dist_exists", return_value=True), \
@@ -1432,6 +1455,12 @@ class TestNodeRuntimeNpmResolution:
         mock_npm_install.assert_not_called()
         mock_idle_build.assert_not_called()
         mock_desktop_build.assert_not_called()
+        # The refresh gate is now genuinely shut, not merely survived.
+        mock_cua_refresh.assert_not_called()
+        # Lower bound first: the three assertions above and the `all(...)` below
+        # are all satisfied by an empty call list, so without this they would go
+        # vacuous the moment this mock stopped intercepting.
+        assert mock_run.call_args_list, "subprocess.run mock never fired"
         assert all(
             not call.args or not call.args[0] or call.args[0][0] != windows_npm
             for call in mock_run.call_args_list
