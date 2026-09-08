@@ -141,9 +141,11 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
   // own jobs; ALL_PROFILES keeps the unified view.
   const refreshCronJobs = useCallback(async () => {
     try {
-      const jobs = await getCronJobs(cronListScope(profileScope))
+      const listing = await getCronJobs(cronListScope(profileScope))
 
-      setCronJobs(jobs)
+      // The sidebar section shows rows only; a partially-failed aggregate is
+      // reported on the cron panel, which has room to name the profiles.
+      setCronJobs(listing.jobs)
     } catch {
       // Non-fatal: the cron section just keeps its last-known jobs.
     }

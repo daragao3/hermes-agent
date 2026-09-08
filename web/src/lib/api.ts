@@ -559,8 +559,17 @@ export const api = {
     }),
 
   // Cron jobs
-  getCronJobs: (profile = "all") =>
-    fetchJSON<CronJob[]>(`/api/cron/jobs?profile=${encodeURIComponent(profile)}`),
+  // The endpoint answers { jobs, errors } so a partially-failed cross-profile
+  // aggregate is distinguishable from an empty crontab. This dashboard only
+  // consumes the rows; normalize a pre-{jobs,errors} backend's bare array too,
+  // since the served bundle and the gateway are versioned independently.
+  getCronJobs: async (profile = "all") => {
+    const body = await fetchJSON<CronJob[] | { errors?: unknown; jobs?: CronJob[] }>(
+      `/api/cron/jobs?profile=${encodeURIComponent(profile)}`,
+    );
+
+    return Array.isArray(body) ? body : (body?.jobs ?? []);
+  },
   getCronDeliveryTargets: () =>
     fetchJSON<{ targets: CronDeliveryTarget[] }>("/api/cron/delivery-targets"),
   createCronJob: (job: CronJobMutation, profile = "default") =>

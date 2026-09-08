@@ -95,3 +95,49 @@ describe('cron helpers are profile-scoped', () => {
     expect(api.mock.calls.at(-1)?.[0].path).toBe('/api/cron/jobs')
   })
 })
+
+// A partial cross-profile failure and an empty crontab are different facts.
+// The endpoint reports the first as { jobs, errors }; the client must preserve
+// that distinction rather than handing callers a bare row list, and must still
+// work against a gateway that predates the shape (the packaged renderer and the
+// gateway are deployed independently, so either can be the older half).
+describe('getCronJobs normalizes the list response', () => {
+  const api = vi.fn()
+
+  beforeEach(() => {
+    ;(window as { hermesDesktop?: unknown }).hermesDesktop = { api }
+    api.mockReset()
+  })
+
+  afterEach(() => {
+    setApiRequestProfile(null)
+    delete (window as { hermesDesktop?: unknown }).hermesDesktop
+  })
+
+  it('carries per-profile read failures through to the caller', async () => {
+    api.mockResolvedValue({
+      jobs: [{ enabled: true, id: 'job-1' }],
+      errors: [{ profile: 'matcher', error: 'no such table: sessions' }]
+    })
+
+    const listing = await getCronJobs('all')
+
+    expect(listing.jobs).toHaveLength(1)
+    expect(listing.errors).toEqual([{ profile: 'matcher', error: 'no such table: sessions' }])
+  })
+
+  it('reports no errors when every profile answered', async () => {
+    api.mockResolvedValue({ jobs: [{ enabled: true, id: 'job-1' }], errors: [] })
+
+    expect((await getCronJobs('all')).errors).toEqual([])
+  })
+
+  it('accepts a pre-{jobs,errors} backend answering with a bare array', async () => {
+    api.mockResolvedValue([{ enabled: true, id: 'job-1' }])
+
+    const listing = await getCronJobs('all')
+
+    expect(listing.jobs).toHaveLength(1)
+    expect(listing.errors).toEqual([])
+  })
+})

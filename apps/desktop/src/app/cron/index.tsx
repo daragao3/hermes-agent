@@ -28,6 +28,7 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   createCronJob,
   type CronJob,
+  type CronProfileError,
   deleteCronJob,
   getCronJobRuns,
   getCronJobs,
@@ -42,7 +43,7 @@ import { AlertTriangle } from '@/lib/icons'
 import { requestModelOptions } from '@/lib/model-options'
 import { asText } from '@/lib/text'
 import { $cronFocusJobId, $cronJobs, setCronFocusJobId, setCronJobs, updateCronJobs } from '@/store/cron'
-import { notify, notifyError } from '@/store/notifications'
+import { notify, notifyError, readableError } from '@/store/notifications'
 import { $profileScope, cronListScope } from '@/store/profile'
 
 import { useRefreshHotkey } from '../hooks/use-refresh-hotkey'
@@ -298,10 +299,17 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
   // default — scope the fetch to the sidebar's profile scope so this overlay
   // and the sidebar (which share the $cronJobs atom) agree on what's shown.
   const profileScope = useStore($profileScope)
+  // Profiles whose cron store the backend could not read. The aggregate keeps
+  // going past a failing profile, so without this the list renders a partial
+  // result identically to a complete empty one.
+  const [listErrors, setListErrors] = useState<CronProfileError[]>([])
 
   const refresh = useCallback(async () => {
     try {
-      setCronJobs(await getCronJobs(cronListScope(profileScope)))
+      const listing = await getCronJobs(cronListScope(profileScope))
+
+      setCronJobs(listing.jobs)
+      setListErrors(listing.errors)
     } catch (err) {
       notifyError(err, c.failedLoad)
     } finally {
@@ -441,7 +449,7 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
     <Panel closeLabel={c.close} onClose={onClose}>
       {loading && jobs.length === 0 ? (
         <PageLoader label={c.loading} />
-      ) : totalCount === 0 ? (
+      ) : totalCount === 0 && listErrors.length === 0 ? (
         <PanelEmpty
           action={
             <Button onClick={() => setEditor({ mode: 'create' })} size="sm">
@@ -456,6 +464,24 @@ export function CronView({ onClose, onOpenSession, setStatusbarItemGroup: _setSt
         <>
           <PanelHeader subtitle={c.count(totalCount)} title={c.title} />
           <PanelBody>
+            {listErrors.length > 0 ? (
+              <div
+                className="mb-1.5 flex items-start gap-1.5 rounded bg-destructive/10 p-2 text-[0.7rem] text-destructive"
+                role="alert"
+              >
+                <AlertTriangle className="mt-px size-3 shrink-0" />
+                <span className="min-w-0 break-words">
+                  {c.jobsPartial(listErrors.map(e => e.profile).join(', '))}
+                </span>
+                <button
+                  className="shrink-0 underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  onClick={() => void refresh()}
+                  type="button"
+                >
+                  {c.retry}
+                </button>
+              </div>
+            ) : null}
             <PanelList
               onSearchChange={setQuery}
               searchHints={jobs
@@ -657,6 +683,14 @@ function CronJobRuns({
   onOpenSession?: (sessionId: string) => void
 }) {
   const [runs, setRuns] = useState<null | SessionInfo[]>(null)
+  // A rejected request used to be written into `runs` as [], which renders
+  // exactly like a job that has never fired. Track the failure separately so
+  // "the request failed" and "there is no history" are different states: the
+  // 2026-09-07 profile-scope bugs each reached the user as a confident empty
+  // panel, and a visible error would have settled them in one step.
+  const [error, setError] = useState<null | string>(null)
+  // Bumped by Retry to re-run the effect's load without waiting for the poll.
+  const [reloadNonce, setReloadNonce] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -666,11 +700,14 @@ function CronJobRuns({
         .then(result => {
           if (!cancelled) {
             setRuns(result)
+            setError(null)
           }
         })
-        .catch(() => {
+        .catch((err: unknown) => {
           if (!cancelled) {
-            setRuns(prev => prev ?? [])
+            // Runs already on screen stay on screen -- an 8s poll blip must not
+            // wipe a populated list. The error rides alongside them instead.
+            setError(readableError(err, c.runsFailed).message)
           }
         })
 
@@ -695,7 +732,17 @@ function CronJobRuns({
       window.clearInterval(intervalId)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [jobId, jobProfile])
+  }, [c, jobId, jobProfile, reloadNonce])
+
+  const retry = (
+    <button
+      className="shrink-0 underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+      onClick={() => setReloadNonce(n => n + 1)}
+      type="button"
+    >
+      {c.retry}
+    </button>
+  )
 
   return (
     <div>
@@ -703,12 +750,26 @@ function CronJobRuns({
         {c.runHistory}
         {runs && runs.length > 0 ? ` · ${runs.length}` : ''}
       </PanelSectionLabel>
-      {runs === null ? (
-        <div className="flex items-center gap-1.5 py-1 text-xs text-muted-foreground">
-          <Codicon name="loading" size="0.75rem" spinning />
+      {error ? (
+        <div
+          className="mb-1.5 flex items-start gap-1.5 rounded bg-destructive/10 p-2 text-[0.7rem] text-destructive"
+          role="alert"
+        >
+          <AlertTriangle className="mt-px size-3 shrink-0" />
+          <span className="min-w-0 break-words">
+            {runs && runs.length > 0 ? c.runsStale : `${c.runsFailed} — ${error}`}
+          </span>
+          {retry}
         </div>
+      ) : null}
+      {runs === null ? (
+        error ? null : (
+          <div className="flex items-center gap-1.5 py-1 text-xs text-muted-foreground">
+            <Codicon name="loading" size="0.75rem" spinning />
+          </div>
+        )
       ) : runs.length === 0 ? (
-        <div className="py-1 text-xs text-muted-foreground">{c.noRuns}</div>
+        error ? null : <div className="py-1 text-xs text-muted-foreground">{c.noRuns}</div>
       ) : (
         <div className="flex flex-col gap-px">
           {runs.map(run => (

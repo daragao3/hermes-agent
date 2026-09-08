@@ -1234,6 +1234,16 @@ export interface Translations {
     last: string
     next: string
     noRuns: string
+    /** Run history could not be loaded. Distinct from `noRuns` on purpose: a
+     *  failed request and an empty history are different facts, and collapsing
+     *  them is what made three profile-scope bugs expensive to diagnose. */
+    runsFailed: string
+    /** A poll failed while previously-loaded runs are still on screen. */
+    runsStale: string
+    /** Cron jobs could not be read for one or more profiles, so the list is
+     *  partial rather than empty. */
+    jobsPartial: (profiles: string) => string
+    retry: string
     manage: string
     showRuns: string
     hideRuns: string

@@ -11965,20 +11965,35 @@ def _find_cron_job_profile(job_id: str) -> Optional[str]:
 
 
 def _list_cron_jobs_sync(profile: str = "all"):
+    """Cron jobs for one profile, or the cross-profile aggregate.
+
+    Returns ``{"jobs": [...], "errors": [{"profile", "error"}]}`` -- the same
+    ``errors`` shape as the ``/api/profiles/sessions`` aggregate. The aggregate
+    keeps going when one profile's store is unreadable (a locked or corrupt
+    jobs.json), but a partial result that only logs the failure is
+    byte-indistinguishable from a genuinely empty crontab, which is how the
+    2026-09-07 profile-scope bugs each presented as a confident empty state.
+    Reporting the failures alongside the rows lets the caller say "partially
+    loaded" instead of "no jobs".
+    """
     requested = (profile or "all").strip()
     if requested.lower() != "all":
-        return _call_cron_for_profile(requested, "list_jobs", True)
+        # A concrete profile has no partial case: the call either answers or
+        # raises, and a raise already reaches the client as a failed request.
+        return {"jobs": _call_cron_for_profile(requested, "list_jobs", True), "errors": []}
 
     jobs: List[Dict[str, Any]] = []
+    errors: List[Dict[str, str]] = []
     for item in _cron_profile_dicts():
         name = str(item.get("name") or "")
         if not name:
             continue
         try:
             jobs.extend(_call_cron_for_profile(name, "list_jobs", True))
-        except Exception:
+        except Exception as exc:
             _log.exception("Failed to list cron jobs for profile %s", name)
-    return jobs
+            errors.append({"profile": name, "error": str(exc)})
+    return {"jobs": jobs, "errors": errors}
 
 
 async def _run_cron_dashboard_io(func, *args, **kwargs):

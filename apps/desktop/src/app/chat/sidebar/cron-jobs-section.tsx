@@ -278,6 +278,12 @@ function CronJobSidebarRuns({
   const c = t.cron
   const selectedSessionId = useStore($selectedStoredSessionId)
   const [runs, setRuns] = useState<null | SessionInfo[]>(null)
+  // A rejected request used to be written in as [], which renders exactly like
+  // a job that has never fired. Keep "failed" distinct from "empty" -- see the
+  // matching comment in app/cron/index.tsx.
+  const [failed, setFailed] = useState(false)
+  // Bumped by Retry to re-run the load without waiting for the poll.
+  const [reloadNonce, setReloadNonce] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -287,11 +293,13 @@ function CronJobSidebarRuns({
         .then(result => {
           if (!cancelled) {
             setRuns(result)
+            setFailed(false)
           }
         })
         .catch(() => {
+          // Rows already on screen stay: a poll blip must not wipe the peek.
           if (!cancelled) {
-            setRuns(prev => prev ?? [])
+            setFailed(true)
           }
         })
 
@@ -307,16 +315,35 @@ function CronJobSidebarRuns({
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [jobId, jobProfile])
+  }, [jobId, jobProfile, reloadNonce])
 
   return (
     <div className="mb-1 ml-[1.375rem] flex flex-col gap-px">
-      {runs === null ? (
-        <div className="flex items-center gap-1.5 py-1 pl-1 text-[0.6875rem] text-(--ui-text-tertiary)">
-          <GlyphSpinner ariaLabel={c.loading} className="text-[0.75rem]" />
+      {failed ? (
+        <div
+          className="flex items-center gap-1.5 py-1 pl-1 text-[0.6875rem] text-destructive"
+          role="alert"
+        >
+          <span className="min-w-0 truncate">{runs && runs.length > 0 ? c.runsStale : c.runsFailed}</span>
+          <button
+            className="shrink-0 underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            onClick={() => setReloadNonce(n => n + 1)}
+            type="button"
+          >
+            {c.retry}
+          </button>
         </div>
+      ) : null}
+      {runs === null ? (
+        failed ? null : (
+          <div className="flex items-center gap-1.5 py-1 pl-1 text-[0.6875rem] text-(--ui-text-tertiary)">
+            <GlyphSpinner ariaLabel={c.loading} className="text-[0.75rem]" />
+          </div>
+        )
       ) : runs.length === 0 ? (
-        <div className="py-1 pl-1 text-[0.6875rem] text-(--ui-text-tertiary)">{c.noRuns}</div>
+        failed ? null : (
+          <div className="py-1 pl-1 text-[0.6875rem] text-(--ui-text-tertiary)">{c.noRuns}</div>
+        )
       ) : (
         <>
           {runs.map(run => (
