@@ -30,6 +30,7 @@ import {
   setMessagingPlatformTotals,
   setMessagingSessions,
   setMessagingTruncated,
+  setSessionAllProfileTotals,
   setSessionProfileTotals,
   setSessions,
   setSessionsLoading,
@@ -86,6 +87,9 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
   // Ghost scope we already told the user about, so the fallback notice fires
   // once per scope value rather than once per refresh tick.
   const ghostScopeNotifiedRef = useRef<null | string>(null)
+  // Last reported set of unreadable profiles, so a persistent failure notifies
+  // once rather than on every poll.
+  const sessionsPartialNotifiedRef = useRef<null | string>(null)
 
   // Messaging-platform sessions as their own slice, fetched separately from
   // local recents so each platform renders a self-managed section and never
@@ -243,6 +247,18 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
           return sameCronSignature(prev, next) ? prev : next
         })
         setSessionsTotal(typeof recents.total === 'number' ? recents.total : recents.sessions.length)
+        // Every profile's count, not just the scoped one. Feeds the
+        // scoped-but-genuinely-empty sidebar state; deliberately NOT merged
+        // into $sessionProfileTotals, which is iterated below to pick catalogs
+        // to hydrate and must stay scoped.
+        setSessionAllProfileTotals(prev => {
+          const next = recents.all_profile_totals ?? {}
+          const prevKeys = Object.keys(prev)
+
+          return prevKeys.length === Object.keys(next).length && prevKeys.every(key => prev[key] === next[key])
+            ? prev
+            : next
+        })
         setSessionProfileTotals(prev => {
           const next = recents.profile_totals ?? {}
           const prevKeys = Object.keys(prev)
@@ -279,6 +295,25 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
         const failedProfiles = new Set(
           (result.errors ?? []).map(error => (error.profile === 'all' ? 'all' : normalizeProfileKey(error.profile)))
         )
+
+        // A profile whose store cannot be read (locked, corrupt, no sessions
+        // table) is dropped from the aggregate and the rest are returned as if
+        // complete -- a partial list rendered as a whole one. Say it once per
+        // distinct failure set, the same shape as the ghost-scope notice above.
+        if (result.errors && result.errors.length > 0) {
+          const signature = [...failedProfiles].sort().join(',')
+
+          if (sessionsPartialNotifiedRef.current !== signature) {
+            sessionsPartialNotifiedRef.current = signature
+            notify({
+              kind: 'warning',
+              title: translateNow('desktop.sessionsPartialTitle'),
+              message: translateNow('desktop.sessionsPartialMessage', [...failedProfiles].join(', '))
+            })
+          }
+        } else {
+          sessionsPartialNotifiedRef.current = null
+        }
 
         for (const [profile, total] of authoritativeTotals) {
           if (refreshSessionsRequestRef.current !== requestId) {

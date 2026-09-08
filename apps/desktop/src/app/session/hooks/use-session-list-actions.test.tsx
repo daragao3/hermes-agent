@@ -7,6 +7,8 @@ import { $showAllProfiles, setShowAllProfiles } from '@/store/profile'
 import {
   $cronSessions,
   $messagingSessions,
+  $sessionAllProfileTotals,
+  $sessionProfileTotals,
   $sessions,
   $sessionsLoading,
   setCronSessions,
@@ -60,7 +62,7 @@ const notify = vi.fn()
 
 vi.mock('@/hermes', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  getCronJobs: vi.fn(async () => []),
+  getCronJobs: vi.fn(async () => ({ errors: [], jobs: [] })),
   listAllProfileSessions: (...args: unknown[]) => listAllProfileSessions(...args),
   listSidebarSessions: (...args: unknown[]) => listSidebarSessions(...args)
 }))
@@ -737,5 +739,108 @@ describe('loadMoreSessionsForProfile bounded paging', () => {
     expect(ids).toContain('session-53')
     expect(ids).toContain(otherProfile.id)
     expect(new Set(ids).size).toBe(previous.length + incoming.length + 1)
+  })
+})
+
+// The cross-profile aggregate DROPS a profile whose store it cannot read (a
+// locked or corrupt state.db, or one with no sessions table) and returns the
+// survivors as if complete. Measured on this box 2026-09-07: every single
+// sidebar call carries [{profile: 'matcher', error: 'no such table: sessions'}]
+// and nothing surfaced it, so a partial list rendered as a whole one.
+describe('partial aggregate failure is surfaced', () => {
+  const withErrors = (errors: Array<{ profile: string; error: string }>): SidebarSessionsResponse => ({
+    recents: {
+      sessions: [],
+      total: 0,
+      profile_totals: { default: 0 },
+      profile: 'all',
+      profile_matched: true
+    },
+    cron: { sessions: [] },
+    messaging: { sessions: [], total: 0 },
+    errors
+  })
+
+  it('notifies once, naming the unreadable profile', async () => {
+    listSidebarSessions.mockResolvedValue(
+      withErrors([{ profile: 'matcher', error: 'no such table: sessions' }])
+    )
+
+    const { result } = renderHook(() => useSessionListActions({ profileScope: 'all' }))
+
+    await act(async () => {
+      await result.current.refreshSessions()
+    })
+
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(notify.mock.calls[0])).toContain('matcher')
+
+    // A persistent failure must not re-notify on every poll.
+    await act(async () => {
+      await result.current.refreshSessions()
+    })
+
+    expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays silent when every profile answered', async () => {
+    listSidebarSessions.mockResolvedValue(withErrors([]))
+
+    const { result } = renderHook(() => useSessionListActions({ profileScope: 'all' }))
+
+    await act(async () => {
+      await result.current.refreshSessions()
+    })
+
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('re-notifies when a DIFFERENT profile starts failing', async () => {
+    listSidebarSessions.mockResolvedValue(
+      withErrors([{ profile: 'matcher', error: 'no such table: sessions' }])
+    )
+
+    const { result } = renderHook(() => useSessionListActions({ profileScope: 'all' }))
+
+    await act(async () => {
+      await result.current.refreshSessions()
+    })
+
+    listSidebarSessions.mockResolvedValue(withErrors([{ profile: 'scout', error: 'database is locked' }]))
+
+    await act(async () => {
+      await result.current.refreshSessions()
+    })
+
+    expect(notify).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(notify.mock.calls[1])).toContain('scout')
+  })
+
+  it('stores every profile total, not just the scoped one', async () => {
+    // Feeds the scoped-but-empty sidebar state. Under a concrete scope
+    // profile_totals carries only its own key, so this must come from the
+    // separate all_profile_totals field.
+    listSidebarSessions.mockResolvedValue({
+      recents: {
+        sessions: [],
+        total: 0,
+        profile_totals: { main: 0 },
+        all_profile_totals: { default: 8309, main: 0 },
+        profile: 'main',
+        profile_matched: true
+      },
+      cron: { sessions: [] },
+      messaging: { sessions: [], total: 0 }
+    } satisfies SidebarSessionsResponse)
+
+    const { result } = renderHook(() => useSessionListActions({ profileScope: 'main' }))
+
+    await act(async () => {
+      await result.current.refreshSessions()
+    })
+
+    expect($sessionAllProfileTotals.get()).toEqual({ default: 8309, main: 0 })
+    // The scoped map stays scoped -- it drives catalog hydration.
+    expect($sessionProfileTotals.get()).toEqual({ main: 0 })
   })
 })

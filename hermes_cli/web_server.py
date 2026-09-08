@@ -4853,6 +4853,7 @@ def get_profiles_sessions_sidebar(
     messaging_rows: List[Dict[str, Any]] = []
     recents_total = 0
     recents_profile_totals: Dict[str, int] = {}
+    all_profile_totals: Dict[str, int] = {}
     errors: List[Dict[str, str]] = []
     now = time.time()
 
@@ -4896,18 +4897,35 @@ def get_profiles_sessions_sidebar(
             errors.append({"profile": name, "error": str(exc)})
             continue
         try:
+            # Counted for EVERY profile, in-scope or not, and reported in the
+            # SEPARATE `all_profile_totals` field below. A scoped request that
+            # legitimately returns zero (a real, recognized, populated profile
+            # that holds none of the session class this slice shows -- e.g. one
+            # whose rows are all cron/subagent) renders a confident empty
+            # sidebar, and the client can only say where the chats actually ARE
+            # if it can see the other profiles' counts.
+            # Free in practice: this loop already opens every profile DB for the
+            # cross-profile cron/messaging slices, so this is one extra COUNT per
+            # already-open handle -- measured 2026-09-07, scope=all (counts all)
+            # and scope=main (counted one) both ~3.9s end to end.
+            rtotal = db.session_count(
+                exclude_sources=recents_exclude_list or None,
+                min_message_count=1,
+                include_archived=False,
+                archived_only=False,
+                exclude_children=True,
+            )
+            all_profile_totals[name] = rtotal
             if recents_scope == "all" or name == recents_scope:
                 recents_rows.extend(
                     _tag(_slice(db, exclude=recents_exclude_list, cap=recents_cap), name)
                 )
-                rtotal = db.session_count(
-                    exclude_sources=recents_exclude_list or None,
-                    min_message_count=1,
-                    include_archived=False,
-                    archived_only=False,
-                    exclude_children=True,
-                )
                 recents_total += rtotal
+                # DELIBERATELY STILL SCOPED. The client ITERATES this map to
+                # decide which profile catalogs to hydrate (sidebar
+                # use-session-list-actions), so widening it would make a scoped
+                # sidebar re-fetch every profile. Cross-profile counts go in
+                # `all_profile_totals`, which nothing iterates for that purpose.
                 recents_profile_totals[name] = rtotal
             cron_rows.extend(_tag(_slice(db, source="cron", cap=cron_cap), name))
             messaging_rows.extend(
@@ -4931,6 +4949,11 @@ def get_profiles_sessions_sidebar(
             "profile_totals": recents_profile_totals,
             "profile": recents_scope,
             "profile_matched": recents_scope_matched,
+            # Every profile's showable count, regardless of scope. Lets a client
+            # distinguish "this profile has no chats" from "nothing loaded" and
+            # name where the chats are. Superset of `profile_totals`; keep the
+            # two separate (see the comment at the write site).
+            "all_profile_totals": all_profile_totals,
         },
         "cron": {"sessions": _window(cron_rows, cron_cap)},
         "messaging": {

@@ -31,6 +31,7 @@ import {
   $messagingPlatformTotals,
   $messagingSessions,
   $messagingTruncated,
+  $sessionAllProfileTotals,
   $sessionProfileTotals,
   $sessions,
   $sessionsLoading,
@@ -43,7 +44,17 @@ import { ChatSidebar } from './index'
 
 vi.mock('./sessions-section', () => ({
   VIRTUALIZE_THRESHOLD: 25,
-  SidebarSessionsSection: ({ headerAction, label, onToggle, open, projectOverview, rootClassName, sessions }: {
+  SidebarSessionsSection: ({
+    emptyState,
+    headerAction,
+    label,
+    onToggle,
+    open,
+    projectOverview,
+    rootClassName,
+    sessions
+  }: {
+    emptyState?: ReactNode
     headerAction?: ReactNode
     label: string
     onToggle: () => void
@@ -58,6 +69,7 @@ vi.mock('./sessions-section', () => ({
       {sessions.map(session => (
         <span key={session.id}>{session.title ?? session.id}</span>
       ))}
+      {sessions.length === 0 ? emptyState : null}
       {projectOverview?.map(project => <span key={project.id}>{project.label}</span>)}
     </section>
   )
@@ -208,5 +220,72 @@ describe('ChatSidebar session visibility', () => {
 
     expect(screen.getByRole('region', { name: 'Projects' })).toBeTruthy()
     expect(screen.getByRole('region', { name: 'Sessions' }).textContent).toContain('20260808_191530_b67b9d')
+  })
+})
+
+// THE THIRD EMPTY STATE. A scope that MATCHES a real profile, on a request that
+// SUCCEEDS, can still legitimately return zero: the recents slice excludes
+// cron/subagent/tool/messaging, and a profile can hold nothing else. Measured
+// 2026-09-07, ~/.hermes/profiles/main holds 1,132 sessions that are 100%
+// excluded sources, so scoping to it returned total 0 / profile_matched true /
+// no errors and the sidebar went blank over 8,309 showable chats in default.
+// Neither the ghost-scope fallback (profile_matched === false) nor the
+// failed-request states (a rejection) fire here. Say where the chats are.
+describe('scoped-but-empty profile empty state', () => {
+  beforeEach(() => {
+    $sessions.set([])
+    $sessionsTotal.set(0)
+    $showAllProfiles.set(false)
+    $activeGatewayProfile.set('main')
+    $profiles.set([
+      { name: 'default' },
+      { name: 'main' }
+    ] as never)
+  })
+
+  it('names the scope and where the chats actually are, with a way to reach them', () => {
+    $sessionProfileTotals.set({ main: 0 })
+    $sessionAllProfileTotals.set({ default: 8309, main: 0 })
+
+    renderSidebar()
+
+    expect(screen.getByText(/No chats in "main"/)).toBeTruthy()
+    expect(screen.getByText(/8309 in other profiles/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show all profiles' })).toBeTruthy()
+  })
+
+  it('switches to the all-profiles view when that action is taken', () => {
+    $sessionProfileTotals.set({ main: 0 })
+    $sessionAllProfileTotals.set({ default: 8309, main: 0 })
+
+    renderSidebar()
+    fireEvent.click(screen.getByRole('button', { name: 'Show all profiles' }))
+
+    expect($showAllProfiles.get()).toBe(true)
+  })
+
+  it('keeps the plain empty state when there are no chats ANYWHERE', () => {
+    // Nothing to point at, so pointing elsewhere would be a lie.
+    $sessionProfileTotals.set({ main: 0 })
+    $sessionAllProfileTotals.set({ default: 0, main: 0 })
+
+    renderSidebar()
+
+    expect(screen.queryByText(/No chats in/)).toBeNull()
+    // 'No sessions yet' is also the pins/project empty copy, so it is not unique.
+    expect(screen.getAllByText('No sessions yet').length).toBeGreaterThan(0)
+  })
+
+  it('stays inert against an older backend that omits all_profile_totals', () => {
+    // A pre-field gateway leaves the map empty; the state must not fire on a
+    // total it cannot see. The renderer and the gateway deploy independently.
+    $sessionProfileTotals.set({ main: 0 })
+    $sessionAllProfileTotals.set({})
+
+    renderSidebar()
+
+    expect(screen.queryByText(/No chats in/)).toBeNull()
+    // 'No sessions yet' is also the pins/project empty copy, so it is not unique.
+    expect(screen.getAllByText('No sessions yet').length).toBeGreaterThan(0)
   })
 })
