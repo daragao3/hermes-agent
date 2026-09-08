@@ -3255,15 +3255,40 @@ class SessionDB:
         """Close the database connection.
 
         Attempts a TRUNCATE WAL checkpoint first so that exiting processes
-        help shrink the WAL file.
+        help shrink the WAL file — but ONLY on writable handles.
+
+        A ``read_only`` handle is opened ``mode=ro``, and checkpointing writes
+        to the main DB file, so it can NEVER succeed there: measured against a
+        non-empty WAL with no other connection open at all, the PRAGMA still
+        fails ``disk I/O error`` and leaves the WAL byte-identical. Skipping it
+        is therefore behaviourally a no-op.
+
+        It is not a no-op for latency. When any other process holds the DB open
+        — the normal case for these handles, which exist to poll another
+        profile's LIVE state.db — the doomed PRAGMA lands in SQLite's Windows
+        I/O retry loop (10 retries at 25ms increments = 1375ms) before
+        returning the error, and the ``except`` below swallowed it silently.
+        That cost ~1.46s per handle, and the cross-profile catalog endpoints
+        open one handle per profile per request: it was ~80% of the wall time
+        of GET /api/profiles/sessions/sidebar, which the desktop sidebar polls.
+        Mode is irrelevant (PASSIVE pays the same 1.46s), so the fix is to not
+        ask, not to ask more cheaply.
+
+        This also restores what the ``read_only`` branch of ``__init__``
+        already promises: that such a handle "takes NO write lock, so polling
+        another profile's live DB on every sidebar refresh never contends with
+        that profile's running backend".
         """
         with self._lock:
             connection = getattr(self, "_conn", None)
             if connection is not None:
-                try:
-                    connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                except Exception as exc:
-                    logger.debug("WAL checkpoint (TRUNCATE) at close failed: %s", exc)
+                if not getattr(self, "read_only", False):
+                    try:
+                        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    except Exception as exc:
+                        logger.debug(
+                            "WAL checkpoint (TRUNCATE) at close failed: %s", exc
+                        )
                 connection.close()
                 del self._conn
 

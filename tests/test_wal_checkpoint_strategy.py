@@ -136,3 +136,83 @@ class TestCheckpointFrequency:
         assert call_count[0] == 1, (
             f"Expected 1 checkpoint after {n} writes, got {call_count[0]}"
         )
+
+
+class TestCloseSkipsCheckpointOnReadOnlyHandles:
+    """A read_only handle must NOT attempt a checkpoint at close.
+
+    Checkpointing writes to the main DB file, so it can never succeed on a
+    ``mode=ro`` connection. Attempting it anyway is not merely futile: when
+    another process holds the DB open (the normal case for these handles,
+    which poll another profile's live state.db), the doomed PRAGMA sits in
+    SQLite's Windows I/O retry loop for ~1.4s per close before failing, and
+    the failure was swallowed at debug level. That was ~80% of the wall time
+    of GET /api/profiles/sessions/sidebar.
+    """
+
+    def _readonly_db(self, tmp_path):
+        db_path = tmp_path / "ro_state.db"
+        writer = SessionDB(db_path=db_path)
+        writer.close()
+        return SessionDB(db_path=db_path, read_only=True)
+
+    def test_readonly_close_issues_no_checkpoint(self, tmp_path):
+        db = self._readonly_db(tmp_path)
+        real_conn = db._conn
+        execute_calls = []
+
+        def tracking_execute(sql, *args, **kwargs):
+            execute_calls.append(sql)
+            return real_conn.execute(sql, *args, **kwargs)
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = tracking_execute
+        db._conn = mock_conn
+
+        db.close()
+
+        assert not [c for c in execute_calls if "wal_checkpoint" in c], (
+            f"read_only close must issue no checkpoint, got: {execute_calls}"
+        )
+        assert mock_conn.close.called, "connection must still be closed"
+        assert not hasattr(db, "_conn"), "_conn must still be deleted"
+        real_conn.close()
+
+    def test_writable_close_still_checkpoints(self, tmp_path):
+        """The skip is keyed on read_only only — writable close is unchanged."""
+        db = SessionDB(db_path=tmp_path / "rw_state.db")
+        real_conn = db._conn
+        execute_calls = []
+
+        def tracking_execute(sql, *args, **kwargs):
+            execute_calls.append(sql)
+            return real_conn.execute(sql, *args, **kwargs)
+
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = tracking_execute
+        db._conn = mock_conn
+
+        db.close()
+
+        assert len([c for c in execute_calls if "wal_checkpoint(TRUNCATE)" in c]) == 1
+        real_conn.close()
+
+    def test_readonly_checkpoint_could_never_have_worked(self, tmp_path):
+        """Pins the premise: the skipped PRAGMA fails on a mode=ro handle.
+
+        If SQLite ever starts honouring it, this test fails and the skip above
+        needs re-justifying rather than silently dropping real WAL truncation.
+        """
+        import sqlite3 as _sqlite3
+
+        db_path = tmp_path / "premise.db"
+        writer = SessionDB(db_path=db_path)
+        writer.create_session("s1", "cli")
+        # Leave the writer OPEN so the WAL is non-empty and unmerged.
+        ro = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, isolation_level=None)
+        try:
+            with pytest.raises(_sqlite3.OperationalError):
+                ro.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            ro.close()
+            writer.close()
