@@ -60,7 +60,9 @@ vi.mock('@/hermes', async importOriginal => {
 
   return {
     ...actual,
-    getCronJobs: vi.fn(async () => []),
+    // { jobs, errors } since the endpoint gained an errors channel; a bare
+    // array here makes refreshCronJobs set the atom to undefined.
+    getCronJobs: vi.fn(async () => ({ errors: [], jobs: [] })),
     listAllProfileSessions: vi.fn(async () => ({ errors: [], profile_totals: {}, sessions: [], total: 0 })),
     listSidebarSessions: (req: { recentsProfile: string }) => listSidebarSessions(req)
   }
