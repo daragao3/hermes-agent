@@ -11,6 +11,27 @@ from gateway.platforms.base import BasePlatformAdapter, SendResult
 from gateway.run import GatewayRunner
 
 
+def _patch_channel_directory():
+    """Stub the directory rebuild the reconnect watcher kicks off.
+
+    ``_platform_reconnect_watcher`` imports ``build_channel_directory``
+    FUNCTION-LOCALLY (gateway/run.py:9211), so the name is resolved on
+    ``gateway.channel_directory`` at call time and there is no
+    ``gateway.run.build_channel_directory`` attribute at all.
+
+    Three call sites here used to patch the latter with ``create=True`` --
+    which is the tell: ``create=True`` was required *because* the name does not
+    live there, and it turned the patch into a silent no-op. The real coroutine
+    ran 3x across this file (it only stayed harmless because these tests drive
+    StubAdapters, so nothing reached a platform API). ``create=True`` also left
+    mock nothing to infer async-ness from, so the stub was a MagicMock where
+    the real target is an ``async def``.
+
+    Patch the defining module, as the already-correct site at line ~165 does.
+    """
+    return patch("gateway.channel_directory.build_channel_directory")
+
+
 @pytest.fixture(autouse=True)
 def _neutralize_eventbus_startup(monkeypatch):
     """Keep ``GatewayRunner.start()`` off the canonical ~/.hermes event bus.
@@ -234,7 +255,7 @@ class TestPlatformReconnectWatcher:
         real_sleep = asyncio.sleep
 
         with patch.object(runner, "_create_adapter", return_value=succeed_adapter):
-            with patch("gateway.run.build_channel_directory", create=True):
+            with _patch_channel_directory():
                 # Run one iteration of the watcher then stop
                 async def run_one_iteration():
                     runner._running = True
@@ -275,7 +296,7 @@ class TestPlatformReconnectWatcher:
         real_sleep = asyncio.sleep
 
         with patch.object(runner, "_create_adapter", return_value=succeed_adapter):
-            with patch("gateway.run.build_channel_directory", create=True):
+            with _patch_channel_directory():
                 runner._running = True
                 call_count = 0
 
@@ -335,7 +356,7 @@ class TestPlatformReconnectWatcher:
         real_sleep = asyncio.sleep
 
         with patch.object(runner, "_create_adapter", return_value=succeed_adapter):
-            with patch("gateway.run.build_channel_directory", create=True):
+            with _patch_channel_directory():
                 async def run_one_iteration():
                     runner._running = True
                     call_count = 0
