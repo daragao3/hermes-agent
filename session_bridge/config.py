@@ -263,6 +263,10 @@ class ClaudeVisibilityConfig:
     # (.../.claude/worktrees/...) as automation: chips and agent sessions run
     # there, the user's own Codex desktop sessions do not.
     exclude_worktree_sources: bool = False
+    # Skip Codex threads the official Codex importer created from Claude
+    # sessions (rollout originator "hermes-codex-import"): mirroring one back
+    # puts a Claude session in the Claude sidebar as a [Codex] row.
+    exclude_codex_imports: bool = False
 
 
 @dataclass(frozen=True)
@@ -372,6 +376,7 @@ class BridgeConfig:
                 "hydrate_conversation",
                 "hydrate_backfill_messages",
                 "exclude_worktree_sources",
+                "exclude_codex_imports",
             }),
             scope="session_bridge.claude_visibility",
         )
@@ -879,6 +884,13 @@ class BridgeConfig:
                     claude_visibility_defaults.exclude_worktree_sources,
                 ),
                 "session_bridge.claude_visibility.exclude_worktree_sources",
+            ),
+            exclude_codex_imports=_toml_bool(
+                claude_visibility.get(
+                    "exclude_codex_imports",
+                    claude_visibility_defaults.exclude_codex_imports,
+                ),
+                "session_bridge.claude_visibility.exclude_codex_imports",
             ),
             auto_dismiss_exhausted_after_seconds=_optional_toml_int(
                 claude_visibility.get(

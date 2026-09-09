@@ -277,6 +277,7 @@ def conversational_turns(
             _is_codex_injected_context(content)
             or _is_codex_automation_envelope(content)
             or _is_codex_registration(content)
+            or is_envelope_user_text(content)
         ):
             continue
         redacted = _redact(content).strip()
@@ -306,6 +307,32 @@ def conversational_turns(
 
 
 _ROLLOUT_TEXT_BLOCK_TYPES = frozenset({"input_text", "output_text", "text"})
+# User turns that are harness or tool envelopes, not something a person typed:
+# Codex's own context injections, Claude Code's notifications and slash-command
+# bookkeeping (present in threads the Codex importer copied from Claude), and
+# the bridge's automation heartbeats. Rendered verbatim they are what Diego
+# called "broken formatting" in a mirror row (2026-09-09). Prefix match on the
+# stripped text; assistant prose that QUOTES a tag is untouched.
+_ENVELOPE_USER_PREFIXES = (
+    "<environment_context>",
+    "<user_action>",
+    "<turn_aborted>",
+    "<permissions instructions>",
+    "<app-context>",
+    "<task-notification>",
+    "<system-reminder>",
+    "<local-command-",
+    "<command-name>",
+    "<command-message>",
+    "<heartbeat>",
+    "<codex_delegation>",
+    "<cross-session-message",
+    "<ci-monitor-event",
+)
+
+
+def is_envelope_user_text(value: object) -> bool:
+    return isinstance(value, str) and value.lstrip().startswith(_ENVELOPE_USER_PREFIXES)
 
 
 def read_codex_rollout_rows(
