@@ -32,6 +32,25 @@ def is_mirrored_record(record: object) -> bool:
     )
 
 
+# Top-level provenance tag on the registration prompt record of a visibility
+# mirror after the bridge has hidden it from the desktop app. The app hides a
+# ``user`` record carrying ``isMeta: true`` from its conversation view (measured
+# 2026-09-09 against Claude 1.49585 -- the renderer skips such records unless
+# they match a known event shape), but the adapter also treats ``isMeta`` as
+# ineligible, so a hidden prompt would stop carrying the signed marker and the
+# mirror would reclassify as NATIVE. This tag is honoured by ONE consumer,
+# ``claude_adapter._detect_origin``, so that a hidden registration record is
+# still harvested for its marker while staying out of projection and out of the
+# human-turn count. See session_bridge.mirror_conversation.hide_registration_prefix.
+REGISTRATION_RECORD_KEY = "hermesRegistration"
+
+
+def is_registration_record(record: object) -> bool:
+    return isinstance(record, dict) and isinstance(
+        record.get(REGISTRATION_RECORD_KEY), dict
+    )
+
+
 class OriginKind(StrEnum):
     NATIVE = "native"
     BRIDGE_PLACEHOLDER = "bridge_placeholder"
