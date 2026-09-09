@@ -487,7 +487,7 @@ Hermes 会从进程环境读取环境变量，对于用户自行管理的密钥�
 | `GATEWAY_ALLOWED_USERS` | 跨所有平台允许的逗号分隔用户 ID |
 | `GATEWAY_ALLOW_ALL_USERS` | 无需白名单允许所有用户（`true`/`false`，默认：`false`） |
 
-### Web Dashboard 与 Hermes Desktop
+### Web Dashboard 与 Hermes Desktop {#web-dashboard--hermes-desktop}
 
 [Web dashboard](/user-guide/features/web-dashboard) 以及[将 Hermes Desktop 连接到远程后端](/user-guide/features/web-dashboard#connecting-hermes-desktop-to-a-remote-backend)所用的认证。按照"仅密钥"的约定，凭据应放在 `~/.hermes/.env` 中；OAuth 的 `client_id` 更适合写在 `config.yaml` 的 `dashboard.oauth` 下（同时设置时环境变量优先）。
 

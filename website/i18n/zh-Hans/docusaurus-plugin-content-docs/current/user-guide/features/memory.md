@@ -216,7 +216,7 @@ memory:
   write_approval: false     # false = 自由写入（默认） | true = 需要审批
 ```
 
-## 控制记忆写入（`write_approval`）
+## 控制记忆写入（`write_approval`） {#controlling-memory-writes-write_approval}
 
 默认情况下，Agent 会自由保存记忆——包括在一轮对话之后运行的后台自我改进
 复盘所产生的保存。如果你更希望先审批这些保存，请设置

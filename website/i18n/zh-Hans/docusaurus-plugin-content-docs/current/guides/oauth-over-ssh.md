@@ -42,7 +42,7 @@ Hermes 会在 `Waiting for callback on ...` 一行打印实际绑定的端口—
 
 如果你的提供商不在表中，则不需要隧道。
 
-## MCP 服务器
+## MCP 服务器 {#mcp-servers}
 
 远程 MCP 服务器（Linear、Sentry、Atlassian、Asana、Figma 等）使用同样的回环重定向流程。Hermes 会为每台服务器自动选择一个空闲端口，并在 OAuth 流程启动时打印授权 URL——可能是在启动时（当 `mcp_servers:` 中出现新服务器时），也可能是在你运行 `hermes mcp login <server>` 时。
 

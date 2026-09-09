@@ -255,7 +255,7 @@ FEISHU_BOT_USER_ID=xxx        # 若应用使用 sender_id_type=user_id 则必填
 FEISHU_BOT_NAME=MyBot         # 仅在自动检测失败时使用
 ```
 
-## 机器人间消息传递
+## 机器人间消息传递 {#bot-to-bot-messaging}
 
 默认情况下，Hermes 忽略其他机器人发送的消息。当你希望 Hermes 参与 A2A 编排或接收同一群中其他机器人的通知时，可启用机器人间消息传递。
 

@@ -355,7 +355,7 @@ Gateway hooks 仅在 **gateway**（Telegram、Discord、Slack、WhatsApp、Teams
 [插件](/user-guide/features/plugins)可以注册在 **CLI 和 gateway** 会话中均会触发的 hook。这些 hook 通过插件 `register()` 函数中的 `ctx.register_hook()` 以编程方式注册。
 
 有关插件打包与注册的详细信息，请参阅
-[插件指南](/docs/user-guide/features/plugins)。
+[插件指南](/user-guide/features/plugins)。
 
 ```python
 def register(ctx):

@@ -21,7 +21,7 @@ Hermes Agent 采用纵深防御安全模型。本页涵盖所有安全边界—�
 7. **跨会话隔离** — 会话之间无法访问彼此的数据或状态；cron 任务存储路径已针对路径遍历攻击进行加固
 8. **输入清理** — 终端工具后端中的工作目录参数会经过允许列表验证，以防止 shell 注入
 
-## 危险命令审批
+## 危险命令审批 {#dangerous-command-approval}
 
 在执行任何命令之前，Hermes 会将其与一份精心维护的危险模式列表进行比对。若匹配，用户必须明确批准。
 
@@ -58,7 +58,7 @@ approvals:
 设置 `approvals.mode: off` 将禁用所有安全提示。仅在受信任的环境（CI/CD、容器等）中使用。
 :::
 
-### YOLO 模式
+### YOLO 模式 {#yolo-mode}
 
 YOLO 模式会绕过当前会话中**所有**危险命令审批提示。可通过以下三种方式激活：
 
@@ -111,7 +111,7 @@ YOLO 模式会禁用会话中**所有**危险命令安全检查——**但硬性
 
 若触发黑名单，工具调用会向 Agent 返回一条说明性错误，且不执行任何操作。如果某个合法工作流确实需要这些命令（例如，你是一个清除并重装流水线的操作者），请在 Agent 外部运行。
 
-### 用户自定义拒绝规则（`approvals.deny`）
+### 用户自定义拒绝规则（`approvals.deny`） {#user-defined-deny-rules-approvalsdeny}
 
 硬性黑名单是固定的、随代码发布的。`approvals.deny` 是它的用户可编辑对应物：一组 glob 模式，会无条件阻止匹配的终端命令——在 `--yolo`、`/yolo` 和 `approvals.mode: off` 被纳入考虑**之前**就生效。可用它实现"带例外的 yolo"：让 Agent 什么都能做，唯独这几件事永远不行。
 
@@ -321,7 +321,7 @@ or configure platform allowlists (e.g., TELEGRAM_ALLOWED_USERS=your_id).
 ```
 :::
 
-### DM 配对系统
+### DM 配对系统 {#dm-pairing-system}
 
 为实现更灵活的授权，Hermes 提供了基于验证码的配对系统。无需预先提供用户 ID，未知用户会收到一次性配对码，由机器人所有者通过 CLI 批准。
 

@@ -621,7 +621,7 @@ Nix 构建的二进制文件能在 Ubuntu 容器内运行，是因为 `/nix/stor
 
 ---
 
-## 插件
+## 插件 {#plugins}
 
 NixOS 模块支持声明式插件安装——无需命令式的 `hermes plugins install`。
 

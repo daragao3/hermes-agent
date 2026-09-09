@@ -1043,7 +1043,7 @@ TELEGRAM_GUEST_MODE=true
 
 私聊和白名单群组的行为与之前完全相同。
 
-## 斜杠命令访问控制
+## 斜杠命令访问控制 {#slash-command-access-control}
 
 默认情况下，每个允许的用户都可以运行每个斜杠命令。要将你的白名单分为**管理员**（完整斜杠命令访问）和**普通用户**（仅你明确启用的命令），请在平台的 `extra` 块中添加 `allow_admin_from` 和 `user_allowed_commands`：
 

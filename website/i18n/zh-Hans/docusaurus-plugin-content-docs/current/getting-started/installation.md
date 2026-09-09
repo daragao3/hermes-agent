@@ -20,12 +20,12 @@ description: "在 Linux、macOS、WSL2、原生 Windows 或通过 Termux 在 And
 ### 不使用 Hermes Desktop：
 如需不含 Hermes Desktop 的纯命令行安装，请运行：
 
-#### Linux / macOS / WSL2 / Android（Termux）
+#### Linux / macOS / WSL2 / Android（Termux） {#linux--macos--wsl2--android-termux}
 ```bash
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 ```
 
-#### Windows（原生）
+#### Windows（原生） {#windows-native}
 
 在 PowerShell 中运行：
 ```powershell

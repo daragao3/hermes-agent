@@ -280,7 +280,7 @@ model:
 使用 Z.AI / GLM 提供商时，Hermes 会自动探测多个端点（全球版、中国版、编程版）以找到接受你 API key 的端点。无需手动设置 `GLM_BASE_URL`——可用端点会被自动检测并缓存。
 :::
 
-### xAI（Grok）— Responses API + Prompt 缓存
+### xAI（Grok）— Responses API + Prompt 缓存 {#xai-grok--responses-api--prompt-caching}
 
 xAI 通过 Responses API（`codex_responses` 传输）接入，自动支持 Grok 4 模型的推理——无需 `reasoning_effort` 参数，服务端默认进行推理。在 `~/.hermes/.env` 中设置 `XAI_API_KEY` 并在 `hermes model` 中选择 xAI，或直接用 `grok` 作为快捷方式输入 `/model grok-4-fast-reasoning`。
 
@@ -1137,7 +1137,7 @@ model:
 
 ---
 
-### 上下文长度检测
+### 上下文长度检测 {#context-length-detection}
 
 :::note 两个设置，容易混淆
 **`context_length`** 是**总上下文窗口**——输入和输出 token 的合计预算（例如 Claude Opus 4.6 为 200,000）。Hermes 用它来决定何时压缩历史记录以及验证 API 请求。
@@ -1446,7 +1446,7 @@ provider_routing:
 
 **快捷方式：** 在任意模型名称后附加 `:nitro` 进行吞吐量排序（如 `anthropic/claude-sonnet-4:nitro`），或附加 `:floor` 进行价格排序。
 
-## OpenRouter Pareto Code 路由器
+## OpenRouter Pareto Code 路由器 {#openrouter-pareto-code-router}
 
 OpenRouter 提供一个实验性编程模型路由器 `openrouter/pareto-code`，自动将请求路由到满足编程质量标准的最便宜模型（按 [Artificial Analysis](https://artificialanalysis.ai/) 排名）。选择此模型并在 `~/.hermes/config.yaml` 中调整 `min_coding_score` 参数：
 
@@ -1467,7 +1467,7 @@ openrouter:
 - 参见 OpenRouter 的 [Pareto Router 文档](https://openrouter.ai/docs/guides/routing/routers/pareto-router) 了解完整路由器行为。
 - 要将 Pareto Code 路由器用于特定**辅助任务**（压缩、视觉等）而非主智能体，在该任务下设置 `extra_body.plugins`——参见[辅助模型 → OpenRouter 路由与辅助任务的 Pareto Code](/user-guide/configuration#openrouter-routing--pareto-code-for-auxiliary-tasks)。
 
-## 故障转移提供商
+## 故障转移提供商 {#fallback-providers}
 
 配置一个备用提供商链，当主模型失败时（速率限制、服务器错误、认证失败）Hermes 按顺序尝试。规范格式是顶级 `fallback_providers:` 列表：
 
