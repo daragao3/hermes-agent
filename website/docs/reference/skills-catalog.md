@@ -20,7 +20,6 @@ If a skill is missing from this list but present in the repo, the catalog is reg
 | [`apple-reminders`](/user-guide/skills/bundled/apple/apple-apple-reminders) | Apple Reminders via remindctl: add, list, complete. | `apple/apple-reminders` |
 | [`findmy`](/user-guide/skills/bundled/apple/apple-findmy) | Track Apple devices/AirTags via FindMy.app on macOS. | `apple/findmy` |
 | [`imessage`](/user-guide/skills/bundled/apple/apple-imessage) | Send and receive iMessages/SMS via the imsg CLI on macOS. | `apple/imessage` |
-| [`macos-computer-use`](/user-guide/skills/bundled/apple/apple-macos-computer-use) | Drive the macOS desktop in the background — screenshots, mouse, keyboard, scroll, drag — without stealing the user's cursor, keyboard focus, or Space. Works with any tool-capable model. Load this skill whenever the `computer_use` tool is... | `apple/macos-computer-use` |
 
 ## autonomous-ai-agents
 
@@ -31,7 +30,12 @@ If a skill is missing from this list but present in the repo, the catalog is reg
 | [`hermes-agent`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent) | Configure, extend, or contribute to Hermes Agent. | `autonomous-ai-agents/hermes-agent` |
 | [`opencode`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-opencode) | Delegate coding to OpenCode CLI (features, PR review). | `autonomous-ai-agents/opencode` |
 
-## creative
+## computer-use
+
+| Skill | Description | Path |
+|-------|-------------|------|
+| [`computer-use`](/user-guide/skills/bundled/computer-use/computer-use-computer-use) | Drive the user's desktop in the background — clicking, typing, scrolling, dragging — without stealing the cursor, keyboard focus, or switching virtual desktops / Spaces. Cross-platform: macOS, Windows, Linux. Works with any tool-capable... | `computer-use` |
+
 
 | Skill | Description | Path |
 |-------|-------------|------|
