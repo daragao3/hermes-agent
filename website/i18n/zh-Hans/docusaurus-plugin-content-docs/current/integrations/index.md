@@ -8,11 +8,15 @@ sidebar_position: 0
 
 Hermes Agent 可连接外部系统，用于 AI 推理、工具服务器、IDE 工作流、程序化访问等。这些集成扩展了 Hermes 的能力边界与运行环境。
 
+:::tip 从这里开始
+如果你只有时间配置一项集成，请配置 [Nous Portal](/integrations/nous-portal)——一次 OAuth 登录即可覆盖 300+ 个模型，外加四个 Tool Gateway 工具（网页搜索、图像生成、TTS 和浏览器自动化）。
+:::
+
 ## AI 提供商与路由
 
 Hermes 开箱即支持多个 AI 推理提供商。使用 `hermes model` 进行交互式配置，或在 `config.yaml` 中直接设置。
 
-- **[AI 提供商](/user-guide/features/provider-routing)** — OpenRouter、Anthropic、OpenAI、Google 以及任何兼容 OpenAI 的端点。Hermes 会自动检测每个提供商的能力，包括视觉、流式传输和工具调用。
+- **[AI 提供商](/integrations/providers)** — OpenRouter、Anthropic、OpenAI、Google 以及任何兼容 OpenAI 的端点。Hermes 会自动检测每个提供商的能力，包括视觉、流式传输和工具调用。
 - **[提供商路由](/user-guide/features/provider-routing)** — 精细控制哪些底层提供商处理你的 OpenRouter 请求。通过排序、白名单、黑名单和显式优先级排序，在成本、速度或质量之间优化。
 - **[备用提供商](/user-guide/features/fallback-providers)** — 当主模型遇到错误时，自动故障转移到备用 LLM 提供商。包括主模型回退，以及用于视觉、压缩和网页提取的独立辅助任务回退。
 
@@ -22,14 +26,18 @@ Hermes 开箱即支持多个 AI 推理提供商。使用 `hermes model` 进行�
 
 ## 网页搜索后端
 
-`web_search` 和 `web_extract` 工具支持四个后端提供商，通过 `config.yaml` 或 `hermes tools` 配置：
+`web_search` 和 `web_extract` 工具支持八个后端提供商，通过 `config.yaml` 或 `hermes tools` 配置：
 
 | 后端 | 环境变量 | 搜索 | 提取 | 爬取 |
 |---------|---------|--------|---------|-------|
 | **Firecrawl**（默认） | `FIRECRAWL_API_KEY` | ✔ | ✔ | ✔ |
-| **Parallel** | `PARALLEL_API_KEY` | ✔ | ✔ | — |
+| **SearXNG** | `SEARXNG_URL` | ✔ | — | — |
+| **Brave**（免费套餐） | `BRAVE_SEARCH_API_KEY` | ✔ | — | — |
+| **DuckDuckGo**（ddgs） | _（无）_ | ✔ | — | — |
 | **Tavily** | `TAVILY_API_KEY` | ✔ | ✔ | ✔ |
 | **Exa** | `EXA_API_KEY` | ✔ | ✔ | — |
+| **Parallel** | `PARALLEL_API_KEY` | ✔ | ✔ | — |
+| **xAI** | `XAI_API_KEY` | ✔ | — | — |
 
 快速配置示例：
 
@@ -61,6 +69,7 @@ Hermes 内置完整的浏览器自动化功能，提供多种后端选项，用�
 | **ElevenLabs** | 优秀 | 付费 | `ELEVENLABS_API_KEY` |
 | **OpenAI TTS** | 良好 | 付费 | `VOICE_TOOLS_OPENAI_KEY` |
 | **MiniMax** | 良好 | 付费 | `MINIMAX_API_KEY` |
+| **xAI TTS** | 良好 | 付费 | `XAI_API_KEY` |
 | **NeuTTS** | 良好 | 免费 | 无需 |
 
 语音转文字支持六个提供商：本地 faster-whisper（免费，设备端运行）、本地命令封装器、Groq、OpenAI Whisper API、Mistral 和 xAI。语音消息转录支持 Telegram、Discord、WhatsApp 及其他消息平台。详见[语音与 TTS](/user-guide/features/tts) 和[语音模式](/user-guide/features/voice-mode)。
@@ -80,9 +89,9 @@ Hermes 内置完整的浏览器自动化功能，提供多种后端选项，用�
 
 ## 消息平台
 
-Hermes 可作为 gateway（网关）机器人运行于 19+ 个消息平台，均通过同一 `gateway` 子系统配置：
+Hermes 可作为 gateway（网关）机器人运行于 27+ 个消息平台，均通过同一 `gateway` 子系统配置：
 
-- **[Telegram](/user-guide/messaging/telegram)**、**[Discord](/user-guide/messaging/discord)**、**[Slack](/user-guide/messaging/slack)**、**[WhatsApp](/user-guide/messaging/whatsapp)**、**[Signal](/user-guide/messaging/signal)**、**[Matrix](/user-guide/messaging/matrix)**、**[Mattermost](/user-guide/messaging/mattermost)**、**[Email](/user-guide/messaging/email)**、**[SMS](/user-guide/messaging/sms)**、**[DingTalk](/user-guide/messaging/dingtalk)**、**[Feishu/Lark](/user-guide/messaging/feishu)**、**[WeCom](/user-guide/messaging/wecom)**、**[WeCom Callback](/user-guide/messaging/wecom-callback)**、**[Weixin](/user-guide/messaging/weixin)**、**[BlueBubbles](/user-guide/messaging/bluebubbles)**、**[QQ Bot](/user-guide/messaging/qqbot)**、**[Yuanbao](/user-guide/messaging/yuanbao)**、**[Home Assistant](/user-guide/messaging/homeassistant)**、**[Microsoft Teams](/user-guide/messaging/teams)**、**[Webhooks](/user-guide/messaging/webhooks)**
+- **[Telegram](/user-guide/messaging/telegram)**、**[Discord](/user-guide/messaging/discord)**、**[Slack](/user-guide/messaging/slack)**、**[WhatsApp](/user-guide/messaging/whatsapp)**、**[Signal](/user-guide/messaging/signal)**、**[Matrix](/user-guide/messaging/matrix)**、**[Mattermost](/user-guide/messaging/mattermost)**、**[Email](/user-guide/messaging/email)**、**[SMS](/user-guide/messaging/sms)**、**[DingTalk](/user-guide/messaging/dingtalk)**、**[Feishu/Lark](/user-guide/messaging/feishu)**、**[WeCom](/user-guide/messaging/wecom)**、**[WeCom Callback](/user-guide/messaging/wecom-callback)**、**[Weixin](/user-guide/messaging/weixin)**、**[BlueBubbles](/user-guide/messaging/bluebubbles)**、**[QQ Bot](/user-guide/messaging/qqbot)**、**[Yuanbao](/user-guide/messaging/yuanbao)**、**[Home Assistant](/user-guide/messaging/homeassistant)**、**[Microsoft Teams](/user-guide/messaging/teams)**、**[Microsoft Teams 会议](/user-guide/messaging/teams-meetings)**、**[Microsoft Graph Webhook](/user-guide/messaging/msgraph-webhook)**、**[Google Chat](/user-guide/messaging/google_chat)**、**[LINE](/user-guide/messaging/line)**、**[ntfy](/user-guide/messaging/ntfy)**、**[SimpleX](/user-guide/messaging/simplex)**、**[Open WebUI](/user-guide/messaging/open-webui)**、**[Webhooks](/user-guide/messaging/webhooks)**
 
 平台对比表和配置指南详见[消息 Gateway 概览](/user-guide/messaging)。
 

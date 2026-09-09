@@ -29,11 +29,13 @@ description: "使用 Socket Mode 将 Hermes Agent 设置为 Slack 机器人"
 
 ### 方式 A：使用 Hermes 生成的 manifest（推荐）
 
-1. 生成 manifest：
+1. 生成 manifest。新建的 Slack 应用必须使用 Agent view：
    ```bash
-   hermes slack manifest --write
+   hermes slack manifest --agent-view --write
    ```
-   此命令会将 `~/.hermes/slack-manifest.json` 写入磁盘并打印粘贴说明。
+   此命令会将 `~/.hermes/slack-manifest.json` 写入磁盘并打印粘贴说明。仍在使用
+   Slack 旧版 Assistant view 的现有应用，可以在准备好迁移之前省略
+   `--agent-view`。
 2. 前往 [https://api.slack.com/apps](https://api.slack.com/apps) →
    **Create New App** → **From an app manifest**
 3. 选择你的工作区，粘贴 JSON 内容，检查后点击 **Next** → **Create**
@@ -80,6 +82,7 @@ description: "使用 Socket Mode 将 Hermes Agent 设置为 Slack 机器人"
 | 权限范围 | 用途 |
 |-------|---------|
 | `groups:read` | 列出并获取私有频道信息 |
+| `assistant:write` | 在机器人处理消息时，于机器人名称旁渲染工作状态提示行（"is thinking…"）。缺少此权限范围时，`assistant.threads.setStatus` 调用会静默失败，Slack 转而显示它自己轮换的通用占位文本（"Finding answers…"、"Reviewing findings…" 等）——Hermes 完全无法控制该文本。`typing_status_text` 要产生任何可见效果都需要此权限范围。 |
 
 ---
 
@@ -198,6 +201,12 @@ hermes gateway install      # 安装为用户服务
 sudo hermes gateway install --system   # 仅 Linux：开机启动系统服务
 ```
 
+:::tip Codex reasoning-effort 安全提示
+对于由 Codex 驱动的 Slack peer-agent 频道，建议使用 `agent.reasoning_effort: high` 或更低值。
+`xhigh` 可能会把整轮时间都花在隐藏推理上，从而始终不产生可见的 assistant 文本；Hermes 现在
+会在话题中抑制这类"轮次未完成"警告，并把诊断信息保留在 gateway 日志中。
+:::
+
 ---
 
 ## 第九步：将机器人邀请到频道
@@ -214,9 +223,21 @@ sudo hermes gateway install --system   # 仅 Linux：开机启动系统服务
 
 ## 斜杠命令
 
-每个 Hermes 命令（`/btw`、`/stop`、`/new`、`/model`、`/help`……）都是原生 Slack 斜杠命令——与它们在 Telegram 和 Discord 上的工作方式完全相同。在 Slack 中输入 `/`，自动补全选择器会列出每个 Hermes 命令及其描述。
+大多数 Hermes 命令（`/btw`、`/stop`、`/new`、`/model`、`/help`……）都是原生 Slack 斜杠命令，与 Telegram 和 Discord 保持一致。在 Slack 中输入 `/`，自动补全选择器会列出这些命令及其描述。
 
-底层实现：Hermes 附带一个生成的 Slack 应用 manifest（见第一步，方式 A），它将 [`COMMAND_REGISTRY`](https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/commands.py) 中的每个命令声明为斜杠命令。在 Socket Mode 下，无论 manifest 的 `url` 字段如何，Slack 都会通过 WebSocket 路由命令事件。
+Slack 只允许每个应用注册 50 个斜杠命令。被有意排除在这一原生名额之外的命令，仍可通过 `/hermes <命令>` 使用。目前这包括对确认较为敏感的 DevFlow 决策流程：使用 `/hermes ddp-approve <request-id> <evidence>`，随后使用 `/hermes ddp-approve-confirm <token>`（或对应的拒绝形式）。在没有 Slack manifest 数量限制的平台上，可以直接使用不带前缀的 `/ddp-approve` 语法。
+
+底层实现：Hermes 附带一个生成的 Slack 应用 manifest（见第一步，方式 A），它将 [`COMMAND_REGISTRY`](https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/commands.py) 中的原生子集声明为斜杠命令。在 Socket Mode 下，无论 manifest 的 `url` 字段如何，Slack 都会通过 WebSocket 路由命令事件。
+
+### Agent 消息体验
+
+新建的 Slack 应用使用 Slack 的 **Agent** 消息体验。现有的 Hermes Assistant 应用可以通过使用 `--agent-view` 重新生成 manifest 来迁移：
+
+```bash
+hermes slack manifest --agent-view --write
+```
+
+在 **Features → App Manifest** 中更新 manifest，如果 Slack 提示，请重新安装应用。Agent view 无法回退到 Assistant view，切换后用户可能需要强制刷新 Slack。生成的 Agent manifest 会订阅 `message.im`、`app_home_opened` 和 `app_context_changed`，使 Hermes 能够识别 Messages 标签页中的私信，并随每一轮接收用户当前的 Slack 上下文。Hermes 只把该上下文作为标签使用；它不会读取所查看频道的历史记录。
 
 ### 更新后刷新斜杠命令
 
@@ -244,6 +265,8 @@ Slack 本身会阻止在话题回复中使用原生斜杠命令——在话题�
 作为解决方案，Hermes 识别前导 `!` 作为在话题（以及任何其他地方）中有效的替代命令前缀。在话题回复中输入 `!queue`、`!stop`、`!model gpt-5.4` 等普通回复——Hermes 会以与斜杠形式完全相同的方式处理，并在同一话题中回复。
 
 只有第一个 token（词元）会与已知命令列表进行匹配，因此像 `!nice work` 这样的随意消息会原样传递给 agent。
+
+审批提示（危险命令 / `execute_code` 审批）通常渲染为交互式按钮。当按钮无法送达、Hermes 回退到文本提示时，该提示会指示你回复 `!approve` / `!deny`——这是在话题中可用的形式。
 
 ### 高级：仅输出斜杠命令数组
 
@@ -307,6 +330,19 @@ platforms:
       # （100 行 / 20 列 / 1 万字符）的表格会优雅地回退为对齐的等宽文本。
       rich_blocks: false
 
+      # 为最终的 Block Kit 回复追加 Slack 原生反馈控件。
+      # 需要 rich_blocks: true。默认：false。
+      feedback_buttons: false
+
+      # 固定在 Agent view Messages 标签页顶部的建议提示。
+      # 可以是 {title, message} 行的列表，或带标题的对象：
+      # {title: "Start here", prompts: [{title: "Plan", message: "..."}]}
+      suggested_prompts: []
+
+      # 根据用户的第一条消息为 Agent/Assistant 私信话题命名。
+      # 默认：true。设为 false 则保留 Slack 的默认话题标题。
+      assistant_thread_titles: true
+
       # 可继续 cron 任务的投递方式（默认："thread"）。
       # "in_channel" 将可继续的 cron 任务直接平铺投递到频道中
       # （不新建话题）；需与 reply_in_thread: false（及
@@ -321,7 +357,52 @@ platforms:
 | `platforms.slack.extra.reply_in_thread` | `true` | 为 `false` 时，频道消息直接回复而非话题。已在话题中的消息仍在话题中回复。 |
 | `platforms.slack.extra.reply_broadcast` | `false` | 为 `true` 时，话题回复也会发布到主频道。仅广播第一个分块。 |
 | `platforms.slack.extra.rich_blocks` | `false` | 为 `true` 时，Agent 消息会渲染为 [Block Kit](https://docs.slack.dev/block-kit/) 区块（标题、分隔线、真正的嵌套列表以及原生表格）。始终附带纯文本回退。超出 Slack 限制的表格会回退为对齐的等宽文本。无需重新安装应用——这仅是发送端的改动。 |
+| `platforms.slack.extra.feedback_buttons` | `false` | 与 `rich_blocks` 同时为 `true` 时，会在最终回复中追加 Slack 原生反馈控件。 |
+| `platforms.slack.extra.suggested_prompts` | `[]` | 用于 Agent/Assistant 私信入口的最多四条 `{title, message}` 提示；可接受列表或 `{title, prompts}` 形式。 |
+| `platforms.slack.extra.assistant_thread_titles` | `true` | 为 `true` 时，根据用户的第一条消息为 Agent/Assistant 私信话题命名。 |
 | `platforms.slack.extra.cron_continuable_surface` | `"thread"` | [可继续 cron 任务](../features/cron.md)的投递方式。`"thread"` 为每次投递新建专用话题（默认）；`"in_channel"` 直接平铺投递到频道时间线。使用 `in_channel` 时需搭配 `reply_in_thread: false`（及 `require_mention: false`），纯文本回复即可继续任务。 |
+
+### 工作状态提示行
+
+在 agent 处理消息期间，Slack 会在话题中的机器人名称旁显示一行状态提示。Hermes 默认将其设为 `is thinking...`；可用 `typing_status_text` 自定义——例如一只名为 Ada 的小猫助手：
+
+```yaml
+platforms:
+  slack:
+    # 自定义工作状态提示行（默认："is thinking..."）。
+    typing_status_text: "is pouncing… 🐾"
+```
+
+| 键 | 默认值 | 描述 |
+|-----|---------|-------------|
+| `platforms.slack.typing_status_text` | `"is thinking..."` | agent 处理消息期间显示的工作状态提示行文本。需要 `assistant:write` 权限范围——缺少该权限时，状态调用会静默失败，无论此处设置为何，Slack 都会渲染它自己的通用占位文本。设置 `typing_indicator: false` 可完全禁用状态提示行。 |
+
+:::note 状态显示在哪里
+自定义状态出现在**回复输入框下方的页脚**中（"*BotName* is thinking…"），而不是消息列表中的行内位置。AI 应用工作时 Slack 在消息区域显示的行内 "Generating response…" / "Finding answers…" 是 **Slack 自己的轮换指示器**——`assistant.threads.setStatus` 不控制它们，且两者可能同时出现。
+:::
+
+同一个键也用于自定义 Google Chat 的可见工作状态标记消息（`platforms.google_chat.typing_status_text`，默认 `"Hermes is thinking…"`）——注意在 Google Chat 上它是一条真实发布的消息，随后会被修补为回复内容，而非临时状态。
+
+### 实时状态（按工具）
+
+默认情况下，状态提示行会**随 agent 的工作实时更新**：它显示的不是静态的 `is thinking...`，而是 agent 当前正在做什么——`is running pytest tests/…`、`is reading docs/api.md…`、`is searching the web for slack api limits…`。在两次工具调用之间，它会回到静态文本。它复用已有的状态刷新节奏，因此不会产生额外的 Slack API 调用；即使 `tool_progress: off`（Slack 的默认值）它同样有效——与进度气泡不同，状态提示行是临时的，不会在频道中留下任何内容。
+
+通过 `display.live_status`（全局或按平台）控制：
+
+```yaml
+display:
+  platforms:
+    slack:
+      # full = 动词 + 参数（"is running pytest…"）   [默认]
+      # verb = 仅动词（"is running…"）——隐藏命令/路径，
+      #        适用于共享或面向客户的频道
+      # off  = 静态文本（typing_status_text 或 "is thinking..."）
+      live_status: full
+```
+
+| 键 | 默认值 | 描述 |
+|-----|---------|-------------|
+| `display.live_status` | `"full"` | 按工具的实时状态提示行。`full` 显示动词 + 参数预览；`verb` 仅显示动词（避免把文件路径和命令暴露到共享频道）；`off` 恢复静态文本。与静态状态提示行一样，需要 `assistant:write` 权限范围。 |
 
 ### 会话隔离
 
@@ -365,14 +446,18 @@ slack:
 :::
 
 :::info
-Slack 支持两种模式：默认情况下需要 `@mention` 才能开始对话，但你可以通过 `SLACK_FREE_RESPONSE_CHANNELS`（逗号分隔的频道 ID）或 `config.yaml` 中的 `slack.free_response_channels` 为特定频道取消此限制。一旦机器人在话题中有活跃会话，后续话题回复无需提及。在私信中，机器人始终响应，无需提及。
+Slack 支持两种模式：默认情况下需要 `@mention` 才能开始对话，但你可以通过 `SLACK_FREE_RESPONSE_CHANNELS`（逗号分隔的频道 ID）或 `config.yaml` 中的 `slack.free_response_channels` 为特定频道取消此限制。一旦机器人在话题中有活跃会话，后续话题回复无需提及。在**一对一私信**中，机器人始终响应，无需提及。
+:::
+
+:::caution 群组私信（MPIM）是共享场所，而非一对一私信
+**一对一私信**是与单个人的私密对话，因此豁免提及要求。**群组私信（MPIM / 多人私信）**是*共享场所*——多个人都能看到并触发机器人——因此它遵循与频道相同的运维控制：`require_mention`、`strict_mention`、`free_response_channels` 和 `allowed_channels` 全部适用，并且只有在真正被 `@mention` 时，机器人才会添加 `:eyes:`/`:white_check_mark:` 反应。若要让机器人在某个特定群组私信中自由响应，请把它的频道 ID（以 `G` 开头）加入 `free_response_channels`。
 :::
 
 ### 频道白名单（`allowed_channels`）
 
 将机器人限制在固定的 Slack 频道集合中——当机器人被邀请到许多频道但只应在少数频道中响应时很有用。设置后，不在此列表中的频道消息将被**静默忽略**，即使机器人被 `@mention`。
 
-**私信不受此过滤器影响**，因此授权用户始终可以通过私信联系机器人。
+**一对一私信不受此过滤器影响**，因此授权用户始终可以通过私信联系机器人。**群组私信（MPIM）不豁免**——与频道一样，MPIM 必须在白名单中（其 ID 以 `G` 开头），否则其消息会被丢弃。
 
 ```yaml
 slack:

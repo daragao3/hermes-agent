@@ -10,6 +10,10 @@ description: "在 CLI、Telegram、Discord 及 Discord 语音频道中设置和�
 
 功能页面介绍语音模式能做什么，本指南则说明如何真正用好它。
 
+:::tip
+[Nous Portal](/integrations/nous-portal) 通过一次 OAuth 同时提供 LLM 和 TTS——语音模式无需额外凭据即可端到端工作。
+:::
+
 ## 语音模式适合哪些场景
 
 语音模式在以下情况特别有用：

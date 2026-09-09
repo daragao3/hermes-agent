@@ -8,6 +8,10 @@ description: "充分发挥 Hermes Agent 潜力的实用建议——prompt 技巧
 
 一份实用技巧速查集，帮助你立即提升使用 Hermes Agent 的效率。每个章节针对不同方面——扫描标题，直接跳到相关内容。
 
+:::tip 不确定该选哪个模型？
+运行 `hermes setup --portal`——一个订阅即可获得 300+ 模型，包括 Claude、GPT-5 和 Gemini。参见 [Nous Portal](/integrations/nous-portal)。
+:::
+
 ---
 
 ## 获得最佳结果
@@ -129,7 +133,7 @@ Hermes 在会话启动时从当前工作目录加载顶层 `AGENTS.md`。子目�
 
 ### 不要破坏 Prompt 缓存
 
-大多数 LLM 提供商会缓存系统 prompt 前缀。如果你保持系统 prompt 稳定（相同的上下文文件、相同的记忆），同一会话中的后续消息会命中**缓存**，成本显著降低。避免在会话中途切换模型或修改系统 prompt。
+大多数 LLM 提供商会缓存对话前缀（系统 prompt + 历史记录）。如果你保持系统 prompt 稳定（相同的上下文文件、相同的记忆），同一会话中的后续消息会命中**缓存**，成本显著降低。缓存是按模型和账户绑定的——因此显式的 `/model` 切换、[自动 provider 回退](../user-guide/features/fallback-providers.md)或[凭据池轮换](../user-guide/features/credential-pools.md)都会迫使下一轮以完整输入价格重新读取整个对话。偶尔切换没问题；但在长会话中频繁切换会成倍增加你的成本。
 
 ### 在达到限制前使用 /compress
 
@@ -145,7 +149,7 @@ Hermes 在会话启动时从当前工作目录加载顶层 `AGENTS.md`。子目�
 
 ### 选择合适的模型
 
-使用 `/model` 在会话中途切换模型。对于复杂推理和架构决策，使用前沿模型（Claude Sonnet/Opus、GPT-4o）；对于格式化、重命名或样板代码生成等简单任务，切换到更快的模型。
+使用 `/model` 在会话中途切换模型。对于复杂推理和架构决策，使用前沿模型（Claude Sonnet/Opus、GPT-4o）；对于格式化、重命名或样板代码生成等简单任务，切换到更快的模型。请注意，每次切换都会重置 prompt 缓存（见上文），因此在长会话中，直接用另一个模型开启新会话往往比来回切换更省钱。
 
 :::tip
 定期运行 `/usage` 查看 token 消耗情况。运行 `/insights` 可查看过去 30 天的用量模式概览。
@@ -177,11 +181,11 @@ Hermes 在会话启动时从当前工作目录加载顶层 `AGENTS.md`。子目�
 
 ### 对不可信代码使用 Docker
 
-在处理不可信仓库或运行陌生代码时，使用 Docker 或 Daytona 作为终端后端。在 `.env` 中设置 `TERMINAL_BACKEND=docker`。容器内的破坏性命令不会影响宿主系统。
+在处理不可信仓库或运行陌生代码时，使用 Docker 或 Daytona 作为终端后端。在 `.env` 中设置 `TERMINAL_ENV=docker`。容器内的破坏性命令不会影响宿主系统。
 
 ```bash
 # In your .env:
-TERMINAL_BACKEND=docker
+TERMINAL_ENV=docker
 TERMINAL_DOCKER_IMAGE=hermes-sandbox:latest
 ```
 

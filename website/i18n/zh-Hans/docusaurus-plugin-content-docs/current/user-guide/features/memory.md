@@ -20,7 +20,11 @@ Hermes Agent 拥有有界、经过整理的记忆，可跨会话持久保存。�
 两个文件均存储于 `~/.hermes/memories/`，在会话开始时以冻结快照的形式注入系统 prompt（提示词）。Agent 通过 `memory` 工具管理自身记忆——可添加、替换或删除条目。
 
 :::info
-字符上限使记忆保持聚焦。当记忆已满时，Agent 会整合或替换条目以腾出空间存放新信息。
+字符上限使记忆保持聚焦。记忆**不会**自动压缩：当一次写入将超出上限时，
+`memory` 工具会返回错误，而不是悄悄丢弃条目。随后 Agent 会自行腾出空间——
+在同一轮中整合或删除条目，然后再重试（参见[记忆已满时会发生什么](#what-happens-when-memory-is-full)）。
+注意 `replace` 同样受上限约束：把一个条目换成更长的内容仍可能溢出，
+因此新内容必须缩短（或删除另一个条目）才能放得下。
 :::
 
 ## 记忆在系统 Prompt 中的呈现方式
@@ -128,7 +132,7 @@ Agent 会自动保存——无需你主动要求。当它学到以下内容时�
 ```json
 {
   "success": false,
-  "error": "Memory at 2,100/2,200 chars. Adding this entry (250 chars) would exceed the limit. Replace or remove existing entries first.",
+  "error": "Memory at 2,100/2,200 chars. Adding this entry (250 chars) would exceed the limit. Consolidate now: use 'replace' to merge overlapping entries into shorter ones or 'remove' stale or less important entries (see current_entries below), then retry this add — all in this turn.",
   "current_entries": ["..."],
   "usage": "2,100/2,200"
 }
@@ -209,7 +213,106 @@ memory:
   user_profile_enabled: true
   memory_char_limit: 2200   # ~800 tokens
   user_char_limit: 1375     # ~500 tokens
+  write_approval: false     # false = 自由写入（默认） | true = 需要审批
 ```
+
+## 控制记忆写入（`write_approval`）
+
+默认情况下，Agent 会自由保存记忆——包括在一轮对话之后运行的后台自我改进
+复盘所产生的保存。如果你更希望先审批这些保存，请设置
+`memory.write_approval: true`。这是一个简单的开关式门控，同时作用于
+**前台**对话轮和后台复盘：
+
+| `write_approval` | 行为 |
+|------------------|------|
+| `false`（默认） | 自由写入——门控关闭（引入门控之前的行为）。 |
+| `true` | 保存任何内容前都需要审批。在交互式 CLI 中，前台写入会内联提示你（条目足够短，可以完整阅读）。其他所有场景——消息平台、脚本以及后台自我改进复盘——写入都会被**暂存**，通过 `/memory pending` 审阅。 |
+
+> 若要完全关闭记忆（而不只是加门控），请设置 `memory_enabled: false`。
+
+在 CLI 或任意消息平台上审阅暂存的写入：
+
+```
+/memory pending             # 列出暂存的记忆写入（自动产生的会标记 [auto]）
+/memory approve <id>        # 应用其中一条（或 'all'）
+/memory reject <id>         # 丢弃其中一条（或 'all'）
+/memory approval on         # 打开门控（或 'off'）并持久化该设置
+```
+
+这正是"Agent 保存了一个关于我的错误假设"的解法：设置
+`write_approval: true`，此后每一次保存——尤其是那些未经请求的后台保存——
+都要等你点头或否决之后才会进入你的档案。
+
+## 后台复盘通知（`display.memory_notifications`）
+
+在一轮对话之后，后台自我改进复盘可能会悄悄保存一条记忆或更新某个技能。
+这是 Hermes 具备同意意识的学习闭环：反复出现的纠正和持久的工作流经验会
+变成紧凑的记忆条目或流程化技能，而 `write_approval` 可以把这些写入暂存
+起来供你审阅，再决定是否影响后续会话。默认情况下它会在聊天中显示一行简短的
+`💾 Memory updated`，让你知道发生了什么。你可以控制它的啰嗦程度：
+
+```yaml
+display:
+  memory_notifications: on    # off | on（默认） | verbose
+```
+
+| 取值 | 行为 |
+|------|------|
+| `off` | 不发聊天通知。复盘照常运行、照常写入——只是你看不到提示行。 |
+| `on`（默认） | 通用提示行，例如 `💾 Memory updated`、`💾 Skill 'foo' patched`。 |
+| `verbose` | 附带变更内容的紧凑预览，例如 `💾 Memory ➕ User prefers terse replies`，或一段 `"old" → "new"` 的技能 diff 片段。 |
+
+> 这只控制**网关**的聊天通知。复盘本身以及对记忆/技能存储的写入不受此设置
+> 影响。可通过 `display.platforms.<platform>.memory_notifications` 按平台设置。
+
+## 在更便宜的模型上运行复盘（`auxiliary.background_review`）
+
+复盘默认运行在你的**主聊天模型**上，重放整段对话——这些内容已经在 prompt
+缓存中预热，因此只是廉价的缓存读取。如果主模型很贵，你可以改用更便宜的模型
+来跑复盘：
+
+```yaml
+auxiliary:
+  background_review:
+    provider: openrouter
+    model: google/gemini-3-flash-preview   # auto（默认）= 主聊天模型
+```
+
+当你把它指向与主模型**不同**的模型时，复盘会在那里以显著更低的成本运行
+（基准测试中约为 3–5 倍差距）。由于不同的模型本来也无法复用主模型的 prompt
+缓存，这个分支会自动重放一份紧凑的对话**摘要**（近期轮次逐字保留 + 较早内容
+的总结），而不是完整记录——从而尽量减少写入新缓存的内容。捕获质量依然成立：
+在测试中，记忆捕获与主模型复盘完全一致，技能捕获也几乎一致。
+
+保持 `auto`（或将其设为你的主模型），一切照旧——复盘仍在主模型上运行，
+并使用完整的热缓存重放。
+
+## 控制技能写入（`skills.write_approval`）
+
+技能使用同样的开关式门控，但审阅体验有所不同，因为 `SKILL.md` 远大于一个
+聊天气泡所能容纳的篇幅：
+
+```yaml
+skills:
+  write_approval: false     # false = 自由写入（默认） | true = 需要审批
+```
+
+当 `write_approval: true` 时，技能写入（create / edit / patch / write_file /
+delete）无论来源如何都会**暂存**。你在内联界面审阅一行摘要，完整 diff 则保留
+在带外查看：
+
+```
+/skills pending             # 列出暂存的技能写入，每条附一行摘要
+/skills diff <id>           # 完整 unified diff（建议在 CLI 或仪表盘中查看）
+/skills approve <id>        # 应用（或 'all'）
+/skills reject <id>         # 丢弃（或 'all'）
+/skills approval on         # 打开门控（或 'off'）并持久化该设置
+```
+
+在消息平台上，你可以根据摘要与元数据批准某个技能；想读完整改动时，可在
+CLI / 仪表盘上执行 `/skills diff`，或直接查看 `~/.hermes/pending/skills/<id>.json`
+下的暂存文件。完整细节参见 [为 Agent 技能写入加门控](/user-guide/features/skills#gating-agent-skill-writes-skillswrite_approval)。
+
 
 ## 外部记忆提供商
 

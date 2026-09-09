@@ -17,7 +17,7 @@ description: "Hermes Agent 常见问题解答及常见问题解决方案"
 Hermes Agent 可与任何兼容 OpenAI 的 API 配合使用。支持的提供商包括：
 
 - **[OpenRouter](https://openrouter.ai/)** — 通过一个 API key 访问数百个模型（推荐，灵活性强）
-- **Nous Portal** — Nous Research 自有推理端点
+- **[Nous Portal](/integrations/nous-portal)** — Nous Research 的订阅制网关 — 一次 OAuth 登录即可使用 300+ 模型以及网页/图像/TTS/浏览器能力（推荐新手使用）
 - **OpenAI** — GPT-5.4、GPT-5-codex、GPT-4.1、GPT-4o 等
 - **Anthropic** — Claude 模型（直接 API、通过 `hermes auth add anthropic` 进行 OAuth、OpenRouter 或任何兼容代理）
 - **Google** — Gemini 模型（通过 `gemini` 提供商直接调用 API、OpenRouter 或兼容代理）
@@ -28,13 +28,8 @@ Hermes Agent 可与任何兼容 OpenAI 的 API 配合使用。支持的提供商
 
 使用 `hermes model` 设置提供商，或直接编辑 `~/.hermes/.env`。所有提供商 key 请参阅[环境变量](./environment-variables.md)参考文档。
 
-### 支持 Windows 吗？
-
-**原生不支持。** Hermes Agent 需要类 Unix 环境。在 Windows 上，请安装 [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) 并在其中运行 Hermes。标准安装命令在 WSL2 中可完美运行：
-
-```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-```
+### 支持 Windows / Android / Termux / 我的平台吗？？
+完整的平台可用性矩阵请参阅 **[平台支持](../getting-started/platform-support.md)**。
 
 ### 我在 WSL2 中运行 Hermes，如何控制 Windows 上的普通 Chrome？
 
@@ -53,20 +48,6 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 
 - [在 Hermes 中使用 MCP](../guides/use-mcp-with-hermes.md#wsl2-bridge-hermes-in-wsl-to-windows-chrome)
 - [浏览器自动化](../user-guide/features/browser.md#wsl2--windows-chrome-prefer-mcp-over-browser-connect)
-
-### 支持 Android / Termux 吗？
-
-支持 — Hermes 现已为 Android 手机提供经过测试的 Termux 安装路径。
-
-快速安装：
-
-```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-```
-
-完整的手动步骤、支持的扩展及当前限制，请参阅 [Termux 指南](../getting-started/termux.md)。
-
-重要说明：完整的 `.[all]` 扩展目前在 Android 上不可用，因为 `voice` 扩展依赖 `faster-whisper` → `ctranslate2`，而 `ctranslate2` 未发布 Android wheel 包。请改用经过测试的 `.[termux]` 扩展。
 
 ### 我的数据会被发送到哪里？
 
@@ -663,6 +644,10 @@ delegation:
 # ... 撰写内容 ...
 /model openai/gpt-5.4                   # 切换回来
 ```
+
+:::warning
+每次 `/model` 切换都会重置 prompt（提示词）缓存 — 缓存键包含模型，因此每次切换后的第一条消息都会按完整输入价格重新读取整段对话。在长会话中，优先使用委托（子智能体拥有各自全新的上下文）或新开会话，而不是反复来回切换。
+:::
 
 有关委托工作原理的更多信息，请参阅[子智能体委托](../user-guide/features/delegation.md)。
 

@@ -21,7 +21,7 @@ Git **worktrees** 是为每个 agent 提供独立检出（checkout）而无需�
 Hermes 将**当前工作目录**视为项目根目录：
 
 - CLI：运行 `hermes` 或 `hermes chat` 时所在的目录
-- Messaging gateway：由 `MESSAGING_CWD` 设置的目录
+- Messaging gateway：由 `~/.hermes/config.yaml` 中的 `terminal.cwd` 设置的目录
 
 如果在**同一检出**中运行多个 agent，它们的变更可能相互干扰：
 
@@ -171,3 +171,7 @@ hermes -w -z "Fix issue #123"
 - 强有力的保证，确保不同 agent 和实验互不干扰。
 - 快速迭代周期，轻松从错误编辑中恢复。
 - 干净、易于审查的 pull request。
+
+## 跨 worktree 开发 UI 界面
+
+TypeScript 界面（`ui-tui/`、`apps/desktop/`）各自都需要一份 `node_modules`，而在每个 worktree 中执行全新的 `npm ci` 会让它在每个分支上重复一遍。如果你要从多个 worktree 开发 TUI 或桌面应用，请参阅 [从 Worktree 开发 TUI 与桌面应用](../developer-guide/worktree-ui-dev.md)，其中介绍了通过符号链接共享同一份安装的 `htui` / `hgui` 辅助命令。

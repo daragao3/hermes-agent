@@ -11,7 +11,8 @@ Hermes Agent 使用 SQLite 数据库（`~/.hermes/state.db`）跨 CLI 和 gatewa
 ~/.hermes/state.db (SQLite, WAL mode)
 ├── sessions              — 会话元数据、token 计数、计费信息
 ├── messages              — 每个会话的完整消息历史
-├── messages_fts          — FTS5 虚拟表（content + tool_name + tool_calls）
+├── messages_fts          — 基于 messages_fts_source 的 FTS5 外部内容索引
+├── messages_fts_source   — 视图：每条消息的 content + tool_name + tool_calls
 ├── messages_fts_trigram  — 使用 trigram tokenizer 的 FTS5 虚拟表（CJK / 子串搜索）
 ├── state_meta            — 键值元数据表
 └── schema_version        — 单行表，跟踪迁移状态
@@ -100,37 +101,106 @@ CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestam
 
 ### FTS5 全文搜索
 
+`messages_fts` 是一个**外部内容（external-content）**索引：它只存储搜索索引，不
+保存被索引文本的副本，需要时再从 `messages` 中读回。被索引的字符串跨越三个列，
+因此 `content=` 选项指向的是一个视图，而不是直接指向 `messages`：
+
 ```sql
+CREATE VIEW IF NOT EXISTS messages_fts_source AS
+SELECT
+    id AS id,
+    COALESCE(content, '') || ' ' || COALESCE(tool_name, '') || ' ' || COALESCE(tool_calls, '') AS content
+FROM messages;
+
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content,
-    content=messages,
-    content_rowid=id
+    content='messages_fts_source',
+    content_rowid='id'
 );
 ```
 
-FTS5 表通过三个触发器与 `messages` 表保持同步，分别在 INSERT、UPDATE 和 DELETE 时触发：
+不再保存第二份消息文本副本，大约能节省数据库文件的四分之一——在一个 5.1 GB 的
+生产 `state.db` 上，这份重复副本占了 1.3 GB。代价是 `snippet()` 需要通过视图
+重新读取该行；实际中这约占查询时间的 0.1%，因为调用方本来就会 join `messages`
+以获取完整内容。
+
+有两个后果很容易被忽略：
+
+- **`SELECT COUNT(*) FROM messages_fts` 统计的是消息数，而非已索引的行数。** 对
+  外部内容表做全表扫描读取的是视图，因此无论索引是完整还是为空，返回的都是同一
+  个数字。若要对索引本身作出任何断言，请使用 `... WHERE messages_fts MATCH ?`。
+- **请使用强完整性检查来验证。**
+  `INSERT INTO messages_fts(messages_fts, rank) VALUES('integrity-check', 1)`
+  会从内容表重新推导词元，因此既能检测出孤立的索引 rowid，也能检测出陈旧文本。
+  默认的 `rank=0` 形式两者都检测不到——你可能想到的其他手段同样如此：
+  `PRAGMA integrity_check` 会通过，消息写入会通过，而 `search_messages` 会按索引
+  rowid 对 `messages` 做 INNER JOIN，因此孤立项只是被过滤出结果，而不会报错。
+  受影响的消息会**在搜索中悄无声息地消失**；表面上看不出任何异常。
+
+### 从 CLI 检查
+
+```bash
+hermes doctor --deep
+```
+
+会运行该检查，而 `--deep --fix` 会用一次原地 FTS `'rebuild'` 修复所发现的问题。
+它**不属于**普通的 `hermes doctor`：rank=1 会重新读取并重新分词每一行已索引数据，
+在一个包含 576k 条消息的 4.9 GB `state.db` 上实测约需 70s。该开销受限于 CPU 而非
+I/O，因此缓存预热并不会带来改善。
+
+该检查有时间上限（`HERMES_DOCTOR_FTS_PROBE_TIMEOUT`，默认 300s），并且拥有独立的
+时间预算，而不是与通用 `state.db` 探测共享——两者的伸缩维度不同，共享一个截止时间
+会导致 `PRAGMA integrity_check` 在 FTS 检查开始之前就把预算耗尽。预算耗尽会被报告
+为 **unknown**，绝不会报告为损坏，也绝不会触发 `--fix`。
+
+如需不受时间限制的检查，`hermes sessions repair --check-only` 会执行同样的验证，
+且没有时间上限。
+
+索引通过 `messages` 上的三个触发器保持同步。删除一个条目意味着要通过 `'delete'`
+命令把**旧的**文本交给 FTS5，让它知道需要撤回哪些词元——直接
+`DELETE FROM messages_fts` 会被拒绝：
 
 ```sql
 CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+    INSERT INTO messages_fts(rowid, content) VALUES (
+        new.id,
+        COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
+    );
 END;
 
 CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content)
-        VALUES('delete', old.id, old.content);
+    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES (
+        'delete',
+        old.id,
+        COALESCE(old.content, '') || ' ' || COALESCE(old.tool_name, '') || ' ' || COALESCE(old.tool_calls, '')
+    );
 END;
 
 CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content)
-        VALUES('delete', old.id, old.content);
-    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES (
+        'delete',
+        old.id,
+        COALESCE(old.content, '') || ' ' || COALESCE(old.tool_name, '') || ' ' || COALESCE(old.tool_calls, '')
+    );
+    INSERT INTO messages_fts(rowid, content) VALUES (
+        new.id,
+        COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
+    );
 END;
 ```
 
+从损坏或不完整的索引中恢复的方式是
+`INSERT INTO messages_fts(messages_fts) VALUES('rebuild')`，它以
+`SessionDB.rebuild_fts()` 的形式对外暴露。由于它是从视图重新生成索引的，因此也会
+补上任何从未被索引过的消息——而对内联索引执行 rebuild 做不到这一点，因为后者读取
+的是索引自身存储的副本。
+
+`messages_fts_trigram` 是一个独立的**内联**索引；它是惰性创建的，可以通过
+`HERMES_DISABLE_MESSAGE_TRIGRAM` 禁用。
 
 ## Schema 版本与迁移
 
-当前 schema 版本：**11**
+当前 schema 版本：**21**
 
 `schema_version` 表存储单个整数。简单的列添加由 `_reconcile_columns()` 声明式处理（对比实时列与 `SCHEMA_SQL` 并 ADD 缺失列）。版本门控链保留用于无法声明式表达的数据迁移及索引/FTS 变更：
 
@@ -147,6 +217,12 @@ END;
 | 9 | 向 messages 添加 `codex_message_items` 列，用于 Codex Responses 消息 id/phase 重放 |
 | 10 | 添加 `messages_fts_trigram` 虚拟表（trigram tokenizer，用于 CJK / 子串搜索）并回填现有行 |
 | 11 | 重新索引 `messages_fts` 和 `messages_fts_trigram` 以覆盖 `tool_name` + `tool_calls`，从外部内容模式切换为内联模式；删除旧触发器并回填所有消息行 |
+| 16 | 在 `model_config` 中标记 delegate 子 agent 行（`$._delegate_from`），使父会话删除导致其成为孤立行后，会话选择器仍保持整洁 |
+| 18 | Gateway 元数据整合——从 `sessions.json` 回填 `display_name` / `origin_json` / `expiry_finalized` |
+| 20 | 按模型的用量归属——从历史上的逐会话聚合总量播种 `session_model_usage` 行 |
+| 32 | 将 `messages_fts` 转换回基于新的 `messages_fts_source` 视图的外部内容模式，删除重复的 `messages_fts_content` 影子表（在 5.1 GB 的数据库上约 1.3 GB）；将触发器重写为 `'delete'` 命令形式，并 `'rebuild'` 索引。**该迁移会重新索引每一条消息，在大型数据库上会持有写锁数十分钟**——请在写入方停止的情况下部署，不要在例行重启时执行 |
+
+上面未列出的版本属于由 `_reconcile_columns()` 处理的声明式列添加（仅提升版本号，无数据迁移）。
 
 声明式列添加使用 `ALTER TABLE ADD COLUMN`，包裹在 try/except 中以处理列已存在的情况（幂等）。每个成功的迁移块完成后版本号递增。
 

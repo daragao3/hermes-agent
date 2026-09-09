@@ -10,7 +10,7 @@ description: "与 Hermes Agent 的第一次对话——从安装到开始聊天�
 
 ## 更喜欢看视频？
 
-**Onchain AI Garage** 制作了一套涵盖安装、配置和基本命令的 Masterclass 演示视频——如果你更习惯跟着视频操作，这是本页的绝佳补充。更多内容请查看完整的 [Hermes Agent 教程与使用案例](https://www.youtube.com/channel/UCqB1bhMwGsW-yefBxYwFCCg) 播放列表。
+**Onchain AI Garage** 制作了一套涵盖安装、配置和基本命令的 Masterclass 演示视频——如果你更习惯跟着视频操作，这是本页的绝佳补充。更多内容请查看完整的 [Hermes Agent 教程与使用案例](https://www.youtube.com/playlist?list=PLmpUb_PWAkDxewld5ZYyKifuHxgIbiq2d) 播放列表。
 
 <div style={{position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden', maxWidth: '100%', marginBottom: '1.5rem'}}>
   <iframe
@@ -54,21 +54,24 @@ description: "与 Hermes Agent 的第一次对话——从安装到开始聊天�
 
 ### 不使用 Hermes Desktop：
 
-仅安装命令行版本（跟踪 main 分支）：
+如需在不安装 Hermes Desktop 的情况下仅安装命令行版本，请运行：
 
+#### Linux / macOS / WSL2 / Android (Termux)
 ```bash
-# Linux / macOS / WSL2 / Android (Termux)
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+```
+
+#### Windows（原生）
+
+在 powershell 中运行：
+```powershell
+iex (irm https://hermes-agent.nousresearch.com/install.ps1) 
 ```
 
 安装脚本会在 `~/.hermes/hermes-agent` 创建一个受管理的隔离环境（独立的 uv 托管解释器和 venv），这是唯一受支持的安装方式 —— 包括开发用途。请勿使用 `pip install hermes-agent`。
 
 :::tip Android / Termux
 如果你在手机上安装，请参阅专门的 [Termux 指南](./termux.md)，其中包含经过测试的手动安装步骤、支持的扩展功能以及当前 Android 特有的限制。
-:::
-
-:::tip Windows 用户
-请先安装 [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)，然后在 WSL2 终端中运行上述命令。
 :::
 
 安装完成后，重新加载 shell：
@@ -97,6 +100,16 @@ hermes setup --portal
 该命令一次性完成登录、设置 Nous 为 provider 并开启 Tool Gateway。
 :::
 
+:::info 配置模式
+在全新安装时，`hermes setup` 提供三种模式：
+
+- **快速配置（Nous Portal）** — 免费 OAuth 登录，无需 API key；一次配好模型以及 Tool Gateway 工具。推荐的快捷路径。
+- **完整配置** — 由你自己逐项走完每个 provider、工具和选项（自带 key）。
+- **空白起步（Blank Slate）** — 除了运行 Agent 所必需的最低配置外，一切默认**关闭**：**provider 与模型、文件操作（File Operations）工具集和终端（Terminal）工具集**。没有网页、浏览器、代码执行、视觉、记忆、委派、cron、skills、插件或 MCP 服务器——压缩、检查点、智能路由和记忆捕获也全部禁用。应用最小基线后，你可以在两条路径中选择其一：**保持一切禁用**（就此完成，得到一个最小化 Agent），或**逐项走完所有配置**（按需启用工具、skills、插件、MCP 和消息平台）。当你想要一个最小化、完全受控的 Agent，并打算只启用确实需要的功能时，选择这个模式。
+
+空白起步会写入一份显式的 `platform_toolsets.cli` 列表以及 `agent.disabled_toolsets`，因此你没有选择的东西永远不会加载——即使在 `hermes update` 之后也不会。之后可随时用 `hermes tools` 重新启用，用 `hermes skills opt-in --sync` 装载 skills，或用 `hermes setup agent` 调整设置。
+:::
+
 推荐默认选项：
 
 | Provider | 说明 | 配置方式 |
@@ -105,17 +118,29 @@ hermes setup --portal
 | **OpenAI Codex** | ChatGPT OAuth，使用 Codex 模型 | 通过 `hermes model` 进行设备码认证 |
 | **Anthropic** | 直接使用 Claude 模型——Max 计划 + 额外用量积分（OAuth），或按 token 付费的 API key | `hermes model` → OAuth 登录（需要 Max + 额外积分），或 Anthropic API key |
 | **OpenRouter** | 跨多个 provider 的多模型路由 | 输入 API key |
-| **Z.AI** | GLM / Zhipu 托管模型 | 设置 `GLM_API_KEY` / `ZAI_API_KEY` |
+| **Fireworks AI** | 兼容 OpenAI 的直连模型 API | 设置 `FIREWORKS_API_KEY` |
+| **Z.AI** | GLM / Zhipu 托管模型 | 设置 `GLM_API_KEY` / `ZAI_API_KEY`（也接受 `Z_AI_API_KEY`） |
 | **Kimi / Moonshot** | Moonshot 托管的编程和对话模型 | 设置 `KIMI_API_KEY`（或 Kimi-Coding 专用的 `KIMI_CODING_API_KEY`） |
 | **Kimi / Moonshot China** | 中国区 Moonshot endpoint | 设置 `KIMI_CN_API_KEY` |
 | **Arcee AI** | Trinity 模型 | 设置 `ARCEEAI_API_KEY` |
 | **GMI Cloud** | 多模型直连 API | 设置 `GMI_API_KEY` |
-| **MiniMax (OAuth)** | 通过浏览器 OAuth 使用 MiniMax-M2.7，无需 API key | `hermes model` → MiniMax (OAuth) |
+| **MiniMax (OAuth)** | 通过浏览器 OAuth 使用 MiniMax 前沿模型，无需 API key（`hermes_cli/models.py` 中的模型名称可能随版本变化） | `hermes model` → MiniMax (OAuth) |
 | **MiniMax** | 国际版 MiniMax endpoint | 设置 `MINIMAX_API_KEY` |
 | **MiniMax China** | 中国区 MiniMax endpoint | 设置 `MINIMAX_CN_API_KEY` |
-| **Alibaba Cloud** | 通过 DashScope 使用 Qwen 模型 | 设置 `DASHSCOPE_API_KEY` |
+| **Alibaba Cloud** | 通过 DashScope 使用 Qwen 模型 | 设置 `DASHSCOPE_API_KEY`（Qwen Coding Plan 也接受 `ALIBABA_CODING_PLAN_API_KEY`） |
 | **Hugging Face** | 通过统一路由器使用 20+ 开源模型（Qwen、DeepSeek、Kimi 等） | 设置 `HF_TOKEN` |
 | **AWS Bedrock** | 通过原生 Converse API 使用 Claude、Nova、Llama、DeepSeek | IAM 角色或 `aws configure`（[指南](../guides/aws-bedrock.md)） |
+| **Azure Foundry** | Azure AI Foundry 托管模型 | 设置 `AZURE_FOUNDRY_API_KEY` + `AZURE_FOUNDRY_BASE_URL` |
+| **Google AI Studio** | 通过直连 API 使用 Gemini 模型 | 设置 `GOOGLE_API_KEY` / `GEMINI_API_KEY` |
+| **xAI** | 通过直连 API 使用 Grok 模型 | 设置 `XAI_API_KEY` |
+| **xAI Grok OAuth** | SuperGrok / Premium+ 订阅，无需 API key | `hermes model` → xAI Grok OAuth |
+| **NovitaAI** | 多模型 API 网关 | 设置 `NOVITA_API_KEY` |
+| **StepFun** | Step Plan 模型 | 设置 `STEPFUN_API_KEY` |
+| **Xiaomi MiMo** | 小米托管模型 | 设置 `XIAOMI_API_KEY` |
+| **Tencent TokenHub** | 腾讯托管模型 | 设置 `TOKENHUB_API_KEY` |
+| **Ollama Cloud** | 托管的 Ollama 模型服务 | 设置 `OLLAMA_API_KEY` |
+| **LM Studio** | 提供兼容 OpenAI API 的本地桌面应用 | 设置 `LM_API_KEY`（如非默认地址还需 `LM_BASE_URL`） |
+| **Qwen OAuth** | Qwen Portal 浏览器 OAuth，无需 API key | `hermes model` → Qwen OAuth |
 | **Kilo Code** | KiloCode 托管模型 | 设置 `KILOCODE_API_KEY` |
 | **OpenCode Zen** | 按需付费访问精选模型 | 设置 `OPENCODE_ZEN_API_KEY` |
 | **OpenCode Go** | $10/月订阅，访问开源模型 | 设置 `OPENCODE_GO_API_KEY` |
@@ -266,12 +291,30 @@ uv pip install -e ".[voice]"
 
 ### Skills
 
+Skills 是按需加载的指令文档，教会 Hermes 如何完成某项具体任务——部署到 Kubernetes、开一个 GitHub PR、微调模型、搜索 GIF。每个 skill 都是一个 `SKILL.md` 文件，包含名称、描述和分步流程。Agent 会免费读取这些简短描述，只有当任务确实需要时才加载 skill 的完整内容，因此增加 skills 并不会让每次请求都变得臃肿。
+
+Hermes 自带一批内置 skills，已安装在 `~/.hermes/skills/` 中。你还可以从 Skills Hub 添加更多，或自己编写。
+
+**从 hub 浏览并安装：**
+
 ```bash
-hermes skills search kubernetes
-hermes skills install openai/skills/k8s
+hermes skills browse                      # 列出所有可用的 skill
+hermes skills search kubernetes           # 按关键词查找 skill
+hermes skills install openai/skills/k8s   # 安装某个 skill（会先执行安全扫描）
 ```
 
-或在聊天会话中使用 `/skills`。
+install 的参数是来自 hub 的 `source/path` slug——`openai/skills/k8s` 表示 OpenAI 目录中的 `k8s` skill。`hermes skills browse` 会显示可用的确切 slug。
+
+**使用 skill** —— 每个已安装的 skill 都会自动成为一个斜杠命令：
+
+```bash
+/k8s deploy the staging manifest          # 带请求运行该 skill
+/k8s                                       # 加载它，让 Hermes 询问你的需求
+```
+
+这在 CLI 以及任何已接入的消息平台中都可用。你不必预先安装所有内容——在正常对话中，只要任务匹配，Agent 会自行选用合适的内置 skill。
+
+编写自己的 skill、外部 skill 目录以及完整的 hub 源列表，请参阅 [Skills 系统](../user-guide/features/skills.md)。
 
 ### MCP 服务器
 

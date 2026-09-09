@@ -24,6 +24,10 @@ coder chat                        # 开始对话
 
 ## 创建 profile
 
+:::tip
+最快的配置方式：在新 profile 中运行 `hermes setup --portal`，一次性接好模型和工具。参见 [Nous Portal](/integrations/nous-portal)。
+:::
+
 ### 空白 profile
 
 ```bash
@@ -201,6 +205,18 @@ echo "You are a focused coding assistant." > ~/.hermes/profiles/coder/SOUL.md
 coder config set terminal.cwd /absolute/path/to/project
 ```
 
+### 从仪表板管理
+
+[Web 仪表板](features/web-dashboard.md#managing-multiple-profiles)是一个机器级
+界面，可以通过侧边栏中的 profile 切换器管理**任意** profile 的配置、API 密钥、
+技能、MCP 和模型——无需为每个 profile 单独启动仪表板。`coder dashboard` 会跳转
+到机器仪表板，并预先选中 `coder` profile。仪表板的 Chat 标签页同样跟随该切换
+器，会在所选 profile 的主目录下开启对话。
+
+注意：仪表板 Profiles 页面上的 "Set as active" 设置的是**后续 CLI/gateway 运行**
+的粘性默认值（等同于 `hermes profile use`）——若要从仪表板编辑某个 profile，
+请改用切换器。
+
 ## 更新
 
 `hermes update` 拉取一次代码（共享），并自动将新的内置技能同步到**所有** profile：
@@ -254,6 +270,29 @@ eval "$(hermes completion zsh)"
 profile 使用 `HERMES_HOME` 环境变量。运行 `coder chat` 时，包装脚本在启动 hermes 前将 `HERMES_HOME` 设置为 `~/.hermes/profiles/coder`。由于代码库中 119+ 个文件通过 `get_hermes_home()` 解析路径，Hermes 状态会自动限定在 profile 目录范围内——包括配置、会话、记忆、技能、状态数据库、gateway PID、日志和 cron 任务。
 
 这与终端工作目录是分开的。工具执行从 `terminal.cwd` 开始（或在 local 后端使用 `cwd: "."` 时从启动目录开始），而非自动从 `HERMES_HOME` 开始。
+
+在宿主机安装中，工具子进程默认保留你真实的操作系统用户 `HOME`，这样 `~` 下已有
+的 CLI 凭据在各个 profile 之间都能继续使用。profile 数据是靠 `HERMES_HOME` 隔离
+的，而不是靠更改 `HOME`。容器后端仍然使用 `{HERMES_HOME}/home` 来保存持久化的
+工具状态；宿主机用户若需要严格的按 profile 隔离工具配置，可以通过
+`terminal.home_mode: profile` 主动开启。
+
+这意味着两件容易混淆的事：
+
+- `HERMES_HOME` 是 profile 的边界。它控制 Hermes 的配置、`.env`、记忆、会话、
+  技能、日志、cron 任务、gateway 状态以及其他 Hermes 数据。
+- `HOME` 是外部 CLI 所期望的操作系统/用户主目录。在宿主机安装中，Hermes 默认
+  将其保持为真实的用户主目录，这样 `git`、`ssh`、`gh`、`az`、`npm`、Claude Code
+  和 Codex 等工具就能找到它们在你日常 shell 中使用的同一套凭据。
+
+代价是宿主机上的各 profile 默认共享普通的用户级 CLI 状态。如果你需要每个
+profile 拥有独立的 CLI 身份，请在该 profile 的 `config.yaml` 中设置
+`terminal.home_mode: profile`。在该模式下，Hermes 会以 `HOME={HERMES_HOME}/home`
+启动工具子进程；随后你需要在该 profile 主目录内初始化或链接对应的 `~/.ssh`、
+`~/.gitconfig`、`~/.config/gh`、云 CLI 认证、Claude/Codex 认证、npm 状态等文件。
+
+Hermes 还会向子进程暴露 `HERMES_REAL_HOME`，这样在 `home_mode: profile` 生效时，
+脚本仍然可以找到真实的账户主目录。
 
 默认 profile 就是 `~/.hermes` 本身。无需迁移——现有安装的工作方式完全不变。
 

@@ -8,6 +8,10 @@ description: "掌握 Hermes Agent 终端界面——命令、快捷键、人格�
 
 Hermes Agent 的 CLI 是一个完整的终端用户界面（TUI），而非 Web UI。它支持多行编辑、斜杠命令自动补全、对话历史、中断并重定向，以及流式工具输出。专为常驻终端的用户而生。
 
+:::tip 首次设置
+一条命令——`hermes setup --portal`——即可开始 `hermes chat`。参见 [Nous Portal](/integrations/nous-portal)。
+:::
+
 :::tip
 Hermes 还提供了一个现代 TUI，支持模态覆盖层、鼠标选择和非阻塞输入。使用 `hermes --tui` 启动——参见 [TUI](tui.md) 指南。
 :::
@@ -49,7 +53,7 @@ hermes -w -z "Fix issue #123"     # 在 worktree 中以单次查询模式运行
 
 ## 界面布局
 
-<img className="docs-terminal-figure" src="/img/docs/cli-layout.svg" alt="Hermes CLI 布局的风格化预览，展示了横幅、对话区域和固定输入提示符。" />
+<img className="docs-terminal-figure" src="/docs/img/docs/cli-layout.svg" alt="Hermes CLI 布局的风格化预览，展示了横幅、对话区域和固定输入提示符。" />
 <p className="docs-figure-caption">Hermes CLI 横幅、对话流和固定输入提示符，以稳定的文档图示形式呈现，而非脆弱的文字艺术。</p>
 
 欢迎横幅一目了然地显示当前模型、终端后端、工作目录、可用工具和已安装的 skill。
@@ -85,6 +89,8 @@ hermes -w -z "Fix issue #123"     # 在 worktree 中以单次查询模式运行
 | 红色 | ≥ 95% | 即将溢出——考虑使用 `/compress` |
 
 使用 `/usage` 查看详细分解，包括各类别费用（输入 vs 输出 token）。
+
+在 `openai-codex` provider 上，`/usage` 还会显示你的 ChatGPT 账户中已存入的用量限额重置次数（"You have N resets banked - use /usage reset to activate"）。`/usage reset` 会兑换一次已存入的重置，完全恢复你的 5 小时和每周限额。当你的限额尚未耗尽时，Hermes 会拒绝兑换（一次已存入的重置会恢复全部额度，提前使用会造成浪费）——传入 `/usage reset --force` 可强制兑换。
 
 ### 会话恢复显示
 

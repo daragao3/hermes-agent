@@ -17,6 +17,36 @@ Skills 是 agent 在需要时可以加载的按需知识文档。它们遵循**�
 - [捆绑 Skills 目录](/reference/skills-catalog)
 - [官方可选 Skills 目录](/reference/optional-skills-catalog)
 
+## 从空白状态开始
+
+默认情况下，每个 profile 都会预置捆绑的 skill 目录，并且每次 `hermes update` 都会加入新捆绑的 skills。如果你想要一个**不含任何捆绑 skills** 的 profile——并且在更新后仍保持为空——有两条路径：
+
+**在安装时**（适用于默认的 `~/.hermes` profile）：
+
+```bash
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --no-skills
+```
+
+**在创建 profile 时**（具名 profile）：
+
+```bash
+hermes profile create research --no-skills
+```
+
+**在已安装的 profile 上**（默认或具名），可在运行时切换：
+
+```bash
+hermes skills opt-out            # 停止未来的预置——不会改动磁盘上的任何内容
+hermes skills opt-out --remove   # 同时删除未被修改的捆绑 skills（会先确认）
+hermes skills opt-in --sync      # 撤销：删除标记并立即重新预置
+```
+
+这三条路径都会在 profile 目录中写入一个 `.no-bundled-skills` 标记文件。只要该标记存在，安装器、`hermes update` 以及任何 skill 同步都会跳过该 profile 的捆绑 skill 预置。删除该标记（或运行 `hermes skills opt-in`）即可重新启用。
+
+:::note 默认即安全
+`hermes skills opt-out` 只会停止*未来*的预置——它绝不会删除磁盘上已有的任何内容。可选的 `--remove` 标志**仅**在捆绑 skills 未被修改（与 Hermes 安装的版本逐字节相同）时才会删除它们。你编辑过的 skills、从 hub 安装的 skills，以及你自己编写的 skills 始终会被保留。
+:::
+
 ## 使用 Skills
 
 每个已安装的 skill 都会自动作为斜杠命令可用：
@@ -32,6 +62,22 @@ Skills 是 agent 在需要时可以加载的按需知识文档。它们遵循**�
 /excalidraw
 ```
 
+### 在一条命令中叠加多个 skills
+
+你可以在一条消息中调用多个 skill：只需在开头连续串接斜杠命令——开头的每个 `/skill` token（最多 5 个）都会被加载，其余部分作为你的指令：
+
+```bash
+/github-pr-workflow /test-driven-development fix issue #123 and open a PR
+```
+
+解析会在第一个非已安装 skill 的 token 处停止，因此恰好以 `/` 开头的参数（例如文件路径）绝不会被吞掉：
+
+```bash
+/ocr-and-documents /tmp/scan.pdf extract the tables   # 加载一个 skill；/tmp/scan.pdf 是参数
+```
+
+对于你反复使用的组合，更推荐使用 [skill 捆绑包](#skill-bundles)——一条短命令即可达到同样的效果。
+
 捆绑的 `plan` skill 是一个很好的示例。运行 `/plan [request]` 会加载该 skill 的指令，告知 Hermes 在需要时检查上下文、编写 markdown 实现计划而非直接执行任务，并将结果保存在相对于当前工作区/后端工作目录的 `.hermes/plans/` 下。
 
 你也可以通过自然对话与 skills 交互：
@@ -40,6 +86,28 @@ Skills 是 agent 在需要时可以加载的按需知识文档。它们遵循**�
 hermes chat --toolsets skills -q "What skills do you have?"
 hermes chat --toolsets skills -q "Show me the axolotl skill"
 ```
+
+## 从资料中学习一个 skill（`/learn`）
+
+`/learn` 是把你已经掌握的知识——或一堆参考资料——快速变成可复用 skill 的方式，而无需手写 `SKILL.md`。它是开放式的：把它指向*任何你能描述的东西*，agent 会用它已有的工具收集材料，然后按照[本项目的编写规范](#skillmd-format)撰写一个 skill（描述不超过 60 字符、标准的章节顺序、以 Hermes 工具为框架、不臆造命令）。
+
+```bash
+# 本地 SDK 或文档目录——用 read_file / search_files 读取
+/learn the REST client in ~/projects/acme-sdk, focus on auth + pagination
+
+# 在线文档页面——用 web_extract 抓取
+/learn https://docs.example.com/api/quickstart
+
+# 你刚刚在本次对话中带着 agent 走过的工作流
+/learn how I just deployed the staging server
+
+# 粘贴的笔记 / 口述的操作步骤
+/learn filing an expense: open the portal, New > Expense, attach the receipt, submit
+```
+
+由于是实时的 agent 完成资料收集，`/learn` 在 CLI、消息 gateway、TUI 和仪表板中的表现完全一致——在任何终端后端（本地、Docker、远程）上也是如此，因为它没有独立的摄取引擎。在**仪表板**中，Skills 页面有一个 **Learn a skill** 按钮，会打开一个包含目录字段、URL 字段和开放式文本框的面板；它会组装出一条 `/learn` 请求并在聊天中运行。
+
+它没有模型工具层面的开销：`/learn` 会构建一条遵循规范的提示词，并作为普通轮次交给 agent。agent 使用 `skill_manage` 工具保存结果，因此如果你启用了[写入审批门禁](#gating-agent-skill-writes-skillswrite_approval)，它同样适用。
 
 ## 渐进式披露
 
@@ -352,6 +420,8 @@ hermes bundles reload
 
 agent 可以通过 `skill_manage` 工具创建、更新和删除自己的 skills。这是 agent 的**程序性记忆**——当它找到一个非平凡的工作流时，它会将该方法保存为 skill 以供将来复用。
 
+skills 与记忆在自我改进循环中协同工作：记忆存放应始终位于上下文中的、简短而持久的事实，而 skills 存放只在相关时才加载的较长流程。后台审查可以在一次会话之后建议或暂存 skill 变更，而下文的写入审批门禁则让你可以要求这些变更先经过人工审阅再落地。
+
 ### Agent 创建 Skills 的时机
 
 - 成功完成复杂任务后（5+ 次工具调用）
@@ -373,6 +443,29 @@ agent 可以通过 `skill_manage` 工具创建、更新和删除自己的 skills
 :::tip
 `patch` 操作是更新的首选方式——它比 `edit` 更节省 token，因为工具调用中只出现变更的文本。
 :::
+
+### 对 agent 的 skill 写入设置门禁（`skills.write_approval`）
+
+默认情况下 agent 可以自由写入 skills——包括来自轮次结束后运行的[后台自我改进审查](/user-guide/features/memory#controlling-memory-writes-write_approval)的写入。如果你更希望先审批每一次 skill 写入（例如小模型会误判自己学到了什么、处于安全敏感环境，或只是想盯着自我改进循环），可以打开写入审批门禁：
+
+```yaml
+skills:
+  write_approval: false     # false = write freely (default) | true = require approval
+```
+
+当 `write_approval: true` 时，每一次 `skill_manage` 写入（create / edit / patch / delete / write_file / remove_file）都会被**暂存**而非直接提交——SKILL.md 体量太大，无法内联审阅，因此无论写入来自前台轮次还是后台审查，都一律暂存。暂存的写入保存在 `~/.hermes/pending/skills/` 下，可跨重启保留，并使用与危险命令相同、你已熟悉的批准/拒绝流程进行审阅：
+
+```
+/skills pending             # list staged skill writes + a one-line gist each
+/skills diff <id>           # full unified diff (best viewed in CLI or dashboard)
+/skills approve <id>        # apply it (or 'all')
+/skills reject <id>         # drop it (or 'all')
+/skills approval on         # turn the gate on (or 'off') and persist it
+```
+
+该审阅界面在交互式 CLI 和消息平台上均可使用（聊天气泡中的 diff 输出会被截断——请在 CLI 或 pending JSON 文件中查看完整 diff）。记忆写入在 `memory.write_approval` 下有同样的门禁——参见[控制记忆写入](/user-guide/features/memory#controlling-memory-writes-write_approval)。
+
+> 另有一个独立的 `skills.guard_agent_created` 设置，它是内容扫描器（基于危险模式的启发式判断），而不是审批门禁——两者互相独立。参见 [对 agent 创建的 skill 写入设置防护](/user-guide/configuration#guard-on-agent-created-skill-writes)。
 
 ## Skills Hub
 
@@ -414,7 +507,7 @@ hermes skills tap add myorg/skills-repo           # Add a custom GitHub source
 | `well-known` | `well-known:https://mintlify.com/docs/.well-known/skills/mintlify` | 直接从网站的 `/.well-known/skills/index.json` 提供的 skills。使用站点或文档 URL 搜索。 |
 | `url` | `https://sharethis.chat/SKILL.md` | 指向 `SKILL.md` 及其明确引用的支持文件的直接 HTTP(S) URL。名称解析顺序：frontmatter → URL slug → 交互式提示 → `--name` 标志。 |
 | `github` | `openai/skills/k8s` | 直接从 GitHub 仓库/路径安装以及基于 GitHub 的自定义 tap。 |
-| `clawhub`、`lobehub`、`browse-sh`、`claude-marketplace` | 来源特定标识符 | 社区或市场集成。 |
+| `clawhub`、`lobehub`、`browse-sh` | 来源特定标识符 | 社区或市场集成。 |
 
 ### 集成的 hub 和注册表
 
@@ -471,7 +564,6 @@ Hermes 可以直接从 GitHub 仓库和基于 GitHub 的 tap 安装。当你已�
 - [anthropics/skills](https://github.com/anthropics/skills)
 - [huggingface/skills](https://github.com/huggingface/skills)
 - [NVIDIA/skills](https://github.com/NVIDIA/skills) — NVIDIA 官方验证的技能（带签名 `skill.oms.sig` 与治理用 `skill-card.md`）
-- [VoltAgent/awesome-agent-skills](https://github.com/VoltAgent/awesome-agent-skills)
 - [garrytan/gstack](https://github.com/garrytan/gstack)
 
 - 示例：
@@ -479,6 +571,18 @@ Hermes 可以直接从 GitHub 仓库和基于 GitHub 的 tap 安装。当你已�
 ```bash
 hermes skills install openai/skills/k8s
 hermes skills tap add myorg/skills-repo
+```
+
+**分类分组（`skills.sh.json`）。** 一个 GitHub tap 可以在其仓库根目录提供一个遵循 [skills.sh schema](https://skills.sh/schemas/skills.sh.schema.json) 的 `skills.sh.json` 文件。其中的 `groupings`（每项含一个 `title` 和一组 skill 名称）会在建立索引时被读取，并成为 [Skills Hub](https://hermes-agent.nousresearch.com/docs) 页面上显示的分类标签——取代基于标签的推测。这是通用机制：任何提供该文件的 tap 都能获得真实的分类，无需改动 Hermes 侧的代码。
+
+```json
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "groupings": [
+    { "title": "Inference AI", "skills": ["dynamo-recipe-runner", "dynamo-router-sla"] },
+    { "title": "Decision Optimization", "skills": ["cuopt-developer", "cuopt-install"] }
+  ]
+}
 ```
 
 #### 5. ClawHub（`clawhub`）

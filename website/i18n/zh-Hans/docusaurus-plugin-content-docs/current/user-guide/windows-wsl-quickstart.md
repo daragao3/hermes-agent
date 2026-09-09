@@ -260,6 +260,31 @@ WSL2 在轻量级虚拟机中运行，拥有独立的网络栈。这意味着 WS
 
 Hermes 的 [Tool Gateway](/user-guide/features/tool-gateway) 和 API 服务器都是长期运行的进程。在 WSL2 中，有以下几种方式保持它们持续运行。
 
+### 用桌面快捷方式快速打开 Hermes
+
+如果你只是想要一个双击即可启动交互式 Hermes shell 的启动器，可以在 Windows
+一侧创建它，并让它自动跳进 WSL：
+
+1. 右键点击 Windows 桌面，选择 **新建 -> 快捷方式**。
+2. 目标一栏填入你的发行版名称（如有需要请替换 `Ubuntu`）：
+
+   ```text
+   wt.exe -w 0 -p "Ubuntu" wsl.exe -d Ubuntu --cd ~ -- bash -ic "hermes"
+   ```
+
+3. 给它起一个一目了然的名字，比如 `Hermes`。
+
+这会打开 Windows Terminal，启动你的 WSL 发行版，将你带到 Linux 家目录，并启动
+Hermes。如果 `hermes` 还不在 PATH 中，先手动打开一次 WSL 并运行
+`source ~/.bashrc`，或者把命令换成在你的项目检出目录中执行 `uv run hermes`。
+
+可选的润色：
+
+- **自定义图标：** 打开 **属性 -> 更改图标**，指向一个 `.ico` 文件，例如仓库中的
+  Hermes favicon。
+- **固定启动器：** 快捷方式可用之后，把它固定到“开始”菜单或任务栏，这样就不必
+  每次都去翻找。
+
 ### 在 WSL 内使用 systemd（推荐）
 
 如果你按照上面的安装步骤启用了 systemd，`hermes gateway` 和 API 服务器的使用方式与任何 Linux 机器上完全相同。使用 gateway 设置向导：

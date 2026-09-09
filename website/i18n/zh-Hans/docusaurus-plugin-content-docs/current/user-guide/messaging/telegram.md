@@ -48,6 +48,59 @@ sethome - Set this chat as the home channel
 ```
 :::
 
+### 在线/离线状态指示器（可选）
+
+Telegram 机器人没有真正的在线/离线状态圆点——那个绿点是*用户账号*的特性，Bot API
+并未为机器人提供该能力。最接近的呈现方式是机器人的**简短描述**（显示在机器人资料页
+名称下方的那一行）。
+
+启用 `status_indicator` 后，Hermes 会在 gateway 连接时把该简短描述设为 **Online**，
+并在正常关闭时设为 **Offline**：
+
+```yaml
+gateway:
+  platforms:
+    telegram:
+      extra:
+        status_indicator: true
+        # 可选的自定义文案（默认："Online" / "Offline"）：
+        status_online: "🟢 Online"
+        status_offline: "🔴 Offline"
+```
+
+注意事项：
+
+- 简短描述对机器人而言是**全局**的（所有用户可见），并非按聊天区分。用户会在机器人
+  的资料页看到它，而不是在打开的聊天中作为实时徽标显示。
+- 只有 gateway **正常**关闭（`/stop`、`disconnect`）才会写入"Offline"。
+  硬崩溃会保留最后已知状态——这是基于资料文本的指示器固有的局限。
+- 默认关闭，因为它会修改机器人的全局资料。
+
+### 命令菜单优先级与上限（可选）
+
+Telegram gateway 启动时，Hermes 会自动注册其命令菜单。该菜单由中央斜杠命令注册表加上符合条件的插件/技能命令构建，然后进行截断，以便 Telegram 能可靠地接受该负载。默认上限为 60 条命令——足以让所有内置命令加上常用技能命令保持可见。
+
+如果你有希望在 Telegram 的 `/` 选择器中保持可见的本地命令或插件命令，可在 `~/.hermes/config.yaml` 中为其设置优先级：
+
+```yaml
+platforms:
+  telegram:
+    extra:
+      command_menu:
+        max_commands: 60
+        priority_mode: prepend  # prepend | append | replace
+        priority:
+          - my_plugin_command
+```
+
+`priority_mode` 控制你的列表如何与 Hermes 内置优先级列表组合：
+
+- `prepend`：你的命令在前，随后是 Hermes 默认命令
+- `append`：Hermes 默认命令在前，随后是你的命令
+- `replace`：仅使用你的列表进行优先级排序
+
+Telegram 最多允许 100 条 BotCommand，但过大的命令负载可能失败。为可靠起见，Hermes 默认为 60，并将配置值钳制在 `1..100` 范围内；完整命令列表请使用 `/commands`。
+
 ## 第三步：隐私模式（群组关键设置）
 
 Telegram 机器人有一个**隐私模式**，**默认启用**。这是在群组中使用机器人时最常见的困惑来源。
@@ -314,7 +367,7 @@ stt:
 
 你的工具或技能可以直接读取该路径（例如，将其传递给本地说话人分离管道、更丰富的转录模型，或上传到长期存储）。文件扩展名反映 Telegram 投递的原始格式（语音备忘录为 `.ogg`，音频附件为 `.mp3`/`.m4a` 等）。
 
-这与下方的[本地 Bot API 服务器](#large-files-20mb--via-local-bot-api-server)部分配合使用效果极佳，该功能将 Telegram 的 20MB `getFile` 上限提升至 2GB——当你需要处理超过几分钟的录音时非常有用。
+这与下方的[本地 Bot API 服务器](#large-files-20mb-via-local-bot-api-server)部分配合使用效果极佳，该功能将 Telegram 的 20MB `getFile` 上限提升至 2GB——当你需要处理超过几分钟的录音时非常有用。
 
 ### 发送语音（文字转语音）
 
@@ -894,9 +947,10 @@ gateway:
     telegram:
       extra:
         rich_messages: true
+        rich_drafts: false
 ```
 
-这个设置用于客户端渲染/复制兼容性；当 Telegram 拒绝富消息 API 调用时，Hermes 已经会自动回退。如果你只是想在保持富消息启用的同时恢复旧版「始终使用代码块」表格行为，可在 `config.yaml` 中设置 `telegram.pretty_tables: false` 禁用表格规范化（默认：`true`）。
+这个设置用于客户端渲染/复制兼容性；当 Telegram 拒绝富消息 API 调用时，Hermes 已经会自动回退。`rich_drafts` 控制 Telegram 私聊流式传输期间的实验性富草稿预览路径，默认保持关闭，因为 Telegram Desktop/macOS 在聊天重绘之前可能会在视觉上叠加富草稿帧。如果你只是想在保持富消息启用的同时恢复旧版「始终使用代码块」表格行为，可在 `config.yaml` 中设置 `telegram.pretty_tables: false` 禁用表格规范化（默认：`true`）。
 
 **链接预览。** Telegram 会为机器人消息中的 URL 自动生成链接预览。如果你希望抑制这些预览（长 `/tools` 输出、提及十个链接的 Agent 回复等）：
 
@@ -1223,6 +1277,14 @@ HERMES_TELEGRAM_NOTIFICATIONS=all
 ```
 
 未知值会记录警告并回退到 `important`。
+
+## 原地编辑的状态消息
+
+Telegram 适配器会将周期性的 agent 状态回调（例如"正在压缩上下文…"、"正在调用工具…"）经由 `send_or_update_status()` 路由，该函数维护一个 `{(chat_id, status_key) → message_id}` 缓存，并在后续发出时**原地编辑已有气泡**，而不是每次追加一条新消息。不同的 `status_key` 值会各自拥有独立消息；不同聊天之间绝不会相互冲突。如果编辑失败（例如用户删除了该消息，或它超出了 Telegram 允许编辑的时限），对应缓存项会被丢弃，下一次发出时会发送一条新消息并重新缓存其 ID。无需任何配置——这是 Telegram 的默认行为。未实现 `send_or_update_status` 的其他适配器会照旧回退到普通的 `send()`。
+
+## 在 agent 轮次期间置顶用户的来信
+
+当用户发送的消息触发一次 agent 轮次时，Telegram 适配器会在该轮次期间置顶这条来信，并在回复完成后取消置顶——这是一个轻量的视觉提示，表明机器人正在处理该消息而非忽略它。置顶使用 `disable_notification=true`，以避免额外的提示音。无需任何配置。
 
 ## 安全
 

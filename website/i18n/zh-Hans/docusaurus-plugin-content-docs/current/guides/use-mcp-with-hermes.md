@@ -264,7 +264,58 @@ Review the project structure and identify where configuration lives.
 Check the local git state and summarize what changed recently.
 ```
 
-### 模式 2：GitHub 分类助手
+### 模式 2：使用 Open Scaffold 的仓库原生工作记录
+
+当你希望 Hermes 读取某个仓库中持久化的 AI 工作记录——任务目标（mission）、计划、证据笔记、交接包（handoff packet）以及评审/门禁结果时，请使用 [Open Scaffold](https://github.com/graphanov/open-scaffold)。Hermes 仍然是智能体，Open Scaffold 仍然是仓库本地的记录。
+
+为某个已搭建 scaffold 的仓库添加服务器：
+
+```bash
+hermes mcp add open_scaffold --command npx --args -y open-scaffold@latest mcp serve --repo /absolute/path/to/repo
+hermes mcp test open_scaffold
+```
+
+然后让暴露出来的接口保持以只读为主。在 `hermes mcp add` 的提示中选择 `select`，或者之后编辑 `config.yaml`：
+
+```yaml
+mcp_servers:
+  open_scaffold:
+    command: "npx"
+    args: ["-y", "open-scaffold@latest", "mcp", "serve", "--repo", "/absolute/path/to/repo"]
+    tools:
+      include:
+        - list_plans
+        - get_plan
+        - get_mission
+        - list_evidence
+        - get_evidence
+        - get_status
+        - search_plans
+        - list_amendments
+        - get_handoff
+        - analyze_loop
+        - gate_loop
+      prompts: false
+```
+
+好的 prompt：
+
+```text
+Use the Open Scaffold MCP tools to compile the current handoff packet and tell me the next legal action.
+```
+
+```text
+Inspect the active plans and evidence notes, then say whether this repo is ready for human review or needs another attempt.
+```
+
+边界说明：
+
+- Open Scaffold MCP 以本地优先，且默认只读。
+- 它的写入类工具要求服务器以 `--allow-write` 启动；在你明确希望 Hermes 修改 `.osc` 文件之前，不要启用该选项。
+- Open Scaffold 只负责记录并对工作设置门禁；它并不授权 Hermes 合并、发布、部署或启动运行时。
+- 如果你需要可复现的工具 schema，请固定 `open-scaffold@<version>` 而不是使用 `@latest`。
+
+### 模式 3：GitHub 分类助手
 
 ```yaml
 mcp_servers:
@@ -289,7 +340,7 @@ List open issues about MCP, cluster them by theme, and draft a high-quality issu
 Search the repo for uses of _discover_and_register_server and explain how MCP tools are registered.
 ```
 
-### 模式 3：内部 API 助手
+### 模式 4：内部 API 助手
 
 ```yaml
 mcp_servers:

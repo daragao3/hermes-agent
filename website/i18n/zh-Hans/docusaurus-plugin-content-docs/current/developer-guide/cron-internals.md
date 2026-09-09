@@ -102,9 +102,67 @@ tick()
 
 ### Gateway 集成
 
-在 gateway 模式下，调度器运行在专用后台线程中（`gateway/run.py` 中的 `_start_cron_ticker`），每 60 秒调用一次 `scheduler.tick()`，与消息处理并行运行。
+在 gateway 模式下，cron **触发器**（决定一个到期任务*何时*触发的部分——“轴 B”）通过可插拔的
+`CronScheduler` provider 选择。Gateway 调用 `resolve_cron_scheduler()`
+（`cron/scheduler_provider.py`），并在专用后台线程中运行所解析 provider 的 `start()`，
+同时另有一个独立的 gateway 内务线程。
+
+活跃的 provider 由 `cron.provider` 配置键决定：
+
+- **留空（默认）** → 内置的 `InProcessCronScheduler`，运行历史上的进程内循环，每 60 秒调用一次
+  `scheduler.tick()`。其行为与引入 provider 之前逐字节一致。
+- **具名 provider**（例如 `chronos`，一个面向缩容至零部署的托管 cron provider）→
+  从 `plugins/cron/<name>/` 或 `$HERMES_HOME/plugins/<name>/` 中发现。
+
+如果具名 provider 缺失、加载失败，或报告 `is_available() ==
+False`，解析器会回退到内置 provider 并记录警告——**cron 永远不会没有触发器。**
+内置 provider 位于核心代码中（`cron/scheduler_provider.py`），而非 `plugins/`，因此该回退不会被意外移除。
+
+“触发”*意味着*什么（任务执行 + 投递）保持不变，并由所有 provider 共享——它仍然位于
+`scheduler.run_job()` / `scheduler._deliver_result()` 中。
+Provider 只控制触发器，绝不控制执行。
 
 在 CLI 模式下，cron 任务仅在运行 `hermes cron` 命令或活跃 CLI 会话期间触发。
+
+### 面向缩容至零的托管 cron（Chronos）
+
+托管 gateway 可以运行 **Chronos** provider（`cron.provider: chronos`）
+来替代内置的 ticker。Chronos 让空闲的 gateway 能够**缩容至零**
+并仍然触发 cron 任务：它不使用 60 秒的进程内循环（那会让进程一直保持唤醒），
+而是请求 Nous 基础设施在每个任务真正的下次触发时刻**为该任务精确布置一个托管的一次性定时器**。
+到达触发时刻时，Nous 通过一个经过认证的 webhook 回调 gateway（`POST /api/cron/fire`）；
+gateway 通过与内置实现相同的 `run_one_job` 路径运行该任务，
+然后重新布置下一个一次性定时器。两次触发之间进程可以被完全停止——
+它只在真正的触发时被唤醒，而不会被周期性定时器唤醒。
+
+流程如下（托管调度器由 Nous 提供；agent 不持有任何调度器凭证）：
+
+```
+create/update a cron job
+  → Chronos asks Nous to arm a one-shot at the job's next_run_at
+      (authenticated with the agent's existing Nous token)
+  → at fire time Nous calls the gateway: POST {callback_url}/api/cron/fire
+      (authenticated with a short-lived, purpose-scoped Nous-minted JWT)
+  → the gateway verifies the token, claims the job (store compare-and-set so
+    multi-replica deployments fire at-most-once), runs it, and re-arms the next
+    one-shot
+```
+
+配置（全部为非机密项；在托管 agent 上由 Nous 在开通时设置）：
+
+| 键 | 含义 |
+|---|---|
+| `cron.provider` | 设为 `chronos` 以启用（留空 = 内置 ticker） |
+| `cron.chronos.portal_url` | Nous 基础 URL（布置定时器 + 触发令牌签发方） |
+| `cron.chronos.callback_url` | gateway 自身用于接收入站触发的公网基础 URL |
+| `cron.chronos.expected_audience` | 本 agent 的触发令牌 audience |
+| `cron.chronos.nas_jwks_url` | 用于验证入站触发令牌的密钥集 |
+
+如果 Chronos 配置有误，或 agent 未登录 Nous，
+`resolve_cron_scheduler()` 会回退到内置 ticker（并记录警告）——
+cron 永远不会失去触发器。重复任务在每次触发后重新布置定时器；`repeat`-N
+任务在次数耗尽后干净地停止（不会遗留孤立的一次性定时器）。完整的
+agent↔Nous 通信契约位于 `docs/chronos-managed-cron-contract.md`。
 
 ### 全新会话隔离
 
@@ -141,12 +199,14 @@ import requests, json
 # 将摘要打印到 stdout——agent 进行分析并报告
 ```
 
-脚本超时默认为 120 秒。`_get_script_timeout()` 通过三层链路解析限制：
+脚本超时默认为 3600 秒（1 小时）。`_get_script_timeout()` 通过三层链路解析限制：
 
 1. **模块级覆盖** — `_SCRIPT_TIMEOUT`（用于测试/monkeypatching）。仅在与默认值不同时使用。
 2. **环境变量** — `HERMES_CRON_SCRIPT_TIMEOUT`
 3. **配置** — `config.yaml` 中的 `cron.script_timeout_seconds`（通过 `load_config()` 读取）
-4. **默认值** — 120 秒
+4. **默认值** — 3600 秒（1 小时）
+
+该超时仅限制**预运行脚本**，不限制 agent。基于技能 / LLM 驱动的任务采用一套独立的、基于*非活动*的预算（`HERMES_CRON_TIMEOUT`，默认 600 秒空闲时间，`0` = 无限制）——只要它们持续调用工具或流式输出 token，就可以运行数小时，只有在配置的空闲时长内毫无活动时才会被终止。脚本被派发到一个常驻线程池（不占用 tick 锁），因此长时间运行的脚本不会阻塞其他到期任务的触发。
 
 ### Provider 恢复
 

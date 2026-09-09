@@ -157,6 +157,10 @@ hermes mcp test NAME        Test connection
 hermes mcp configure NAME   Toggle tool selection
 ```
 
+内置 MCP 客户端如何连接服务器（stdio/HTTP）、自动发现
+其工具并将它们暴露为一等工具，以及目录安装
+（`hermes mcp install <name>`）：`skill_view(name="hermes-agent", file_path="references/native-mcp.md")`。
+
 ### Gateway（消息平台）
 
 ```
@@ -204,6 +208,9 @@ hermes webhook list         List subscriptions
 hermes webhook remove NAME  Remove a subscription
 hermes webhook test NAME    Send a test POST
 ```
+
+完整的设置、路由配置、payload 模板化以及事件驱动的 agent 运行
+模式：`skill_view(name="hermes-agent", file_path="references/webhooks.md")`。
 
 ### Profiles
 
@@ -348,7 +355,7 @@ hermes uninstall            Uninstall Hermes
 
 ```
 ~/.hermes/config.yaml       Main configuration
-~/.hermes/.env              API keys and secrets
+~/.hermes/.env              API keys and secrets (under $HERMES_HOME if set)
 $HERMES_HOME/skills/        Installed skills
 ~/.hermes/sessions/         Session transcripts
 ~/.hermes/logs/             Gateway and error logs
@@ -364,7 +371,7 @@ Profiles 使用 `~/.hermes/profiles/<name>/`，布局相同。
 
 | 节 | 键选项 |
 |---------|-------------|
-| `model` | `default`, `provider`, `base_url`, `api_key`, `context_length` |
+| `model` | `default`, `provider`, `base_url`, `api_key`, `context_length`（显式覆盖；清空为 `""` 则从服务器的 `/v1/models` 自动检测） |
 | `agent` | `max_turns` (90), `tool_use_enforcement` |
 | `terminal` | `backend` (local/docker/ssh/modal), `cwd`, `timeout` (180) |
 | `compression` | `enabled`, `threshold` (0.50), `target_ratio` (0.20) |
@@ -443,7 +450,6 @@ Profiles 使用 `~/.hermes/profiles/<name>/`，布局相同。
 | `feishu_drive` | 飞书云盘工具 |
 | `yuanbao` | 元宝集成工具 |
 | `rl` | 强化学习工具（默认关闭） |
-| `moa` | Mixture of Agents（默认关闭） |
 
 完整枚举位于 `toolsets.py` 的 `TOOLSETS` 字典中；`_HERMES_CORE_TOOLS` 是大多数平台继承的默认工具包。
 
@@ -457,15 +463,15 @@ Profiles 使用 `~/.hermes/profiles/<name>/`，布局相同。
 
 ### 工具输出中的密钥脱敏
 
-密钥脱敏**默认关闭** — 工具输出（终端 stdout、`read_file`、网页内容、子 agent 摘要等）不经修改直接传递。如果用户希望 Hermes 在 API key、token 和密钥进入对话上下文和日志之前自动屏蔽它们：
+密钥脱敏**默认开启** — 工具输出（终端 stdout、`read_file`、网页内容、子 agent 摘要等）在进入对话上下文和日志之前，会被扫描是否包含形似 API key、token 和密钥的字符串。日常使用请保持启用：
 
 ```bash
-hermes config set security.redact_secrets true       # 全局启用
+hermes config set security.redact_secrets true       # 保持全局启用
 ```
 
-**需要重启。** `security.redact_secrets` 在导入时快照 — 在会话中途切换（例如通过工具调用执行 `export HERMES_REDACT_SECRETS=true`）对正在运行的进程**不会**生效。告知用户在终端运行 `hermes config set security.redact_secrets true`，然后启动新会话。这是有意为之——防止 LLM 在任务中途自行切换该开关。
+**需要重启。** `security.redact_secrets` 在导入时快照 — 在会话中途切换（例如通过工具调用执行 `export HERMES_REDACT_SECRETS=false`）对正在运行的进程**不会**生效。告知用户从终端在配置中更改它，然后启动新会话。这是有意为之——防止 LLM 在任务中途自行切换该开关。
 
-再次禁用：
+仅当你确实需要原始的、形似凭据的字符串来做调试或开发脱敏器时才禁用：
 ```bash
 hermes config set security.redact_secrets false
 ```
@@ -775,6 +781,21 @@ hermes config set auxiliary.vision.model <model_name>
 ```
 
 ---
+### 上下文窗口显示的大小不对
+
+如果 Hermes 报告的上下文窗口小于你的本地模型实际支持的大小
+（例如 llama-server 设置了 `-c 262144`，却显示 128k）：
+
+**检查 `model.context_length` 是否被显式设置。** Hermes 使用
+多来源解析链（优先级从高到低）：
+
+1. config.yaml 中的 `model.context_length`——**一旦设置就会阻断自动检测**
+2. 自定义提供商的按模型设置
+3. 持久缓存（重启后仍有效）
+4. 你的服务器的 `/v1/models` 端点——在上面各项都未覆盖时自动检测
+
+**修复：** 清除该覆盖值，让自动检测生效：
+
 
 ## 查找资源
 
@@ -827,7 +848,7 @@ hermes-agent/
 ```
 <!-- ascii-guard-ignore-end -->
 
-配置：`~/.hermes/config.yaml`（设置）、`~/.hermes/.env`（API key）。
+配置：`~/.hermes/config.yaml`（设置）、`~/.hermes/.env`（API key）——设置了 `$HERMES_HOME` 时两者都位于其下。
 
 ### 添加工具（3 个文件）
 

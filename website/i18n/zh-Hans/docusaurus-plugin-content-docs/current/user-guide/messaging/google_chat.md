@@ -8,6 +8,8 @@ description: "使用 Cloud Pub/Sub 将 Hermes Agent 设置为 Google Chat 机器
 
 将 Hermes Agent 作为机器人接入 Google Chat。该集成使用 Cloud Pub/Sub 拉取订阅接收入站事件，使用 Chat REST API 发送出站消息。与 Slack Socket Mode 或 Telegram 长轮询的使用体验相当：Hermes 进程无需公网 URL、隧道或 TLS 证书。它直接连接、认证并监听订阅——就像 Telegram 机器人通过 token 监听一样。
 
+> 运行 `hermes gateway setup` 并选择 **Google Chat**，可获得引导式配置流程。
+
 :::note Workspace 版本
 Google Chat 是 Google Workspace 的一部分。你可以在个人 Workspace（通过 Google 注册的 `@yourdomain.com`）或拥有管理员权限可发布应用的企业 Workspace 中使用此集成。仅有 Gmail 账号的用户无法托管 Chat 应用。
 :::
@@ -159,6 +161,19 @@ hermes gateway
 
 在测试私信中发送"hola"。机器人会先发送一条"Hermes is thinking…"占位消息，然后原地编辑该消息为真实回复——不会留下"消息已删除"的墓碑。
 
+### 自定义工作状态标记
+
+标记文本可通过 `~/.hermes/config.yaml` 中的 `typing_status_text` 配置——例如一只名叫 Ada 的小猫助手：
+
+```yaml
+platforms:
+  google_chat:
+    # 自定义工作状态标记文本（默认："Hermes is thinking…"）。
+    typing_status_text: "is pouncing… 🐾"
+```
+
+与 Slack 的临时状态行不同，这是一条**真实发送的消息**，随后会被原地编辑为回复内容——因此你在此设置的任何文本都会作为一条普通消息短暂出现在聊天中。将 `typing_indicator` 设为 `false` 可完全禁用该标记。
+
 ---
 
 ## 格式化与功能
@@ -192,19 +207,24 @@ Google Chat 的 `media.upload` 端点会硬拒绝 service account 认证：
 
 没有任何 IAM 角色或 scope 能解决这个问题。该端点只接受用户凭据。因此，机器人在上传文件时必须*以用户身份*操作——具体来说，是以请求文件的用户身份。
 
-### 一次性宿主机设置
+### 一次性设置（每个 profile 一次）
 
 1. 在同一 GCP 项目中，进入 **APIs & Services → Credentials**。
 2. **Create credentials → OAuth client ID → Desktop app**。
 3. 下载 JSON 文件，移动到运行 Hermes 的宿主机上。
-4. 在宿主机上，向 Hermes 注册该客户端：
+4. 向 Hermes 注册该客户端（在你希望其作用范围所属的 profile 下运行）：
 
 ```bash
-python -m gateway.platforms.google_chat_user_oauth \
+# 默认 profile：
+python -m plugins.platforms.google_chat.oauth \
+    --client-secret /path/to/client_secret.json
+
+# 具名 profile 拥有各自独立的注册：
+hermes -p <profile> python -m plugins.platforms.google_chat.oauth \
     --client-secret /path/to/client_secret.json
 ```
 
-该命令会写入 `~/.hermes/google_chat_user_client_secret.json`。这是共享基础设施——它标识 OAuth *应用*，而非某个具体用户。无论后续有多少用户授权，每台宿主机只需一个文件。
+该命令会把客户端密钥写入当前 profile 的 Hermes home（例如默认 profile 为 `~/.hermes/google_chat_user_client_secret.json`）。客户端密钥是 **profile 范围的，不会在多个 profile 之间共享**——每个 profile 需各自注册。这是有意为之：profile 是相互隔离的认证边界，因此两个 profile 可以指向不同的 Google OAuth 应用/账号。每个需要 Google Chat 附件投递的 profile 注册一次即可。
 
 ### 每用户授权（在 Chat 中操作）
 
@@ -255,12 +275,17 @@ Chat API 默认配额为每个 space 每分钟 60 条消息。如果 agent 产�
 
 请求者没有每用户 OAuth token，也没有旧版回退。在其私信中运行 `/setup-files` 并按照第十步操作。交换完成后，下次文件请求将原生上传，无需重启 gateway。
 
-**`/setup-files start` 提示"No client credentials stored on the host."**
+**`/setup-files start` 提示"No client credentials stored."**
 
-一次性宿主机设置未完成。在运行 Hermes 的宿主机终端中执行：
+*该 profile* 的一次性设置未完成（客户端密钥是 profile 范围的，因此在某个 profile 下完成的注册不会被另一个 profile 看到）。在终端中，以 gateway 使用的 profile 运行：
 
 ```bash
-python -m gateway.platforms.google_chat_user_oauth \
+# 默认 profile：
+python -m plugins.platforms.google_chat.oauth \
+    --client-secret /path/to/client_secret.json
+
+# 具名 profile：
+hermes -p <profile> python -m plugins.platforms.google_chat.oauth \
     --client-secret /path/to/client_secret.json
 ```
 

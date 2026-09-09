@@ -202,8 +202,8 @@ async def handle(event_type: str, context: dict):
 # Startup Checklist
 
 1. Run `hermes cron list` and check if any scheduled jobs failed overnight.
-2. If any failed, send a summary to Discord #ops using the `send_message` tool.
-3. Check if `/opt/app/deploy.log` has any ERROR lines from the last 24 hours. If yes, summarize them and include in the same Discord message.
+2. If any failed, summarize them for Discord #ops (the hook delivers your final response to its configured target).
+3. Check if `/opt/app/deploy.log` has any ERROR lines from the last 24 hours. If yes, summarize them and include in the same report.
 4. If nothing went wrong, reply with only `[SILENT]` so no message is sent.
 ```
 
@@ -247,8 +247,9 @@ def _build_prompt(content: str) -> str:
         "---\n"
         f"{content}\n"
         "---\n\n"
-        "Execute each instruction. Use the send_message tool to deliver any "
-        "messages to platforms like Discord or Slack.\n"
+        "Execute each instruction. Put any user-facing summary in your "
+        "final response — the hook delivers it to the configured channel "
+        "(e.g. Discord or Slack); you do not send messages yourself.\n"
         "If nothing needs attention and there is nothing to report, reply "
         "with ONLY: [SILENT]"
     )
@@ -274,8 +275,8 @@ def _run_boot_agent(content: str) -> None:
             max_iterations=20,
         )
         result = agent.run_conversation(_build_prompt(content))
-        response = result.get("final_response", "")
-        if response and "[SILENT]" not in response:
+        response = (result.get("final_response", "") or "").strip()
+        if response.upper() not in {"[SILENT]", "SILENT", "NO_REPLY", "NO REPLY"}:
             logger.info("boot-md completed: %s", response[:200])
         else:
             logger.info("boot-md completed (nothing to report)")
@@ -323,7 +324,7 @@ hermes gateway restart
 hermes logs --follow --level INFO | grep boot-md
 ```
 
-你应该看到 `Running BOOT.md (N chars)`，随后是 `boot-md completed: ...`（agent 执行内容的摘要）或 `boot-md completed (nothing to report)`（agent 回复了 `[SILENT]`）。
+你应该看到 `Running BOOT.md (N chars)`，随后是 `boot-md completed: ...`（agent 执行内容的摘要）或 `boot-md completed (nothing to report)`（agent 回复了精确的静默 token，例如 `[SILENT]`）。
 
 删除 `~/.hermes/BOOT.md` 即可禁用检查清单——hook 保持加载状态，但在文件不存在时会静默跳过。
 
@@ -353,6 +354,9 @@ Gateway hooks 仅在 **gateway**（Telegram、Discord、Slack、WhatsApp、Teams
 
 [插件](/user-guide/features/plugins)可以注册在 **CLI 和 gateway** 会话中均会触发的 hook。这些 hook 通过插件 `register()` 函数中的 `ctx.register_hook()` 以编程方式注册。
 
+有关插件打包与注册的详细信息，请参阅
+[插件指南](/docs/user-guide/features/plugins)。
+
 ```python
 def register(ctx):
     ctx.register_hook("pre_tool_call", my_tool_observer)
@@ -368,6 +372,7 @@ def register(ctx):
 - 回调接收**关键字参数**。始终接受 `**kwargs` 以保持向前兼容性——未来版本可能会在不破坏插件的情况下添加新参数。
 - 如果回调**崩溃**，会被记录并跳过。其他 hook 和 agent 继续正常运行。行为异常的插件永远不会破坏 agent。
 - 两个 hook 的返回值会影响行为：[`pre_tool_call`](#pre_tool_call) 可以**阻断**工具，[`pre_llm_call`](#pre_llm_call) 可以**注入上下文**到 LLM 调用中。其他所有 hook 均为即发即忘的观察者。
+- 观察者回调会自动收到 `telemetry_schema_version`。当存在时，`turn_id`、`api_request_id`、`task_id`、`session_id` 和 `api_call_count` 是各自独立的关联字段。请将 `api_request_id` 视为不透明标识符，不要解析其字符串格式。
 
 ### 快速参考
 
@@ -377,14 +382,16 @@ def register(ctx):
 | [`post_tool_call`](#post_tool_call) | 任意工具返回后 | 忽略 |
 | [`pre_llm_call`](#pre_llm_call) | 每轮一次，工具调用循环前 | `{"context": str}` 用于在用户消息前追加上下文 |
 | [`post_llm_call`](#post_llm_call) | 每轮一次，工具调用循环后 | 忽略 |
+| [`pre_verify`](#pre_verify) | agent 编辑过代码时每轮一次，在其验证/结束之前 | `{"action": "continue", "message": str}` 用于让其继续 |
 | [`on_session_start`](#on_session_start) | 新会话创建（仅第一轮） | 忽略 |
 | [`on_session_end`](#on_session_end) | 会话结束 | 忽略 |
 | [`on_session_finalize`](#on_session_finalize) | CLI/gateway 销毁活跃会话（刷新、保存、统计） | 忽略 |
 | [`on_session_reset`](#on_session_reset) | Gateway 换入新会话 key（如 `/new`、`/reset`） | 忽略 |
+| [`subagent_start`](#subagent_start) | `delegate_task` 子 agent 已构建完成，即将运行 | 忽略 |
 | [`subagent_stop`](#subagent_stop) | `delegate_task` 子 agent 退出 | 忽略 |
 | [`pre_gateway_dispatch`](#pre_gateway_dispatch) | Gateway 收到用户消息，认证和分发前 | `{"action": "skip" \| "rewrite" \| "allow", ...}` 用于影响流程 |
-| [`pre_approval_request`](#pre_approval_request) | 危险命令需要用户审批，提示/通知发送前 | 忽略 |
-| [`post_approval_response`](#post_approval_response) | 用户响应审批提示（或超时） | 忽略 |
+| [`pre_approval_request`](#pre_approval_request) | 请求做出审批决定时，包括 smart 模式的自动决定 | 忽略 |
+| [`post_approval_response`](#post_approval_response) | 做出审批决定时（或提示超时） | 忽略 |
 | [`transform_tool_result`](#transform_tool_result) | 任意工具返回后，结果交还给模型前 | `str` 替换结果，`None` 保持不变 |
 | [`transform_terminal_output`](#transform_terminal_output) | `terminal` 工具内部，截断/ANSI 剥离/脱敏前 | `str` 替换原始输出，`None` 保持不变 |
 | [`transform_llm_output`](#transform_llm_output) | 工具调用循环完成后，最终响应交付前 | `str` 替换响应文本，`None`/空值保持不变 |
@@ -646,6 +653,71 @@ def register(ctx):
 
 ---
 
+### `pre_verify`
+
+**在 agent 编辑过代码的那一轮触发一次**，就在它结束之前（在内置的 verify-on-stop 守卫之后）。这是一个用户/插件策略门控：回调可以让 agent 继续跑下去——执行一次检查、推迟检查、整理 diff——而不是让它就此停下。
+
+Hermes 自带的验证指引并不是一个默认的 `pre_verify` hook。当被编辑的代码缺少新鲜的验证证据时，它会被追加到基于证据的 verify-on-stop 提示中，因此不会额外制造第二条默认的续跑路径。设置 `agent.verify_guidance: false` 可让内置的证据提示保持简短。
+
+**回调签名：**
+
+```python
+def my_callback(session_id: str, platform: str, model: str, coding: bool,
+                attempt: int, final_response: str, changed_paths: list, **kwargs):
+```
+
+| 参数 | 类型 | 描述 |
+|-----|------|------|
+| `session_id` | `str` | 当前会话的唯一标识符 |
+| `platform` | `str` | 会话运行的位置（`"cli"`、`"telegram"` 等） |
+| `model` | `str` | 模型标识符 |
+| `coding` | `bool` | 该轮是否处于编码姿态（位于代码工作区中）——用它来限定 hook 的作用范围 |
+| `attempt` | `int` | 本轮已经被提示过多少次（首次为 0）——用它来自我限流 |
+| `final_response` | `str` | agent 即将给出的答案 |
+| `changed_paths` | `list` | agent 本轮编辑过的文件（已排序，此处始终非空） |
+
+通过检查 `coding` 将 hook 限定在编码上下文，并用 `attempt` 让它只触发一次（shell hook 从 `.extra` 中读取这两个字段），方式与 `pre_tool_call` hook 用 `tool_name` 限定范围一样——这样你可以注册多个 `pre_verify` hook，各自只在该触发的地方触发。
+
+**触发位置：** `agent/conversation_loop.py` 中，agent 将要接受最终答案的位置，紧接在 verify-on-stop 检查之后——但仅当 agent 本轮编辑过代码且至少注册了一个 `pre_verify` hook 时才会触发。
+
+**返回值——让 agent 继续：**
+
+```python
+return {"action": "continue", "message": "Run the formatter on your changes, then finish."}
+```
+
+`message` 会作为一个合成的用户轮次追加进去，循环随之再跑一遍。Claude-Code 的 Stop 形式（`{"decision": "block", "reason": "..."}`，其中阻断停止的含义正是*继续跑*）同样被接受。没有 message 的指令——或任何其他返回值——都会让本轮结束。
+
+**有界：** 一轮中连续的 continue 指令数量受 `agent.max_verify_nudges` 限制（默认 3），因此一个总是说 continue 的 hook 永远无法困住循环。被打断的那个答案会保留在历史中，但在 agent 被提示期间不会呈现给用户。
+
+**保持幂等：** 每次提示之后该 hook 都会再次触发，因此请基于 `attempt` 加门控（`if attempt: return None`）——否则它只会一直提示到触及上限为止。
+
+**使用场景：** 在创意迭代期间推迟测试/lint、对特定路径要求检查全绿、在存在 changelog 条目之前禁止"完成"、执行项目专属的验证清单。
+
+**示例——在创意型 UI 工作中推迟检查，限定范围 + 只触发一次：**
+
+```python
+UI = (".tsx", ".jsx", ".css", ".scss")
+
+def defer_ui_checks(coding, attempt, changed_paths, **kwargs):
+    if attempt or not coding:
+        return None  # one-shot, coding only
+    if not all(p.endswith(UI) for p in changed_paths):
+        return None  # only pure-UI edits
+    return {
+        "action": "continue",
+        "message": "This is UI work — don't run tests/lints yet; ask the user to "
+                   "eyeball it first, and clean the diff before any commit.",
+    }
+
+def register(ctx):
+    ctx.register_hook("pre_verify", defer_ui_checks)
+```
+
+如果只是想让某些长期指引去影响内置的"缺少证据"提示，请使用 `agent.verify_guidance`。如果是更宽泛的编码姿态规则、并不需要*门控*验证，则优先使用 `config.yaml` 中的 `agent.coding_instructions`——它随编码简报一起下发，不会额外消耗一轮。
+
+---
+
 ### `on_session_start`
 
 在全新会话创建时触发**一次**。在会话延续时**不会**触发（用户在已有会话中发送第二条消息时）。
@@ -805,6 +877,77 @@ def my_callback(session_id: str, platform: str, **kwargs):
 
 ---
 
+### `subagent_start`
+
+在 `delegate_task` 构建出子 `AIAgent` 之后、该子 agent 运行之前，**每个子 agent 触发一次**。无论你委托的是单个任务还是一批三个任务，每个子 agent 都会触发一次。
+
+此 hook 专用于委托/子 agent 生命周期。它不是一个适用于 gateway、CLI、cron、批处理、MoA 或其他 runner 发起的 agent 执行的通用"任意 agent 调用前"门控。
+
+**回调签名：**
+
+```python
+def my_callback(parent_session_id: str | None,
+                parent_turn_id: str,
+                parent_subagent_id: str | None,
+                child_session_id: str | None,
+                child_subagent_id: str,
+                child_role: str,
+                child_goal: str,
+                **kwargs):
+```
+
+| 参数 | 类型 | 描述 |
+|-----|------|------|
+| `parent_session_id` | `str \| None` | 发起委托的父 agent 的会话 ID。 |
+| `parent_turn_id` | `str` | 请求委托的那个父 agent 轮次的 Turn ID（如果可用）。 |
+| `parent_subagent_id` | `str \| None` | 当该子 agent 由另一个子 agent 生成时的父级 subagent ID；顶层父 agent 为 `None`。 |
+| `child_session_id` | `str \| None` | 为子 agent 分配的会话 ID。 |
+| `child_subagent_id` | `str` | 委托可观测性与控制所使用的稳定 subagent ID。 |
+| `child_role` | `str` | 应用委托策略后子 agent 的实际角色，例如 `"leaf"` 或 `"orchestrator"`。 |
+| `child_goal` | `str` | 子 agent 将要执行的委托目标/prompt（提示词）。 |
+
+**触发位置：** `tools/delegate_tool.py` 中 `_build_child_agent()` 内部，在子 `AIAgent` 构建完成并标注 subagent 身份元数据之后、`_run_single_child()` 运行子 agent 之前。
+
+**返回值：** 忽略。这只是一个观察者 hook；返回值不会阻断或改变子 agent 的运行。
+
+**使用场景：** 记录子 agent 创建、映射父/子会话关系、跟踪嵌套委托树、生成运行前审计记录、为每个子 agent 预分配可观测性资源。
+
+**示例——记录子 agent 创建：**
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+def log_subagent_start(
+    parent_session_id,
+    parent_turn_id,
+    child_session_id,
+    child_subagent_id,
+    child_role,
+    child_goal,
+    **kwargs,
+):
+    logger.info(
+        "SUBAGENT_START parent=%s turn=%s child_session=%s child=%s role=%s goal=%r",
+        parent_session_id,
+        parent_turn_id,
+        child_session_id,
+        child_subagent_id,
+        child_role,
+        child_goal[:200],
+    )
+
+def register(ctx):
+    ctx.register_hook("subagent_start", log_subagent_start)
+```
+
+:::info
+`subagent_start` 对委托可观测性很有用，但它不是一个可阻断的策略 hook。若要在子 agent 被构建之前阻断委托，请使用 [`pre_tool_call`](#pre_tool_call) 阻断 `delegate_task` 工具调用。
+:::
+
+---
+
 ### `subagent_stop`
 
 `delegate_task` 完成后，**每个子 agent 触发一次**。无论你委托了单个任务还是三个任务的批次，此 hook 对每个子 agent 各触发一次，在父线程上串行执行。
@@ -917,7 +1060,7 @@ def register(ctx):
 
 ### `pre_approval_request`
 
-在审批请求向用户展示**之前立即**触发——覆盖所有界面：交互式 CLI、Ink TUI、gateway 平台（Telegram、Discord、Slack、WhatsApp、Matrix 等）以及 ACP 客户端（VS Code、Zed、JetBrains）。
+在请求做出审批决定之前触发。它涵盖有提示的界面——交互式 CLI、Ink TUI、gateway 平台以及 ACP 客户端——以及无需人工提示即可做出的 `approvals.mode=smart` 决定（`surface="smart"`）。在 smart 模式下，该 hook 在辅助 LLM 被调用之前运行。
 
 这是接入自定义通知器的正确位置——例如弹出允许/拒绝通知的 macOS 菜单栏应用，或记录每个带上下文审批请求的审计日志。
 
@@ -937,12 +1080,12 @@ def my_callback(
 
 | 参数 | 类型 | 描述 |
 |-----|------|------|
-| `command` | `str` | 等待审批的 shell 命令 |
+| `command` | `str` | 正在评估的 terminal 命令或 `execute_code` 脚本。smart 和 gateway 的载荷在分发给观察者之前会先脱敏。即使 `security.redact_secrets` 被禁用，smart 观察者的脱敏也是强制的；若脱敏失败，smart hook 会被跳过。 |
 | `description` | `str` | 命令被标记的人类可读原因（多个模式匹配时合并） |
 | `pattern_key` | `str` | 触发审批的主要模式键（如 `"rm_rf"`、`"sudo"`） |
 | `pattern_keys` | `list[str]` | 所有匹配的模式键 |
 | `session_key` | `str` | 会话标识符，用于按聊天限定通知范围 |
-| `surface` | `str` | 交互式 CLI/TUI 提示为 `"cli"`，异步平台审批为 `"gateway"` |
+| `surface` | `str` | 交互式 CLI/TUI 提示为 `"cli"`，异步平台审批为 `"gateway"`，辅助 LLM 自动批准/拒绝决定为 `"smart"` |
 
 **返回值：** 忽略。此处的 hook 仅作观察用途；不能否决或预先回答审批。使用 [`pre_tool_call`](#pre_tool_call) 在工具到达审批系统前阻断它。
 
@@ -969,7 +1112,7 @@ def register(ctx):
 
 ### `post_approval_response`
 
-在用户响应审批提示（或提示超时）**之后**触发。
+在有提示的审批决定或 smart 审批决定做出之后（或提示超时之后）触发。
 
 **回调签名：**
 
@@ -990,7 +1133,8 @@ def my_callback(
 
 | 参数 | 类型 | 描述 |
 |-----|------|------|
-| `choice` | `str` | `"once"`、`"session"`、`"always"`、`"deny"` 或 `"timeout"` 之一 |
+| `choice` | `str` | 有提示的界面使用 `"once"`、`"session"`、`"always"`、`"deny"` 或 `"timeout"`；smart 决定使用 `"smart_approve"` 或 `"smart_deny"` |
+| `decided_by` | `str` | smart 决定为 `"aux_llm"`；有提示的界面上不存在该字段 |
 
 **返回值：** 忽略。
 
@@ -1207,6 +1351,10 @@ hooks_auto_accept: false         # See "Consent model" below
 // Inject context for pre_llm_call:
 {"context": "Today is Friday, 2026-04-17"}
 
+// Keep the agent going at the verify gate (pre_verify); both shapes accepted:
+{"action": "continue", "message": "Run the formatter, then finish."}
+{"decision": "block",  "reason":  "Run the formatter, then finish."}
+
 // Silent no-op — any empty / non-matching output is fine:
 ```
 
@@ -1308,6 +1456,23 @@ printf '{}\n'
 非 TTY 运行（gateway、cron、CI）需要这三种方式之一——否则任何新添加的 hook 会静默保持未注册状态并记录警告。
 
 **脚本编辑被静默信任。** 允许列表以精确的命令字符串为键，而非脚本的哈希值，因此编辑磁盘上的脚本不会使授权失效。`hermes hooks doctor` 会标记 mtime 漂移，以便你发现编辑并决定是否重新审批。
+
+#### 手动加入允许列表
+
+对于非 TTY 或服务账号部署——操作者无法交互式回答首次使用提示——手动加入允许列表很有用。允许列表文件是 `~/.hermes/shell-hooks-allowlist.json`，期望的格式是一个 `approvals` 数组。每条审批记录 hook 的 `event` 和精确的 `command` 字符串：
+
+```json
+{
+  "approvals": [
+    {
+      "event": "post_llm_call",
+      "command": "/home/hermes/.hermes/hooks/my-hook.py"
+    }
+  ]
+}
+```
+
+命令字符串必须与配置的 hook 命令完全一致。带 `sha256` 字段、以路径为键的对象不是期望的格式，不会为该 hook 授权。请用 `hermes hooks list` 验证手动添加的条目。
 
 ### `hermes hooks` CLI
 

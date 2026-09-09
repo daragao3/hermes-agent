@@ -76,9 +76,28 @@ agent 对于语法正确但存在语义问题的文件，会看到 ``lint: ok`` 
 | Prisma | `prisma language-server` | 手动 |
 | Kotlin | `kotlin-language-server` | 手动 |
 | Java | `jdtls` | 手动 |
+| PowerShell | `PowerShellEditorServices`（`pwsh` 宿主） | 手动（发布 zip 包） |
 
 对于"手动"条目，请通过该语言对应的工具链管理器安装服务器（rustup、ghcup、opam、brew 等）。
 Hermes 会自动检测 PATH 上或 `<HERMES_HOME>/lsp/bin/` 中的二进制文件。
+
+### PowerShell
+
+PowerShellEditorServices 并不是单个二进制文件——它是一个由 `pwsh`（PowerShell 7+）
+或 `powershell` 宿主启动的 PowerShell 模块包。设置步骤：
+
+1. 安装 [PowerShell](https://github.com/PowerShell/PowerShell)，使 `pwsh`
+   （或 Windows 上的 `powershell`）位于 PATH 上。
+2. 从 [PowerShellEditorServices releases](https://github.com/PowerShell/PowerShellEditorServices/releases)
+   下载最新的发布 zip 包并解压。
+3. 让 Hermes 指向解压后的模块包——即包含
+   `PowerShellEditorServices/Start-EditorServices.ps1` 的目录。可任选其一：
+   - 在 `config.yaml` 中设置 `lsp.servers.powershell.command: ["/path/to/bundle"]`，或
+   - 将其解压到 `<HERMES_HOME>/lsp/PowerShellEditorServices`，或
+   - 导出 `PSES_BUNDLE_PATH=/path/to/bundle`。
+
+一旦找到 `pwsh`，`hermes lsp status` 就会报告 `installed`；如果模块包缺失，
+你会在日志中看到一次性的警告以及下载链接。
 
 部分服务器需要与 npm 不会自动拉取的对等依赖一同安装。当前的典型情况是
 `typescript-language-server`，它要求 `typescript` SDK 可从同一 `node_modules`
@@ -111,6 +130,10 @@ lsp:
 
   # 每次写入后等待诊断结果的方式。
   wait_mode: document      # "document" 或 "full"
+  # 编辑后等待服务器重新检查该文件的最长秒数。只有*新鲜的*诊断结果
+  #（针对编辑后内容生成的）才会被上报；如果服务器未能在该预算内完成，
+  # 此次编辑将报告"无 LSP 数据"，而不是编辑前的过时错误。对于大型项目上
+  # 较慢的服务器（tsserver、索引中的 rust-analyzer），请调高该值。
   wait_timeout: 5.0
 
   # 处理缺失服务器二进制文件的策略。
@@ -158,6 +181,11 @@ LSP 服务器在**首次使用时懒启动**。在从未处理过 `.py` 文件�
 在没有诊断结果输出时，LSP 层对干净写入仅增加数毫秒延迟。有诊断结果时，等待预算为
 `wait_timeout` 秒——pyright/tsserver 通常在数十毫秒内响应，rust-analyzer 在索引
 过程中可能需要数秒。
+
+诊断结果受**新鲜度门控**：只有当服务器是针对当前编辑的内容生成该结果时才会被计入
+（即在变更时刻或之后推送的 `publishDiagnostics`，或在其之后应答的拉取请求）。
+尚未完成重新检查的慢速服务器会使该次编辑得到"无数据"——而绝不会把昨天的错误
+当作当前结果重新上报。
 
 服务器在 Hermes 进程的整个生命周期内保持运行。没有空闲超时回收机制——每次写入都
 重启服务器索引的代价远高于保持守护进程运行。

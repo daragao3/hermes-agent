@@ -84,6 +84,38 @@ remindctl add --title "Call mom" --list Personal --due tomorrow
 remindctl add --title "Meeting prep" --due "2026-02-15 09:00"
 ```
 
+### 截止时间 vs 闹钟 / 提前提醒
+
+`--due` 和 `--alarm` 是不同的字段：
+
+- `--due` 设置提醒的截止日期/时间。
+- `--alarm` 设置 EventKit 的闹钟/通知触发器。带具体时间的截止提醒可能默认在截止时间触发闹钟，但当用户要求提前提醒时，请显式传入 `--alarm`。
+
+对于截止时间为下午 2:00、需要提前 30 分钟通知的提醒：
+
+```bash
+remindctl add --title "Hairdresser" --due "2026-05-15 14:00" --alarm "2026-05-15 13:30"
+```
+
+编辑已有的提醒：
+
+```bash
+remindctl edit 87354 --due "2026-05-15 14:00" --alarm "2026-05-15 13:30"
+```
+
+Reminders 界面可能会按闹钟时间显示或分组该条目，因为那是通知触发的时刻。请用 JSON 进行核实，而不要想当然地认为截止时间被改动了：
+
+```bash
+remindctl today --json
+```
+
+预期结构：
+
+- `dueDate`：实际截止时间
+- `alarmDate`：通知 / 提前提醒时间
+
+Apple 的公开 `EKReminder` 文档仅列出提醒特有的属性。闹钟支持来自继承自 `EKCalendarItem` 的行为，由 remindctl 的 `--alarm` 标志暴露出来。
+
 ### 完成 / 删除
 
 ```bash

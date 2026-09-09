@@ -9,6 +9,10 @@ sidebar_position: 7
 
 Hermes Agent 支持**多模态视觉**——你可以直接将剪贴板中的图像粘贴到 CLI，让 Agent 对其进行分析、描述或处理。图像以 base64 编码的内容块形式发送给模型，因此任何支持视觉的模型均可处理。
 
+:::tip
+Portal 订阅者可在同一模型目录中使用支持视觉的模型（Claude、GPT-5、Gemini）——无需额外凭据。参见 [Nous Portal](/integrations/nous-portal)。
+:::
+
 ## 工作原理
 
 1. 将图像复制到剪贴板（截图、浏览器图片等）

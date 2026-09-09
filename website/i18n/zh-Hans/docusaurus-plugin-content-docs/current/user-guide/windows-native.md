@@ -1,4 +1,4 @@
-P---
+---
 title: "Windows（原生）指南"
 description: "在 Windows 10 / 11 上原生运行 Hermes Agent — 安装、功能矩阵、UTF-8 控制台、Git Bash、将 gateway 作为计划任务、编辑器处理、PATH、卸载及常见问题"
 sidebar_label: "Windows（原生）"
@@ -20,7 +20,7 @@ Hermes 可在 Windows 10 和 Windows 11 上原生运行——无需 WSL、Cygwin
 打开 **PowerShell**（或 Windows Terminal）并运行：
 
 ```powershell
-iex (irm https://hermes-agent.nousresearch.com/install.ps1)
+iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1)
 ```
 
 无需管理员权限。安装程序会写入 `%LOCALAPPDATA%\hermes\`，并将 `hermes` 添加到你的**用户 PATH**——安装完成后打开新终端即可使用。
@@ -28,7 +28,7 @@ iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 **安装程序选项**（需要使用 scriptblock 形式传递参数）：
 
 ```powershell
-& ([scriptblock]::Create((irm https://hermes-agent.nousresearch.com/install.ps1))) -NoVenv -SkipSetup -Branch main
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1))) -NoVenv -SkipSetup -Branch main
 ```
 
 | 参数          | 默认值                               | 用途                                            |
@@ -45,7 +45,7 @@ iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 
 ### 桌面安装程序（备选方案）
 
-也提供了一个轻量 GUI 安装程序——如果你更倾向于双击 `.exe` 而非打开 PowerShell，可以使用它。下载 Hermes Desktop，运行安装程序，首次启动时 GUI 会在后台调用 `install.ps1` 来配置 Python（通过 `uv`）、Node、PortableGit 以及下文描述的其余依赖引导流程。首次运行后，桌面应用与 PowerShell 安装的 `hermes` CLI 共享同一个 `%LOCALAPPDATA%\hermes\hermes-agent` 安装目录和 `%USERPROFILE%\.hermes` 数据目录——可以在 GUI 和 CLI 之间自由切换。
+也提供了一个轻量 GUI 安装程序——如果你更倾向于双击 `.exe` 而非打开 PowerShell，可以使用它。下载 Hermes Desktop，运行安装程序，首次启动时 GUI 会在后台调用 `install.ps1` 来配置 Python（通过 `uv`）、Node、PortableGit 以及下文描述的其余依赖引导流程。首次运行后，桌面应用与 PowerShell 安装的 `hermes` CLI 共享同一个 `%LOCALAPPDATA%\hermes\hermes-agent` 安装目录和 `%LOCALAPPDATA%\hermes` 数据目录——可以在 GUI 和 CLI 之间自由切换。
 
 如果你想要熟悉的 Windows 安装体验，或者要将 Hermes 交给非开发者使用，请使用桌面安装程序；如果你已经在终端中，请使用 PowerShell 一行命令。
 
@@ -75,7 +75,7 @@ iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 6. **分层 `uv pip install`** — 先尝试 `.[all]`，如果 `git+https` 依赖在 GitHub 限速时失败，则逐步回退到更小的集合（`[messaging,dashboard,ext]` → `[messaging]` → `.`）。防止"单次失败导致裸安装"的故障模式。
 7. **根据 `.env` 自动安装消息 SDK** — 如果存在 `TELEGRAM_BOT_TOKEN` / `DISCORD_BOT_TOKEN` / `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `WHATSAPP_ENABLED`，则运行 `python -m ensurepip --upgrade` 并针对性地调用 `pip install`，确保各平台 SDK 可正常导入。
 8. **设置 `HERMES_GIT_BASH_PATH`** 为解析后的 `bash.exe` 路径，使 Hermes 在新 shell 中能确定性地找到它。
-9. **将 `%LOCALAPPDATA%\hermes\bin` 添加到用户 PATH** — 打开新终端后即可使用 `hermes` 命令。
+9. **将 `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts` 添加到用户 PATH，并设置 `HERMES_HOME=%LOCALAPPDATA%\hermes`** — 打开新终端后即可使用 `hermes` 命令（并让它指向你的数据目录）。
 10. **运行 `hermes setup`** — 正常的首次运行向导（模型、提供商、工具集）。使用 `-SkipSetup` 跳过。
 
 :::tip 在 Windows 上跳过繁琐的提供商配置
@@ -202,15 +202,15 @@ hermes gateway uninstall   # 移除 schtasks 条目、Startup 快捷方式、pid
 
 | 路径                                  | 内容                                                            |
 | ------------------------------------- | --------------------------------------------------------------- |
-| `%LOCALAPPDATA%\hermes\hermes-agent\` | Git 检出 + venv。可安全执行 `Remove-Item -Recurse` 后重新安装。 |
+| `%LOCALAPPDATA%\hermes\hermes-agent\` | Git 检出 + venv。`venv\Scripts\hermes.exe` 就是被添加到用户 PATH 的命令。可安全执行 `Remove-Item -Recurse` 后重新安装。 |
 | `%LOCALAPPDATA%\hermes\git\`          | PortableGit（仅在安装程序配置时存在）。                         |
 | `%LOCALAPPDATA%\hermes\node\`         | 便携式 Node.js（仅在安装程序配置时存在）。                      |
-| `%LOCALAPPDATA%\hermes\bin\`          | `hermes.cmd` 垫片，已添加到用户 PATH。                          |
-| `%USERPROFILE%\.hermes\`              | 你的配置、认证、技能、会话、日志。**重装后保留。**              |
+| `%LOCALAPPDATA%\hermes\bin\`          | Hermes 托管的 `uv.exe`（它用于更新的 Python 管理器）。          |
+| `%LOCALAPPDATA%\hermes\`（根目录）    | 你的配置、认证、技能、会话、日志（`config.yaml`、`.env`、`skills\`、`sessions\`、`logs\` 等）。**重装后保留。** |
 
-这种分离是有意为之：`%LOCALAPPDATA%\hermes` 是可丢弃的基础设施（可以删除后用一行命令恢复）。`%USERPROFILE%\.hermes` 是你的数据——配置、记忆、技能、会话历史——其结构与 Linux 安装完全相同。在机器间同步它，你的 Hermes 就随之迁移。
+在原生 Windows 上，安装程序会设置 `HERMES_HOME=%LOCALAPPDATA%\hermes`，因此你的数据和可丢弃的安装目录位于**同一个** `%LOCALAPPDATA%\hermes` 根目录下：安装/运行时是 `hermes-agent\`、`git\`、`node\` 和 `bin\` 子目录，而你的数据文件直接位于 `%LOCALAPPDATA%\hermes` 中。重新安装只会替换 `hermes-agent\` 检出，因此你的数据会保留——但由于两者共用同一个根目录，如果你想保留数据，**不要**执行 `Remove-Item -Recurse %LOCALAPPDATA%\hermes`，而应删除 `hermes-agent\` 子目录。你的数据目录结构与 Linux 的 `~/.hermes` 完全相同，因此可以在机器间同步。
 
-**覆盖 `HERMES_HOME`：** 设置该环境变量以指向不同的数据目录。与 Linux 上的用法相同。
+**覆盖 `HERMES_HOME`：** 设置该环境变量以指向不同的数据目录（例如设为 `%USERPROFILE%\.hermes` 以匹配 Linux/WSL 布局）。与 Linux 上的用法相同。
 
 ## 浏览器工具
 
@@ -224,18 +224,18 @@ hermes gateway uninstall   # 移除 schtasks 条目、Startup 快捷方式、pid
 
 ### 安装后的 PATH
 
-安装程序通过 `[Environment]::SetEnvironmentVariable` 将 `%LOCALAPPDATA%\hermes\bin` 添加到你的**用户 PATH**。已打开的终端不会获取此更新——安装完成后请打开新的 PowerShell 窗口（或 Windows Terminal 标签页）。关闭并重新打开，不要手动执行 `$env:PATH += …`，除非你清楚自己在做什么。
+安装程序通过 `[Environment]::SetEnvironmentVariable` 将 `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts` 添加到你的**用户 PATH**。已打开的终端不会获取此更新——安装完成后请打开新的 PowerShell 窗口（或 Windows Terminal 标签页）。关闭并重新打开，不要手动执行 `$env:PATH += …`，除非你清楚自己在做什么。
 
 验证：
 
 ```powershell
-Get-Command hermes        # 应输出 C:\Users\<you>\AppData\Local\hermes\bin\hermes.cmd
+Get-Command hermes        # 应输出 C:\Users\<you>\AppData\Local\hermes\hermes-agent\venv\Scripts\hermes.exe
 hermes --version
 ```
 
 ### 环境变量
 
-Hermes 同时支持 `$env:X`（进程作用域）和用户环境变量（永久，在系统属性 → 环境变量中设置）。将 API key 放在 `%USERPROFILE%\.hermes\.env` 中是标准做法——与 Linux 相同：
+Hermes 同时支持 `$env:X`（进程作用域）和用户环境变量（永久，在系统属性 → 环境变量中设置）。将 API key 放在 `%LOCALAPPDATA%\hermes\.env`（即你的 `HERMES_HOME`）中是标准做法——与 Linux 相同：
 
 ```
 OPENROUTER_API_KEY=sk-or-...
@@ -262,14 +262,15 @@ TELEGRAM_BOT_TOKEN=...
 hermes uninstall
 ```
 
-这是干净的卸载路径——移除 schtasks 条目、Startup 文件夹快捷方式、`hermes.cmd` 垫片，删除 `%LOCALAPPDATA%\hermes\hermes-agent\`，并从用户 PATH 中移除相关条目。它会保留 `%USERPROFILE%\.hermes\`（你的配置、认证、技能、会话、日志），以防你需要重新安装。
+这是干净的卸载路径——移除 schtasks 条目、Startup 文件夹快捷方式、`hermes.cmd` 垫片，删除 `%LOCALAPPDATA%\hermes\hermes-agent\`，并从用户 PATH 中移除相关条目。它会保留 `%LOCALAPPDATA%\hermes\` 中的其余内容（你的配置、认证、技能、会话、日志），以防你需要重新安装。
 
 彻底清除所有内容：
 
 ```powershell
 hermes uninstall
-Remove-Item -Recurse -Force "$env:USERPROFILE\.hermes"
 Remove-Item -Recurse -Force "$env:LOCALAPPDATA\hermes"
+# Also remove a legacy CLI/WSL data dir if you ever used one:
+Remove-Item -Recurse -Force "$env:USERPROFILE\.hermes"
 ```
 
 `hermes uninstall` CLI 子命令还能处理 schtasks 条目以不同任务名注册的情况（旧版安装）——它通过安装路径而非硬编码任务名来搜索。

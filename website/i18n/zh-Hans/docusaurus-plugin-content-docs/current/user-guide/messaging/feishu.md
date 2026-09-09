@@ -55,6 +55,40 @@ hermes gateway setup
 请妥善保管 App Secret。任何持有它的人都可以冒充你的应用。
 :::
 
+### 配置权限
+
+在飞书开发者后台中进入 **权限管理**，添加以下权限范围。你可以在权限页面中批量导入它们。
+
+**必需权限：**
+
+| 权限范围 | 用途 |
+|-------|---------|
+| `im:message` | 接收和读取消息 |
+| `im:message:send_as_bot` | 以机器人身份发送消息 |
+| `im:resource` | 访问用户发送的图片、文件和音频 |
+| `im:chat` | 访问聊天/群组元数据 |
+| `im:chat:readonly` | 读取聊天列表和成员信息 |
+
+**推荐权限（用于完整功能）：**
+
+| 权限范围 | 用途 |
+|-------|---------|
+| `im:message.reactions:readonly` | 接收表情回应事件 |
+| `admin:app.info:readonly` | 自动检测机器人身份以用于 @提及 门控 |
+| `contact:user.id:readonly` | 解析用户 ID 以进行白名单匹配 |
+
+### 配置事件
+
+在 **事件与回调** 中：
+
+1. 将连接模式设为 **长连接（WebSocket）**（推荐），或配置 webhook URL
+2. 在 **事件配置** 部分订阅：
+   - `im.message.receive_v1` — 接收消息所必需
+
+### 发布应用
+
+配置好权限和事件后，进入 **版本管理** 并发布应用的新版本。权限在版本发布并通过审核之前不会生效（对于企业自建应用，这可能需要管理员审批）。
+
 ## 第二步：选择连接模式
 
 ### 推荐：WebSocket 模式
@@ -319,6 +353,29 @@ python -m gateway.platforms.feishu_comment_rules pairing remove <user_open_id>
 
 - 在 **事件订阅** 中订阅 `drive.notice.comment_add_v1`。
 - 授予 `docs:doc:readonly` 和 `drive:drive:readonly` 权限范围，以便处理器读取文档内容。
+
+## 会议邀请事件
+
+你可以像邀请真人参会者一样，把 Hermes 飞书/Lark 机器人邀请进视频会议。当机器人收到会议邀请事件时，Hermes 可以自动启动一个 agent 轮次，尝试加入该会议。
+
+该能力由 `vc.bot.meeting_invited_v1` 事件驱动，流程如下：
+
+- 用户将机器人邀请进飞书/Lark 视频会议。
+- 飞书/Lark 向 Hermes 发送会议邀请事件。
+- Hermes 提取邀请人、会议主题和会议号。
+- 如果邀请人已通过常规的 gateway 白名单或配对策略获得授权，agent 会拿到会议号并尝试自动加入。
+- 如果邀请格式有误，或 agent 无法加入，Hermes 会丢弃该事件，或向邀请人回复一条简洁的说明。
+
+未同时包含邀请人和 `meeting_no` 的畸形邀请会被忽略。
+
+### 飞书应用所需配置
+
+在已授予的聊天/卡片权限基础上，添加视频会议邀请事件：
+
+- 在 **事件订阅** 中订阅 `vc.bot.meeting_invited_v1`。
+- 启用飞书/Lark 开发者后台针对该事件提示的视频会议权限范围。
+- 保持 `im:message` 和 `im:message:send_as_bot` 处于启用状态，以便 Hermes 能回复邀请人。
+- 确保 gateway 用户白名单或配对策略已授权该邀请人。会议邀请不会绕过常规的 gateway 访问检查。
 
 ## 媒体支持
 
