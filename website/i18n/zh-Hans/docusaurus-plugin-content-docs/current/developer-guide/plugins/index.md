@@ -1,7 +1,7 @@
 ---
-sidebar_label: "Build a Plugin"
 slug: /developer-guide/plugins
 title: "构建 Hermes 插件"
+sidebar_label: "Build a Plugin"
 description: "逐步指南：构建包含工具、钩子、数据文件和技能的完整 Hermes 插件"
 ---
 

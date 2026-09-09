@@ -1,7 +1,7 @@
 ---
 sidebar_position: 3
-sidebar_label: "Git Worktrees"
 title: "Git Worktrees"
+sidebar_label: "Git Worktrees"
 description: "Run multiple Hermes agents safely on the same repository using git worktrees and isolated checkouts"
 ---
 

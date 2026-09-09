@@ -1,8 +1,8 @@
 ---
-title: "功能概览"
-description: "Hermes Agent 内置能力总览，分为核心、自动化、媒体与网页、集成四类"
-sidebar_label: "概览"
 sidebar_position: 1
+title: "功能概览"
+sidebar_label: "概览"
+description: "Hermes Agent 内置能力总览，分为核心、自动化、媒体与网页、集成四类"
 ---
 
 # 功能概览

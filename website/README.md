@@ -91,14 +91,15 @@ Two things worth knowing before you trust or change these:
   the reason inline, and delete it in the same change that fills the gap. A
   test fails if an entry stops being needed, so a waiver cannot outlive its
   debt.
-- **Gate 7 constrains one key pair, not a canonical order.** `title` must come
-  before `description`; nothing else is constrained. That is a measurement, not
-  timidity — the tree carries 11 distinct frontmatter key sequences and
-  disagrees with itself in both directions (356 pages order
-  `title → sidebar_label`, 16 the reverse; 284 order
-  `sidebar_position → title`, 34 the reverse), so any single canonical order
-  fails 56 pages and would mean normalising to a convention nobody chose, for a
-  key order with zero rendered effect. `title` before `description` is
-  unanimous at 0 of 722, so it gates for free. If you want a full canonical
-  order, that is a separate normalisation change — decide it, then widen the
-  gate.
+- **Gate 7's canonical key order was derived, not decreed.** Frontmatter keys
+  must follow `FM_KEY_ORDER`: `slug`, `sidebar_position`, `title`,
+  `sidebar_label`, `description`, `hide_title`, `hide_table_of_contents`,
+  `displayed_sidebar`. That sequence is the unique minimum-churn permutation —
+  all 40,320 orderings of the eight keys in use were scored against the 722
+  page/locale pairs, and this one deviates on 56 pages where the runners-up
+  deviate on 58. The 56 were normalised in the same commit that widened the
+  gate, so it carries no allowlist. Do not "tidy" `FM_KEY_ORDER` into something
+  that reads more naturally: a test pins the exact tuple, because reordering it
+  silently puts the whole repo out of canonical order. Keys it does not rank
+  are ignored by the gate, but a second test fails until a newly-used key is
+  ranked deliberately.

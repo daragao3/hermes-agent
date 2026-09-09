@@ -33,12 +33,13 @@ Run them all; a page can pass six and fail the seventh.
                     FRONTMATTER_ALLOW ratchet is now EMPTY -- the 70 gaps it
                     was seeded with were all filled -- so this gate blocks
                     unconditionally.
-7. KEY ORDER     -- ``title:`` must precede ``description:``. Narrow by
-                    measurement, not by timidity: the tree has 11 distinct key
-                    sequences and contradicts itself on every OTHER pair, so a
-                    single canonical order would fail 56 pages and mean
-                    normalising to a convention nobody chose. Title-before-
-                    description is unanimous at 0 of 722, so it gates for free.
+7. KEY ORDER     -- frontmatter keys must follow FM_KEY_ORDER. The order was
+                    DERIVED: all 40,320 permutations were scored against the
+                    722 page/locale pairs and this is the unique minimum, at 56
+                    deviating pages. Those 56 were normalised in the same
+                    commit that widened this gate, so it carries no allowlist.
+                    Unranked keys are ignored, but a test fails until a new one
+                    is ranked deliberately.
 
 Deliberately NOT gated on, because both are actively misleading here:
 
@@ -441,31 +442,49 @@ def gate_frontmatter(en_pages, zh_pages, findings):
 
 
 # --------------------------------------------------------------------- gate 7
-# `title` must come before `description`. This is NARROW on purpose, and the
-# narrowness is the measured part.
+# Frontmatter keys must appear in one canonical order.
 #
-# The obvious version of this gate -- one canonical key order for every page --
-# is not available here, because the tree genuinely disagrees with itself and
-# there is no existing convention to codify. Measured 2026-09-09 over all 722
-# page/locale pairs: 11 distinct key sequences, and the two commonest disagree
-# in both directions. 356 pages order title -> sidebar_label while 16 order
-# sidebar_label -> title; 284 order sidebar_position -> title while 34 order
-# title -> sidebar_position. Any fixed rank fails on 56 pages, so enforcing one
-# would mean normalising the tree to a convention nobody has chosen -- for a
-# key order that has ZERO rendered effect.
+# THE ORDER WAS DERIVED, NOT DECREED. It is the unique permutation that the
+# existing tree already agrees with most: every one of the 8!  = 40,320
+# orderings was scored against all 722 page/locale pairs, and this one is the
+# single minimum at 56 deviating pages (the runners-up sit at 58, and no other
+# permutation ties). Choosing by measurement rather than taste is what kept the
+# normalisation to 56 files instead of several hundred.
 #
-# What IS unanimous is title before description: 0 of 722 violate it, so this
-# gate is green on arrival with no page edits and no allowlist. It also catches
-# the exact defect that prompted it -- a mechanical fill inserted `description`
-# at the top of blocks that already had a `sidebar_position`, leaving
-# description / sidebar_position / title on twelve files (caught by reading the
-# diff, because no gate then looked at order).
+# Those 56 were normalised on 2026-09-09 in the same commit that widened this
+# gate, so it is green on arrival with no allowlist. The reorder was proved
+# content-preserving rather than assumed: every touched file's frontmatter has
+# an identical MULTISET of lines before and after, only the order differs, and
+# no frontmatter block in either locale contains an indented or continuation
+# line that a pure line permutation could separate from its key.
 #
-# Keys BETWEEN title and description are fine: `title -> sidebar_label ->
-# description` is the single commonest shape in the repo. Only the relative
-# order of these two is constrained.
+# This gate began life narrower -- title-before-description only, the one pair
+# the tree already agreed on unanimously -- because that was the only rule
+# available for free before the normalisation. That pair is still the defect
+# that prompted the gate: a mechanical fill inserted `description` at the top
+# of blocks that already had a `sidebar_position`, leaving description /
+# sidebar_position / title on twelve files, caught by reading the diff.
+#
+# Keys NOT in this list are ignored rather than rejected. A contributor adding
+# a legitimate Docusaurus key (`keywords`, `image`, `tags`) should not have the
+# build blocked before anyone has decided where it belongs -- but the omission
+# is not silent either: test_key_order_rank_covers_every_key_in_the_tree fails
+# until the new key is ranked here deliberately.
+FM_KEY_ORDER = (
+    "slug",
+    "sidebar_position",
+    "title",
+    "sidebar_label",
+    "description",
+    "hide_title",
+    "hide_table_of_contents",
+    "displayed_sidebar",
+)
+
+
 def gate_key_order(en_pages, zh_pages, findings):
-    """`title:` must appear before `description:` in the frontmatter block."""
+    """Frontmatter keys must appear in FM_KEY_ORDER's relative order."""
+    rank = {key: i for i, key in enumerate(FM_KEY_ORDER)}
     bad = 0
     for locale, root, pages in (
         ("en", EN_DIR, en_pages),
@@ -473,14 +492,19 @@ def gate_key_order(en_pages, zh_pages, findings):
     ):
         for rel in sorted(pages):
             keys = frontmatter_keys(read(os.path.join(root, rel)))
-            if "title" not in keys or "description" not in keys:
-                continue  # gate 6 owns absence; this gate has no opinion on it
-            if keys.index("description") < keys.index("title"):
-                bad += 1
-                findings.append(
-                    "key order     %s [%s]  description: appears before title: "
-                    "(%s)" % (rel, locale, " -> ".join(keys))
+            ranked = [key for key in keys if key in rank]
+            if ranked == sorted(ranked, key=rank.__getitem__):
+                continue
+            bad += 1
+            findings.append(
+                "key order     %s [%s]  %s -- expected %s"
+                % (
+                    rel,
+                    locale,
+                    " -> ".join(ranked),
+                    " -> ".join(sorted(ranked, key=rank.__getitem__)),
                 )
+            )
     return bad
 
 

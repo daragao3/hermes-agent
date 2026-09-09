@@ -1,8 +1,8 @@
 ---
-title: "集成"
-description: "Hermes Agent 可对接的外部系统：推理服务、工具服务器、IDE 工作流以及编程接口"
-sidebar_label: "概览"
 sidebar_position: 0
+title: "集成"
+sidebar_label: "概览"
+description: "Hermes Agent 可对接的外部系统：推理服务、工具服务器、IDE 工作流以及编程接口"
 ---
 
 # 集成

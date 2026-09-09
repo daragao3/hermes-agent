@@ -1,7 +1,7 @@
 ---
 sidebar_position: 3
-sidebar_label: "Git Worktrees"
 title: "Git Worktrees"
+sidebar_label: "Git Worktrees"
 description: "使用 git worktrees 和隔离检出在同一仓库中安全运行多个 Hermes agent"
 ---
 

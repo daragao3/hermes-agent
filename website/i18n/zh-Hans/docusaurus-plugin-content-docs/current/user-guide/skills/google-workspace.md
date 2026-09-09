@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
-sidebar_label: "Google Workspace"
 title: "Google Workspace — Gmail、Calendar、Drive、Sheets 与 Docs"
+sidebar_label: "Google Workspace"
 description: "通过 OAuth2 认证的 Google API，发送邮件、管理日历事件、搜索 Drive、读写 Sheets 并访问 Docs"
 ---
 

@@ -1,8 +1,8 @@
 ---
-title: X (Twitter) Search
-description: Search X (Twitter) posts and threads from within the agent using xAI's built-in x_search Responses tool — works with either a SuperGrok OAuth login or an XAI_API_KEY.
-sidebar_label: X (Twitter) Search
 sidebar_position: 7
+title: X (Twitter) Search
+sidebar_label: X (Twitter) Search
+description: Search X (Twitter) posts and threads from within the agent using xAI's built-in x_search Responses tool — works with either a SuperGrok OAuth login or an XAI_API_KEY.
 ---
 
 # X (Twitter) Search

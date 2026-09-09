@@ -1,8 +1,8 @@
 ---
-title: "AI Providers"
-description: "Set up inference providers for Hermes — cloud APIs, self-hosted endpoints, and routing with fallback"
-sidebar_label: "AI Providers"
 sidebar_position: 1
+title: "AI Providers"
+sidebar_label: "AI Providers"
+description: "Set up inference providers for Hermes — cloud APIs, self-hosted endpoints, and routing with fallback"
 ---
 
 # AI Providers

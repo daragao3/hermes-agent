@@ -1,8 +1,8 @@
 ---
-title: "AI 提供商"
-description: "为 Hermes 配置推理提供商：云端 API、自托管端点，以及带回退的路由策略"
-sidebar_label: "AI 提供商"
 sidebar_position: 1
+title: "AI 提供商"
+sidebar_label: "AI 提供商"
+description: "为 Hermes 配置推理提供商：云端 API、自托管端点，以及带回退的路由策略"
 ---
 
 # AI 提供商

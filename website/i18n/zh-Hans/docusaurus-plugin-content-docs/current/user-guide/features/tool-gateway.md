@@ -1,8 +1,8 @@
 ---
-title: "Nous Tool Gateway（工具网关）"
-description: "一份订阅，覆盖全部工具。网页搜索、文生图、TTS 与云端浏览器——全部通过 Nous Portal 路由，无需额外 API Key。"
-sidebar_label: "Tool Gateway"
 sidebar_position: 2
+title: "Nous Tool Gateway（工具网关）"
+sidebar_label: "Tool Gateway"
+description: "一份订阅，覆盖全部工具。网页搜索、文生图、TTS 与云端浏览器——全部通过 Nous Portal 路由，无需额外 API Key。"
 ---
 
 # Nous Tool Gateway（工具网关）

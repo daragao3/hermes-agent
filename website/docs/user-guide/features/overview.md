@@ -1,8 +1,8 @@
 ---
-title: "Features Overview"
-description: "The capabilities Hermes Agent ships with, grouped into core, automation, media and web, and integrations"
-sidebar_label: "Overview"
 sidebar_position: 1
+title: "Features Overview"
+sidebar_label: "Overview"
+description: "The capabilities Hermes Agent ships with, grouped into core, automation, media and web, and integrations"
 ---
 
 # Features Overview

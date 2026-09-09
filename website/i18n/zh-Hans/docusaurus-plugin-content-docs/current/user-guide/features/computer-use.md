@@ -1,7 +1,7 @@
 ---
+sidebar_position: 16
 title: 电脑操控
 description: "让 Hermes 在 macOS、Windows 和 Linux 上后台操控桌面，不会抢占你的光标与键盘焦点"
-sidebar_position: 16
 ---
 
 # 电脑操控
