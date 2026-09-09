@@ -1,5 +1,7 @@
 ---
 sidebar_position: 2
+title: "Profiles: Running Multiple Agents"
+description: "Run independent Hermes agents on one machine, each with its own config, keys, memory, sessions and skills"
 ---
 
 # Profiles: Running Multiple Agents

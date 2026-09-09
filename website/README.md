@@ -84,6 +84,9 @@ Two things worth knowing before you trust or change these:
   — so on this site the key is inert and 184 of 361 English pages omit it with
   no effect. The falsifier is in the built HTML: the messaging sidebar renders
   `bluebubbles` (position 21) ahead of `photon` (18), i.e. `sidebars.ts` order.
-  Gate 6 is ratcheted by `FRONTMATTER_ALLOW`, which holds the 70 gaps that
-  predate it; a test fails if an entry stops being needed, so the list can only
-  shrink. Work it down rather than adding to it.
+  Gate 6 was seeded with a `FRONTMATTER_ALLOW` ratchet holding the 70 gaps that
+  predated it. All 70 were filled on 2026-09-09 and the list is now **empty**,
+  so the gate blocks unconditionally. Adding an entry back is adding debt: name
+  the reason inline, and delete it in the same change that fills the gap. A
+  test fails if an entry stops being needed, so a waiver cannot outlive its
+  debt.

@@ -29,8 +29,10 @@ Run them all; a page can pass five and fail the sixth.
                     has already found, so a page carrying a PARTIAL frontmatter
                     block -- or none at all -- passes all five gates above.
                     ``sidebar_position`` is deliberately not required: this
-                    site's sidebar is explicit, so the key is inert. Ratcheted
-                    by FRONTMATTER_ALLOW, which can only shrink.
+                    site's sidebar is explicit, so the key is inert. The
+                    FRONTMATTER_ALLOW ratchet is now EMPTY -- the 70 gaps it
+                    was seeded with were all filled -- so this gate blocks
+                    unconditionally.
 
 Deliberately NOT gated on, because both are actively misleading here:
 
@@ -363,111 +365,27 @@ def gate_descriptions(paired, findings):
 FRONTMATTER_REQUIRED = ("title", "description")
 
 # ---------------------------------------------------------------------------
-# frontmatter ratchet
+# frontmatter ratchet -- EMPTY, and that is the point.
 #
-# The 70 gaps that already existed when this gate was written, across 21 pages.
-# Keyed by (page, locale, key) so the tolerance stays exactly as wide as the
-# debt and no wider: the same key missing from any other page, or from the other
-# locale of one of these pages, still fails.
+# This held 70 gaps across 21 pages when gate 6 was written. All 70 were filled
+# on 2026-09-09 and every waiver was deleted with the page that needed it, so
+# the gate now blocks unconditionally: every page in both locales declares a
+# title and a description, with no exceptions carried.
 #
-# THIS LIST CAN ONLY SHRINK. A test asserts every entry still points at a real
-# file AND is still genuinely missing that key, so filling one in fails the
-# suite until its entry is deleted. That is the ratchet -- there is no way to
-# quietly re-add debt, and a fixed page cannot silently keep its waiver.
+# Adding an entry here is ADDING DEBT. Do it only to land a page whose title or
+# description genuinely cannot be written yet, name the reason inline, and take
+# it out in the same change that fills the gap -- a test asserts every entry
+# still points at a real file AND is still genuinely missing its key, so a
+# waiver cannot outlive the debt it was written for.
+#
+# Keyed by (page, locale, key): a tolerance is exactly as wide as one gap, never
+# a whole page and never both locales at once.
+#
+# NOTE the `set()` rather than `{}` -- an empty brace literal is a DICT, which
+# iterates empty and would pass every test here while silently changing the
+# type. Pinned by test_frontmatter_allowlist_is_a_set.
 # ---------------------------------------------------------------------------
-FRONTMATTER_ALLOW = {
-    # developer-guide/adding-platform-adapters.md
-    ("developer-guide/adding-platform-adapters.md", "en", "title"),
-    ("developer-guide/adding-platform-adapters.md", "en", "description"),
-    ("developer-guide/adding-platform-adapters.md", "zh", "title"),
-    ("developer-guide/adding-platform-adapters.md", "zh", "description"),
-    # developer-guide/context-compression-and-caching.md
-    ("developer-guide/context-compression-and-caching.md", "en", "title"),
-    ("developer-guide/context-compression-and-caching.md", "en", "description"),
-    # developer-guide/session-storage.md
-    ("developer-guide/session-storage.md", "en", "title"),
-    ("developer-guide/session-storage.md", "en", "description"),
-    ("developer-guide/session-storage.md", "zh", "title"),
-    ("developer-guide/session-storage.md", "zh", "description"),
-    # developer-guide/trajectory-format.md
-    ("developer-guide/trajectory-format.md", "en", "title"),
-    ("developer-guide/trajectory-format.md", "en", "description"),
-    ("developer-guide/trajectory-format.md", "zh", "title"),
-    ("developer-guide/trajectory-format.md", "zh", "description"),
-    # integrations/index.md
-    ("integrations/index.md", "en", "description"),
-    ("integrations/index.md", "zh", "description"),
-    # integrations/providers.md
-    ("integrations/providers.md", "en", "description"),
-    ("integrations/providers.md", "zh", "description"),
-    # reference/profile-commands.md
-    ("reference/profile-commands.md", "en", "title"),
-    ("reference/profile-commands.md", "en", "description"),
-    ("reference/profile-commands.md", "zh", "title"),
-    ("reference/profile-commands.md", "zh", "description"),
-    # user-guide/configuring-models.md
-    ("user-guide/configuring-models.md", "en", "title"),
-    ("user-guide/configuring-models.md", "en", "description"),
-    ("user-guide/configuring-models.md", "zh", "title"),
-    ("user-guide/configuring-models.md", "zh", "description"),
-    # user-guide/features/codex-app-server-runtime.md
-    ("user-guide/features/codex-app-server-runtime.md", "en", "description"),
-    ("user-guide/features/codex-app-server-runtime.md", "zh", "description"),
-    # user-guide/features/computer-use.md
-    ("user-guide/features/computer-use.md", "en", "description"),
-    ("user-guide/features/computer-use.md", "zh", "description"),
-    # user-guide/features/kanban-tutorial.md
-    ("user-guide/features/kanban-tutorial.md", "en", "title"),
-    ("user-guide/features/kanban-tutorial.md", "en", "description"),
-    ("user-guide/features/kanban-tutorial.md", "zh", "title"),
-    ("user-guide/features/kanban-tutorial.md", "zh", "description"),
-    # user-guide/features/kanban-worker-lanes.md
-    ("user-guide/features/kanban-worker-lanes.md", "en", "title"),
-    ("user-guide/features/kanban-worker-lanes.md", "en", "description"),
-    ("user-guide/features/kanban-worker-lanes.md", "zh", "title"),
-    ("user-guide/features/kanban-worker-lanes.md", "zh", "description"),
-    # user-guide/features/overview.md
-    ("user-guide/features/overview.md", "en", "description"),
-    ("user-guide/features/overview.md", "zh", "description"),
-    # user-guide/features/spotify.md
-    ("user-guide/features/spotify.md", "en", "title"),
-    ("user-guide/features/spotify.md", "en", "description"),
-    ("user-guide/features/spotify.md", "zh", "title"),
-    ("user-guide/features/spotify.md", "zh", "description"),
-    # user-guide/features/tool-search.md
-    ("user-guide/features/tool-search.md", "en", "description"),
-    ("user-guide/features/tool-search.md", "zh", "description"),
-    # user-guide/multi-profile-gateways.md
-    ("user-guide/multi-profile-gateways.md", "en", "title"),
-    ("user-guide/multi-profile-gateways.md", "en", "description"),
-    ("user-guide/multi-profile-gateways.md", "zh", "title"),
-    ("user-guide/multi-profile-gateways.md", "zh", "description"),
-    # user-guide/profile-distributions.md
-    ("user-guide/profile-distributions.md", "en", "title"),
-    ("user-guide/profile-distributions.md", "en", "description"),
-    ("user-guide/profile-distributions.md", "zh", "title"),
-    ("user-guide/profile-distributions.md", "zh", "description"),
-    # user-guide/profiles.md
-    ("user-guide/profiles.md", "en", "title"),
-    ("user-guide/profiles.md", "en", "description"),
-    ("user-guide/profiles.md", "zh", "title"),
-    ("user-guide/profiles.md", "zh", "description"),
-    # user-guide/secrets/bitwarden.md
-    ("user-guide/secrets/bitwarden.md", "en", "title"),
-    ("user-guide/secrets/bitwarden.md", "en", "description"),
-    ("user-guide/secrets/bitwarden.md", "zh", "title"),
-    ("user-guide/secrets/bitwarden.md", "zh", "description"),
-    # user-guide/secrets/index.md
-    ("user-guide/secrets/index.md", "en", "title"),
-    ("user-guide/secrets/index.md", "en", "description"),
-    ("user-guide/secrets/index.md", "zh", "title"),
-    ("user-guide/secrets/index.md", "zh", "description"),
-    # user-guide/secrets/onepassword.md
-    ("user-guide/secrets/onepassword.md", "en", "title"),
-    ("user-guide/secrets/onepassword.md", "en", "description"),
-    ("user-guide/secrets/onepassword.md", "zh", "title"),
-    ("user-guide/secrets/onepassword.md", "zh", "description"),
-}
+FRONTMATTER_ALLOW = set()
 
 
 def gate_frontmatter(en_pages, zh_pages, findings):

@@ -1,3 +1,8 @@
+---
+title: "1Password"
+description: "启动时通过 op:// 引用从 1Password 解析 Hermes 所需的 API key，支持服务账户或桌面端会话认证"
+---
+
 # 1Password
 
 在进程启动时从 [1Password](https://1password.com/) 解析提供商 API 密钥，而不是以明文形式存储在 `~/.hermes/.env` 中。你将密钥保存为 1Password 条目，并通过 `op://vault/item/field` 引用它们；轮换凭据只需在 1Password 中修改一处即可。

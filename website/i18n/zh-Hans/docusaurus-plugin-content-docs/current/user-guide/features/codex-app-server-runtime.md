@@ -1,5 +1,6 @@
 ---
 title: Codex App-Server 运行时（可选）
+description: "可选地把 openai/* turn 交给 Codex CLI app-server，由它的运行时执行工具调用、文件编辑与沙箱"
 sidebar_label: Codex App-Server 运行时
 ---
 

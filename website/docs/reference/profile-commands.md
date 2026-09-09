@@ -1,5 +1,7 @@
 ---
 sidebar_position: 7
+title: "Profile Commands Reference"
+description: "Every hermes profile subcommand — list, use, create, describe and the rest — with flags and examples"
 ---
 
 # Profile Commands Reference

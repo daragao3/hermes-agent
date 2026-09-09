@@ -1,5 +1,6 @@
 ---
 title: Computer Use
+description: "Let Hermes drive your desktop in the background on macOS, Windows and Linux without taking over your cursor"
 sidebar_position: 16
 ---
 

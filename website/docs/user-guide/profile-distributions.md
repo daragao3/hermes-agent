@@ -1,5 +1,7 @@
 ---
 sidebar_position: 3
+title: "Profile Distributions: Share a Whole Agent"
+description: "Package a complete Hermes agent as a git repository others can install and update, keeping their own keys"
 ---
 
 # Profile Distributions: Share a Whole Agent
