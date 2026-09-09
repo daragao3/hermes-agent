@@ -1,3 +1,9 @@
+---
+sidebar_position: 21
+title: "BlueBubbles (iMessage)"
+description: "Connect Hermes Agent to Apple iMessage through a self-hosted BlueBubbles macOS server"
+---
+
 # BlueBubbles (iMessage)
 
 Connect Hermes to Apple iMessage via [BlueBubbles](https://bluebubbles.app/) — a free, open-source macOS server that bridges iMessage to any device.
