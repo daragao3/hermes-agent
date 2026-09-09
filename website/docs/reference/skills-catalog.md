@@ -36,6 +36,7 @@ If a skill is missing from this list but present in the repo, the catalog is reg
 |-------|-------------|------|
 | [`computer-use`](/user-guide/skills/bundled/computer-use/computer-use-computer-use) | Drive the user's desktop in the background — clicking, typing, scrolling, dragging — without stealing the cursor, keyboard focus, or switching virtual desktops / Spaces. Cross-platform: macOS, Windows, Linux. Works with any tool-capable... | `computer-use` |
 
+## creative
 
 | Skill | Description | Path |
 |-------|-------------|------|
@@ -62,12 +63,6 @@ If a skill is missing from this list but present in the repo, the catalog is reg
 |-------|-------------|------|
 | [`jupyter-live-kernel`](/user-guide/skills/bundled/data-science/data-science-jupyter-live-kernel) | Iterative Python via live Jupyter kernel (hamelnb). | `data-science/jupyter-live-kernel` |
 
-## devops
-
-| Skill | Description | Path |
-|-------|-------------|------|
-
-
 ## dogfood
 
 | Skill | Description | Path |
@@ -90,6 +85,12 @@ If a skill is missing from this list but present in the repo, the catalog is reg
 | [`github-issues`](/user-guide/skills/bundled/github/github-github-issues) | Create, triage, label, assign GitHub issues via gh or REST. | `github/github-issues` |
 | [`github-pr-workflow`](/user-guide/skills/bundled/github/github-github-pr-workflow) | GitHub PR lifecycle: branch, commit, open, CI, merge. | `github/github-pr-workflow` |
 | [`github-repo-management`](/user-guide/skills/bundled/github/github-github-repo-management) | Clone/create/fork repos; manage remotes, releases. | `github/github-repo-management` |
+
+## hermes-desktop-plugins
+
+| Skill | Description | Path |
+|-------|-------------|------|
+| [`hermes-desktop-plugins`](/user-guide/skills/bundled/hermes-desktop-plugins/hermes-desktop-plugins-hermes-desktop-plugins) | Write desktop app plugins that add UI panes and commands. | `hermes-desktop-plugins` |
 
 ## media
 
@@ -158,7 +159,7 @@ If a skill is missing from this list but present in the repo, the catalog is reg
 
 | Skill | Description | Path |
 |-------|-------------|------|
-| [`hermes-agent-skill-authoring`](/user-guide/skills/bundled/software-development/software-development-hermes-agent-skill-authoring) | Author in-repo SKILL.md: frontmatter, validator, structure. | `software-development/hermes-agent-skill-authoring` |
+| [`hermes-agent-skill-authoring`](/user-guide/skills/bundled/software-development/software-development-hermes-agent-skill-authoring) | Author in-repo SKILL.md: frontmatter, validator, structure, and writing-quality principles. | `software-development/hermes-agent-skill-authoring` |
 | [`node-inspect-debugger`](/user-guide/skills/bundled/software-development/software-development-node-inspect-debugger) | Debug Node.js via --inspect + Chrome DevTools Protocol CLI. | `software-development/node-inspect-debugger` |
 | [`plan`](/user-guide/skills/bundled/software-development/software-development-plan) | Plan mode: write an actionable markdown plan to .hermes/plans/, no execution. Bite-sized tasks, exact paths, complete code. | `software-development/plan` |
 | [`python-debugpy`](/user-guide/skills/bundled/software-development/software-development-python-debugpy) | Debug Python: pdb REPL + debugpy remote (DAP). | `software-development/python-debugpy` |

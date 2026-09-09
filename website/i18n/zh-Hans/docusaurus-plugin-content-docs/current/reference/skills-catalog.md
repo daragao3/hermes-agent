@@ -34,8 +34,9 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 
 | 技能 | 描述 | 路径 |
 |-------|-------------|------|
-| [`computer-use`](/user-guide/skills/bundled/computer-use/computer-use-computer-use) | 在后台驱动用户桌面——点击、输入、滚动、拖拽——不抢占光标、键盘焦点，也不切换虚拟桌面 / Space。跨平台：macOS、Windows、Linux。适用于任何支持工具调用的模型。 | `computer-use` |
+| [`computer-use`](/user-guide/skills/bundled/computer-use/computer-use-computer-use) | 在后台驱动用户桌面——点击、输入、滚动、拖拽——不抢占光标、键盘焦点，也不切换虚拟桌面 / Space。跨平台：macOS、Windows、Linux。适用于任何支持工具调用... | `computer-use` |
 
+## creative
 
 | 技能 | 描述 | 路径 |
 |-------|-------------|------|
@@ -62,12 +63,6 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 |-------|-------------|------|
 | [`jupyter-live-kernel`](/user-guide/skills/bundled/data-science/data-science-jupyter-live-kernel) | 通过实时 Jupyter kernel（hamelnb）进行迭代式 Python 开发。 | `data-science/jupyter-live-kernel` |
 
-## devops
-
-| 技能 | 描述 | 路径 |
-|-------|-------------|------|
-
-
 ## dogfood
 
 | 技能 | 描述 | 路径 |
@@ -90,6 +85,12 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 | [`github-issues`](/user-guide/skills/bundled/github/github-github-issues) | 通过 gh 或 REST API 创建、分类、标记、分配 GitHub issue。 | `github/github-issues` |
 | [`github-pr-workflow`](/user-guide/skills/bundled/github/github-github-pr-workflow) | GitHub PR 生命周期：分支、提交、开启、CI、合并。 | `github/github-pr-workflow` |
 | [`github-repo-management`](/user-guide/skills/bundled/github/github-github-repo-management) | 克隆/创建/fork 仓库；管理远程、发布版本。 | `github/github-repo-management` |
+
+## hermes-desktop-plugins
+
+| 技能 | 描述 | 路径 |
+|-------|-------------|------|
+| [`hermes-desktop-plugins`](/user-guide/skills/bundled/hermes-desktop-plugins/hermes-desktop-plugins-hermes-desktop-plugins) | 编写桌面应用插件，添加 UI 面板与命令。 | `hermes-desktop-plugins` |
 
 ## media
 
@@ -158,7 +159,7 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 
 | 技能 | 描述 | 路径 |
 |-------|-------------|------|
-| [`hermes-agent-skill-authoring`](/user-guide/skills/bundled/software-development/software-development-hermes-agent-skill-authoring) | 编写仓库内 SKILL.md：frontmatter、验证器、结构规范。 | `software-development/hermes-agent-skill-authoring` |
+| [`hermes-agent-skill-authoring`](/user-guide/skills/bundled/software-development/software-development-hermes-agent-skill-authoring) | 编写仓库内 SKILL.md：frontmatter、验证器、结构规范，以及写作质量原则。 | `software-development/hermes-agent-skill-authoring` |
 | [`node-inspect-debugger`](/user-guide/skills/bundled/software-development/software-development-node-inspect-debugger) | 通过 --inspect + Chrome DevTools Protocol CLI 调试 Node.js。 | `software-development/node-inspect-debugger` |
 | [`plan`](/user-guide/skills/bundled/software-development/software-development-plan) | 计划模式：将 Markdown 计划写入 `.hermes/plans/`，不执行。 | `software-development/plan` |
 | [`python-debugpy`](/user-guide/skills/bundled/software-development/software-development-python-debugpy) | 调试 Python：pdb REPL + debugpy 远程调试（DAP）。 | `software-development/python-debugpy` |

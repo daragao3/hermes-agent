@@ -234,6 +234,15 @@ const sidebars: SidebarsConfig = {
                 },
                 {
                   type: 'category',
+                  label: 'hermes-desktop-plugins',
+                  key: 'skills-bundled-hermes-desktop-plugins',
+                  collapsed: true,
+                  items: [
+                    'user-guide/skills/bundled/hermes-desktop-plugins/hermes-desktop-plugins-hermes-desktop-plugins',
+                  ],
+                },
+                {
+                  type: 'category',
                   label: 'media',
                   key: 'skills-bundled-media',
                   collapsed: true,
@@ -397,6 +406,7 @@ const sidebars: SidebarsConfig = {
                     'user-guide/skills/optional/creative/creative-kanban-video-orchestrator',
                     'user-guide/skills/optional/creative/creative-meme-generation',
                     'user-guide/skills/optional/creative/creative-pixel-art',
+                    'user-guide/skills/optional/creative/creative-unreal-mcp',
                   ],
                 },
                 {
@@ -579,6 +589,7 @@ const sidebars: SidebarsConfig = {
                     'user-guide/skills/optional/security/security-godmode',
                     'user-guide/skills/optional/security/security-oss-forensics',
                     'user-guide/skills/optional/security/security-sherlock',
+                    'user-guide/skills/optional/security/security-unbroker',
                     'user-guide/skills/optional/security/security-web-pentest',
                   ],
                 },
@@ -599,6 +610,7 @@ const sidebars: SidebarsConfig = {
                   key: 'skills-optional-web-development',
                   collapsed: true,
                   items: [
+                    'user-guide/skills/optional/web-development/web-development-cloudflare-temporary-deploy',
                     'user-guide/skills/optional/web-development/web-development-page-agent',
                   ],
                 },

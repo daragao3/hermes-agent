@@ -86,7 +86,8 @@ python3 $SCRIPT crypto BTC ETH SOL
 
 ### `compare SYMBOL1 SYMBOL2 [...]`
 
-并排对比：价格、涨跌幅、52 周表现。
+并排对比：价格、涨跌幅，以及 `52w_range_position_pct`——价格位于 52 周最低价（0%）
+与最高价（100%）之间的位置。
 
 ### `crypto SYMBOL [SYMBOL2 ...]`
 

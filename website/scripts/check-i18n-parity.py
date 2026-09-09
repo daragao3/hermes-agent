@@ -32,8 +32,8 @@ Deliberately NOT gated on, because both are actively misleading here:
 
 These static gates are NECESSARY BUT NOT SUFFICIENT. They missed a 115-link
 regression that only ``npm run build`` caught, because gate 3 normalises the
-``/docs/`` prefix away (routeBasePath is "/") and is therefore blind to that
-prefix being wrongly PRESENT. Pair this with check-build-links.py.
+``/docs/`` prefix away and is therefore blind to that prefix being wrongly
+PRESENT. Pair this with check-build-links.py.
 
 Usage:
     python3 website/scripts/check-i18n-parity.py            # gate: exit 1 on findings
@@ -146,8 +146,12 @@ def gate_structure(paired, findings):
 # --------------------------------------------------------------------- gate 3
 def neutral_items(text):
     links = set(re.findall(r"\]\(([^)\s]+)", text))
-    # the zh locale deliberately strips the /docs prefix (routeBasePath is "/"),
-    # so normalise it away rather than reporting every skill link as missing
+    # Historically the zh locale stripped a /docs prefix the English pages still
+    # carried, so this normalises it away rather than reporting every skill link
+    # as missing. Both locales now emit the bare form (the prefix comes from
+    # baseUrl, and only ever resolved in `en` by coincidence), so this should be
+    # a no-op -- kept so an un-regenerated page cannot produce a wall of false
+    # drift.
     links = {re.sub(r"^/docs/", "/", link) for link in links}
     nofence = re.sub(r"```.*?```", "", text, flags=re.S)
     spans = set()
