@@ -25,6 +25,7 @@ platforms:
   msgraph_webhook:
     enabled: true
     extra:
+      host: 127.0.0.1
       port: 8646
       client_state: "replace-with-a-strong-secret"
       accepted_resources:
@@ -39,6 +40,8 @@ MSGRAPH_WEBHOOK_PORT=8646
 MSGRAPH_WEBHOOK_CLIENT_STATE=<generate-with-openssl-rand-hex-32>
 MSGRAPH_WEBHOOK_ACCEPTED_RESOURCES=communications/onlineMeetings
 ```
+
+注意：绑定主机从 `config.yaml` 的 `extra.host` 读取（见上方示例）；没有 `MSGRAPH_WEBHOOK_HOST` 环境变量覆盖项。
 
 启动 gateway：`hermes gateway run`。监听器暴露以下端点：
 
@@ -58,14 +61,14 @@ https://ops.example.com/msgraph/webhook
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `host` | `0.0.0.0` | HTTP 监听器的绑定地址。 |
+| `host` | `0.0.0.0` | HTTP 监听器的绑定地址。非环回地址绑定需要设置 `allowed_source_cidrs`；环回地址（`127.0.0.1` / `::1`）是最简单的 dev tunnel / 反向代理配置。 |
 | `port` | `8646` | 绑定端口。 |
 | `webhook_path` | `/msgraph/webhook` | Graph POST 请求的 URL 路径。 |
 | `health_path` | `/health` | 就绪端点。 |
 | `client_state` | — | Graph 在每条通知中回传的共享密钥。使用 `hmac.compare_digest` 进行比较——使用 `openssl rand -hex 32` 生成。 |
 | `accepted_resources` | `[]`（接受全部） | Graph 资源路径/模式的白名单。末尾 `*` 作为前缀匹配。可容忍开头的 `/`。示例：`["communications/onlineMeetings", "chats/*/messages"]`。 |
 | `max_seen_receipts` | `5000` | 通知 ID 的去重缓存大小。达到上限时淘汰最旧的条目。 |
-| `allowed_source_cidrs` | `[]`（允许全部） | 可选的源 IP 白名单。见下文。 |
+| `allowed_source_cidrs` | `[]` | 非环回地址绑定时必需。仅当监听器绑定到环回地址并由本地 tunnel / 反向代理置于其前端时，才可留空。 |
 
 大多数设置也有对应的环境变量（`MSGRAPH_WEBHOOK_*`），在 gateway 启动时合并到配置中（例外是 `host`，它仅可通过配置文件设置——参见上方说明）——参见[环境变量参考](/reference/environment-variables#microsoft-graph-teams-meetings)。
 
@@ -75,7 +78,7 @@ https://ops.example.com/msgraph/webhook
 
 每条 Graph 通知都包含你在订阅时注册的 `clientState` 字符串。监听器使用时序安全比较拒绝任何 `clientState` 不匹配的通知。这是 Microsoft 的官方机制——请将该值视为强共享密钥。
 
-如果未设置 `client_state`，监听器将接受所有格式正确的 POST 请求。**生产环境中请勿在未设置的情况下运行。**
+如果未设置 `client_state`，监听器将拒绝启动。
 
 ### 源 IP 白名单（生产部署）
 
@@ -86,6 +89,7 @@ platforms:
   msgraph_webhook:
     enabled: true
     extra:
+      host: 0.0.0.0
       client_state: "..."
       allowed_source_cidrs:
         - "52.96.0.0/14"
@@ -99,7 +103,7 @@ platforms:
 MSGRAPH_WEBHOOK_ALLOWED_SOURCE_CIDRS="52.96.0.0/14,52.104.0.0/14"
 ```
 
-空白名单 = 接受来自任何地址的请求（默认；保留 dev tunnel 工作流）。无效的 CIDR 字符串会记录警告并被忽略。**请每季度审查 Microsoft IP 列表**——它会变更。
+在未设置 `allowed_source_cidrs` 的情况下绑定 `0.0.0.0`、`::` 或某个局域网 IP 等非环回主机，会在启动时被拒绝。如果你在同一台机器上使用 dev tunnel 或反向代理，请将 Hermes 绑定到 `127.0.0.1` 或 `::1`，并将白名单留空。无效的 CIDR 字符串会记录警告并被忽略。**请每季度审查 Microsoft IP 列表**——它会变更。
 
 ### HTTPS 终止
 
@@ -107,7 +111,7 @@ MSGRAPH_WEBHOOK_ALLOWED_SOURCE_CIDRS="52.96.0.0/14,52.104.0.0/14"
 
 ### 响应规范
 
-成功时，监听器返回 `202 Accepted` 且响应体为空——内部计数器不会出现在响应中。运维人员可通过 `/health` 观察计数。
+成功时，监听器返回 `202 Accepted` 且响应体为空——内部计数器不会出现在响应中。运维人员可通过 `/health` 观察计数，该端点受与 webhook 路径相同的源 IP 规则保护。
 
 状态码说明：
 
@@ -127,8 +131,9 @@ MSGRAPH_WEBHOOK_ALLOWED_SOURCE_CIDRS="52.96.0.0/14,52.104.0.0/14"
 | Graph 订阅验证失败 | 公开 URL 可访问，`/msgraph/webhook` 路径匹配，带 `validationToken` 的 GET 在 10 秒内以 `text/plain` 原样回传 token。 |
 | 通知 POST 成功但无内容被摄取 | `client_state` 与订阅时注册的值一致。如值已漂移，重新运行 `openssl rand -hex 32` 并创建新订阅。检查 `accepted_resources` 是否包含 Graph 发送的资源路径。 |
 | 每条通知均返回 403 | `clientState` 不匹配（伪造，或订阅时使用了不同的值）。使用 `hermes teams-pipeline subscribe --client-state "$MSGRAPH_WEBHOOK_CLIENT_STATE" ...` 重新创建订阅（随流水线运行时 PR 一同发布）。 |
+| 监听器拒绝在 `0.0.0.0` 上启动 | 将 `allowed_source_cidrs` 设置为 Microsoft 当前的 webhook 出口范围，或将 Hermes 绑定到 `127.0.0.1` / `::1` 并置于你的 tunnel 或反向代理之后。 |
 | 监听器已启动，但 `curl http://localhost:8646/health` 挂起 | 端口绑定冲突。检查 `ss -tlnp \| grep 8646`，如有需要更改 `port:`。 |
-| 来自 Microsoft 的真实 Graph 请求返回 403 | 源 IP 白名单范围过窄。临时移除 `allowed_source_cidrs`，确认流量正常后，将列表扩展至包含当前 Microsoft 出口范围。 |
+| 来自 Microsoft 的真实 Graph 请求返回 403 | 源 IP 白名单范围过窄。将列表扩展至包含当前 Microsoft 出口范围。如果你仍在验证 tunnel 链路，请将 Hermes 绑定到环回地址，由 tunnel 负责对外暴露。 |
 
 ## 相关文档
 

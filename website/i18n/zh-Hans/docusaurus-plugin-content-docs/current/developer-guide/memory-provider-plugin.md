@@ -154,10 +154,10 @@ hooks:
 **`sync_turn()` 必须是非阻塞的。** 如果你的后端存在延迟（API 调用、LLM 处理），请在守护线程中执行：
 
 ```python
-def sync_turn(self, user_content, assistant_content):
+def sync_turn(self, user_content, assistant_content, *, session_id="", messages=None):
     def _sync():
         try:
-            self._api.ingest(user_content, assistant_content)
+            self._api.ingest(user_content, assistant_content, session_id=session_id, messages=messages)
         except Exception as e:
             logger.warning("Sync failed: %s", e)
 
@@ -166,6 +166,10 @@ def sync_turn(self, user_content, assistant_content):
     self._sync_thread = threading.Thread(target=_sync, daemon=True)
     self._sync_thread.start()
 ```
+
+`messages` 是可选参数，为截至本轮完成时的 OpenAI 风格对话上下文。存在时，它包含 user/assistant 消息、assistant 的工具调用以及工具结果消息。不需要原始轮次上下文的 provider 可以省略 `messages` 参数；Hermes 会继续以旧签名调用它们。
+
+云端 provider 应说明 `messages` 中的哪些部分会被发送到设备之外。工具调用和工具结果可能包含文件路径、命令输出或其他工作区数据。
 
 ## Profile 隔离
 
@@ -182,7 +186,7 @@ data_dir = Path("~/.hermes/my-provider").expanduser()
 
 ## 测试
 
-完整的端到端测试模式（使用真实 SQLite provider）请参见 `tests/agent/test_memory_plugin_e2e.py`。
+端到端测试模式请参见 `tests/agent/test_memory_provider.py` 及相邻的记忆相关测试（`tests/agent/test_memory_session_switch.py`、`tests/agent/test_memory_user_id.py`、`tests/run_agent/test_memory_provider_init.py`）。
 
 ```python
 from agent.memory_manager import MemoryManager
