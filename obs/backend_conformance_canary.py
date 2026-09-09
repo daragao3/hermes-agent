@@ -62,9 +62,15 @@ _REPAGE_SECONDS = 3600
 # was healthy -- the pinned model completes in ~1s through the same key/endpoint.
 # Same pin as laptop-monitor's harness probe and hindsight-app's startup gate;
 # repoint ALL THREE together if this model dies upstream.
+# 2026-09-09: gpt-5.4-mini DIED upstream -- OpenAI's Codex backend now answers
+# "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT
+# account" (first seen 2026-09-08 16:12 local; gpt-5.4 rejected the same way).
+# gpt-5.5 verified end-to-end through the same key/endpoint. FOUR sites now:
+# this file, ~/manifest-lifecycle.ps1 ($bodyJson), ~/.hermes/hindsight/.env
+# (HINDSIGHT_API_LLM_MODEL) and hindsight/docker-compose.yaml's default.
 _MANIFEST_HARNESS_KEY_FILE = Path("C:/Users/diego/manifest/.mnfst-harness-key")
 _MANIFEST_HARNESS_BASE_URL = "http://localhost:2099/v1"
-_MANIFEST_HARNESS_MODEL = "openai/gpt-5.4-mini-subscription"
+_MANIFEST_HARNESS_MODEL = "openai/gpt-5.5-subscription"
 
 
 @dataclass
