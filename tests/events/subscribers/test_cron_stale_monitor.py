@@ -232,6 +232,10 @@ class TestCronStaleMonitor:
             "jobflow-tracker-followup",
             "nightly-test-gate",
             "postgres-sync",
+            # 2026-09-09: devflow-execute-approved runs 4-56 min (median 43); the
+            # 1200s default fired on 12 of its last 14 healthy runs. Entry 3600,
+            # below its 5400s timeout_seconds (loops telegram-alert-triage-20260909).
+            "devflow-execute-approved",
         ],
     )
     def test_production_threshold_boundaries(self, bus, job_name):
