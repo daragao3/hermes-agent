@@ -28,7 +28,7 @@ Hermes Agent 可与任何兼容 OpenAI 的 API 配合使用。支持的提供商
 
 使用 `hermes model` 设置提供商，或直接编辑 `~/.hermes/.env`。所有提供商 key 请参阅[环境变量](./environment-variables.md)参考文档。
 
-### 支持 Windows / Android / Termux / 我的平台吗？？
+### 支持 Windows / Android / Termux / 我的平台吗？
 完整的平台可用性矩阵请参阅 **[平台支持](../getting-started/platform-support.md)**。
 
 ### 我在 WSL2 中运行 Hermes，如何控制 Windows 上的普通 Chrome？

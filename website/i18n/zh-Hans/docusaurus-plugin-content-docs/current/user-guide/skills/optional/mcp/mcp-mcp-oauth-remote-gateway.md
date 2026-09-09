@@ -48,7 +48,7 @@ Hermes 内置的 MCP OAuth 客户端会在 Hermes 进程内于 `127.0.0.1:<port>
 以下情况**不要**使用：
 - **本地 CLI 版 Hermes** —— 直接在 `mcp_servers.<name>` 中设置 `auth: oauth` 并 `/reload-mcp` 即可。内置流程会打开浏览器并在 localhost 上捕获回调，工作得很好。
 - **接受静态 Bearer 令牌（API key）的服务器** —— 只要用户愿意，就优先使用 `headers.Authorization: "Bearer <token>"`。更简单，也不用折腾刷新。
-- **GitHub Copilot MCP**（`api.githubcopilot.com/mcp/`）—— GitHub 不提供 DCR。请使用 PAT 或预先注册的 OAuth App（见陷阱 12）。
+- **GitHub Copilot MCP**（`api.githubcopilot.com/mcp/`）—— GitHub 不提供 DCR。请使用 PAT 或预先注册的 OAuth App（见陷阱 17）。
 
 ## 为什么内置 OAuth 流程在远程网关上会失败
 

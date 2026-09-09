@@ -128,7 +128,7 @@ Chat 标签页是每次 `hermes dashboard` 启动的一部分——内嵌的浏�
 
 若要让 [Hermes Desktop](#connecting-hermes-desktop-to-a-remote-backend) 指向运行在另一台机器上的 Dashboard，而不是使用它自带的本地后端，请参阅下面的远程后端一节。
 
-### 将 Hermes Desktop 连接到远程后端 {#connecting-hermes-desktop-to-a-remote-backend}
+### 通过远程后端使用 Desktop 聊天 {#desktop-chat-over-a-remote-backend}
 
 Hermes Desktop 通常会启动自己的本地后端，但它也可以通过 **Settings → Gateway → Remote gateway** 连接到运行在远程机器（虚拟机、家庭实验室主机等）上的 Dashboard。这是"Desktop 说后端已就绪但聊天始终不可用"这类报告最常见的来源，因为 Desktop 的就绪检查所验证的内容比实时聊天连接实际需要的要少。
 
@@ -989,7 +989,7 @@ curl -s http://127.0.0.1:9119/api/status | jq '.auth_required, .auth_providers'
 
 Dashboard 的 React StatusPage 在 "Web server" 下显示同样的字段。登录之后，侧边栏的 AuthWidget 会展示当前身份。
 
-## 将 Hermes Desktop 连接到远程后端
+## 将 Hermes Desktop 连接到远程后端 {#connecting-hermes-desktop-to-a-remote-backend}
 
 Hermes Desktop 可以驱动运行在另一台机器上的 Hermes 后端（一台 VPS、一台家庭服务器、一台在 Tailscale 之后的 Mini）。在应用中，这一功能位于 **Settings → Gateway → Remote gateway**，它会询问 **Remote URL** 以及**登录**方式。（关于桌面应用本身——安装、设置、聊天——请参阅 [Hermes Desktop](/user-guide/desktop) 页面。）
 

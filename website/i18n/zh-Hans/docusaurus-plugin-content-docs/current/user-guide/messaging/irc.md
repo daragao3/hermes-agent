@@ -1,3 +1,9 @@
+---
+sidebar_position: 20
+title: "IRC"
+description: "使用零依赖的 IRC gateway 适配器，把 Hermes 连接到任意 IRC 服务器或网络。"
+---
+
 # IRC
 
 IRC 适配器将 Hermes 连接到任意 IRC 服务器，并在 IRC 频道（或私聊）与 agent 之间转发消息。它基于 Python 标准库 `asyncio` 直接实现 IRC 协议——**无外部依赖、无 SDK、无守护进程**。它可用于 [Libera.Chat](https://libera.chat/) 等公共网络，也可用于任何自建 ircd。

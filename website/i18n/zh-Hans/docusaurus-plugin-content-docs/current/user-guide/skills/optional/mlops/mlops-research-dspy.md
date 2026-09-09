@@ -536,7 +536,7 @@ class SummarizeArticle(dspy.Signature):
 ```python
 # 创建多样化的训练示例
 trainset = [
-    dspy.Example(question="factual", answer="...).with_inputs("question"),
+    dspy.Example(question="factual", answer="...").with_inputs("question"),
     dspy.Example(question="reasoning", answer="...").with_inputs("question"),
     dspy.Example(question="calculation", answer="...").with_inputs("question"),
 ]

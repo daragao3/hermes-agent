@@ -55,7 +55,7 @@ Use this skill when **all** of the following are true:
 Do NOT use this for:
 - **Local CLI Hermes** — just set `auth: oauth` in `mcp_servers.<name>` and `/reload-mcp`. The built-in flow opens a browser and captures the callback on localhost. Works perfectly.
 - **Servers that accept a static Bearer token (API key)** — always prefer `headers.Authorization: "Bearer <token>"` when the user is willing. Simpler, no refresh dance.
-- **GitHub Copilot MCP** (`api.githubcopilot.com/mcp/`) — GitHub does not expose DCR. Use a PAT or a pre-registered OAuth App (see pitfall 12).
+- **GitHub Copilot MCP** (`api.githubcopilot.com/mcp/`) — GitHub does not expose DCR. Use a PAT or a pre-registered OAuth App (see pitfall 17).
 
 ## Why the Built-in OAuth Flow Fails on a Remote Gateway
 

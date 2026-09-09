@@ -384,6 +384,15 @@ display:
   tool_progress_grouping: accumulate   # accumulate | separate
 ```
 
+启用后，机器人在工作时发送状态消息：
+
+```text
+💻 `ls -la`...
+🔍 web_search...
+📄 web_extract...
+🐍 execute_code...
+```
+
 ### 模型上下文中的消息时间戳
 
 默认关闭。启用后，Hermes 会在**模型上下文中**的每条**用户**消息前加上一个
@@ -399,15 +408,6 @@ gateway:
 
 持久化的会话记录始终保持干净——无论该开关如何，时间戳都作为消息元数据存储，
 因此之后再启用它也能为过去的消息呈现发送时间，而且重放绝不会累积重复前缀。
-
-启用后，机器人在工作时发送状态消息：
-
-```text
-💻 `ls -la`...
-🔍 web_search...
-📄 web_extract...
-🐍 execute_code...
-```
 
 ## 后台会话 {#background-sessions}
 

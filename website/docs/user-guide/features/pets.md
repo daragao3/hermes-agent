@@ -22,7 +22,7 @@ the agent's behavior** — the sprite is a display concern only. The feature is
   own set.
 - Selecting a pet writes `display.pet.slug` and `display.pet.enabled` to
   `config.yaml` — nothing is stored as a secret or env var.
-- Each surface watches the activity it already tracks and maps it to one of six
+- Each surface watches the activity it already tracks and maps it to one of seven
   animation states. The mapping lives in one place so every surface behaves the
   same:
 
@@ -82,7 +82,7 @@ hermes pets doctor
 `hermes pets show` flags:
 
 - `--state` — play a single state (`idle`, `wave`, `run`, `failed`, `review`,
-  `jump`).
+  `jump`, `waiting`).
 - `--cycle` — cycle through every state.
 - `--once` — play once instead of looping.
 - `--mode` — override the render protocol (`kitty`, `iterm`, `sixel`,
