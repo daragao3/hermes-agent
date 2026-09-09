@@ -5,7 +5,7 @@ animated sprite "pets" for coding agents.  Each pet is a ``pet.json`` plus a
 ``spritesheet.{webp,png}`` of 192×208 px cells. Current Codex/petdex sheets use
 an 8-column × 9-row atlas; older Hermes/petdex sheets used an 8-row atlas.
 Hermes infers the row taxonomy from the sheet and maps agent activity onto
-idle/run/review/failed/wave/jump.
+idle/run/review/failed/wave/jump/waiting.
 
 This package is the **single source of truth** for the feature so the base
 CLI (Python) and TUI (Ink, via ``tui_gateway``) never duplicate the hard

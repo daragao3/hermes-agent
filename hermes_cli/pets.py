@@ -480,7 +480,7 @@ def register_cli(parent: argparse.ArgumentParser) -> None:
 
     p_show = subs.add_parser("show", help="Animate the active pet in the terminal")
     p_show.add_argument("slug", nargs="?", default="", help="Pet slug (default: active)")
-    p_show.add_argument("--state", default="", help="Single state: idle/run/review/failed/wave/jump")
+    p_show.add_argument("--state", default="", help="Single state: idle/run/review/failed/wave/jump/waiting")
     p_show.add_argument("--cycle", action="store_true", help="Cycle through all states")
     p_show.add_argument("--once", action="store_true", help="Play once instead of looping")
     p_show.add_argument("--mode", default=None, help="Override render mode (kitty/iterm/sixel/unicode/auto)")

@@ -7492,7 +7492,7 @@ def _(rid, params: dict) -> dict:
     a grid of half-block cells and the Ink side paints them with native color
     props. Each cell is ``[tr,tg,tb,ta, br,bg,bb,ba]`` (top + bottom pixel).
 
-    Params: ``state`` (idle/run/review/failed/wave/jump), ``cols`` (width).
+    Params: ``state`` (idle/run/review/failed/wave/jump/waiting), ``cols`` (width).
     Fail-open: ``enabled=False`` on any problem.
     """
     try:
