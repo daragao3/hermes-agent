@@ -7,6 +7,32 @@ permissions:
   contents: read
 
 jobs:
+  # zh-Hans locale parity. Its own job: it needs only Python, so it reports in
+  # ~10s instead of waiting behind the npm install the site build needs.
+  #
+  # Runs against the checkout as committed, BEFORE generate-skill-docs.py
+  # regenerates the English skill pages — the committed tree is what we are
+  # gating, and skills-index-freshness.yml separately asserts the generated
+  # pages are up to date.
+  i18n-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      # --allow-untranslated: generate-skill-docs.py emits ENGLISH pages only,
+      # so adding a skill creates a page with no zh counterpart and would block
+      # a PR on a translation its author cannot write. Those findings are still
+      # printed (as a ::warning::) and the nightly run does fail on them. The
+      # other three gates stay blocking here — they only ever fire on a page
+      # somebody already translated, which is the drift this exists to stop.
+      - name: Check zh-Hans docs parity
+        run: python3 website/scripts/check-i18n-parity.py --allow-untranslated
+
   docs-site-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -45,5 +71,16 @@ jobs:
         working-directory: website
 
       - name: Build Docusaurus
-        run: npm run build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee "$RUNNER_TEMP/docusaurus-build.log"
         working-directory: website
+
+      # The build's EXIT CODE proves nothing about references: docusaurus.config
+      # sets onBrokenLinks and onBrokenMarkdownLinks to 'warn', so it exits 0
+      # with broken links in the output. This is the only gate that catches a
+      # wrongly-present /docs/ prefix — check-i18n-parity.py normalises that
+      # prefix away by design and is blind to it. A 115-link regression reached
+      # main past three green static gates and was caught only here.
+      - name: Check the build log for broken links and anchors
+        run: python3 website/scripts/check-build-links.py "$RUNNER_TEMP/docusaurus-build.log"
