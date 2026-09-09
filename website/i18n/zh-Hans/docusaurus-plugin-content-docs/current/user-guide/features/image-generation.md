@@ -121,11 +121,13 @@ Blend these two product shots into one hero image → <image1> <image2>
 
 从智能体视角，三个宽高比词对所有模型通用；内部会映射到各模型原生参数：
 
-| 智能体输入 | image_size（flux/z-image/qwen/recraft/ideogram） | aspect_ratio（nano-banana-pro） | image_size（gpt-image） |
-|---|---|---|---|
-| `landscape` | `landscape_16_9` | `16:9` | `1536x1024` |
-| `square` | `square_hd` | `1:1` | `1024x1024` |
-| `portrait` | `portrait_16_9` | `9:16` | `1024x1536` |
+| 智能体输入 | image_size（flux/z-image/qwen/recraft/ideogram） | aspect_ratio（nano-banana-pro） | image_size（gpt-image-1.5） | image_size（gpt-image-2） |
+|---|---|---|---|---|
+| `landscape` | `landscape_16_9` | `16:9` | `1536x1024` | `landscape_4_3`（1024×768） |
+| `square` | `square_hd` | `1:1` | `1024x1024` | `square_hd`（1024×1024） |
+| `portrait` | `portrait_16_9` | `9:16` | `1024x1536` | `portrait_4_3`（768×1024） |
+
+GPT Image 2 映射到 4:3 预设而非 16:9，因为它的最小像素数为 655,360——`landscape_16_9` 预设（1024×576 = 589,824）会被拒绝。
 
 该映射在 `_build_fal_payload()` 中完成，智能体代码无需了解各模型 schema 差异。
 

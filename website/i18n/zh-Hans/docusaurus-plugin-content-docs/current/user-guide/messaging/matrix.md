@@ -16,10 +16,10 @@ Hermes 兼容任何 Matrix homeserver——Synapse、Conduit、Dendrite 或 matr
 
 | 场景 | 行为 |
 |---------|----------|
-| **私聊（DM）** | Hermes 响应每条消息，无需 `@提及`。每个 DM 有独立的会话。设置 `MATRIX_DM_MENTION_THREADS=true` 可在 DM 中被 `@提及` 时创建线程。 |
-| **房间** | 默认情况下，Hermes 需要 `@提及` 才会响应。设置 `MATRIX_REQUIRE_MENTION=false` 或将房间 ID 添加到 `MATRIX_FREE_RESPONSE_ROOMS` 可开启自由响应模式。房间邀请会被自动接受。 |
+| **私聊（DM）** | Hermes 响应每条消息，无需 `@mention`（@ 提及）。每个 DM 有独立的会话。设置 `MATRIX_DM_MENTION_THREADS=true` 可在 DM 中被 `@mentioned` 时创建线程。 |
+| **房间** | 默认情况下，Hermes 需要 `@mention`（@ 提及）才会响应。设置 `MATRIX_REQUIRE_MENTION=false` 或将房间 ID 添加到 `MATRIX_FREE_RESPONSE_ROOMS` 可开启自由响应模式。房间邀请会被自动接受。 |
 | **线程** | Hermes 支持 Matrix 线程（MSC3440）。在线程中回复时，Hermes 会将线程上下文与主房间时间线隔离。机器人已参与的线程无需提及即可响应。 |
-| **自动线程** | 默认情况下，Hermes 会为其在房间中响应的每条消息自动创建线程，以保持对话隔离。设置 `MATRIX_AUTO_THREAD=false` 可禁用此功能。设置 `MATRIX_DM_AUTO_THREAD=true`（默认 false）可同时为私聊消息自动创建线程——这与 `MATRIX_DM_MENTION_THREADS` 不同，后者仅在私聊中 @提及 Bot 时才创建线程。 |
+| **自动线程** | 默认情况下，Hermes 会为其在房间中响应的每条消息自动创建线程，以保持对话隔离。设置 `MATRIX_AUTO_THREAD=false` 可禁用此功能。设置 `MATRIX_DM_AUTO_THREAD=true`（默认 false）可同时为私聊消息自动创建线程——这与 `MATRIX_DM_MENTION_THREADS` 不同，后者仅在私聊中机器人被 `@mentioned` 时才创建线程。 |
 | **命令** | 当你的 Matrix 客户端会发送 `/命令` 时，Hermes 可以正常接收。如果你的客户端把 `/` 保留给本地命令，请改用 `!命令`；Hermes 会把已知的 `!command` 别名规范化为 `/command`。 |
 | **交互式控件** | 危险命令审批和 `/model` 选择可以使用 Matrix 反应。审批反应可以限制为仅由发起该操作的用户操作。 |
 | **思考与工具活动** | 启用 gateway 进度显示时，Matrix 使用可编辑的线程化思考/工具活动面板，因此更新不会淹没主房间时间线。 |

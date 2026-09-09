@@ -19,6 +19,7 @@ hermes profile <subcommand>
 | `list` | 列出所有 profile。 |
 | `use` | 设置当前活跃（默认）profile。 |
 | `create` | 创建新 profile。 |
+| `describe` | 读取或设置 profile 的描述（供 kanban 编排器路由使用）。 |
 | `delete` | 删除 profile。 |
 | `show` | 显示 profile 详情。 |
 | `alias` | 重新生成 profile 的 shell alias。 |
@@ -84,7 +85,7 @@ hermes profile create <name> [options]
 | `--clone-from <profile>` | 从指定 profile 克隆 config/skills/SOUL，而非当前 profile。除非与 `--clone-all` 配合使用，否则会隐含 `--clone`。 |
 | `--no-alias` | 跳过 wrapper 脚本创建。 |
 | `--description "<text>"` | 一到两句话描述该 profile 的用途。供 kanban 编排器根据角色而非仅凭 profile 名称来路由任务。可跳过，稍后通过 `hermes profile describe` 添加。持久化保存在 `<profile_dir>/profile.yaml` 中。 |
-| `--no-skills` | 创建一个**空** profile，不启用任何内置 skill。会在 profile 目录中写入 `.no-bundled-skills` 标记，使后续 `hermes update` 不再重新植入内置 skill 集，且拒绝与 `--clone`、`--clone-from` 或 `--clone-all` 组合使用（因为这些选项会复制 skill）。适用于不应继承完整 skill 目录的窄化编排器 profile 或沙箱 profile。 |
+| `--no-skills` | 创建一个**空** profile，不启用任何内置 skill。会在 profile 目录中写入 `.no-bundled-skills` 标记，使后续 `hermes update` 不再重新植入内置 skill 集，且拒绝与 `--clone`、`--clone-from` 或 `--clone-all` 组合使用（因为这些选项会复制 skill）。适用于不应继承完整 skill 目录的窄化编排器 profile 或沙箱 profile。若要在已创建的 profile（包括默认的 `~/.hermes`）上切换此项，请使用 `hermes skills opt-out` / `hermes skills opt-in`。 |
 
 创建 profile **不会**将该 profile 目录设为终端命令的默认项目/工作目录。如需让某个 profile 从特定项目目录启动，请在该 profile 的 `config.yaml` 中设置 `terminal.cwd`。
 
