@@ -1,7 +1,7 @@
 ---
 title: Codex App-Server Runtime (optional)
-description: "Optionally hand openai/* turns to the Codex CLI app-server so its runtime executes tools, edits and sandboxing"
 sidebar_label: Codex App-Server Runtime
+description: "Optionally hand openai/* turns to the Codex CLI app-server so its runtime executes tools, edits and sandboxing"
 ---
 
 # Codex App-Server Runtime

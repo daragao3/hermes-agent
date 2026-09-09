@@ -1,8 +1,8 @@
 ---
-title: Browser Automation
-description: Control browsers with multiple providers, local Chromium-family browsers via CDP, or cloud browsers for web interaction, form filling, scraping, and more.
-sidebar_label: Browser
 sidebar_position: 5
+title: Browser Automation
+sidebar_label: Browser
+description: Control browsers with multiple providers, local Chromium-family browsers via CDP, or cloud browsers for web interaction, form filling, scraping, and more.
 ---
 
 # Browser Automation

@@ -1,8 +1,8 @@
 ---
-title: Provider Routing
-description: Configure OpenRouter or Nous Portal provider preferences to optimize for cost, speed, or quality.
-sidebar_label: Provider Routing
 sidebar_position: 7
+title: Provider Routing
+sidebar_label: Provider Routing
+description: Configure OpenRouter or Nous Portal provider preferences to optimize for cost, speed, or quality.
 ---
 
 # Provider Routing

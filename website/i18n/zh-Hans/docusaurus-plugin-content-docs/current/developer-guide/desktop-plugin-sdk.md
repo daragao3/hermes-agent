@@ -1,6 +1,6 @@
 ---
-sidebar_label: "Desktop Plugin SDK"
 title: "桌面端插件 SDK（@hermes/plugin-sdk）"
+sidebar_label: "Desktop Plugin SDK"
 description: "扩展原生 Hermes 桌面端应用——面板、页面、侧边栏导航、状态栏、命令面板、快捷键、主题，以及一个作用域受限的后端命名空间，只需一次 import，无需构建步骤。"
 ---
 

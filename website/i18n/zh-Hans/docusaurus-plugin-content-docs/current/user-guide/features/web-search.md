@@ -1,8 +1,8 @@
 ---
-title: 网页搜索与提取
-description: 通过多个后端提供商搜索网页并提取页面内容——包括免费的自托管 SearXNG。
-sidebar_label: Web Search
 sidebar_position: 6
+title: 网页搜索与提取
+sidebar_label: Web Search
+description: 通过多个后端提供商搜索网页并提取页面内容——包括免费的自托管 SearXNG。
 ---
 
 # 网页搜索与提取

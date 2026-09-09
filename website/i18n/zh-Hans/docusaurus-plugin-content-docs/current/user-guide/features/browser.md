@@ -1,8 +1,8 @@
 ---
-title: 浏览器自动化
-description: 通过多种提供商控制浏览器，支持通过 CDP 连接本地 Chromium 系浏览器或云端浏览器，用于网页交互、表单填写、数据抓取等场景。
-sidebar_label: Browser
 sidebar_position: 5
+title: 浏览器自动化
+sidebar_label: Browser
+description: 通过多种提供商控制浏览器，支持通过 CDP 连接本地 Chromium 系浏览器或云端浏览器，用于网页交互、表单填写、数据抓取等场景。
 ---
 
 # 浏览器自动化

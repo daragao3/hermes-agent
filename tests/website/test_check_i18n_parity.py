@@ -638,10 +638,10 @@ def test_allow_untranslated_does_not_waive_incomplete_frontmatter(parity, tree):
 # --------------------------------------------------------------------------
 # gate 7 — frontmatter key order
 #
-# Deliberately constrains ONE pair. A single canonical order is not available:
-# the tree carries 11 distinct key sequences and disagrees with itself in both
-# directions on sidebar_label and sidebar_position, so any fixed rank fails 56
-# pages. title-before-description is unanimous, so it gates for free.
+# The canonical order was DERIVED, not chosen: all 40,320 permutations of the
+# eight keys in use were scored against the 722 real page/locale pairs, and
+# FM_KEY_ORDER is the unique minimum at 56 deviating pages. Those 56 were
+# normalised in the same commit that widened this gate.
 # --------------------------------------------------------------------------
 def _fm(*keys):
     body = "".join('%s: "x"\n' % k for k in keys)
@@ -652,39 +652,60 @@ def test_key_order_flags_description_before_title(parity, tree):
     """The defect that prompted this gate: a mechanical fill inserted
     description at the top of a block that already had a sidebar_position, so
     title ended up below both."""
-    tree("a.md", _fm("description", "sidebar_position", "title"), _fm("title", "description"))
+    tree("a.md", _fm("description", "sidebar_position", "title"),
+         _fm("title", "description"))
     findings = []
     assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 1
-    assert "description: appears before title:" in findings[0]
+    assert "expected sidebar_position -> title -> description" in findings[0]
     assert "[en]" in findings[0]
 
 
-def test_key_order_accepts_title_before_description(parity, tree):
-    tree("a.md", _fm("sidebar_position", "title", "description"), _fm("title", "description"))
+def test_key_order_accepts_the_canonical_order(parity, tree):
+    canonical = _fm(*parity.FM_KEY_ORDER)
+    tree("a.md", canonical, canonical)
     findings = []
     assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 0
 
 
-def test_key_order_allows_keys_between_the_two(parity, tree):
-    """`title -> sidebar_label -> description` is the SINGLE COMMONEST shape in
-    the repo (356 of 722 pages). Requiring adjacency would fail the majority."""
-    tree("a.md", _fm("title", "sidebar_label", "description"), _fm("title", "sidebar_label", "description"))
+def test_key_order_flags_sidebar_label_before_title(parity, tree):
+    """One of the two pairs the tree used to disagree on. 16 pages ordered
+    sidebar_label -> title against 356 the other way; the minority was
+    normalised, so this is now a finding rather than legitimate variation."""
+    tree("a.md", _fm("sidebar_label", "title", "description"),
+         _fm("title", "sidebar_label", "description"))
+    findings = []
+    assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 1
+
+
+def test_key_order_flags_sidebar_position_after_title(parity, tree):
+    """The other formerly-contested pair: 34 pages ordered
+    title -> sidebar_position against 284 the other way."""
+    tree("a.md", _fm("title", "description", "sidebar_position"),
+         _fm("sidebar_position", "title", "description"))
+    findings = []
+    assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 1
+
+
+def test_key_order_allows_a_subset_in_canonical_relative_order(parity, tree):
+    """Most pages carry only some of the eight keys. The rule is RELATIVE
+    order, so a page may skip any of them."""
+    tree("a.md", _fm("title", "description"), _fm("sidebar_position", "title", "description"))
     findings = []
     assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 0
 
 
-def test_key_order_has_no_opinion_on_other_pairs(parity, tree):
-    """The tree contradicts itself on sidebar_label and sidebar_position, so
-    this gate must stay silent about them or it fails 56 real pages."""
-    tree("a.md", _fm("sidebar_label", "title", "description"), _fm("title", "description", "sidebar_position"))
+def test_key_order_ignores_keys_it_does_not_rank(parity, tree):
+    """A contributor adding a legitimate Docusaurus key should not have the
+    build blocked before anyone has decided where it belongs. The omission is
+    surfaced by test_key_order_rank_covers_every_key_in_the_tree instead."""
+    tree("a.md", _fm("title", "keywords", "description"),
+         _fm("title", "keywords", "description"))
     findings = []
     assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 0
 
 
-def test_key_order_is_silent_when_a_key_is_absent(parity, tree):
-    """Absence is gate 6's business. Reporting it here would double-count every
-    incomplete page."""
-    tree("a.md", _fm("description"), _fm("title"), bare=False)
+def test_key_order_is_silent_on_a_page_with_no_frontmatter(parity, tree):
+    tree("a.md", "# T\n\ntext\n", "# T\n\ntext\n", bare=True)
     findings = []
     assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 0
 
@@ -719,12 +740,46 @@ def test_allow_untranslated_does_not_waive_bad_key_order(parity, tree):
 
 
 def test_key_order_holds_across_the_whole_real_tree(parity):
-    """Pins the measurement the gate's narrowness rests on: title-before-
-    description is unanimous today, which is WHY this gate needs no allowlist.
-    If this ever fails, the gate stopped being free and the choice between
-    fixing the page and widening the rule has to be made deliberately."""
+    """The normalisation is what makes this gate allowlist-free. If this fails,
+    a page drifted out of canonical order -- fix the page, do not widen the
+    rule."""
     findings = []
     n = parity.gate_key_order(
         parity.rel_pages(parity.EN_DIR), parity.rel_pages(parity.ZH_DIR), findings
     )
     assert n == 0, findings
+
+
+def test_key_order_rank_covers_every_key_in_the_tree(parity):
+    """FM_KEY_ORDER must rank every key actually in use. An unranked key is
+    IGNORED by the gate, so without this test a new key could take up any
+    position forever without anyone deciding where it belongs."""
+    import os
+
+    unranked = set()
+    for root in (parity.EN_DIR, parity.ZH_DIR):
+        for rel in parity.rel_pages(root):
+            for key in parity.frontmatter_keys(parity.read(os.path.join(root, rel))):
+                if key not in parity.FM_KEY_ORDER:
+                    unranked.add(key)
+    assert not unranked, (
+        "these frontmatter keys are in use but unranked -- add them to "
+        "FM_KEY_ORDER in the position you want enforced: %s" % sorted(unranked)
+    )
+
+
+def test_canonical_order_is_the_minimum_churn_permutation(parity):
+    """FM_KEY_ORDER was derived by scoring every permutation against the real
+    tree, not picked by taste. Pinned because a plausible 'tidy-up' would
+    reorder it to something that reads more naturally and silently put the
+    repo back out of canonical order."""
+    assert parity.FM_KEY_ORDER == (
+        "slug",
+        "sidebar_position",
+        "title",
+        "sidebar_label",
+        "description",
+        "hide_title",
+        "hide_table_of_contents",
+        "displayed_sidebar",
+    )

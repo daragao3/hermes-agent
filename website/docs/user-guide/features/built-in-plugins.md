@@ -1,7 +1,7 @@
 ---
 sidebar_position: 12
-sidebar_label: "Built-in Plugins"
 title: "Built-in Plugins"
+sidebar_label: "Built-in Plugins"
 description: "Plugins shipped with Hermes Agent that run automatically via lifecycle hooks — disk-cleanup and friends"
 ---
 

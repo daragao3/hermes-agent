@@ -1,8 +1,8 @@
 ---
-title: Provider Routing
-description: 配置 OpenRouter 或 Nous Portal 的 provider 偏好，以优化成本、速度或质量。
-sidebar_label: Provider Routing
 sidebar_position: 7
+title: Provider Routing
+sidebar_label: Provider Routing
+description: 配置 OpenRouter 或 Nous Portal 的 provider 偏好，以优化成本、速度或质量。
 ---
 
 # Provider Routing

@@ -1,8 +1,8 @@
 ---
-title: 文生图（Image Generation）
-description: 通过 FAL.ai 文生图；支持 11 个模型，含 FLUX 2、GPT Image（1.5 与 2）、Nano Banana Pro、Ideogram、Recraft V4 Pro、Krea 2 等，可用 hermes tools 切换。
-sidebar_label: 文生图
 sidebar_position: 6
+title: 文生图（Image Generation）
+sidebar_label: 文生图
+description: 通过 FAL.ai 文生图；支持 11 个模型，含 FLUX 2、GPT Image（1.5 与 2）、Nano Banana Pro、Ideogram、Recraft V4 Pro、Krea 2 等，可用 hermes tools 切换。
 ---
 
 # 文生图（Image Generation）

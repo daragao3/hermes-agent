@@ -1,7 +1,7 @@
 ---
 sidebar_position: 12
-sidebar_label: "内置插件"
 title: "内置插件"
+sidebar_label: "内置插件"
 description: "随 Hermes Agent 附带并通过生命周期 hook 自动运行的插件——disk-cleanup 等"
 ---
 
