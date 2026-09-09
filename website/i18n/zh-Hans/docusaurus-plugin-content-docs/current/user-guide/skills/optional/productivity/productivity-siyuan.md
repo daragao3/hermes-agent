@@ -37,7 +37,7 @@ description: "通过 curl 调用 SiYuan Note API，在自托管知识库中搜�
 
 1. 安装并运行 SiYuan（桌面版或 Docker）
 2. 获取 API token：**设置 > 关于 > API token**
-3. 将其存储在 `~/.hermes/.env` 中：
+3. 将其存储在 `${HERMES_HOME:-~/.hermes}/.env` 中：
    ```
    SIYUAN_TOKEN=your_token_here
    SIYUAN_URL=http://127.0.0.1:6806
