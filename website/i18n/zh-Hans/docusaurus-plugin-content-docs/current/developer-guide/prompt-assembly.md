@@ -220,7 +220,7 @@ def build_context_files_prompt(cwd=None, skip_soul=False):
 
 所有上下文文件均会：
 - **安全扫描** — 检查 prompt 注入模式（不可见 unicode、"ignore previous instructions"、凭据窃取尝试）
-- **截断处理** — 使用 70/20 头尾比例上限为 20,000 字符，并附截断标记
+- **截断处理** — 使用 70/20 头尾比例，上限为 `context_file_max_chars` 字符（默认 20,000），并附截断标记
 - **剥离 YAML frontmatter** — `.hermes.md` 的 frontmatter 会被移除（保留供未来配置覆盖使用）
 
 ## 仅在 API 调用时生效的层
