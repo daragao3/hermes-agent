@@ -46,7 +46,93 @@ Unsloth：2-5倍更快的 LoRA/QLoRA 微调，更少显存。
 
 ### 常用模式
 
-*随着你使用此 skill，快速参考模式将逐步添加。*
+**模式 1：** 用 `FastModel.from_pretrained` 加载模型。`load_in_4bit = True` 为 4-bit 量化；`False` 表示 16-bit LoRA。要做全参数微调，请设置 `full_finetuning = True`。
+
+```
+model, tokenizer = FastModel.from_pretrained(
+    model_name = "unsloth/gpt-oss-20b",
+    max_seq_length = 2048, # Choose any for long context!
+    load_in_4bit = True,  # 4-bit quantization. False = 16-bit LoRA.
+    load_in_8bit = False, # 8-bit quantization
+    load_in_16bit = False, # [NEW!] 16-bit LoRA
+    full_finetuning = False, # Use for full fine-tuning.
+    # token = "hf_...", # use one if using gated models
+)
+```
+
+**模式 2：** 用 `get_peft_model` 添加 LoRA 适配器。`use_gradient_checkpointing = "unsloth"` 可少用 30% 显存，并支持 2 倍大的批次。
+
+```
+model = FastLanguageModel.get_peft_model(
+    model,
+    r = 16,
+    target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
+                      "gate_proj", "up_proj", "down_proj",],
+    lora_alpha = 16,
+    lora_dropout = 0, # Supports any, but = 0 is optimized
+    bias = "none",    # Supports any, but = "none" is optimized
+    # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
+    use_gradient_checkpointing = "unsloth", # True or "unsloth" for very long context
+    random_state = 3407,
+    max_seq_length = max_seq_length,
+    use_rslora = False,  # We support rank stabilized LoRA
+    loftq_config = None, # And LoftQ
+)
+```
+
+**模式 3：** 用 `get_chat_template` 为你的 tokenizer 应用正确的对话模板。
+
+```
+tokenizer = get_chat_template(
+      tokenizer,
+      chat_template = "gemma-3", # change this to the right chat_template name
+  )
+```
+
+**模式 4：** 如果你的数据集使用 ShareGPT 的 `from`/`value` 键，而不是 ChatML 的 `role`/`content` 格式，请先用 `standardize_sharegpt` 转换。
+
+```
+from unsloth.chat_templates import standardize_sharegpt
+dataset = standardize_sharegpt(dataset)
+```
+
+**模式 5：** 若只想在助手回合上训练，请用 `train_on_responses_only` 包装 trainer，并定义指令部分与助手部分。下面给出的是 Llama 3.x / 4 的形式。
+
+```
+from unsloth.chat_templates import train_on_responses_only
+trainer = train_on_responses_only(
+    trainer,
+    instruction_part = "<|start_header_id|>user<|end_header_id|>\n\n",
+    response_part = "<|start_header_id|>assistant<|end_header_id|>\n\n",
+)
+```
+
+**模式 6：** Unsloth 本身就提供原生 2 倍速推理，因此请始终调用 `FastLanguageModel.for_inference(model)`。想要更长的回复就调高 `max_new_tokens`。
+
+```
+FastLanguageModel.for_inference(model)
+```
+
+**模式 7：** 若要使用 vLLM 后端生成，请在加载时设置 `fast_inference = True`，并调用 `model.fast_generate`。
+
+```
+from unsloth import FastLanguageModel
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name = "unsloth/Llama-3.2-3B-Instruct",
+    fast_inference = True,
+)
+model.fast_generate(["Hello!"])
+```
+
+**模式 8：** 用 `save_pretrained_merged` 保存合并后的权重，或用 `save_pretrained_gguf` 配合某种量化方法导出 GGUF。
+
+```
+# Save to 16-bit precision
+model.save_pretrained_merged("model", tokenizer, save_method="merged_16bit")
+model.save_pretrained_gguf("directory", tokenizer, quantization_method = "q4_k_m")
+```
+
+以上模式为精简版；完整文档请阅读 `references/` 中的文件。
 
 ## 参考文件
 
