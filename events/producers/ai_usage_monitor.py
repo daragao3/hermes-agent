@@ -133,7 +133,7 @@ class AIUsageCollectorMonitor:
         runner: Optional[Callable[[Path], Any]] = None,
         clock: Optional[Callable[[], float]] = None,
         home: Optional[str] = None,
-        start_immediately: bool = False,
+        start_immediately: bool = True,
     ):
         self.mode = mode if mode is not None else resolve_mode()
         self.interval_seconds = interval_seconds
@@ -146,6 +146,13 @@ class AIUsageCollectorMonitor:
         self._worker: Optional[threading.Thread] = None
         self._started_at: Optional[float] = None
         # None means "never run"; start_immediately makes the first tick due.
+        # DEFAULT TRUE since 2026-09-09: the gateway constructs this with no
+        # arguments, and with the old False default the first collection landed a
+        # full interval (15 min) after gateway start. Across a laptop restart the
+        # on-disk snapshot keeps its pre-shutdown fetched_at stamps, so every
+        # provider on the usage panel read "stale" for those 15 minutes. The run
+        # happens on a daemon worker, never inline in check(), so an immediate
+        # first tick costs the gateway's startup nothing.
         self._last_finished_at: Optional[float] = None
         if not start_immediately:
             # Defensive: this runs during gateway startup, where an exception

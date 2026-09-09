@@ -303,3 +303,26 @@ def test_status_reports_mode_target_and_counters(tmp_path):
     assert status["out_path"].endswith(SHADOW_FILENAME)
     assert status["runs_completed"] == 1
     assert status["in_flight"] is False
+
+
+def test_a_monitor_built_with_no_arguments_is_due_on_its_first_tick(tmp_path):
+    """The gateway constructs AIUsageCollectorMonitor() bare. A deferred first
+    run meant 15 minutes of "stale" on the usage panel after every gateway
+    (re)start, and across a laptop restart the panel showed every provider
+    stale until then. Pin the default: the first check() must start a run."""
+    calls = []
+
+    def runner(target):
+        calls.append(target)
+        return {"providers": []}
+
+    monitor = AIUsageCollectorMonitor(
+        mode="shadow",
+        runner=runner,
+        clock=lambda: 1000.0,
+        home=str(tmp_path),
+    )
+    monitor.check()
+    _drain(monitor)
+    assert len(calls) == 1, "the bare-constructed monitor must run on its first tick"
+
