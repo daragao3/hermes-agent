@@ -1,7 +1,7 @@
 ---
 title: "Unreal Mcp"
 sidebar_label: "Unreal Mcp"
-description: "当用户想通过 Epic 官方内嵌于编辑器的 MCP 服务器（目录条目：unreal-engine）在 Unreal Engine 中执行任何操作时使用 ..."
+description: "当用户想通过 Epic 官方内嵌于编辑器的 MCP 服务器（目录条目：unreal-engine）在 Unreal Engine 中执行任何操作时使用——搭建/打光/填充场景、放置与变换 Actor、编写 Blueprint、用 Sequencer 制作动画、创建材质实例、构图相机、截图、渲染..."
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}

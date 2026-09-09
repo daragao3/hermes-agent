@@ -352,7 +352,11 @@ def _truncate_on_word_boundary(text: str, limit: int) -> str:
     boundary = clipped.rfind(" ") if mid_word else -1
     if boundary > 0:
         clipped = clipped[:boundary]
-    return clipped.rstrip().rstrip(",;:-—–") + "..."
+    # Strip whitespace, then punctuation, then whitespace AGAIN. The second
+    # pass is load-bearing: stripping a dangling dash can expose the space in
+    # front of it ("...unreal-engine) —" -> "...unreal-engine) "), and a single
+    # ordered pass leaves that space stranded before the ellipsis.
+    return clipped.rstrip().rstrip(",;:-—–").rstrip() + "..."
 
 
 def render_skill_page(
