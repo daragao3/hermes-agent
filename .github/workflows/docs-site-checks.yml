@@ -35,10 +35,14 @@ jobs:
       # so adding a skill creates a page with no zh counterpart and would block
       # a PR on a translation its author cannot write. Those findings are still
       # printed (as a ::warning::) and the nightly run does fail on them. The
-      # other four gates stay blocking here — they only ever fire on a page
+      # flag waives gate 1 (PAGE SET) and nothing else, so EVERY OTHER gate in
+      # check-i18n-parity.py stays blocking here — they only ever fire on a page
       # somebody already translated, which is the drift this exists to stop.
-      # (Four, not three: the flag waives gate 1 alone, and check-i18n-parity.py
-      # has run five gates since the zh-description gate landed in ee1fec2de2.)
+      #
+      # Deliberately no count: this comment said "the other three gates" and was
+      # already wrong (gate 5 had landed in ee1fec2de2); it was corrected to
+      # "four" and gate 6 landed the same day. Read the numbered gates in the
+      # script's docstring — do not re-add a number here.
       - name: Check zh-Hans docs parity
         run: python3 website/scripts/check-i18n-parity.py --allow-untranslated
 
