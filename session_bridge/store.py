@@ -13057,6 +13057,20 @@ def _ensure_claude_visibility_lineage_row_if_known(
         source_identity_issue=source_identity_issue,
     )
     if finalized["state"] == "blocked":
+        if finalized["code"] in _CLAUDE_LINEAGE_COMMIT_TOLERATED:
+            # The same tolerance the commit path has carried since 2026-09-04
+            # (1b5f9259fc), applied to the OTHER place this guard runs: indexing
+            # the target transcript. A source that is not yet catalogued is a
+            # completeness fact, not two records disagreeing, and raising here
+            # was far more expensive than the commit case: the raise rolled the
+            # whole target upsert back, the scanner re-staged the transcript on
+            # every cycle, and one such transcript latched the ENTIRE claude
+            # provider into scan_failed (2026-09-08..09: two 8KB registration
+            # stubs whose Codex sources were agent-spawned and uncatalogued kept
+            # four tray rows red across a bridge restart). Index the target
+            # unlinked; the job stays visible with a reported blocker and the
+            # reconcile path links it once the source is catalogued.
+            return None
         raise ValueError(str(finalized["code"] or _CLAUDE_LINEAGE_CONFLICT))
     if finalized["state"] == "target_missing":
         return None

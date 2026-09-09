@@ -17501,6 +17501,127 @@ def test_claude_visibility_commit_succeeds_when_only_the_source_is_uncatalogued(
     )
 
 
+def test_indexing_a_visibility_target_tolerates_an_uncatalogued_source(db) -> None:
+    """Indexing the TARGET transcript must not raise when only the SOURCE is missing.
+
+    The commit path has tolerated claude_lineage_missing_source since 2026-09-04
+    (test_claude_visibility_commit_succeeds_when_only_the_source_is_uncatalogued),
+    but the same guard also runs when the target transcript is upserted, and
+    there it still raised. That was the worse of the two: the raise rolled the
+    whole target upsert back, the scanner re-staged the transcript on every
+    cycle, and ONE such transcript latched the entire claude provider into
+    scan_failed. Measured 2026-09-08..09: two 8KB registration stubs
+    (2fcb5ce9-..., fa18bae9-...) whose Codex sources were agent-spawned and never
+    catalogued kept session-bridge-service/catalog/queues/continuity red across a
+    bridge restart. Same rule as the commit path: absence is tolerated, the job
+    stays visible with a reported blocker, and the reconcile path links it once
+    the source is catalogued -- which this test also exercises end to end.
+    """
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("upsert-missing-source")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    claim = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    committed = store.commit_claude_visibility_job(
+        identity.job_id, claim.lease_digest, "d" * 64, 100.0
+    )
+    assert committed["state"] == "claude_visible"
+
+    # The target transcript arrives while the source is still uncatalogued.
+    # Before the fix this raised ValueError("claude_lineage_missing_source")
+    # and _execute_write rolled the external_sessions row back with it.
+    store.upsert_projection(
+        _projection(
+            _message("target-user", "signed registration"),
+            native_id=identity.claude_uuid,
+            origin_kind=OriginKind.BRIDGE_PLACEHOLDER,
+            origin_bridge_id=identity.bridge_id,
+        )
+    )
+
+    assert _rows(
+        db,
+        "SELECT native_id FROM external_sessions WHERE provider = 'claude' AND native_id = ?",
+        (identity.claude_uuid,),
+    ) == [{"native_id": identity.claude_uuid}]
+    assert (
+        _rows(db, "SELECT id FROM session_links WHERE bridge_id = ?", (identity.bridge_id,))
+        == []
+    )
+    status = store.claude_visibility_status(100.0)
+    assert status["lineage"]["unlinked_visible"] == 1
+    assert status["lineage"]["blocker_codes"] == {"claude_lineage_missing_source": 1}
+
+    # The documented remedy: catalogue the source (CodexSourceAdapter
+    # .read_native_thread -> upsert_projection), then reconcile links it.
+    _seed_claude_visibility_native_source(db, store, candidate)
+    result = store.reconcile_claude_visibility_lineage(
+        limit=10, marker_secret=_CLAUDE_MARKER_SECRET, apply=True
+    )
+    assert result["repaired"] == 1
+    assert result["blocker_codes"] == {}
+    assert _rows(
+        db,
+        """SELECT from_session_id, to_session_id, relation
+             FROM session_links WHERE bridge_id = ?""",
+        (identity.bridge_id,),
+    ) == [
+        {
+            "from_session_id": candidate.source_session_id,
+            "to_session_id": f"claude:{identity.claude_uuid}",
+            "relation": "mirrors",
+        }
+    ]
+    assert store.claude_visibility_status(100.0)["lineage"]["blocker_codes"] == {}
+
+
+def test_indexing_a_visibility_target_still_refuses_a_real_lineage_mismatch(db) -> None:
+    """The tolerance above is NARROW: a source that EXISTS but disagrees still raises.
+
+    Shape: the job commits visible while its source is uncatalogued (tolerated),
+    then the source is catalogued with bridge provenance instead of native
+    authority, then the target transcript arrives. That is two records
+    disagreeing, not absence, so the upsert must refuse and roll back exactly as
+    before.
+    """
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _claude_visibility_identity("upsert-mismatch")
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    claim = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.commit_claude_visibility_job(
+        identity.job_id, claim.lease_digest, "e" * 64, 100.0
+    )
+    store.upsert_projection(
+        _projection(
+            _message("source-user", "meaningful request"),
+            provider=Provider.CODEX,
+            native_id=candidate.source_session_id.removeprefix("codex:"),
+            origin_kind=OriginKind.BRIDGE_PLACEHOLDER,
+            origin_bridge_id="some-other-bridge",
+        )
+    )
+
+    with pytest.raises(ValueError, match="claude_lineage_source_provenance_mismatch"):
+        store.upsert_projection(
+            _projection(
+                _message("target-user", "signed registration"),
+                native_id=identity.claude_uuid,
+                origin_kind=OriginKind.BRIDGE_PLACEHOLDER,
+                origin_bridge_id=identity.bridge_id,
+            )
+        )
+    # Rolled back with the raise: the target row never landed.
+    assert (
+        _rows(
+            db,
+            "SELECT native_id FROM external_sessions WHERE provider = 'claude' AND native_id = ?",
+            (identity.claude_uuid,),
+        )
+        == []
+    )
+
+
 def test_claude_visibility_commit_still_refuses_a_real_lineage_conflict(db) -> None:
     """The tolerance is NARROW: absence is forgiven, disagreement is not.
 
