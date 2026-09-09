@@ -202,7 +202,12 @@ def is_agent_worktree_cwd(cwd: object) -> bool:
 # read (one line, bounded); an unreadable or absent head reads as NOT an
 # import, so a missing file never hides a real session.
 CODEX_IMPORT_ORIGINATOR = "hermes-codex-import"
-_ROLLOUT_HEAD_BYTES = 8192
+# The session_meta line carries the thread's full base_instructions (the
+# system prompt), so it runs to tens of KiB. Measured 2026-09-09: an 8 KiB
+# bound returned an UNTERMINATED head for every real rollout, the probe read
+# "not an import", and two echoes passed discovery. 4 MiB is a hard ceiling
+# against a pathological file, not a size we expect to read.
+_ROLLOUT_HEAD_BYTES = 4 * 1024 * 1024
 
 
 def codex_rollout_originator(native_path: object) -> str | None:
