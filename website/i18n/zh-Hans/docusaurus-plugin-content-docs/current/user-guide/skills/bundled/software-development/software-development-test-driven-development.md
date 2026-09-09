@@ -193,6 +193,25 @@ pytest tests/ -q
 
 为下一个行为编写下一个失败的测试。一次一个循环。
 
+## 避免横向切分
+
+**不要**先写完所有测试、再写所有实现。那是横向切分：RED 变成“写一堆凭空想象的测试”，GREEN 变成“让这堆测试通过”。这样产出的测试很脆弱，因为测试是在实现告诉你哪些行为和接口真正重要之前就设计好的。
+
+改用纵向的示踪弹（tracer bullet）：
+
+```text
+WRONG:
+  RED:   test1, test2, test3, test4
+  GREEN: impl1, impl2, impl3, impl4
+
+RIGHT:
+  RED→GREEN: test1→impl1
+  RED→GREEN: test2→impl2
+  RED→GREEN: test3→impl3
+```
+
+一颗示踪弹就是一个端到端的行为切片。它证明整条路径可行，让你了解接口的真实形态，并使下一个测试始终扎根于你刚学到的东西。
+
 ## 为什么顺序很重要
 
 **"我会在之后写测试来验证它是否有效"**

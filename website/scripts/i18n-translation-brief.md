@@ -57,9 +57,17 @@ other.
   `*粗体*` makes the documented syntax simply wrong. A Chinese gloss alongside is
   fine. This was a recurring real defect, found on six pages.
 - Use `——` for the em-dash, matching existing pages.
-- **Skill-page links drop the `/docs/` prefix.** `routeBasePath` is `/`, so the
-  prefixed form resolves nowhere. This is the one place the sweep deliberately
-  does not keep a link target byte-identical.
+- **Root-relative links carry no `/docs/` prefix — in EITHER locale.** The
+  reason is `baseUrl`, not `routeBasePath`: Docusaurus renders markdown links
+  through `<Link>`, which prepends `siteConfig.baseUrl` unless the href already
+  starts with it (`shouldAddBaseUrl = !url.startsWith(baseUrl)` in
+  `useBaseUrl.js`). Writing `/docs/user-guide/x` only works in `en`, where
+  `baseUrl` happens to BE `/docs/`; in `zh-Hans` `baseUrl` is `/docs/zh-Hans/`,
+  the prefix stops matching, and the link is doubled into
+  `/docs/zh-Hans/docs/user-guide/x`. Write the bare `/user-guide/x` and let
+  `addBaseUrl` do the work. Since the generator fix this is no longer a zh-side
+  workaround — the English pages use the same form, so a link target should now
+  stay byte-identical across locales.
 
 ## In-page anchors — mandatory
 

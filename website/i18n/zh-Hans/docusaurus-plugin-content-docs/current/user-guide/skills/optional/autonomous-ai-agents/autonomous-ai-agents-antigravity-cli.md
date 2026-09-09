@@ -16,7 +16,7 @@ description: "操作 Antigravity CLI（agy）：插件、认证、沙箱"
 |---|---|
 | 来源 | 可选 — 使用 `hermes skills install official/autonomous-ai-agents/antigravity-cli` 安装 |
 | 路径 | `optional-skills/autonomous-ai-agents/antigravity-cli` |
-| 版本 | `0.1.0` |
+| 版本 | `0.2.0` |
 | 作者 | Tony Simons (asimons81), Hermes Agent |
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
@@ -78,6 +78,60 @@ terminal(command="agy --print 'Summarize the repo in 3 bullets'", workdir="/path
 
 要检查 Antigravity 自己的文件，请对下方"核心路径"中的路径使用 `read_file`
 —— 不要通过终端 `cat` 它们。
+
+## 委派模式
+
+`agy` 与 `codex` / `claude-code` 属于同一类编码 agent 后端，因此同样的委派形态也适用。
+当你要把真正的工作（功能开发、缺陷修复、代码审查、第二意见）交给 Antigravity，
+而不只是做冒烟测试时，请使用这些模式。
+
+### 一次性调用（脚本化提示词和第二意见的首选）
+
+```
+terminal(command="agy -p 'Review this diff for bugs and security issues' --model 'Gemini 3.1 Pro (High)'", workdir="/path/to/repo", timeout=300)
+```
+
+`-p` 是非交互式的：它执行提示词后退出。用 `--model` 选择引擎（运行 `agy models`
+获取确切的显示名称，例如 `'Gemini 3.1 Pro (High)'`、`'Claude Opus 4.6 (Thinking)'`）。
+用可重复的 `--add-dir` 添加额外的上下文根目录。
+
+### 长时间 / 有界运行（测试、构建、多文件改动）
+
+把它放到后台并在完成时收到通知，与 `codex` skill 的做法相同：
+
+```
+terminal(command="agy -p 'Implement the change described in TASK.md and run the tests' --dangerously-skip-permissions", workdir="/path/to/repo", background=true, notify_on_complete=true)
+# 然后：process(action="poll"/"log"/"wait", session_id=<id>)
+```
+
+### 交互式多轮对话（PTY + tmux）
+
+如需对话式会话，在 `pty=true` 下启动 `agy -i`（或直接 `agy`），并配合 tmux 使用
+`capture-pane` / `send-keys`，与 `codex` / `claude-code` skill 中记录的模式完全一致。
+之后可用 `--continue` / `-c` 或指定 `--conversation <id>` 恢复会话。
+
+### 并行实例（批量子问题 / worktree 扇出）
+
+为每个任务创建一个 git worktree，并在每个 worktree 中启动独立的 `agy -p`（后台运行），
+然后收集结果——与 `codex` skill 用于批量修复 issue 的 worktree 扇出方式相同。
+并发数应控制在机器承受能力和你的审查能力之内。
+
+### 输出与边界的注意事项（与 Claude Code 不同）
+
+- `agy -p` 返回**纯文本**——**没有 `--output-format json`**，也没有带
+  `session_id` / 成本 / 轮次计数的结果封装。请直接解析 stdout，不要指望拿到 JSON 对象。
+- **没有 `--max-turns`**。一次 print 运行由 **`--print-timeout`**（默认 `5m`）限定。
+  长任务请调高它：`--print-timeout 20m`。同时设置 `terminal` 的 `timeout=`，
+  以免外层调用提前中断运行。
+
+### 编排边界
+
+Antigravity 是**worker 执行后端或第三方意见的审查者**——它是由运行任务的 agent/profile
+所拥有的执行细节，而**不是**一等的编排原语。不要把 `agy` 作为独立卡片放到看板上，
+也不要把它当作协调层；应通过正常的任务图分发工作，由被指派的 worker 自行选择
+`agy`（还是 codex/claude-code/直接使用工具）作为其执行方式。只有在用户明确要求、
+某个 worker 被配置为封装它，或你想用 Gemini 家族对另一个 agent 的方案或 diff
+做交叉验证时，才显式使用它。
 
 ## 核心路径
 
@@ -173,6 +227,10 @@ terminal(command="agy --print 'Summarize the repo in 3 bullets'", workdir="/path
   会话状态的问题，而不是仅与浏览器相关的问题。
 - 工作区身份可能取决于启动目录以及 `.antigravitycli`
   项目标记文件。
+- `agy -p` 只输出纯文本——没有 `--output-format json`，也没有结果封装。
+  不要试图从中解析出 JSON 对象（这一点与 `claude-code` 不同）。
+- 用 `--print-timeout`（默认 `5m`）限定 print 运行，而不是 `--max-turns`
+  （`agy` 上并不存在该选项）。
 
 ## 验证
 

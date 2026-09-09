@@ -2166,7 +2166,7 @@ ACL 系列会议有不同的投稿类型：
 | **`memory`** | 跨会话持久化关键决策：贡献框架、会议选择、审稿反馈。 |
 | **`cronjob`** | 调度实验监控、截止日期倒计时、自动 arXiv 检查。 |
 | **`clarify`** | 在真正受阻时向用户提出针对性问题（会议选择、贡献框架）。 |
-| **`send_message`** | 即使用户不在聊天中，也在实验完成或草稿准备好时通知用户。 |
+| **cron `deliver:`** | 即使用户不在聊天中，也在实验完成或草稿准备好时通知用户——将该检查安排为 cron 任务，并配置消息类 `deliver:` 目标（agent 已不再提供 `send_message` 工具；外发投递由 cron/`hermes send` 负责）。 |
 
 ### 工具使用模式
 
@@ -2177,7 +2177,7 @@ terminal("ps aux | grep <pattern>")
 → terminal("ls results/")
 → execute_code("analyze results JSON, compute metrics")
 → terminal("git add -A && git commit -m '<descriptive message>' && git push")
-→ send_message("Experiment complete: <summary>")
+→ （最终回复会自动投递 "Experiment complete: <summary>"；无人值守运行请通过 cron 配合 deliver: 目标来安排）
 ```
 
 **并行章节起草**（使用委派）：
@@ -2277,7 +2277,7 @@ cronjob("create", {
 
 ### 通信模式
 
-**何时通知用户**（通过 `send_message` 或直接回复）：
+**何时通知用户**（通过你的直接/最终回复，或在无人值守运行时使用 cron `deliver:` 目标）：
 - 一批实验完成（附结果表格）
 - 意外发现或需要决策的故障
 - 草稿章节准备好供审阅
