@@ -4,3 +4,19 @@ tests/hermes_cli/test_auth_provider_gate.py:generic-api-key:187
 tests/run_agent/test_malformed_tool_arguments.py:generic-api-key:30
 tests/run_agent/test_tool_batch_segmentation.py:generic-api-key:227
 tests/test_hermes_constants.py:generic-api-key:693
+
+# zh-Hans i18n parity sweep (2026-09-08): documentation placeholders, verified
+# non-secrets. Each value below is byte-identical to a string already shipped in
+# the ENGLISH counterpart page, at the SAME line number -- the zh pages are
+# faithful translations, so the placeholder necessarily reappears. Verified
+# against website/docs/user-guide/messaging/discord.md (lines 265, 719, 792) and
+# website/docs/user-guide/features/web-search.md (line 181).
+#   - 284102345871466496 / 123456789012345678: example Discord snowflake ids
+#   - abcdef12345678: the SearXNG example secret_key from upstream docs
+# Note these fingerprints embed a LINE NUMBER, so they need re-deriving if the
+# pages shift; re-derive with `gitleaks detect --no-git --source <file>` rather
+# than editing the numbers by hand.
+website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/features/web-search.md:generic-api-key:181
+website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/discord.md:discord-client-id:265
+website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/discord.md:discord-client-id:719
+website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/discord.md:discord-client-id:792

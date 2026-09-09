@@ -25,7 +25,7 @@ Hermes Agent 内置两个可供模型调用的网页工具，由多个提供商�
 | **Tavily** | `TAVILY_API_KEY` | ✔ | ✔ | 1 000 次搜索/月 |
 | **Exa** | `EXA_API_KEY` | ✔ | ✔ | 1 000 次搜索/月 |
 | **Parallel** | `PARALLEL_API_KEY` | ✔ | ✔ | 付费 |
-| **xAI (Grok)** | `XAI_API_KEY` 或 `hermes auth login xai-oauth` | ✔ | — | 付费（SuperGrok 或按 token 计费） |
+| **xAI (Grok)** | `XAI_API_KEY` 或 `hermes auth add xai-oauth` | ✔ | — | 付费（SuperGrok 或按 token 计费） |
 
 Brave Search、DDGS 和 xAI 均为**仅搜索**——如果同时需要 `web_extract`，可将其中任意一个与 Firecrawl/Tavily/Exa/Parallel 配合使用。DDGS 底层使用 [`ddgs` Python 包](https://pypi.org/project/ddgs/)；若尚未安装，请运行 `pip install ddgs`（或让 Hermes 在首次使用时懒加载安装）。xAI 通过 Responses API 运行 Grok 服务端的 `web_search` 工具——结果由 LLM 生成而非基于索引，因此标题、描述和 URL 选择均为模型输出（参见下方[信任模型说明](#xai-grok)）。
 
@@ -37,7 +37,7 @@ Brave Search、DDGS 和 xAI 均为**仅搜索**——如果同时需要 `web_ext
 
 ---
 
-## `web_extract` 如何处理长页面
+## `web_extract` 如何处理长页面 {#how-web_extract-handles-long-pages}
 
 后端返回的原始页面 markdown 可能非常庞大（论坛帖子、文档站点、带嵌入评论的新闻文章）。为保持上下文窗口可用并降低成本，`web_extract` 在将内容交给 agent 之前，会通过 **`web_extract` 辅助模型**对返回内容进行处理。行为完全由大小决定：
 
@@ -115,7 +115,7 @@ SearXNG 是一个注重隐私的开源元搜索引擎，聚合来自 70 多个�
 
 SearXNG 为**仅搜索**——`web_extract` 需要单独的提取提供商。
 
-#### 方案 A — 使用 Docker 自托管（推荐）
+#### 方案 A — 使用 Docker 自托管（推荐） {#option-a--self-host-with-docker-recommended}
 
 这为您提供无速率限制的私有实例。
 
@@ -158,17 +158,33 @@ SearXNG 默认禁用 JSON 输出。复制生成的配置并启用它：
 docker cp searxng:/etc/searxng/settings.yml ~/searxng/searxng/settings.yml
 ```
 
-打开 `~/searxng/searxng/settings.yml`，找到 `formats` 块（约第 84 行）：
+打开 `~/searxng/searxng/settings.yml`。
+如果文件中存在 `use_default_settings: true`，则该文件只包含你的覆盖项，其余所有设置都继承自内置默认值。
+要为 Hermes 启用 JSON 响应，请添加以下覆盖项：
 
 ```yaml
-# 修改前（默认——JSON 已禁用）：
-formats:
-  - html
+search:
+  formats:
+    - html
+    - json
+```
 
-# 修改后（为 Hermes 启用 JSON）：
-formats:
-  - html
-  - json
+你的 `settings.yml` 应该类似于：
+
+```yaml
+# 在扩展默认设置之前请先阅读文档：
+# https://docs.searxng.org/admin/settings/
+
+use_default_settings: true
+
+server:
+  secret_key: "abcdef12345678"
+  image_proxy: true
+
+search:
+  formats:
+    - html
+    - json
 ```
 
 **5. 重启以应用更改：**
@@ -288,7 +304,7 @@ XAI_API_KEY=sk-xai-your-key-here
 或对于 SuperGrok 订阅用户：
 
 ```bash
-hermes auth login xai-oauth
+hermes auth add xai-oauth
 ```
 
 然后选择 xAI 作为搜索后端：

@@ -14,12 +14,12 @@ Hermes Agent 以机器人形式与 Discord 集成，让你可以通过私信或�
 
 | 上下文 | 行为 |
 |---------|----------|
-| **私信（DM）** | Hermes 响应每条消息，无需 `@提及`。每个私信有独立的会话。 |
-| **服务器频道** | 默认情况下，Hermes 仅在被 `@提及` 时响应。如果你在频道中发帖但未提及它，Hermes 会忽略该消息。 |
+| **私信（DM）** | Hermes 响应每条消息，无需 `@mention`。每个私信有独立的会话。 |
+| **服务器频道** | 默认情况下，Hermes 仅在被 `@mention` 时响应。如果你在频道中发帖但未提及它，Hermes 会忽略该消息。 |
 | **自由响应频道** | 你可以通过 `DISCORD_FREE_RESPONSE_CHANNELS` 将特定频道设为无需提及，或通过 `DISCORD_REQUIRE_MENTION=false` 全局禁用提及要求。这些频道中的消息会直接回复——自动创建线程功能会被跳过，使频道保持轻量级聊天状态。 |
 | **线程（Thread）** | Hermes 在同一线程中回复。提及规则仍然适用，除非该线程或其父频道被配置为自由响应。线程的会话历史与父频道相互隔离。 |
 | **多用户共享频道** | 默认情况下，Hermes 为安全和清晰起见，在频道内按用户隔离会话历史。在同一频道中交谈的两个人不会共享同一份对话记录，除非你明确禁用该功能。 |
-| **提及其他用户的消息** | 当 `DISCORD_IGNORE_NO_MENTION` 为 `true`（默认值）时，如果消息 @提及了其他用户但**未**提及机器人，Hermes 保持沉默。这可防止机器人介入针对其他人的对话。如果你希望机器人响应所有消息而不管提及了谁，请设置为 `false`。此设置仅适用于服务器频道，不适用于私信。 |
+| **提及其他用户的消息** | 当 `DISCORD_IGNORE_NO_MENTION` 为 `true`（默认值）时，如果消息 @mentions 了其他用户但**未**提及机器人，Hermes 保持沉默。这可防止机器人介入针对其他人的对话。如果你希望机器人响应所有消息而不管提及了谁，请设置为 `false`。此设置仅适用于服务器频道，不适用于私信。 |
 
 :::tip
 如果你想要一个普通的机器人帮助频道，让用户无需每次都 @标记就能与 Hermes 对话，请将该频道添加到 `DISCORD_FREE_RESPONSE_CHANNELS`。
@@ -38,7 +38,7 @@ Hermes 在 Discord 上不是无状态回复的 webhook（网络钩子）。它�
 
 这一点很重要，因为在繁忙服务器中的行为取决于 Discord 路由和 Hermes 会话策略两者。
 
-### Discord 中的会话模型
+### Discord 中的会话模型 {#session-model-in-discord}
 
 默认情况下：
 
@@ -84,9 +84,11 @@ Hermes 按会话键跟踪正在运行的 agent。
 
 ### Discord Gateway WebSocket 健康
 
-Discord REST 与 Gateway WebSocket 是独立传输。REST 请求成功不代表机器人仍能接收 Gateway 事件。Hermes 会组合检查 ready 状态、client/socket 关闭状态、socket 是否打开、heartbeat ACK 年龄和有限 heartbeat latency。
+Discord REST 与 Gateway WebSocket 是独立传输。REST 请求成功（包括 `fetch_user()` 返回 HTTP 200）并不能证明机器人仍能接收 Gateway 事件。Hermes 会组合检查 ready 状态、client/socket 关闭状态、socket 是否打开、heartbeat ACK 年龄和有限 heartbeat latency。
 
-连续异常达到阈值后，适配器只上报一次可重试失败；现有 Gateway 重连器创建新适配器，不会启动第二个无限重连循环。
+连续异常样本达到配置的次数后，适配器只上报一次可重试的致命事件。现有的 gateway 重连监视器会创建新的适配器；Discord 适配器不会启动第二个无限重连循环。
+
+在 `config.yaml` 中配置这些非机密阈值：
 
 ```yaml
 discord:
@@ -186,7 +188,7 @@ Token 只显示一次。如果丢失，你需要重置并生成新的 token。�
 你可以使用以下格式直接构建邀请 URL：
 
 ```
-https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=309237763136
+https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=274878286912
 ```
 
 将 `YOUR_APP_ID` 替换为第一步中的 Application ID。
@@ -204,7 +206,6 @@ https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+application
 ### 推荐的附加权限
 
 - **Send Messages in Threads** — 在线程对话中响应
-- **Create Public Threads** - create threads
 - **Add Reactions** — 对消息添加反应以示确认
 
 ### 权限整数
@@ -212,7 +213,7 @@ https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+application
 | 级别 | 权限整数 | 包含内容 |
 |-------|-------------------|-----------------|
 | 最低 | `117760` | View Channels、Send Messages、Read Message History、Attach Files |
-| 推荐 | `309237763136` | 以上所有权限，加上 Embed Links、Send Messages in Threads、Add Reactions, Create Public Threads |
+| 推荐 | `274878286912` | 以上所有权限，加上 Embed Links、Send Messages in Threads、Add Reactions |
 
 ## 第六步：邀请到你的服务器
 
@@ -288,19 +289,21 @@ Discord 行为通过两个文件控制：**`~/.hermes/.env`** 用于凭据和环
 | 变量 | 是否必填 | 默认值 | 描述 |
 |----------|----------|---------|-------------|
 | `DISCORD_BOT_TOKEN` | **是** | — | 来自 [Discord 开发者门户](https://discord.com/developers/applications) 的机器人 token。 |
-| `DISCORD_ALLOWED_USERS` | **是** | — | 允许与机器人交互的 Discord 用户 ID，逗号分隔。没有此项**或** `DISCORD_ALLOWED_ROLES`，网关将拒绝所有用户。 |
+| `DISCORD_ALLOWED_USERS` | 视情况 | — | 允许与机器人交互的 Discord 用户 ID，逗号分隔。没有此项**或** `DISCORD_ALLOWED_ROLES` 时，网关将拒绝所有用户，除非设置了 `DISCORD_ALLOW_ALL_USERS=true`、`GATEWAY_ALLOW_ALL_USERS=true`，或由 `DISCORD_ALLOWED_CHANNELS` 显式限定了服务器访问范围。 |
 | `DISCORD_ALLOWED_ROLES` | 否 | — | Discord 角色 ID，逗号分隔。拥有其中任一角色的成员即被授权——与 `DISCORD_ALLOWED_USERS` 为 OR 语义。连接时自动启用 **Server Members Intent**。适用于管理团队频繁变动的场景：新管理员一旦被授予角色即可获得访问权限，无需推送配置。 |
+| `DISCORD_ALLOW_ALL_USERS` | 否 | `false` | 显式选择允许所有能接触到机器人的 Discord 用户。此项仅针对 Discord 恢复 0.18 之前的开放行为；仅用于受信任的私有服务器或开发环境。 |
+| `GATEWAY_ALLOW_ALL_USERS` | 否 | `false` | 面向所有网关平台的全局“允许全部”开关。除非你确实希望所有已接入的平台都开放，否则请优先使用平台专属的 `DISCORD_ALLOW_ALL_USERS`。 |
 | `DISCORD_HOME_CHANNEL` | 否 | — | 机器人发送主动消息（cron 输出、提醒、通知）的频道 ID。 |
 | `DISCORD_HOME_CHANNEL_NAME` | 否 | `"Home"` | 主频道在日志和状态输出中的显示名称。 |
 | `DISCORD_COMMAND_SYNC_POLICY` | 否 | `"safe"` | 控制原生斜杠命令启动同步。`"safe"` 对现有全局命令进行差异比较，仅更新已更改的内容，当 Discord 元数据更改无法通过补丁应用时重新创建命令。`"bulk"` 保留旧的 `tree.sync()` 行为。`"off"` 完全跳过启动同步。 |
-| `DISCORD_REQUIRE_MENTION` | 否 | `true` | 为 `true` 时，机器人仅在服务器频道中被 `@提及` 时响应。设置为 `false` 可响应每个频道中的所有消息。 |
-| `DISCORD_THREAD_REQUIRE_MENTION` | 否 | `false` | 为 `true` 时，禁用线程内的提及快捷方式——线程与频道的门控方式相同，即使机器人已经参与其中，也需要 `@提及`。当多个机器人共享一个线程且你希望每个机器人仅在明确 `@提及` 时触发时使用此设置。 |
-| `DISCORD_FREE_RESPONSE_CHANNELS` | 否 | — | 机器人无需 `@提及` 即可响应的频道 ID，逗号分隔，即使 `DISCORD_REQUIRE_MENTION` 为 `true` 也适用。 |
-| `DISCORD_IGNORE_NO_MENTION` | 否 | `true` | 为 `true` 时，如果消息 `@提及` 了其他用户但**未**提及机器人，机器人保持沉默。防止机器人介入针对其他人的对话。仅适用于服务器频道，不适用于私信。 |
-| `DISCORD_AUTO_THREAD` | 否 | `true` | 为 `true` 时，自动为文本频道中的每次 `@提及` 创建新线程，使每个对话相互隔离（类似 Slack 行为）。已在线程或私信中的消息不受影响。 |
-| `DISCORD_ALLOW_BOTS` | 否 | `"none"` | 控制机器人如何处理来自其他 Discord 机器人的消息。`"none"` — 忽略所有其他机器人。`"mentions"` — 仅接受 `@提及` Hermes 的机器人消息。`"all"` — 接受所有机器人消息。 |
+| `DISCORD_REQUIRE_MENTION` | 否 | `true` | 为 `true` 时，机器人仅在服务器频道中被 `@mentioned` 时响应。设置为 `false` 可响应每个频道中的所有消息。 |
+| `DISCORD_THREAD_REQUIRE_MENTION` | 否 | `false` | 为 `true` 时，禁用线程内的提及快捷方式——线程与频道的门控方式相同，即使机器人已经参与其中，也需要 `@mention`。当多个机器人共享一个线程且你希望每个机器人仅在明确 `@mention` 时触发时使用此设置。 |
+| `DISCORD_FREE_RESPONSE_CHANNELS` | 否 | — | 机器人无需 `@mention` 即可响应的频道 ID，逗号分隔，即使 `DISCORD_REQUIRE_MENTION` 为 `true` 也适用。 |
+| `DISCORD_IGNORE_NO_MENTION` | 否 | `true` | 为 `true` 时，如果消息 `@mentions` 了其他用户但**未**提及机器人，机器人保持沉默。防止机器人介入针对其他人的对话。仅适用于服务器频道，不适用于私信。 |
+| `DISCORD_AUTO_THREAD` | 否 | `true` | 为 `true` 时，自动为文本频道中的每次 `@mention` 创建新线程，使每个对话相互隔离（类似 Slack 行为）。已在线程或私信中的消息不受影响。 |
+| `DISCORD_ALLOW_BOTS` | 否 | `"none"` | 控制机器人如何处理来自其他 Discord 机器人的消息。`"none"` — 忽略所有其他机器人。`"mentions"` — 仅接受 `@mention` Hermes 的机器人消息。`"all"` — 接受所有机器人消息。 |
 | `DISCORD_REACTIONS` | 否 | `true` | 为 `true` 时，机器人在处理过程中为消息添加 emoji 反应（开始时 👀，成功时 ✅，出错时 ❌）。设置为 `false` 可完全禁用反应。 |
-| `DISCORD_IGNORED_CHANNELS` | 否 | — | 机器人**永不**响应的频道 ID，逗号分隔，即使被 `@提及` 也不响应。优先于所有其他频道设置。 |
+| `DISCORD_IGNORED_CHANNELS` | 否 | — | 机器人**永不**响应的频道 ID，逗号分隔，即使被 `@mentioned` 也不响应。优先于所有其他频道设置。 |
 | `DISCORD_ALLOWED_CHANNELS` | 否 | — | 频道 ID，逗号分隔。设置后，机器人**仅**在这些频道（以及允许的私信）中响应。覆盖 `config.yaml` 中的 `discord.allowed_channels`。与 `DISCORD_IGNORED_CHANNELS` 结合使用可表达允许/拒绝规则。 |
 | `DISCORD_NO_THREAD_CHANNELS` | 否 | — | 机器人直接在频道中响应而不创建线程的频道 ID，逗号分隔。仅在 `DISCORD_AUTO_THREAD` 为 `true` 时有效。 |
 | `DISCORD_HISTORY_BACKFILL` | 否 | `true` | 为 `true` 时，当机器人被提及时，将最近的频道滚动历史（自机器人上次响应以来）前置到用户消息中。恢复机器人在 `require_mention` 模式下会错过的上下文。在私信和自由响应频道中跳过。设置为 `false` 可禁用。 |
@@ -316,6 +319,12 @@ Discord 行为通过两个文件控制：**`~/.hermes/.env`** 用于凭据和环
 | `HERMES_DISCORD_TEXT_BATCH_DELAY_SECONDS` | 否 | `0.6` | 适配器在刷新排队文本块之前等待的宽限窗口。用于平滑流式输出。 |
 | `HERMES_DISCORD_TEXT_BATCH_SPLIT_DELAY_SECONDS` | 否 | `2.0` | 当单条消息超过 Discord 长度限制时，分割块之间的延迟。 |
 
+:::warning 不支持机器人之间互相对话
+`DISCORD_ALLOW_BOTS` 的用途是接受来自某个特定可信机器人（例如中继或 webhook 机器人）的输入，而不是让两个 Hermes 配置档互相交谈。默认值 `"none"` 会忽略所有其他机器人，这是安全的设置。
+
+把多个 Hermes 配置档接到同一个频道里互相回复——即在多个配置档上设置 `"mentions"` 或 `"all"`——是不受支持的拓扑。Discord 在每次回复时都会自动 `@mentions` 被回复者，因此在 `"mentions"` 下两个机器人会无限满足彼此的提及条件并陷入确认循环。系统没有为此设置断路器，因为受支持的配置就是把 `DISCORD_ALLOW_BOTS` 保持为 `"none"`。如果你确实必须接受某个特定机器人，请把接受范围收得很窄，并且绝不要指向另一个会自动回复的 agent。
+:::
+
 ### 配置文件（`config.yaml`）
 
 `~/.hermes/config.yaml` 中的 `discord` 部分与上述环境变量对应。config.yaml 设置作为默认值应用——如果已设置等效的环境变量，则环境变量优先。
@@ -323,10 +332,10 @@ Discord 行为通过两个文件控制：**`~/.hermes/.env`** 用于凭据和环
 ```yaml
 # Discord 特定设置
 discord:
-  require_mention: true           # 在服务器频道中需要 @提及
-  thread_require_mention: false   # 为 true 时，线程中也需要 @提及（多机器人线程）
+  require_mention: true           # 在服务器频道中需要 @mention
+  thread_require_mention: false   # 为 true 时，线程中也需要 @mention（多机器人线程）
   free_response_channels: ""      # 逗号分隔的频道 ID（或 YAML 列表）
-  auto_thread: true               # 在 @提及 时自动创建线程
+  auto_thread: true               # 在 @mention 时自动创建线程
   reactions: true                 # 处理过程中添加 emoji 反应
   ignored_channels: []            # 机器人永不响应的频道 ID
   no_thread_channels: []          # 机器人不创建线程直接响应的频道 ID
@@ -353,15 +362,15 @@ group_sessions_per_user: true     # 在共享频道中按用户隔离会话
 
 **类型：** 布尔值 — **默认值：** `true`
 
-启用后，机器人仅在服务器频道中被直接 `@提及` 时响应。无论此设置如何，私信始终会得到响应。
+启用后，机器人仅在服务器频道中被直接 `@mentioned` 时响应。无论此设置如何，私信始终会得到响应。
 
 #### `discord.thread_require_mention`
 
 **类型：** 布尔值 — **默认值：** `false`
 
-默认情况下，一旦机器人参与了某个线程（通过 `@提及` 自动创建或回复过一次），它就会继续响应该线程中的每条后续消息，无需再次 `@提及`。这对于一对一对话来说是正确的默认行为。
+默认情况下，一旦机器人参与了某个线程（通过 `@mention` 自动创建或回复过一次），它就会继续响应该线程中的每条后续消息，无需再次 `@mentioned`。这对于一对一对话来说是正确的默认行为。
 
-在**多机器人线程**中，用户每次只与一个机器人交流，这个默认行为会成为隐患——线程中的每个其他机器人也会对每条消息触发，消耗额度并刷屏。将 `thread_require_mention: true` 设置为禁用线程内快捷方式，使线程与频道的门控方式相同。显式 `@提及` 仍然有效。
+在**多机器人线程**中，用户每次只与一个机器人交流，这个默认行为会成为隐患——线程中的每个其他机器人也会对每条消息触发，消耗额度并刷屏。将 `thread_require_mention: true` 设置为禁用线程内快捷方式，使线程与频道的门控方式相同。显式 `@mentions` 仍然有效。
 
 ```yaml
 discord:
@@ -373,7 +382,7 @@ discord:
 
 **类型：** 字符串或列表 — **默认值：** `""`
 
-机器人无需 `@提及` 即可响应所有消息的频道 ID。接受逗号分隔的字符串或 YAML 列表：
+机器人无需 `@mention` 即可响应所有消息的频道 ID。接受逗号分隔的字符串或 YAML 列表：
 
 ```yaml
 # 字符串格式
@@ -389,13 +398,13 @@ discord:
 
 如果线程的父频道在此列表中，该线程也变为无需提及。
 
-自由响应频道还会**跳过自动创建线程**——机器人直接回复而不是为每条消息创建新线程。这使频道可用作轻量级聊天界面。如果你想要线程行为，不要将频道列为自由响应（改用普通的 `@提及` 流程）。
+自由响应频道还会**跳过自动创建线程**——机器人直接回复而不是为每条消息创建新线程。这使频道可用作轻量级聊天界面。如果你想要线程行为，不要将频道列为自由响应（改用普通的 `@mention` 流程）。
 
 #### `discord.auto_thread`
 
 **类型：** 布尔值 — **默认值：** `true`
 
-启用后，普通文本频道中的每次 `@提及` 都会自动为对话创建新线程。这保持主频道整洁，并为每个对话提供独立的会话历史。一旦创建线程，该线程中的后续消息不需要 `@提及`——机器人知道它已经在参与其中。对于多机器人设置，将 [`thread_require_mention`](#discordthread_require_mention) 设置为 `true` 可禁用此线程内快捷方式。
+启用后，普通文本频道中的每次 `@mention` 都会自动为对话创建新线程。这保持主频道整洁，并为每个对话提供独立的会话历史。一旦创建线程，该线程中的后续消息不需要 `@mention`——机器人知道它已经在参与其中。对于多机器人设置，将 [`thread_require_mention`](#discordthread_require_mention) 设置为 `true` 可禁用此线程内快捷方式。
 
 在现有线程或私信中发送的消息不受此设置影响。`discord.free_response_channels` 或 `discord.no_thread_channels` 中列出的频道也会绕过自动创建线程，改为直接回复。
 
@@ -414,7 +423,7 @@ discord:
 
 **类型：** 字符串或列表 — **默认值：** `[]`
 
-机器人**永不**响应的频道 ID，即使被直接 `@提及` 也不响应。这具有最高优先级——如果频道在此列表中，机器人会静默忽略那里的所有消息，无论 `require_mention`、`free_response_channels` 或任何其他设置如何。
+机器人**永不**响应的频道 ID，即使被直接 `@mentioned` 也不响应。这具有最高优先级——如果频道在此列表中，机器人会静默忽略那里的所有消息，无论 `require_mention`、`free_response_channels` 或任何其他设置如何。
 
 ```yaml
 # 字符串格式
@@ -470,7 +479,7 @@ discord:
 
 **类型：** 布尔值 — **默认值：** `true`
 
-启用后，机器人在每次 `@提及` 时恢复错过的频道消息。当 `require_mention: true` 时，机器人只处理直接标记它的消息——频道中的其他所有内容对会话记录都是不可见的。历史回填在触发时向后扫描最近的频道历史，收集机器人上次响应与当前提及之间的消息，并将其作为上下文包含进来。
+启用后，机器人在每次 `@mention` 时恢复错过的频道消息。当 `require_mention: true` 时，机器人只处理直接标记它的消息——频道中的其他所有内容对会话记录都是不可见的。历史回填在触发时向后扫描最近的频道历史，收集机器人上次响应与当前提及之间的消息，并将其作为上下文包含进来。
 
 按界面的行为：
 
@@ -642,9 +651,9 @@ gateway:
 
 在"主"网关上保持 `true` 可维持正常行为——为内置命令和已安装技能提供全局 `/` 菜单命令。
 
-## 发送媒体（`send_message` + `MEDIA:` 标签）
+## 发送媒体（内联 `MEDIA:` 标签）
 
-Discord 适配器通过 `send_message` 工具和 agent 发出的内联 `MEDIA:/path/to/file` 标签，支持所有常见媒体类型的原生文件上传：
+Discord 适配器通过 agent 在响应中发出的内联 `MEDIA:/path/to/file` 标签，支持所有常见媒体类型的原生文件上传——适配器会剥离该标签并自动上传文件：
 
 | 类型 | 发送方式 |
 |---|---|
@@ -658,24 +667,25 @@ Discord 的每次上传大小限制取决于服务器的加成等级（免费 25
 
 ## 接收任意文件类型
 
-默认情况下，机器人缓存与内置允许列表匹配的上传——图片、音频、视频、PDF、文本/markdown/csv/log、JSON/XML/YAML/TOML、zip、docx/xlsx/pptx。其他任何内容（`.wav`、`.bin`、自定义扩展名的转储文件）都会被记录为 `Unsupported document type` 并在 agent 看到之前被丢弃。
+用户上传的任何文件类型都会被接受。把关的是与 agent 通信的授权，而不是文件扩展名。每一次上传都会被下载、缓存到 `~/.hermes/cache/documents/` 下，并以 `DOCUMENT` 类型的消息事件提供给 agent，使其可以用 `terminal`（`ffprobe`、`unzip`、`file`、`strings` 等）或 `read_file` 检查该文件。
 
-要接受任意文件类型，启用 `discord.allow_any_attachment`：
+- 已知类型（PDF、docx/xlsx/pptx、zip、图片/音频/视频等）保留其精确的 MIME。
+- 未知类型则回退到上传所声明的 content type；若未提供，则使用 `application/octet-stream`。
+- 可被 UTF-8 解码的小文件（文本、代码、配置、HTML、CSS、JSON、YAML……）其内容会自动注入 prompt，上限 100 KiB。无法解码的二进制文件只会以指向路径的上下文说明形式呈现（通过 `to_agent_visible_cache_path` 为 Docker/Modal 沙盒终端自动转换），因此不会撑爆上下文窗口。
+
+唯一的入站限制是单文件大小上限（默认 32 MiB）：
 
 ```yaml
 discord:
-  allow_any_attachment: true
   # 可选 — 提高/禁用每文件大小上限。默认为 32 MiB。
   # 整个文件在缓存时保存在内存中，因此无限制
   # 上传会带来真实的内存成本。
   max_attachment_bytes: 33554432   # 字节；0 = 无限制
 ```
 
-启用该标志后，任何上传的文件都会被下载、缓存到 `~/.hermes/cache/documents/` 下，并以 `application/octet-stream` MIME 类型的 `DOCUMENT` 类型消息事件提供给 agent。Agent 收到指向本地路径的上下文说明（通过 `to_agent_visible_cache_path` 为 Docker/Modal 沙盒终端自动转换），可以使用 `terminal`（`ffprobe`、`unzip`、`file`、`strings` 等）或 `read_file` 检查文件。文件内容**不会**内联到 prompt 中——只有路径——因此二进制上传不会撑爆上下文窗口。
+等效环境变量：`DISCORD_MAX_ATTACHMENT_BYTES=33554432`（或 `0` 表示无上限）。
 
-已在允许列表中的已知文本格式（`.txt`、`.md`、`.log`）继续自动注入最多 100 KiB 的内容；启用该标志后此行为不变。
-
-等效环境变量：`DISCORD_ALLOW_ANY_ATTACHMENT=true` 和 `DISCORD_MAX_ATTACHMENT_BYTES=33554432`（或 `0` 表示无上限）。
+旧的 `discord.allow_any_attachment` 标志现在是一个空操作——任何文件类型始终会被接受——保留它只是为了让已有配置不会报错。
 
 :::warning 无限制的内存成本
 禁用大小上限（`max_attachment_bytes: 0`）意味着用户可以向机器人上传数 GB 的文件，网关会尽职地在缓存到磁盘时将其缓冲到内存中。仅在受信任的单用户安装中设置此项。对于共享机器人，保持默认的 32 MiB 或保守地提高上限。
@@ -724,9 +734,40 @@ Hermes Agent 支持 Discord 语音消息：
 - [语音模式](/user-guide/features/voice-mode)
 - [与 Hermes 使用语音模式](/guides/use-voice-mode-with-hermes)
 
+### 语音频道音频效果（环境音 + 口头确认）
+
+当机器人身处语音频道时，你可以让它更有对话感：在开始工作前先说一句简短的口头确认（"我来看一下"），并在工具运行期间在底下播放一段低调的"思考"环境音——说话时会把环境音压低，结束后再让它回升，类似 Grok 语音模式的感觉。
+
+discord.py 每个连接只播放一路音频流，因此 Hermes 会在出站流上装一个软件混音器，把环境音循环、确认语和 TTS 回复汇总进这一路流中——它们会叠加播放，而不是互相打断。
+
+此功能**默认关闭**。在 `config.yaml` 中启用：
+
+```yaml
+discord:
+  voice_fx:
+    enabled: true          # 总开关
+    ambient_enabled: true  # 工具运行期间的"思考"环境音
+    ambient_path: ""       # 自定义循环音频文件（任意音频格式）；"" = 内置合成音垫
+    ambient_gain: 0.18     # 空闲环境音的响度（0.0–1.0）
+    duck_gain: 0.06        # 机器人说话时的环境音响度
+    speech_gain: 1.0       # TTS / 确认语的响度
+    ack_enabled: true      # 在本轮第一次工具调用前说一句简短的话
+    ack_phrases:           # 随机选取；设为 [] 可关闭口头确认
+      - "Let me look into that."
+      - "One moment."
+      - "Checking on that now."
+```
+
+注意事项：
+- 口头确认每轮最多触发一次，且仅在机器人位于语音频道且混音器处于活动状态时触发。它使用你所配置的 TTS 提供商。
+- `ambient_path` 接受任何 `ffmpeg` 能解码的文件；它会被无缝循环播放。留空则使用内置的合成音垫（无需任何素材）。
+- 所有设置都位于 `config.yaml`（而非 `.env`）——它们属于行为配置，不是密钥。
+- 当 `voice_fx.enabled` 为 `false` 时，语音播放走原来的一次性播放路径，行为完全不变。
+
+
 ## 论坛频道
 
-Discord 论坛频道（类型 15）不接受直接消息——论坛中的每个帖子都必须是线程。Hermes 自动检测论坛频道，并在需要发送消息时创建新的线程帖子，因此 `send_message`、TTS、图片、语音消息和文件附件都无需 agent 进行特殊处理即可正常工作。
+Discord 论坛频道（类型 15）不接受直接消息——论坛中的每个帖子都必须是线程。Hermes 自动检测论坛频道，并在需要发送消息时创建新的线程帖子，因此文本回复、TTS、图片、语音消息和文件附件都无需 agent 进行特殊处理即可正常工作。
 
 - **线程名称**从消息的第一行派生（去除 markdown 标题前缀，上限 100 个字符）。当消息仅包含附件时，文件名用作备用线程名称。
 - **附件**随新线程的起始消息一起发送——无需单独上传步骤，不会出现部分发送。
@@ -739,9 +780,34 @@ Discord 论坛频道（类型 15）不接受直接消息——论坛中的每个
 
 ### 机器人在线但不响应消息
 
-**原因**：Message Content Intent 被禁用。
+**原因**：可能是 Message Content Intent 被禁用，也可能是因为没有配置任何访问策略，Discord 授权在默认拒绝（fail closed）。
 
-**解决方法**：前往[开发者门户](https://discord.com/developers/applications) → 你的应用 → Bot → Privileged Gateway Intents → 启用 **Message Content Intent** → Save Changes。重启网关。
+**解决方法**：
+
+1. 前往[开发者门户](https://discord.com/developers/applications) → 你的应用 → Bot → Privileged Gateway Intents → 启用 **Message Content Intent** → Save Changes。
+2. 确认至少配置了一项 Discord 访问策略：
+
+   ```bash
+   # 推荐：允许指定用户
+   DISCORD_ALLOWED_USERS=284102345871466496
+
+   # 或者让一个受信任的服务器/开发机器人表现得像 0.18 之前的 Discord
+   DISCORD_ALLOW_ALL_USERS=true
+   ```
+
+3. 重启网关：
+
+   ```bash
+   hermes gateway restart
+   ```
+
+如果网关日志显示 Discord 已连接、REST API 检查也正常，但每一条入站消息都石沉大海，请在 `~/.hermes/logs/gateway.log` 中查找这条警告：
+
+```text
+No Discord access policy configured; inbound Discord messages will be denied by default.
+```
+
+Hermes 0.18 对可从外部访问的适配器刻意采用默认拒绝策略。一个既没有 `DISCORD_ALLOWED_USERS`、也没有 `DISCORD_ALLOWED_ROLES`、没有 `DISCORD_ALLOWED_CHANNELS`、也没有显式 allow-all 标志的 Discord 机器人，会成功连接，但会在正常消息处理之前就拒绝入站用户。
 
 ### 启动时出现"Disallowed Intents"错误
 
@@ -809,7 +875,7 @@ DISCORD_ALLOWED_ROLES=987654321098765432,876543210987654321
 
 当管理团队频繁变动时，这是首选模式——新管理员一旦被授予角色即可获得访问权限，无需编辑 `.env` 或重启网关。
 
-### 提及控制
+### 提及控制 {#mention-control}
 
 默认情况下，Hermes 会阻止机器人 ping `@everyone`、`@here` 和角色提及，即使其回复中包含这些 token 也不例外。这可防止措辞不当的 prompt 或回显的用户内容向整个服务器发送垃圾消息。个人 `@user` ping 和回复引用 ping（"回复……"小标签）保持启用，以便正常对话仍然有效。
 
