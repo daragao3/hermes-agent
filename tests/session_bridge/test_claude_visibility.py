@@ -717,3 +717,23 @@ def test_codex_import_rollouts_are_recognised_by_originator(tmp_path) -> None:
     unterminated = tmp_path / "e.jsonl"
     unterminated.write_text('{"type":"session_meta","payload":{"originator":"hermes-codex-import"}}', encoding="utf-8")
     assert is_codex_import_rollout(str(unterminated)) is False
+
+
+def test_codex_import_probe_reads_a_meta_line_longer_than_8kib(tmp_path) -> None:
+    """Real session_meta lines embed base_instructions and exceed 8 KiB."""
+    import json as _json
+
+    path = tmp_path / "long-meta.jsonl"
+    head = {
+        "timestamp": "2026-09-09T20:38:42.000Z",
+        "type": "session_meta",
+        "payload": {
+            "id": "01a087e4",
+            "cwd": "C:/x",
+            "originator": "hermes-codex-import",
+            "base_instructions": {"text": "x" * 40_000},
+        },
+    }
+    path.write_text(_json.dumps(head) + "\n", encoding="utf-8")
+
+    assert is_codex_import_rollout(str(path)) is True
