@@ -1,5 +1,7 @@
 ---
 sidebar_position: 18
+title: "Photon iMessage"
+description: "通过托管的共享线路服务 Photon 将 Hermes Agent 连接到 iMessage，无需自建 Mac 中继"
 ---
 
 # Photon iMessage

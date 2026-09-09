@@ -1,5 +1,7 @@
 ---
 sidebar_position: 18
+title: "Photon iMessage"
+description: "Connect Hermes Agent to iMessage through Photon, a managed shared-line service that needs no Mac relay"
 ---
 
 # Photon iMessage

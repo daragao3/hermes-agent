@@ -1,5 +1,7 @@
 ---
 sidebar_position: 15
+title: "WeCom Callback (Self-Built App)"
+description: "Connect Hermes Agent to WeCom as a self-built enterprise app receiving encrypted XML callbacks"
 ---
 
 # WeCom Callback (Self-Built App)
