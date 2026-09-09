@@ -16,8 +16,12 @@ Hermes Web Dashboard（`hermes dashboard`）在设计上支持换肤和扩展，
 
 如果只是想使用 dashboard，请参阅 [Web Dashboard](./web-dashboard)。如果想为终端 CLI（而非 Web Dashboard）换肤，请参阅 [Skins & Themes](./skins) —— CLI 皮肤系统与 dashboard 主题无关。
 
+:::note 这不是桌面应用
+本页介绍的是 **Web Dashboard**（`hermes dashboard`）的插件系统——`window.__HERMES_PLUGIN_SDK__`、一个 `manifest.json` 以及预先构建好的 JS bundle。**原生桌面应用**（`hermes desktop`）有一套自己的、与之无关的 SDK——`@hermes/plugin-sdk`，单个 ESM 文件，无需构建步骤——文档见 [Desktop Plugin SDK](/developer-guide/desktop-plugin-sdk)。两者之间只共享后端的 `plugin_api.py` 命名空间（`/api/plugins/<name>`）。
+:::
+
 :::note 各部分如何组合
-主题和插件相互独立，但可协同工作。主题可以单独使用（仅一个 YAML 文件）。插件也可以单独使用（仅一个标签页）。两者结合可构建带有自定义 HUD 的完整视觉换肤方案——内置的 `strike-freedom-cockpit` 演示正是如此。参见[主题 + 插件组合演示](#combined-theme--plugin-demo)。
+主题和插件相互独立，但可协同工作。主题可以单独使用（仅一个 YAML 文件）。插件也可以单独使用（仅一个标签页）。两者结合可构建带有自定义 HUD 的完整视觉换肤方案——示例 `strike-freedom-cockpit` 演示（位于配套仓库 `hermes-example-plugins`，安装步骤参见[主题 + 插件组合演示](#combined-theme--plugin-demo)）正是如此。
 :::
 
 ---
@@ -130,6 +134,19 @@ typography:
   lineHeight: "1.5"
   letterSpacing: "0.04em"
 ```
+
+##### 从界面更换字体（无需写 YAML）
+
+Dashboard 顶栏的主题选择器在主题列表下方设有 **Font** 一节。在那里选择任意
+字体，都会覆盖当前生效主题的正文字体——该选择独立于主题，并在切换主题后依然
+保留（保存在 `config.yaml` 的 `dashboard.font` 下）。选择 **Theme default**
+可清除该覆盖，回退到当前主题自身的 `fontSans`。
+
+选择器提供一份精选目录（系统字体栈，外加一组涵盖 sans / serif / mono 的
+Google Fonts 字族）。它刻意**不**接受自由填写的字体 URL——字体样式表是以
+`<link>` 形式注入的，因此该目录会把注入来源限定在固定范围内。若需要完全自定义
+的字体，请按上文所示在主题 YAML 中设置 `fontSans` + `fontUrl`。主题的
+`fontMono`（代码块、终端）永远不会被界面上的覆盖所影响。
 
 #### 布局
 

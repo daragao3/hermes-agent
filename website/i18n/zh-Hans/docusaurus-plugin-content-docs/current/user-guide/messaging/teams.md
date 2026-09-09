@@ -10,6 +10,8 @@ description: "将 Hermes Agent 设置为 Microsoft Teams 机器人"
 
 如果你需要的是来自 Microsoft Graph 事件的会议摘要，而非普通的机器人对话，请使用专用设置页面：[Teams 会议](/user-guide/messaging/teams-meetings)。
 
+> 运行 `hermes gateway setup` 并选择 **Microsoft Teams**，即可获得引导式的配置流程。
+
 ## 机器人的响应方式
 
 | 场景 | 行为 |
@@ -21,6 +23,14 @@ description: "将 Hermes Agent 设置为 Microsoft Teams 机器人"
 Teams 将 @提及作为普通消息投递，其中包含 `<at>BotName</at>` 标签，Hermes 在处理前会自动去除这些标签。
 
 ---
+
+对于源码安装或本地安装，请包含 teams 附加依赖组，以便随附的适配器能够导入 Microsoft Teams SDK：
+
+```bash
+uv sync --extra teams
+# 或者，对于可编辑安装：
+uv pip install -e ".[teams]"
+```
 
 ## 第一步：安装 Teams CLI
 

@@ -170,6 +170,25 @@ make down
 CAMOFOX_URL=http://localhost:9377
 ```
 
+如果 Camofox 运行在 Docker 中，而你希望它打开由宿主机提供服务的 Web 应用，请启用 loopback 重写。`CAMOFOX_URL` 仍应指向宿主机上发布的控制 API，但形如 `http://127.0.0.1:3000` 的页面 URL 必须在容器内部以 `http://host.docker.internal:3000` 打开：
+
+```yaml
+# ~/.hermes/config.yaml
+browser:
+  camofox:
+    rewrite_loopback_urls: true
+    loopback_host_alias: host.docker.internal  # default; use a LAN IP if needed
+```
+
+等效的环境变量：
+
+```bash
+CAMOFOX_REWRITE_LOOPBACK_URLS=true
+CAMOFOX_LOOPBACK_HOST_ALIAS=host.docker.internal
+```
+
+该重写仅作用于主机为 loopback（`localhost`、`127.0.0.1`、`::1`）的页面导航 URL，不会更改 `CAMOFOX_URL`。对于非 Docker 的 Camofox 安装，浏览器本身已运行在宿主机上、loopback URL 本就正确，请保持关闭。
+
 或通过 `hermes tools` → Browser Automation → Camofox 进行配置。
 
 设置 `CAMOFOX_URL` 后，所有浏览器工具将自动通过 Camofox 路由，而非 Browserbase 或 agent-browser。
@@ -361,9 +380,9 @@ BROWSERBASE_ADVANCED_STEALTH=false
 # Session reconnection after disconnects — requires paid plan (default: "true")
 BROWSERBASE_KEEP_ALIVE=true
 
-# Custom session timeout in milliseconds (default: project default)
-# Examples: 600000 (10min), 1800000 (30min)
-BROWSERBASE_SESSION_TIMEOUT=600000
+# Custom session timeout in seconds (max 21600 = 6 hours) (default: project default)
+# Examples: 600 (10min), 1800 (30min), 21600 (6h max)
+BROWSERBASE_SESSION_TIMEOUT=1800
 
 # Inactivity timeout before auto-cleanup in seconds (default: 120)
 BROWSER_INACTIVITY_TIMEOUT=120
@@ -596,6 +615,24 @@ browser:
 ```
 
 启用后，录制在首次 `browser_navigate` 时自动开始，会话关闭时保存到 `~/.hermes/browser_recordings/`。本地模式和云端模式（Browserbase）均支持。超过 72 小时的录制文件自动清理。
+
+## 有头模式（可见浏览器窗口）
+
+默认情况下，本地浏览器以无头方式运行。启用有头模式后，你会得到一个可以观察并直接操作的可见 Chromium 窗口：
+
+```yaml
+browser:
+  headed: true  # default: false
+```
+
+也可通过环境变量设置：`AGENT_BROWSER_HEADED=1`。
+
+有头模式做两件事：
+
+1. **以可见窗口启动 Chromium**（在本地模式下向 agent-browser 传入 `--headed`）。
+2. **在多轮对话之间保持窗口打开。** 通常浏览器会话会在每次 Agent 回复后被清理；有头模式下会跳过这种每轮清理，因此你可以观察 Agent 的工作、手动介入（登录验证、CAPTCHA），并在整个对话过程中保持登录状态。
+
+空闲会话仍会在 `browser.inactivity_timeout`（默认 120 秒无浏览器活动）后被回收，且所有会话在关闭时都会被关闭。有头模式仅影响本地浏览器——云端会话（Browserbase）不受影响。
 
 ## 隐身功能
 

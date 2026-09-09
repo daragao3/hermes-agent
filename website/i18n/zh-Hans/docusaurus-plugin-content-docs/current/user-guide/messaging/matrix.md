@@ -20,11 +20,35 @@ Hermes 兼容任何 Matrix homeserver——Synapse、Conduit、Dendrite 或 matr
 | **房间** | 默认情况下，Hermes 需要 `@提及` 才会响应。设置 `MATRIX_REQUIRE_MENTION=false` 或将房间 ID 添加到 `MATRIX_FREE_RESPONSE_ROOMS` 可开启自由响应模式。房间邀请会被自动接受。 |
 | **线程** | Hermes 支持 Matrix 线程（MSC3440）。在线程中回复时，Hermes 会将线程上下文与主房间时间线隔离。机器人已参与的线程无需提及即可响应。 |
 | **自动线程** | 默认情况下，Hermes 会为其在房间中响应的每条消息自动创建线程，以保持对话隔离。设置 `MATRIX_AUTO_THREAD=false` 可禁用此功能。设置 `MATRIX_DM_AUTO_THREAD=true`（默认 false）可同时为私聊消息自动创建线程——这与 `MATRIX_DM_MENTION_THREADS` 不同，后者仅在私聊中 @提及 Bot 时才创建线程。 |
+| **命令** | 当你的 Matrix 客户端会发送 `/命令` 时，Hermes 可以正常接收。如果你的客户端把 `/` 保留给本地命令，请改用 `!命令`；Hermes 会把已知的 `!command` 别名规范化为 `/command`。 |
+| **交互式控件** | 危险命令审批和 `/model` 选择可以使用 Matrix 反应。审批反应可以限制为仅由发起该操作的用户操作。 |
+| **思考与工具活动** | 启用 gateway 进度显示时，Matrix 使用可编辑的线程化思考/工具活动面板，因此更新不会淹没主房间时间线。 |
 | **多用户共享房间** | 默认情况下，Hermes 在房间内按用户隔离会话历史。同一房间中的两个人不会共享同一对话记录，除非你明确禁用该功能。 |
 
 :::tip
 机器人在被邀请时会自动加入房间。只需将机器人的 Matrix 用户邀请到任意房间，它就会加入并开始响应。
 :::
+
+## 能力矩阵
+
+此表以 Matrix 适配器的能力声明和 Matrix 测试覆盖为依据。E2EE 是按模式区分的，
+因为各部署可以自行选择加密房间是禁用、机会性启用还是强制要求。
+
+| 能力 | Matrix |
+|------------|--------|
+| 文本 | 是 |
+| 线程 | 是 |
+| 反应 | 是 |
+| 审批 | 是 |
+| 模型选择器 | 是 |
+| 思考面板 | 是 |
+| 图片 | 是 |
+| 多张图片 | 是 |
+| 文件 | 是 |
+| 语音/音频 | 是 |
+| 视频 | 是 |
+| E2EE | 关闭 / 可选 / 必需 |
+| 诊断 | 是 |
 
 ### Matrix 中的会话模型
 
@@ -59,29 +83,77 @@ group_sessions_per_user: false
 ```yaml
 matrix:
   require_mention: true           # 在房间中要求 @提及（默认：true）
+  allowed_users:                  # 允许触发 agent 回合的 Matrix 用户
+    - "@alice:matrix.org"
+  allowed_rooms:                  # 允许触发 agent 回合的 Matrix 房间
+    - "!abc123:matrix.org"
   free_response_rooms:            # 免除提及要求的房间
     - "!abc123:matrix.org"
+  ignore_user_patterns:           # 需要忽略的桥接/appservice 幽灵用户
+    - "^@telegram_"
+    - "^@whatsapp_"
+  process_notices: false          # 默认忽略 m.notice
+  session_scope: room             # auto|room|thread；项目房间推荐使用 room
   auto_thread: true               # 自动为响应创建线程（默认：true）
   dm_mention_threads: false       # 在 DM 中被 @提及时创建线程（默认：false）
+  max_message_length: 16000       # 出站分块大小，单位为字符（默认：16000，最大：65535）
 ```
 
 或通过环境变量：
 
 ```bash
 MATRIX_REQUIRE_MENTION=true
+MATRIX_ALLOWED_USERS=@alice:matrix.org
+MATRIX_ALLOWED_ROOMS=!abc123:matrix.org
 MATRIX_FREE_RESPONSE_ROOMS=!abc123:matrix.org,!def456:matrix.org
+MATRIX_IGNORE_USER_PATTERNS='^@telegram_,^@whatsapp_'
+MATRIX_PROCESS_NOTICES=false
+MATRIX_SESSION_SCOPE=room       # 推荐用于稳定的项目房间上下文
 MATRIX_AUTO_THREAD=true
 MATRIX_DM_MENTION_THREADS=false
 MATRIX_REACTIONS=true          # 默认：true——处理过程中发送 emoji 反应
+MATRIX_ALLOW_ROOM_MENTIONS=false
 ```
 
 :::tip 禁用反应
 `MATRIX_REACTIONS=false` 会关闭机器人在收到消息时发布的处理生命周期 emoji 反应（👀/✅/❌）。适用于反应事件较为嘈杂或部分参与客户端不支持的房间。
 :::
 
+:::tip 全房间提及
+对于像 `@alice:example.org` 这样明确的 Matrix ID，Hermes 会发送结构化的 Matrix 用户提及。全房间的 `@room` 通知默认禁用；仅在允许机器人通知所有人的房间中才设置 `MATRIX_ALLOW_ROOM_MENTIONS=true`。
+:::
+
 :::note
 如果你从没有 `MATRIX_REQUIRE_MENTION` 的版本升级，机器人之前会响应房间中的所有消息。要保留该行为，请设置 `MATRIX_REQUIRE_MENTION=false`。
 :::
+
+### 项目房间隔离
+
+如果你在多个项目房间中使用同一个 Matrix 机器人，请配置稳定的按房间划分的会话：
+
+```bash
+MATRIX_SESSION_SCOPE=room
+MATRIX_AUTO_THREAD=false
+```
+
+`MATRIX_SESSION_SCOPE` 接受以下取值：
+
+| 作用域 | 行为 |
+|-------|------|
+| `auto` | 向后兼容的默认值。由现有的 `MATRIX_AUTO_THREAD` 行为控制合成线程。 |
+| `room` | 未开线程的房间消息保持在同一个稳定的房间会话中。真正的 Matrix 线程仍然使用各自的线程根。 |
+| `thread` | 未开线程的房间消息会根据触发事件 ID 合成一个线程/会话。 |
+
+现在 Hermes 会把当前的 Matrix 房间名称、房间 ID、主题、消息 ID 以及一条 Matrix
+房间边界说明加入 agent prompt（提示词）中。`/status` 也会显示当前的 Matrix
+房间/会话作用域，并且 `/resume` 不会悄悄恢复来自另一个 Matrix 房间的同名会话，
+除非你明确使用 `/resume --cross-room <session name>`。
+
+`MATRIX_SESSION_SCOPE=room` 控制的是房间/线程这一条通道。现有的
+`group_sessions_per_user` 设置仍然控制该房间内的用户是否共享这条通道。当
+`group_sessions_per_user: true`（默认）时，Alice 和 Bob 各自拥有独立的
+Project B 会话。当 `group_sessions_per_user: false` 时，该房间只有一份共享的
+Project B 对话记录。
 
 本指南将引导你完成完整的设置流程——从创建机器人账户到发送第一条消息。
 
@@ -195,6 +267,9 @@ MATRIX_ACCESS_TOKEN=***
 # 安全：限制可与机器人交互的用户
 MATRIX_ALLOWED_USERS=@alice:matrix.example.org
 
+# 可选：限制哪些房间可以触发机器人
+MATRIX_ALLOWED_ROOMS=!abc123:matrix.example.org
+
 # 多个允许用户（逗号分隔）
 # MATRIX_ALLOWED_USERS=@alice:matrix.example.org,@bob:matrix.example.org
 ```
@@ -210,6 +285,42 @@ MATRIX_PASSWORD=***
 # 安全
 MATRIX_ALLOWED_USERS=@alice:matrix.example.org
 ```
+
+## 私有部署加固
+
+对于私有 Matrix 部署，请同时设置用户和房间白名单。如果未设置
+`MATRIX_ALLOWED_USERS`，任何能在机器人已加入的房间中触达它的发送者都可以触发
+agent 回合。如果未设置 `MATRIX_ALLOWED_ROOMS`，机器人加入的任何房间都可以触发
+agent 回合。加固后的部署应当同时设置两者：
+
+```bash
+MATRIX_ALLOWED_USERS=@alice:matrix.example.org,@bob:matrix.example.org
+MATRIX_ALLOWED_ROOMS=!ops:matrix.example.org,!dmroom:matrix.example.org
+```
+
+桥接和 appservice 部署需要额外的回环保护。Hermes 默认始终忽略自身事件、
+localpart 以 `_` 开头的 Matrix appservice 风格用户、重复的事件 ID、启动前的旧事件、
+编辑替换事件以及 `m.notice` 事件。当你的桥接使用不同的命名约定时，请补充与该部署
+对应的桥接幽灵用户模式：
+
+```bash
+MATRIX_IGNORE_USER_PATTERNS='^@telegram_,^@slack_,^@whatsapp_'
+```
+
+只有当某个可信的人工工作流确实会发送 `m.notice` 时，才启用 notice：
+
+```bash
+MATRIX_PROCESS_NOTICES=true
+```
+
+出站的全房间通知默认禁用。除非明确允许机器人用 `@room` 唤醒整个房间，
+否则请保持 `MATRIX_ALLOW_ROOM_MENTIONS=false`。
+
+诊断信息和调试载荷会对 Matrix 访问令牌、恢复密钥、设备标识符和消息正文做脱敏处理。
+媒体下载被限制为 Matrix `mxc://` 内容 URI，超过 `MATRIX_MAX_MEDIA_BYTES` 时会被拒绝。
+请把联邦房间和不受信任的 homeserver 视为不可信输入：保持房间白名单收紧，
+对工具密集型工作优先使用私聊或私有房间，并避免把桥接幽灵用户或 appservice
+傀儡账号授权为允许用户。
 
 `~/.hermes/config.yaml` 中的可选行为设置：
 
@@ -267,8 +378,20 @@ sudo dnf install libolm-devel
 在 `~/.hermes/.env` 中添加：
 
 ```bash
-MATRIX_ENCRYPTION=true
+MATRIX_E2EE_MODE=required
 ```
+
+`MATRIX_E2EE_MODE` 接受以下取值：
+
+| 模式 | 行为 |
+|------|------|
+| `off` | 不初始化 Matrix E2EE。 |
+| `optional` | 依赖可用时尝试启用 E2EE，但在加密模块无法初始化时仍保持未加密房间正常工作。 |
+| `required` | 若 E2EE 依赖或加密设置不可用，则失败关闭（fail closed）。 |
+
+在加密设置不可用时，optional 模式可能回退到非 E2EE 运行。required 模式则会失败关闭，而不是悄悄降级。
+
+为向后兼容，`MATRIX_ENCRYPTION=true` 仍然启用 required 级别的 E2EE 行为。
 
 启用 E2EE 后，Hermes 会：
 
@@ -276,6 +399,61 @@ MATRIX_ENCRYPTION=true
 - 在首次连接时上传设备密钥
 - 自动解密传入消息并加密传出消息
 - 被邀请时自动加入加密房间
+
+### Matrix 工具与控件
+
+在 Matrix 对话中，Hermes 会向 agent 暴露 Matrix 专用工具：
+
+- `matrix_send_reaction`
+- `matrix_redact_message`
+- `matrix_create_room`
+- `matrix_invite_user`
+- `matrix_fetch_history`
+- `matrix_set_presence`
+
+这些工具的作用范围仅限 Matrix 上下文，在非 Matrix 工具集中不可用。管理类工具默认禁用：撤回需要 `MATRIX_TOOLS_ALLOW_REDACTION=true`，邀请需要 `MATRIX_TOOLS_ALLOW_INVITES=true`，创建房间需要 `MATRIX_TOOLS_ALLOW_ROOM_CREATE=true`。创建公开房间还需要 `MATRIX_ALLOW_PUBLIC_ROOMS=true`。
+Matrix 工具默认仅限于当前 Matrix 房间。明确的跨房间目标需要
+`MATRIX_TOOLS_ALLOW_CROSS_ROOM=true`；撤回及类似邀请的跨房间操作还额外需要
+`MATRIX_TOOLS_ALLOW_CROSS_ROOM_DESTRUCTIVE=true`。如果设置了 `MATRIX_ALLOWED_ROOMS`，
+Matrix 工具只能以这些房间为目标。
+
+反应控件使用：
+
+- ✅ 批准一次
+- ♾️ 始终批准
+- ❌ 拒绝
+- 数字反应用于 `/model` 选项
+
+如果你有意让房间中任何已授权的 Matrix 用户都能操作审批/模型选择器提示，请设置 `MATRIX_APPROVAL_REQUIRE_SENDER=false`。在 Hermes 知道谁发起了该操作时，默认是绑定到发起者的。
+
+### 媒体限制
+
+Hermes 通过 Matrix 媒体 API 上传和下载 Matrix 图片、文件、音频和视频。多张生成的图片会作为一个有序的逻辑批次发送，在整个批次中保留标题和线程上下文。
+
+默认情况下，超过 100 MB 的 Matrix 媒体会在上传/下载前被拒绝。可通过以下方式覆盖：
+
+```bash
+MATRIX_MAX_MEDIA_BYTES=104857600
+```
+
+入站媒体必须使用 Matrix `mxc://` 内容 URI。Hermes 会拒绝 Matrix 事件中任意的
+HTTP(S) 媒体 URL，以免把联邦房间变成不受限的下载器。
+
+## Synapse 集成测试
+
+Hermes 附带了一个可选启用的 Synapse 测试环境，用于本地验证：
+
+```bash
+docker compose -f tests/e2e/matrix_synapse_gateway/docker-compose.yml up -d
+HERMES_MATRIX_SYNAPSE_INTEGRATION=1 \
+  scripts/run_tests.sh -m "integration and matrix_synapse" \
+  tests/e2e/matrix_synapse_gateway/test_gateway.py
+docker compose -f tests/e2e/matrix_synapse_gateway/docker-compose.yml down -v
+```
+
+该环境通过 Synapse 的共享密钥注册创建临时用户，覆盖私有房间的收发、具名房间的
+邀请/加入、媒体上传/下载、机器人响应投递以及启动时的旧事件过滤。E2EE 冒烟测试
+另以 `matrix_e2ee` 标记，因此在开发机器上可以保持为可选启用。
 
 ### 交叉签名验证（推荐）
 
@@ -288,6 +466,10 @@ MATRIX_RECOVERY_KEY=EsT... 你的恢复密钥
 **查找位置：** 在 Element 中，前往 **设置** → **安全与隐私** → **加密** → 你的恢复密钥（也称为"安全密钥"）。这是你首次设置交叉签名时被要求保存的密钥。
 
 每次启动时，如果设置了 `MATRIX_RECOVERY_KEY`，Hermes 会从 homeserver 的安全密钥存储中导入交叉签名密钥并对当前设备进行签名。此操作是幂等的，可以永久启用。
+
+如果 Hermes 引导生成了新的 Matrix 恢复密钥，它绝不会把原始密钥写入日志。可在启动前设置
+`MATRIX_RECOVERY_KEY_OUTPUT_FILE=/secure/path/matrix-recovery-key.txt`，将生成的密钥以
+文件权限 `0600` 写出一次；若该文件已存在，则不会被覆盖。
 
 :::warning[删除加密存储]
 如果你删除了 `~/.hermes/platforms/matrix/store/crypto.db`，机器人将失去其加密身份。仅使用相同的设备 ID 重启**不能**完全恢复——homeserver 仍持有使用旧身份密钥签名的一次性密钥，对等方无法建立新的 Olm 会话。
@@ -336,6 +518,7 @@ Hermes 在启动时会检测到此情况并拒绝启用 E2EE，日志显示：`d
 ### 使用斜杠命令
 
 在机器人所在的任意 Matrix 房间中输入 `/sethome`。该房间即成为主房间。
+如果你的 Matrix 客户端会拦截斜杠命令，请改为输入 `!sethome`。
 
 ### 手动配置
 
@@ -376,13 +559,33 @@ MATRIX_ALLOWED_ROOMS="!abc123def456:matrix.example.org,!opsroom789:matrix.exampl
 查找房间 ID：在 Element 中，进入房间 → **设置** → **高级** → **内部房间 ID**（以 `!` 开头）。
 :::
 
+## Matrix 中的命令
+
+Hermes 在 Matrix 中支持与其他消息平台相同的 gateway 命令，包括
+`/commands`、`/model`、`/stop`、`/queue`、`/steer`、`/goal`、`/subgoal`、
+`/background`、`/bg`、`/btw`、`/tasks` 和 `/yolo`。
+
+有些 Matrix 客户端把开头的 `/` 保留给本地客户端命令，可能不会把未知的斜杠命令
+发送到房间。这种情况下，请使用 `!` 作为 Matrix 下安全的别名：
+
+```text
+!commands
+!model
+!model gpt-5.5 --provider openrouter
+!queue continue with the next task
+!stop
+```
+
+只有当命令是 gateway 已知的命令、已注册的插件命令或已安装的 skill 命令时，
+Hermes 才会规范化 `!command`。像 `!important` 这样普通的感叹表达仍然是普通聊天消息。
+
 ## 故障排查
 
 ### 机器人不响应消息
 
-**原因**：机器人未加入房间，或 `MATRIX_ALLOWED_USERS` 中不包含你的用户 ID。
+**原因**：机器人未加入房间、`MATRIX_ALLOWED_USERS` 中不包含你的用户 ID、`MATRIX_ALLOWED_ROOMS` 中不包含该房间，或者房间消息没有提及机器人。
 
-**解决方法**：邀请机器人进入房间——它会在收到邀请时自动加入。确认你的用户 ID 在 `MATRIX_ALLOWED_USERS` 中（使用完整的 `@user:server` 格式）。重启 gateway。
+**解决方法**：邀请机器人进入房间——它会在收到邀请时自动加入。确认你的用户 ID 在 `MATRIX_ALLOWED_USERS` 中（使用完整的 `@user:server` 格式）；若配置了 `MATRIX_ALLOWED_ROOMS` 白名单，还需确认房间 ID 在其中。在房间中请提及机器人，或把该房间加入 `MATRIX_FREE_RESPONSE_ROOMS`。重启 gateway。
 
 ### 机器人加入房间但静默丢弃所有消息（时钟偏差）
 
@@ -641,6 +844,19 @@ CMD ["hermes", "gateway"]
 **限制（v1）：** 来自远程 agent 的工具进度消息不会被中继回来——用户只能看到流式传输的最终响应，而非单个工具调用。危险命令审批提示在主机侧处理，不会中继给 Matrix 用户。这些问题可在未来版本中解决。
 :::
 
+### 机器人可以连接和发送，但忽略入站消息
+
+**原因**：只有当同步载荷经由 mautrix 的 `handle_sync()` 机制分发时，Matrix 事件
+处理器才会触发。若使用从不调用 `handle_sync()` 的原始 `client.sync()` 轮询，
+适配器可能表现为已连接（发送正常），而入站消息永远到不了 `_on_room_message`。
+
+**解决方法**：Hermes 使用一个显式的同步循环，在首次同步和每一次增量同步响应上都
+调用 `client.handle_sync()`。这与上游 issue #7914 和已关闭的 PR #37807 中的诊断
+一致，但保留了 Hermes 自己的后台维护任务（已加入房间的跟踪、邀请处理、E2EE 密钥
+共享），而不是把完整生命周期委托给 `client.start()`。如果重启 gateway 后入站消息
+仍然失败，请确认处理器是在首次同步之前注册的，并检查日志中是否有
+`sync event dispatch error`。
+
 ### 同步问题/机器人落后
 
 **原因**：长时间运行的工具执行可能延迟同步循环，或 homeserver 响应较慢。
@@ -659,10 +875,22 @@ CMD ["hermes", "gateway"]
 
 **解决方法**：将你的用户 ID 添加到 `~/.hermes/.env` 中的 `MATRIX_ALLOWED_USERS` 并重启 gateway。使用完整的 `@user:server` 格式。
 
+### 机器人忽略整个房间
+
+**原因**：设置了 `MATRIX_ALLOWED_ROOMS`，但当前房间 ID 不在列表中；或该房间要求提及，而消息没有提及机器人。
+
+**解决方法**：把房间 ID 加入 `MATRIX_ALLOWED_ROOMS`；如果这是个人部署，也可以移除房间白名单。要查找房间 ID，请在 Element 中打开房间设置并查看**高级**。
+
+### 桥接消息回环或回声
+
+**原因**：某个桥接/appservice 傀儡账号把机器人的输出当作新的用户消息中继回来，或某个桥接使用了非标准的幽灵用户 ID。
+
+**解决方法**：不要把桥接幽灵用户放进 `MATRIX_ALLOWED_USERS`，添加一条匹配的 `MATRIX_IGNORE_USER_PATTERNS` 条目，并保持 `MATRIX_PROCESS_NOTICES=false`，除非 notice 属于某个可信工作流的一部分。
+
 ## 安全
 
 :::warning
-始终设置 `MATRIX_ALLOWED_USERS` 以限制可与机器人交互的用户。若不设置，gateway 默认拒绝所有用户作为安全措施。只添加你信任的人的用户 ID——授权用户可完整访问 agent 的所有功能，包括工具调用和系统访问。
+始终设置 `MATRIX_ALLOWED_USERS`；对于共享/私有部署，还应设置 `MATRIX_ALLOWED_ROOMS`。若不设置，任何能在机器人已加入的房间中给它发消息的人都可能触发 agent。只授权你信任的人和房间——授权用户可完整访问 agent 的所有功能，包括工具调用和系统访问。
 :::
 
 有关保护 Hermes Agent 部署的更多信息，请参阅[安全指南](../security.md)。

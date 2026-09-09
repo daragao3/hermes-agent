@@ -277,6 +277,10 @@ run 的工具调用进度、token 增量和生命周期事件的 Server-Sent Eve
 中断正在运行的 agent 轮次。端点立即返回 `{"status": "stopping"}`，同时 Hermes 要求活跃 agent 在下一个安全中断点停止。
 run 会保持 `stopping` 并继续被跟踪，直到 executor 支持的工作退出，然后进入 `cancelled`；停止请求不会隐藏仍在运行的 worker。
 
+### POST /v1/runs/\{run_id\}/approval
+
+解决某个正在等待人工决策的 run 的待处理审批（例如受审批策略限制的工具调用）。请求体携带审批决策；决策被记录后 run 即恢复执行。该端点在 `/v1/capabilities` 中以 `run_approval` 特性广播，便于外部 UI 在展示审批提示之前检测是否支持。
+
 ## Jobs API（后台计划任务）
 
 服务器暴露了一个轻量级 jobs CRUD 接口，用于从远程客户端管理计划/后台 agent run。所有端点均受同一 bearer 认证保护。
@@ -312,6 +316,66 @@ run 会保持 `stopping` 并继续被跟踪，直到 executor 支持的工作退
 ### POST /api/jobs/\{job_id\}/run
 
 立即触发任务运行，不受计划限制。
+
+## Sessions API（通过 REST 控制 session）
+
+外部 UI 无需搭建仪表板即可通过 REST 管理 Hermes 的 session。所有端点均受 `API_SERVER_KEY` 保护，位于 `/api/sessions/*` 之下。
+
+| 方法 | 路径 | 说明 |
+|--------|------|-------------|
+| `GET` | `/api/sessions` | 列出 session（分页——`limit`、`offset`、`source`、`include_children`） |
+| `POST` | `/api/sessions` | 创建一个空 session |
+| `GET` | `/api/sessions/{id}` | 读取 session 元数据 |
+| `PATCH` | `/api/sessions/{id}` | 更新标题或 `end_reason` |
+| `DELETE` | `/api/sessions/{id}` | 删除 session |
+| `GET` | `/api/sessions/{id}/messages` | 某个 session 的消息历史 |
+| `POST` | `/api/sessions/{id}/fork` | 通过 `SessionDB` 血缘关系分叉 session（与 CLI `/branch` 语义一致） |
+| `POST` | `/api/sessions/{id}/chat` | 同步运行一个 agent 轮次 |
+| `POST` | `/api/sessions/{id}/chat/stream` | 单轮次的 SSE 包装——发出 `assistant.delta`、`tool.started`、`tool.completed`、`run.completed` 事件 |
+
+`/v1/capabilities` 通过 `session_*` 特性标志和 `endpoints.session_*` 条目广播完整接口，便于外部 UI 检测支持情况并安全回退。`chat` 和 `chat/stream` 的载荷支持内联图片（多模态感知路径）。
+
+```bash
+# 分叉一个 session 并运行一个轮次
+curl -X POST http://localhost:8642/api/sessions/$ID/fork \
+  -H "Authorization: Bearer $API_SERVER_KEY" \
+  -d '{"title": "explore alt path"}'
+
+# 通过 SSE 流式运行一个轮次
+curl -N -X POST http://localhost:8642/api/sessions/$ID/chat/stream \
+  -H "Authorization: Bearer $API_SERVER_KEY" \
+  -d '{"input": "what files changed in the last hour?"}'
+```
+
+## 技能与工具集发现
+
+`GET /v1/skills` 和 `GET /v1/toolsets` 让外部客户端可以通过 REST 确定性地枚举 agent 的能力，而不必去询问模型。两者均为只读，且受 `API_SERVER_KEY` 保护。
+
+```bash
+curl http://localhost:8642/v1/skills \
+  -H "Authorization: Bearer $API_SERVER_KEY"
+# → [{"name": "github-pr-workflow", "description": "...", "category": "..."}, ...]
+
+curl http://localhost:8642/v1/toolsets \
+  -H "Authorization: Bearer $API_SERVER_KEY"
+# → [{"name": "core", "label": "...", "description": "...", "enabled": true,
+#     "configured": true, "tools": ["read_file", "write_file", ...]}, ...]
+```
+
+`/v1/skills` 返回与技能中心内部使用的相同元数据。`/v1/toolsets` 返回为 `api_server` 平台解析出的工具集，以及每个工具集展开后的具体 `tools` 列表。两者都在 `/v1/capabilities` 的 `endpoints.*` 下广播。
+
+## 长期记忆作用域（`X-Hermes-Session-Key`）
+
+像 Open WebUI 这样的多用户前端需要一个稳定的、按频道划分的标识符用于长期记忆（Honcho 等），并且要**独立**于按会话记录划分的 `X-Hermes-Session-Id`（该值会在 `/new` 时轮换）。在 `/v1/chat/completions`、`/v1/responses` 或 `/v1/runs` 上传入 `X-Hermes-Session-Key`，Hermes 会将其透传至 `AIAgent(gateway_session_key=...)`，Honcho 记忆提供商据此派生出稳定的作用域。
+
+```http
+POST /v1/chat/completions HTTP/1.1
+Authorization: Bearer ***
+X-Hermes-Session-Id: transcript-alpha
+X-Hermes-Session-Key: agent:main:webui:dm:user-42
+```
+
+规则：最长 256 个字符，控制字符（`\r`、`\n`、`\x00`）会被拒绝，该值会在响应中回显（JSON + SSE）。`/v1/capabilities` 通过 `"session_key_header": "X-Hermes-Session-Key"` 广播支持情况。若不传该键，Honcho 的 `per-session` 策略会为每个 `session_id` 产生不同的作用域——这正是 Hermes 此前的行为。
 
 ## 系统 Prompt 处理
 

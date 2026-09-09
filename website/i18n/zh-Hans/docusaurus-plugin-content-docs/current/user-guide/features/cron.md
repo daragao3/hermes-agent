@@ -21,6 +21,10 @@ Cron 任务可以：
 
 所有这些功能均可通过 `cronjob` 工具由 Hermes 自身使用，因此你可以用自然语言创建、暂停、编辑和删除任务——无需 CLI。
 
+:::tip
+创建时，未固定的任务（即你没有显式指定 `provider`/`model` 的任务）会沿用由 `hermes model` 选定的全局默认值——并且 Hermes 会把那个提供商和模型**快照**到该任务上。如果之后全局默认值发生变化，该任务会**失败关闭**：跳过本次运行，不发起任何推理调用，并发送告警，提示你显式固定提供商/模型（`cronjob action=update job_id=… provider=… model=…`）后再继续。这可以防止一个无人值守的任务悄悄继承到付费提供商/模型的切换，花掉你并不打算花的钱（#44585）。若想让某个任务有意跟随你的全局默认值，请在更改默认值后把它固定到新的值。对于无人值守的运行，`hermes setup --portal` 是摩擦最小的选项，因为 OAuth 刷新是自动的。参见 [Nous Portal](/integrations/nous-portal)。
+:::
+
 :::warning
 Cron 运行的会话不能递归创建更多 cron 任务。Hermes 在 cron 执行内部禁用了 cron 管理工具，以防止失控的调度循环。
 :::
@@ -113,41 +117,12 @@ cronjob(
 设置 `workdir` 后：
 
 - 该目录中的 `AGENTS.md`、`CLAUDE.md` 和 `.cursorrules` 会被注入系统 prompt（发现顺序与交互式 CLI 相同）
-- `terminal`、`read_file`、`write_file`、`patch`、`search_files` 和 `execute_code` 均以该目录为工作目录（通过 `TERMINAL_CWD`）
+- `terminal`、`read_file`、`write_file`、`patch`、`search_files` 和 `execute_code` 均以该目录为工作目录
 - 路径必须是已存在的绝对目录——相对路径和不存在的目录在创建/更新时会被拒绝
 - 编辑时传入 `--workdir ""`（或工具中的 `workdir=""`）可清除该设置并恢复原有行为
 
 :::note 串行化
-设置了 `workdir` 的任务在调度器 tick 时串行运行，而非在并行池中运行。这是有意为之——`TERMINAL_CWD` 是进程全局变量，两个 workdir 任务同时运行会互相破坏各自的 cwd。无 workdir 的任务仍像以前一样并行运行。
-:::
-
-## 在指定 profile 中运行 cron 任务
-
-默认情况下，cron 任务继承创建它的 gateway/CLI 所属的 Hermes profile。传入 `--profile <name>`（CLI）或 `profile=`（cronjob 工具）可将任务重定向到不同的 profile——调度器会解析该 profile 的 `HERMES_HOME`，在运行期间临时切换到该 profile，加载其 `.env` 和 `config.yaml`，并在其中执行任务：
-
-```bash
-# 将任务固定到 `night-ops` profile，无论在哪里调度
-hermes cron create "every 1d at 03:00" \
-  "Tail the security log and flag anomalies" \
-  --profile night-ops
-```
-
-```python
-# 在聊天中，通过 cronjob 工具
-cronjob(
-    action="create",
-    schedule="every 1d at 03:00",
-    prompt="Tail the security log and flag anomalies",
-    profile="night-ops",
-)
-```
-
-使用 `--profile default` 可显式固定到根 Hermes profile。指定的 profile 必须已存在；调度器不会动态创建 profile。在 `cron edit` 时清除 profile 固定，传入空字符串（`--profile ""` 或 `profile=""`）——任务将恢复在调度器当前所在的 profile 中运行。
-
-如果固定的 profile 后来被删除，调度器会记录警告并回退到在当前 profile 中运行该任务，而不是崩溃——因此过期的 `profile` 引用不会卡住任务。
-
-:::note 串行化
-设置了 `profile` 的任务也串行运行，原因与 `workdir` 固定任务相同：切换 `HERMES_HOME` 是进程全局变更，两个 profile 固定任务并行运行会产生竞争。未固定的任务仍在正常并行池中运行。
+设置了 `workdir` 的任务在调度器 tick 时串行运行，而非在并行池中运行。这是有意为之：cron worker 通过进程全局的终端状态来应用任务的 workdir，因此两个 workdir 任务同时运行会互相破坏各自的 cwd。无 workdir 的任务仍像以前一样并行运行。
 :::
 
 ## 编辑任务
@@ -204,10 +179,11 @@ Cron 任务现在拥有比创建/删除更完整的生命周期。
 
 ```bash
 hermes cron list
-hermes cron pause <job_id>
-hermes cron resume <job_id>
-hermes cron run <job_id>
-hermes cron remove <job_id>
+hermes cron pause <job_id_or_name>
+hermes cron resume <job_id_or_name>
+hermes cron run <job_id_or_name>
+hermes cron remove <job_id_or_name>
+hermes cron edit <job_id_or_name> [...flags]
 hermes cron status
 hermes cron tick
 ```
@@ -218,6 +194,9 @@ hermes cron tick
 - `resume` — 重新启用任务并计算下次运行时间
 - `run` — 在下次调度器 tick 时触发任务
 - `remove` — 彻底删除任务
+- `edit` — 修改调度、prompt、投递方式等
+
+**基于名称的查找。** 四个会产生变更的动词（`pause`、`resume`、`run`、`remove`、`edit`）以及 agent 的 `cronjob` 工具现在都接受用任务**名称**（不区分大小写）代替十六进制 ID。agent 和 CLI 都会优先匹配精确的 ID（如果存在）；名称匹配存在歧义时（多个任务同名），命令会拒绝执行并列出全部候选 ID，供你显式选择。名称并不唯一，因此这道防线很关键——它可以避免在两个任务同名时悄悄改错任务。
 
 ## 工作原理
 
@@ -283,7 +262,7 @@ Hermes 会在执行器或调度提供程序分派之前，将每次已领取的 
 | `"telegram,discord"` | 扇出到指定的一组频道 | 逗号分隔列表 |
 | `"origin,all"` | 投递到来源**加上**所有其他已连接频道 | 可组合任意 token |
 
-Agent 的最终响应会自动投递，无需在 cron prompt 中调用 `send_message`。
+Agent 的最终响应会自动投递到配置的 `deliver:` 目标——agent 自己不发送消息，因此 cron prompt 中无需调用任何东西。
 
 ### 路由意图（`all`）
 
@@ -399,7 +378,7 @@ in_channel 任务——都会加入同一段滚动对话。这是「平铺在频
 
 ### 静默抑制
 
-如果 agent 的最终响应以 `[SILENT]` 开头，投递将被完全抑制。输出仍会保存到本地以供审计（位于 `~/.hermes/cron/output/`），但不会向投递目标发送任何消息。
+如果 agent 的最终响应中包含 `[SILENT]`，投递将被完全抑制。输出仍会保存到本地以供审计（位于 `~/.hermes/cron/output/`），但不会向投递目标发送任何消息。
 
 这对于只在出现问题时才需要上报的监控任务很有用：
 
@@ -408,19 +387,19 @@ Check if nginx is running. If everything is healthy, respond with only [SILENT].
 Otherwise, report the issue.
 ```
 
-失败的任务无论 `[SILENT]` 标记如何都会投递——只有成功的运行才能被静默。
+失败的任务无论 `[SILENT]` 标记如何都会投递——只有成功的运行才能被静默。对于安静的监控类任务，请在 prompt 中要求 agent 在没有任何情况需要报告时仅回复 `[SILENT]`。
 
 ## 脚本超时
 
-预运行脚本（通过 `script` 参数附加）的默认超时为 120 秒。如果你的脚本需要更长时间——例如，包含随机延迟以避免类机器人的时序模式——可以增加此值：
+预运行脚本（通过 `script` 参数附加）的默认超时为 3600 秒（1 小时）。它只约束**脚本本身**——基于 skill / 由 LLM 驱动的任务使用另一套空闲预算，不受此值限制。如果你的脚本需要不同的限制，可以修改它：
 
 ```yaml
 # ~/.hermes/config.yaml
 cron:
-  script_timeout_seconds: 300   # 5 分钟
+  script_timeout_seconds: 1800   # 30 分钟
 ```
 
-或设置 `HERMES_CRON_SCRIPT_TIMEOUT` 环境变量。解析顺序为：环境变量 → config.yaml → 默认 120 秒。
+或设置 `HERMES_CRON_SCRIPT_TIMEOUT` 环境变量。解析顺序为：环境变量 → config.yaml → 默认 3600 秒。
 
 ## 无 agent 模式（纯脚本任务）
 
@@ -530,7 +509,7 @@ Cron 任务继承你配置的回退 provider 和凭证池轮换。如果主 API 
 
 ## 调度格式
 
-Agent 的最终响应会自动投递——你**无需**在 cron prompt 中为同一目标包含 `send_message`。如果 cron 运行调用了 `send_message` 且目标与调度器已投递的目标完全相同，Hermes 会跳过该重复发送，并告知模型将面向用户的内容放在最终响应中。仅对额外或不同的目标使用 `send_message`。
+Agent 的最终响应会自动投递到任务的 `deliver:` 目标——agent 不再自行发送消息，因此面向用户的内容直接放在最终响应里即可。若要投递到**额外或不同的**目标，请在 cron 任务上列出多个 `deliver:` 目标（逗号分隔，例如 `deliver: "telegram,discord"`），而不是让 agent 去发送它们。
 
 ### 相对延迟（一次性）
 
@@ -618,7 +597,7 @@ cronjob(action="create", name="weekly-news-summary",
         prompt="Summarize this week's AI news: ...")
 ```
 
-当任务上设置了 `enabled_toolsets` 时，它优先生效；否则 `hermes tools` 的 cron 平台配置生效；否则 Hermes 回退到内置默认值。这对成本控制很重要：在每个小型"获取新闻"任务中携带 `moa`、`browser`、`delegation` 会在每次 LLM 调用时膨胀工具 schema prompt。
+当任务上设置了 `enabled_toolsets` 时，它优先生效；否则 `hermes tools` 的 cron 平台配置生效；否则 Hermes 回退到内置默认值。这对成本控制很重要：在每个小型"获取新闻"任务中携带 `browser`、`delegation` 会在每次 LLM 调用时膨胀工具 schema prompt。
 
 ### 完全跳过 agent：`wakeAgent`
 
@@ -740,6 +719,10 @@ cronjob(action="create", name="daily-digest",
 ## 任务存储
 
 任务存储在 `~/.hermes/cron/jobs.json`。任务运行的输出保存到 `~/.hermes/cron/output/{job_id}/{timestamp}.md`。
+
+:::tip
+请让 agent 通过 `cronjob` 工具、`hermes cron edit` 或 `/cron` 来管理任务，而不要直接修补 `jobs.json`。当[文件写入安全](../security.md#file-write-safety)机制阻止该路径时（例如设置了 `HERMES_WRITE_SAFE_ROOT`），直接编辑可能会静默失败，而[文件变更校验器](../configuration.md#file-mutation-verifier)页脚才是"什么都没保存"的权威信号。
+:::
 
 任务可能将 `model` 和 `provider` 存储为 `null`。省略这些字段时，Hermes 在执行时从全局配置中解析它们。只有设置了单任务覆盖时，这些字段才会出现在任务记录中。
 

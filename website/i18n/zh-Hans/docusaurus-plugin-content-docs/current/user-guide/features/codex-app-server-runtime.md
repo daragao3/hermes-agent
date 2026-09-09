@@ -9,6 +9,10 @@ Hermes 可以选择将 `openai/*` 和 `openai-codex/*` 的轮次交由 [Codex CL
 
 此功能**仅限手动启用**。除非你主动切换该标志，否则 Hermes 的默认行为不变。Hermes 不会自动将你路由到此运行时。
 
+:::tip
+没有使用 OpenAI Codex？`hermes setup --portal` 可以一步配置基于 Claude/Gemini 等模型的非 Codex 后端。参见 [Nous Portal](/integrations/nous-portal)。
+:::
+
 ## 为什么使用
 
 - 通过 Codex CLI 使用的相同认证流程，使用你的 **ChatGPT 订阅**运行 OpenAI agent 轮次（无需 API 密钥）。
@@ -128,6 +132,13 @@ Kanban 工具通过分发器设置的 `HERMES_KANBAN_TASK` 环境变量进行访
 | 所有 gateway 平台 | 是 | 是 |
 | 非 OpenAI 提供商 | 是 | 不适用——仅限 OpenAI/Codex |
 
+### 实时显示
+
+尽管 agent 循环运行在 Codex 子进程内，该运行时仍会将 Codex 的事件流桥接到与默认运行时相同的显示路径：
+
+- 实时的助手增量输出、推理过程（包括摘要增量）以及带稳定 ID 的工具开始/完成事件，会在轮次进行过程中呈现在 TUI、桌面端和消息 gateway 中。仅处理完成事件的历史投影器保持独立，因此恢复会话时会重建与轮次进行时相同的工具卡片。
+- 在关闭 token 流式传输时，gateway 的旁白仍然可见；即使是在审批请求之前被排空的通知，实时工具事件也会被转发。旁白遵循 `display.show_commentary` 设置。
+
 ## 前提条件
 
 1. **已安装 Codex CLI：**
@@ -139,7 +150,7 @@ Kanban 工具通过分发器设置的 `HERMES_KANBAN_TASK` 环境变量进行访
    ```bash
    codex login                  # 将 token 写入 ~/.codex/auth.json
    ```
-   Hermes 自己的 `hermes auth login codex` 写入 `~/.hermes/auth.json`——那是独立的会话。**如果你还没有运行过 `codex login`，请单独运行它。**
+   Hermes 自己的 `hermes auth add openai-codex` 写入 `~/.hermes/auth.json`——那是独立的会话。**如果你还没有运行过 `codex login`，请单独运行它。**
 
 3. **（可选）安装你想要的 Codex 插件。** 启用运行时时，Hermes 会自动迁移你已通过 Codex CLI 安装的所有精选插件：
    ```bash
@@ -386,7 +397,7 @@ tool_timeout_sec = 600.0
 
 已知限制：
 
-- **Hermes 认证和 Codex 认证是独立的会话。** 为获得最佳体验，你需要同时运行 `codex login` 和 `hermes auth login codex`（运行时使用 Codex 的会话进行 LLM 调用）。这是 Hermes `_import_codex_cli_tokens` 中的有意设计——Hermes 不会与 Codex CLI 共享 OAuth 状态，以避免在 token 刷新时相互覆盖。
+- **Hermes 认证和 Codex 认证是独立的会话。** 为获得最佳体验，你需要同时运行 `codex login` 和 `hermes auth add openai-codex`（运行时使用 Codex 的会话进行 LLM 调用）。这是 Hermes `_import_codex_cli_tokens` 中的有意设计——Hermes 不会与 Codex CLI 共享 OAuth 状态，以避免在 token 刷新时相互覆盖。
 - **`delegate_task`、`memory`、`session_search`、`todo` 在此运行时上不可用。** 它们需要运行中的 AIAgent 上下文，无状态的 MCP 回调无法提供。需要这些工具时，请使用 `/codex-runtime auto`。
 - **当 Codex 未跟踪变更集时，审批提示中没有内联 patch 预览。** Codex 的 `fileChange` 审批参数并不总是携带变更集。Hermes 会尽可能从对应的 `item/started` 通知中缓存数据，但如果审批在事件项流式传输完成之前到达，提示会回退到 Codex 提供的 `reason`。
 - **亚秒级取消无法保证。** 流式传输中途的中断（Codex 响应时按 Ctrl+C）通过 `turn/interrupt` 发送，但如果 Codex 已经刷新了最终消息，你仍会收到该响应。

@@ -76,11 +76,6 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 |-------|-------------|------|
 | [`himalaya`](/user-guide/skills/bundled/email/email-himalaya) | Himalaya CLI：在终端中收发 IMAP/SMTP 邮件。 | `email/himalaya` |
 
-## gaming
-
-| 技能 | 描述 | 路径 |
-|-------|-------------|------|
-
 ## github
 
 | 技能 | 描述 | 路径 |
@@ -91,11 +86,6 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 | [`github-issues`](/user-guide/skills/bundled/github/github-github-issues) | 通过 gh 或 REST API 创建、分类、标记、分配 GitHub issue。 | `github/github-issues` |
 | [`github-pr-workflow`](/user-guide/skills/bundled/github/github-github-pr-workflow) | GitHub PR 生命周期：分支、提交、开启、CI、合并。 | `github/github-pr-workflow` |
 | [`github-repo-management`](/user-guide/skills/bundled/github/github-github-repo-management) | 克隆/创建/fork 仓库；管理远程、发布版本。 | `github/github-repo-management` |
-
-## mcp
-
-| 技能 | 描述 | 路径 |
-|-------|-------------|------|
 
 ## media
 
@@ -134,6 +124,7 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 | [`nano-pdf`](/user-guide/skills/bundled/productivity/productivity-nano-pdf) | 通过 nano-pdf CLI 编辑 PDF 文本/错别字/标题（自然语言 prompt）。 | `productivity/nano-pdf` |
 | [`notion`](/user-guide/skills/bundled/productivity/productivity-notion) | Notion API + ntn CLI：页面、数据库、Markdown、Workers。 | `productivity/notion` |
 | [`ocr-and-documents`](/user-guide/skills/bundled/productivity/productivity-ocr-and-documents) | 从 PDF/扫描件中提取文本（pymupdf、marker-pdf）。 | `productivity/ocr-and-documents` |
+| [`petdex`](/user-guide/skills/bundled/productivity/productivity-petdex) | 为 Hermes 安装并选择动画 petdex 吉祥物。 | `productivity/petdex` |
 | [`powerpoint`](/user-guide/skills/bundled/productivity/productivity-powerpoint) | 创建、读取、编辑 .pptx 演示文稿、幻灯片、备注、模板。 | `productivity/powerpoint` |
 | [`teams-meeting-pipeline`](/user-guide/skills/bundled/productivity/productivity-teams-meeting-pipeline) | 通过 Hermes CLI 操作 Teams 会议摘要流水线——汇总会议、检查流水线状态、重放任务、管理 Microsoft Graph 订阅。 | `productivity/teams-meeting-pipeline` |
 
@@ -168,6 +159,7 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 | [`plan`](/user-guide/skills/bundled/software-development/software-development-plan) | 计划模式：将 Markdown 计划写入 `.hermes/plans/`，不执行。 | `software-development/plan` |
 | [`python-debugpy`](/user-guide/skills/bundled/software-development/software-development-python-debugpy) | 调试 Python：pdb REPL + debugpy 远程调试（DAP）。 | `software-development/python-debugpy` |
 | [`requesting-code-review`](/user-guide/skills/bundled/software-development/software-development-requesting-code-review) | 提交前审查：安全扫描、质量门控、自动修复。 | `software-development/requesting-code-review` |
+| [`simplify-code`](/user-guide/skills/bundled/software-development/software-development-simplify-code) | 由 3 个 agent 并行清理近期的代码改动。 | `software-development/simplify-code` |
 | [`spike`](/user-guide/skills/bundled/software-development/software-development-spike) | 一次性实验，在正式构建前验证想法。 | `software-development/spike` |
 | [`systematic-debugging`](/user-guide/skills/bundled/software-development/software-development-systematic-debugging) | 四阶段根因调试：先理解 bug，再修复。 | `software-development/systematic-debugging` |
 | [`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development) | TDD：强制执行红-绿-重构流程，先写测试再写代码。 | `software-development/test-driven-development` |

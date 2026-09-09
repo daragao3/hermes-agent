@@ -38,6 +38,31 @@ BLUEBUBBLES_SERVER_URL=http://192.168.1.10:1234
 BLUEBUBBLES_PASSWORD=your-server-password
 ```
 
+#### 可选：在群聊中要求 @ 提及
+
+默认情况下，Hermes 会响应每一条已授权的 BlueBubbles/iMessage 私聊或群聊消息。若想让群聊改为按需触发，可启用提及门控：
+
+```yaml
+platforms:
+  bluebubbles:
+    enabled: true
+    extra:
+      require_mention: true
+```
+
+设置 `require_mention: true` 后，私聊仍照常工作，但群聊消息除非匹配到提及模式，否则会被忽略。如果你没有配置自定义模式，Hermes 会对 `Hermes` 和 `@Hermes agent` 等变体使用保守的默认模式。
+
+若使用自定义 agent 名称，可设置正则模式：
+
+```yaml
+platforms:
+  bluebubbles:
+    extra:
+      require_mention: true
+      mention_patterns:
+        - '(?<![\w@])@?amos\b[,:\-]?'
+```
+
 ### 4. 授权用户
 
 选择以下任一方式：
@@ -90,6 +115,8 @@ Hermes → BlueBubbles REST API → Messages.app → iMessage
 | `BLUEBUBBLES_HOME_CHANNEL` | 否 | — | cron 投递使用的手机号/邮箱 |
 | `BLUEBUBBLES_ALLOWED_USERS` | 否 | — | 逗号分隔的授权用户列表 |
 | `BLUEBUBBLES_ALLOW_ALL_USERS` | 否 | `false` | 允许所有用户 |
+| `BLUEBUBBLES_REQUIRE_MENTION` | 否 | `false` | 在群聊中响应前要求匹配提及模式 |
+| `BLUEBUBBLES_MENTION_PATTERNS` | 否 | Hermes 唤醒词 | 用于群聊提及匹配的正则模式，可为 JSON 数组、换行分隔或逗号分隔 |
 
 自动将消息标记为已读由 `~/.hermes/config.yaml` 中 `platforms.bluebubbles.extra` 下的 `send_read_receipts` 键控制（默认值：`true`）。该选项没有对应的环境变量。
 

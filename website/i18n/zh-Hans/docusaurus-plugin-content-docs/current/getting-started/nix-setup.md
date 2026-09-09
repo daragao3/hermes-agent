@@ -6,7 +6,13 @@ description: "使用 Nix 安装和部署 Hermes Agent——从快速 `nix run` �
 
 # Nix & NixOS 安装配置
 
-Hermes Agent 提供了一个 Nix flake，支持三个层级的集成：
+:::warning Tier 2 平台
+Nix 和 NixOS 属于 [Tier 2 平台](./platform-support.md#tier-2)。本页记录的 flake 和 NixOS 模块仅按尽力而为的方式维护。提交到 `main` 的代码随时可能破坏这些软件包。
+
+如需受支持的部署方式，请使用标准[安装](./installation.md)路径之一——Docker 或 FHS 环境。
+:::
+
+Hermes Agent 提供了一个 Nix flake 和一个 NixOS 模块。
 
 | 层级 | 适用对象 | 提供内容 |
 |-------|-------------|--------------|
@@ -34,26 +40,39 @@ Hermes Agent 提供了一个 Nix flake，支持三个层级的集成：
 无需克隆仓库。Nix 会自动获取、构建并运行所有内容：
 
 ```bash
-# 直接运行（首次使用时构建，之后使用缓存）
-nix run github:NousResearch/hermes-agent -- setup
-nix run github:NousResearch/hermes-agent -- chat
+# 运行桌面应用
+nix run github:NousResearch/hermes-agent#desktop
 
 # 或持久化安装
+nix profile install github:NousResearch/hermes-agent#desktop
+
+# 运行 TUI
+nix run github:NousResearch/hermes-agent -- setup
+nix run github:NousResearch/hermes-agent -- --tui
+
+# 或将其安装到你的 profile 中
 nix profile install github:NousResearch/hermes-agent
 hermes setup
-hermes chat
+hermes --tui
 ```
 
 执行 `nix profile install` 后，`hermes`、`hermes-agent` 和 `hermes-acp` 将出现在你的 PATH 中。之后的工作流与[标准安装](./installation.md)完全相同——`hermes setup` 引导你完成提供商选择，`hermes gateway install` 设置 launchd（macOS）或 systemd 用户服务，配置存放在 `~/.hermes/`。
 
+:::warning 消息平台（Discord、Telegram、Slack）
+默认软件包包含 hermes-agent 可能需要的所有库。如果你想要更小的变体，请查看 flake 的其他输出。
+
+`default` 软件包会使闭包增加约 700 MB。如果你只需要消息平台，`#messaging` 仅增加约 33 MB。
+
+:::
+
 <details>
-<summary><strong>从本地克隆构建</strong></summary>
+<summary><strong>从本地克隆运行</strong></summary>
 
 ```bash
 git clone https://github.com/NousResearch/hermes-agent.git
 cd hermes-agent
-nix build
-./result/bin/hermes setup
+nix develop
+hermes setup
 ```
 
 </details>
@@ -319,6 +338,7 @@ Nix 用户最常见自定义需求的快速参考：
 | 添加 API 密钥 | `environmentFiles` | `[ config.sops.secrets."hermes-env".path ]` |
 | 给 Agent 设置个性 | `${services.hermes-agent.stateDir}/.hermes/SOUL.md` | 直接管理该文件 |
 | 添加 MCP 工具服务器 | `mcpServers.<name>` | 参见 [MCP 服务器](#mcp-servers) |
+| 启用 Discord/Telegram/Slack | `extraDependencyGroups` | `[ "messaging" ]` |
 | 将主机目录挂载到容器 | `container.extraVolumes` | `[ "/data:/data:rw" ]` |
 | 为容器传入 GPU 访问 | `container.extraOptions` | `[ "--gpus" "all" ]` |
 | 使用 Podman 替代 Docker | `container.backend` | `"podman"` |
@@ -566,7 +586,7 @@ scp ~/.hermes/mcp-tokens/my-oauth-server{,.client}.json \
   │   ├── state.db, sessions/, memories/   （运行时状态）
   │   └── mcp-tokens/                      （MCP 服务器的 OAuth token）
   ├── home/                                ──►  /home/hermes    (rw)
-  └── workspace/                           （MESSAGING_CWD）
+  └── workspace/                           （Agent 工作目录）
       ├── SOUL.md                          （来自 documents 选项）
       └── （Agent 创建的文件）
 
@@ -647,16 +667,44 @@ services.hermes-agent.extraPythonPackages = [
 
 ### 可选依赖组（`extraDependencyGroups`）
 
-对于已在 hermes-agent 的 `pyproject.toml` 中声明的可选 extras（例如 `hindsight` 或 `honcho` 等记忆提供商），使用 `extraDependencyGroups` 在构建时将其包含到封闭的 venv 中：
+对于已在 hermes-agent 的 `pyproject.toml` 中声明的可选 extras，使用 `extraDependencyGroups` 在构建时将其包含到封闭的 venv 中。任何不在默认 `[all]` 集合中的 extra 都必须这样做——在 Nix 上，无法在运行时把内容安装进只读的 store。
 
 ```nix
+# 启用 Discord、Telegram、Slack
+services.hermes-agent.extraDependencyGroups = [ "messaging" ];
+```
+
+```nix
+# 启用一个记忆提供商
 services.hermes-agent = {
   extraDependencyGroups = [ "hindsight" ];
   settings.memory.provider = "hindsight";
 };
 ```
 
-这由 uv 与核心依赖在单次解析中完成——不需要 PYTHONPATH 补丁，没有冲突风险。可用的组与 `pyproject.toml` 中 `[project.optional-dependencies]` 的键对应（例如 `"hindsight"`、`"honcho"`、`"voice"`、`"matrix"`、`"mistral"`、`"bedrock"`）。
+这由 uv 与核心依赖一起解析——不需要 PYTHONPATH 补丁，没有冲突风险。可用的组：
+
+| 组 | 启用的功能 |
+|-------|-----------------|
+| `messaging` | Discord、Telegram、Slack |
+| `matrix` | Matrix/Element（带加密的 mautrix；仅限 Linux） |
+| `dingtalk` | 钉钉 |
+| `feishu` | 飞书/Lark |
+| `voice` | 本地语音转文字（faster-whisper） |
+| `edge-tts` | Edge TTS 提供商 |
+| `tts-premium` | ElevenLabs TTS |
+| `anthropic` | 原生 Anthropic SDK（通过 OpenRouter 使用时不需要） |
+| `bedrock` | AWS Bedrock（boto3） |
+| `azure-identity` | Azure Entra ID 认证 |
+| `honcho` | Honcho 记忆提供商 |
+| `hindsight` | Hindsight 记忆提供商 |
+| `modal` | Modal 终端后端 |
+| `daytona` | Daytona 终端后端 |
+| `exa` | Exa 网页搜索 |
+| `firecrawl` | Firecrawl 网页搜索 |
+| `fal` | FAL 图像生成 |
+
+或者，你也可以直接使用预构建的 `#messaging` 或 `#full` flake 包，而不必逐项配置 extra（参见[快速开始](#quick-start-any-nix-user)）。
 
 **何时使用哪个：**
 
@@ -786,7 +834,7 @@ nix build .#checks.x86_64-linux.config-roundtrip    # 合并脚本保留用户�
 | `group` | `str` | `"hermes"` | 系统组 |
 | `createUser` | `bool` | `true` | 自动创建用户/组 |
 | `stateDir` | `str` | `"/var/lib/hermes"` | 状态目录（`HERMES_HOME` 的父目录） |
-| `workingDirectory` | `str` | `"${stateDir}/workspace"` | Agent 工作目录（`MESSAGING_CWD`） |
+| `workingDirectory` | `str` | `"${stateDir}/workspace"` | Agent 工作目录 |
 | `addToSystemPackages` | `bool` | `false` | 将 `hermes` CLI 添加到系统 PATH 并在系统范围内设置 `HERMES_HOME` |
 
 ### 配置
@@ -873,7 +921,7 @@ nix build .#checks.x86_64-linux.config-roundtrip    # 合并脚本保留用户�
 │   ├── cron/
 │   └── logs/
 ├── home/                            # Agent HOME
-└── workspace/                       # MESSAGING_CWD
+└── workspace/                       # Agent 工作目录
     ├── SOUL.md                      # 来自 documents 选项
     └── （Agent 创建的文件）
 ```
@@ -966,6 +1014,7 @@ nix-store --query --roots $(docker exec hermes-agent readlink /data/current-pack
 | 现象 | 原因 | 解决方法 |
 |---|---|---|
 | `Cannot save configuration: managed by NixOS` | CLI 守卫已激活 | 编辑 `configuration.nix` 并执行 `nixos-rebuild switch` |
+| `No adapter available for discord`（或 telegram/slack） | 封闭的 Nix venv 中缺少消息平台依赖 | 安装 `#messaging` 变体：`nix profile install ...#messaging`。使用 NixOS 模块时：`extraDependencyGroups = [ "messaging" ]`。查看 `journalctl -u hermes-agent` 中的 `FeatureUnavailable` 或 `requirements not met` 以获取底层错误。 |
 | 容器意外重建 | `extraVolumes`、`extraOptions` 或 `image` 发生变更 | 预期行为——可写层重置。重新安装包或使用自定义镜像 |
 | `hermes version` 显示旧版本 | 容器未重启 | `systemctl restart hermes-agent` |
 | `/var/lib/hermes` 权限拒绝 | 状态目录为 `0750 hermes:hermes` | 使用 `docker exec` 或 `sudo -u hermes` |

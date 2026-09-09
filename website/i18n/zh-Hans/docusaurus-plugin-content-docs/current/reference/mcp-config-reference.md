@@ -25,6 +25,11 @@ mcp_servers:
     url: "..."          # HTTP servers
     headers: {}
 
+    # Optional HTTP/SSE TLS settings:
+    ssl_verify: true                # bool or path to a CA bundle (PEM)
+    client_cert: "/path/to/cert.pem"  # mTLS client certificate (see below)
+    # client_key: "/path/to/key.pem"  # optional, when key lives in a separate file
+
     enabled: true
     timeout: 120
     connect_timeout: 60
@@ -45,10 +50,14 @@ mcp_servers:
 | `env` | mapping | stdio | 传递给子进程的环境变量 |
 | `url` | string | HTTP | 远程 MCP 端点 |
 | `headers` | mapping | HTTP | 远程服务器请求的请求头 |
+| `ssl_verify` | bool 或 string | HTTP | TLS 校验。`true`（默认）使用系统 CA，`false` 关闭校验（不安全），也可填自定义 CA 证书包（PEM）的路径字符串 |
+| `client_cert` | string 或 list | HTTP | mTLS 客户端证书。字符串 = 同时包含证书与私钥的 PEM 文件路径。列表 `[cert, key]` = 证书与私钥分文件。列表 `[cert, key, password]` = 加密私钥 |
+| `client_key` | string | HTTP | 客户端私钥路径，适用于 `client_cert` 为字符串且私钥位于单独文件的情况 |
 | `enabled` | bool | 两者 | 为 false 时完全跳过该服务器 |
-| `timeout` | number | 两者 | 工具调用超时时间 |
-| `connect_timeout` | number | 两者 | 初始连接超时时间 |
+| `timeout` | number | 两者 | 工具调用超时时间（秒，默认：`300`） |
+| `connect_timeout` | number | 两者 | 初始连接超时时间（秒，默认：`60`） |
 | `supports_parallel_tool_calls` | bool | 两者 | 允许该服务器的工具并发执行 |
+| `skip_preflight` | bool | HTTP | 对于 HEAD/GET 返回非 MCP content type 的合法 Streamable HTTP 端点，跳过快速失败的 content-type 预检（默认：`false`） |
 | `tools` | mapping | 两者 | 过滤及工具策略 |
 | `auth` | string | HTTP | 认证方式。设为 `oauth` 可启用带 PKCE 的 OAuth 2.1 |
 | `sampling` | mapping | 两者 | 服务器发起的 LLM 请求策略（参见 MCP 指南） |
@@ -190,6 +199,40 @@ mcp_servers:
       resources: true
       prompts: false
 ```
+
+### TLS 客户端证书（mTLS）
+
+对于要求客户端证书的 HTTP/SSE 服务器，请设置 `client_cert`（并可选设置 `client_key`）：
+
+```yaml
+mcp_servers:
+  # Combined cert + key in a single PEM file
+  internal_api:
+    url: "https://mcp.internal.example.com/mcp"
+    client_cert: "~/secrets/mcp-client.pem"
+
+  # Separate cert and key files
+  partner_api:
+    url: "https://mcp.partner.example.com/mcp"
+    client_cert: "~/secrets/client.crt"
+    client_key: "~/secrets/client.key"
+
+  # Encrypted key with a passphrase (3-element list form)
+  bank_api:
+    url: "https://mcp.bank.example.com/mcp"
+    client_cert: ["~/secrets/client.crt", "~/secrets/client.key", "my-passphrase"]
+
+  # Custom CA bundle (private CA / self-signed server)
+  lab_api:
+    url: "https://mcp.lab.local/mcp"
+    ssl_verify: "~/secrets/lab-ca.pem"
+    client_cert: "~/secrets/lab-client.pem"
+```
+
+注意事项：
+- 路径支持 `~` 展开。文件缺失会在连接时快速失败，并给出针对该服务器的错误信息。
+- `ssl_verify: false` 会完全关闭服务器证书校验。请勿在真实服务上使用。
+- 在 Streamable HTTP 与 SSE 两种传输方式上均可使用。
 
 ## 重新加载配置
 

@@ -182,12 +182,20 @@ tail -f "${HERMES_HOME:-$HOME/.hermes}/logs/gateway.log"
 
 ## 过滤特定 action
 
-GitHub 会针对多种 action 发送 `pull_request` 事件：`opened`、`synchronize`、`reopened`、`closed`、`labeled` 等。`events` 列表仅按 `X-GitHub-Event` 请求头值过滤——无法在路由级别按 action 子类型过滤。
+GitHub 会针对多种 action 发送 `pull_request` 事件：`opened`、`synchronize`、`reopened`、`closed`、`labeled` 等。`events` 列表按 `X-GitHub-Event` 请求头值过滤，而路由级别的 `filters` 可以按 `action` 等 payload 字段进一步收窄。
 
 第一步中的 prompt 已通过指示 agent 对 `closed` 和 `labeled` 事件提前停止来处理这一问题。
 
 :::warning Agent 仍会运行并消耗 token（令牌）
-"stop here" 指令会阻止有意义的审查，但无论 action 如何，agent 仍会对每个 `pull_request` 事件运行至完成。GitHub webhook 只能按事件类型（`pull_request`、`push`、`issues` 等）过滤——无法按 action 子类型（`opened`、`closed`、`labeled`）过滤。路由级别没有针对子 action 的过滤器。对于高流量仓库，请接受这一成本，或通过 GitHub Actions workflow 在上游进行过滤，有条件地调用你的 webhook URL。
+"stop here" 指令会阻止有意义的审查，但无论 action 如何，agent 仍会对每个 `pull_request` 事件运行至完成。更好的做法是在 agent 被唤醒之前就进行过滤：
+
+```yaml
+filters:
+  - field: "action"
+    in: ["opened", "synchronize", "reopened"]
+```
+
+对于高流量仓库，你仍然可以通过 GitHub Actions workflow 在上游进行过滤，有条件地调用你的 webhook URL。
 :::
 
 > 不支持 Jinja2 或条件模板语法。`{field}` 和 `{nested.field}` 是唯一支持的替换方式。其他内容会原样传递给 agent。
@@ -303,7 +311,6 @@ platforms:
   webhook:
     enabled: true
     extra:
-      host: "0.0.0.0"         # 绑定地址（默认：0.0.0.0）
       port: 8644               # 监听端口（默认：8644）
       secret: ""               # 可选的全局回退 secret
       rate_limit: 30           # 每条路由每分钟请求数

@@ -12,6 +12,10 @@ Hermes 支持两种企业微信集成模式：
 - **WeCom 回调**（本页）— 自建应用，接收加密 XML 回调。在用户企业微信侧边栏中显示为一级应用，支持多企业路由。
 :::
 
+另请参阅：[WeCom Bot](./wecom.md) 了解 Bot 风格的集成方式。
+
+> 运行 `hermes gateway setup` 并选择 **WeCom Callback**，即可获得引导式配置流程。
+
 ## 工作原理
 
 1. 在企业微信管理后台注册自建应用
@@ -147,3 +151,25 @@ WECOM_CALLBACK_ALLOW_ALL_USERS=true
 - **不支持正在输入提示** — 回调模式不支持输入状态
 - **仅支持文本** — 目前仅支持文本消息输入；图片/文件/语音输入尚未实现。Agent 可通过企业微信平台提示感知出站媒体能力（图片、文档、视频、语音）。
 - **响应延迟** — Agent 会话需要 3–30 分钟；用户在处理完成后收到回复
+
+## 故障排查
+
+**签名验证失败。**
+企业微信会用你在管理后台注册的 **Token** 对每个请求签名。Hermes 中配置的
+token 与管理后台期望的 token 不一致是最常见的原因。请重新从管理后台复制
+**Token** 和 **EncodingAESKey**——它们很容易被截断。`~/.hermes/.env` 中
+`=` 两侧的空白字符同样会破坏签名校验。修复后请重启 `hermes gateway run`。
+
+**回调 URL 不可达 / 验证步骤失败。**
+企业微信会访问你注册的公网 URL。请确认：
+1. 你的反向代理／隧道已将 `/wecom/callback` 转发到 gateway 的端口。
+2. 管理后台中的 URL 是 HTTPS（企业微信拒绝纯 HTTP）。
+3. 从你的网络外部执行 `curl -i https://<your-domain>/wecom/callback`
+   返回的不是超时（不带查询参数时返回 4xx 也没问题——这只说明监听器可达）。
+
+**端口不可达 / 监听器未绑定。**
+检查 `hermes gateway run` 日志中绑定的 host/port。如果适配器绑定到了
+`127.0.0.1`，你必须在前面加一层反向代理或隧道——企业微信的服务器无法访问
+回环地址。请在 `config.yaml` 中设置 `extra.host: 0.0.0.0`（如果直接暴露，
+还需设置 `allowed_source_cidrs`），或者保持回环地址并使用
+Cloudflare Tunnel / nginx 之类的隧道。

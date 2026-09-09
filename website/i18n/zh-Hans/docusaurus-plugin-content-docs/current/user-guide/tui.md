@@ -36,7 +36,16 @@ hermes          # 现在使用 TUI
 hermes chat     # 同上
 ```
 
-Classic CLI 仍作为默认方式保留。[CLI 界面](cli.md)中记录的所有内容——斜杠命令、快捷命令、skill 预加载、personality、多行输入、中断——在 TUI 中均完全一致。
+也可以在 `~/.hermes/config.yaml` 中将其设为持久默认值：
+
+```yaml
+display:
+  interface: tui   # "cli"（默认）或 "tui"
+```
+
+设置 `display.interface: tui` 后，直接运行 `hermes`（以及 `hermes chat`）都会启动 TUI。显式标志始终优先——运行 `hermes --cli` 可在单次调用中回退到 classic REPL；当配置默认值为 `cli` 时，使用 `hermes --tui` / `HERMES_TUI=1` 可强制使用 TUI。
+
+Classic CLI 仍是发行版的默认方式。[CLI 界面](cli.md)中记录的所有内容——斜杠命令、快捷命令、skill 预加载、personality、多行输入、中断——在 TUI 中均完全一致。
 
 ## 为什么选择 TUI
 
@@ -70,6 +79,10 @@ TUI 启动 banner 将运行时信息分为四个可折叠区块，每个区块�
 
 首次启动时，Hermes 会将 TUI 的 Node 依赖安装到 `ui-tui/node_modules`（一次性操作，耗时数秒）。后续启动速度很快。拉取新版 Hermes 后，若源文件比 dist 更新，TUI bundle 将自动重新构建。
 
+:::tip 需要跨 git worktree 工作？
+如果贡献者要从多个 worktree 运行 `hermes --tui --dev`，可以共享一份 `node_modules`，而不必为每个检出目录各装一份——参见 [从 Worktree 运行 TUI 与桌面端](../developer-guide/worktree-ui-dev.md)。
+:::
+
 ### 外部预构建
 
 发行版若附带预构建 bundle（如 Nix、系统包），可将 Hermes 指向该 bundle：
@@ -89,7 +102,7 @@ hermes --tui
 - **`Cmd+V` / `Ctrl+V`** — 优先尝试普通文本粘贴，然后回退到 OSC52/原生剪贴板读取，最后在剪贴板或粘贴内容解析为图片时进行图片附件操作。
 - **`/terminal-setup`** — 安装本地 VS Code / Cursor / Windsurf 终端绑定，以在 macOS 上获得更好的 `Cmd+Enter` 和撤销/重做一致性。
 - **斜杠自动补全** — 以带描述的浮动面板形式展开，而非内联下拉菜单。
-- **`Ctrl+X`** — 当排队消息被高亮（在 agent 仍在运行时发送的消息）时，从队列中删除该消息。**`Esc`** 取消编辑并取消高亮，但不删除。
+- **`Ctrl+X`** 打开实时会话切换器。当排队消息被高亮（在 agent 仍在运行时发送的消息）时，它仍然会改为删除该排队消息。**`Esc`** 取消编辑并取消高亮，但不删除。
 - **`Ctrl+G` / `Ctrl+X Ctrl+E`** — 在 `$EDITOR` 中打开当前输入缓冲区，用于多行/长 prompt 编写；保存并退出后，内容将作为 prompt 发送回来。
 
 ## 斜杠命令
@@ -99,7 +112,7 @@ hermes --tui
 | 命令 | TUI 行为 |
 |------|---------|
 | `/help` | 带分类命令的浮层，可用方向键导航 |
-| `/sessions` | 模态会话选择器——预览、标题、token 总量、内联恢复 |
+| `/sessions`（别名 `/switch`） | 实时会话切换器——列出打开的 TUI 会话，在它们之间切换、关闭它们，或另起一个新会话 |
 | `/model` | 按提供商分组的模态模型选择器，带费用提示 |
 | `/skin` | 实时预览——浏览时主题变更即时生效 |
 | `/details` | 切换详细工具调用详情（全局或按区块） |
@@ -109,6 +122,31 @@ hermes --tui
 | `/mouse [on\|off\|toggle\|wheel\|buttons\|all]` | 在运行时选择鼠标跟踪预设（同时持久化到 `config.yaml` 的 `display.mouse_tracking`）。`wheel`（1000+1006）保留滚轮滚动而不产生悬停事件，避免在 tmux 中向 prompt 行发送"No image in clipboard"垃圾信息；`buttons` 添加 1002 以支持终端侧拖拽选择；`all` 是带悬停 UI 的默认值。 |
 
 其他所有斜杠命令（包括已安装的 skill、快捷命令和 personality 切换）与 classic CLI 完全一致。请参阅[斜杠命令参考](../reference/slash-commands.md)。
+
+## 实时会话切换器
+
+当你希望用一个终端充当多个 TUI 会话的调度台时，就使用实时会话切换器。它只列出当前在该 TUI 进程中处于活动状态的会话；已关闭的会话仍会保存为对话记录，可通过 `/resume` 或 `hermes --tui --resume <id-or-title>` 重新打开。
+
+以下任一方式都可以打开它：
+
+- 在 TUI 中按 `Ctrl+X`。
+- `/sessions` 或 `/switch`。
+- `/sessions new` 可立即创建一个全新的实时会话。
+- 点击状态行中的 `N live sessions` 计数。
+
+<img alt="Hermes TUI 会话编排器，显示一个实时会话和一行 +new" src="/docs/img/docs/tui-session-orchestrator/session-orchestrator.png" />
+
+<video controls muted loop playsInline src="/docs/img/docs/tui-session-orchestrator/session-orchestrator-demo.mp4" title="Hermes TUI 会话编排器演示" style={{maxWidth: '100%'}}></video>
+
+在切换器内部：
+
+- `↑` / `↓` 移动选中项；也可以用鼠标点击选中某一行。
+- `Enter` 切换到选中的实时会话。
+- `Ctrl+D` 关闭选中的实时会话。
+- `Ctrl+N` 启动一个空白的实时会话。
+- `Ctrl+R` 刷新实时会话列表。
+- `Esc` 关闭切换器。
+- 选中 `+new`，输入 prompt 并按 `Enter`，即可派发一个新的实时会话。如果想仅为该新会话选择模型，请先按 `Tab`。
 
 ## LaTeX 数学渲染
 
@@ -241,7 +279,7 @@ TUI 附带有主见的按区块默认值，将轮次以实时转录形式流式�
 
 ## 回退到 Classic CLI
 
-不带 `--tui` 启动 `hermes` 将继续使用 classic CLI。若要让某台机器默认使用 TUI，在 shell profile 中设置 `HERMES_TUI=1`。若要回退，取消设置即可。
+不带 `--tui` 启动 `hermes` 默认将继续使用 classic CLI。若要让某台机器优先使用 TUI，可在 `~/.hermes/config.yaml` 中设置 `display.interface: tui`（持久生效），或在 shell profile 中设置 `HERMES_TUI=1`（仅对该 shell 生效）。若要回退，设置 `interface: cli` / 取消该环境变量，或临时使用 `hermes --cli`。
 
 如果 TUI 启动失败（无 Node、缺少 bundle、TTY 问题），Hermes 会打印诊断信息并回退——而不是让你陷入困境。
 

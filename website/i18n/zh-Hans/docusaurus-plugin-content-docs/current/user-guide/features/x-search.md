@@ -11,6 +11,10 @@ sidebar_position: 7
 
 **当你明确需要 X 上的当前讨论、反应或观点时，请使用此工具而非 `web_search`。** 对于一般网页内容，继续使用 `web_search` / `web_extract`。
 
+:::tip
+如果你本来就在为某个 xAI 模型付费使用 Portal，那么 Live Search 调用会计入为聊天配置的同一个 xAI 密钥。参见 [Nous Portal](/integrations/nous-portal)。
+:::
+
 ## 认证
 
 满足以下**任一** xAI 凭据路径时，`x_search` 即会注册：

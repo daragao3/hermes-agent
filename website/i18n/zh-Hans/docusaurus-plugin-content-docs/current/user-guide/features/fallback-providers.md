@@ -29,18 +29,18 @@ hermes fallback
 
 `hermes fallback` 复用 `hermes model` 的提供商选择器——相同的提供商列表、相同的凭据提示、相同的验证流程。使用子命令 `add`、`list`（别名 `ls`）、`remove`（别名 `rm`）和 `clear` 来管理备用链。更改会持久化到 `config.yaml` 顶层的 `fallback_providers:` 列表中。
 
-如果你更倾向于直接编辑 YAML，可在 `~/.hermes/config.yaml` 中添加 `fallback_model` 部分：
+如果你更倾向于直接编辑 YAML，可在 `~/.hermes/config.yaml` 中添加顶层的 `fallback_providers` 列表：
 
 ```yaml
-fallback_model:
-  provider: openrouter
-  model: anthropic/claude-sonnet-4
+fallback_providers:
+  - provider: openrouter
+    model: anthropic/claude-sonnet-4
 ```
 
-`provider` 和 `model` 均为**必填项**。若任一缺失，备用功能将被禁用。
+每个条目都需要同时包含 `provider` 和 `model`。缺少任一字段的条目将被忽略。
 
 :::note `fallback_model` 与 `fallback_providers`
-`fallback_model`（单数）是旧版单备用键——Hermes 仍支持以保持向后兼容。`fallback_providers`（复数，列表）支持按顺序尝试多个备用；`hermes fallback` 写入此键。当两者同时设置时，Hermes 会合并它们，`fallback_providers` 优先。
+`fallback_providers`（复数，列表）是当前的配置形态，支持按顺序尝试多个备用。`fallback_model`（单数）是旧版单备用键——Hermes 仍支持以保持向后兼容，但 `hermes fallback` 写入的是当前的 `fallback_providers` 键，并会在写入时迁移旧版配置。当两者同时设置时，`fallback_providers` 优先。
 :::
 
 ### 支持的提供商
@@ -60,6 +60,7 @@ fallback_model:
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` |
 | NVIDIA NIM | `nvidia` | `NVIDIA_API_KEY`（可选：`NVIDIA_BASE_URL`） |
 | GMI Cloud | `gmi` | `GMI_API_KEY`（可选：`GMI_BASE_URL`） |
+| Upstage Solar | `upstage`（别名 `solar`） | `UPSTAGE_API_KEY`（可选：`UPSTAGE_BASE_URL`） |
 | StepFun | `stepfun` | `STEPFUN_API_KEY`（可选：`STEPFUN_BASE_URL`） |
 | Ollama Cloud | `ollama-cloud` | `OLLAMA_API_KEY` |
 | Google AI Studio | `gemini` | `GOOGLE_API_KEY`（别名：`GEMINI_API_KEY`） |
@@ -89,11 +90,11 @@ fallback_model:
 对于兼容 OpenAI 的自定义端点，添加 `base_url` 并可选填 `key_env`：
 
 ```yaml
-fallback_model:
-  provider: custom
-  model: my-local-model
-  base_url: http://localhost:8000/v1
-  key_env: MY_LOCAL_KEY              # 包含 API 密钥的环境变量名
+fallback_providers:
+  - provider: custom
+    model: my-local-model
+    base_url: http://localhost:8000/v1
+    key_env: MY_LOCAL_KEY            # 包含 API 密钥的环境变量名
 ```
 
 ### 备用触发条件
@@ -115,6 +116,10 @@ fallback_model:
 
 切换是无感知的——对话历史、工具调用和上下文均被保留。Agent 从中断处继续，只是使用了不同的模型。
 
+:::warning 备用会重置 prompt（提示词）缓存
+Prompt 缓存是按处理请求的模型（在大多数提供商上还包括账户）来建立键的。当备用触发时，新的 provider:model 对你的对话没有任何缓存前缀，因此下一次请求会以完整的输入 token 价格重新读取整个历史，而不是享受约 75–90% 折扣的缓存费率。轮次结束、主模型恢复时同样如此——回到主模型后的第一次请求也是一次完整重读（除非主模型的缓存 TTL 尚未过期）。这是无法避免的——这是在故障期间保持可用的代价——但它也解释了为什么在提供商之间来回跳转的长会话会明显比一直待在原处的会话更贵。
+:::
+
 :::info 按轮次，而非按会话
 备用机制的**作用域为单次轮次**：每条新用户消息都从主模型重新开始。若主模型在某轮次中途失败，备用仅对该轮次生效。下一条消息时，Hermes 会再次尝试主模型。在单次轮次内，备用最多激活一次——若备用也失败，则进入常规错误处理流程（重试，然后返回错误消息）。这既防止了单轮次内的级联故障转移循环，又让主模型在每轮次都有重新尝试的机会。
 :::
@@ -127,9 +132,9 @@ model:
   provider: anthropic
   default: claude-sonnet-4-6
 
-fallback_model:
-  provider: openrouter
-  model: anthropic/claude-sonnet-4
+fallback_providers:
+  - provider: openrouter
+    model: anthropic/claude-sonnet-4
 ```
 
 **以 Nous Portal 作为 OpenRouter 的备用：**
@@ -138,25 +143,25 @@ model:
   provider: openrouter
   default: anthropic/claude-opus-4
 
-fallback_model:
-  provider: nous
-  model: nous-hermes-3
+fallback_providers:
+  - provider: nous
+    model: nous-hermes-3
 ```
 
 **以本地模型作为云端的备用：**
 ```yaml
-fallback_model:
-  provider: custom
-  model: llama-3.1-70b
-  base_url: http://localhost:8000/v1
-  key_env: LOCAL_API_KEY
+fallback_providers:
+  - provider: custom
+    model: llama-3.1-70b
+    base_url: http://localhost:8000/v1
+    key_env: LOCAL_API_KEY
 ```
 
 **以 Codex OAuth 作为备用：**
 ```yaml
-fallback_model:
-  provider: openai-codex
-  model: gpt-5.3-codex
+fallback_providers:
+  - provider: openai-codex
+    model: gpt-5.3-codex
 ```
 
 ### 备用适用范围
@@ -167,7 +172,7 @@ fallback_model:
 | 消息网关（Telegram、Discord 等） | ✔ |
 | 子 Agent 委派 | ✔（子 Agent 继承父 Agent 的备用链） |
 | Cron 任务 | ✔（Cron Agent 继承配置的备用提供商） |
-| 辅助任务（视觉、压缩等） | ✘（使用各自的提供商链——见下文） |
+| 使用 `provider: auto` 的辅助任务 | ✔（先尝试每任务备用链，再尝试主备用链，最后才使用内置的辅助自动发现链） |
 
 :::tip
 没有针对主备用链的环境变量——只能通过 `config.yaml` 或 `hermes fallback` 进行配置。这是有意为之：备用配置是一个经过深思熟虑的选择，不应被过期的 shell 导出变量覆盖。
@@ -194,23 +199,30 @@ Hermes 为附属任务使用独立的轻量级模型。每个任务都有自己�
 
 ### 自动检测链
 
-当任务的提供商设置为 `"auto"`（默认值）时，Hermes 按顺序尝试各提供商，直到找到可用的：
+当任务的提供商设置为 `"auto"`（默认值）时，Hermes 会先尝试该辅助任务的主提供商 + 主模型。如果该路由不可用，或之后因容量类错误而失败，Hermes 现在会先遵循用户配置的备用策略，然后才使用内置的发现链：
 
-**文本任务（压缩、网页提取等）：**
+```text
+主提供商 + 主模型 → auxiliary.<task>.fallback_chain →
+fallback_providers / fallback_model → 内置辅助自动发现链
+```
+
+任务级的备用链最为精确，存在时优先生效。顶层的 `fallback_providers` 链与主 Agent 使用的是同一套策略，因此"仅限免费"或"同提供商"之类的备用规则同样适用于处于 `auto` 状态的辅助任务。
+
+**内置文本发现链（压缩、网页提取、标题生成等）：**
 
 ```text
 OpenRouter → Nous Portal → 自定义端点 → Codex OAuth →
 API 密钥提供商（z.ai、Kimi、MiniMax、Xiaomi MiMo、Hugging Face、Anthropic）→ 放弃
 ```
 
-**视觉任务：**
+**内置视觉发现链：**
 
 ```text
 主提供商（若支持视觉）→ OpenRouter → Nous Portal →
 Codex OAuth → Anthropic → 自定义端点 → 放弃
 ```
 
-若解析到的提供商在调用时失败，Hermes 还有内部重试机制：若该提供商不是 OpenRouter 且未设置显式 `base_url`，则尝试以 OpenRouter 作为最后备用。
+这些内置链是为尚未声明任务级或主备用策略的用户提供的便捷兜底。
 
 ### 配置辅助提供商
 
@@ -231,6 +243,9 @@ auxiliary:
   compression:
     provider: "auto"
     model: ""
+    fallback_chain:              # 可选，任务级备用策略
+      - provider: openrouter
+        model: inclusionai/ring-2.6-1t:free
 
   skills_hub:
     provider: "auto"
@@ -241,7 +256,9 @@ auxiliary:
     model: ""
 ```
 
-以上每个任务均遵循相同的 **provider / model / base_url** 模式。上下文压缩在 `auxiliary.compression` 下配置：
+以上每个任务均遵循相同的 **provider / model / base_url** 模式。每个任务还可以声明自己的 `fallback_chain`；若省略，`provider: auto` 会先使用顶层的 `fallback_providers` 链，然后才使用 Hermes 内置的辅助自动发现链。
+
+上下文压缩在 `auxiliary.compression` 下配置：
 
 ```yaml
 auxiliary:
@@ -251,20 +268,20 @@ auxiliary:
     base_url: null                                    # 自定义 OpenAI 兼容端点
 ```
 
-备用模型使用：
+而主备用链使用：
 
 ```yaml
-fallback_model:
-  provider: openrouter
-  model: anthropic/claude-sonnet-4
-  # base_url: http://localhost:8000/v1               # 可选自定义端点
+fallback_providers:
+  - provider: openrouter
+    model: anthropic/claude-sonnet-4
+    # base_url: http://localhost:8000/v1             # 可选自定义端点
 ```
 
 三者——辅助任务、压缩、备用——工作方式相同：设置 `provider` 指定处理请求的提供商，`model` 指定使用的模型，`base_url` 指向自定义端点（会覆盖 provider）。
 
 ### 辅助任务的提供商选项
 
-以下选项仅适用于 `auxiliary:`、`compression:` 和 `fallback_model:` 配置——`"main"` **不是**顶层 `model.provider` 的有效值。对于自定义端点，请在 `model:` 部分使用 `provider: custom`（参见 [AI 提供商](/integrations/providers)）。
+以下选项仅适用于 `auxiliary:`、`compression:` 和 `fallback_providers:` 条目——`"main"` **不是**顶层 `model.provider` 的有效值。对于自定义端点，请在 `model:` 部分使用 `provider: custom`（参见 [AI 提供商](/integrations/providers)）。
 
 | 提供商 | 说明 | 要求 |
 |----------|-------------|-------------|
@@ -324,9 +341,12 @@ auxiliary:
     fallback_chain:
       - provider: openai
         model: gpt-4o-mini
+        timeout: 240            # 可选——该候选自己的截止时限（秒）
 ```
 
 你**不需要**配置 `fallback_chain` 才能获得备用功能——主 Agent 安全网无论如何都会运行。仅当你明确希望使用与默认不同的顺序时才需配置。
+
+每个 `fallback_chain` 条目还可以声明自己的 `timeout`（秒）。若不声明，备用候选会继承任务级超时——而该超时可能是针对主提供商调优过的。声明按条目的 `timeout`，可以让较慢但可靠的备用（例如一个大上下文的摘要模型）获得它实际需要的预算，而不是死在主提供商的时钟上。
 
 ### 触发备用的提供商配额错误
 

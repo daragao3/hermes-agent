@@ -250,3 +250,11 @@ Agent automatically:
      entity_id="light.hallway")
 3. Sends notification: "Front door opened. Hallway lights turned on."
 ```
+
+## 故障排查
+
+**环境变量未生效。**
+适配器从 `~/.hermes/.env`（启动时自动合并）或 `config.yaml` 读取凭据。请再次确认该文件位于当前生效的 Hermes profile 主目录下，并且 URL/令牌两侧没有多余的引号。修改后需重启 gateway——环境变量的改动只在进程启动时应用。
+
+**REST 认证失败（`401 Unauthorized`）。**
+令牌必须是在你的 HA 用户资料页（**Profile → Security → Long-lived access tokens**）创建的*长期访问令牌*。短期的 UI 会话令牌无法使用。同时请确认基础 URL 包含协议和端口（例如 `http://homeassistant.local:8123`），且运行 Hermes 的主机可以访问它——`curl -H "Authorization: Bearer <token>" <url>/api/` 应返回 `{"message": "API running."}`。

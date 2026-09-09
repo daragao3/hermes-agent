@@ -1,15 +1,19 @@
 ---
 title: Provider Routing
-description: 配置 OpenRouter provider 偏好，以优化成本、速度或质量。
+description: 配置 OpenRouter 或 Nous Portal 的 provider 偏好，以优化成本、速度或质量。
 sidebar_label: Provider Routing
 sidebar_position: 7
 ---
 
 # Provider Routing
 
-使用 [OpenRouter](https://openrouter.ai) 作为 LLM provider 时，Hermes Agent 支持 **provider routing**（提供商路由）——对哪些底层 AI provider 处理你的请求以及如何排列优先级进行精细控制。
+使用 [OpenRouter](https://openrouter.ai) 或 [Nous Portal](/integrations/nous-portal) 作为 LLM provider 时，Hermes Agent 支持 **provider routing**（提供商路由）——对哪些底层 AI provider 处理你的请求以及如何排列优先级进行精细控制。
 
 OpenRouter 将请求路由到多个 provider（例如 Anthropic、Google、AWS Bedrock、Together AI）。Provider routing 让你可以针对成本、速度、质量进行优化，或强制指定特定 provider。
+
+:::tip
+通过 Nous Portal 路由的流量同样遵循相同的 provider 偏好——并且 Portal 订阅者在按 token 计费的 provider 上可享受 10% 折扣。
+:::
 
 ## 配置
 
@@ -26,7 +30,7 @@ provider_routing:
 ```
 
 :::info
-Provider routing 仅在使用 OpenRouter 时生效。直接连接 provider（例如直接连接 Anthropic API）时无效。
+Provider routing 仅在使用 OpenRouter 或 Nous Portal 时生效。直接连接 provider（例如直接连接 Anthropic API）时无效。
 :::
 
 ## 选项
@@ -48,13 +52,13 @@ provider_routing:
 
 ### `only`
 
-Provider 名称白名单。设置后，**仅**使用这些 provider，其余全部排除。
+Provider slug 白名单。设置后，**仅**使用这些 provider，其余全部排除。请使用 OpenRouter 为每个 provider 显示的小写 slug。
 
 ```yaml
 provider_routing:
   only:
-    - "Anthropic"
-    - "Google"
+    - "anthropic"
+    - "google"
 ```
 
 ### `ignore`
@@ -64,8 +68,8 @@ Provider 名称黑名单。这些 provider **永远不会**被使用，即使它
 ```yaml
 provider_routing:
   ignore:
-    - "Together"
-    - "DeepInfra"
+    - "together"
+    - "deepinfra"
 ```
 
 ### `order`
@@ -75,9 +79,9 @@ provider_routing:
 ```yaml
 provider_routing:
   order:
-    - "Anthropic"
-    - "Google"
-    - "AWS Bedrock"
+    - "anthropic"
+    - "google"
+    - "amazon-bedrock"
 ```
 
 ### `require_parameters`
@@ -134,7 +138,7 @@ provider_routing:
 ```yaml
 provider_routing:
   only:
-    - "Anthropic"
+    - "anthropic"
 ```
 
 ### 排除特定 Provider
@@ -144,8 +148,8 @@ provider_routing:
 ```yaml
 provider_routing:
   ignore:
-    - "Together"
-    - "Lepton"
+    - "together"
+    - "lepton"
   data_collection: "deny"
 ```
 
@@ -156,14 +160,14 @@ provider_routing:
 ```yaml
 provider_routing:
   order:
-    - "Anthropic"
-    - "Google"
+    - "anthropic"
+    - "google"
   require_parameters: true
 ```
 
 ## 工作原理
 
-Provider routing 偏好通过每次 API 调用的 `extra_body.provider` 字段传递给 OpenRouter API，适用于以下两种模式：
+Provider routing 偏好会在 agent 聊天请求和迭代上限摘要中通过 `extra_body.provider` 字段传递给 OpenRouter 或 Nous Portal。（`extra_body` 是 OpenAI Python SDK 的参数；它在 JSON 请求中会成为顶层的 `provider` 对象。）压缩和标题生成等辅助任务则在 `auxiliary.<task>.extra_body` 下独立配置。
 
 - **CLI 模式** — 在 `~/.hermes/config.yaml` 中配置，启动时加载
 - **Gateway 模式** — 同一配置文件，gateway 启动时加载
@@ -185,7 +189,7 @@ provider_data_collection    ← 来自 provider_routing.data_collection
 ```yaml
 provider_routing:
   sort: "price"
-  ignore: ["Together"]
+  ignore: ["together"]
   require_parameters: true
   data_collection: "deny"
 ```
@@ -193,8 +197,8 @@ provider_routing:
 
 ## 默认行为
 
-未配置 `provider_routing` 部分时（默认情况），OpenRouter 使用其自身的默认路由逻辑，通常会自动在成本和可用性之间取得平衡。
+未配置 `provider_routing` 部分时（默认情况），聚合器使用其自身的默认路由逻辑，通常会自动在成本和可用性之间取得平衡。
 
 :::tip Provider Routing 与 Fallback Models
-Provider routing 控制 OpenRouter **内部的子 provider** 如何处理你的请求。若需要在主模型失败时自动故障转移到完全不同的 provider，请参阅 [Fallback Providers](/user-guide/features/fallback-providers)。
+Provider routing 控制 OpenRouter 或 Nous Portal **背后的子 provider** 如何处理你的请求。若需要在主模型失败时自动故障转移到完全不同的 provider，请参阅 [Fallback Providers](/user-guide/features/fallback-providers)。
 :::

@@ -60,17 +60,31 @@ git checkout -b fix/description
 scripts/run_tests.sh
 ```
 
+你也可以运行一个完全隔离的 Hermes 实例（一次性的 HERMES_HOME、独立的 Electron
+userData、不同的 Electron 应用名以避开单实例锁）：
+
+```bash
+scripts/dev-sandbox.sh python -m hermes_cli.main
+scripts/dev-sandbox.sh --persistent python -m hermes_cli.main desktop  # 状态可在重启后保留，但存放在 worktree 内 :)
+```
+
 ### 手动克隆备用路径
 
 只有在你明确不想使用 Hermes managed install layout 时才使用这种方式（例如容器或 CI job 里的临时 clone）。如果这样安装，请确保运行的是这个 venv 里的 `hermes` entrypoint；运行系统 `python3 -m hermes_cli.main` 可能会加载无关的系统 Python 包。
+
+请在克隆的源码树**之外**创建虚拟环境。位于 Agent 操作目录内部的虚拟环境，可能被
+Agent 针对自身 checkout 运行的相对路径命令抹掉（`rm -rf venv`、`uv venv venv` 等），
+从而在会话中途悄然摧毁正在运行的运行时。把它放在源码树之外，就不会有任何来自工作区
+的相对路径解析到它。
 
 ```bash
 git clone https://github.com/NousResearch/hermes-agent.git
 cd hermes-agent
 
-# 使用 Python 3.11 创建虚拟环境
-uv venv venv --python 3.11
-export VIRTUAL_ENV="$(pwd)/venv"
+# 使用 Python 3.11 创建虚拟环境，位于源码树之外
+uv venv ~/.hermes/venvs/hermes-dev --python 3.11
+export VIRTUAL_ENV="$HOME/.hermes/venvs/hermes-dev"
+export PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # 安装所有扩展（messaging、cron、CLI 菜单、开发工具）
 uv pip install -e ".[all,dev]"
@@ -121,7 +135,7 @@ scripts/run_tests.sh
 
 ## 跨平台兼容性
 
-Hermes 官方支持 **Linux、macOS、WSL2 以及原生 Windows（通过 PowerShell 安装）**。原生 Windows 使用 [Git for Windows](https://git-scm.com/download/win) 提供的 Git Bash 执行 shell 命令。部分功能依赖 POSIX 内核原语，已做条件限制：dashboard 内嵌的 PTY 终端面板（`/chat` 标签页）仅支持 WSL2。如果您主要在 Windows 上开发，推送前请运行 Windows 陷阱（footgun）lint（`scripts/check-windows-footguns.py`）。
+参见 **[平台支持](../getting-started/platform-support.md)**。原生 Windows 使用 [Git for Windows](https://git-scm.com/download/win) 提供的 Git Bash 执行 shell 命令。部分功能依赖 POSIX 内核原语，已做条件限制：dashboard 内嵌的 PTY 终端面板（`/chat` 标签页）需要 POSIX PTY（Linux、macOS 或 WSL2）。如果您主要在 Windows 上开发，推送前请运行 Windows 陷阱（footgun）lint（`scripts/check-windows-footguns.py`）。
 
 贡献代码时，请遵守以下规则：
 
@@ -220,6 +234,7 @@ refactor/description   # 代码重构
 ### PR 描述
 
 请包含：
+
 - **变更内容**及**变更原因**
 - **测试方法**
 - **测试平台**
@@ -245,6 +260,7 @@ refactor/description   # 代码重构
 Scope 范围：`cli`、`gateway`、`tools`、`skills`、`agent`、`install`、`whatsapp`、`security`
 
 示例：
+
 ```
 fix(cli): prevent crash in save_config_value when model is a string
 feat(gateway): add WhatsApp multi-user session isolation

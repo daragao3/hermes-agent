@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: "消息网关"
-description: "通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Email、Home Assistant、Mattermost、Matrix、DingTalk、Yuanbao、Microsoft Teams、LINE、Webhooks 或任何兼容 OpenAI 的前端与 Hermes 对话 — 架构与配置概览"
+description: "通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Email、Home Assistant、Mattermost、Matrix、DingTalk、Yuanbao、Microsoft Teams、LINE、Raft、Webhooks 或任何兼容 OpenAI 的前端与 Hermes 对话 — 架构与配置概览"
 ---
 
 # 消息网关
@@ -9,6 +9,10 @@ description: "通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Emai
 通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Email、Home Assistant、Mattermost、Matrix、DingTalk、Feishu/Lark、WeCom、Weixin、BlueBubbles（iMessage）、QQ、Yuanbao、Microsoft Teams、LINE、ntfy 或浏览器与 Hermes 对话。网关是一个单一后台进程，连接所有已配置的平台，管理会话，运行 cron 任务，并传递语音消息。
 
 完整的语音功能集——包括 CLI 麦克风模式、消息中的语音回复以及 Discord 语音频道对话——请参阅 [Voice Mode](/user-guide/features/voice-mode) 和 [Use Voice Mode with Hermes](/guides/use-voice-mode-with-hermes)。
+
+:::tip
+机器人同时需要模型提供商和工具提供商（TTS、网页）。[Nous Portal](/integrations/nous-portal) 订阅将它们全部打包在一起。
+:::
 
 ## 平台对比
 
@@ -36,6 +40,8 @@ description: "通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Emai
 | Microsoft Teams | — | ✅ | — | ✅ | — | ✅ | — |
 | LINE | — | ✅ | ✅ | — | — | ✅ | — |
 | ntfy | — | — | — | — | — | — | — |
+| Raft | — | — | — | — | — | — | — |
+| IRC | — | — | — | — | — | — | — |
 
 **语音** = TTS 音频回复和/或语音消息转录。**图片** = 发送/接收图片。**文件** = 发送/接收文件附件。**线程** = 线程式对话。**表情反应** = 对消息添加 emoji 反应。**输入提示** = 处理时显示正在输入状态。**流式输出** = 通过编辑消息实现渐进式更新。
 
@@ -102,6 +108,29 @@ flowchart TB
 
 每个平台适配器接收消息，通过每个聊天的会话存储进行路由，并将其分发给 AIAgent 处理。网关还运行 cron 调度器，每 60 秒触发一次以执行到期任务。
 
+## 有意静默 Token
+
+针对群聊、hook 和自动化流程，Hermes 支持显式的静默 token。如果 agent 的最终响应恰好等于某个受支持的 token，网关就会抑制外发投递，不向聊天发送任何内容。
+
+支持的 token：
+
+- `[SILENT]`
+- `SILENT`
+- `NO_REPLY`
+- `NO REPLY`
+
+空白字符和大小写会被归一化，但整个最终响应必须就是该 token。像"没有变化时使用 `[SILENT]`"这样的句子会正常投递。
+
+静默只是一个投递层面的决定。Hermes 会把这个助手静默轮次保留在会话记录中，因此对话仍然正常交替：
+
+```text
+user: side-channel chatter
+assistant: [SILENT]   # stored, not delivered
+user: next message
+```
+
+失败的轮次仍会以错误形式呈现；Hermes 不会仅因文本形似静默 token 就隐藏失败。
+
 ## 快速配置
 
 配置消息平台最简单的方式是使用交互式向导：
@@ -125,6 +154,28 @@ hermes gateway status       # 检查默认服务状态
 hermes gateway status --system         # 仅 Linux：显式检查系统服务
 ```
 
+### 可选的 Linux 事件循环看门狗
+
+由 systemd 管理的网关可以选择启用进程恢复机制，用于 Python asyncio
+事件循环不再获得调度时间的情况。这涵盖了那些同时会让平台专属存活任务
+无法运行的整进程停滞：
+
+```yaml title="~/.hermes/config.yaml"
+gateway:
+  systemd_watchdog_seconds: 120
+```
+
+修改此设置后需要重新生成 service unit：
+
+```bash
+hermes gateway install --force
+```
+
+正值会让生成的 unit 使用 `Type=notify`、`NotifyAccess=main` 以及相应的
+`WatchdogSec`。只有当事件循环在及时推进时，Hermes 才会发送心跳；心跳停止后
+systemd 会重启该进程。默认值 `0` 保持现有的 `Type=simple` 行为。此设置仅适用于
+Linux/systemd，且不会把普通的平台网络断连当作事件循环故障。
+
 ## 聊天命令（在消息平台内使用）
 
 | 命令 | 说明 |
@@ -143,7 +194,7 @@ hermes gateway status --system         # 仅 Linux：显式检查系统服务
 | `/compress` | 手动压缩对话上下文 |
 | `/title [name]` | 设置或显示会话标题 |
 | `/resume [name]` | 恢复之前命名的会话 |
-| `/usage` | 显示本会话的 token 用量 |
+| `/usage` | 显示本会话的 token 用量（`/usage reset [--force]` 可兑换已存入的 Codex 限额重置） |
 | `/insights [days]` | 显示用量洞察与分析 |
 | `/reasoning [level\|show\|hide]` | 更改推理强度或切换推理显示 |
 | `/voice [on\|off\|tts\|join\|leave\|status]` | 控制消息语音回复和 Discord 语音频道行为 |
@@ -159,6 +210,24 @@ hermes gateway status --system         # 仅 Linux：显式检查系统服务
 ### 会话持久化
 
 会话在消息之间持续保留，直到重置。Agent 会记住你的对话上下文。
+
+### 投递可靠性
+
+Agent 的最终响应会在每次平台发送前后记录到一个持久化的**投递账本**
+（`state.db`）中。如果网关在生成响应之后、平台确认收到之前崩溃或重启，
+下一次启动会重新投递已存储的响应，而不是把它丢掉——也不会重跑整个轮次。
+
+其语义是诚实的至少一次（at-least-once）：
+
+- 发送**从未开始**的响应会原样重新投递。
+- 网关挂掉时正**处于发送中**的响应（平台可能收到了，也可能没收到）会带上
+  可见的"♻️ Recovered reply —— … may be a duplicate"前缀重新投递。歧义会被
+  标注出来，绝不静默重发。
+- 重新投递是有界的：3 次尝试、24 小时新鲜度，之后该条记录被放弃。已投递的
+  记录会在 7 天后清理。
+
+在 `config.yaml` 中设置 `gateway.delivery_ledger: false` 可禁用（恢复旧行为：
+崩溃时正在传输中的响应会丢失）。
 
 ### 重置策略
 
@@ -177,6 +246,13 @@ session_reset:
 | `daily` | 每天在指定时间重置 |
 | `idle` | 空闲 N 分钟后重置 |
 | `both` | 以先触发者为准 |
+
+处于活动状态的后台进程（通过 `terminal(background=true)` 启动）通常会保护其会话
+不被重置，以免输出丢失。为避免一个被遗忘的进程——比如某个预览服务器——把会话
+永久钉住，运行时间超过 `bg_process_max_age_hours`（默认 **24**）的后台进程不再
+阻止重置。该进程**不会**被杀掉，只是被重置守卫忽略。把它设为 `0` 可禁用这个
+截止时间（任何活动进程都会阻止重置，即旧行为），若你确实有需要靠存活状态
+保持对话打开的多日任务，则可以调高它。
 
 在 `~/.hermes/gateway.json` 中配置各平台的覆盖设置：
 
@@ -217,7 +293,7 @@ GATEWAY_ALLOW_ALL_USERS=true
 
 ### 私信配对（白名单的替代方案）
 
-无需手动配置用户 ID，未知用户私信机器人时会收到一次性配对码：
+无需手动配置用户 ID，未知用户私信机器人时会收到一次性配对码。Email 是例外：除非显式启用 email 配对，否则未知的邮件发件人会被忽略。
 
 ```bash
 # 用户看到："Pairing code: XKGH5N7P"
@@ -301,7 +377,28 @@ display:
 display:
   tool_progress: all    # off | new | all | verbose
   tool_progress_command: false  # 设为 true 可在消息平台中启用 /verbose
+  # 在支持消息编辑的平台上，进度如何分组：
+  #   accumulate（默认）—— 工具运行时就地编辑同一个气泡
+  #   separate          —— 每个工具发送一条消息（v0.9 之前的风格；更嘈杂）
+  # 仅在 tool_progress 已启用时生效。
+  tool_progress_grouping: accumulate   # accumulate | separate
 ```
+
+### 模型上下文中的消息时间戳
+
+默认关闭。启用后，Hermes 会在**模型上下文中**的每条**用户**消息前加上一个
+人类可读的时间戳（例如 `[Tue 2026-04-28 13:40:53 CEST]`），让 agent 知道消息
+是何时发送的——这对时间推理很有用（"你今天早上问过……"、注意到长时间间隔）。
+它**不会**被加到助手消息或系统 prompt（提示词）上。
+
+```yaml
+gateway:
+  message_timestamps:
+    enabled: false   # 设为 true 可向模型展示发送时间
+```
+
+持久化的会话记录始终保持干净——无论该开关如何，时间戳都作为消息元数据存储，
+因此之后再启用它也能为过去的消息呈现发送时间，而且重放绝不会累积重复前缀。
 
 启用后，机器人在工作时发送状态消息：
 
@@ -392,6 +489,27 @@ journalctl -u hermes-gateway -f
 
 笔记本和开发机使用用户服务。VPS 或无头主机（需要开机自动启动而不依赖 systemd linger）使用系统服务。
 
+:::danger 不要添加自定义的 `ExecStopPost` kill drop-in
+Hermes 安装的 unit 已经用 `KillMode=mixed` + `KillSignal=SIGTERM` 干净地关闭网关，并使用 `Restart=always` 加 `RestartForceExitStatus`，使更新和 `/restart` 能正确重新拉起进程。**不要**添加诸如 `ExecStopPost=/bin/kill -9 $MAINPID` 这样的 systemd drop-in —— `ExecStopPost` 会在*每一次*停止时触发，包括干净的重启，因此它会在新拉起的实例稳定之前就把它 `SIGKILL` 掉，而 `Restart=always` 又会立刻再拉起一个。结果就是无限重启循环（在 Telegram 上还会刷屏发送重启消息）。如果你已经添加了这样的 drop-in，请把它删掉：执行 `systemctl --user edit hermes-gateway`（系统服务则用 `sudo systemctl edit hermes-gateway`）删除 `ExecStopPost` 那一行，然后 `systemctl --user daemon-reload`。
+:::
+
+:::tip 无头虚拟机：用户服务 + linger 可避免 root 提示
+系统服务每次重启都需要 root——包括 `hermes update` 结束时的自动网关重启。当 `hermes update` 以非 root 用户运行时，它会尝试免密 `sudo systemctl`；若不可用，它会跳过重启并打印手动执行的 `sudo systemctl restart hermes-gateway` 命令（它绝不会阻塞在交互式密码提示上）。
+
+对于你从不登录的无头虚拟机，启用 lingering 的**用户**服务能提供同样的开机自启行为，且完全无需 root 介入：
+
+```bash
+hermes gateway install          # 用户服务
+sudo loginctl enable-linger $USER   # 一次性：开机启动，注销后继续运行
+```
+
+之后，`hermes update` 无需任何特权即可重启网关。如果你更愿意保留系统服务，可以用 `sudo hermes update` 运行更新，或为该服务账号授予 systemctl 的免密 sudo，例如在 `sudo visudo -f /etc/sudoers.d/hermes-gateway` 中：
+
+```
+hermes ALL=(root) NOPASSWD: /usr/bin/systemctl --no-ask-password reset-failed hermes-gateway*, /usr/bin/systemctl --no-ask-password start hermes-gateway*, /usr/bin/systemctl --no-ask-password restart hermes-gateway*
+```
+:::
+
 除非你确实有此需要，否则避免同时安装用户和系统网关单元。Hermes 检测到两者同时存在时会发出警告，因为 start/stop/status 行为会变得不明确。
 
 :::info 多个安装
@@ -432,6 +550,7 @@ launchd plist 是静态的——如果你在配置网关后安装了新工具（
 | Telegram | `hermes-telegram` | 完整工具，包括终端 |
 | Discord | `hermes-discord` | 完整工具，包括终端 |
 | WhatsApp | `hermes-whatsapp` | 完整工具，包括终端 |
+| WhatsApp Cloud API | `hermes-whatsapp` | 完整工具，包括终端（与 Baileys 桥接共用工具集） |
 | Slack | `hermes-slack` | 完整工具，包括终端 |
 | Google Chat | `hermes-google_chat` | 完整工具，包括终端 |
 | Signal | `hermes-signal` | 完整工具，包括终端 |
@@ -451,6 +570,7 @@ launchd plist 是静态的——如果你在配置网关后安装了新工具（
 | Microsoft Teams | `hermes-teams` | 完整工具，包括终端 |
 | API Server | `hermes-api-server` | 完整工具（去除 `clarify`、`send_message`、`text_to_speech`——程序化访问没有交互用户） |
 | Webhooks | `hermes-webhook` | 完整工具，包括终端 |
+| Raft | `hermes-raft` | 仅唤醒通道；agent 使用 Raft CLI 收发消息 |
 
 ## 运营多平台网关
 
@@ -530,9 +650,33 @@ Scheduled auto-resume for N restart-interrupted session(s)
 
 无需配置。如果你不想要提示消息，在该平台上设置 `gateway_restart_notification: false`。
 
+### 适合移动端的进度默认值
+
+Telegram 通常是一个移动端收件箱，因此默认值是按该场景调优的：
+
+- **`tool_progress`** 默认为 **`off`** —— 不会有逐个工具的面包屑流塞满聊天。
+- **`busy_ack_detail`** 默认为 **`off`** —— 繁忙状态确认和长任务心跳保持简短（没有 `iteration 21/60` 这类调试细节）。
+- **`interim_assistant_messages`** 保持 **on** —— 真正的轮次中途助手评述（模型确实在告诉你它接下来要做什么）是信号，不是噪音。
+- **`long_running_notifications`** 保持 **on** —— 一个就地编辑的"⏳ Working —— N min"气泡每隔几分钟更新一次，这样你至少有个心跳，而不是盯着 `typing…` 看半个小时。
+
+你可以退出上述两个保持开启的默认值，或按平台重新启用详尽进度：
+
+```yaml
+display:
+  platforms:
+    telegram:
+      # 重新启用工具进度流
+      tool_progress: new
+      # 在心跳和繁忙确认中显示 "iteration N/M, running: tool"
+      busy_ack_detail: true
+      # 或者把它们完全静音
+      interim_assistant_messages: false
+      long_running_notifications: false
+```
+
 ### 进度气泡清理（可选启用）
 
-工具进度消息、"仍在处理中……"心跳以及状态回调气泡可在最终响应落地后自动删除。通过 `display.platforms.<platform>.cleanup_progress` 按平台启用：
+工具进度消息、"仍在处理中……"心跳以及状态回调气泡也可在最终响应落地后自动删除。通过 `display.platforms.<platform>.cleanup_progress` 按平台启用：
 
 ```yaml
 display:
