@@ -197,7 +197,7 @@ hermes-agent/
 
 在对话生命周期中构建和维护 prompt：
 
-- **`prompt_builder.py`** — 从以下来源组装系统 prompt：个性（SOUL.md）、记忆（MEMORY.md、USER.md）、skill、上下文文件（AGENTS.md、.hermes.md）、工具使用指引以及模型专项指令
+- **`system_prompt.py` + `prompt_builder.py`** — 按顺序组装系统 prompt 的各个层级（`stable` → `context` → `volatile`）：身份/工具使用指引/skill，上下文文件，然后是记忆/profile/时间戳块
 - **`prompt_caching.py`** — 为前缀缓存应用 Anthropic 缓存断点
 - **`context_compressor.py`** — 当上下文超出阈值时对中间对话轮次进行摘要
 

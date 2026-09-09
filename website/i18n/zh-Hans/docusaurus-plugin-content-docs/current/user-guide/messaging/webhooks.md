@@ -80,7 +80,7 @@ curl http://localhost:8644/health
 |----------|----------|-------------|
 | `events` | 否 | 要接受的事件类型列表（例如 `["pull_request"]`）。若为空，则接受所有事件。事件类型从 `X-GitHub-Event`、`X-GitLab-Event` 或 payload 中的 `event_type` 读取。 |
 | `secret` | **是** | 用于签名验证的 HMAC secret。若路由未设置，则回退到全局 `secret`。仅用于测试时可设为 `"INSECURE_NO_AUTH"`（跳过验证）。 |
-| `prompt` | 否 | 使用点号表示法访问 payload 字段的模板字符串（例如 `{pull_request.title}`）。若省略，则将完整 JSON payload 转储到 prompt 中。 |
+| `prompt` | 否 | 使用点号表示法访问 payload 字段的模板字符串（例如 `{pull_request.title}`）。若省略，则将完整 JSON payload 转储到 prompt 中。payload 字段不可信——参见[已认证不等于可信](#authenticated-does-not-mean-trusted)。 |
 | `filters` | 否 | 声明式 payload 过滤器，在认证/请求体/事件过滤之后、agent 或直接投递之前求值。不匹配时返回 `{"status":"ignored","reason":"filter"}`（HTTP 200）。 |
 | `script` | 否 | 位于 `~/.hermes/scripts/` 下的过滤/转换脚本。webhook payload 以 JSON 形式通过 stdin 传入。stdout 为 JSON 对象时会在模板渲染前替换 payload；文本 stdout 以 `script_output` 形式暴露；空 stdout、`[SILENT]` 或非零退出码会忽略该 webhook。 |
 | `skills` | 否 | agent 运行时加载的 skill 名称列表。 |
@@ -455,7 +455,8 @@ webhook 适配器包含多层安全机制：
 
 - **GitHub**：`X-Hub-Signature-256` 请求头——以 `sha256=` 为前缀的 HMAC-SHA256 十六进制摘要
 - **GitLab**：`X-Gitlab-Token` 请求头——明文 secret 字符串匹配
-- **通用**：`X-Webhook-Signature` 请求头——原始 HMAC-SHA256 十六进制摘要
+- **通用（V2，推荐）**：`X-Webhook-Signature-V2` + `X-Webhook-Timestamp` 请求头——对 `<timestamp>.<body>` 计算的 HMAC-SHA256 十六进制摘要。时间戳（Unix 秒）必须在服务器时钟的 ±300 秒之内，这可防止被截获的请求在之后被重放。
+- **通用（V1，遗留）**：`X-Webhook-Signature` 请求头——仅对请求体计算的原始 HMAC-SHA256 十六进制摘要。出于向后兼容仍被接受，但没有重放保护（被截获的请求可无限期重放）；gateway 会对每个路由记录一次弃用警告。请将发送方切换到 V2。
 
 若已配置 secret 但请求中不存在已识别的签名请求头，则请求被拒绝。
 
@@ -493,10 +494,17 @@ platforms:
       max_body_bytes: 2097152  # 2 MB
 ```
 
-### Prompt 注入风险
+### 已认证不等于可信 {#authenticated-does-not-mean-trusted}
 
 :::warning
-Webhook payload 包含攻击者可控的数据——PR 标题、commit 消息、issue 描述等均可能包含恶意指令。在暴露于互联网时，请在沙箱环境（Docker、VM）中运行 gateway。考虑使用 Docker 或 SSH terminal 后端进行隔离。
+**HMAC 验证认证的是_发送方_，而非_内容_。** 有效签名仅能证明请求来自持有该路由 secret 的一方（例如 GitHub），它完全不能说明 payload 内部的_业务字段_是谁写的——PR 标题、commit 消息、issue 描述以及任何其他上游文本均由任意第三方撰写，必须视为不可信。
+
+这与 agent 读取的一切内容适用同一套信任模型：网页、文件和工具输出都是不可信输入。Hermes 不会——也无法可靠地——用黑名单净化不可信文本；措辞、编码和翻译都能轻易绕过它。**信任边界在于 agent 的能力面，而非输入通道。** 请在能力面上加固：
+
+- **对运行时做沙箱隔离。** 暴露于互联网时，使用 Docker 或 SSH terminal 后端（或在虚拟机中）运行 gateway，使被劫持的一轮对话无法触及宿主机。
+- **收窄工具集。** 如果该路由只需读取和总结，请在 webhook 触发的会话上禁用 `terminal`、`file` 及对外操作类工具。能力越少，payload 字段携带注入指令时的影响范围就越小。
+- **保持审批开启**，用于任何破坏性或对外操作，使注入的指令无法在无人值守时执行。
+- **模板收窄。** 优先使用带具名字段的具体 `prompt`（`{pull_request.title}`），而非 `{__raw__}` 或转储整个 payload 的空模板，这样只有你打算暴露的字段才会进入 prompt。
 :::
 
 ---
@@ -549,4 +557,5 @@ Webhook payload 包含攻击者可控的数据——PR 标题、commit 消息、
 |----------|-------------|---------|
 | `WEBHOOK_ENABLED` | 启用 webhook 平台适配器 | `false` |
 | `WEBHOOK_PORT` | 接收 webhook 的 HTTP 服务器端口 | `8644` |
+| `WEBHOOK_SECRET` | 全局 HMAC secret（当路由未指定自己的 secret 时作为回退） | _（无）_ |
 | `WEBHOOK_SECRET` | 全局 HMAC secret（路由未指定自身 secret 时作为回退） | _（无）_ |

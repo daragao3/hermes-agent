@@ -16,8 +16,8 @@ Hermes Agent 以机器人身份集成到 Mattermost，让你可以通过私信�
 
 | 场景 | 行为 |
 |---------|----------|
-| **私信（DM）** | Hermes 响应每一条消息，无需 `@提及`。每个私信有独立的会话。 |
-| **公开/私有频道** | Hermes 仅在被 `@提及` 时响应。未被提及时，Hermes 忽略消息。 |
+| **私信（DM）** | Hermes 响应每一条消息，无需 `@mention`。每个私信有独立的会话。 |
+| **公开/私有频道** | Hermes 仅在被 `@mention` 时响应。未被提及时，Hermes 忽略消息。 |
 | **线程（Thread）** | 若设置 `MATTERMOST_REPLY_MODE=thread`，Hermes 在你的消息下方以线程形式回复。线程上下文与父频道隔离。 |
 | **多用户共享频道** | 默认情况下，Hermes 在频道内按用户隔离会话历史。同一频道中的两个人不会共享同一份对话记录，除非你明确禁用该设置。 |
 
@@ -150,10 +150,10 @@ MATTERMOST_ALLOWED_USERS=3uo8dkh1p7g1mfk49ear5fzs5c
 # 可选：回复模式（thread 或 off，默认：off）
 # MATTERMOST_REPLY_MODE=thread
 
-# 可选：无需 @提及 即可响应（默认：true = 需要提及）
+# 可选：无需 @mention 即可响应（默认：true = 需要提及）
 # MATTERMOST_REQUIRE_MENTION=false
 
-# 可选：机器人无需 @提及 即可响应的频道（逗号分隔的频道 ID）
+# 可选：机器人无需 @mention 即可响应的频道（逗号分隔的频道 ID）
 # MATTERMOST_FREE_RESPONSE_CHANNELS=channel_id_1,channel_id_2
 ```
 
@@ -214,20 +214,20 @@ MATTERMOST_REPLY_MODE=thread
 
 ## 提及行为
 
-默认情况下，机器人仅在频道中被 `@提及` 时响应。你可以更改此行为：
+默认情况下，机器人仅在频道中被 `@mentioned` 时响应。你可以更改此行为：
 
 | 变量 | 默认值 | 描述 |
 |----------|---------|-------------|
 | `MATTERMOST_REQUIRE_MENTION` | `true` | 设为 `false` 可响应频道中的所有消息（私信始终有效）。 |
-| `MATTERMOST_FREE_RESPONSE_CHANNELS` | _（无）_ | 逗号分隔的频道 ID，机器人在这些频道中无需 `@提及` 即可响应，即使 require_mention 为 true。 |
+| `MATTERMOST_FREE_RESPONSE_CHANNELS` | _（无）_ | 逗号分隔的频道 ID，机器人在这些频道中无需 `@mention` 即可响应，即使 require_mention 为 true。 |
 
 在 Mattermost 中查找频道 ID：打开频道，点击频道名称标题，在 URL 或频道详情中查找 ID。
 
-当机器人被 `@提及` 时，提及内容会在处理前自动从消息中去除。
+当机器人被 `@mentioned` 时，提及内容会在处理前自动从消息中去除。
 
 ## 频道白名单（`allowed_channels`）
 
-将机器人限制在固定的 Mattermost 频道集合中。设置后，机器人**仅**在 ID 出现在列表中的频道响应——来自其他频道的消息将被静默忽略，即使机器人被 `@提及`。
+将机器人限制在固定的 Mattermost 频道集合中。设置后，机器人**仅**在 ID 出现在列表中的频道响应——来自其他频道的消息将被静默忽略，即使机器人被 `@mentioned`。
 
 **私信不受此过滤器限制**，因此授权用户始终可以通过私信联系机器人。
 
@@ -306,7 +306,7 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 
 **原因**：你的用户 ID 不在 `MATTERMOST_ALLOWED_USERS` 中。
 
-**解决方法**：将你的用户 ID 添加到 `~/.hermes/.env` 中的 `MATTERMOST_ALLOWED_USERS`，然后重启 gateway。注意：用户 ID 是 26 位字母数字字符串，不是你的 `@用户名`。
+**解决方法**：将你的用户 ID 添加到 `~/.hermes/.env` 中的 `MATTERMOST_ALLOWED_USERS`，然后重启 gateway。注意：用户 ID 是 26 位字母数字字符串，不是你的 `@username`。
 
 ## 按频道设置 Prompt
 

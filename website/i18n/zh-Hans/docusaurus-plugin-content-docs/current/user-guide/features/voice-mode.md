@@ -458,6 +458,8 @@ DISCORD_ALLOWED_USERS=...
 | **Groq** | `whisper-large-v3` | 快（约 1 秒） | 较好 | 免费额度 | 是 |
 | **OpenAI** | `whisper-1` | 快（约 1 秒） | 良好 | 付费 | 是 |
 | **OpenAI** | `gpt-4o-transcribe` | 中等（约 2 秒） | 最佳 | 付费 | 是 |
+| **Mistral** | `voxtral-mini-latest` | 快 | 良好 | 付费 | 是 |
+| **xAI** | `grok-stt` | 快 | 良好 | 付费 | 是 |
 
 提供商优先级（自动回退）：**本地** > **groq** > **openai**
 
@@ -484,6 +486,8 @@ PortAudio 未安装：
 brew install portaudio    # macOS
 sudo apt install portaudio19-dev  # Ubuntu
 ```
+
+如果你在 Linux 桌面上通过 Docker 运行 Hermes，容器还需要访问宿主机的音频套接字。请参阅 [Docker 音频桥接](/user-guide/docker#optional-linux-desktop-audio-bridge) 说明，了解兼容 PulseAudio/PipeWire 的配置方式。
 
 ### Bot 在 Discord 服务器频道中不响应
 

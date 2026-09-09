@@ -176,6 +176,8 @@ gateway/platforms/                  # 核心 base 与旧的直接适配器
 └── api_server.py        # REST API 服务器适配器
 ```
 
+实验性的连接器（connector）驱动平台使用 `gateway/relay/` 中的通用 relay 适配器，而非独立的平台模块。当配置了 `GATEWAY_RELAY_URL` 或 `gateway.relay_url` 时，gateway 会注册 `relay` 平台，通过出站 WebSocket 拨号连接到该连接器，并在同一条 socket 上接收 `descriptor`、`inbound` 和 `interrupt_inbound` 帧。连接器会声明一个 `CapabilityDescriptor`；Hermes 可以通过该 relay 回送普通出站回复、无 token 的 `follow_up` 操作以及中断帧。基于源码的线路协议约定见 [`docs/relay-connector-contract.md`](https://github.com/NousResearch/hermes-agent/blob/main/docs/relay-connector-contract.md)。
+
 适配器实现统一接口：
 - `connect()` / `disconnect()` — 生命周期管理
 - `send_message()` — 出站消息投递
@@ -191,7 +193,7 @@ gateway/platforms/                  # 核心 base 与旧的直接适配器
 
 - **直接回复** — 将响应发回原始聊天
 - **主频道投递** — 将 cron 任务输出和后台结果路由至已配置的主频道
-- **显式目标投递** — `send_message` 工具指定 `telegram:-1001234567890`，或通过 [`hermes send` CLI](/guides/pipe-script-output) 封装同一工具供 shell 脚本使用
+- **显式目标投递** — 发送引擎指定 `telegram:-1001234567890`，可通过 [`hermes send` CLI](/guides/pipe-script-output) 供 shell 脚本使用，也可通过 cron 的 `deliver:` 目标使用
 - **跨平台投递** — 投递至与原始消息不同的平台
 
 Cron 任务投递**不会**镜像到 gateway 会话历史中 — 它们仅存在于各自的 cron 会话中。这是有意为之的设计选择，以避免消息交替违规。

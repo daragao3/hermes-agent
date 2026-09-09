@@ -1,5 +1,6 @@
 ---
 sidebar_label: "Build a Plugin"
+slug: /developer-guide/plugins
 title: "构建 Hermes 插件"
 description: "逐步指南：构建包含工具、钩子、数据文件和技能的完整 Hermes 插件"
 ---
@@ -281,13 +282,18 @@ def register(ctx):
 **`dispatch_tool` 示例——执行工具的斜杠命令：**
 
 ```python
-def handle_scan(ctx, argstr):
+def handle_scan(ctx, raw_args: str):
     """Implement /scan by invoking the terminal tool through the registry."""
-    result = ctx.dispatch_tool("terminal", {"command": f"find . -name '{argstr}'"})
+    result = ctx.dispatch_tool("terminal", {"command": f"find . -name '{raw_args}'"})
     return result  # returned to the caller's chat UI
 
 def register(ctx):
-    ctx.register_command("scan", handle_scan, help="Find files matching a glob")
+    # Handlers receive a single raw_args string; close over ctx via a lambda.
+    ctx.register_command(
+        "scan",
+        lambda raw: handle_scan(ctx, raw),
+        description="Find files matching a glob",
+    )
 ```
 
 被分发的工具会经过正常的审批、脱敏和预算流程——这是真实的工具调用，而非绕过这些流程的捷径。
@@ -592,10 +598,15 @@ def register(ctx):
 | [`on_session_end`](/user-guide/features/hooks#on_session_end) | 每次 `run_conversation` 调用结束 + CLI 退出 | `session_id: str, completed: bool, interrupted: bool, model: str, platform: str` | 忽略 |
 | [`on_session_finalize`](/user-guide/features/hooks#on_session_finalize) | CLI/网关销毁活跃会话 | `session_id: str \| None, platform: str` | 忽略 |
 | [`on_session_reset`](/user-guide/features/hooks#on_session_reset) | 网关切换新会话键（`/new`、`/reset`） | `session_id: str, platform: str` | 忽略 |
+| `kanban_task_claimed` | kanban 任务被认领（dispatcher 进程中，worker 启动之前） | `task_id: str, board: str \| None, assignee: str \| None, run_id: int \| None, profile_name: str` | 忽略 |
+| `kanban_task_completed` | kanban 任务完成（worker 进程） | `task_id, board, assignee, run_id, profile_name, summary: str \| None` | 忽略 |
+| `kanban_task_blocked` | kanban 任务被阻塞（worker 进程） | `task_id, board, assignee, run_id, profile_name, reason: str \| None` | 忽略 |
 
 大多数钩子是即发即忘的观察者——其返回值被忽略。例外是 `pre_llm_call`，它可以向对话中注入上下文。
 
 所有回调都应接受 `**kwargs` 以保持向前兼容性。如果钩子回调崩溃，会被记录日志并跳过。其他钩子和代理继续正常运行。
+
+kanban 生命周期钩子在看板数据库变更提交**之后**触发，因此回调总是看到持久化后的状态，并且绝不会持有 SQLite 写锁。由于 kanban worker 以独立的 `hermes -p <profile> chat -q` 子进程运行，`kanban_task_claimed` 在 **dispatcher** 进程中触发，而 `kanban_task_completed` / `kanban_task_blocked` 在 **worker** 进程中触发——在 dispatcher 中挂钩可集中观察每一次状态转换，在 worker 中挂钩则可获得每个任务的会话内上下文。
 
 ### `pre_llm_call` 上下文注入 {#pre_llm_call-context-injection}
 
@@ -1012,11 +1023,15 @@ class MyMemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = session_id
 
-    def sync_turn(self, user_message, assistant_response, **kwargs) -> None:
+    def sync_turn(self, user_content, assistant_content, *,
+                  session_id="", messages=None) -> None:
         ...
 
-    def prefetch(self, query: str, **kwargs) -> str | None:
+    def prefetch(self, query, *, session_id="") -> str:
         ...
+
+    def get_tool_schemas(self) -> list[dict]:
+        return []   # required @abstractmethod — see full guide
 
 def register(ctx):
     ctx.register_memory_provider(MyMemoryProvider())
@@ -1037,8 +1052,9 @@ class MyContextEngine(ContextEngine):
     def name(self) -> str:
         return "my-engine"
 
-    def should_compress(self, messages, model) -> bool: ...
-    def compress(self, messages, model) -> list[dict]: ...
+    def update_from_response(self, usage) -> None: ...
+    def should_compress(self, prompt_tokens: int = None) -> bool: ...
+    def compress(self, messages, current_tokens=None, focus_topic=None) -> list: ...
 
 def register(ctx):
     ctx.register_context_engine(MyContextEngine())
