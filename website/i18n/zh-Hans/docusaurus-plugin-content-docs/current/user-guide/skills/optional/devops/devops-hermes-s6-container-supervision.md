@@ -1,7 +1,7 @@
 ---
 title: "Hermes S6 Container Supervision"
 sidebar_label: "Hermes S6 Container Supervision"
-description: "修改、调试或扩展 Hermes Agent Docker 镜像内的 s6-overlay 监督树 —— 添加新服务、调试 profile gateway、理解……"
+description: "修改、调试或扩展 Hermes Agent Docker 镜像内的 s6-overlay 监督树 —— 添加新服务、调试 profile gateway、理解 Architecture B 主程序模式"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
