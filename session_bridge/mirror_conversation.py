@@ -62,8 +62,9 @@ from .claude_visibility import (
     _is_codex_registration,
 )
 from .context_pack import _redact
-from .models import MIRROR_RECORD_KEY, Provider
+from .models import MIRROR_RECORD_KEY, Provider, is_mirrored_record
 from .preview import _is_internal_bridge_message
+from .sidebar import is_meaningful_user_text
 from .store import SessionBridgeStore
 
 _LOG = logging.getLogger(__name__)
@@ -76,8 +77,11 @@ DEFAULT_MESSAGE_CHARS = 20_000
 _FETCH_LIMIT = 2_000
 _TRUNCATION_MARKER = " [truncated by Hermes mirror]"
 # Bridge state key holding {claude_uuid: {"last_message_id", "leaf_uuid",
-# "mirrored"}}. Read and written whole, like the auto-archive ledger.
-_STATE_KEY = "session-bridge:claude-visibility:mirror-conversation"
+# "mirrored"}}. Read and written whole, like the auto-archive ledger. Public
+# because the float worker reads ``mirrored`` to decide whether a mirror has
+# anything to title itself from (see ClaudeMirrorFloatWorker._derive_mirror_title).
+MIRROR_CONVERSATION_STATE_KEY = "session-bridge:claude-visibility:mirror-conversation"
+_STATE_KEY = MIRROR_CONVERSATION_STATE_KEY
 _MIRROR_ENTRYPOINT = "hermes-session-bridge"
 
 
@@ -468,6 +472,38 @@ def render_mirror_record(
         },
         "message": message,
     }
+
+
+def first_mirrored_user_text(path: Path) -> str | None:
+    """Text of the first mirrored USER turn that reads as a real request.
+
+    Walks the mirror transcript in file order and returns the content of the
+    first ``hermesMirror``-tagged user record whose text passes the sidebar's
+    ``is_meaningful_user_text`` (so an "ok" or a bare ack does not become a
+    title). The backfill notice (``message_id`` 0, "[Hermes mirror] N earlier
+    message(s) ...") is skipped by id, never by text, so a source turn that
+    happens to quote the notice still counts. Malformed lines are skipped;
+    ``None`` means the mirror holds no such turn yet. Raises ``OSError`` for
+    an unreadable file so the caller decides what an unreadable mirror means.
+    """
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if not is_mirrored_record(record) or record.get("type") != "user":
+                continue
+            if record[MIRROR_RECORD_KEY].get("message_id") == 0:
+                continue
+            message = record.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(content, str) and is_meaningful_user_text(content):
+                return content
+    return None
 
 
 def mirror_record_uuid(claude_uuid: str, source_session_id: str, message_id: int) -> str:
