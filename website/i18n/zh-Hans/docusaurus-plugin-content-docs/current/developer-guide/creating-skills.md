@@ -185,7 +185,7 @@ required_environment_variables:
 
 ### Config 配置项（config.yaml）
 
-Skill 可声明非密钥配置项，这些配置项存储在 `config.yaml` 的 `skills.config` 命名空间下。与环境变量（存储密钥）不同，config 配置项用于路径、偏好设置及其他非敏感值。
+Skill 可声明非密钥配置项，这些配置项存储在 `config.yaml` 的 `skills.config` 命名空间下。与环境变量（存储在 `.env` 中的密钥）不同，config 配置项用于路径、偏好设置及其他非敏感值。
 
 ```yaml
 metadata:
@@ -372,13 +372,13 @@ hermes skills install owner/morning-brief
 /suggestions dismiss 1   # never offer it again
 ```
 
-Blueprint 是统一的「建议 Cron 任务」界面的**来源**之一——精选的入门自动化任务，以及（后续的）使用习惯建议和集成建议，都会出现在同一个地方。参见下文的[建议 Cron 任务](#建议-cron-任务)。
+Blueprint 是统一的「建议 Cron 任务」界面的**来源**之一——精选的入门自动化任务，以及（后续的）使用习惯建议和集成建议，都会出现在同一个地方。参见下文的[建议 Cron 任务](#suggested-cron-jobs)。
 
 **分享你自己搭建的自动化任务。** 由 cron 任务加载的 blueprint（`hermes cron create --skill <name> ...`）可以被导出回 SKILL.md，并像其他任何 skill 一样发布，因此你为自己调优的自动化任务，对别人来说就成了一条命令即可安装的东西。
 
 Blueprint 这一层没有引入任何新的对象类型、存储或传输方式——blueprint 就是 skill，调度计划就是 cron 任务，分享走的就是既有的 publish/tap/索引路径。
 
-## 建议 Cron 任务
+## 建议 Cron 任务 {#suggested-cron-jobs}
 
 Hermes 可以*主动提议*自动化任务，让你一键接受，而不必手工拼装 cron 任务。无论建议来自何处，所有提议都会汇入同一个界面——`/suggestions` 命令：
 

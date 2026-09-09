@@ -360,7 +360,7 @@ platforms:
 | `platforms.slack.extra.feedback_buttons` | `false` | 与 `rich_blocks` 同时为 `true` 时，会在最终回复中追加 Slack 原生反馈控件。 |
 | `platforms.slack.extra.suggested_prompts` | `[]` | 用于 Agent/Assistant 私信入口的最多四条 `{title, message}` 提示；可接受列表或 `{title, prompts}` 形式。 |
 | `platforms.slack.extra.assistant_thread_titles` | `true` | 为 `true` 时，根据用户的第一条消息为 Agent/Assistant 私信话题命名。 |
-| `platforms.slack.extra.cron_continuable_surface` | `"thread"` | [可继续 cron 任务](../features/cron.md)的投递方式。`"thread"` 为每次投递新建专用话题（默认）；`"in_channel"` 直接平铺投递到频道时间线。使用 `in_channel` 时需搭配 `reply_in_thread: false`（及 `require_mention: false`），纯文本回复即可继续任务。 |
+| `platforms.slack.extra.cron_continuable_surface` | `"thread"` | [可继续 cron 任务](../features/cron.md#flat-in-channel-continuation-slack)的投递方式。`"thread"` 为每次投递新建专用话题（默认）；`"in_channel"` 直接平铺投递到频道时间线。使用 `in_channel` 时需搭配 `reply_in_thread: false`（及 `require_mention: false`），纯文本回复即可继续任务。 |
 
 ### 工作状态提示行
 
@@ -450,12 +450,12 @@ Slack 支持两种模式：默认情况下需要 `@mention` 才能开始对话�
 :::
 
 :::caution 群组私信（MPIM）是共享场所，而非一对一私信
-**一对一私信**是与单个人的私密对话，因此豁免提及要求。**群组私信（MPIM / 多人私信）**是*共享场所*——多个人都能看到并触发机器人——因此它遵循与频道相同的运维控制：`require_mention`、`strict_mention`、`free_response_channels` 和 `allowed_channels` 全部适用，并且只有在真正被 `@mention` 时，机器人才会添加 `:eyes:`/`:white_check_mark:` 反应。若要让机器人在某个特定群组私信中自由响应，请把它的频道 ID（以 `G` 开头）加入 `free_response_channels`。
+**一对一私信**是与单个人的私密对话，因此豁免提及要求。**群组私信（MPIM / 多人私信）**是*共享场所*——多个人都能看到并触发机器人——因此它遵循与频道相同的运维控制：`require_mention`、`strict_mention`、`free_response_channels` 和 `allowed_channels` 全部适用，并且只有在真正被 `@mentioned`（@ 提及）时，机器人才会添加 `:eyes:`/`:white_check_mark:` 反应。若要让机器人在某个特定群组私信中自由响应，请把它的频道 ID（以 `G` 开头）加入 `free_response_channels`。
 :::
 
 ### 频道白名单（`allowed_channels`）
 
-将机器人限制在固定的 Slack 频道集合中——当机器人被邀请到许多频道但只应在少数频道中响应时很有用。设置后，不在此列表中的频道消息将被**静默忽略**，即使机器人被 `@mention`。
+将机器人限制在固定的 Slack 频道集合中——当机器人被邀请到许多频道但只应在少数频道中响应时很有用。设置后，不在此列表中的频道消息将被**静默忽略**，即使机器人被 `@mentioned`（@ 提及）。
 
 **一对一私信不受此过滤器影响**，因此授权用户始终可以通过私信联系机器人。**群组私信（MPIM）不豁免**——与频道一样，MPIM 必须在白名单中（其 ID 以 `G` 开头），否则其消息会被丢弃。
 

@@ -105,8 +105,8 @@ platforms:
 | `/toolsets` | 列出可用工具集 |
 | `/browser [connect\|disconnect\|status]` | 管理本地 Chromium 系浏览器的 CDP 连接。`connect` 将浏览器工具附加到正在运行的 Chrome、Brave、Chromium 或 Edge 实例（默认：`http://127.0.0.1:9222`）。`disconnect` 断开连接。`status` 显示当前连接状态。若未检测到调试器，则自动启动支持的 Chromium 系浏览器。 |
 | `/skills` | 从在线注册表搜索、安装、检查或管理 skill。同时也是 skill 写入审批门控的审核入口：`/skills pending`、`/skills diff <id>`、`/skills approve <id>`、`/skills reject <id>`、`/skills approval on\|off`。见 [为 agent 的 skill 写入加门控](/user-guide/features/skills#gating-agent-skill-writes-skillswrite_approval)。 |
-| `/memory [pending\|approve\|reject\|approval]` | 审核由写入审批门控（`memory.write_approval`）暂存的待处理 memory 写入，并切换该门控。见 [Memory 功能](/user-guide/features/memory)。 |
-| `/bundles` | 列出已配置的 skill bundle——即一次预加载多个 skill 的 `/<name>` 斜杠别名。在 `~/.hermes/config.yaml` 的 `bundles:` 下配置。见 [Skills 功能](/user-guide/features/skills)。 |
+| `/memory [pending\|approve\|reject\|approval]` | 审核由写入审批门控（`memory.write_approval`）暂存的待处理 memory 写入，并切换该门控。见 [控制 memory 写入](/user-guide/features/memory#controlling-memory-writes-write_approval)。 |
+| `/bundles` | 列出已配置的 skill bundle——即一次预加载多个 skill 的 `/<name>` 斜杠别名。在 `~/.hermes/config.yaml` 的 `bundles:` 下配置。见 [Skill Bundles](/user-guide/features/skills#skill-bundles)。 |
 | `/learn <what to learn from>` | 从你描述的任何东西中提炼出一个可复用的 skill——一个目录、一个 URL、你刚刚带着 agent 走过的工作流，或是粘贴进来的笔记。它是开放式的：agent 会用自己的工具收集这些来源，并按内部的编写规范撰写一份 `SKILL.md`。可在 CLI、消息 gateway、TUI 以及仪表板的 Skills 页面使用。 |
 | `/cron` | 管理定时任务（列出、添加/创建、编辑、暂停、恢复、运行、删除） |
 | `/suggestions [accept\|dismiss N\|catalog\|clear]`（别名：`/suggest`） | 审核建议的自动化。使用 `/suggestions` 列出待处理建议，`/suggestions accept <id>` 接受并创建建议任务，`/suggestions dismiss <id>` 拒绝单条建议，`/suggestions catalog` 添加精选起步自动化，`/suggestions clear` 清理已解决的建议记录。被接受的任务会保留当前表面作为投递来源。 |
@@ -248,7 +248,7 @@ hermes config set model.aliases.grok x-ai/grok-4
 | `/curator [status\|run\|pin\|archive]` | 后台 skill 维护控制。 |
 | `/suggestions [accept\|dismiss N\|catalog\|clear]` | 直接在聊天中审核建议的自动化。`/suggestions` 列出待处理建议，`catalog` 添加精选起步自动化，`clear` 清理已解决的建议记录。被接受的建议会保留当前聊天/线程作为任务投递来源。 |
 | `/blueprint [name] [slot=value ...]` | 浏览 cron blueprint、启动引导式填槽对话，或直接创建 blueprint 任务。直接创建的任务会回投到当前聊天/线程。 |
-| `/memory [pending\|approve\|reject\|approval]` | 审核由写入审批门控（`memory.write_approval`）暂存的待处理 memory 写入——可直接在聊天中批准或拒绝——并通过 `/memory approval on\|off` 切换门控。见 [Memory 功能](/user-guide/features/memory)。 |
+| `/memory [pending\|approve\|reject\|approval]` | 审核由写入审批门控（`memory.write_approval`）暂存的待处理 memory 写入——可直接在聊天中批准或拒绝——并通过 `/memory approval on\|off` 切换门控。见 [控制 memory 写入](/user-guide/features/memory#controlling-memory-writes-write_approval)。 |
 | `/skills [pending\|approve\|reject\|diff\|approval]` | 审核由写入审批门控（`skills.write_approval`）暂存的待处理 **skill** 写入。每条待写入会显示一行摘要；`/skills diff <id>` 在聊天中会截断——完整 diff 请在 CLI 或 `~/.hermes/pending/skills/<id>.json` 中查看。仅当门控开启（或仍有待处理写入）时出现；搜索/安装仍然是 CLI-only。 |
 | `/kanban <action>` | 从聊天中操作多 profile、多项目协作看板——参数与 CLI 完全一致。绕过运行中 agent 的保护，因此 `/kanban unblock t_abc`、`/kanban comment t_abc "…"`、`/kanban list --mine`、`/kanban boards switch <slug>` 等均可在轮次进行中使用。`/kanban create …` 会自动将发起聊天订阅到新任务的终态事件。见 [Kanban 斜杠命令](/user-guide/features/kanban#kanban-slash-command)。 |
 | `/platform <list\|pause\|resume> [name]` | 直接在聊天中操作正在运行的 gateway 平台。`/platform list` 列出所有适配器及其状态（运行中、熔断器暂停、手动暂停）；`/platform pause <name>` 停止向该适配器分发新消息但不卸载它；`/platform resume <name>` 重新启用它，并在上游恢复健康后清除已触发的熔断器。 |
