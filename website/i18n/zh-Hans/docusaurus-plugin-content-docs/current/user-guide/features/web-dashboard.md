@@ -296,7 +296,7 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 
 ### MCP
 
-无需 CLI 即可管理 [MCP](/integrations/mcp) 服务器。操作的是 `config.yaml` 中
+无需 CLI 即可管理 [MCP](/user-guide/features/mcp) 服务器。操作的是 `config.yaml` 中
 `hermes mcp` 所读取的同一个 `mcp_servers` 块。
 
 **你的 MCP 服务器：**
