@@ -53,6 +53,8 @@ Unsloth：2-5倍更快的 LoRA/QLoRA 微调，更少显存。
 此 skill 在 `references/` 中包含完整文档：
 
 - **llms-txt.md** - Llms-Txt 文档
+- **llms-full.md** - 上游 llms-full.txt 完整文档
+- **llms.md** - 上游 llms.txt 链接索引
 
 需要详细信息时，使用 `view` 读取特定参考文件。
 

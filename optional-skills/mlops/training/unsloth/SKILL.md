@@ -36,6 +36,8 @@ This skill should be triggered when:
 This skill includes comprehensive documentation in `references/`:
 
 - **llms-txt.md** - Llms-Txt documentation
+- **llms-full.md** - Full upstream llms-full.txt documentation
+- **llms.md** - Upstream llms.txt link index
 
 Use `view` to read specific reference files when detailed information is needed.
 
