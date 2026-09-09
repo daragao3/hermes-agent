@@ -192,6 +192,46 @@ def is_agent_worktree_cwd(cwd: object) -> bool:
     return isinstance(cwd, str) and _AGENT_WORKTREE_CWD_RE.search(cwd) is not None
 
 
+# The official Codex importer (Settings > Import > Claude Code, "Keep imports
+# in sync") copies every Claude Code session into a Codex thread whose rollout
+# session_meta carries this originator. Registering those as visibility
+# sources mirrors a Claude session back into the Claude sidebar as a [Codex]
+# row -- an echo, not a Codex session the user started. Measured 2026-09-09:
+# 165 of 172 visible mirrors were import echoes; 7 were genuine Codex Desktop
+# threads. thread/list does not expose the originator, so the rollout head is
+# read (one line, bounded); an unreadable or absent head reads as NOT an
+# import, so a missing file never hides a real session.
+CODEX_IMPORT_ORIGINATOR = "hermes-codex-import"
+_ROLLOUT_HEAD_BYTES = 8192
+
+
+def codex_rollout_originator(native_path: object) -> str | None:
+    if not isinstance(native_path, str) or not native_path:
+        return None
+    try:
+        with open(native_path, "rb") as stream:
+            head = stream.readline(_ROLLOUT_HEAD_BYTES)
+    except OSError:
+        return None
+    if not head.endswith(b"\n"):
+        return None
+    try:
+        record = json.loads(head.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(record, dict) or record.get("type") != "session_meta":
+        return None
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    originator = payload.get("originator")
+    return originator if isinstance(originator, str) and originator else None
+
+
+def is_codex_import_rollout(native_path: object) -> bool:
+    return codex_rollout_originator(native_path) == CODEX_IMPORT_ORIGINATOR
+
+
 def evaluate_claude_visibility(
     projection: SessionProjection,
     *,

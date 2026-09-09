@@ -681,3 +681,23 @@ def test_sync_pins_store_mode_when_the_rollout_is_missing(store, tmp_path) -> No
 def test_sync_rejects_degenerate_bounds(store, kwargs, message) -> None:
     with pytest.raises(ValueError, match=message):
         MirrorConversationSync(store, **kwargs)
+
+
+def test_turns_drop_harness_envelope_user_turns_but_keep_quoting_assistants() -> None:
+    from session_bridge.mirror_conversation import is_envelope_user_text
+
+    rows = [
+        {"id": 1, "role": "user", "content": "<environment_context>\n<cwd>C:/x</cwd>", "timestamp": 1.0},
+        {"id": 2, "role": "user", "content": "  <task-notification>\n<task-id>x</task-id>", "timestamp": 2.0},
+        {"id": 3, "role": "user", "content": "<heartbeat>\n<automation_id>a</automation_id>", "timestamp": 3.0},
+        {"id": 4, "role": "user", "content": "<command-message>bye</command-message>", "timestamp": 4.0},
+        {"id": 5, "role": "user", "content": "please look at <heartbeat> handling", "timestamp": 5.0},
+        {"id": 6, "role": "assistant", "content": "The envelope is `<heartbeat>...</heartbeat>`.", "timestamp": 6.0},
+    ]
+
+    turns = conversational_turns(rows)
+
+    assert [turn["message_id"] for turn in turns] == [5, 6]
+    assert is_envelope_user_text("<system-reminder>\nx") is True
+    assert is_envelope_user_text("hello <system-reminder>") is False
+    assert is_envelope_user_text(None) is False
