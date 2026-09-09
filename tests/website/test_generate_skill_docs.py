@@ -117,7 +117,7 @@ def test_bundled_catalog_explains_missing_local_skills(gen_module):
 
 
 # ---------------------------------------------------------------------------
-# truncate_at_word
+# _truncate_on_word_boundary
 #
 # Frontmatter descriptions are capped at 160 chars for the meta description and
 # catalog table cells at 240. The old cap sliced at the byte index, which cut
@@ -126,18 +126,18 @@ def test_bundled_catalog_explains_missing_local_skills(gen_module):
 
 
 def test_short_text_is_returned_untouched(gen_module):
-    assert gen_module.truncate_at_word("already short", 160) == "already short"
+    assert gen_module._truncate_on_word_boundary("already short", 160) == "already short"
 
 
 def test_text_exactly_at_the_limit_is_untouched(gen_module):
     text = "x" * 160
-    assert gen_module.truncate_at_word(text, 160) == text
+    assert gen_module._truncate_on_word_boundary(text, 160) == text
 
 
 def test_cut_backs_up_to_a_word_boundary(gen_module):
     # "streaming" would be sliced to "strea" by a naive text[:limit - 3].
     text = "alpha beta gamma delta streaming"
-    out = gen_module.truncate_at_word(text, 31)
+    out = gen_module._truncate_on_word_boundary(text, 31)
     assert out == "alpha beta gamma delta..."
     assert not out.removesuffix("...").endswith(" ")
 
@@ -145,32 +145,32 @@ def test_cut_backs_up_to_a_word_boundary(gen_module):
 def test_result_never_exceeds_the_limit(gen_module):
     text = "word " * 200
     for limit in (20, 160, 240):
-        assert len(gen_module.truncate_at_word(text, limit)) <= limit
+        assert len(gen_module._truncate_on_word_boundary(text, limit)) <= limit
 
 
 def test_boundary_cut_keeps_the_whole_last_word(gen_module):
     # The slice lands exactly on the space after "gamma", so there is no
     # partial word and backing up another word would shorten it for nothing.
     text = "alpha beta gamma delta"
-    assert gen_module.truncate_at_word(text, 19) == "alpha beta gamma..."
+    assert gen_module._truncate_on_word_boundary(text, 19) == "alpha beta gamma..."
 
 
 def test_dangling_punctuation_is_stripped_before_the_ellipsis(gen_module):
     # The slice ends "...gamma, " — a whole word plus punctuation, so nothing is
     # backed up and only the trailing comma is dropped.
     text = "alpha beta gamma, delta epsilon"
-    assert gen_module.truncate_at_word(text, 21) == "alpha beta gamma..."
+    assert gen_module._truncate_on_word_boundary(text, 21) == "alpha beta gamma..."
 
 
 def test_trailing_space_in_the_slice_is_not_treated_as_mid_word(gen_module):
     # Regression: keying only off the character AFTER the cut treated this as a
     # mid-word break and dropped "gamma" even though the slice ended cleanly.
     text = "alpha beta gamma delta epsilon"
-    assert gen_module.truncate_at_word(text, 20) == "alpha beta gamma..."
+    assert gen_module._truncate_on_word_boundary(text, 20) == "alpha beta gamma..."
 
 
 def test_single_unbroken_token_still_truncates(gen_module):
     # No space to back up to: fall back to a hard slice rather than returning "...".
-    out = gen_module.truncate_at_word("x" * 300, 160)
+    out = gen_module._truncate_on_word_boundary("x" * 300, 160)
     assert len(out) == 160
     assert out.endswith("...")

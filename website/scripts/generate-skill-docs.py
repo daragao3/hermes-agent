@@ -266,28 +266,6 @@ def parse_skill_md(path: Path) -> dict[str, Any]:
     return {"frontmatter": fm, "body": body.lstrip("\n")}
 
 
-def truncate_at_word(text: str, limit: int) -> str:
-    """Trim `text` to at most `limit` characters, ending on a word boundary.
-
-    The naive `text[:limit - 3] + "..."` cuts mid-word, which reads as a typo
-    in a `<meta name="description">` and in a catalog table cell. We back up to
-    the last space instead and strip any dangling punctuation, so the ellipsis
-    always follows a whole word. Short text is returned untouched.
-    """
-    if len(text) <= limit:
-        return text
-    head = text[: limit - 3]
-    # Back up only when the cut actually landed inside a word — i.e. there is a
-    # word character on both sides of it. When either side is whitespace we
-    # already have whole words, and dropping one more would shorten the text
-    # for no reason. A token with no space in it at all (a long URL) keeps the
-    # hard slice; there is nothing better to do with it.
-    mid_word = bool(head) and not head[-1].isspace() and not text[limit - 3].isspace()
-    if mid_word and " " in head.rstrip():
-        head = head.rstrip().rsplit(" ", 1)[0]
-    return head.rstrip(",;:-–— ") + "..."
-
-
 def sanitize_yaml_string(s: str) -> str:
     """Make a string safe to embed in a YAML double-quoted scalar."""
     s = s.replace("\\", "\\\\").replace('"', '\\"')
@@ -350,6 +328,33 @@ def sidebar_doc_id(meta: dict[str, Any]) -> str:
     return f"user-guide/skills/{meta['source_kind']}/{meta['category']}/{page_id(meta)}"
 
 
+def _truncate_on_word_boundary(text: str, limit: int) -> str:
+    """Clip `text` to at most `limit` chars, ending on a whole word.
+
+    The ellipsis counts toward the limit. Cutting at a fixed offset used to
+    slice words in half ("...reconciliation, tes..."), which reads as a bug
+    in the rendered <meta name="description"> and in search results. Back
+    off to the last space instead, then drop any dangling punctuation so the
+    ellipsis follows a word rather than a comma.
+
+    A single token longer than the budget has no boundary to back off to, so
+    it is still cut mid-word -- that is the only case where the old behaviour
+    is the best available.
+    """
+    if len(text) <= limit:
+        return text
+    clipped = text[: limit - 3]
+    # Back off only when the cut landed INSIDE a word, i.e. there is a word
+    # character on both sides of it. When either side is already whitespace
+    # we have whole words, and dropping one more shortens the text for
+    # nothing.
+    mid_word = bool(clipped) and not clipped[-1].isspace() and not text[limit - 3].isspace()
+    boundary = clipped.rfind(" ") if mid_word else -1
+    if boundary > 0:
+        clipped = clipped[:boundary]
+    return clipped.rstrip().rstrip(",;:-—–") + "..."
+
+
 def render_skill_page(
     meta: dict[str, Any],
     fm: dict[str, Any],
@@ -359,7 +364,7 @@ def render_skill_page(
     name = fm.get("name", meta["slug"])
     description = fm.get("description", "").strip()
     short_desc = description.split(".")[0].strip() if description else name
-    short_desc = truncate_at_word(short_desc, 160)
+    short_desc = _truncate_on_word_boundary(short_desc, 160)
 
     # Heuristic nicer title from name
     display_name = name.replace("-", " ").replace("_", " ").title()
@@ -526,7 +531,7 @@ def build_catalog_md_bundled(entries: list[tuple[dict[str, Any], dict[str, Any]]
             fm = parsed["frontmatter"]
             name = fm.get("name", meta["slug"])
             desc = (fm.get("description") or "").strip()
-            desc = truncate_at_word(desc, 240)
+            desc = _truncate_on_word_boundary(desc, 240)
             link_target = f"/user-guide/skills/bundled/{meta['category']}/{page_id(meta)}"
             path = f"`{meta['rel_path']}`"
             desc_esc = mdx_escape_body(desc).replace("|", "\\|").replace("\n", " ")
@@ -586,7 +591,7 @@ def build_catalog_md_optional(entries: list[tuple[dict[str, Any], dict[str, Any]
             fm = parsed["frontmatter"]
             name = fm.get("name", meta["slug"])
             desc = (fm.get("description") or "").strip()
-            desc = truncate_at_word(desc, 240)
+            desc = _truncate_on_word_boundary(desc, 240)
             link_target = f"/user-guide/skills/optional/{meta['category']}/{page_id(meta)}"
             desc_esc = mdx_escape_body(desc).replace("|", "\\|").replace("\n", " ")
             lines.append(f"| [**{name}**]({link_target}) | {desc_esc} |")
