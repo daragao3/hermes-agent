@@ -178,7 +178,7 @@ PDD="python3 scripts/pdd.py"
   推迟到隐身浏览器那一轮。退出请求会遇到 CAPTCHA、邮件验证循环和会话绑定——请
   **一次一个、仔细地**处理（这与并行扇出正好相反），但在 `autonomy=full` 下不要为每次
   提交停下来征求许可；在 `assisted` 模式下则逐个确认。当经纪商同时提供两种方式时，
-  **通常优先选择删除而非抑制**（Spokeo/BeenVerified）——但要遵循记录中的
+  当某个经纪商同时提供两种方式时，**通常优先选择删除而非抑制**（Spokeo/BeenVerified）——但要遵循记录中的
   `deletion.prefer`：**PeopleConnect 是例外**（`prefer: false`），在那里删除
   你的用户数据反而会清除你的抑制设置，也无法阻止公共记录重新收录，因此应当
   改为抑制并持续维护。
