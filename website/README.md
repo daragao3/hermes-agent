@@ -53,7 +53,8 @@ nothing measured it. Three checks now do, and CI runs all of them:
 
 ```bash
 python3 website/scripts/check-i18n-parity.py       # page set, structure, content, anchors,
-                                                   # descriptions, frontmatter completeness
+                                                   # descriptions, frontmatter completeness,
+                                                   # frontmatter key order
 python3 website/scripts/fix-i18n-anchors.py        # dry run; --apply to repair anchors
 
 cd website && npm run build 2>&1 | tee build.log
@@ -90,3 +91,14 @@ Two things worth knowing before you trust or change these:
   the reason inline, and delete it in the same change that fills the gap. A
   test fails if an entry stops being needed, so a waiver cannot outlive its
   debt.
+- **Gate 7 constrains one key pair, not a canonical order.** `title` must come
+  before `description`; nothing else is constrained. That is a measurement, not
+  timidity — the tree carries 11 distinct frontmatter key sequences and
+  disagrees with itself in both directions (356 pages order
+  `title → sidebar_label`, 16 the reverse; 284 order
+  `sidebar_position → title`, 34 the reverse), so any single canonical order
+  fails 56 pages and would mean normalising to a convention nobody chose, for a
+  key order with zero rendered effect. `title` before `description` is
+  unanimous at 0 of 722, so it gates for free. If you want a full canonical
+  order, that is a separate normalisation change — decide it, then widen the
+  gate.
