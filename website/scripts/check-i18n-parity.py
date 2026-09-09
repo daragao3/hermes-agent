@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Gate the zh-Hans docs locale against ``website/docs`` so it cannot drift silently.
 
-Four independent gates, each catching a failure class the others are blind to.
-Run them all; a page can pass three and fail the fourth.
+Five independent gates, each catching a failure class the others are blind to.
+Run them all; a page can pass four and fail the fifth.
 
 1. PAGE SET      -- every English page has a zh counterpart (and vice versa).
                     A missing zh file is drift, and no per-page gate can see it.
@@ -19,6 +19,11 @@ Run them all; a page can pass three and fail the fourth.
 4. ANCHORS       -- in-page and cross-page ``#fragment`` resolution against the
                     zh headings. Catches links silently broken by translating
                     the heading they point at.
+5. DESCRIPTIONS  -- a zh frontmatter ``description:`` must not carry an ellipsis
+                    it did not earn. Translating the CLIPPED English string
+                    drags its ellipsis into Chinese, which needs far fewer
+                    characters and usually fits whole. Gates 1-4 never look at
+                    frontmatter text, so this was invisible to all of them.
 
 Deliberately NOT gated on, because both are actively misleading here:
 
@@ -255,6 +260,65 @@ def gate_anchors(zh_pages, findings):
     return bad
 
 
+# --------------------------------------------------------------------- gate 5
+# generate-skill-docs.py clips an English `description:` to 160 chars and marks
+# the cut with an ellipsis. A translator working from the clipped English string
+# carries that ellipsis into the Chinese -- where it is usually WRONG, because
+# Chinese says the same thing in far fewer characters and the whole sentence
+# fits. Measured on the first five translated skill pages this repo produced:
+# two of five, a 40% rate on a class no other gate can see.
+DESC_LIMIT = 160  # must match generate-skill-docs.py's meta-description cap
+# Below this, an elided zh description is treated as inherited rather than
+# needed: the untruncated sentence would almost certainly have fitted. Above it
+# the translator was genuinely up against the budget, so the ellipsis stands.
+DESC_MIN_ELIDED = 120
+ELLIPSES = ("...", "…", "……")
+
+
+def frontmatter_description(text):
+    """The `description:` value from a page's YAML frontmatter, or None."""
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return None
+        if line.startswith("description:"):
+            value = line.split(":", 1)[1].strip()
+            if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            return value
+    return None
+
+
+def is_elided(desc):
+    return desc.rstrip().endswith(ELLIPSES)
+
+
+def gate_descriptions(paired, findings):
+    bad = 0
+    for rel in paired:
+        zh = frontmatter_description(read(os.path.join(ZH_DIR, rel)))
+        en = frontmatter_description(read(os.path.join(EN_DIR, rel)))
+        if not zh or en is None or not is_elided(zh):
+            continue
+        if not is_elided(en):
+            # The English was never clipped, so there is nothing to elide.
+            bad += 1
+            findings.append(
+                "description   %s  zh ends in an ellipsis but the English does "
+                "not -- nothing is elided (%d chars)" % (rel, len(zh))
+            )
+        elif len(zh) < DESC_MIN_ELIDED:
+            bad += 1
+            findings.append(
+                "description   %s  elided at %d of %d chars -- far under budget, "
+                "so the ellipsis was almost certainly inherited from the clipped "
+                "English rather than needed" % (rel, len(zh), DESC_LIMIT)
+            )
+    return bad
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Check zh-Hans docs parity against website/docs."
@@ -296,6 +360,7 @@ def main(argv=None):
     n_struct = gate_structure(paired, findings)
     n_drift = gate_drift(paired, args.drift_min, findings)
     n_anchor = gate_anchors(sorted(zh_pages), findings)
+    n_desc = gate_descriptions(paired, findings)
 
     for line in findings:
         print(line)
@@ -309,9 +374,10 @@ def main(argv=None):
     print("structurally drifted .... %d" % n_struct)
     print("content-drifted (>=%d) ... %d" % (args.drift_min, n_drift))
     print("pages w/ broken anchors . %d" % n_anchor)
+    print("bad zh descriptions ..... %d" % n_desc)
 
     n_pageset = len(untranslated) + len(orphaned)
-    total = n_pageset + n_struct + n_drift + n_anchor
+    total = n_pageset + n_struct + n_drift + n_anchor + n_desc
     waived = 0
     if n_pageset and args.allow_untranslated:
         print("")

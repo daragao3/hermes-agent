@@ -389,3 +389,98 @@ def test_an_already_pinned_heading_is_left_alone(fixer, anchor_tree):
     assert fixer.main(["--apply"]) == 0
     body = (zh / "a.md").read_text(encoding="utf-8")
     assert body.count("{#setup}") == 1
+
+
+# --------------------------------------------------------------------------
+# gate 5 — zh descriptions must not carry an ellipsis they did not earn
+#
+# generate-skill-docs.py clips an English description at 160 chars and marks
+# the cut with an ellipsis. A translator working from that clipped string
+# carries the ellipsis into Chinese, which needs far fewer characters and
+# usually fits whole. Two of the first five translated skill pages had it, and
+# gates 1-4 are all blind to it because none of them reads frontmatter text.
+# --------------------------------------------------------------------------
+def _page(desc, body="# T\n\ntext\n"):
+    return '---\ntitle: "T"\ndescription: "%s"\n---\n\n%s' % (desc, body)
+
+
+def test_description_flags_an_ellipsis_the_english_never_had(parity, tree):
+    """The English was never clipped, so there is nothing for the zh to elide."""
+    tree("a.md", _page("Complete English sentence"), _page("完整的中文句子……"))
+    findings = []
+    assert parity.gate_descriptions(["a.md"], findings) == 1
+    assert "nothing is elided" in findings[0]
+
+
+def test_description_flags_an_elision_far_under_budget(parity, tree):
+    """Both sides elided, but 20 of 160 chars means the whole sentence fitted."""
+    tree("a.md", _page("English clipped at the cap..."), _page("中文很短……"))
+    findings = []
+    assert parity.gate_descriptions(["a.md"], findings) == 1
+    assert "under budget" in findings[0]
+
+
+def test_description_accepts_a_genuine_elision_near_the_budget(parity, tree):
+    """A translator actually up against the 160-char cap keeps their ellipsis."""
+    long_zh = "中" * (parity.DESC_MIN_ELIDED + 5) + "..."
+    tree("a.md", _page("English clipped at the cap..."), _page(long_zh))
+    findings = []
+    assert parity.gate_descriptions(["a.md"], findings) == 0
+    assert findings == []
+
+
+def test_description_ignores_pages_with_no_ellipsis(parity, tree):
+    tree("a.md", _page("English"), _page("中文"))
+    findings = []
+    assert parity.gate_descriptions(["a.md"], findings) == 0
+
+
+@pytest.mark.parametrize("mark", ["...", "…", "……"])
+def test_description_detects_ascii_and_cjk_ellipses(parity, tree, mark):
+    """The zh locale uses BOTH. An ASCII-only grep missed the `……` on
+    devops-hermes-s6-container-supervision.md, which is exactly how that page
+    survived a hand sweep of this same defect."""
+    tree("a.md", _page("Complete English sentence"), _page("中文" + mark))
+    findings = []
+    assert parity.gate_descriptions(["a.md"], findings) == 1
+
+
+def test_description_tolerates_a_page_with_no_frontmatter(parity, tree):
+    """Several hand-written pages have none; the gate must not crash on them."""
+    tree("a.md", "# Just a heading\n", "# 只是一个标题\n")
+    findings = []
+    assert parity.gate_descriptions(["a.md"], findings) == 0
+
+
+def test_description_reads_single_quoted_frontmatter(parity, tree):
+    tree(
+        "a.md",
+        "---\ndescription: 'Complete English sentence'\n---\n\n# T\n",
+        "---\ndescription: '完整的中文句子……'\n---\n\n# T\n",
+    )
+    findings = []
+    assert parity.gate_descriptions(["a.md"], findings) == 1
+
+
+def test_description_does_not_read_a_body_line_as_frontmatter(parity, tree):
+    """`description:` in the BODY is prose, not metadata -- reading it would
+    invent findings on pages that have no frontmatter at all."""
+    tree("a.md", "# T\n\ndescription: English...\n", "# T\n\ndescription: 中文……\n")
+    findings = []
+    assert parity.gate_descriptions(["a.md"], findings) == 0
+
+
+def test_description_failure_counts_toward_the_exit_code(parity, tree, capsys):
+    """A gate nobody fails on is theatre -- pin it to the process exit code."""
+    tree("a.md", _page("Complete English sentence"), _page("完整的中文句子……"))
+    assert parity.main([]) == 1
+    out = capsys.readouterr().out
+    assert "bad zh descriptions ..... 1" in out
+
+
+def test_allow_untranslated_does_not_waive_a_bad_description(parity, tree, capsys):
+    """--allow-untranslated exists for pages nobody has translated yet. This
+    fires only on a page someone DID translate, so the PR lane must still
+    fail on it."""
+    tree("a.md", _page("Complete English sentence"), _page("完整的中文句子……"))
+    assert parity.main(["--allow-untranslated"]) == 1
