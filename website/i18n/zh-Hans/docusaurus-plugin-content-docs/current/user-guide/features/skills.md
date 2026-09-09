@@ -121,7 +121,7 @@ Level 2: skill_view(name, path)  → Specific reference file       (varies)
 
 agent 只在真正需要时才加载完整的 skill 内容。
 
-## SKILL.md 格式
+## SKILL.md 格式 {#skillmd-format}
 
 ```markdown
 ---
@@ -289,7 +289,7 @@ metadata:
 
 通过第三方 URL 或 GitHub 安装时，Hermes 会安装 `SKILL.md`，以及其中明确引用且位于 `references/`、`templates/`、`scripts/`、`assets/` 和 `examples/` 下的文件。未引用的仓库文件不会被复制。Hermes 会扫描完整的隔离捆绑包，并在 `skills/.hub/lock.json` 中记录来源 URL、精确内容哈希、扫描器版本、发现项、时间戳，以及本次结果是新扫描还是缓存复用。
 
-## 外部 Skill 目录
+## 外部 Skill 目录 {#external-skill-directories}
 
 如果你在 Hermes 之外维护 skills——例如，供多个 AI 工具使用的共享 `~/.agents/skills/` 目录——你可以告诉 Hermes 也扫描这些目录。
 
@@ -331,7 +331,7 @@ skills:
 
 所有四个 skills 都出现在你的 skill 索引中。如果你在本地创建一个名为 `my-custom-workflow` 的新 skill，它会遮蔽外部版本。
 
-## Skill 捆绑包
+## Skill 捆绑包 {#skill-bundles}
 
 Skill 捆绑包是将多个 skills 归组在单个斜杠命令下的小型 YAML 文件。当你运行 `/<bundle-name>` 时，捆绑包中列出的每个 skill 都会同时加载——当某个特定任务总是受益于同一组 skills 时非常有用。
 
@@ -444,7 +444,7 @@ skills 与记忆在自我改进循环中协同工作：记忆存放应始终位�
 `patch` 操作是更新的首选方式——它比 `edit` 更节省 token，因为工具调用中只出现变更的文本。
 :::
 
-### 对 agent 的 skill 写入设置门禁（`skills.write_approval`）
+### 对 agent 的 skill 写入设置门禁（`skills.write_approval`） {#gating-agent-skill-writes-skillswrite_approval}
 
 默认情况下 agent 可以自由写入 skills——包括来自轮次结束后运行的[后台自我改进审查](/user-guide/features/memory#controlling-memory-writes-write_approval)的写入。如果你更希望先审批每一次 skill 写入（例如小模型会误判自己学到了什么、处于安全敏感环境，或只是想盯着自我改进循环），可以打开写入审批门禁：
 

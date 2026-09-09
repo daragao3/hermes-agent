@@ -597,7 +597,7 @@ def register(ctx):
 
 所有回调都应接受 `**kwargs` 以保持向前兼容性。如果钩子回调崩溃，会被记录日志并跳过。其他钩子和代理继续正常运行。
 
-### `pre_llm_call` 上下文注入
+### `pre_llm_call` 上下文注入 {#pre_llm_call-context-injection}
 
 这是唯一一个返回值有意义的钩子。当 `pre_llm_call` 回调返回包含 `"context"` 键的字典（或纯字符串）时，Hermes 会将该文本注入**当前轮次的用户消息**中。这是记忆插件、RAG 集成、护栏以及任何需要向模型提供额外上下文的插件所使用的机制。
 
@@ -746,7 +746,7 @@ def register(ctx):
 
 **活跃提供商限制：** 记忆插件 CLI 命令仅在其提供商是配置中活跃的 `memory.provider` 时才会出现。如果用户尚未设置你的提供商，你的 CLI 命令不会出现在帮助输出中。
 
-### 注册斜杠命令
+### 注册斜杠命令 {#register-slash-commands}
 
 插件可以注册会话内斜杠命令——用户在对话中输入的命令（如 `/lcm status` 或 `/ping`）。这些命令在 CLI 和网关（Telegram、Discord 等）中均可使用。
 

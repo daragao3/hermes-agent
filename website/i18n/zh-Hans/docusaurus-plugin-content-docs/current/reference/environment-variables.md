@@ -513,7 +513,7 @@ Hermes 会从进程环境读取环境变量，对于用户自行管理的密钥�
 | `HERMES_DESKTOP_PYTHON` | 后端所用 Python 解释器的绝对路径，优先于 Electron 为源码检出自动解析的解释器。worktree 开发辅助工具（见 [从 worktree 运行 TUI 与 Desktop](../developer-guide/worktree-ui-dev.md)）用它来复用共享 venv。 |
 | `HERMES_DESKTOP_DEV_SERVER` | Electron 外壳加载的 Vite 开发服务器 URL，用于替代打包好的产物（例如 `http://127.0.0.1:5174`）。由 `npm run dev` 自动设置；仅在开发该应用时相关。 |
 
-### Microsoft Graph（Teams 会议）
+### Microsoft Graph（Teams 会议） {#microsoft-graph-teams-meetings}
 
 用于即将推出的 Teams 会议摘要流水线的 Microsoft Graph REST 客户端的仅应用凭证。Azure 门户操作步骤和所需 API 权限详见[注册 Microsoft Graph 应用程序](/guides/microsoft-graph-app-registration)。
 

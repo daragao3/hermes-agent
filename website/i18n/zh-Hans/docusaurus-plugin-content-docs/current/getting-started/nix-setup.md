@@ -35,7 +35,7 @@ Hermes Agent 提供了一个 Nix flake 和一个 NixOS 模块。
 
 ---
 
-## 快速开始（任意 Nix 用户）
+## 快速开始（任意 Nix 用户） {#quick-start-any-nix-user}
 
 无需克隆仓库。Nix 会自动获取、构建并运行所有内容：
 
@@ -351,7 +351,7 @@ Nix 用户最常见自定义需求的快速参考：
 
 ---
 
-## 密钥管理
+## 密钥管理 {#secrets-management}
 
 :::danger 切勿将 API 密钥放入 `settings` 或 `environment`
 Nix 表达式中的值会进入 `/nix/store`，该目录是全局可读的。请始终使用带有密钥管理器的 `environmentFiles`。
@@ -435,7 +435,7 @@ Agent 身份文件是独立的：Hermes 从 `$HERMES_HOME/SOUL.md` 加载其主�
 
 ---
 
-## MCP 服务器
+## MCP 服务器 {#mcp-servers}
 
 `mcpServers` 选项以声明式方式配置 [MCP（Model Context Protocol，模型上下文协议）](https://modelcontextprotocol.io)服务器。每个服务器使用 **stdio**（本地命令）或 **HTTP**（远程 URL）传输方式。
 
@@ -926,7 +926,7 @@ nix build .#checks.x86_64-linux.config-roundtrip    # 合并脚本保留用户�
     └── （Agent 创建的文件）
 ```
 
-### 容器模式
+### 容器模式 {#container-mode}
 
 相同的布局，挂载到容器中：
 

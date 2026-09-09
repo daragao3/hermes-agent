@@ -56,11 +56,11 @@ Hermes Web Dashboard（`hermes dashboard`）在设计上支持换肤和扩展，
 
 ---
 
-## 主题
+## 主题 {#themes}
 
 主题是存储在 `~/.hermes/dashboard-themes/` 中的 YAML 文件。文件名无关紧要（系统使用主题的 `name:` 字段），但惯例是 `<name>.yaml`。所有字段均为可选——缺失的键会回退到内置的 `default` 主题，因此一个主题可以只包含一个颜色。
 
-### 快速上手——你的第一个主题
+### 快速上手——你的第一个主题 {#quick-start--your-first-theme}
 
 ```bash
 mkdir -p ~/.hermes/dashboard-themes
@@ -81,7 +81,7 @@ palette:
 
 这就是全部入门流程：一个文件，两个颜色。以下内容均为可选的进阶配置。
 
-### 调色板、字体排版、布局
+### 调色板、字体排版、布局 {#palette-typography-layout}
 
 这三个块是主题的核心。每个块相互独立——覆盖其中一个，其余保持不变。
 
@@ -161,7 +161,7 @@ layout:
   density: compact
 ```
 
-### 布局变体
+### 布局变体 {#layout-variants}
 
 `layoutVariant` 选择整体 shell 布局。缺省时默认为 `"standard"`。
 
@@ -177,7 +177,7 @@ layoutVariant: cockpit
 
 当前变体通过 `document.documentElement.dataset.layoutVariant` 暴露，因此 `customCSS` 中的原始 CSS 可通过 `:root[data-layout-variant="cockpit"] ...` 定向匹配。
 
-### 主题资源（图片作为 CSS 变量）
+### 主题资源（图片作为 CSS 变量） {#theme-assets-images-as-css-vars}
 
 随主题附带图片 URL。每个命名插槽会成为一个 CSS 变量（`--theme-asset-<name>`），内置 shell 和任何插件均可读取。`bg` 插槽自动接入 backdrop；其他插槽面向插件开放。
 
@@ -209,7 +209,7 @@ const hero = getComputedStyle(document.documentElement)
   .getPropertyValue("--theme-asset-hero").trim();
 ```
 
-### 组件外观覆盖
+### 组件外观覆盖 {#component-chrome-overrides}
 
 `componentStyles` 可在不编写 CSS 选择器的情况下重新设置各 shell 组件的样式。每个桶（bucket）的条目会成为 CSS 变量（`--component-<bucket>-<kebab-property>`），shell 的共享组件会读取这些变量。因此 `card:` 的覆盖应用于所有 `<Card>`，`header:` 应用于应用栏，以此类推。
 
@@ -235,7 +235,7 @@ componentStyles:
 
 属性名使用 camelCase（`clipPath`），输出为 kebab-case（`clip-path`）。值为纯 CSS 字符串——CSS 接受的任何内容均可（`clip-path`、`border-image`、`background`、`box-shadow`、`animation` 等）。
 
-### 颜色覆盖
+### 颜色覆盖 {#color-overrides}
 
 大多数主题不需要此功能——3 层调色板已派生出所有 shadcn token。当你需要派生无法产生的特定强调色时（例如柔和主题的更柔和的破坏性红色，或品牌专属的成功绿色），才使用 `colorOverrides`。
 
@@ -253,7 +253,7 @@ colorOverrides:
 
 每个键与 `--color-<kebab>` CSS 变量一一对应（例如 `primaryForeground` → `--color-primary-foreground`）。此处设置的任何键仅对当前激活主题生效，切换到其他主题时覆盖会被清除。
 
-### 原始 `customCSS`
+### 原始 `customCSS` {#raw-customcss}
 
 对于 `componentStyles` 无法表达的选择器级外观——伪元素、动画、媒体查询、主题范围内的覆盖——可将原始 CSS 写入 `customCSS`：
 
@@ -275,7 +275,7 @@ customCSS: |
 
 CSS 在主题应用时以单个带作用域的 `<style data-hermes-theme-css>` 标签注入，主题切换时清除。**每个主题上限为 32 KiB。**
 
-### 内置主题
+### 内置主题 {#built-in-themes}
 
 每个内置主题都有自己的调色板、字体排版和布局——切换时产生的变化不仅限于颜色。
 
@@ -291,7 +291,7 @@ CSS 在主题应用时以单个带作用域的 `<style data-hermes-theme-css>` �
 
 引用 Google Fonts 的主题（除 Hermes Teal 外均如此）会按需加载样式表——首次切换时会向 `<head>` 注入一个 `<link>` 标签。
 
-### 完整主题 YAML 参考
+### 完整主题 YAML 参考 {#full-theme-yaml-reference}
 
 所有配置项汇总在一个文件中——复制后删除不需要的部分：
 
@@ -356,13 +356,13 @@ customCSS: |
 
 ---
 
-## 插件
+## 插件 {#plugins}
 
 Dashboard 插件是一个包含 `manifest.json`、预构建 JS bundle，以及可选的 CSS 文件和带 FastAPI 路由的 Python 文件的目录。插件与其他 Hermes 插件一起存放在 `~/.hermes/plugins/<name>/`——dashboard 扩展是该插件目录内的 `dashboard/` 子文件夹，因此一个插件可以从单次安装中同时扩展 CLI/gateway 和 dashboard。
 
 插件不打包 React 或 UI 组件，而是使用暴露在 `window.__HERMES_PLUGIN_SDK__` 上的 **Plugin SDK**。这使插件 bundle 保持极小体积（通常只有几 KB），并避免版本冲突。
 
-### 快速上手——你的第一个插件
+### 快速上手——你的第一个插件 {#quick-start--your-first-plugin}
 
 创建目录结构：
 
@@ -421,7 +421,7 @@ mkdir -p ~/.hermes/plugins/my-plugin/dashboard/dist
 如果你偏好 JSX，可使用任意打包工具（esbuild、Vite、rollup），将 React 设为外部依赖并输出 IIFE 格式。唯一的硬性要求是最终文件是可通过 `<script>` 加载的单个 JS 文件。React 永远不会被打包进去；它来自 `SDK.React`。
 :::
 
-### 目录结构
+### 目录结构 {#directory-layout}
 
 ```
 ~/.hermes/plugins/my-plugin/
@@ -443,7 +443,7 @@ mkdir -p ~/.hermes/plugins/my-plugin/dashboard/dist
 
 三者均非必须；按需包含所需层次即可。
 
-### Manifest 参考
+### Manifest 参考 {#manifest-reference}
 
 ```json
 {
@@ -489,7 +489,7 @@ mkdir -p ~/.hermes/plugins/my-plugin/dashboard/dist
 
 需要其他图标？向 `web/src/App.tsx` 的 `ICON_MAP` 提交 PR——纯增量修改。
 
-### Plugin SDK
+### Plugin SDK {#the-plugin-sdk}
 
 插件所需的一切均在 `window.__HERMES_PLUGIN_SDK__` 上。插件不应直接导入 React。
 
@@ -558,7 +558,7 @@ SDK.api.getSessions(10).then((resp) => console.log(resp.sessions.length));
 
 完整列表参见 [Web Dashboard → REST API](./web-dashboard#rest-api)。
 
-### Shell 插槽
+### Shell 插槽 {#shell-slots}
 
 插槽（slot）允许插件向应用 shell 的命名位置注入组件——cockpit 侧边栏、顶栏、底栏、覆盖层——而无需占用整个标签页。多个插件可以填充同一个插槽；它们按注册顺序堆叠渲染。
 
@@ -569,7 +569,7 @@ window.__HERMES_PLUGINS__.registerSlot("my-plugin", "sidebar", MySidebar);
 window.__HERMES_PLUGINS__.registerSlot("my-plugin", "header-left", MyCrest);
 ```
 
-#### 插槽目录
+#### 插槽目录 {#slot-catalogue}
 
 **Shell 全局插槽**（在应用外壳的任意位置渲染）：
 
@@ -621,7 +621,7 @@ Shell 只为上述插槽渲染 `<PluginSlot name="..." />`。注册表接受额�
 
 如果同一个 `(plugin, slot)` 对被注册两次，后一次调用会替换前一次——这与 React HMR 期望插件重新挂载时的行为一致。
 
-### 替换内置页面（`tab.override`）
+### 替换内置页面（`tab.override`） {#replacing-built-in-pages-taboverride}
 
 将 `tab.override` 设置为内置路由路径，可使插件组件替换该页面，而非添加新标签页。适用于主题希望自定义首页（`/`）但保留 dashboard 其余部分的场景。
 
@@ -648,7 +648,7 @@ Shell 只为上述插槽渲染 `<PluginSlot name="..." />`。注册表接受额�
 
 如果只需要向现有页面添加卡片或工具栏而不完全接管它，请改用[页面级插槽](#augmenting-built-in-pages-page-scoped-slots)。
 
-### 增强内置页面（页面级插槽）
+### 增强内置页面（页面级插槽） {#augmenting-built-in-pages-page-scoped-slots}
 
 通过 `tab.override` 完全替换页面代价较重——你的插件现在拥有整个页面，包括我们未来对其的所有更新。大多数情况下，你只是想向现有页面添加横幅、卡片或工具栏。这正是**页面级插槽**的用途。
 
@@ -700,7 +700,7 @@ Shell 只为上述插槽渲染 `<PluginSlot name="..." />`。注册表接受额�
 
 参考插件（[`hermes-example-plugins`](https://github.com/NousResearch/hermes-example-plugins/tree/main/example-dashboard) 中的 `example-dashboard`）提供了一个向 `sessions:top` 注入横幅的实时演示——安装它可端到端了解该模式。
 
-### 仅插槽插件（`tab.hidden`）
+### 仅插槽插件（`tab.hidden`） {#slot-only-plugins-tabhidden}
 
 当 `tab.hidden: true` 时，插件注册其组件（用于直接 URL 访问）和所有插槽，但不向导航添加标签页。适用于仅用于注入插槽的插件——顶栏徽标、侧边栏 HUD、覆盖层。
 
@@ -720,7 +720,7 @@ Shell 只为上述插槽渲染 `<PluginSlot name="..." />`。注册表接受额�
 
 Bundle 仍需调用带占位符组件的 `register()`（以防有人直接访问该 URL），然后调用 `registerSlot()` 完成实际工作。
 
-### 后端 API 路由
+### 后端 API 路由 {#backend-api-routes}
 
 插件可通过在 manifest 中设置 `api` 来注册 FastAPI 路由。创建文件并导出 `router`：
 
@@ -772,7 +772,7 @@ async def config_snapshot():
     return {"model": cfg.get("model", {})}
 ```
 
-### 插件自定义 CSS
+### 插件自定义 CSS {#custom-css-per-plugin}
 
 如果插件需要超出 Tailwind 类和内联 `style=` 的样式，可添加 CSS 文件并在 manifest 中引用：
 
@@ -799,7 +799,7 @@ async def config_snapshot():
 
 Dashboard 将每个 shadcn token 暴露为 `--color-*`，以及主题额外变量（`--theme-asset-*`、`--component-<bucket>-*`、`--radius`、`--spacing-mul`）。引用这些变量后，你的插件会随激活主题自动换肤。
 
-### 插件发现与重载
+### 插件发现与重载 {#plugin-discovery--reload}
 
 Dashboard 扫描三个目录中的 `dashboard/manifest.json`：
 
@@ -833,7 +833,7 @@ curl http://127.0.0.1:9119/api/dashboard/plugins/rescan
 
 ---
 
-## 主题 + 插件组合演示
+## 主题 + 插件组合演示 {#combined-theme--plugin-demo}
 
 [`strike-freedom-cockpit`](https://github.com/NousResearch/hermes-example-plugins/tree/main/strike-freedom-cockpit) 插件（伴随仓库 `hermes-example-plugins`）是一个完整的换肤演示。它将主题 YAML 与仅插槽插件配对，在不 fork dashboard 的情况下生成驾驶舱风格的 HUD。
 
@@ -865,7 +865,7 @@ cp -r hermes-example-plugins/strike-freedom-cockpit ~/.hermes/plugins/
 
 ---
 
-## API 参考
+## API 参考 {#api-reference}
 
 ### 主题端点
 
@@ -893,7 +893,7 @@ cp -r hermes-example-plugins/strike-freedom-cockpit ~/.hermes/plugins/
 
 ---
 
-## 故障排查
+## 故障排查 {#troubleshooting}
 
 **我的主题没有出现在选择器中。**
 检查文件是否在 `~/.hermes/dashboard-themes/` 中且以 `.yaml` 或 `.yml` 结尾。刷新页面。运行 `curl http://127.0.0.1:9119/api/dashboard/themes`——你的主题应出现在响应中。如果 YAML 有解析错误，dashboard 会记录到 `~/.hermes/logs/` 下的 `errors.log`。

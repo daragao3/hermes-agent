@@ -717,7 +717,7 @@ worktree_sync: true    # 默认 —— 从拉取到的远程 tip 分叉
 node_modules/
 ```
 
-## 上下文压缩
+## 上下文压缩 {#context-compression}
 
 Hermes 自动压缩长对话以保持在模型的上下文窗口内。压缩摘要器是一个单独的 LLM 调用 —— 您可以将其指向任何 provider 或端点。
 
@@ -1003,7 +1003,7 @@ auxiliary:
 `"main"` provider 选项表示"使用我的主 agent 使用的任何 provider" —— 它仅在 `auxiliary:`、`compression:` 以及主回退条目（`fallback_providers:` 或旧版 `fallback_model:`）中有效。它**不是**顶级 `model.provider` 设置的有效值。如果您使用自定义 OpenAI 兼容端点，请在 `model:` 部分设置 `provider: custom`。所有主模型 provider 选项请参阅 [AI Providers](/integrations/providers)。
 :::
 
-### 完整辅助配置参考
+### 完整辅助配置参考 {#full-auxiliary-config-reference}
 
 ```yaml
 auxiliary:

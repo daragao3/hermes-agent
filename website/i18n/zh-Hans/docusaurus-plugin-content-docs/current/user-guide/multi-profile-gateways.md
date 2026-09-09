@@ -436,7 +436,7 @@ sudo loginctl enable-linger "$USER"
 启用 lingering 后，你的 systemd 用户单元（包括
 `hermes-gateway-<profile>.service`）会在 SSH 断开和重启之后继续运行。
 
-## Token 冲突防护
+## Token 冲突防护 {#token-conflict-safety}
 
 每个 profile 在每个平台上都必须使用唯一的 bot token。如果两个 profile
 共用同一个 Telegram、Discord、Slack、WhatsApp 或 Signal token，第二个

@@ -289,7 +289,7 @@ Gateway 驱动的更新提示使用原生飞书 `Yes` / `No` 卡片，而非回�
 
 **命令审批**也通过此机制实现——当 Agent 需要执行危险命令时，会发送一张带有「允许一次 / 本次会话 / 始终允许 / 拒绝」按钮的交互式卡片。用户点击按钮后，卡片操作回调将审批决定传回 Agent。
 
-### 飞书应用所需配置
+### 飞书应用所需配置 {#required-feishu-app-configuration}
 
 交互式卡片需要在飞书开发者控制台完成**三项**配置。缺少任何一项，用户点击卡片按钮时将出现错误 **200340**。
 
@@ -471,7 +471,7 @@ Agent 工作期间，机器人会在你的消息上显示 `Typing` 表情回应�
 - **请求体读取超时：** 30 秒
 - **Content-Type 强制：** 仅接受 `application/json`
 
-## WebSocket 调优
+## WebSocket 调优 {#websocket-tuning}
 
 使用 `websocket` 模式时，可自定义重连和 ping 行为：
 
@@ -488,7 +488,7 @@ platforms:
 | 重连间隔 | `ws_reconnect_interval` | 120s | 两次重连尝试之间的等待时间 |
 | Ping 间隔 | `ws_ping_interval` | _（SDK 默认）_ | WebSocket 保活 ping 的频率 |
 
-## 按群访问控制
+## 按群访问控制 {#per-group-access-control}
 
 除全局 `FEISHU_GROUP_POLICY` 外，还可在 config.yaml 的 `group_rules` 中为每个群聊设置细粒度规则：
 

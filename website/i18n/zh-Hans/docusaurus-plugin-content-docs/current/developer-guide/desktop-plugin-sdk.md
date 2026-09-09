@@ -528,7 +528,7 @@ const tab = ctx.storage.get('lastTab', 'summary')
 ctx.storage.remove('lastTab')
 ```
 
-## 打包内置插件
+## 打包内置插件 {#bundled-plugins}
 
 插件也可以随仓库内置于 `apps/desktop/src/plugins/<id>/plugin.tsx`（默认
 导出一个 `HermesPlugin`）。它会在启动时由 `discoverBundledPlugins()` 发现——

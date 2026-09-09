@@ -178,7 +178,7 @@ mcp_servers:
 - 需要低延迟访问本地资源
 - 你参考的 MCP 服务器文档中使用了 `command`、`args` 和 `env`
 
-### HTTP 服务器
+### HTTP 服务器 {#http-servers}
 
 HTTP MCP 服务器是 Hermes 直接连接的远程端点。
 
@@ -511,7 +511,7 @@ mcp_servers:
 
 Hermes 在启动时发现 MCP 服务器，并将其工具注册到普通工具注册表中。
 
-### 动态工具发现
+### 动态工具发现 {#dynamic-tool-discovery}
 
 MCP 服务器可以在运行时通过发送 `notifications/tools/list_changed` 通知，告知 Hermes 其可用工具发生了变化。Hermes 收到该通知后，会自动重新获取服务器的工具列表并更新注册表——无需手动执行 `/reload-mcp`。
 
