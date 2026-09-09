@@ -344,7 +344,12 @@ def _truncate_on_word_boundary(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     clipped = text[: limit - 3]
-    boundary = clipped.rfind(" ")
+    # Back off only when the cut landed INSIDE a word, i.e. there is a word
+    # character on both sides of it. When either side is already whitespace
+    # we have whole words, and dropping one more shortens the text for
+    # nothing.
+    mid_word = bool(clipped) and not clipped[-1].isspace() and not text[limit - 3].isspace()
+    boundary = clipped.rfind(" ") if mid_word else -1
     if boundary > 0:
         clipped = clipped[:boundary]
     return clipped.rstrip().rstrip(",;:-—–") + "..."
@@ -359,8 +364,7 @@ def render_skill_page(
     name = fm.get("name", meta["slug"])
     description = fm.get("description", "").strip()
     short_desc = description.split(".")[0].strip() if description else name
-    if len(short_desc) > 160:
-        short_desc = _truncate_on_word_boundary(short_desc, 160)
+    short_desc = _truncate_on_word_boundary(short_desc, 160)
 
     # Heuristic nicer title from name
     display_name = name.replace("-", " ").replace("_", " ").title()
@@ -527,8 +531,7 @@ def build_catalog_md_bundled(entries: list[tuple[dict[str, Any], dict[str, Any]]
             fm = parsed["frontmatter"]
             name = fm.get("name", meta["slug"])
             desc = (fm.get("description") or "").strip()
-            if len(desc) > 240:
-                desc = desc[:237].rstrip() + "..."
+            desc = _truncate_on_word_boundary(desc, 240)
             link_target = f"/user-guide/skills/bundled/{meta['category']}/{page_id(meta)}"
             path = f"`{meta['rel_path']}`"
             desc_esc = mdx_escape_body(desc).replace("|", "\\|").replace("\n", " ")
@@ -588,8 +591,7 @@ def build_catalog_md_optional(entries: list[tuple[dict[str, Any], dict[str, Any]
             fm = parsed["frontmatter"]
             name = fm.get("name", meta["slug"])
             desc = (fm.get("description") or "").strip()
-            if len(desc) > 240:
-                desc = desc[:237].rstrip() + "..."
+            desc = _truncate_on_word_boundary(desc, 240)
             link_target = f"/user-guide/skills/optional/{meta['category']}/{page_id(meta)}"
             desc_esc = mdx_escape_body(desc).replace("|", "\\|").replace("\n", " ")
             lines.append(f"| [**{name}**]({link_target}) | {desc_esc} |")
