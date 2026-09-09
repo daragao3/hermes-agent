@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Gate the zh-Hans docs locale against ``website/docs`` so it cannot drift silently.
 
-Six independent gates, each catching a failure class the others are blind to.
-Run them all; a page can pass five and fail the sixth.
+Seven independent gates, each catching a failure class the others are blind to.
+Run them all; a page can pass six and fail the seventh.
 
 1. PAGE SET      -- every English page has a zh counterpart (and vice versa).
                     A missing zh file is drift, and no per-page gate can see it.
@@ -33,6 +33,12 @@ Run them all; a page can pass five and fail the sixth.
                     FRONTMATTER_ALLOW ratchet is now EMPTY -- the 70 gaps it
                     was seeded with were all filled -- so this gate blocks
                     unconditionally.
+7. KEY ORDER     -- ``title:`` must precede ``description:``. Narrow by
+                    measurement, not by timidity: the tree has 11 distinct key
+                    sequences and contradicts itself on every OTHER pair, so a
+                    single canonical order would fail 56 pages and mean
+                    normalising to a convention nobody chose. Title-before-
+                    description is unanimous at 0 of 722, so it gates for free.
 
 Deliberately NOT gated on, because both are actively misleading here:
 
@@ -311,6 +317,30 @@ def frontmatter_description(text):
     return frontmatter_value(text, "description")
 
 
+FM_KEY = re.compile(r"([A-Za-z_][\w-]*):")
+
+
+def frontmatter_keys(text):
+    """Top-level frontmatter key names, in the order they appear.
+
+    Indented lines cannot match, so the members of a nested mapping or a YAML
+    list are not mistaken for top-level keys. A page with no frontmatter block
+    yields an empty list, not None -- callers here only ever ask about order,
+    and "no keys" orders trivially.
+    """
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return []
+    out = []
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        match = FM_KEY.match(line)
+        if match:
+            out.append(match.group(1))
+    return out
+
+
 def is_elided(desc):
     return desc.rstrip().endswith(ELLIPSES)
 
@@ -410,6 +440,50 @@ def gate_frontmatter(en_pages, zh_pages, findings):
     return bad
 
 
+# --------------------------------------------------------------------- gate 7
+# `title` must come before `description`. This is NARROW on purpose, and the
+# narrowness is the measured part.
+#
+# The obvious version of this gate -- one canonical key order for every page --
+# is not available here, because the tree genuinely disagrees with itself and
+# there is no existing convention to codify. Measured 2026-09-09 over all 722
+# page/locale pairs: 11 distinct key sequences, and the two commonest disagree
+# in both directions. 356 pages order title -> sidebar_label while 16 order
+# sidebar_label -> title; 284 order sidebar_position -> title while 34 order
+# title -> sidebar_position. Any fixed rank fails on 56 pages, so enforcing one
+# would mean normalising the tree to a convention nobody has chosen -- for a
+# key order that has ZERO rendered effect.
+#
+# What IS unanimous is title before description: 0 of 722 violate it, so this
+# gate is green on arrival with no page edits and no allowlist. It also catches
+# the exact defect that prompted it -- a mechanical fill inserted `description`
+# at the top of blocks that already had a `sidebar_position`, leaving
+# description / sidebar_position / title on twelve files (caught by reading the
+# diff, because no gate then looked at order).
+#
+# Keys BETWEEN title and description are fine: `title -> sidebar_label ->
+# description` is the single commonest shape in the repo. Only the relative
+# order of these two is constrained.
+def gate_key_order(en_pages, zh_pages, findings):
+    """`title:` must appear before `description:` in the frontmatter block."""
+    bad = 0
+    for locale, root, pages in (
+        ("en", EN_DIR, en_pages),
+        ("zh", ZH_DIR, zh_pages),
+    ):
+        for rel in sorted(pages):
+            keys = frontmatter_keys(read(os.path.join(root, rel)))
+            if "title" not in keys or "description" not in keys:
+                continue  # gate 6 owns absence; this gate has no opinion on it
+            if keys.index("description") < keys.index("title"):
+                bad += 1
+                findings.append(
+                    "key order     %s [%s]  description: appears before title: "
+                    "(%s)" % (rel, locale, " -> ".join(keys))
+                )
+    return bad
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Check zh-Hans docs parity against website/docs."
@@ -453,6 +527,7 @@ def main(argv=None):
     n_anchor = gate_anchors(sorted(zh_pages), findings)
     n_desc = gate_descriptions(paired, findings)
     n_fm = gate_frontmatter(en_pages, zh_pages, findings)
+    n_order = gate_key_order(en_pages, zh_pages, findings)
 
     for line in findings:
         print(line)
@@ -468,9 +543,10 @@ def main(argv=None):
     print("pages w/ broken anchors . %d" % n_anchor)
     print("bad zh descriptions ..... %d" % n_desc)
     print("incomplete frontmatter .. %d" % n_fm)
+    print("frontmatter key order ... %d" % n_order)
 
     n_pageset = len(untranslated) + len(orphaned)
-    total = n_pageset + n_struct + n_drift + n_anchor + n_desc + n_fm
+    total = n_pageset + n_struct + n_drift + n_anchor + n_desc + n_fm + n_order
     waived = 0
     if n_pageset and args.allow_untranslated:
         print("")

@@ -633,3 +633,98 @@ def test_allow_untranslated_does_not_waive_incomplete_frontmatter(parity, tree):
     PR lane can block on this without stranding a skill author."""
     tree("a.md", "# T\n\ntext\n", FULL, bare=True)
     assert parity.main(["--allow-untranslated"]) == 1
+
+
+# --------------------------------------------------------------------------
+# gate 7 — frontmatter key order
+#
+# Deliberately constrains ONE pair. A single canonical order is not available:
+# the tree carries 11 distinct key sequences and disagrees with itself in both
+# directions on sidebar_label and sidebar_position, so any fixed rank fails 56
+# pages. title-before-description is unanimous, so it gates for free.
+# --------------------------------------------------------------------------
+def _fm(*keys):
+    body = "".join('%s: "x"\n' % k for k in keys)
+    return "---\n%s---\n\n# T\n\ntext\n" % body
+
+
+def test_key_order_flags_description_before_title(parity, tree):
+    """The defect that prompted this gate: a mechanical fill inserted
+    description at the top of a block that already had a sidebar_position, so
+    title ended up below both."""
+    tree("a.md", _fm("description", "sidebar_position", "title"), _fm("title", "description"))
+    findings = []
+    assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 1
+    assert "description: appears before title:" in findings[0]
+    assert "[en]" in findings[0]
+
+
+def test_key_order_accepts_title_before_description(parity, tree):
+    tree("a.md", _fm("sidebar_position", "title", "description"), _fm("title", "description"))
+    findings = []
+    assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 0
+
+
+def test_key_order_allows_keys_between_the_two(parity, tree):
+    """`title -> sidebar_label -> description` is the SINGLE COMMONEST shape in
+    the repo (356 of 722 pages). Requiring adjacency would fail the majority."""
+    tree("a.md", _fm("title", "sidebar_label", "description"), _fm("title", "sidebar_label", "description"))
+    findings = []
+    assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 0
+
+
+def test_key_order_has_no_opinion_on_other_pairs(parity, tree):
+    """The tree contradicts itself on sidebar_label and sidebar_position, so
+    this gate must stay silent about them or it fails 56 real pages."""
+    tree("a.md", _fm("sidebar_label", "title", "description"), _fm("title", "description", "sidebar_position"))
+    findings = []
+    assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 0
+
+
+def test_key_order_is_silent_when_a_key_is_absent(parity, tree):
+    """Absence is gate 6's business. Reporting it here would double-count every
+    incomplete page."""
+    tree("a.md", _fm("description"), _fm("title"), bare=False)
+    findings = []
+    assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 0
+
+
+def test_key_order_checks_the_zh_locale_too(parity, tree):
+    tree("a.md", _fm("title", "description"), _fm("description", "title"))
+    findings = []
+    assert parity.gate_key_order({"a.md"}, {"a.md"}, findings) == 1
+    assert "[zh]" in findings[0]
+
+
+def test_frontmatter_keys_ignores_indented_lines(parity):
+    """A nested mapping's members are not top-level keys. Reading them as such
+    would invent an order that does not exist."""
+    text = '---\ntitle: "T"\nseo:\n  description: "nested"\ndescription: "D"\n---\n\n# T\n'
+    assert parity.frontmatter_keys(text) == ["title", "seo", "description"]
+
+
+def test_frontmatter_keys_of_a_page_with_no_block_is_empty(parity):
+    assert parity.frontmatter_keys("# Just a heading\n") == []
+
+
+def test_key_order_failure_counts_toward_the_exit_code(parity, tree, capsys):
+    tree("a.md", _fm("description", "title"), _fm("title", "description"))
+    assert parity.main([]) == 1
+    assert "frontmatter key order ... 1" in capsys.readouterr().out
+
+
+def test_allow_untranslated_does_not_waive_bad_key_order(parity, tree):
+    tree("a.md", _fm("description", "title"), _fm("title", "description"))
+    assert parity.main(["--allow-untranslated"]) == 1
+
+
+def test_key_order_holds_across_the_whole_real_tree(parity):
+    """Pins the measurement the gate's narrowness rests on: title-before-
+    description is unanimous today, which is WHY this gate needs no allowlist.
+    If this ever fails, the gate stopped being free and the choice between
+    fixing the page and widening the rule has to be made deliberately."""
+    findings = []
+    n = parity.gate_key_order(
+        parity.rel_pages(parity.EN_DIR), parity.rel_pages(parity.ZH_DIR), findings
+    )
+    assert n == 0, findings
