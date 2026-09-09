@@ -156,19 +156,19 @@ Hermes 将使用终端工具、文件操作和你的本地模型——无需任�
 
 ### 增大 Ollama 的上下文窗口
 
-默认情况下，Ollama 使用 2048 token 的上下文。对于 agentic 工作（工具调用、长对话），需要更大的上下文：
+默认情况下，Ollama 使用 2048 token 的上下文。Hermes 进行带工具的 agentic 工作至少需要 64,000 token：
 
 ```bash
 # 创建一个扩展上下文的 Modelfile
 cat > /tmp/Modelfile << 'EOF'
 FROM gemma4:31b
-PARAMETER num_ctx 16384
+PARAMETER num_ctx 64000
 EOF
 
-ollama create gemma4-16k -f /tmp/Modelfile
+ollama create gemma4-64k -f /tmp/Modelfile
 ```
 
-然后将 Hermes 配置中的模型名称更新为 `gemma4-16k`。
+然后将 Hermes 配置中的模型名称更新为 `gemma4-64k`。
 
 ### 保持模型常驻内存
 

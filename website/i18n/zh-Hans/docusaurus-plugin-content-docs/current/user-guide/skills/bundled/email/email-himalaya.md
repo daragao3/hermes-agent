@@ -32,6 +32,10 @@ Himalaya CLI：从终端收发 IMAP/SMTP 邮件。
 
 Himalaya 是一个 CLI 邮件客户端，支持通过 IMAP、SMTP、Notmuch 或 Sendmail 后端从终端管理邮件。
 
+本 skill 与 Hermes 的 Email 网关适配器是两回事。网关适配器让别人可以给 agent
+发邮件，使用的是 Hermes 内置的 IMAP/SMTP 适配器；而本 skill 让 agent 通过终端
+工具操作邮箱，需要外部的 `himalaya` CLI。
+
 ## 参考资料
 
 - `references/configuration.md`（配置文件设置 + IMAP/SMTP 认证）

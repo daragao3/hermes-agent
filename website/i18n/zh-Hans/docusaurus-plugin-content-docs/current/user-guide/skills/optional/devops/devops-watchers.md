@@ -77,7 +77,7 @@ python $HERMES_HOME/skills/devops/watchers/scripts/watch_rss.py \
   --name hn --url https://news.ycombinator.com/rss --max 5
 ```
 
-监控 GitHub 仓库（在 `~/.hermes/.env` 中设置 `GITHUB_TOKEN` 以避免匿名请求限制 60 次/小时）：
+监控 GitHub 仓库（在 `${HERMES_HOME:-~/.hermes}/.env` 中设置 `GITHUB_TOKEN` 以避免匿名请求限制 60 次/小时）：
 
 ```bash
 python $HERMES_HOME/skills/devops/watchers/scripts/watch_github.py \

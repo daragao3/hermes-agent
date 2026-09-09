@@ -109,7 +109,7 @@ Hermes 兼容 Cursor IDE 的 `.cursorrules` 文件和 `.cursor/rules/*.mdc` 规�
 1. **扫描工作目录** — 依次检查 `.hermes.md` → `AGENTS.md` → `CLAUDE.md` → `.cursorrules`（先匹配先生效）
 2. **读取内容** — 以 UTF-8 文本读取每个文件
 3. **安全扫描** — 检查内容是否存在 prompt 注入模式
-4. **截断** — 超过 20,000 个字符的文件进行首尾截断（70% 头部，20% 尾部，中间插入标记）
+4. **截断** — 超过 `context_file_max_chars` 个字符（默认 20,000）的文件进行首尾截断（70% 头部，20% 尾部，中间插入标记）
 5. **组装** — 所有部分合并在 `# Project Context` 标题下
 6. **注入** — 组装后的内容添加到系统 prompt
 
@@ -171,12 +171,12 @@ The following project context files have been loaded and should be followed:
 
 | 限制 | 值 |
 |-------|-------|
-| 每个文件最大字符数 | 20,000（约 7,000 个 token） |
+| 每个文件最大字符数 | `context_file_max_chars`（默认 20,000，约 7,000 个 token） |
 | 头部截断比例 | 70% |
 | 尾部截断比例 | 20% |
 | 截断标记 | 10%（显示字符数并建议使用文件工具） |
 
-当文件超过 20,000 个字符时，截断提示如下：
+当文件超过配置的上限时，截断提示如下：
 
 ```
 [...truncated AGENTS.md: kept 14000+4000 of 25000 chars. Use file tools to read the full file.]
@@ -185,7 +185,7 @@ The following project context files have been loaded and should be followed:
 ## 有效使用上下文文件的技巧
 
 :::tip AGENTS.md 最佳实践
-1. **保持简洁** — 远低于 20K 字符；agent 每轮都会读取
+1. **保持简洁** — 保持在你配置的 `context_file_max_chars` 以内；agent 每轮都会读取
 2. **使用标题结构** — 用 `##` 分节描述架构、规范、重要说明
 3. **包含具体示例** — 展示首选代码模式、API 结构、命名规范
 4. **说明禁止事项** — 例如「不得直接修改迁移文件」

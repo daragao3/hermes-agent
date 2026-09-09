@@ -61,7 +61,7 @@ prompt（提示词）缓存以处理该请求的模型为键，因此任何在�
 
 ![辅助面板展开状态](/img/docs/dashboard-models/auxiliary-expanded.png)
 
-每个辅助任务默认为 `auto`，即 Hermes 对该任务也使用主模型。当某个边缘任务需要更便宜或更快的模型时，可单独覆盖该槽位。
+每个辅助任务默认为 `auto`，即 Hermes 对该任务也会先尝试你的主模型。如果该路由不可用或遇到容量类失败，`auto` 会依次尝试该任务专属的 `auxiliary.<task>.fallback_chain`，然后是主链 `fallback_providers` / `fallback_model`，最后才是 Hermes 内置的辅助任务发现链。当某个边缘任务需要更便宜或更快的模型时，可单独覆盖该槽位。
 
 ### 常见覆盖模式
 

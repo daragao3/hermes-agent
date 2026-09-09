@@ -9,7 +9,7 @@ sidebar_position: 9
 :::tip
 添加平台有两种方式：
 - **Plugin**（推荐用于社区/第三方）：将 plugin 目录放入 `~/.hermes/plugins/` — 无需修改任何核心代码。参见下方 [Plugin 路径](#plugin-path-recommended)。
-- **内置**：需修改代码、配置和文档共 20+ 个文件。参见下方 [内置清单](#step-by-step-checklist)。
+- **内置**：需修改代码、配置和文档共 20+ 个文件。参见下方 [内置清单](#step-by-step-checklist-built-in-path)。
 :::
 
 ## 架构概览
@@ -454,7 +454,7 @@ LINE 两者都支持：阈值默认为 45 秒用于免费 postback 获取，`LIN
 
 ---
 
-## 分步清单（内置路径）{#step-by-step-checklist}
+## 分步清单（内置路径）{#step-by-step-checklist-built-in-path}
 
 :::note
 此清单用于将平台直接添加到 Hermes 核心代码库 — 通常由核心贡献者为官方支持的平台执行。社区/第三方平台应使用上方的 [Plugin 路径](#plugin-path-recommended)。
