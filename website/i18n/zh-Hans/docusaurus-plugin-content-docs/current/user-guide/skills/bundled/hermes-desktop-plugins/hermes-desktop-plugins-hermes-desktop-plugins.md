@@ -85,7 +85,7 @@ description: "编写桌面应用插件，添加 UI 面板与命令"
   面板会与该角色下已有的面板堆叠（形成标签页）。
   若想落到某个具体的**边缘**，请加上 `dock: { pane, pos }`——这与把面板拖到
   某个面板的投放 chip 上是同一个动作。`pane` 可以是任意面板 id
-  （`workspace` 是主线程面板；还有 `sessions`、`terminal`、`files`、
+  （`workspace` 是主对话线程面板；还有 `sessions`、`terminal`、`files`、
   `review`、`logs`），`pos` 取 `'top'|'bottom'|'left'|'right'|'center'`。
   例如"在对话下方"就是 `dock: { pane: 'workspace', pos: 'bottom' }`
   ——记得声明 `height`（如 `'200px'`），以免它占掉半个区域。
