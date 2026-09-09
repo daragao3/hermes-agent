@@ -175,7 +175,7 @@ platforms: [macos, linux]     # macOS and Linux
 
 设置后，该 skill 会在不兼容的平台上自动从系统提示词、`skills_list()` 和斜杠命令中隐藏。若省略，则在所有平台上加载。
 
-## Skill 输出与媒体传递
+## Skill 输出与媒体传递 {#skill-output-and-media-delivery}
 
 当 skill 响应（或任何 agent 响应）包含指向媒体文件的裸绝对路径时——例如 `/home/user/screenshots/diagram.png`——gateway 会自动检测到它，将其从可见文本中剥离，并以原生方式将文件传递给用户的聊天界面（Telegram 图片、Discord 附件等），而不是在消息中留下原始路径。
 
@@ -416,7 +416,7 @@ hermes bundles reload
 
 捆绑包只是一个 YAML 别名——它不会为你安装 skills。Skills 本身必须已经存在（在 `~/.hermes/skills/` 或外部 skill 目录中）。否则捆绑包调用只会跳过缺失的 skills。
 
-## Agent 管理的 Skills（skill_manage 工具）
+## Agent 管理的 Skills（skill_manage 工具） {#agent-managed-skills-skill_manage-tool}
 
 agent 可以通过 `skill_manage` 工具创建、更新和删除自己的 skills。这是 agent 的**程序性记忆**——当它找到一个非平凡的工作流时，它会将该方法保存为 skill 以供将来复用。
 
@@ -705,7 +705,7 @@ hermes skills update react   # Update one specific installed hub skill
 Skills hub 操作使用 GitHub API，未认证用户的速率限制为每小时 60 次请求。如果在安装或搜索时看到速率限制错误，请在 `.env` 文件中设置 `GITHUB_TOKEN` 以将限制提高到每小时 5,000 次请求。发生此情况时，错误消息会包含可操作的提示。
 :::
 
-### 发布自定义 skill tap
+### 发布自定义 skill tap {#publishing-a-custom-skill-tap}
 
 如果你想分享一组精选的 skills——为你的团队、组织或公开分享——你可以将它们发布为 **tap**：其他 Hermes 用户通过 `hermes skills tap add <owner/repo>` 添加的 GitHub 仓库。无需服务器，无需注册表注册，无需发布流水线。只需一个包含 `SKILL.md` 文件的目录。
 

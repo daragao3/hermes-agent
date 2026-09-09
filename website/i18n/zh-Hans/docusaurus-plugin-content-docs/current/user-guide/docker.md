@@ -13,7 +13,7 @@ Docker 与 Hermes Agent 的交集有两种截然不同的方式：
 
 本页介绍选项 1。容器将所有用户数据（配置、API 密钥、会话、技能、记忆）存储在从宿主机挂载于 `/opt/data` 的单个目录中。镜像本身是无状态的，可通过拉取新版本进行升级而不会丢失任何配置。
 
-## 快速开始
+## 快速开始 {#quick-start}
 
 如果这是你第一次运行 Hermes Agent，请在宿主机上创建一个数据目录，并以交互方式启动容器以运行设置向导：
 
@@ -368,7 +368,7 @@ services:
 
 使用 `docker compose up -d` 启动，使用 `docker compose logs -f` 查看日志。受监管 gateway 的 stdout 同时也会输出到卷上的 `${HERMES_HOME}/logs/gateways/<profile>/current` —— 完整的路由映射见[日志去了哪里](#where-the-logs-go)。
 
-## 可选：Linux 桌面音频桥接
+## 可选：Linux 桌面音频桥接 {#optional-linux-desktop-audio-bridge}
 
 在 Docker 中使用语音模式需要两件事同时成立：必须允许 Hermes 在容器内探测音频设备，并且容器必须能访问宿主机的音频服务器。下面的配置覆盖了宿主机侧的音频管道，适用于暴露 PulseAudio 兼容套接字的 Linux 桌面，包括许多 PipeWire 配置。
 

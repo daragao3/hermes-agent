@@ -98,7 +98,7 @@ echo 'HONCHO_API_KEY=***' >> ~/.hermes/.env
 
 会话初始化时，Honcho 在后台以完整配置的 `dialecticDepth` 触发一次辩证调用，并将结果直接传递给第 1 轮的上下文组装。对冷 peer 进行单轮预热通常返回较少内容——多轮深度会在用户开口之前完成审计/调和周期。如果预热在第 1 轮前未完成，第 1 轮将回退到有超时限制的同步调用。
 
-### 查询自适应推理级别
+### 查询自适应推理级别 {#query-adaptive-reasoning-level}
 
 自动注入的辩证会根据查询长度调整 `dialecticReasoningLevel`：≥120 字符时 +1 级，≥400 字符时 +2 级，上限为 `reasoningLevelCap`（默认 `"high"`）。设置 `reasoningHeuristic: false` 可禁用此功能，将所有自动调用固定在 `dialecticReasoningLevel`。可用级别：`minimal`、`low`、`medium`、`high`、`max`。
 
@@ -157,7 +157,7 @@ Honcho 在 `~/.honcho/config.json`（全局）或 `$HERMES_HOME/honcho.json`（p
 
 在 `tools` 模式下，模型完全自主——它在需要时调用 `honcho_reasoning`，并自行选择 `reasoning_level`。Cadence 和预算设置仅适用于有自动注入的模式（`hybrid` 和 `context`）。
 
-## Gateway 身份映射
+## Gateway 身份映射 {#gateway-identity-mapping}
 
 这些设置仅在你运行 [Hermes gateway](../../developer-guide/gateway-internals.md) 时才有意义——那是用户携带平台原生运行时 ID（Telegram UID、Discord snowflake、Slack user）到达的唯一入口。CLI、TUI 和桌面会话没有运行时 ID，始终解析为 `peerName`，因此在 gateway 之外这些键不起任何作用。
 
@@ -181,7 +181,7 @@ Honcho 在 `~/.honcho/config.json`（全局）或 `$HERMES_HOME/honcho.json`（p
 `pinPeerName` 是 `pinUserPeer` 的遗留别名——出于向后兼容仍会被读取（两者同时设置时以 `pinUserPeer` 为准），但不再写入。重新运行 setup 会将其迁移到规范键上。
 :::
 
-## 观察模式（定向 vs. 统一）
+## 观察模式（定向 vs. 统一） {#observation-directional-vs-unified}
 
 Honcho 将对话建模为 peer 之间的消息交换。每个 peer 有两个观察开关，与 Honcho 的 `SessionPeerConfig` 一一对应：
 

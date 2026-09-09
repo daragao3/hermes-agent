@@ -195,7 +195,7 @@ mcp_servers:
 - 你的组织暴露了内部 MCP 端点
 - 你不希望 Hermes 为该集成在本地启动子进程
 
-### 使用 OAuth 认证的 HTTP 服务器
+### 使用 OAuth 认证的 HTTP 服务器 {#oauth-authenticated-http-servers}
 
 大多数托管 MCP 服务器（Linear、Sentry、Atlassian、Asana、Figma、Stripe 等）要求使用 OAuth 2.1 而非静态 bearer token。设置 `auth: oauth` 后，Hermes 会通过 MCP Python SDK 处理服务发现、动态客户端注册、PKCE、token 交换、刷新以及升级认证（step-up auth）。
 
@@ -695,7 +695,7 @@ mcp_servers:
       enabled: false
 ```
 
-## 将 Hermes 作为 MCP 服务器运行
+## 将 Hermes 作为 MCP 服务器运行 {#running-hermes-as-an-mcp-server}
 
 除了连接**到** MCP 服务器，Hermes 也可以**作为** MCP 服务器运行。这让其他支持 MCP 的 agent（Claude Code、Cursor、Codex 或任何 MCP 客户端）能够使用 Hermes 的消息能力——列出会话、读取消息历史，以及跨所有已连接平台发送消息。
 

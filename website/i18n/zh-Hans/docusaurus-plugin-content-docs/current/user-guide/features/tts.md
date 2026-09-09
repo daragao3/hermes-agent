@@ -12,7 +12,7 @@ Hermes Agent 支持跨所有消息平台的文字转语音（TTS）输出和语�
 如果你拥有付费的 [Nous Portal](https://portal.nousresearch.com) 订阅，OpenAI TTS 可通过 **[Tool Gateway](tool-gateway.md)** 使用，无需单独的 OpenAI API 密钥。新安装可运行 `hermes setup --portal` 登录并一次性开启所有 gateway 工具；已有安装可通过 `hermes model` 或 `hermes tools` 选择 **Nous Subscription** 仅启用 TTS。
 :::
 
-## 文字转语音（TTS）
+## 文字转语音（TTS） {#text-to-speech}
 
 支持十个提供商将文字转换为语音：
 
@@ -328,7 +328,7 @@ tts:
 
 命令类型提供商会以你的用户权限运行你配置的任何 shell 命令。Hermes 会对占位符值进行转义并强制执行配置的超时，但命令模板本身是受信任的本地输入——请像对待 PATH 中的 shell 脚本一样对待它。
 
-### Python 插件提供商
+### Python 插件提供商 {#python-plugin-providers}
 
 对于无法用单个 shell 命令表达的 TTS 引擎——没有 CLI 的 Python SDK、流式引擎、声音列表 API、OAuth 刷新认证——可通过 `ctx.register_tts_provider()` 注册 Python 插件。该插件与[自定义命令提供商](#custom-command-providers)注册表**共存**（不替换）；选择适合你引擎的接入方式。
 
@@ -407,7 +407,7 @@ def register(ctx):
 
 完整的抽象基类（含文档字符串）请参阅 `agent/tts_provider.py`。
 
-## 语音消息转录（STT）
+## 语音消息转录（STT） {#voice-message-transcription-stt}
 
 在 Telegram、Discord、WhatsApp、Slack 或 Signal 上发送的语音消息会被自动转录并作为文本注入对话。Agent 将转录内容视为普通文本。
 
@@ -562,7 +562,7 @@ stt:
 
 该 shell 命令以与 Hermes 相同的用户身份运行，拥有完整的文件系统访问权限——与 `tts.providers.<name>: type: command` 和 `HERMES_LOCAL_STT_COMMAND` 的信任模型相同。只声明来自你信任来源的命令提供商。
 
-### Python 插件提供商（STT）
+### Python 插件提供商（STT） {#python-plugin-providers-stt}
 
 对于既非内置、又无法用 shell 命令表达的 STT 引擎（需要 Python SDK、OAuth 刷新认证、流式分块等），可通过 `ctx.register_transcription_provider()` 注册 Python 插件。该插件与 6 个内置提供商（`local`、`local_command`、`groq`、`openai`、`mistral`、`xai`）以及 `stt.providers.<name>: type: command` 注册表**共存**——内置提供商保留其原生实现，并在名称冲突时始终优先；同名情况下命令提供商优先于插件（配置比插件安装更「局部」）。
 

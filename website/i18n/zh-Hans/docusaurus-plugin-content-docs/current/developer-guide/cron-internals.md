@@ -100,7 +100,7 @@ tick()
   6. 释放调度器锁
 ```
 
-### Gateway 集成
+### Gateway 集成 {#gateway-integration}
 
 在 gateway 模式下，cron **触发器**（决定一个到期任务*何时*触发的部分——“轴 B”）通过可插拔的
 `CronScheduler` provider 选择。Gateway 调用 `resolve_cron_scheduler()`

@@ -82,7 +82,7 @@ iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/script
 在 Windows 上，逐个配置工具 API key（Firecrawl、FAL、Browser Use、OpenAI TTS）是获得可用 agent 摩擦最大的部分。[Nous Portal](/user-guide/features/tool-gateway) 订阅通过一次 OAuth 登录即可覆盖模型**以及**所有这些工具。安装程序完成后，运行 `hermes setup --portal` 完成配置。
 :::
 
-## 功能矩阵
+## 功能矩阵 {#feature-matrix}
 
 除 dashboard 内嵌终端面板外，所有功能均可在 Windows 上原生运行。
 
@@ -101,7 +101,7 @@ iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/script
 
 Dashboard 的 `/chat` 标签页通过 POSIX PTY（`ptyprocess`）内嵌了真实终端。原生 Windows 没有等效的原语；Python 的 `pywinpty` / Windows ConPTY 可以实现，但需要单独的实现——视为未来工作。**dashboard 的其余部分均可原生运行**——只有该标签页会显示"请使用 WSL2"的提示横幅。
 
-## Hermes 在 Windows 上如何运行 shell 命令
+## Hermes 在 Windows 上如何运行 shell 命令 {#how-hermes-runs-shell-commands-on-windows}
 
 Hermes 的终端工具通过 **Git Bash** 运行命令，与 Claude Code 采用相同策略。这在不重写每个工具的情况下绕过了 POSIX 与 Windows 的差异。
 

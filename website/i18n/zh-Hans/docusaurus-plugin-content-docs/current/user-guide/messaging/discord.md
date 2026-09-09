@@ -575,7 +575,7 @@ display:
   tool_progress_command: true
 ```
 
-## 斜杠命令访问控制
+## 斜杠命令访问控制 {#slash-command-access-control}
 
 默认情况下，每个允许的用户都可以运行每个斜杠命令。要将你的允许列表分为**管理员**（完整斜杠命令访问权限）和**普通用户**（仅你明确启用的命令），请在 Discord 平台的 `extra` 块中添加 `allow_admin_from` 和 `user_allowed_commands`：
 

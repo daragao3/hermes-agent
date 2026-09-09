@@ -13,7 +13,7 @@ Hermes 有两个斜杠命令入口，均由 `hermes_cli/commands.py` 中的中�
 
 已安装的 skill（技能）也会在两个入口以动态斜杠命令的形式暴露。这包括内置 skill，如 `/plan`，它会打开计划模式并将 markdown 计划保存在活动工作区/后端工作目录下的 `.hermes/plans/` 中。
 
-## 权限与管理员/用户分级
+## 权限与管理员/用户分级 {#permissions-and-adminuser-split}
 
 每个支持按用户白名单的消息平台（Telegram、Discord、Slack、Matrix、Mattermost、Signal 等）都支持两级斜杠命令分级：**管理员**可使用所有已注册命令，**普通用户**只能使用你在 `user_allowed_commands` 中列出的命令（以及始终允许的 `/help` 和 `/whoami`）。在 `~/.hermes/gateway-config.yaml` 中对应平台的 `extra:` 块内配置 `allow_admin_from` 和 `user_allowed_commands`（以及群组等效项 `group_allow_admin_from` / `group_user_allowed_commands`）。
 
@@ -120,7 +120,7 @@ platforms:
 | `/pet [list\|<slug>]` | 切换或领养一只 [petdex](/user-guide/features/pets) 吉祥物。`/pet` 切换面板，`/pet list` 显示已安装的宠物，`/pet <slug>` 领养指定的一只。 |
 | `/hatch <description>`（别名：`/generate-pet`） | 根据文字描述生成一只全新的 petdex 宠物，使用已配置的图像后端（OpenRouter / Nous Portal）。见 [Pets](/user-guide/features/pets)。 |
 
-### 信息
+### 信息 {#info}
 
 | 命令 | 描述 |
 |---------|-------------|
@@ -276,7 +276,7 @@ hermes config set model.aliases.grok x-ai/grok-4
 - `/voice join`、`/voice channel` 和 `/voice leave` 仅在 Discord 上有意义。
 - 在 TUI 中，`/sessions` 显示的是当前 TUI 进程内的实时会话。对于已保存或已关闭的转录，请使用 `/resume [name]` 或 `hermes --tui --resume <id-or-title>`。
 
-## 破坏性命令的确认提示
+## 破坏性命令的确认提示 {#confirmation-prompts-for-destructive-commands}
 
 CLI 在执行会丢弃未保存会话状态的斜杠命令前会提示确认。当前破坏性命令集为：
 

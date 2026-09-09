@@ -41,7 +41,7 @@ hermes dashboard --host 0.0.0.0
 hermes dashboard --no-open
 ```
 
-## 管理多个 profile
+## 管理多个 profile {#managing-multiple-profiles}
 
 Dashboard 是一个**机器级**管理界面：一个服务器管理机器上的每一个
 [profile](../profiles.md)。侧边栏中的 profile 切换器（只要存在多个 profile
@@ -102,7 +102,7 @@ Chat 标签页是每次 `hermes dashboard` 启动的一部分——内嵌的浏�
 
 状态页每 5 秒自动刷新一次。
 
-### Chat（聊天）
+### Chat（聊天） {#chat}
 
 **Chat** 标签页将完整的 Hermes TUI（与 `hermes --tui` 相同的界面）直接嵌入浏览器。你在终端 TUI 中能做的一切——斜杠命令、模型选择器、工具调用卡片、Markdown 流式输出、clarify/sudo/approval 提示、皮肤主题——在这里都完全一致，因为 Dashboard 运行的是真实的 TUI 二进制文件，并通过 [xterm.js](https://xtermjs.org/) 的 WebGL 渲染器以像素级精度渲染其 ANSI 输出。
 
@@ -548,7 +548,7 @@ WebSocket 接受同样的参数，用于在所选 profile 下启动聊天。
 | `POST /api/sessions/prune` | 删除结束时间超过 N 天的会话 |
 | `PUT /api/cron/jobs/{id}` | 编辑定时任务的 prompt / 计划 / 名称 / 投递目标 |
 
-## 认证（gated 模式）
+## 认证（gated 模式） {#authentication-gated-mode}
 
 当 Dashboard 绑定到公网或非回环地址时——也就是 `127.0.0.1` / `localhost` 之外的任何地址——Hermes Agent 会启用一道认证门。每个请求都必须携带经过验证的会话 cookie，否则会被弹回登录页。内置了三种提供方：
 
