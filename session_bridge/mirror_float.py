@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -9,7 +10,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, MutableMapping
 
+from .mirror_conversation import MirrorConversationSync
 from .models import Provider, canonical_session_id
+
+_LOG = logging.getLogger(__name__)
 
 _VISIBILITY_ORIGIN_PREFIX = "claude-visibility:"
 _BACKUP_MARKERS = (".junction-backup", ".real-", "recovery-backup")
@@ -326,6 +330,7 @@ class ClaudeMirrorFloatWorker:
         id_factory: Callable[[], str] | None = None,
         run_min_interval_seconds: float = 300.0,
         archive_idle_seconds: float | None = None,
+        conversation_sync: MirrorConversationSync | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
     ) -> None:
@@ -359,6 +364,7 @@ class ClaudeMirrorFloatWorker:
         self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
         self._run_min_interval_seconds = run_interval
         self._archive_idle_seconds = archive_idle
+        self._conversation_sync = conversation_sync
         self._monotonic = monotonic
         self._wall_clock = wall_clock
         self._last_run_at: float | None = None
@@ -375,10 +381,11 @@ class ClaudeMirrorFloatWorker:
                 "skipped": 0,
                 "registered": 0,
                 "archived": 0,
+                "hydrated": 0,
                 "throttled": 1,
             }
         self._last_run_at = now
-        examined = floated = skipped = registered = archived = 0
+        examined = floated = skipped = registered = archived = hydrated = 0
         registry_index = self._load_registry_index()
         already_archived = self._load_auto_archived_ids()
         newly_archived: set[str] = set()
@@ -390,7 +397,12 @@ class ClaudeMirrorFloatWorker:
             except (KeyError, TypeError):
                 pass
             try:
-                mirror_floated, mirror_registered, mirror_archived = self._float_one(
+                (
+                    mirror_floated,
+                    mirror_registered,
+                    mirror_archived,
+                    mirror_hydrated,
+                ) = self._float_one(
                     row, registry_index, already_archived, newly_archived
                 )
             except (
@@ -406,6 +418,7 @@ class ClaudeMirrorFloatWorker:
             floated += int(mirror_floated)
             registered += int(mirror_registered)
             archived += int(mirror_archived)
+            hydrated += int(mirror_hydrated)
         if newly_archived:
             # Prune to mirrors still visible: a record that has left the visible
             # set can no longer be archived by this worker, so remembering it
@@ -430,6 +443,7 @@ class ClaudeMirrorFloatWorker:
             "skipped": skipped,
             "registered": registered,
             "archived": archived,
+            "hydrated": hydrated,
             "throttled": 0,
         }
 
@@ -460,7 +474,7 @@ class ClaudeMirrorFloatWorker:
         registry_index: dict[str, Path],
         already_archived: frozenset[str] | set[str] = frozenset(),
         newly_archived: set[str] | None = None,
-    ) -> tuple[bool, bool, bool]:
+    ) -> tuple[bool, bool, bool, int]:
         claude_uuid = str(row["claude_uuid"])
         # _resolve_source_activity RAISES _MirrorFloatSkip when the source's
         # activity is unavailable, so an unknown-liveness mirror is skipped
@@ -501,7 +515,33 @@ class ClaudeMirrorFloatWorker:
                 newly_archived,
             )
             floated = floated or record_floated
-        return floated, registered, archived
+        hydrated = 0
+        if self._conversation_sync is not None:
+            hydrated = self._hydrate_conversation(row, mirror, claude_uuid, native_path)
+        return floated, registered, archived, hydrated
+
+    def _hydrate_conversation(
+        self,
+        row: Mapping[str, Any],
+        mirror: Mapping[str, Any],
+        claude_uuid: str,
+        native_path: str,
+    ) -> int:
+        """Append new source turns to the mirror; a failure costs one cycle, not the loop."""
+        assert self._conversation_sync is not None
+        try:
+            result = self._conversation_sync.sync(
+                claude_uuid=claude_uuid,
+                source_session_id=str(row["source_session_id"]),
+                native_path=native_path,
+                cwd=str(mirror.get("cwd") or ""),
+            )
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            _LOG.warning(
+                "mirror conversation hydration failed for %s: %s", claude_uuid, exc
+            )
+            return 0
+        return int(result.appended)
 
     @property
     def _registry_root(self) -> Path | None:

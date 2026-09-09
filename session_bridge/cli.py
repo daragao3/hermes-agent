@@ -89,6 +89,7 @@ from .mcp_server import (
     resolve_retired_marker_keys,
 )
 from .desktop_registry_worker import DesktopRegistrySyncWorker
+from .mirror_conversation import MirrorConversationSync
 from .mirror_float import (
     CaptureMissRecorder,
     ClaudeMirrorFloatWorker,
@@ -4156,6 +4157,16 @@ class ProductionBackend:
                         else float(
                             effective_config.claude_visibility.archive_idle_mirror_seconds
                         )
+                    ),
+                    conversation_sync=(
+                        MirrorConversationSync(
+                            self._require_store(),
+                            backfill_messages=(
+                                effective_config.claude_visibility.hydrate_backfill_messages
+                            ),
+                        )
+                        if effective_config.claude_visibility.hydrate_conversation
+                        else None
                     ),
                 )
                 if (

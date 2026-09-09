@@ -251,6 +251,18 @@ class ClaudeVisibilityConfig:
     # instead of cleared. Without it a timer alone marches the whole backlog
     # through paid attempts while the registration path is broken.
     auto_dismiss_health_window_seconds: int = 86_400
+    # Append the source conversation to each visibility mirror's transcript so
+    # a [Codex]/[Hermes] sidebar row shows the conversation instead of the
+    # registration prompt (Diego, 2026-09-09). Off by default: a mirror is
+    # then the bare registration session it always was.
+    hydrate_conversation: bool = False
+    # Most recent source messages written on a mirror's FIRST hydration; later
+    # cycles append every new message. Bounds the one-time backfill write.
+    hydrate_backfill_messages: int = 400
+    # Treat a source whose cwd is a per-session agent worktree
+    # (.../.claude/worktrees/...) as automation: chips and agent sessions run
+    # there, the user's own Codex desktop sessions do not.
+    exclude_worktree_sources: bool = False
 
 
 @dataclass(frozen=True)
@@ -357,6 +369,9 @@ class BridgeConfig:
                 "archive_idle_mirror_seconds",
                 "auto_dismiss_exhausted_after_seconds",
                 "auto_dismiss_health_window_seconds",
+                "hydrate_conversation",
+                "hydrate_backfill_messages",
+                "exclude_worktree_sources",
             }),
             scope="session_bridge.claude_visibility",
         )
@@ -842,6 +857,28 @@ class BridgeConfig:
                 ),
                 "session_bridge.claude_visibility.archive_idle_mirror_seconds",
                 minimum=3600,
+            ),
+            hydrate_conversation=_toml_bool(
+                claude_visibility.get(
+                    "hydrate_conversation",
+                    claude_visibility_defaults.hydrate_conversation,
+                ),
+                "session_bridge.claude_visibility.hydrate_conversation",
+            ),
+            hydrate_backfill_messages=_toml_int(
+                claude_visibility.get(
+                    "hydrate_backfill_messages",
+                    claude_visibility_defaults.hydrate_backfill_messages,
+                ),
+                "session_bridge.claude_visibility.hydrate_backfill_messages",
+                minimum=20,
+            ),
+            exclude_worktree_sources=_toml_bool(
+                claude_visibility.get(
+                    "exclude_worktree_sources",
+                    claude_visibility_defaults.exclude_worktree_sources,
+                ),
+                "session_bridge.claude_visibility.exclude_worktree_sources",
             ),
             auto_dismiss_exhausted_after_seconds=_optional_toml_int(
                 claude_visibility.get(

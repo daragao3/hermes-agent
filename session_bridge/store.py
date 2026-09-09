@@ -4077,6 +4077,32 @@ class SessionBridgeStore:
             for row in rows
         ]
 
+    def list_conversation_messages_after(
+        self, session_id: str, *, after_id: int | None, limit: int
+    ) -> list[dict[str, Any]]:
+        """Stored messages of ``session_id`` with id > ``after_id``, oldest first.
+
+        Backs the visibility mirror's conversation hydration: the same
+        ``messages`` rows the catalog reads, keyed by the monotonic row id so a
+        caller can resume exactly where its last append stopped.
+        """
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        floor = -1 if after_id is None else int(after_id)
+        with self.db._lock:
+            conn = self.db._conn
+            assert conn is not None
+            rows = conn.execute(
+                """SELECT id, role, content, tool_call_id, tool_calls, tool_name,
+                          timestamp
+                     FROM messages
+                    WHERE session_id = ? AND id > ?
+                      AND (active = 1 OR compacted = 1)
+                    ORDER BY id LIMIT ?""",
+                (session_id, floor, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def _claude_visibility_local_day(self, timestamp: float) -> str:
         if self._local_timezone is None:
             local = datetime.fromtimestamp(timestamp).astimezone()

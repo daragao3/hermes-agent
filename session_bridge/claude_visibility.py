@@ -178,11 +178,26 @@ class ClaudeVisibilityClaim:
         return self.status == "claimed"
 
 
+# Chip and agent sessions run in per-session worktrees; the user's own Codex
+# desktop sessions open at repository roots. Diego's sidebar rule (2026-09-09)
+# is "sessions I initiated", so with the config opted in a source whose cwd is
+# an agent worktree is excluded exactly like an automation envelope. Measured
+# on the 2026-09-09 sidebar: 42 of the 42 [Codex] rows he wanted archived
+# came from .claude/worktrees cwds; the one Codex session he had typed himself
+# came from a repo root.
+_AGENT_WORKTREE_CWD_RE = re.compile(r"[\\/]\.claude[\\/]worktrees[\\/]", re.IGNORECASE)
+
+
+def is_agent_worktree_cwd(cwd: object) -> bool:
+    return isinstance(cwd, str) and _AGENT_WORKTREE_CWD_RE.search(cwd) is not None
+
+
 def evaluate_claude_visibility(
     projection: SessionProjection,
     *,
     automation_only: bool = False,
     subagent_only: bool = False,
+    exclude_worktree_sources: bool = False,
 ) -> str:
     if projection.provider is Provider.CLAUDE:
         return "source_claude"
@@ -198,6 +213,8 @@ def evaluate_claude_visibility(
         return "automation_only"
     if subagent_only:
         return "subagent_only"
+    if exclude_worktree_sources and is_agent_worktree_cwd(projection.cwd):
+        return "automation_only"
     try:
         canonical_session_id(projection.provider, projection.native_id)
     except ValueError:
@@ -243,11 +260,13 @@ def build_claude_visibility_candidate(
     worktree_id: str | None = None,
     automation_only: bool = False,
     subagent_only: bool = False,
+    exclude_worktree_sources: bool = False,
 ) -> ClaudeVisibilityCandidate:
     reason = evaluate_claude_visibility(
         projection,
         automation_only=automation_only,
         subagent_only=subagent_only,
+        exclude_worktree_sources=exclude_worktree_sources,
     )
     if reason != "eligible":
         raise ValueError(f"Claude visibility candidate is excluded: {reason}")

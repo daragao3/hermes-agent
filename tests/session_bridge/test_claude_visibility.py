@@ -648,3 +648,41 @@ def test_identity_binding_accepts_pre_rotation_marker_via_retired_keys() -> None
             SECRET,
             retired_marker_secrets=(b"",),
         )
+
+
+from session_bridge.claude_visibility import is_agent_worktree_cwd
+
+
+@pytest.mark.parametrize(
+    "cwd, expected",
+    [
+        (r"C:\Users\diego\.hermes\.claude\worktrees\kind-mestorf-a297f7", True),
+        ("C:/Users/diego/.hermes/agent-src/.claude/worktrees/vigorous-maxwell", True),
+        (r"C:\Users\diego\.hermes", False),
+        ("C:/Users/diego/.hermes/agent-src", False),
+        ("C:/Users/diego/worktrees/not-claude", False),
+        (None, False),
+        ("", False),
+    ],
+)
+def test_is_agent_worktree_cwd(cwd, expected) -> None:
+    assert is_agent_worktree_cwd(cwd) is expected
+
+
+def test_worktree_sources_are_excluded_only_when_opted_in() -> None:
+    worktree = replace(
+        _projection(Provider.CODEX),
+        cwd=r"C:\Users\diego\.hermes\.claude\worktrees\kind-mestorf-a297f7",
+    )
+    root = _projection(Provider.CODEX)
+
+    assert evaluate_claude_visibility(worktree) == "eligible"
+    assert (
+        evaluate_claude_visibility(worktree, exclude_worktree_sources=True)
+        == "automation_only"
+    )
+    assert evaluate_claude_visibility(root, exclude_worktree_sources=True) == "eligible"
+    with pytest.raises(ValueError, match="automation_only"):
+        build_claude_visibility_candidate(
+            worktree, eligible_at=20.0, exclude_worktree_sources=True
+        )

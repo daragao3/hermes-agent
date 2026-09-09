@@ -192,6 +192,7 @@ def test_floats_mirror_to_source_activity(db, tmp_path) -> None:
         "skipped": 0,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(5_000.0)
@@ -672,6 +673,7 @@ def test_run_once_is_internally_throttled(db, tmp_path) -> None:
         "skipped": 0,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
         "throttled": 1,
     }
     assert third["examined"] == 1
@@ -706,6 +708,7 @@ def test_skips_bump_within_min_interval(db, tmp_path) -> None:
         "skipped": 0,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(1_000.0)
@@ -724,6 +727,7 @@ def test_skips_missing_mirror_file_without_raising(db, tmp_path) -> None:
         "skipped": 1,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
         "throttled": 0,
     }
 
@@ -746,6 +750,7 @@ def test_refuses_mirror_with_foreign_origin(db, tmp_path) -> None:
         "skipped": 1,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(1_000.0)
@@ -1036,6 +1041,83 @@ def test_hermes_source_resolves_via_canonical_fallback(db, tmp_path) -> None:
         "skipped": 0,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(5_000.0)
+
+
+def test_hydrates_visible_mirror_with_source_conversation(db, tmp_path) -> None:
+    from session_bridge.mirror_conversation import MirrorConversationSync
+    from session_bridge.models import is_mirrored_record
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    # The seed writes an unchained placeholder; give the mirror the registration
+    # turn the registrar really leaves, so there is a leaf to append after.
+    leaf = "9ccc7524-3d7e-4a33-a064-9697b6ade415"
+    mirror_path.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "uuid": leaf,
+                "parentUuid": None,
+                "sessionId": identity.claude_uuid,
+                "cwd": "C:/work/project",
+                "message": {"role": "user", "content": "signed registration"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    worker = ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        conversation_sync=MirrorConversationSync(store),
+    )
+
+    result = worker.run_once()
+
+    assert result["examined"] == 1
+    assert result["hydrated"] == 1
+    records = [
+        json.loads(line)
+        for line in mirror_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [record["uuid"] for record in records][0] == leaf
+    mirrored = [record for record in records if is_mirrored_record(record)]
+    assert len(mirrored) == 1
+    assert mirrored[0]["parentUuid"] == leaf
+    assert mirrored[0]["message"]["content"] == "meaningful request"
+    assert mirrored[0]["cwd"] == "C:/work/project"
+
+    # Second cycle: nothing new to mirror.
+    worker = ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        conversation_sync=MirrorConversationSync(store),
+    )
+    assert worker.run_once()["hydrated"] == 0
+
+
+def test_hydration_failure_does_not_stop_the_float_pass(db, tmp_path) -> None:
+    class _Broken:
+        def sync(self, **_kwargs):
+            raise OSError("disk says no")
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    _, mirror_path = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    worker = ClaudeMirrorFloatWorker(
+        store, min_interval_seconds=900.0, conversation_sync=_Broken()
+    )
+
+    result = worker.run_once()
+
+    assert result["floated"] == 1
+    assert result["hydrated"] == 0
+    assert result["skipped"] == 0
