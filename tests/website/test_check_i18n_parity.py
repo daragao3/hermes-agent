@@ -37,19 +37,34 @@ def build_links():
     return _load("check_build_links", BUILD_LINKS)
 
 
+# Every real page in website/docs carries frontmatter, and since gate 6 a page
+# without a title and description is itself a finding. So the fixture writes a
+# COMPLETE page by default: a test about drift or anchors should not have to
+# restate metadata it is not exercising, and should not trip a gate it is not
+# about. Pass ``bare=True`` for the handful of tests whose subject IS a page
+# with absent or partial frontmatter -- there the omission is the fixture.
+STUB_FRONTMATTER = '---\ntitle: "T"\ndescription: "D"\n---\n\n'
+
+
 @pytest.fixture
 def tree(parity, tmp_path, monkeypatch):
-    """Point the gate at a synthetic en/zh pair and return a writer for it."""
+    """Point the gate at a synthetic en/zh pair and return a writer for it.
+
+    Text that does not already open a frontmatter block is given
+    STUB_FRONTMATTER, identically in both locales, so gates 2-3 stay balanced.
+    """
     en, zh = tmp_path / "en", tmp_path / "zh"
     en.mkdir()
     zh.mkdir()
     monkeypatch.setattr(parity, "EN_DIR", str(en))
     monkeypatch.setattr(parity, "ZH_DIR", str(zh))
 
-    def write(rel, en_text, zh_text=None):
+    def write(rel, en_text, zh_text=None, bare=False):
         for root, text in ((en, en_text), (zh, zh_text)):
             if text is None:
                 continue
+            if not bare and not text.startswith("---"):
+                text = STUB_FRONTMATTER + text
             target = Path(root) / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8")
@@ -447,7 +462,7 @@ def test_description_detects_ascii_and_cjk_ellipses(parity, tree, mark):
 
 def test_description_tolerates_a_page_with_no_frontmatter(parity, tree):
     """Several hand-written pages have none; the gate must not crash on them."""
-    tree("a.md", "# Just a heading\n", "# 只是一个标题\n")
+    tree("a.md", "# Just a heading\n", "# 只是一个标题\n", bare=True)
     findings = []
     assert parity.gate_descriptions(["a.md"], findings) == 0
 
@@ -465,7 +480,12 @@ def test_description_reads_single_quoted_frontmatter(parity, tree):
 def test_description_does_not_read_a_body_line_as_frontmatter(parity, tree):
     """`description:` in the BODY is prose, not metadata -- reading it would
     invent findings on pages that have no frontmatter at all."""
-    tree("a.md", "# T\n\ndescription: English...\n", "# T\n\ndescription: 中文……\n")
+    tree(
+        "a.md",
+        "# T\n\ndescription: English...\n",
+        "# T\n\ndescription: 中文……\n",
+        bare=True,
+    )
     findings = []
     assert parity.gate_descriptions(["a.md"], findings) == 0
 
@@ -483,4 +503,118 @@ def test_allow_untranslated_does_not_waive_a_bad_description(parity, tree, capsy
     fires only on a page someone DID translate, so the PR lane must still
     fail on it."""
     tree("a.md", _page("Complete English sentence"), _page("完整的中文句子……"))
+    assert parity.main(["--allow-untranslated"]) == 1
+
+
+# --------------------------------------------------------------------------
+# gate 6 — frontmatter completeness
+#
+# A PARTIAL frontmatter block passes gates 1-5: gate 1 tests existence, 2-4 test
+# the body, and gate 5 only inspects a description it has already found. Six
+# pages in user-guide/messaging carried exactly that defect until 2026-09-09 and
+# were found by hand, not by any gate.
+# --------------------------------------------------------------------------
+FULL = '---\ntitle: "T"\ndescription: "D"\n---\n\n# T\n\ntext\n'
+
+
+def test_frontmatter_flags_a_missing_description(parity, tree):
+    tree("a.md", '---\ntitle: "T"\n---\n\n# T\n\ntext\n', FULL)
+    findings = []
+    assert parity.gate_frontmatter({"a.md"}, {"a.md"}, findings) == 1
+    assert "no description:" in findings[0]
+
+
+def test_frontmatter_flags_a_missing_title(parity, tree):
+    tree("a.md", '---\ndescription: "D"\n---\n\n# T\n\ntext\n', FULL)
+    findings = []
+    assert parity.gate_frontmatter({"a.md"}, {"a.md"}, findings) == 1
+    assert "no title:" in findings[0]
+
+
+def test_frontmatter_flags_a_page_with_no_frontmatter_at_all(parity, tree):
+    """The four-pages-with-no-block case, which is the same defect maximally."""
+    tree("a.md", "# T\n\ntext\n", FULL, bare=True)
+    findings = []
+    assert parity.gate_frontmatter({"a.md"}, {"a.md"}, findings) == 2
+
+
+def test_frontmatter_rejects_a_present_but_empty_value(parity, tree):
+    """`title:` with nothing after it satisfies a mere key-presence check and
+    still renders an empty sidebar label."""
+    tree("a.md", '---\ntitle: ""\ndescription: "D"\n---\n\n# T\n', FULL)
+    findings = []
+    assert parity.gate_frontmatter({"a.md"}, {"a.md"}, findings) == 1
+    assert "no title:" in findings[0]
+
+
+def test_frontmatter_checks_the_zh_locale_too(parity, tree):
+    """A zh `title:` is the zh sidebar label. An English-only check would let
+    the Chinese sidebar silently fall back to the filename."""
+    tree("a.md", FULL, '---\ndescription: "D"\n---\n\n# T\n')
+    findings = []
+    assert parity.gate_frontmatter({"a.md"}, {"a.md"}, findings) == 1
+    assert "[zh]" in findings[0]
+
+
+def test_frontmatter_does_not_require_sidebar_position(parity, tree):
+    """MEASURED, not lenient. website/sidebars.ts is an explicit hand-written
+    sidebar with zero `autogenerated` entries, and Docusaurus only consults
+    sidebar_position for autogenerated items -- so the key is inert here and 184
+    of 361 English pages omit it. Requiring it would be 184 findings of noise.
+    Pinned so nobody 'completes' the gate by adding it back."""
+    assert "sidebar_position" not in parity.FRONTMATTER_REQUIRED
+    tree("a.md", FULL, FULL)
+    findings = []
+    assert parity.gate_frontmatter({"a.md"}, {"a.md"}, findings) == 0
+
+
+def test_frontmatter_allowlist_is_keyed_per_page_locale_and_key(parity, tree):
+    """The waivers are debt for specific (page, locale, key) triples. The same
+    key missing anywhere else is a real finding."""
+    tree("other.md", "# O\n\ntext\n", "# O\n\ntext\n", bare=True)
+    findings = []
+    assert parity.gate_frontmatter({"other.md"}, {"other.md"}, findings) == 4
+
+
+def test_frontmatter_allowlist_entries_point_at_real_pages(parity):
+    """A waiver whose path no longer exists is dead weight covering nothing --
+    the exact failure that made three of the four DRIFT_ALLOW entries inert."""
+    roots = {"en": Path(parity.EN_DIR), "zh": Path(parity.ZH_DIR)}
+    for rel, locale, key in parity.FRONTMATTER_ALLOW:
+        assert locale in roots, (rel, locale)
+        assert key in parity.FRONTMATTER_REQUIRED, (rel, key)
+        assert (roots[locale] / rel).is_file(), (rel, locale)
+
+
+def test_frontmatter_allowlist_entries_are_all_still_needed(parity):
+    """THE RATCHET. Filling in a waived page must fail this test until its entry
+    is deleted, so the list can only ever shrink. Without this a waiver outlives
+    the debt it was written for and silently re-permits the defect."""
+    roots = {"en": Path(parity.EN_DIR), "zh": Path(parity.ZH_DIR)}
+    stale = [
+        (rel, locale, key)
+        for rel, locale, key in sorted(parity.FRONTMATTER_ALLOW)
+        if parity.frontmatter_value(
+            (roots[locale] / rel).read_text(encoding="utf-8"), key
+        )
+    ]
+    assert not stale, (
+        "these pages now HAVE the key their waiver excuses -- delete the "
+        "matching FRONTMATTER_ALLOW entries: %s" % stale
+    )
+
+
+def test_frontmatter_failure_counts_toward_the_exit_code(parity, tree, capsys):
+    """A gate nobody fails on is theatre -- pin it to the process exit code."""
+    tree("a.md", "# T\n\ntext\n", FULL, bare=True)
+    assert parity.main([]) == 1
+    assert "incomplete frontmatter .. 2" in capsys.readouterr().out
+
+
+def test_allow_untranslated_does_not_waive_incomplete_frontmatter(parity, tree):
+    """--allow-untranslated exists for pages nobody has translated yet. It does
+    not excuse a page that exists in a locale from declaring its own title and
+    description, and generate-skill-docs.py emits both unconditionally, so the
+    PR lane can block on this without stranding a skill author."""
+    tree("a.md", "# T\n\ntext\n", FULL, bare=True)
     assert parity.main(["--allow-untranslated"]) == 1
