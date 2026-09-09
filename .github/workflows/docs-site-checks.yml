@@ -12,8 +12,15 @@ jobs:
   #
   # Runs against the checkout as committed, BEFORE generate-skill-docs.py
   # regenerates the English skill pages — the committed tree is what we are
-  # gating, and skills-index-freshness.yml separately asserts the generated
-  # pages are up to date.
+  # gating.
+  #
+  # NOTHING asserts that the committed generated pages match what the
+  # generator would write. This comment used to claim skills-index-freshness.yml
+  # did; it does not — that workflow curls the LIVE skills-index.json every 4h
+  # and opens an issue if it is stale, and compares no trees at all. There is
+  # no dirty-tree gate in this repo, which is why the orphaned-skill-pages job
+  # below has to exist as a separate check rather than relying on the
+  # regeneration step to surface a stale page.
   i18n-parity:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -28,8 +35,10 @@ jobs:
       # so adding a skill creates a page with no zh counterpart and would block
       # a PR on a translation its author cannot write. Those findings are still
       # printed (as a ::warning::) and the nightly run does fail on them. The
-      # other three gates stay blocking here — they only ever fire on a page
+      # other four gates stay blocking here — they only ever fire on a page
       # somebody already translated, which is the drift this exists to stop.
+      # (Four, not three: the flag waives gate 1 alone, and check-i18n-parity.py
+      # has run five gates since the zh-description gate landed in ee1fec2de2.)
       - name: Check zh-Hans docs parity
         run: python3 website/scripts/check-i18n-parity.py --allow-untranslated
 
