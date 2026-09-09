@@ -1,7 +1,7 @@
 ---
 title: "Computer Use"
 sidebar_label: "Computer Use"
-description: "在后台驱动用户桌面——点击、输入、滚动、拖拽——不抢占光标、键盘焦点，也不切换虚拟..."
+description: "在后台驱动用户桌面——点击、输入、滚动、拖拽——不抢占光标、键盘焦点，也不切换虚拟桌面 / Space"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}

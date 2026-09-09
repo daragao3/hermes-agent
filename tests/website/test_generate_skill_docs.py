@@ -174,3 +174,13 @@ def test_single_unbroken_token_still_truncates(gen_module):
     out = gen_module._truncate_on_word_boundary("x" * 300, 160)
     assert len(out) == 160
     assert out.endswith("...")
+
+
+def test_dash_strip_does_not_strand_a_space_before_the_ellipsis(gen_module):
+    # Regression: stripping the dangling dash exposed the space in front of it,
+    # and a single ordered pass left it stranded -- the generated page read
+    # "...(catalog entry: unreal-engine) ..." with a space before the ellipsis.
+    text = "alpha beta gamma — delta epsilon"
+    out = gen_module._truncate_on_word_boundary(text, 22)
+    assert out == "alpha beta gamma..."
+    assert " ..." not in out
