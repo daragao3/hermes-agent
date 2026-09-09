@@ -17,6 +17,21 @@ class Provider(StrEnum):
     HERMES = "hermes"
 
 
+# Top-level provenance tag on a Claude transcript record the session bridge
+# wrote itself: a visibility mirror's mirrored source turn. The desktop app
+# renders such records like any other; the bridge's own adapter treats them as
+# ineligible so a mirror never re-enters the catalog as a second copy of its
+# source, never counts as a human continuation, and never has its quoted
+# marker strings harvested. See session_bridge.mirror_conversation.
+MIRROR_RECORD_KEY = "hermesMirror"
+
+
+def is_mirrored_record(record: object) -> bool:
+    return isinstance(record, dict) and isinstance(
+        record.get(MIRROR_RECORD_KEY), dict
+    )
+
+
 class OriginKind(StrEnum):
     NATIVE = "native"
     BRIDGE_PLACEHOLDER = "bridge_placeholder"

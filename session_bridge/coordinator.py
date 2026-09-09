@@ -615,6 +615,7 @@ class ClaudeVisibilityCoordinator:
             candidates: list[ClaudeVisibilityCandidateResult] = []
             exclusions: list[ClaudeVisibilityExclusion] = []
             seen: set[tuple[str, Provider]] = set()
+            worktree_excluded = self._config.claude_visibility.exclude_worktree_sources
             for source in ordered:
                 projection = source.projection
                 activity = float(projection.last_active)
@@ -630,6 +631,7 @@ class ClaudeVisibilityCoordinator:
                         projection,
                         automation_only=source.automation_only,
                         subagent_only=source.subagent_only,
+                        exclude_worktree_sources=worktree_excluded,
                     )
                     if (
                         reason == "eligible"
@@ -659,6 +661,7 @@ class ClaudeVisibilityCoordinator:
                     worktree_id=source.worktree_id,
                     automation_only=source.automation_only,
                     subagent_only=source.subagent_only,
+                    exclude_worktree_sources=worktree_excluded,
                 )
                 identity = derive_claude_visibility_identity(
                     candidate, self._marker_secret

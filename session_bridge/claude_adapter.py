@@ -16,6 +16,7 @@ from typing import Any, BinaryIO, Callable, Protocol
 import uuid
 
 from .models import (
+    is_mirrored_record,
     InvalidBridgeMarker,
     OriginKind,
     ProjectedMessage,
@@ -1311,8 +1312,16 @@ def _merge_entrypoints(*values: str | None) -> str | None:
 
 
 def _is_eligible_record(record: dict[str, Any]) -> bool:
-    return not bool(record.get("isSidechain", False)) and not bool(
-        record.get("isMeta", False)
+    # A mirrored source turn (session_bridge.mirror_conversation) is display
+    # content for the desktop app, not this session's own history: projecting
+    # it would catalog the source twice, counting it as a human turn would
+    # turn every hydrated mirror into a BRIDGE_CONTINUATION, and harvesting
+    # its text for markers would raise ConflictingClaudeBridgeMarkers the
+    # first time a source quotes one.
+    return (
+        not bool(record.get("isSidechain", False))
+        and not bool(record.get("isMeta", False))
+        and not is_mirrored_record(record)
     )
 
 

@@ -1952,3 +1952,122 @@ def test_pre_rotation_claude_marker_authenticates_via_retired_keys(tmp_path):
     assert not ClaudeSourceAdapter(
         tmp_path, marker_secret=SECRET
     ).projection_has_marker_payload(recovered, payload)
+
+
+def _mirrored_record(
+    content: str,
+    *,
+    role: str,
+    event_id: str,
+    parent: str,
+    timestamp: str,
+) -> dict:
+    """A record session_bridge.mirror_conversation appends to a mirror."""
+    message = (
+        {"role": "assistant", "content": [{"type": "text", "text": content}]}
+        if role == "assistant"
+        else {"role": "user", "content": content}
+    )
+    return {
+        "parentUuid": parent,
+        "isSidechain": False,
+        "type": role,
+        "uuid": event_id,
+        "timestamp": timestamp,
+        "sessionId": BASIC_SESSION_ID,
+        "cwd": "C:/synthetic/project",
+        "userType": "external",
+        "entrypoint": "hermes-session-bridge",
+        "hermesMirror": {
+            "version": 1,
+            "source_session_id": "codex:synthetic-source",
+            "message_id": 7,
+        },
+        "message": message,
+    }
+
+
+def _mirror_transcript(tmp_path: Path, *, tagged: bool, quoted_marker: bool) -> Path:
+    marker = encode_bridge_marker(
+        BridgeMarkerPayload(
+            bridge_id="bridge-hydrated",
+            source_session_id="codex:synthetic-source",
+            target_provider=Provider.CLAUDE,
+            policy_generation=4,
+        ),
+        SECRET,
+    )
+    other = encode_bridge_marker(
+        BridgeMarkerPayload(
+            bridge_id="bridge-quoted-by-the-source",
+            source_session_id="codex:another-source",
+            target_provider=Provider.CLAUDE,
+            policy_generation=4,
+        ),
+        SECRET,
+    )
+    user_text = f"the source pasted {other} into its own chat" if quoted_marker else (
+        "a mirrored human turn from the source"
+    )
+    records = [
+        _message_record(marker),
+        _mirrored_record(
+            user_text,
+            role="user",
+            event_id="31313131-3131-4131-8131-313131313131",
+            parent="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            timestamp="2026-01-01T00:00:01Z",
+        ),
+        _mirrored_record(
+            "a mirrored assistant turn",
+            role="assistant",
+            event_id="32323232-3232-4232-8232-323232323232",
+            parent="31313131-3131-4131-8131-313131313131",
+            timestamp="2026-01-01T00:00:02Z",
+        ),
+    ]
+    if not tagged:
+        for record in records[1:]:
+            del record["hermesMirror"]
+    path = tmp_path / "hydrated-mirror.jsonl"
+    path.write_bytes(b"".join(_json_line(record) for record in records))
+    return path
+
+
+def test_mirrored_records_are_display_only_for_the_adapter(tmp_path):
+    """A hydrated mirror projects nothing of its source and stays a placeholder.
+
+    The mirrored turns are for the desktop app. If the adapter projected them
+    the source would be cataloged twice; if it counted them as human turns the
+    mirror would read as a continuation; if it harvested their text a source
+    that quotes a marker would trip the conflict guard on the mirror's scan.
+    """
+
+    path = _mirror_transcript(tmp_path, tagged=True, quoted_marker=True)
+
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+
+    assert projection.origin_kind is OriginKind.BRIDGE_PLACEHOLDER
+    assert projection.origin_bridge_id == "bridge-hydrated"
+    assert [message.native_event_id for message in projection.messages] == [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    ]
+
+
+def test_untagged_copies_of_the_same_records_would_conflict(tmp_path):
+    """Control for the test above: the tag is what changes the outcome."""
+
+    from session_bridge.claude_adapter import ConflictingClaudeBridgeMarkers
+
+    quoted = _mirror_transcript(tmp_path, tagged=False, quoted_marker=True)
+    with pytest.raises(ConflictingClaudeBridgeMarkers):
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(quoted)
+
+    plain = _mirror_transcript(tmp_path, tagged=False, quoted_marker=False)
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(plain).projection
+    )
+    assert projection.origin_kind is OriginKind.BRIDGE_CONTINUATION
+    assert len(projection.messages) == 3
