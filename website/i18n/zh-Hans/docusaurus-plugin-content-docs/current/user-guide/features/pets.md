@@ -22,7 +22,7 @@ Hermes 可以显示一只动画**宠物**——一个小小的吉祥物精灵，
   自己的一套。
 - 选中一只宠物会把 `display.pet.slug` 和 `display.pet.enabled` 写入
   `config.yaml`——不会有任何内容被当作密钥或环境变量存储。
-- 每个界面都会观察它本就在跟踪的活动，并将其映射为六种动画状态之一。
+- 每个界面都会观察它本就在跟踪的活动，并将其映射为七种动画状态之一。
   该映射只存在于一处，因此所有界面的行为完全一致：
 
   | 智能体活动 | 宠物状态 |
@@ -80,7 +80,7 @@ hermes pets doctor
 `hermes pets show` 的参数：
 
 - `--state` —— 播放单个状态（`idle`、`wave`、`run`、`failed`、`review`、
-  `jump`）。
+  `jump`、`waiting`）。
 - `--cycle` —— 依次循环播放每个状态。
 - `--once` —— 只播放一次而不循环。
 - `--mode` —— 覆盖渲染协议（`kitty`、`iterm`、`sixel`、

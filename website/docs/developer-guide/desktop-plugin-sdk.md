@@ -46,8 +46,10 @@ plugin, and fail to resolve in a disk plugin). Capability comes in tiers:
   cron — everything the app itself calls.
 - **`ctx.rest` / `ctx.socket`** — your plugin's own backend namespace
   (`/api/plugins/<id>`) if you ship a `plugin_api.py`.
-- **`ui.*`** — the design language: the app's real components, theme variables,
-  icons, and formatters, so your UI matches the app pixel-for-pixel.
+- **UI kit exports** — the design language: the app's real components
+  (`Button`, `Dialog*`, `EmptyState`, …), `icons`, and formatters
+  (`relativeTime`, `fmtDateTime`, …), imported by name from the same module,
+  so your UI matches the app pixel-for-pixel.
 
 ## Two delivery modes
 

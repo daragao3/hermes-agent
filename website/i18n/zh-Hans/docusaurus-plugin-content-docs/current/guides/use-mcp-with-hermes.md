@@ -362,7 +362,7 @@ Look up customer ACME Corp and summarize recent invoice activity.
 
 在这类场景中，严格的白名单远优于排除列表。
 
-### 模式 4：文档/知识服务器
+### 模式 5：文档/知识服务器
 
 某些 MCP 服务器暴露的 prompts 或 resources 更像是共享知识资产，而非直接操作。
 

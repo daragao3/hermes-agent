@@ -134,7 +134,7 @@ obliteratus recommend <model_name> --insights  # global cross-architecture ranki
 | MoE 模型（DeepSeek、Mixtral）     | `nuclear`          | 专家粒度，能应对 MoE 的复杂性  |
 | 推理模型（R1 蒸馏版）             | `surgical`         | 感知 CoT，保留思维链    |
 | 顽固的拒答依然存在                | `aggressive`       | 白化 SVD + 注意力头手术 + 越狱   |
-| 想要可逆的改动                    | 使用引导向量（见"分析"一节） |
+| 想要可逆的改动                    | 引导向量           | 可在推理时移除（见"分析"一节） |
 | 追求极致质量，不在乎时间          | `optimized`        | 用贝叶斯搜索寻找最佳参数      |
 | 实验性的自动检测                  | `informed`         | 自动检测对齐类型 —— 实验性质，未必总能胜过 advanced |
 

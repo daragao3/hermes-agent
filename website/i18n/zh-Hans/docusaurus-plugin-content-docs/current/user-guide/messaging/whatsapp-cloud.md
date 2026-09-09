@@ -365,7 +365,7 @@ Meta 的默认吞吐量为**每个商业手机号每秒 80 条消息**，可申�
 
 ### STT（语音消息转写）返回空 / “could not transcribe”
 
-默认的 `stt.provider: local` 需要 `pip install faster-whisper`。如果你是 Nous 订阅用户，可以改为通过 Meta 的托管音频网关来路由 STT：
+默认的 `stt.provider: local` 需要 `pip install faster-whisper`。如果你是 Nous 订阅用户，可以改为通过 Nous 的托管音频网关来路由 STT：
 
 ```bash
 hermes config set stt.provider openai

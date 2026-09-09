@@ -45,8 +45,9 @@ CLI/网关插件的文档见[构建 Hermes 插件](/developer-guide/plugins)。
   cron——应用自己调用的一切。
 - **`ctx.rest` / `ctx.socket`** —— 如果你随插件提供了 `plugin_api.py`，
   这就是你插件自己的后端命名空间（`/api/plugins/<id>`）。
-- **`ui.*`** —— 设计语言：应用真实的组件、主题变量、
-  图标和格式化函数，让你的 UI 与应用像素级一致。
+- **UI 套件导出** —— 设计语言：应用真实的组件（`Button`、`Dialog*`、
+  `EmptyState` 等）、`icons` 以及格式化函数（`relativeTime`、`fmtDateTime`
+  等），都从同一个模块按名导入，让你的 UI 与应用像素级一致。
 
 ## 两种分发模式
 

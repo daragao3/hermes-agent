@@ -365,7 +365,7 @@ If the model emits tool-call-shaped text instead of a structured call, it usuall
 
 ### STT (voice note transcription) returns empty / "could not transcribe"
 
-The default `stt.provider: local` requires `pip install faster-whisper`.  If you're a Nous subscriber, you can route STT through Meta's managed audio gateway instead:
+The default `stt.provider: local` requires `pip install faster-whisper`.  If you're a Nous subscriber, you can route STT through Nous' managed audio gateway instead:
 
 ```bash
 hermes config set stt.provider openai

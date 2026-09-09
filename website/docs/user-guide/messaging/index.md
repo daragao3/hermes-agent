@@ -393,6 +393,15 @@ display:
   tool_progress_grouping: accumulate   # accumulate | separate
 ```
 
+When enabled, the bot sends status messages as it works:
+
+```text
+💻 `ls -la`...
+🔍 web_search...
+📄 web_extract...
+🐍 execute_code...
+```
+
 ### Message timestamps in model context
 
 Off by default. When enabled, Hermes prepends a human-readable timestamp
@@ -410,15 +419,6 @@ gateway:
 Persisted transcripts always stay clean — the timestamp is stored as message
 metadata regardless of this toggle, so enabling it later also surfaces
 send-times for past messages, and replay never accumulates duplicate prefixes.
-
-When enabled, the bot sends status messages as it works:
-
-```text
-💻 `ls -la`...
-🔍 web_search...
-📄 web_extract...
-🐍 execute_code...
-```
 
 ## Background Sessions
 

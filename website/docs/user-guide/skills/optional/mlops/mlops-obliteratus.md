@@ -134,7 +134,7 @@ obliteratus recommend <model_name> --insights  # global cross-architecture ranki
 | MoE model (DeepSeek, Mixtral)     | `nuclear`          | Expert-granular, handles MoE complexity  |
 | Reasoning model (R1 distills)     | `surgical`         | CoT-aware, preserves chain-of-thought    |
 | Stubborn refusals persist         | `aggressive`       | Whitened SVD + head surgery + jailbreak   |
-| Want reversible changes           | Use steering vectors (see Analysis section) |
+| Want reversible changes           | Steering vectors   | Removable at inference time (see Analysis section) |
 | Maximum quality, time no object   | `optimized`        | Bayesian search for best parameters      |
 | Experimental auto-detection       | `informed`         | Auto-detects alignment type — experimental, may not always outperform advanced |
 

@@ -42,11 +42,11 @@ description: "通过无头模拟器 + RAM 读取来玩宝可梦"
 创建 venv，并以可编辑模式安装该包，同时启用 pyboy extra。
 如果没有 uv，则回退到 python3 -m venv + pip。
 
-在这台机器上，它已经安装在 /home/teknium/pokemon-agent，
-venv 也已就绪——只需 cd 过去并 source .venv/bin/activate。
+如果这台机器上已有检出，请直接复用——cd 进去并激活其 venv，
+不要重复克隆。
 
-你还需要一个 ROM 文件。请向用户索取他们自己的 ROM。在这台机器上，
-该目录内的 roms/pokemon_red.gb 已存在一个。
+你还需要一个 ROM 文件。请向用户索取他们自己的 ROM，并使用他们给出的
+路径；检出目录通常把 ROM 放在 roms/ 下。
 切勿下载或提供 ROM 文件——始终向用户索取。
 
 ### 2. 启动游戏服务器

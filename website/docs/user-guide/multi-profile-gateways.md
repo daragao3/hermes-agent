@@ -124,7 +124,7 @@ profile 'coder'. ...
 The multiplexer is the single inbound process; a second profile gateway would
 double-bind that profile's platforms. Pass `--force` only if you deliberately
 want a separate process for that profile (not recommended while the multiplexer
-is running). The cross-profile lifecycle wrapper script earlier on this page is
+is running). The cross-profile lifecycle wrapper script later on this page is
 therefore **not** used in multiplex mode — you only manage the default gateway.
 
 #### 2. HTTP-inbound platforms are reached via a `/p/<profile>/` URL prefix
