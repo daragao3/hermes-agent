@@ -1,3 +1,9 @@
+---
+sidebar_position: 25
+title: "SimpleX Chat"
+description: "通过本地 simplex-chat 守护进程的 WebSocket 接口，将 Hermes Agent 连接到 SimpleX Chat"
+---
+
 # SimpleX Chat
 
 [SimpleX Chat](https://simplex.chat/) 是一个私密的去中心化即时通讯平台，用户完全掌控自己的联系人和群组。与其他平台不同，SimpleX 不分配任何持久用户 ID——每个联系人在建立连接时由系统生成一个不透明的内部 ID，这使其成为目前隐私性最强的即时通讯工具之一。

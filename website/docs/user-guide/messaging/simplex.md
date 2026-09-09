@@ -1,3 +1,9 @@
+---
+sidebar_position: 25
+title: "SimpleX Chat"
+description: "Connect Hermes Agent to SimpleX Chat through the local simplex-chat daemon over WebSocket"
+---
+
 # SimpleX Chat
 
 [SimpleX Chat](https://simplex.chat/) is a private, decentralised messaging platform where users own their contacts and groups. Unlike other platforms, SimpleX assigns no persistent user IDs — every contact is identified by an opaque internal ID generated at connection time, which makes it one of the most private messengers available.

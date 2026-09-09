@@ -1,3 +1,9 @@
+---
+sidebar_position: 22
+title: "ntfy"
+description: "将 Hermes Agent 连接到基于 HTTP 的 ntfy 发布-订阅推送服务，可使用 ntfy.sh 或自托管实例"
+---
+
 # ntfy
 
 [ntfy](https://ntfy.sh/) 是一个简单的基于 HTTP 的发布-订阅通知服务。它可与 `ntfy.sh` 上的免费公共服务器或任何自托管实例配合使用，支持任何能发起 HTTP 请求的客户端——手机、浏览器、脚本、手表。

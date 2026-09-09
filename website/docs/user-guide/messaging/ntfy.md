@@ -1,3 +1,9 @@
+---
+sidebar_position: 22
+title: "ntfy"
+description: "Connect Hermes Agent to the ntfy HTTP pub-sub push service, on ntfy.sh or a self-hosted instance"
+---
+
 # ntfy
 
 [ntfy](https://ntfy.sh/) is a simple HTTP-based pub-sub notification service. It works with the free public server at `ntfy.sh` or any self-hosted instance, and supports any client that can make HTTP requests — phones, browsers, scripts, watches.

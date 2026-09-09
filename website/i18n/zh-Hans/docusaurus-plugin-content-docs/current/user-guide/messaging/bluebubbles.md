@@ -1,3 +1,9 @@
+---
+sidebar_position: 21
+title: "BlueBubbles（iMessage）"
+description: "通过自托管的 BlueBubbles macOS 服务端，将 Hermes Agent 连接到 Apple iMessage"
+---
+
 # BlueBubbles（iMessage）
 
 通过 [BlueBubbles](https://bluebubbles.app/) 将 Hermes 连接至 Apple iMessage——这是一款免费、开源的 macOS 服务端，可将 iMessage 桥接至任意设备。
