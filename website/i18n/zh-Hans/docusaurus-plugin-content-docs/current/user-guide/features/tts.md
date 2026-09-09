@@ -237,7 +237,7 @@ tts:
 
 **高级参数**（`tts.piper.length_scale` / `noise_scale` / `noise_w_scale` / `volume` / `normalize_audio`、`use_cuda`）与 Piper 的 `SynthesisConfig` 一一对应。在较旧的 `piper-tts` 版本上这些参数会被忽略。
 
-### 自定义命令提供商
+### 自定义命令提供商 {#custom-command-providers}
 
 如果你想使用的 TTS 引擎未被原生支持（VoxCPM、MLX-Kokoro、XTTS CLI、声音克隆脚本，或任何其他暴露 CLI 的引擎），你可以将其作为**命令类型提供商**接入，无需编写任何 Python 代码。Hermes 将输入文本写入临时 UTF-8 文件，运行你的 shell 命令，并读取命令生成的音频文件。
 
@@ -266,7 +266,7 @@ tts:
       output_format: wav
 ```
 
-#### 示例：Doubao（中文 seed-tts-2.0）
+#### 示例：Doubao（中文 seed-tts-2.0） {#example-doubao-chinese-seed-tts-20}
 
 如需通过字节跳动的 [seed-tts-2.0](https://www.volcengine.com/docs/6561/1257544) 双向流式 API 实现高质量中文 TTS，请安装 [`doubao-speech`](https://pypi.org/project/doubao-speech/) PyPI 包并将其作为命令提供商接入：
 
@@ -459,7 +459,7 @@ stt:
 
 **自定义本地 CLI 回退** — 若你希望 Hermes 直接调用本地转录命令，请设置 `HERMES_LOCAL_STT_COMMAND`。命令模板支持 `{input_path}`、`{output_dir}`、`{language}` 和 `{model}` 占位符。你的命令必须在 `{output_dir}` 下某处写入 `.txt` 转录文件。
 
-#### 示例：Doubao / Volcengine ASR
+#### 示例：Doubao / Volcengine ASR {#example-doubao--volcengine-asr}
 
 如果你使用 [`doubao-speech`](https://pypi.org/project/doubao-speech/) 进行 Doubao TTS（见[上文](#example-doubao-chinese-seed-tts-20)），同一个包也可通过本地命令 STT 接口处理语音转文字：
 
@@ -486,7 +486,7 @@ Hermes 将传入的语音消息写入 `{input_path}`，运行命令，并读取 
 - **未设置 Mistral 密钥/SDK** → 在自动检测中跳过；回退至下一个可用提供商
 - **无可用提供商** → 语音消息直接传递，并向用户给出准确说明
 
-### STT 自定义命令提供商
+### STT 自定义命令提供商 {#stt-custom-command-providers}
 
 如果你想用的 STT 引擎没有被原生支持（Doubao ASR、NVIDIA Parakeet、某个 whisper.cpp 构建、开源的 SenseVoice CLI，或任何其他暴露 shell 命令的引擎），可以把它接成一个**命令类型提供商**，无需编写任何 Python 代码。Hermes 会对音频文件运行你的 shell 命令，并读回转录文本。
 

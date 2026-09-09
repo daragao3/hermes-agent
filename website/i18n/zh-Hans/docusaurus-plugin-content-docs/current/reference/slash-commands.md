@@ -171,7 +171,7 @@ quick_commands:
 
 不支持将纯字符串 prompt 快捷方式作为快捷命令。较长的可复用 prompt 请放入 skill，或使用 `type: alias` 指向现有斜杠命令。
 
-### 自定义模型别名
+### 自定义模型别名 {#custom-model-aliases}
 
 为常用模型定义自己的短名称，然后在 CLI 或任意消息平台中通过 `/model <alias>` 调用。别名在两者中的行为完全一致，支持仅会话（默认）和 `--global` 切换。
 
@@ -266,7 +266,7 @@ hermes config set model.aliases.grok x-ai/grok-4
 | `/help` | 显示消息平台帮助。 |
 | `/<skill-name>` | 按名称调用任意已安装的 skill。 |
 
-## 注意事项
+## 注意事项 {#notes}
 
 - `/skin`、`/snapshot`、`/reload`、`/tools`、`/toolsets`、`/browser`、`/config`、`/cron`、`/platforms`、`/paste`、`/image`、`/statusbar`、`/plugins`、`/busy`、`/indicator`、`/redraw`、`/clear`、`/history`、`/save`、`/copy`、`/handoff`、`/billing` 和 `/quit` 是**仅限 CLI** 的命令。
 - `/skills` **仅在搜索/浏览/安装时属于 CLI-only**；其写入审批子命令（`pending`、`approve`、`reject`、`diff`、`approval`）在 `skills.write_approval` 开启时也可在消息平台使用。`/memory` 可在**两个表面**使用。

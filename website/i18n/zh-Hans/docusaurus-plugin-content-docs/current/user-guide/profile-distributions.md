@@ -120,7 +120,7 @@ env_requires:
 
 这就是完整的 manifest。除 `name` 外，每个字段都有合理的默认值。
 
-### 第三步——在首次提交之前创建 `.gitignore`
+### 第三步——在首次提交之前创建 `.gitignore` {#step-3--create-a-gitignore-before-the-first-commit}
 
 :::warning
 请在运行 `git init` 或 `git add` **之前**完成这一步。如果你已经和该 profile 聊过天、跑过 setup，或以其他方式使用过它，那么该目录里现在就有一些绝不能发布的文件：`.env`、`auth.json`、`memories/`、`sessions/`、`state.db*`、`logs/` 等等。
@@ -594,7 +594,7 @@ hermes profile install ~/.hermes/profiles/research-bot --name research-bot-test
 
 ---
 
-## 分发中永远不包含的内容
+## 分发中永远不包含的内容 {#whats-not-in-a-distribution-ever}
 
 即使作者不小心将以下路径提交到仓库，安装器也会硬性排除它们。没有任何配置选项可以覆盖此行为——这是经过回归测试的不变量：
 

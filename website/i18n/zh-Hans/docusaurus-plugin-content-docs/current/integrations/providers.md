@@ -876,7 +876,7 @@ hermes config set model.lmstudio_load_mode explicit
 
 ---
 
-### WSL2 网络（Windows 用户）
+### WSL2 网络（Windows 用户） {#wsl2-networking-windows-users}
 
 由于 Hermes Agent 需要 Unix 环境，Windows 用户在 WSL2 内运行它。如果你的模型服务器（Ollama、LM Studio 等）运行在 **Windows 主机**上，需要桥接网络——WSL2 使用具有独立子网的虚拟网络适配器，因此 WSL2 内的 `localhost` 指向 Linux 虚拟机，**而非** Windows 主机。
 
@@ -1107,7 +1107,7 @@ ClawRouter 需要在 Base 或 Solana 上有 USDC 充值的钱包用于支付。�
 
 ---
 
-### 其他兼容提供商
+### 其他兼容提供商 {#other-compatible-providers}
 
 任何具有 OpenAI 兼容 API 的服务均可使用。一些常用选项：
 

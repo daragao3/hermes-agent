@@ -101,7 +101,7 @@ platforms:
 
 Telegram 最多允许 100 条 BotCommand，但过大的命令负载可能失败。为可靠起见，Hermes 默认为 60，并将配置值钳制在 `1..100` 范围内；完整命令列表请使用 `/commands`。
 
-## 第三步：隐私模式（群组关键设置）
+## 第三步：隐私模式（群组关键设置） {#step-3-privacy-mode-critical-for-groups}
 
 Telegram 机器人有一个**隐私模式**，**默认启用**。这是在群组中使用机器人时最常见的困惑来源。
 
@@ -388,7 +388,7 @@ brew install ffmpeg
 
 在 `config.yaml` 的 `tts.provider` 键下配置 TTS 提供商。
 
-## 通过本地 Bot API 服务器处理大文件（>20MB）
+## 通过本地 Bot API 服务器处理大文件（>20MB） {#large-files-20mb-via-local-bot-api-server}
 
 Telegram 的**公共** Bot API 将 `getFile` 下载限制为 **20 MB**，因此任何超过该大小的语音备忘录、音频文件、视频或文档都会被 Hermes 静默拒绝并回复"文件过大"。官方解决方案是运行本地 [telegram-bot-api](https://github.com/tdlib/telegram-bot-api) 守护进程——与 Telegram 使用的相同服务器软件，但运行在你的网络上。本地服务器将文件上限提升至 **2 GB**，Hermes 在检测到自定义 `base_url` 配置时会自动解除自身内部限制。
 
@@ -604,7 +604,7 @@ Telegram 话题 `31` 和 `42` 中的消息在提及和自由响应检查运行�
 - 无效的正则表达式模式会在 gateway 日志中记录警告并被忽略，而不会导致机器人崩溃
 - 如果你希望模式仅在消息开头匹配，请用 `^` 锚定
 
-## 私聊话题（Bot API 9.4）
+## 私聊话题（Bot API 9.4） {#private-chat-topics-bot-api-94}
 
 Telegram Bot API 9.4（2026 年 2 月）引入了**私聊话题**——机器人可以直接在一对一私聊中创建论坛风格的话题线程，无需超级群组。这让你可以在与 Hermes 的现有私聊中运行多个隔离的工作区。
 
@@ -692,7 +692,7 @@ platforms:
 在配置之外创建的话题（例如通过手动调用 Telegram API）会在 `forum_topic_created` 服务消息到达时自动被发现。你也可以在 gateway 运行时向配置中添加话题——它们会在下次缓存未命中时被拾取。
 :::
 
-## 多会话私聊模式（`/topic`）
+## 多会话私聊模式（`/topic`） {#multi-session-dm-mode-topic}
 
 ChatGPT 风格的多会话私聊——一个机器人，多个并行对话。与上方运营商策划的 `extra.dm_topics` 不同，此模式是**用户驱动**的：无需配置，无需预先声明话题名称。终端用户通过 `/topic` 开启，然后点击 Telegram 的 **+** 按钮创建任意数量的话题，每个话题都是完全独立的 Hermes 会话。
 

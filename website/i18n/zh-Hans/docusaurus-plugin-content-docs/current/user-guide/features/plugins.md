@@ -324,7 +324,7 @@ context:
 
 在运行中的会话里，`/plugins` 显示当前已加载的插件。
 
-## 注入消息
+## 注入消息 {#injecting-messages}
 
 插件可使用 `ctx.inject_message()` 向活跃对话注入消息：
 
