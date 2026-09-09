@@ -8,7 +8,7 @@ description: "在仓库中编写 SKILL.md"
 
 # Hermes Agent Skill 编写
 
-编写仓库内 SKILL.md：frontmatter（前置元数据）、验证器、结构。
+编写仓库内 SKILL.md：frontmatter（前置元数据）、验证器、结构，以及写作质量原则。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "在仓库中编写 SKILL.md"
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/software-development/hermes-agent-skill-authoring` |
-| 版本 | `1.0.0` |
+| 版本 | `1.1.0` |
 | 作者 | Hermes Agent |
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
@@ -61,7 +61,7 @@ SKILL.md 可以存放在两个位置：
 ---
 name: my-skill-name               # 小写，连字符，≤64 个字符（MAX_NAME_LENGTH）
 description: Use when <trigger>. <one-line behavior>.
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -78,6 +78,29 @@ metadata:
 - Description：≤ 1024 个字符（强制执行）。
 - 完整 SKILL.md：≤ 100,000 个字符（强制执行为 `MAX_SKILL_CONTENT_CHARS`，约 36k token）。
 - `software-development/` 中的同类 skill 大小在 **8-14k 字符**之间。以此为目标范围。若超过 20k，请拆分为 `references/*.md` 并在 SKILL.md 中引用。
+
+## 写作质量原则
+
+Skill 的存在是为了让 agent 的处理过程更可预测。可预测**并不**意味着每次运行都产生完全相同的输出；它意味着 agent 能可靠地遵循同一套有用的准则。
+
+编写或修改任何 skill 时，使用以下质量检查：
+
+1. **面向过程可预测性优化。** 先问：这个 skill 加载后，应该改变哪些行为？如果某一行不改变行为，就删掉它。
+2. **选择合适的上下文负载。** 由模型触发的 Hermes skill，其 description 每轮都要付出代价。description 应聚焦于触发场景和该 skill 的独特行为，细节放进正文或链接的参考文件。
+3. **建立信息层级。** 始终需要的步骤放在 `SKILL.md`；分支专用或篇幅较大的参考材料放进 `references/`、`templates/` 或 `scripts/`，仅在需要时指向它们。
+4. **每个步骤都以完成标准收尾。** 每个有序步骤都应说明 agent 如何判断它已完成。好的标准是可检查的，必要时是穷尽的："每个被修改的文件都已交代清楚"胜过"总结改动"。
+5. **让规则与其约束的概念放在一起。** 避免把一个想法散落在文件各处。把定义、注意事项、示例和验证放在相邻位置。
+6. **使用有力的引导词。** 优先使用模型已经熟悉的紧凑概念——例如"tight loop""tracer bullet""root cause""regression test"——而不是反复的长篇解释。一个好的引导词既省 token，又能锚定行为。
+7. **清除重复与空转内容。** 每个含义只保留一个事实来源。逐句自问：相对于默认行为，这句话是否改变了 agent 的行为？如果没有，就删除它，而不是润色它。
+8. **警惕过早完成。** 如果 agent 常常草率略过某个步骤，先把该步骤的完成标准写得更锐利。只有当后续步骤会干扰当前步骤的质量时，才拆分流程。
+
+常见的质量缺陷：
+
+- **过早完成**——skill 允许 agent 在工作真正做完之前就继续往下走。
+- **重复**——同一条规则出现在多处，并逐渐彼此漂移。
+- **沉积**——陈旧的内容一直留着，因为新增比删除让人更安心。
+- **蔓延**——始终可见的材料过多；把分支专用的参考内容藏到指针之后。
+- **空转文字**——即使没有这个 skill，agent 本来也会遵循的泛泛建议。
 
 ## 对等匹配结构
 
@@ -168,7 +191,11 @@ skills/<category>/<skill-name>/SKILL.md
 
 6. **期望当前会话能看到新 skill。** 不会。skill 加载器在会话开始时初始化。请在新会话中验证，或通过 `skill_view` 使用精确路径进行验证。
 
-7. **链接到仓库中不存在的 skill。** `related_skills: [some-user-local-skill]` 对你有效，但对其他克隆用户会失效。优先只使用仓库内链接。
+7. **让 skill 不断沉积。** Skill 应当随时间变得更短或更锐利。新增规则时，请删除它所取代的旧措辞；不要让建议无限叠加。
+
+8. **写空转文字。** "小心谨慎""务必全面""遵循最佳实践"这类说法很少能改变模型行为。请换成可检查的完成标准，或更有力的引导词。
+
+9. **链接到仓库中不存在的 skill。** `related_skills: [some-user-local-skill]` 对你有效，但对其他克隆用户会失效。优先只使用仓库内链接。
 
 ## 验证清单
 
@@ -179,5 +206,9 @@ skills/<category>/<skill-name>/SKILL.md
 - [ ] Description ≤ 1024 个字符，且以"Use when ..."开头
 - [ ] 文件总大小 ≤ 100,000 个字符（目标 8-15k）
 - [ ] 结构：`# Title` → `## Overview` → `## When to Use` → 正文 → `## Common Pitfalls` → `## Verification Checklist`
+- [ ] 每个有序步骤都有可检查的完成标准
+- [ ] Description 聚焦触发场景，且不重复正文内容
+- [ ] 篇幅较大或分支专用的参考内容以渐进披露方式放在链接文件中
+- [ ] 已删除空转文字和重复规则
 - [ ] `related_skills` 中的引用在仓库内可解析（或明确允许为用户本地）
 - [ ] 已在目标分支上完成 `git add skills/<category>/<name>/ && git commit`

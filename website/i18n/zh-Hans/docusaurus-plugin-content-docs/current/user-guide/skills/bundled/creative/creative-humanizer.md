@@ -59,12 +59,12 @@ description: "人性化文本：去除 AI 腔调，注入真实声音"
 
 当收到需要人性化的文本时：
 
-1. **识别 AI 模式** — 扫描下列 29 种模式。
-2. **重写问题段落** — 用自然的替代表达替换 AI 腔调。
-3. **保留含义** — 保持核心信息完整。
-4. **维持声音** — 匹配预期语气（正式、随意、技术性等）。如果提供了声音样本，则具体匹配该样本。
-5. **注入灵魂** — 不只是去除坏模式，还要注入真实个性。参见下方"个性与灵魂"章节。
-6. **做最终反 AI 检查** — 问自己："下面这段文字为什么明显是 AI 生成的？"简短回答剩余的特征，然后再修改一次。
+1. **识别 AI 模式。** 扫描下列 34 种模式。
+2. **重写问题段落。** 用自然的替代表达替换 AI 腔调。
+3. **保留含义。** 保持核心信息完整。
+4. **维持声音。** 匹配预期语气（正式、随意、技术性等等）。如果提供了声音样本，则具体匹配该样本。
+5. **注入灵魂。** 去除坏模式只完成了一半；重写后的文字还需要真实的个性。参见下方"个性与灵魂"章节。
+6. **做最终反 AI 检查。** 问自己："下面这段文字为什么明显是 AI 生成的？"简短回答剩余的特征，然后再修改一次。
 
 
 ## 声音校准（可选）
@@ -206,6 +206,8 @@ description: "人性化文本：去除 AI 腔调，注入真实声音"
 ### 7. 过度使用的"AI 词汇"
 
 **高频 AI 词汇：** Actually、additionally、align with、crucial、delve、emphasizing、enduring、enhance、fostering、garner、highlight（动词）、interplay、intricate/intricacies、key（形容词）、landscape（抽象名词）、pivotal、showcase、tapestry（抽象名词）、testament、underscore（动词）、valuable、vibrant
+
+**营销与博客陈词滥调（同样的破绽，不同的语域）：** at the end of the day、when it comes to、in a world where、moving forward、circle back、deep dive、game-changer、double down、take a step back、on the same page、make no mistake、it turns out、let me be clear、navigate（用于挑战）、lean into、unpack（用于分析之前）、straightforward（用来形容任何东西）
 
 **问题：** 这些词在 2023 年后的文本中出现频率远高于以往，且常常同时出现。
 
@@ -493,6 +495,72 @@ description: "人性化文本：去除 AI 腔调，注入真实声音"
 >
 > When users hit a slow page, they leave.
 
+## 风格、节奏与修辞模式
+
+### 30. 生硬的比喻与过度修辞
+
+**注意信号：** 别出心裁却牵强的比喻、混杂的比喻、明明用平实词语更清楚却改用比喻、用完比喻后紧接着又解释它
+
+**问题：** 除了模式 4 和模式 7 中标记的套路化比喻用词之外，LLM 还会发明装饰性的比喻——只增加意象，不增加含义——然后往往还要解释一番。平实的描述通常更清楚也更诚实。如果比喻配不上它占的位置，就删掉它，直接把字面意思说出来。
+
+**之前：**
+> 代码库是一座需要我们打理的花园，修剪枯枝、播下创新的种子，好让整个生态繁荣起来。换句话说，删掉没用的代码并添加功能。
+
+**之后：**
+> 删掉没用的代码，并添加用户正在要求的功能。
+
+
+### 31. 戏剧化断句与漂亮的收尾金句
+
+**注意信号：** 为制造戏剧效果而使用的两三个词、没有主语的句子，"X。而且 Y。而且 Z。"式的短促连发，每段或每节末尾都有一句可引用的短句，卖萌式的同位语碎片（"这份目录，价格实在"）
+
+**问题：** LLM 会把句子切成碎片来制造虚假的强调，并在每节结尾放一句可引用的"金句"。读起来像广告文案或励志海报。如果某一行听起来像该印在海报上，就删掉它，或把它折回成一个有主语的完整句子。这与模式 13 不同：模式 13 讲的是语法上的被动语态，这里的破绽在于节奏和表演感，而不是被隐藏的施事者。
+
+**之前：**
+> 这份目录，价格实在。为它的作用付费。而不是为承诺。它就是能用。每一次都能用。
+
+**之后：**
+> 这份目录按用量计价，因此你只为实际发起的调用付费，而不是每月固定订阅费。
+
+
+### 32. 自问自答的反问
+
+**注意信号：** "如果……会怎样？"、"问题在于……"、"你有没有想过……？"，一个问题紧接着自己的答案，"想想看。"
+
+**问题：** LLM 抛出一个问题，只是为了隔一拍自己回答。这个问题不提供任何信息，还拖慢了句子。直接把观点说出来。
+
+**之前：**
+> 什么样的 API 才算好？归根结底在于可预测性。想想看：开发者希望确切知道自己会拿回什么。
+
+**之后：**
+> 好的 API 是可预测的，开发者因此能确切知道自己会拿回什么。
+
+
+### 33. 句首用语的口癖
+
+**注意用词：** So……、Look，、习惯性地用 And/But 开头、在陈述事实时使用"我认为"/"我相信"、以副词开头（Interestingly、Importantly、Notably、Crucially、Essentially、Ultimately）
+
+**问题：** LLM 依赖一小撮固定的句首用语。副词开头是在告诉读者该有什么感受，而不是把这种感受写出来；"So"或"Look"则是在伪造对话式的亲切感。去掉这些开头，直接从实质内容开始。
+
+**之前：**
+> So，结果好坏参半。Interestingly，采用率上升了。Importantly，流失率也上升了。我认为这说明这个功能还需要打磨。
+
+**之后：**
+> 结果好坏参半：采用率上升了，但流失率同步上升，因此这个功能还需要打磨。
+
+
+### 34. 安慰式收尾
+
+**注意信号：** 这也没关系。、这样也挺好。、这没什么不对。、不必觉得丢人……、你并不孤单、这完全正常
+
+**问题：** LLM 会补上读者从没要求过的安慰。它稀释了文字的力量，并且预设读者需要被安抚。信任读者：把观点说完就停下。
+
+**之前：**
+> 你可能还没有搭好测试环境。这也没关系。很多团队一开始都没有，这没什么不对。
+
+**之后：**
+> 很多团队一开始并没有测试环境，等到回归缺陷开始真正消耗时间时才补上。
+
 ---
 
 ## 流程
@@ -589,6 +657,6 @@ description: "人性化文本：去除 AI 腔调，注入真实声音"
 
 此 skill 移植自 [blader/humanizer](https://github.com/blader/humanizer)（MIT 许可），该项目本身基于 [Wikipedia: Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)，由 WikiProject AI Cleanup 维护。其中记录的模式来自对 Wikipedia 上数千个 AI 生成文本实例的观察。
 
-原作者：Siqi Chen ([@blader](https://github.com/blader))。原始仓库：https://github.com/blader/humanizer（版本 2.5.1）。移植到 Hermes Agent 时加入了 Hermes 原生工具引用（`read_file`、`patch`、`write_file`）以及何时加载此 skill 的指导；29 种模式、个性/灵魂章节和完整示例均原文保留自来源。原始 MIT 许可证保留在此 `SKILL.md` 旁边的 `LICENSE` 文件中。
+原作者：Siqi Chen ([@blader](https://github.com/blader))。原始仓库：https://github.com/blader/humanizer（版本 2.5.1）。移植到 Hermes Agent 时加入了 Hermes 原生工具引用（`read_file`、`patch`、`write_file`）以及何时加载此 skill 的指导。原有的 29 种模式来自来源项目，其中的前后对照示例（包括完整示例）作为示范予以保留。模式 30-34 以及模式 7 中新增的"营销与博客陈词滥调"列表是 Hermes 的补充，并不属于上游来源。此 skill 自身的说明性文字也做了轻度修订以遵循它自己的指导（例如在叙述中去掉破折号和否定式排比），从而让这个 skill 示范它所要求的写作方式。原始 MIT 许可证保留在此 `SKILL.md` 旁边的 `LICENSE` 文件中。
 
 来自 Wikipedia 的核心洞察："LLMs use statistical algorithms to guess what should come next. The result tends toward the most statistically likely result that applies to the widest variety of cases."

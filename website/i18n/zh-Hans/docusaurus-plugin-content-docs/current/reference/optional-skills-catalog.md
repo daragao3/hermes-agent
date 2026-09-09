@@ -64,6 +64,7 @@ hermes skills uninstall <skill-name>
 | [**kanban-video-orchestrator**](/user-guide/skills/optional/creative/creative-kanban-video-orchestrator) | 规划、搭建并监控由 Hermes Kanban 支撑的多 agent 视频制作流水线。适用于用户希望制作任何类型视频的场景 — 叙事影片、产品/营销视频、MV、解说视频、ASCII/终端艺术、抽象/生成式循环等。 |
 | [**meme-generation**](/user-guide/skills/optional/creative/creative-meme-generation) | 通过选取模板并使用 Pillow 叠加文字来生成真实的 meme 图片，输出实际的 .png 文件。 |
 | [**pixel-art**](/user-guide/skills/optional/creative/creative-pixel-art) | 使用时代配色（NES、Game Boy、PICO-8）创作像素画。 |
+| [**unreal-mcp**](/user-guide/skills/optional/creative/creative-unreal-mcp) | 当用户想通过 Epic 官方内嵌于编辑器的 MCP 服务器（目录条目：unreal-engine）在 Unreal Engine 中执行任何操作时使用——搭建/打光/填充场景、放置与变换 Actor、编写 Blueprint、用 Sequence... |
 
 ## devops
 
@@ -207,6 +208,7 @@ hermes skills uninstall <skill-name>
 | [**godmode**](/user-guide/skills/optional/security/security-godmode) | 越狱 LLM：Parseltongue、GODMODE、ULTRAPLINIAN。 |
 | [**oss-forensics**](/user-guide/skills/optional/security/security-oss-forensics) | 针对 GitHub 仓库的供应链调查、证据恢复和取证分析。涵盖已删除提交恢复、强制推送检测、IOC 提取、多源证据收集、假设形成/验证等。 |
 | [**sherlock**](/user-guide/skills/optional/security/security-sherlock) | 跨 400+ 社交网络的 OSINT 用户名搜索。通过用户名追踪社交媒体账号。 |
+| [**unbroker**](/user-guide/skills/optional/security/security-unbroker) | 自主地从数据经纪商网站上移除你的个人信息。 |
 | [**web-pentest**](/user-guide/skills/optional/security/security-web-pentest) | 获得授权的 Web 应用渗透测试 — 侦察、漏洞分析、基于验证的利用及专业报告。在范围、授权等方面带有硬性护栏地采用 Shannon 的"No Exploit, No Report"方法论。 |
 
 ## software-development
@@ -221,6 +223,7 @@ hermes skills uninstall <skill-name>
 
 | 技能 | 描述 |
 |-------|-------------|
+| [**cloudflare-temporary-deploy**](/user-guide/skills/optional/web-development/web-development-cloudflare-temporary-deploy) | 无需账号，通过 wrangler --temporary 实时部署 Worker。 |
 | [**page-agent**](/user-guide/skills/optional/web-development/web-development-page-agent) | 将 alibaba/page-agent 嵌入您自己的 Web 应用 — 一个纯 JavaScript 页内 GUI agent，以单个 `<script>` 标签或 npm 包形式提供，让您网站的终端用户可以用自然语言驱动 UI（如"点击登录，填写用户名..."）。 |
 
 ---
