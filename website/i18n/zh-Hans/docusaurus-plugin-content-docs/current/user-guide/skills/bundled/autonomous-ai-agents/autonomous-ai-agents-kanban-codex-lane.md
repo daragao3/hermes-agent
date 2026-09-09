@@ -1,7 +1,7 @@
 ---
 title: "Kanban Codex Lane"
 sidebar_label: "Kanban Codex Lane"
-description: "当 Hermes Kanban worker 想把 Codex CLI 作为一条隔离的实现通道来运行，而由 Hermes 保留对任务生命周期、对账、测..."
+description: "当 Hermes Kanban worker 想把 Codex CLI 作为一条隔离的实现通道来运行，而由 Hermes 保留对任务生命周期、对账..."
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
