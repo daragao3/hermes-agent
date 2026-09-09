@@ -146,7 +146,7 @@ director profile 从此接管，通过 kanban 工具集将工作分解并路由�
 
 5. **尊重现有技能。** 当某个场景适合现有技能时，相关渲染器应通过任务上的 `--skill <name>` 或 profile 中的 `always_load` 加载该技能。不要重新推导技能已提供的内容。
 
-6. **director 绝不执行。** 即使拥有完整的 `kanban + terminal + file` 工具集，director 的 `SOUL.md` 规则也禁止其自行执行工作。它只负责分解和路由——每个具体任务都变成对专业 profile 的 `hermes kanban create` 调用。自动注入的 kanban 编排指引对此有进一步说明。
+6. **director 绝不执行。** 即使拥有完整的 `kanban + terminal + file` 工具集，director 的 `SOUL.md` 规则也禁止其自行执行工作。它只负责分解和路由——每个具体任务都变成对专业 profile 的 `hermes kanban create` 调用。注入到每个 kanban worker 系统提示中的 kanban 编排指引对此有进一步说明。
 
 7. **不要过度分解。** 一个 30 秒的产品视频**不需要** 20 个任务。目标是最小任务图，同时仍能良好并行化并暴露正确的人工审核节点。
 

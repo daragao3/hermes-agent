@@ -218,13 +218,13 @@ himalaya message write -H "To:recipient@example.com" -H "Subject:Test" "Message 
 
 ### 移动/复制邮件
 
-移动到文件夹：
+移动到文件夹（目标文件夹在前，消息 ID 在后）：
 
 ```bash
 himalaya message move "Archive" 42
 ```
 
-复制到文件夹：
+复制到文件夹（目标文件夹在前，消息 ID 在后）：
 
 ```bash
 himalaya message copy "Important" 42
