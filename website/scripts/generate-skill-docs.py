@@ -24,6 +24,25 @@ REPO = Path(__file__).resolve().parent.parent.parent
 DOCS = REPO / "website" / "docs"
 SKILLS_PAGES = DOCS / "user-guide" / "skills"
 
+# The zh-Hans twin of SKILLS_PAGES. Generated pages are translated in place
+# under the same relative path, so pruning an English page has to prune its
+# translation too -- leaving the twin behind makes check-i18n-parity.py report
+# an `orphaned zh` finding, which is BLOCKING even under --allow-untranslated.
+ZH_SKILLS_PAGES = (
+    REPO
+    / "website"
+    / "i18n"
+    / "zh-Hans"
+    / "docusaurus-plugin-content-docs"
+    / "current"
+    / "user-guide"
+    / "skills"
+)
+
+# Only these subtrees of SKILLS_PAGES are generator-owned. Hand-written pages
+# live at the top level (see HAND_WRITTEN) and must never be pruned.
+GENERATED_PAGE_ROOTS = ("bundled", "optional")
+
 SKILL_SOURCES = [
     ("bundled", REPO / "skills"),
     ("optional", REPO / "optional-skills"),
@@ -321,6 +340,67 @@ def page_output_path(meta: dict[str, Any]) -> Path:
         / meta["category"]
         / f"{page_id(meta)}.md"
     )
+
+
+def prune_orphaned_pages(
+    entries: list[tuple[dict[str, Any], dict[str, Any]]],
+    skills_pages: Path | None = None,
+    zh_skills_pages: Path | None = None,
+) -> list[Path]:
+    """Delete generated pages whose source skill no longer exists.
+
+    The generator used to only ever write. A deleted or moved skill left its
+    page behind forever -- still building, still counted by the i18n parity
+    gate, still reachable by direct URL after it dropped out of sidebars.ts
+    and the catalogs. CI regenerates before it builds, so a stale page never
+    showed up as a build failure either.
+
+    Anything under ``<skills_pages>/{bundled,optional}/`` that this run did not
+    just write is such a leftover, so it and its zh-Hans twin are removed. Only
+    those two subtrees are touched: the hand-written top-level pages are not
+    generator-owned.
+
+    Returns the deleted paths (English and zh-Hans), for the caller to report.
+    """
+    if skills_pages is None:
+        skills_pages = SKILLS_PAGES
+    if zh_skills_pages is None:
+        zh_skills_pages = ZH_SKILLS_PAGES
+
+    # Relative, so a caller can point this at a scratch tree.
+    expected = {
+        page_output_path(meta).relative_to(SKILLS_PAGES) for meta, _ in entries
+    }
+
+    removed: list[Path] = []
+    for root_name in GENERATED_PAGE_ROOTS:
+        root = skills_pages / root_name
+        if not root.is_dir():
+            continue
+        for page in sorted(root.rglob("*.md")):
+            rel = page.relative_to(skills_pages)
+            if rel in expected or page.name in HAND_WRITTEN:
+                continue
+            page.unlink()
+            removed.append(page)
+            zh_twin = zh_skills_pages / rel
+            if zh_twin.is_file():
+                zh_twin.unlink()
+                removed.append(zh_twin)
+
+    # A category that lost its last skill leaves an empty directory behind,
+    # which Docusaurus does not mind but git will not track either -- drop it
+    # so the tree matches what a fresh generation would produce.
+    for base in (skills_pages, zh_skills_pages):
+        for root_name in GENERATED_PAGE_ROOTS:
+            root = base / root_name
+            if not root.is_dir():
+                continue
+            for category in sorted(root.iterdir()):
+                if category.is_dir() and not any(category.iterdir()):
+                    category.rmdir()
+
+    return removed
 
 
 def sidebar_doc_id(meta: dict[str, Any]) -> str:
@@ -786,6 +866,14 @@ def main():
         out_path.write_text(content, encoding="utf-8")
         written += 1
     print(f"Wrote {written} per-skill pages under {SKILLS_PAGES}")
+
+    # Anything left under the generated subtrees that we did not just write is
+    # a page whose skill was deleted or moved.
+    removed = prune_orphaned_pages(entries)
+    if removed:
+        for path in removed:
+            print(f"Pruned orphaned page {path.relative_to(REPO).as_posix()}")
+        print(f"Pruned {len(removed)} orphaned page(s)")
 
     # Regenerate catalogs
     bundled_catalog = build_catalog_md_bundled(entries)

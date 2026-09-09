@@ -33,6 +33,26 @@ jobs:
       - name: Check zh-Hans docs parity
         run: python3 website/scripts/check-i18n-parity.py --allow-untranslated
 
+  # Generated per-skill pages whose source skill is gone. Its own python-only
+  # job for the same two reasons as i18n-parity: it reports in ~10s instead of
+  # waiting behind npm install, and — the load-bearing one — it must see the
+  # tree AS COMMITTED. The docs-site-checks job below regenerates the pages
+  # before it builds, and generate-skill-docs.py now PRUNES, so running this
+  # there would check a tree the regeneration had already repaired and could
+  # never fail.
+  orphaned-skill-pages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Check for orphaned per-skill docs pages
+        run: python3 website/scripts/check-orphaned-skill-pages.py
+
   docs-site-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 20
