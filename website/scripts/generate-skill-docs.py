@@ -328,6 +328,28 @@ def sidebar_doc_id(meta: dict[str, Any]) -> str:
     return f"user-guide/skills/{meta['source_kind']}/{meta['category']}/{page_id(meta)}"
 
 
+def _truncate_on_word_boundary(text: str, limit: int) -> str:
+    """Clip `text` to at most `limit` chars, ending on a whole word.
+
+    The ellipsis counts toward the limit. Cutting at a fixed offset used to
+    slice words in half ("...reconciliation, tes..."), which reads as a bug
+    in the rendered <meta name="description"> and in search results. Back
+    off to the last space instead, then drop any dangling punctuation so the
+    ellipsis follows a word rather than a comma.
+
+    A single token longer than the budget has no boundary to back off to, so
+    it is still cut mid-word -- that is the only case where the old behaviour
+    is the best available.
+    """
+    if len(text) <= limit:
+        return text
+    clipped = text[: limit - 3]
+    boundary = clipped.rfind(" ")
+    if boundary > 0:
+        clipped = clipped[:boundary]
+    return clipped.rstrip().rstrip(",;:-—–") + "..."
+
+
 def render_skill_page(
     meta: dict[str, Any],
     fm: dict[str, Any],
@@ -338,7 +360,7 @@ def render_skill_page(
     description = fm.get("description", "").strip()
     short_desc = description.split(".")[0].strip() if description else name
     if len(short_desc) > 160:
-        short_desc = short_desc[:157] + "..."
+        short_desc = _truncate_on_word_boundary(short_desc, 160)
 
     # Heuristic nicer title from name
     display_name = name.replace("-", " ").replace("_", " ").title()
