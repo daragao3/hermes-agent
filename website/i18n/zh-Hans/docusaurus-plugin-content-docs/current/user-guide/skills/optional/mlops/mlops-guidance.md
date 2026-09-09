@@ -1,7 +1,7 @@
 ---
 title: "Guidance"
 sidebar_label: "Guidance"
-description: "使用正则表达式和语法控制 LLM 输出，保证生成有效的 JSON/XML/代码，强制结构化格式，并使用 Guidance（微软研究院的约束生成框架）构建多步骤工作流..."
+description: "使用正则表达式和语法控制 LLM 输出，保证生成有效的 JSON/XML/代码，强制结构化格式，并使用 Guidance（微软研究院的约束生成框架）构建多步骤工作流"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
