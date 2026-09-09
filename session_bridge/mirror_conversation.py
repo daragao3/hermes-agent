@@ -120,12 +120,23 @@ class MirrorConversationSync:
         entry = ledger.get(claude_uuid)
         last_id = _ledger_int(entry, "last_message_id")
         leaf_uuid = _ledger_str(entry, "leaf_uuid")
-        rows = self._store.list_conversation_messages_after(
-            source_session_id, after_id=last_id, limit=_FETCH_LIMIT
-        )
+        mode = self._source_mode(entry, source_session_id)
+        if mode == "rollout":
+            rollout = self._codex_rollout_path(source_session_id)
+            if rollout is None:
+                return ConversationSyncResult(
+                    "skipped", reason="codex rollout file is not readable"
+                )
+            rows, consumed_id = read_codex_rollout_rows(
+                rollout, after_offset=last_id
+            )
+        else:
+            rows = self._store.list_conversation_messages_after(
+                source_session_id, after_id=last_id, limit=_FETCH_LIMIT
+            )
+            consumed_id = max((int(row["id"]) for row in rows), default=-1)
         if not rows:
             return ConversationSyncResult("idle")
-        consumed_id = max(int(row["id"]) for row in rows)
         turns = conversational_turns(rows, message_chars=self._message_chars)
         dropped = 0
         if entry is None and len(turns) > self._backfill_messages:
@@ -134,7 +145,9 @@ class MirrorConversationSync:
         if not turns:
             # Nothing displayable, but remember we looked so the same rows are
             # not re-filtered every cycle.
-            ledger[claude_uuid] = _ledger_entry(entry, consumed_id, leaf_uuid, 0)
+            ledger[claude_uuid] = _ledger_entry(
+                entry, consumed_id, leaf_uuid, 0, mode=mode
+            )
             self._save_ledger(ledger)
             return ConversationSyncResult("idle")
 
@@ -178,9 +191,49 @@ class MirrorConversationSync:
             parent = record["uuid"]
 
         _append_records(path, records)
-        ledger[claude_uuid] = _ledger_entry(entry, consumed_id, parent, len(records))
+        ledger[claude_uuid] = _ledger_entry(
+            entry, consumed_id, parent, len(records), mode=mode
+        )
         self._save_ledger(ledger)
         return ConversationSyncResult("appended", appended=len(records))
+
+    def _source_mode(
+        self, entry: Mapping[str, Any] | None, source_session_id: str
+    ) -> str:
+        """Where this mirror's turns come from; fixed on first hydration.
+
+        A Codex source is read from its on-disk rollout: the catalog's copy of
+        a Codex thread comes through the app-server under a read budget, and a
+        long thread that exceeded it is cached as a one-message summary for
+        good (measured 2026-09-09: a 65 MB, 333-reply thread held ONE stored
+        message). The rollout is complete and resumes by byte offset. Hermes
+        sources are host-native rows and read from the store. The mode is
+        pinned in the ledger so a mirror never mixes the two id spaces.
+        """
+        pinned = _ledger_str(entry, "mode")
+        if pinned in ("rollout", "store"):
+            return pinned
+        if source_session_id.startswith(f"{Provider.CODEX.value}:"):
+            return "rollout" if self._codex_rollout_path(source_session_id) else "store"
+        return "store"
+
+    def _codex_rollout_path(self, source_session_id: str) -> Path | None:
+        try:
+            row = self._store.get_external_session(source_session_id)
+        except Exception:
+            return None
+        if not isinstance(row, Mapping):
+            return None
+        native_path = row.get("native_path")
+        if not isinstance(native_path, str) or not native_path:
+            return None
+        path = Path(native_path)
+        try:
+            if not path.is_file():
+                return None
+        except OSError:
+            return None
+        return path
 
     def _load_ledger(self) -> dict[str, dict[str, Any]]:
         try:
@@ -250,6 +303,95 @@ def conversational_turns(
             }
         )
     return turns
+
+
+_ROLLOUT_TEXT_BLOCK_TYPES = frozenset({"input_text", "output_text", "text"})
+
+
+def read_codex_rollout_rows(
+    path: Path, *, after_offset: int | None
+) -> tuple[list[dict[str, Any]], int]:
+    """Message rows from a Codex rollout file, resumable by byte offset.
+
+    Returns ``(rows, consumed_offset)``: one row per ``response_item`` message
+    with a user or assistant role found in COMPLETE lines after
+    ``after_offset``, and the offset just past the last complete line read
+    (the value to pass back next time). Each row's ``id`` is the byte offset
+    of its line, which is monotonic in file order and therefore serves as the
+    message id the ledger and the deterministic record uuid key on.
+
+    ``compacted`` entries are skipped on purpose: their ``replacement_history``
+    re-states earlier messages, and a second copy is exactly what a display
+    transcript must not carry. A trailing line without its newline is a write
+    in progress and is left for the next pass.
+    """
+    start = 0 if after_offset is None or after_offset < 0 else int(after_offset)
+    rows: list[dict[str, Any]] = []
+    consumed = start
+    with path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        size = stream.tell()
+        if start >= size:
+            return [], start
+        stream.seek(start)
+        offset = start
+        for raw in stream:
+            line_start = offset
+            offset += len(raw)
+            if not raw.endswith(b"\n"):
+                break
+            consumed = offset
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            try:
+                record = json.loads(stripped.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, dict) or record.get("type") != "response_item":
+                continue
+            payload = record.get("payload")
+            if not isinstance(payload, dict) or payload.get("type") != "message":
+                continue
+            role = payload.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            content = payload.get("content")
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                text = "".join(
+                    block["text"]
+                    for block in content
+                    if isinstance(block, dict)
+                    and block.get("type") in _ROLLOUT_TEXT_BLOCK_TYPES
+                    and isinstance(block.get("text"), str)
+                )
+            else:
+                continue
+            if not text.strip():
+                continue
+            rows.append(
+                {
+                    "id": line_start,
+                    "role": role,
+                    "content": text,
+                    "timestamp": _epoch_from_iso(record.get("timestamp")),
+                }
+            )
+    return rows, consumed
+
+
+def _epoch_from_iso(value: object) -> float | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
 def render_mirror_record(
@@ -411,9 +553,12 @@ def _ledger_entry(
     last_message_id: int,
     leaf_uuid: str | None,
     appended: int,
+    *,
+    mode: str,
 ) -> dict[str, Any]:
     mirrored = _ledger_int(previous, "mirrored") or 0
     entry: dict[str, Any] = {
+        "mode": mode,
         "last_message_id": last_message_id,
         "mirrored": mirrored + appended,
     }

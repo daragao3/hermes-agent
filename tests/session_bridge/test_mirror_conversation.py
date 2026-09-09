@@ -478,6 +478,199 @@ def test_sync_terminates_an_unterminated_prefix_before_appending(store, tmp_path
     assert is_mirrored_record(records[-1])
 
 
+# --- Codex rollout reader ------------------------------------------------
+
+
+def _rollout_line(record: dict) -> bytes:
+    return json.dumps(record, ensure_ascii=False).encode("utf-8") + b"\n"
+
+
+def _rollout_message(role: str, text: str, *, stamp: str) -> dict:
+    block_type = "output_text" if role == "assistant" else "input_text"
+    return {
+        "timestamp": stamp,
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "id": f"msg_{role}_{stamp}",
+            "role": role,
+            "content": [{"type": block_type, "text": text}],
+        },
+    }
+
+
+def _write_rollout(path: Path) -> bytes:
+    lines = [
+        _rollout_line(
+            {
+                "timestamp": "2026-09-08T02:57:18.957Z",
+                "type": "session_meta",
+                "payload": {"id": SOURCE_NATIVE, "cwd": REGISTRATION_CWD},
+            }
+        ),
+        _rollout_line(
+            _rollout_message("developer", "<app-context>", stamp="2026-09-08T02:57:19.411Z")
+        ),
+        _rollout_line(
+            _rollout_message(
+                "user",
+                "<recommended_plugins>\nHere is a list",
+                stamp="2026-09-08T02:57:19.411Z",
+            )
+        ),
+        _rollout_line(
+            _rollout_message(
+                "user", "do a thorough /arch-review", stamp="2026-09-08T02:57:19.500Z"
+            )
+        ),
+        _rollout_line(
+            {
+                "timestamp": "2026-09-08T02:57:20.000Z",
+                "type": "response_item",
+                "payload": {"type": "function_call", "name": "shell", "arguments": "{}"},
+            }
+        ),
+        _rollout_line(
+            _rollout_message(
+                "assistant",
+                "I'm using the arch-review skill to review the platform.",
+                stamp="2026-09-08T02:57:26.849Z",
+            )
+        ),
+        _rollout_line(
+            {
+                "timestamp": "2026-09-08T03:16:05.078Z",
+                "type": "compacted",
+                "payload": {
+                    "message": "",
+                    "replacement_history": [
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {"type": "input_text", "text": "do a thorough /arch-review"}
+                            ],
+                        }
+                    ],
+                },
+            }
+        ),
+    ]
+    payload = b"".join(lines)
+    path.write_bytes(payload)
+    return payload
+
+
+def test_rollout_rows_resume_by_offset_and_skip_noise(tmp_path) -> None:
+    from session_bridge.mirror_conversation import read_codex_rollout_rows
+
+    path = tmp_path / "rollout.jsonl"
+    complete = _write_rollout(path)
+    partial = _rollout_line(
+        _rollout_message("assistant", "half written", stamp="2026-09-08T03:20:00.000Z")
+    )[:-10]
+    path.write_bytes(complete + partial)
+
+    rows, consumed = read_codex_rollout_rows(path, after_offset=None)
+
+    assert [(row["role"], row["content"]) for row in rows] == [
+        ("user", "<recommended_plugins>\nHere is a list"),
+        ("user", "do a thorough /arch-review"),
+        ("assistant", "I'm using the arch-review skill to review the platform."),
+    ]
+    assert [row["id"] for row in rows] == sorted(row["id"] for row in rows)
+    assert rows[1]["timestamp"] == pytest.approx(1788836239.5)
+    # The unterminated line is not consumed; the offset stops before it.
+    assert consumed == len(complete)
+
+    # Finishing that line and adding one more yields exactly the new rows.
+    finished = _rollout_line(
+        _rollout_message("assistant", "half written", stamp="2026-09-08T03:20:00.000Z")
+    )
+    extra = _rollout_line(
+        _rollout_message("user", "thanks", stamp="2026-09-08T03:21:00.000Z")
+    )
+    path.write_bytes(complete + finished + extra)
+    rows, consumed = read_codex_rollout_rows(path, after_offset=consumed)
+    assert [row["content"] for row in rows] == ["half written", "thanks"]
+    assert consumed == len(complete) + len(finished) + len(extra)
+    assert read_codex_rollout_rows(path, after_offset=consumed) == ([], consumed)
+
+    # The injected-context user turn is dropped by the shared filter.
+    turns = conversational_turns(read_codex_rollout_rows(path, after_offset=None)[0])
+    assert [turn["content"] for turn in turns][:2] == [
+        "do a thorough /arch-review",
+        "I'm using the arch-review skill to review the platform.",
+    ]
+
+
+def _under_collected_source(store, rollout: Path) -> None:
+    """The catalog holds ONE message for the thread; the rollout holds all."""
+    projection = _source_projection(
+        _message("e1", "do a thorough /arch-review", timestamp=1788836239.5)
+    )
+    from dataclasses import replace
+
+    store.upsert_projection(replace(projection, native_path=str(rollout)))
+
+
+def test_sync_reads_a_codex_source_from_its_rollout_file(store, tmp_path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    complete = _write_rollout(rollout)
+    _under_collected_source(store, rollout)
+    path = tmp_path / f"{CLAUDE_UUID}.jsonl"
+    _write_prefix(path)
+    sync = MirrorConversationSync(store)
+
+    result = sync.sync(
+        claude_uuid=CLAUDE_UUID,
+        source_session_id=SOURCE_ID,
+        native_path=str(path),
+        cwd=REGISTRATION_CWD,
+    )
+
+    assert result.status == "appended"
+    assert [_text(record) for record in _mirrored(path)] == [
+        "do a thorough /arch-review",
+        "I'm using the arch-review skill to review the platform.",
+    ]
+    ledger = store.get_state("session-bridge:claude-visibility:mirror-conversation")
+    assert ledger[CLAUDE_UUID]["mode"] == "rollout"
+    assert ledger[CLAUDE_UUID]["last_message_id"] == len(complete)
+
+    rollout.write_bytes(
+        complete
+        + _rollout_line(
+            _rollout_message("user", "thanks", stamp="2026-09-08T03:21:00.000Z")
+        )
+    )
+    again = sync.sync(
+        claude_uuid=CLAUDE_UUID,
+        source_session_id=SOURCE_ID,
+        native_path=str(path),
+        cwd=REGISTRATION_CWD,
+    )
+    assert again.appended == 1
+    assert _text(_mirrored(path)[-1]) == "thanks"
+
+
+def test_sync_pins_store_mode_when_the_rollout_is_missing(store, tmp_path) -> None:
+    store.upsert_projection(_source_projection(_message("e1", "hello", timestamp=50.0)))
+    path = tmp_path / f"{CLAUDE_UUID}.jsonl"
+    _write_prefix(path)
+
+    MirrorConversationSync(store).sync(
+        claude_uuid=CLAUDE_UUID,
+        source_session_id=SOURCE_ID,
+        native_path=str(path),
+        cwd=REGISTRATION_CWD,
+    )
+
+    ledger = store.get_state("session-bridge:claude-visibility:mirror-conversation")
+    assert ledger[CLAUDE_UUID]["mode"] == "store"
+    assert [_text(record) for record in _mirrored(path)] == ["hello"]
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [
