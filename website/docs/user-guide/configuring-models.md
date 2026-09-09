@@ -1,5 +1,7 @@
 ---
 sidebar_position: 3
+title: "Configuring Models"
+description: "Set the main model the agent thinks with and the auxiliary model slots, from the dashboard or config files"
 ---
 
 # Configuring Models

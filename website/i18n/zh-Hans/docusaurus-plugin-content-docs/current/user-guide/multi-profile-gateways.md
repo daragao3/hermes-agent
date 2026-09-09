@@ -1,5 +1,7 @@
 ---
 sidebar_position: 4
+title: "同时运行多个 Gateway"
+description: "在一台机器上以受管服务的方式运行多个 profile：统一启动、跨 profile 查看日志并从故障中恢复"
 ---
 
 # 同时运行多个 Gateway

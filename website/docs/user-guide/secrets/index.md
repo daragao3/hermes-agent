@@ -1,3 +1,8 @@
+---
+title: "Secrets"
+description: "Pull provider API keys from an external secret manager at process startup instead of storing them in .env"
+---
+
 # Secrets
 
 Hermes can pull API keys from external secret managers at process startup instead of storing them in `~/.hermes/.env`. The bootstrap token for the secret manager lives in `.env`; every other provider key (OpenAI, Anthropic, OpenRouter, etc.) can stay in the manager and rotate centrally.

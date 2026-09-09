@@ -1,5 +1,6 @@
 ---
 title: "Integrations"
+description: "The external systems Hermes Agent connects to for inference, tool servers, IDE workflows and programmatic access"
 sidebar_label: "Overview"
 sidebar_position: 0
 ---

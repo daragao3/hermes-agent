@@ -1,3 +1,8 @@
+---
+title: "Session Storage"
+description: "How Hermes persists session metadata, message history and model config in the state.db SQLite database"
+---
+
 # Session Storage
 
 Hermes Agent uses a SQLite database (`~/.hermes/state.db`) to persist session

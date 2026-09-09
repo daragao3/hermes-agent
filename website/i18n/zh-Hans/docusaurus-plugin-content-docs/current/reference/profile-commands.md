@@ -1,5 +1,7 @@
 ---
 sidebar_position: 7
+title: "Profile 命令参考"
+description: "hermes profile 的全部子命令——list、use、create、describe 等——含参数与示例"
 ---
 
 # Profile 命令参考

@@ -1,5 +1,7 @@
 ---
 sidebar_position: 2
+title: "Profiles：运行多个 Agent"
+description: "在同一台机器上运行相互独立的 Hermes agent，各自拥有配置、密钥、记忆、会话与技能"
 ---
 
 # Profiles：运行多个 Agent

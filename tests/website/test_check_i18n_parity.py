@@ -586,6 +586,21 @@ def test_frontmatter_allowlist_entries_point_at_real_pages(parity):
         assert (roots[locale] / rel).is_file(), (rel, locale)
 
 
+def test_frontmatter_allowlist_is_a_set(parity):
+    """`FRONTMATTER_ALLOW = {}` is a DICT, not an empty set. It would iterate
+    empty, satisfy every other test here, and silently change the type -- and
+    the natural way to write "no waivers" is exactly that brace literal."""
+    assert isinstance(parity.FRONTMATTER_ALLOW, (set, frozenset))
+
+
+def test_frontmatter_gate_currently_carries_no_waivers(parity):
+    """The 70 seeded gaps were all filled on 2026-09-09, so the gate blocks
+    unconditionally. This is not a law -- a future page may legitimately need a
+    waiver -- but the list being non-empty should be a deliberate, reviewed act
+    rather than something that drifts back in unnoticed."""
+    assert parity.FRONTMATTER_ALLOW == set(), sorted(parity.FRONTMATTER_ALLOW)
+
+
 def test_frontmatter_allowlist_entries_are_all_still_needed(parity):
     """THE RATCHET. Filling in a waived page must fail this test until its entry
     is deleted, so the list can only ever shrink. Without this a waiver outlives

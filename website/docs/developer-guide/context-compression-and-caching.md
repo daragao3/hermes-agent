@@ -1,3 +1,8 @@
+---
+title: "Context Compression and Caching"
+description: "How Hermes manages context window usage with a dual compression system and Anthropic prompt caching"
+---
+
 # Context Compression and Caching
 
 Hermes Agent uses a dual compression system and Anthropic prompt caching to

@@ -1,5 +1,7 @@
 ---
 sidebar_position: 9
+title: "Adding a Platform Adapter"
+description: "Add a new messaging platform to the Hermes gateway, either as a drop-in plugin or as a built-in adapter"
 ---
 
 # Adding a Platform Adapter

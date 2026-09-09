@@ -1,3 +1,8 @@
+---
+title: "Bitwarden Secrets Manager"
+description: "启动时通过一个机器账户访问令牌，从 Bitwarden Secrets Manager 解析 Hermes 所需的 API key"
+---
+
 # Bitwarden Secrets Manager
 
 在进程启动时从 [Bitwarden Secrets Manager](https://bitwarden.com/products/secrets-manager/) 拉取 API 密钥，而不是以明文形式存储在 `~/.hermes/.env` 中。一个引导密钥（机器账户访问令牌）替代了 N 个提供商密钥，轮换凭据只需在 Bitwarden Web 应用中修改一次即可。

@@ -1,5 +1,7 @@
 ---
 sidebar_position: 3
+title: "配置模型"
+description: "设置 agent 用于思考的主模型以及各个辅助模型槽位，可通过仪表盘或配置文件完成"
 ---
 
 # 配置模型

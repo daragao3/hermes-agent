@@ -1,3 +1,8 @@
+---
+title: "Spotify"
+description: "通过官方 Web API 与 PKCE OAuth 控制 Spotify 的播放、队列、搜索、歌单和音乐库"
+---
+
 # Spotify
 
 Hermes 可以直接控制 Spotify——播放、队列、搜索、播放列表、已保存的曲目/专辑以及收听历史——通过 Spotify 官方 Web API 配合 PKCE OAuth 实现。Token（令牌）存储在 `~/.hermes/auth.json` 中，遇到 401 时自动刷新；每台机器只需登录一次。

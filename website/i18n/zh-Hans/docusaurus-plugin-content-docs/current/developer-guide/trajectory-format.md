@@ -1,3 +1,8 @@
+---
+title: "轨迹格式"
+description: "Hermes 用于保存对话轨迹的 ShareGPT 兼容 JSONL 格式，以及如何加载这些轨迹"
+---
+
 # 轨迹格式
 
 Hermes Agent 以 ShareGPT 兼容的 JSONL 格式保存对话轨迹，用于训练数据、调试产物和强化学习数据集。

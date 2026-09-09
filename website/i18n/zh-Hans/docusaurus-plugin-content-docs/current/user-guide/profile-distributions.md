@@ -1,5 +1,7 @@
 ---
 sidebar_position: 3
+title: "Profile 分发：共享完整 Agent"
+description: "把一个完整的 Hermes agent 打包成 git 仓库，他人可一键安装并原地更新，同时保留自己的密钥"
 ---
 
 # Profile 分发：共享完整 Agent

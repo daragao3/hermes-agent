@@ -1,5 +1,7 @@
 ---
 sidebar_position: 9
+title: "添加平台适配器"
+description: "为 Hermes gateway 添加新的消息平台，可以做成即插即用的插件，也可以做成内置适配器"
 ---
 
 # 添加平台适配器

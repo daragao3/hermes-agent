@@ -1,5 +1,6 @@
 ---
 title: Tool Search
+description: "Keep many MCP and plugin tool schemas out of the context window by searching for only the ones a turn needs"
 sidebar_position: 95
 ---
 

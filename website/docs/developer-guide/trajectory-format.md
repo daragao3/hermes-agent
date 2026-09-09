@@ -1,3 +1,8 @@
+---
+title: "Trajectory Format"
+description: "The ShareGPT-compatible JSONL format Hermes writes conversation trajectories in, and how to load them"
+---
+
 # Trajectory Format
 
 Hermes Agent saves conversation trajectories in ShareGPT-compatible JSONL format

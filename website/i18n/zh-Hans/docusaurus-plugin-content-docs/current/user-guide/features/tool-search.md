@@ -1,5 +1,6 @@
 ---
 title: 工具搜索
+description: "当挂载了大量 MCP 与插件工具时，只检索本轮真正需要的工具，避免 schema 占满上下文窗口"
 sidebar_position: 95
 ---
 

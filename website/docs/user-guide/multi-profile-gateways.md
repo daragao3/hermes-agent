@@ -1,5 +1,7 @@
 ---
 sidebar_position: 4
+title: "Running Many Gateways at Once"
+description: "Operate multiple profiles as managed services on one machine — start them together, read logs, and recover"
 ---
 
 # Running Many Gateways at Once
