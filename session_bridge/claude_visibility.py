@@ -324,12 +324,7 @@ def build_claude_visibility_candidate(
     )
     if not isinstance(first_request, str):
         raise ValueError("Claude visibility request text must be a string")
-    title_provider = (
-        Provider.CLAUDE if projection.provider is Provider.CODEX else Provider.HERMES
-    )
-    sanitized = sidebar_title(title_provider, None, first_request)
-    if projection.provider is Provider.CODEX:
-        sanitized = "[Codex] " + sanitized.removeprefix("[Claude] ")
+    sanitized = visibility_sidebar_title(projection.provider, first_request)
     return ClaudeVisibilityCandidate(
         source_session_id=canonical_session_id(
             projection.provider, projection.native_id
@@ -343,6 +338,28 @@ def build_claude_visibility_candidate(
         worktree_id=_optional_metadata(worktree_id, "worktree id"),
         eligible_at=timestamp,
     )
+
+
+def visibility_sidebar_title(source_provider: Provider, first_request: str) -> str:
+    """The sidebar title a visibility mirror gets from its source's first request.
+
+    Runs the text through the same ``sidebar_title`` sanitiser every sidebar
+    row uses (NFKC, secret redaction, whitespace compaction, the 120-char cap
+    including the prefix), then swaps in the mirror prefix by SOURCE provider:
+    ``[Codex] `` or ``[Hermes] ``. Shared by the candidate builder (title from
+    the source catalog at registration) and the mirror float worker (title from
+    the first MIRRORED user turn when the catalog row carried none), so the two
+    can never disagree about what a mirror is called.
+    """
+    if source_provider not in (Provider.CODEX, Provider.HERMES):
+        raise ValueError("Claude visibility source provider must be Codex or Hermes")
+    title_provider = (
+        Provider.CLAUDE if source_provider is Provider.CODEX else Provider.HERMES
+    )
+    sanitized = sidebar_title(title_provider, None, first_request)
+    if source_provider is Provider.CODEX:
+        sanitized = "[Codex] " + sanitized.removeprefix("[Claude] ")
+    return sanitized
 
 
 def _visibility_user_contents(projection: SessionProjection) -> tuple[str, ...]:
