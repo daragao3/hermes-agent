@@ -1546,6 +1546,67 @@ def _kimi_plan(payload: dict) -> Optional[str]:
     return _title_case_slug(text)
 
 
+_KIMI_EXHAUSTED_CODES = frozenset({"resource_exhausted"})
+_KIMI_EXHAUSTED_REASONS = frozenset({"REASON_QUOTA_EXCEEDED"})
+
+
+def _kimi_exhausted_snapshot(response: Any) -> Optional[AccountUsageSnapshot]:
+    """Turn Kimi's "credits used up" refusal into a real 100%-used reading.
+
+    When the Kimi Code plan's credits are exhausted, GET /coding/v1/usages does
+    NOT return the usage payload -- it answers HTTP 429 with
+    ``{"code": "resource_exhausted", "message": "insufficient balance",
+    "details": [{"debug": {"reason": "REASON_QUOTA_EXCEEDED",
+    "localizedMessage": {"message": "Credits used up."}}}]}``
+    (measured live 2026-09-09). ``raise_for_status`` turned that into a
+    collector failure, the collector carried the last good row forward as
+    ``stale``, and after the 24h carry bound the panel read "no data for
+    142h" -- for SIX DAYS (2026-09-03..09) while the true state was simply
+    "plan exhausted". That refusal IS the usage reading: 100% of the weekly
+    quota is used. Report it that way, so the row renders "wk 100%" exactly
+    like the other exhausted subscription rows, and never decays to stale.
+
+    Only the exhaustion shape is mapped. Any other 429 (a genuine rate
+    limit) and every other non-2xx status still raise through
+    ``raise_for_status`` as before.
+    """
+
+    if getattr(response, "status_code", None) != 429:
+        return None
+    try:
+        payload = response.json() or {}
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    code = str(payload.get("code") or "").strip().lower()
+    reason = ""
+    message = str(payload.get("message") or "").strip()
+    for item in payload.get("details") or []:
+        if not isinstance(item, dict):
+            continue
+        debug = item.get("debug") if isinstance(item.get("debug"), dict) else {}
+        reason = str(debug.get("reason") or "").strip().upper() or reason
+        localized = debug.get("localizedMessage")
+        if isinstance(localized, dict) and localized.get("message"):
+            message = str(localized["message"]).strip()
+    if code not in _KIMI_EXHAUSTED_CODES and reason not in _KIMI_EXHAUSTED_REASONS:
+        return None
+    return AccountUsageSnapshot(
+        provider="kimi",
+        source="usages_api",
+        fetched_at=_utc_now(),
+        windows=(
+            AccountUsageWindow(
+                label="Weekly",
+                used_percent=100.0,
+                detail=message or "Credits used up.",
+            ),
+        ),
+        details=(message or "Credits used up.",),
+    )
+
+
 def _fetch_kimi_account_usage(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -1561,6 +1622,9 @@ def _fetch_kimi_account_usage(
     }
     with httpx.Client(timeout=timeout) as client:
         response = client.get(_kimi_usage_url(resolved_base_url), headers=headers)
+        exhausted = _kimi_exhausted_snapshot(response)
+        if exhausted is not None:
+            return exhausted
         response.raise_for_status()
     payload = response.json() or {}
 
