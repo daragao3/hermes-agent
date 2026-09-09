@@ -300,7 +300,10 @@ def derive_skill_meta(skill_path: Path, source_dir: Path, source_kind: str) -> d
         "category": category,
         "sub": sub,
         "slug": slug,
-        "rel_path": str(rel),
+        # as_posix(), not str(): rel_path is rendered into the "Path"
+        # row and into GitHub blob URLs, both of which need forward
+        # slashes. str() yields backslashes on Windows.
+        "rel_path": rel.as_posix(),
     }
 
 
@@ -394,8 +397,18 @@ def render_skill_page(
             if skill_index is not None:
                 target_meta = skill_index.get(r)
             if target_meta is not None:
+                # Root-relative WITHOUT the `/docs` baseUrl segment.
+                # Docusaurus renders markdown links through <Link>, which
+                # calls addBaseUrl(); that prepends siteConfig.baseUrl unless
+                # the href already starts with it (useBaseUrl.js:
+                # `shouldAddBaseUrl = !url.startsWith(baseUrl)`). Writing
+                # `/docs/...` only survives because it happens to equal the
+                # `en` baseUrl -- in `zh-Hans` the baseUrl is `/docs/zh-Hans/`,
+                # the prefix no longer matches, and the link is doubled into
+                # `/docs/zh-Hans/docs/...`. Emitting the bare path lets
+                # addBaseUrl produce the right URL in every locale.
                 href = (
-                    f"/docs/user-guide/skills/{target_meta['source_kind']}"
+                    f"/user-guide/skills/{target_meta['source_kind']}"
                     f"/{target_meta['category']}/{page_id(target_meta)}"
                 )
                 link_parts.append(f"[`{r}`]({href})")
@@ -494,7 +507,7 @@ def build_catalog_md_bundled(entries: list[tuple[dict[str, Any], dict[str, Any]]
             desc = (fm.get("description") or "").strip()
             if len(desc) > 240:
                 desc = desc[:237].rstrip() + "..."
-            link_target = f"/docs/user-guide/skills/bundled/{meta['category']}/{page_id(meta)}"
+            link_target = f"/user-guide/skills/bundled/{meta['category']}/{page_id(meta)}"
             path = f"`{meta['rel_path']}`"
             desc_esc = mdx_escape_body(desc).replace("|", "\\|").replace("\n", " ")
             lines.append(
@@ -555,7 +568,7 @@ def build_catalog_md_optional(entries: list[tuple[dict[str, Any], dict[str, Any]
             desc = (fm.get("description") or "").strip()
             if len(desc) > 240:
                 desc = desc[:237].rstrip() + "..."
-            link_target = f"/docs/user-guide/skills/optional/{meta['category']}/{page_id(meta)}"
+            link_target = f"/user-guide/skills/optional/{meta['category']}/{page_id(meta)}"
             desc_esc = mdx_escape_body(desc).replace("|", "\\|").replace("\n", " ")
             lines.append(f"| [**{name}**]({link_target}) | {desc_esc} |")
         lines.append("")
