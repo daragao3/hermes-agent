@@ -1,5 +1,7 @@
 ---
 sidebar_position: 15
+title: "WeCom 回调（自建应用）"
+description: "将 Hermes Agent 作为企业微信自建应用接入，通过接收加密 XML 回调与 agent 通信"
 ---
 
 # WeCom 回调（自建应用）
