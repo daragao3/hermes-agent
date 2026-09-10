@@ -128,19 +128,25 @@ def _dispatch(monkeypatch, tmp_path, argv, *, agent_env: bool, agent_cwd: bool,
               override: bool = False):
     """Parse `argv` with the real update parser and call the dispatched func.
 
-    The dispatch wraps the handler in TWO gates -- this one and the divergence
-    gate added later (hermes_cli/_update_divergence). This suite is about the
-    agent gate, so the other one is neutralized here: left live it would shell
-    out to real git in the very checkout these tests run from, and -- because
-    that checkout IS diverged from its origin -- would refuse with exit 31 in
-    precisely the cases that assert the agent gate LET THE COMMAND THROUGH.
-    Its own wiring, including the order the two run in, is pinned in
-    tests/hermes_cli/test_update_divergence_gate.py.
+    The dispatch wraps the handler in THREE gates -- this one, the divergence
+    gate (hermes_cli/_update_divergence) and the shared-stash gate
+    (hermes_cli/_update_worktrees), both added later. This suite is about the
+    agent gate, so the other two are neutralized here: left live they would
+    shell out to real git in the very checkout these tests run from, and --
+    because that checkout IS diverged from its origin, AND is a dirty checkout
+    with linked worktrees -- would refuse with exit 31 or 32 in precisely the
+    cases that assert the agent gate LET THE COMMAND THROUGH. Their own wiring,
+    including the order the three run in, is pinned in
+    tests/hermes_cli/test_update_divergence_gate.py and
+    tests/hermes_cli/test_update_shared_stash_gate.py.
     """
-    from hermes_cli import _update_divergence
+    from hermes_cli import _update_divergence, _update_worktrees
 
     monkeypatch.setattr(
         _update_divergence, "enforce_divergence_gate", lambda args: None
+    )
+    monkeypatch.setattr(
+        _update_worktrees, "enforce_shared_stash_gate", lambda args: None
     )
 
     for name in [n for n in os.environ

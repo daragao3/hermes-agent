@@ -85,11 +85,22 @@ def build_update_parser(subparsers, *, cmd_update: Callable) -> None:
     # as for an agent, which is the hazard the agent gate above explicitly says
     # it does not cover. See hermes_cli/_update_divergence for the measurement
     # and for why renaming the remotes would not have fixed it.
+    # SHARED-STASH GATE. Refuses the apply path when its autostash would land on
+    # a stash stack shared with linked worktrees, because the ref it captures
+    # afterwards (`rev-parse refs/stash`) is the stack TIP rather than the entry
+    # it just wrote -- so a concurrent push from another worktree makes the
+    # update apply and then DROP a sibling's stash while silently orphaning the
+    # operator's own, all at exit 0. Ordered last of the three: it is the least
+    # severe (uncommitted changes, not commits), and on a diverged checkout it
+    # is reachable only via the divergence gate's own documented override, which
+    # is exactly the operator path that walks into it. See
+    # hermes_cli/_update_worktrees for the measurement.
     def _gated_cmd_update(args):
-        from hermes_cli import _agent_session, _update_divergence
+        from hermes_cli import _agent_session, _update_divergence, _update_worktrees
 
         _agent_session.enforce_update_gate(args)
         _update_divergence.enforce_divergence_gate(args)
+        _update_worktrees.enforce_shared_stash_gate(args)
         return cmd_update(args)
 
     update_parser.set_defaults(func=_gated_cmd_update)
