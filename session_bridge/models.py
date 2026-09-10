@@ -51,6 +51,24 @@ def is_registration_record(record: object) -> bool:
     )
 
 
+# Top-level provenance tag on a CLI command-bookkeeping record of a visibility
+# mirror after the bridge has hidden it from the desktop app: the ``/exit`` the
+# registrar types at teardown and the CLI's farewell, which Claude Code records
+# as USER records after the ``REGISTERED`` reply and the app renders as turns of
+# the ``[Codex]`` row. Honoured by NO adapter consumer -- ``isMeta`` alone makes
+# the record ineligible, and a whole-content bookkeeping record was already
+# excluded from the human-turn count (``claude_adapter._is_cli_command_bookkeeping``)
+# -- so the tag exists for idempotency and audit only.
+# See session_bridge.mirror_conversation.hide_cli_teardown.
+TEARDOWN_RECORD_KEY = "hermesTeardown"
+
+
+def is_teardown_record(record: object) -> bool:
+    return isinstance(record, dict) and isinstance(
+        record.get(TEARDOWN_RECORD_KEY), dict
+    )
+
+
 class OriginKind(StrEnum):
     NATIVE = "native"
     BRIDGE_PLACEHOLDER = "bridge_placeholder"

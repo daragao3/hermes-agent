@@ -56,6 +56,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .claude_adapter import _is_cli_command_bookkeeping
 from .claude_visibility import (
     _is_codex_automation_envelope,
     _is_codex_injected_context,
@@ -65,9 +66,11 @@ from .context_pack import _redact
 from .models import (
     MIRROR_RECORD_KEY,
     REGISTRATION_RECORD_KEY,
+    TEARDOWN_RECORD_KEY,
     Provider,
     is_mirrored_record,
     is_registration_record,
+    is_teardown_record,
 )
 from .preview import _is_internal_bridge_message
 from .sidebar import is_meaningful_user_text
@@ -80,6 +83,13 @@ REGISTRATION_HIDE_VERSION = 1
 # Ledger key recording that hide_registration_prefix has settled a mirror
 # ("hidden" or "absent"), so the prefix is not re-read on every cycle.
 _LEDGER_PREFIX_KEY = "registration_prefix"
+TEARDOWN_HIDE_VERSION = 1
+# Ledger key recording that hide_cli_teardown has settled a mirror ("hidden" or
+# "absent"). The registrar waits for the CLI to exit before it commits the job
+# (claude_registrar: ``process.write("/exit\r")`` then ``process.wait``), so
+# every teardown record is on disk before the float worker first sees the
+# mirror and settling once is sound.
+_LEDGER_TEARDOWN_KEY = "cli_teardown"
 DEFAULT_BACKFILL_MESSAGES = 400
 DEFAULT_MESSAGE_CHARS = 20_000
 # Ordered by id, so a fetch page is a contiguous run of source history. Larger
@@ -102,6 +112,8 @@ class ConversationSyncResult:
     reason: str | None = None
     # True when this pass hid the mirror's registration prompt (once per mirror).
     hidden: bool = False
+    # True when this pass hid the CLI's /exit bookkeeping records (once per mirror).
+    teardown_hidden: bool = False
 
 
 class MirrorConversationSync:
@@ -149,7 +161,8 @@ class MirrorConversationSync:
         # writer. It is recorded in the ledger even when there is nothing to
         # mirror this cycle, so a quiet source is not re-read every pass.
         hidden = False
-        prefix_settled = False
+        teardown_hidden = False
+        settled = False
         if _ledger_str(entry, _LEDGER_PREFIX_KEY) is None:
             state = hide_registration_prefix(path)
             if state != "unreadable":
@@ -159,18 +172,32 @@ class MirrorConversationSync:
                 }
                 ledger[claude_uuid] = entry
                 hidden = state == "hidden"
-                prefix_settled = True
+                settled = True
                 if hidden:
                     _LOG.info("hid registration prompt of mirror %s", claude_uuid)
+        # Same contract for the CLI's own /exit bookkeeping after the answer.
+        if _ledger_str(entry, _LEDGER_TEARDOWN_KEY) is None:
+            state = hide_cli_teardown(path)
+            if state != "unreadable":
+                entry = {
+                    **(entry or {}),
+                    _LEDGER_TEARDOWN_KEY: "absent" if state == "absent" else "hidden",
+                }
+                ledger[claude_uuid] = entry
+                teardown_hidden = state == "hidden"
+                settled = True
+                if teardown_hidden:
+                    _LOG.info("hid CLI teardown records of mirror %s", claude_uuid)
         if mode == "rollout":
             rollout = self._codex_rollout_path(source_session_id)
             if rollout is None:
-                if prefix_settled:
+                if settled:
                     self._save_ledger(ledger)
                 return ConversationSyncResult(
                     "skipped",
                     reason="codex rollout file is not readable",
                     hidden=hidden,
+                    teardown_hidden=teardown_hidden,
                 )
             rows, consumed_id = read_codex_rollout_rows(
                 rollout, after_offset=last_id
@@ -181,9 +208,11 @@ class MirrorConversationSync:
             )
             consumed_id = max((int(row["id"]) for row in rows), default=-1)
         if not rows:
-            if prefix_settled:
+            if settled:
                 self._save_ledger(ledger)
-            return ConversationSyncResult("idle", hidden=hidden)
+            return ConversationSyncResult(
+                "idle", hidden=hidden, teardown_hidden=teardown_hidden
+            )
         turns = conversational_turns(rows, message_chars=self._message_chars)
         dropped = 0
         if first_sync and len(turns) > self._backfill_messages:
@@ -196,7 +225,9 @@ class MirrorConversationSync:
                 entry, consumed_id, leaf_uuid, 0, mode=mode
             )
             self._save_ledger(ledger)
-            return ConversationSyncResult("idle", hidden=hidden)
+            return ConversationSyncResult(
+                "idle", hidden=hidden, teardown_hidden=teardown_hidden
+            )
 
         if leaf_uuid is None or not cwd:
             tail = transcript_tail(path)
@@ -208,10 +239,13 @@ class MirrorConversationSync:
                 # desktop app already files this session under.
                 cwd = tail.cwd or ""
         if leaf_uuid is None:
-            if prefix_settled:
+            if settled:
                 self._save_ledger(ledger)
             return ConversationSyncResult(
-                "skipped", reason="mirror transcript has no leaf record", hidden=hidden
+                "skipped",
+                reason="mirror transcript has no leaf record",
+                hidden=hidden,
+                teardown_hidden=teardown_hidden,
             )
 
         records: list[dict[str, Any]] = []
@@ -243,7 +277,12 @@ class MirrorConversationSync:
             entry, consumed_id, parent, len(records), mode=mode
         )
         self._save_ledger(ledger)
-        return ConversationSyncResult("appended", appended=len(records), hidden=hidden)
+        return ConversationSyncResult(
+            "appended",
+            appended=len(records),
+            hidden=hidden,
+            teardown_hidden=teardown_hidden,
+        )
 
     def _source_mode(
         self, entry: Mapping[str, Any] | None, source_session_id: str
@@ -771,6 +810,110 @@ def hide_registration_prefix(path: Path, *, now: float | None = None) -> str:
     return "absent"
 
 
+def _bookkeeping_text(record: dict[str, Any]) -> str | None:
+    """The record's text when every content block is text; else None."""
+    message = record.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list) or not content:
+        return None
+    texts: list[str] = []
+    for block in content:
+        if (
+            not isinstance(block, dict)
+            or block.get("type") != "text"
+            or not isinstance(block.get("text"), str)
+        ):
+            return None
+        texts.append(block["text"])
+    return "\n".join(texts)
+
+
+def hide_cli_teardown(path: Path, *, now: float | None = None) -> str:
+    """Hide the CLI's own ``/exit`` bookkeeping from the desktop app, once.
+
+    On the success branch the registrar types ``/exit`` and waits for the CLI
+    to exit before it commits the job (``claude_registrar``), and Claude Code
+    records that slash command and its farewell as two USER records after the
+    ``REGISTERED`` reply -- ``<command-name>/exit</command-name>...`` and
+    ``<local-command-stdout>Goodbye!</local-command-stdout>``. Whether they
+    land is a CLI timing race, not a version: 26 of 172 live mirrors carried
+    them on 2026-09-09, interleaved in time with mirrors that did not. The
+    desktop app renders them as turns of the ``[Codex]`` row (its transcript
+    API lists them, and its renderer turns ``<command-name>`` into a slash
+    echo), so this marks every main-chain user record whose WHOLE content is
+    CLI command bookkeeping ``isMeta`` and tags it ``hermesTeardown``.
+
+    The candidate predicate is ``claude_adapter._is_cli_command_bookkeeping``,
+    the same whole-content rule that already keeps these records out of the
+    human-turn count -- so ``isMeta`` (which makes a record ineligible for the
+    adapter altogether) removes nothing the adapter classified by: such a
+    record was never a human turn, never carried a marker, and only ever
+    projected as a display message. Measured on copies of all 172 live mirrors
+    before landing (loops ``exit-bookkeeping-mirror-visibility-20260909``).
+
+    Sidechain records and the bridge's own mirrored turns are never candidates,
+    and a record already ``isMeta`` (the CLI marks its own
+    ``<local-command-caveat>`` that way) is left alone. Each changed record is
+    re-serialized in place and every other byte of the file is preserved, the
+    way ``hide_registration_prefix`` does it; the registration prompt itself is
+    not bookkeeping and is never touched here.
+
+    Returns ``"hidden"`` (at least one record rewritten now), ``"already"``
+    (tagged earlier, nothing new to hide), ``"absent"`` (no bookkeeping
+    record) or ``"unreadable"``.
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "unreadable"
+    lines = data.split(b"\n")
+    changed = False
+    already = False
+    for index, raw in enumerate(lines):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(record, dict) or record.get("type") != "user":
+            continue
+        if record.get("isSidechain") or is_mirrored_record(record):
+            continue
+        if is_teardown_record(record):
+            already = True
+            continue
+        if record.get("isMeta"):
+            continue
+        text = _bookkeeping_text(record)
+        if text is None or not _is_cli_command_bookkeeping(text):
+            continue
+        record["isMeta"] = True
+        record[TEARDOWN_RECORD_KEY] = {
+            "version": TEARDOWN_HIDE_VERSION,
+            "hidden_at": _iso_timestamp(now),
+        }
+        lines[index] = json.dumps(
+            record, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+        changed = True
+    if not changed:
+        return "already" if already else "absent"
+    payload = b"\n".join(lines)
+    try:
+        with path.open("r+b") as stream:
+            stream.write(payload)
+            stream.truncate()
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError:
+        return "unreadable"
+    return "hidden"
+
+
 def _source_label(source_session_id: str) -> str:
     prefix, _, _ = source_session_id.partition(":")
     return prefix if prefix in {Provider.CODEX.value, Provider.HERMES.value} else "hermes"
@@ -805,6 +948,9 @@ def _ledger_entry(
     prefix_state = _ledger_str(previous, _LEDGER_PREFIX_KEY)
     if prefix_state is not None:
         entry[_LEDGER_PREFIX_KEY] = prefix_state
+    teardown_state = _ledger_str(previous, _LEDGER_TEARDOWN_KEY)
+    if teardown_state is not None:
+        entry[_LEDGER_TEARDOWN_KEY] = teardown_state
     return entry
 
 

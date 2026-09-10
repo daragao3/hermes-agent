@@ -2251,3 +2251,55 @@ def test_hiding_the_prefix_forces_a_rebuild_with_the_same_origin(tmp_path):
     cold = ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path)
     assert cold.projection.origin_bridge_id == before.projection.origin_bridge_id
     assert cold.cursor == after.cursor
+
+
+def test_hidden_cli_teardown_records_keep_the_placeholder_and_leave_projection(tmp_path):
+    """After mirror_conversation.hide_cli_teardown marks the CLI's /exit
+    bookkeeping isMeta (+ hermesTeardown), the records drop out of projection
+    entirely, while the origin -- which never counted them -- is unchanged.
+    The untagged twin of this transcript is
+    test_cli_exit_bookkeeping_after_marker_stays_placeholder."""
+
+    marker = encode_bridge_marker(
+        BridgeMarkerPayload(
+            bridge_id="bridge-teardown-hidden",
+            source_session_id="codex:synthetic-source",
+            target_provider=Provider.CLAUDE,
+            policy_generation=4,
+        ),
+        SECRET,
+    )
+    tag = {"version": 1, "hidden_at": "2026-09-09T23:59:59.000Z"}
+    records = [
+        _message_record(marker),
+        dict(
+            _message_record(
+                '<command-name>/exit</command-name> <command-message>exit</command-message> <command-args></command-args>',
+                event_id="27272727-2727-4272-8272-272727272727",
+                timestamp="2026-01-01T00:00:01Z",
+            ),
+            isMeta=True,
+            hermesTeardown=tag,
+        ),
+        dict(
+            _message_record(
+                '<local-command-stdout>Goodbye!</local-command-stdout>',
+                event_id="28282828-2828-4282-8282-282828282828",
+                timestamp="2026-01-01T00:00:02Z",
+            ),
+            isMeta=True,
+            hermesTeardown=tag,
+        ),
+    ]
+    path = tmp_path / "teardown-hidden.jsonl"
+    path.write_bytes(b"".join(_json_line(record) for record in records))
+
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+
+    assert projection.origin_kind is OriginKind.BRIDGE_PLACEHOLDER
+    assert projection.origin_bridge_id == "bridge-teardown-hidden"
+    # Only the marker turn projects; the hidden bookkeeping is gone from the
+    # message list the app-facing catalog is built from.
+    assert [message.role for message in projection.messages] == ["user"]

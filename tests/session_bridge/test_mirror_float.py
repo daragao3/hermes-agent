@@ -1467,3 +1467,89 @@ def test_run_once_hides_the_registration_prompt_of_a_visible_mirror(db, tmp_path
     assert records[1]["uuid"] == answer_uuid and "isMeta" not in records[1]
     mirrored = [record for record in records if is_mirrored_record(record)]
     assert len(mirrored) == 1 and mirrored[0]["parentUuid"] == answer_uuid
+
+
+def test_run_once_hides_the_cli_teardown_of_a_visible_mirror(db, tmp_path) -> None:
+    """The worker hides the CLI's /exit bookkeeping in the same cycle as the
+    prefix hide, for visible jobs only; the mirrored turn still chains from the
+    farewell record, whose uuid the rewrite leaves untouched."""
+    from session_bridge.claude_visibility import _CURRENT_CODEX_REGISTRATION_PREAMBLE
+    from session_bridge.mirror_conversation import MirrorConversationSync
+    from session_bridge.models import (
+        is_mirrored_record,
+        is_registration_record,
+        is_teardown_record,
+    )
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    prompt_uuid = "9ccc7524-3d7e-4a33-a064-9697b6ade415"
+    answer_uuid = "75c89ce6-cdb0-4b06-90e7-22bd99518810"
+    exit_uuid = "1e1e1e1e-1e1e-4e1e-8e1e-1e1e1e1e1e1e"
+    farewell_uuid = "2e2e2e2e-2e2e-4e2e-8e2e-2e2e2e2e2e2e"
+
+    def record(kind, uuid, parent, content):
+        return {
+            "type": kind,
+            "uuid": uuid,
+            "parentUuid": parent,
+            "isSidechain": False,
+            "sessionId": identity.claude_uuid,
+            "cwd": "C:/work/project",
+            "message": {"role": kind, "content": content},
+        }
+
+    mirror_path.write_text(
+        "\n".join(
+            json.dumps(item)
+            for item in (
+                record(
+                    "user",
+                    prompt_uuid,
+                    None,
+                    _CURRENT_CODEX_REGISTRATION_PREAMBLE
+                    + "abc.def\nBounded metadata: {}\nYou must reply exactly REGISTERED.",
+                ),
+                record("assistant", answer_uuid, prompt_uuid, [{"type": "text", "text": "REGISTERED"}]),
+                record(
+                    "user",
+                    exit_uuid,
+                    answer_uuid,
+                    "<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>",
+                ),
+                record(
+                    "user",
+                    farewell_uuid,
+                    exit_uuid,
+                    "<local-command-stdout>Goodbye!</local-command-stdout>",
+                ),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    worker = ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        conversation_sync=MirrorConversationSync(store),
+    )
+
+    result = worker.run_once()
+
+    assert result["hydrated"] == 1
+    records = [
+        json.loads(line)
+        for line in mirror_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert records[0]["isMeta"] is True and is_registration_record(records[0])
+    assert records[1]["uuid"] == answer_uuid and "isMeta" not in records[1]
+    for index, uuid in ((2, exit_uuid), (3, farewell_uuid)):
+        assert records[index]["uuid"] == uuid
+        assert records[index]["isMeta"] is True
+        assert is_teardown_record(records[index])
+        assert not is_registration_record(records[index])
+    mirrored = [item for item in records if is_mirrored_record(item)]
+    assert len(mirrored) == 1 and mirrored[0]["parentUuid"] == farewell_uuid
