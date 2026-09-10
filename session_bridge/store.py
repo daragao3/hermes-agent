@@ -26,7 +26,7 @@ if sys.platform == "win32":
 else:
     import fcntl
 
-from hermes_state import SCHEMA_VERSION, SessionDB
+from hermes_state import SCHEMA_VERSION, SessionDB, desktop_registry_value_hash
 from hermes_constants import get_hermes_home
 
 from .claude_visibility_codes import (
@@ -12638,6 +12638,20 @@ class SessionBridgeStore:
         # 2026-09-10 11:21). Routing every string column through a per-call
         # pool makes equal strings one object: 156 MB for the same load.
         # Strings are immutable, so nothing downstream can tell.
+        #
+        # SCHEMA v34 (2026-09-10): value_json now lives once per distinct blob
+        # in desktop_registry_values and a baseline row carries only its hash,
+        # so the same duplication no longer exists ON DISK either (600 MB of
+        # value_json -> 7.7 MB). The load is two phases: the values table
+        # first (small, batched the same way), then the baseline rows, each
+        # resolved through that dict -- which also means the 40 KB ``mcp``
+        # blob crosses the sqlite3 boundary ~70 times instead of ~14,000.
+        # The returned rows are shaped exactly as before (value_json inline)
+        # so the worker never sees the hash. A hash the preload does not know
+        # is fetched directly rather than trusted absent: the only writer is
+        # the same worker, after this returns, but a torn read must fail
+        # toward a clear error and never toward a missing baseline.
+        values = self._load_desktop_registry_values()
         out: list[dict[str, Any]] = []
         pool: dict[str, str] = {}
         intern = pool.setdefault
@@ -12645,8 +12659,8 @@ class SessionBridgeStore:
         while True:
             with self.db._lock:
                 rows = self.db._conn.execute(
-                    """SELECT rowid AS batch_rowid, filename, root_id,
-                              group_name, value_json, revision
+                    """SELECT rowid, filename, root_id, group_name,
+                              value_hash, revision
                        FROM desktop_registry_baselines
                        WHERE rowid > ?
                        ORDER BY rowid
@@ -12656,18 +12670,76 @@ class SessionBridgeStore:
             if not rows:
                 break
             for row in rows:
-                record = dict(row)
-                last_rowid = int(record.pop("batch_rowid"))
-                for column in ("filename", "root_id", "group_name", "value_json"):
-                    value = record[column]
-                    if type(value) is str:
-                        record[column] = intern(value, value)
-                out.append(record)
+                last_rowid = int(row[0])
+                value_hash = row[4]
+                value_json = values.get(value_hash)
+                if value_json is None:
+                    value_json = self._fetch_desktop_registry_value(value_hash)
+                    values[value_hash] = value_json
+                out.append(
+                    {
+                        "filename": intern(row[1], row[1]),
+                        "root_id": intern(row[2], row[2]),
+                        "group_name": intern(row[3], row[3]),
+                        "value_json": value_json,
+                        "revision": row[5],
+                    }
+                )
         return out
+
+    def _load_desktop_registry_values(self) -> dict[str, str]:
+        """Return ``{value_hash: value_json}`` for every stored blob.
+
+        Batched on rowid with the lock released between batches, for the
+        same /health-starvation reason as the baseline read above. The table
+        is small by construction (one row per distinct value: 34,265 rows /
+        7.7 MB when the split landed) but nothing here should assume that.
+        """
+        values: dict[str, str] = {}
+        last_rowid = 0
+        while True:
+            with self.db._lock:
+                rows = self.db._conn.execute(
+                    """SELECT rowid, value_hash, value_json
+                       FROM desktop_registry_values
+                       WHERE rowid > ?
+                       ORDER BY rowid
+                       LIMIT ?""",
+                    (last_rowid, self._DESKTOP_REGISTRY_BASELINE_BATCH),
+                ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                last_rowid = int(row[0])
+                values[row[1]] = row[2]
+        return values
+
+    def _fetch_desktop_registry_value(self, value_hash: Any) -> str:
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT value_json FROM desktop_registry_values WHERE value_hash = ?",
+                (value_hash,),
+            ).fetchone()
+        if row is None or not isinstance(row[0], str):
+            raise RuntimeError(
+                "desktop registry baseline references a value that is not "
+                f"stored: {value_hash!r}"
+            )
+        return row[0]
 
     def upsert_desktop_registry_baselines(
         self, rows: Sequence[Mapping[str, Any]]
     ) -> int:
+        """Advance baselines; store each distinct value once; prune orphans.
+
+        Every row's value_json is written to desktop_registry_values under
+        its hash (INSERT OR IGNORE: equal text is equal content) and the
+        baseline row carries the hash. A blob whose LAST reference this call
+        replaces is deleted in the same transaction, so the values table is
+        always exactly the referenced set and a superseded ``mcp`` blob does
+        not outlive its last baseline. The reference check is a point lookup
+        on idx_desktop_registry_baselines_value_hash.
+        """
         validated: list[tuple[str, str, str, str, int]] = []
         for row in rows:
             filename = _exact_nonempty_text(
@@ -12717,19 +12789,68 @@ class SessionBridgeStore:
             if not batch:
                 continue
 
-            def _write(conn: Any, batch: list = batch) -> int:
+            hashed = [
+                (filename, root_id, group_name, desktop_registry_value_hash(value_json))
+                for filename, root_id, group_name, value_json, _revision in batch
+            ]
+            new_values: dict[str, str] = {}
+            for item, (_f, _r, _g, value_hash) in zip(batch, hashed):
+                new_values.setdefault(value_hash, item[3])
+
+            def _write(
+                conn: Any,
+                batch: list = batch,
+                hashed: list = hashed,
+                new_values: dict = new_values,
+            ) -> int:
                 updated_at = _finite_number(self._clock(), "clock")
+                # Hashes this batch is about to replace. Read inside the
+                # transaction so a retry after lock contention sees the
+                # current state, not the state of its first attempt.
+                previous: set[str] = set()
+                for filename, root_id, group_name, _value_hash in hashed:
+                    row = conn.execute(
+                        """SELECT value_hash FROM desktop_registry_baselines
+                           WHERE filename = ? AND root_id = ? AND group_name = ?""",
+                        (filename, root_id, group_name),
+                    ).fetchone()
+                    if row is not None:
+                        previous.add(row[0])
+                conn.executemany(
+                    "INSERT OR IGNORE INTO desktop_registry_values "
+                    "(value_hash, value_json) VALUES (?, ?)",
+                    list(new_values.items()),
+                )
                 conn.executemany(
                     """INSERT INTO desktop_registry_baselines
-                           (filename, root_id, group_name, value_json,
+                           (filename, root_id, group_name, value_hash,
                             revision, updated_at)
                        VALUES (?, ?, ?, ?, ?, ?)
                        ON CONFLICT(filename, root_id, group_name) DO UPDATE SET
-                           value_json = excluded.value_json,
+                           value_hash = excluded.value_hash,
                            revision = excluded.revision,
                            updated_at = excluded.updated_at""",
-                    [(*item, updated_at) for item in batch],
+                    [
+                        (filename, root_id, group_name, value_hash, revision, updated_at)
+                        for (filename, root_id, group_name, _json, revision), (
+                            _f,
+                            _r,
+                            _g,
+                            value_hash,
+                        ) in zip(batch, hashed)
+                    ],
                 )
+                for candidate in sorted(previous - set(new_values)):
+                    referenced = conn.execute(
+                        """SELECT 1 FROM desktop_registry_baselines
+                           WHERE value_hash = ? LIMIT 1""",
+                        (candidate,),
+                    ).fetchone()
+                    if referenced is None:
+                        conn.execute(
+                            "DELETE FROM desktop_registry_values WHERE value_hash = ?",
+                            (candidate,),
+                        )
                 return len(batch)
 
             written += self.db._execute_write(_write)

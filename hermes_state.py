@@ -15,6 +15,7 @@ Key design decisions:
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -222,6 +223,19 @@ T = TypeVar("T")
 DEFAULT_DB_PATH: Optional[Path] = None
 
 
+def desktop_registry_value_hash(value_json: str) -> str:
+    """Content address of one desktop-registry baseline group value.
+
+    SHA-256 of the canonical JSON text's UTF-8 bytes, as lowercase hex. The
+    text is canonical by construction (``session_bridge.desktop_registry``
+    emits it with sorted keys and fixed separators), so equal group values
+    always hash equal and the side table stores each distinct blob once.
+    """
+    if not isinstance(value_json, str):
+        raise TypeError("desktop registry value must be JSON text")
+    return hashlib.sha256(value_json.encode("utf-8")).hexdigest()
+
+
 def _default_db_path() -> Path:
     """Resolve the default session DB path at call time (see DEFAULT_DB_PATH)."""
     if DEFAULT_DB_PATH is not None:
@@ -229,6 +243,10 @@ def _default_db_path() -> Path:
     return get_hermes_home() / "state.db"
 
 
+# 34 = desktop_registry_baselines.value_json moved into the content-addressed
+# desktop_registry_values side table. The name-gated data migration
+# ``desktop_registry_values_v34`` rewrites a legacy table in ONE transaction; a
+# fresh database gets the new shape straight from BRIDGE_SCHEMA_SQL.
 # 30 = additive sidebar placement verification columns. Existing visible rows
 # intentionally remain NULL so recovery can distinguish them from verified
 # generation-1 placement.
@@ -238,7 +256,7 @@ def _default_db_path() -> Path:
 # name-gated in session_bridge_migrations, not version-gated). Live DBs sit
 # at 28 without the upstream migrations, so those are re-gated on < 29
 # below (both are idempotent/self-gating).
-SCHEMA_VERSION = 33
+SCHEMA_VERSION = 34
 
 # Cap on user-controlled FTS5 query input before regex/sanitizer processing.
 # Search queries do not need to be arbitrarily large, and bounding them keeps
@@ -2241,14 +2259,34 @@ CREATE TABLE IF NOT EXISTS session_bridge_migrations (
 -- convergence). Baselines are the last verified per-replica group values;
 -- they advance only after an all-root disk verification, which is what makes
 -- an interrupted cycle recoverable by replanning rather than byte replay.
+--
+-- Group values are CONTENT-ADDRESSED: each distinct canonical JSON blob is
+-- stored once in desktop_registry_values under its SHA-256, and a baseline row
+-- carries only that hash. Measured 2026-09-10 on the production ledger before
+-- this split: 564,174 baseline rows carried 600 MB of value_json for just
+-- 34,265 distinct values totalling 7.7 MB -- the three enrolled roots are
+-- byte-identical mirrors and the ``mcp`` group (14,109 rows, 561 MB) had 70
+-- distinct blobs -- so the table plus its autoindex was ~700 MB of a 4.8 GB
+-- state.db holding 8 MB of information. The hash is hex text rather than a
+-- 32-byte blob so a row reads straight out of the sqlite3 shell; the ~36 MB
+-- that costs over the whole table is noise next to what it replaces. The
+-- values table is kept exactly equal to the referenced set: the baseline
+-- upsert deletes a blob the moment its last reference is replaced, in the
+-- same transaction, so superseded values never accumulate.
+CREATE TABLE IF NOT EXISTS desktop_registry_values (
+    value_hash TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS desktop_registry_baselines (
     filename TEXT NOT NULL,
     root_id TEXT NOT NULL,
     group_name TEXT NOT NULL,
-    value_json TEXT NOT NULL,
+    value_hash TEXT NOT NULL,
     revision INTEGER NOT NULL CHECK (revision >= 1),
     updated_at REAL NOT NULL,
-    PRIMARY KEY (filename, root_id, group_name)
+    PRIMARY KEY (filename, root_id, group_name),
+    FOREIGN KEY (value_hash) REFERENCES desktop_registry_values(value_hash)
 );
 
 CREATE TABLE IF NOT EXISTS desktop_registry_runs (
@@ -2501,6 +2539,13 @@ _CLAUDE_CHARACTERIZATION_EVENT_TRIGGER_NAMES = (
 DEFERRED_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_messages_session_active
     ON messages(session_id, active, timestamp);
+-- Deferred for the same reason: on a pre-v34 database the column does not
+-- exist until _apply_desktop_registry_values_migration has rebuilt the table,
+-- and an index on it inside BRIDGE_SCHEMA_SQL would fail that whole script.
+-- Makes "is this blob still referenced?" a point lookup, which is what lets
+-- the baseline upsert prune a superseded value without a table scan.
+CREATE INDEX IF NOT EXISTS idx_desktop_registry_baselines_value_hash
+    ON desktop_registry_baselines(value_hash);
 CREATE INDEX IF NOT EXISTS idx_messages_active_null
     ON messages(active) WHERE active IS NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_session_key
@@ -4394,6 +4439,181 @@ class SessionDB:
                 connection.rollback()
             raise
 
+    _DESKTOP_REGISTRY_VALUES_MIGRATION = "desktop_registry_values_v34"
+    # Rows per copy batch inside the rebuild. Bounds the transient: the
+    # largest production value_json is ~104 KB (the ``mcp`` group), so a
+    # batch can hold at most ~100 MB of text while it is hashed and re-inserted.
+    _DESKTOP_REGISTRY_VALUES_MIGRATION_BATCH = 1_000
+
+    def _apply_desktop_registry_values_migration(
+        self, cursor: sqlite3.Cursor
+    ) -> None:
+        """Move desktop_registry_baselines.value_json into the values table.
+
+        Pre-v34 the baseline table carried the full canonical JSON of every
+        group on every row: 564,174 rows / 600 MB for 34,265 distinct values
+        (7.7 MB) on the production ledger, i.e. ~700 MB of state.db for 8 MB
+        of information. This rewrites a legacy-shaped table into the v34
+        shape (``value_hash`` referencing ``desktop_registry_values``).
+
+        ONE transaction, deliberately. The copy is batched only to bound
+        memory; it commits once, so any other process sees either the whole
+        legacy table or the whole v34 table, never a mixture. A session-bridge
+        worker still running pre-v34 code after the commit fails LOUDLY on its
+        next load (``no such column: value_json``) and writes nothing -- the
+        safe direction. The alternative, keeping a nullable value_json beside
+        the hash, would have let that stale worker read an empty string as a
+        real baseline and plan mutations from it.
+
+        Runs BEFORE ``_reconcile_columns`` so the reconciler never tries (and
+        fails, at DEBUG) to ADD the NOT NULL ``value_hash`` column onto the
+        legacy table. Name-gated like the other bridge data migrations; the
+        pre-check is lock-free so an already-migrated database never takes
+        the write lock here (2026-08-07 incident class).
+        """
+        migration_name = self._DESKTOP_REGISTRY_VALUES_MIGRATION
+        connection = self._conn
+        if connection is None:
+            raise RuntimeError("bridge migration requires an open database")
+        if self._bridge_migration_applied(cursor, migration_name):
+            return
+        try:
+            cursor.execute("BEGIN IMMEDIATE")
+            applied = cursor.execute(
+                "SELECT 1 FROM session_bridge_migrations WHERE migration_name = ?",
+                (migration_name,),
+            ).fetchone()
+            if applied is not None:
+                connection.commit()
+                return
+            columns = {
+                row[1]
+                for row in cursor.execute(
+                    'PRAGMA table_info("desktop_registry_baselines")'
+                ).fetchall()
+            }
+            if "value_json" in columns:
+                self._rebuild_desktop_registry_baselines_content_addressed(cursor)
+            elif "value_hash" not in columns:
+                raise RuntimeError(
+                    "desktop_registry_baselines has neither value_json nor "
+                    "value_hash; refusing to guess its shape"
+                )
+            cursor.execute(
+                """INSERT INTO session_bridge_migrations
+                   (migration_name, applied_at) VALUES (?, ?)""",
+                (migration_name, time.time()),
+            )
+            connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+
+    @classmethod
+    def _rebuild_desktop_registry_baselines_content_addressed(
+        cls, cursor: sqlite3.Cursor
+    ) -> None:
+        """Rename the legacy table aside, create the canonical v34 table, copy.
+
+        Must run inside the caller's open transaction. The v34 DDL is taken
+        from BRIDGE_SCHEMA_SQL through a reference database rather than
+        restated here, so the rebuilt table cannot drift from what a fresh
+        database gets.
+        """
+        legacy = "desktop_registry_baselines__legacy_v33"
+        reference = sqlite3.connect(":memory:")
+        try:
+            reference.executescript(BRIDGE_SCHEMA_SQL)
+            canonical = {
+                name: sql
+                for name, sql in reference.execute(
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'table' "
+                    "AND name IN ('desktop_registry_values', "
+                    "'desktop_registry_baselines')"
+                ).fetchall()
+            }
+        finally:
+            reference.close()
+        if set(canonical) != {"desktop_registry_values", "desktop_registry_baselines"}:
+            raise RuntimeError("v34 desktop registry schema incomplete")
+
+        # A previous attempt cannot have left this behind (it rolled back with
+        # everything else), so an existing table here is foreign: refuse.
+        if cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (legacy,),
+        ).fetchone() is not None:
+            raise RuntimeError(f"{legacy} already exists; refusing to overwrite it")
+        cursor.execute(f'ALTER TABLE desktop_registry_baselines RENAME TO "{legacy}"')
+        # sqlite_master drops IF NOT EXISTS; the values table normally already
+        # exists because BRIDGE_SCHEMA_SQL ran first, so re-add the guard.
+        cursor.execute(
+            canonical["desktop_registry_values"].replace(
+                "CREATE TABLE desktop_registry_values",
+                "CREATE TABLE IF NOT EXISTS desktop_registry_values",
+                1,
+            )
+        )
+        cursor.execute(canonical["desktop_registry_baselines"])
+
+        expected = cursor.execute(f'SELECT COUNT(*) FROM "{legacy}"').fetchone()[0]
+        copied = 0
+        last_rowid = 0
+        batch_size = cls._DESKTOP_REGISTRY_VALUES_MIGRATION_BATCH
+        while True:
+            rows = cursor.execute(
+                f"""SELECT rowid, filename, root_id, group_name, value_json,
+                           revision, updated_at
+                    FROM "{legacy}"
+                    WHERE rowid > ?
+                    ORDER BY rowid
+                    LIMIT ?""",
+                (last_rowid, batch_size),
+            ).fetchall()
+            if not rows:
+                break
+            values: dict[str, str] = {}
+            baselines: list[tuple[str, str, str, str, int, float]] = []
+            for row in rows:
+                last_rowid = int(row[0])
+                value_json = row[4]
+                if not isinstance(value_json, str) or not value_json:
+                    raise RuntimeError(
+                        "legacy desktop registry baseline rowid "
+                        f"{row[0]} carries no JSON text"
+                    )
+                value_hash = desktop_registry_value_hash(value_json)
+                values.setdefault(value_hash, value_json)
+                baselines.append(
+                    (row[1], row[2], row[3], value_hash, row[5], row[6])
+                )
+            cursor.executemany(
+                "INSERT OR IGNORE INTO desktop_registry_values "
+                "(value_hash, value_json) VALUES (?, ?)",
+                list(values.items()),
+            )
+            cursor.executemany(
+                """INSERT INTO desktop_registry_baselines
+                       (filename, root_id, group_name, value_hash,
+                        revision, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                baselines,
+            )
+            copied += len(rows)
+        if copied != expected:
+            raise RuntimeError(
+                f"desktop registry rebuild copied {copied} of {expected} rows"
+            )
+        rebuilt = cursor.execute(
+            "SELECT COUNT(*) FROM desktop_registry_baselines"
+        ).fetchone()[0]
+        if rebuilt != expected:
+            raise RuntimeError(
+                f"desktop registry rebuild holds {rebuilt} of {expected} rows"
+            )
+        cursor.execute(f'DROP TABLE "{legacy}"')
+
     def _init_schema(self):
         """Create tables and FTS if they don't exist, reconcile columns.
 
@@ -4457,6 +4677,10 @@ class SessionDB:
         # Upgrade that exact shape before generic reconciliation so the
         # migration remains explicit and auditable.
         self._apply_claude_auth_recovery_call_started_migration(cursor)
+        # Same reason, opposite direction: the v34 baseline table DROPS a
+        # column, which the reconciler cannot express, and its replacement
+        # is NOT NULL, which the reconciler cannot ADD. Rebuild first.
+        self._apply_desktop_registry_values_migration(cursor)
         self._reconcile_columns(cursor)
 
         # Bridge security migrations have their own durable ledger. They must

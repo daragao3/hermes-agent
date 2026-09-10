@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from hermes_state import SCHEMA_VERSION, SessionDB
+from hermes_state import SCHEMA_VERSION, SessionDB, desktop_registry_value_hash
 from session_bridge.claude_visibility import (
     ClaudeVisibilityCandidate,
     ClaudeVisibilityIdentity,
@@ -1225,6 +1225,7 @@ def test_v24_bridge_migration_is_independent_of_fts_schema_version(
         "claude_characterization_event_orphan_quarantine_v29",
         "sidebar_resolution_orphan_quarantine_v30",
         "sidebar_reconciliation_proof_orphan_quarantine_v31",
+        "desktop_registry_values_v34",
     }
     first._conn.execute(
         """UPDATE session_claude_visibility_jobs
@@ -17684,3 +17685,350 @@ def test_claude_visibility_commit_still_refuses_a_real_lineage_conflict(db) -> N
         "claude_lineage_target_missing",
         "claude_lineage_missing_source",
     })
+
+
+# ── Desktop registry content-addressed values (schema v34) ──
+
+
+_V33_BASELINES_DDL = """
+CREATE TABLE desktop_registry_baselines (
+    filename TEXT NOT NULL,
+    root_id TEXT NOT NULL,
+    group_name TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (filename, root_id, group_name)
+);
+"""
+
+_MCP_BLOB = '{"state":"present","value":{"mcp":"blob"}}'
+_TITLE_BLOB = '{"state":"present","value":"T"}'
+
+
+def _baseline(filename, root_id, group_name, value_json, revision=1):
+    return {
+        "filename": filename,
+        "root_id": root_id,
+        "group_name": group_name,
+        "value_json": value_json,
+        "revision": revision,
+    }
+
+
+def _ten_baselines():
+    rows = [
+        _baseline(f"{name}.json", root, "mcp", _MCP_BLOB)
+        for name in ("a", "b", "c")
+        for root in ("r1", "r2", "r3")
+    ]
+    rows.append(_baseline("a.json", "r1", "field:title", _TITLE_BLOB))
+    return rows
+
+
+def _values_table(db) -> dict[str, str]:
+    return {
+        row["value_hash"]: row["value_json"]
+        for row in _rows(db, "SELECT value_hash, value_json FROM desktop_registry_values")
+    }
+
+
+def _baseline_columns(db) -> set[str]:
+    return {
+        row["name"]
+        for row in _rows(db, 'PRAGMA table_info("desktop_registry_baselines")')
+    }
+
+
+def _build_legacy_v33_registry(path, rows) -> None:
+    """Leave *path* exactly as a pre-v34 database: value_json inline."""
+    legacy = SessionDB(path)
+    legacy._conn.executescript(
+        "DROP TABLE desktop_registry_baselines;"
+        + _V33_BASELINES_DDL
+        + """DELETE FROM desktop_registry_values;
+        DELETE FROM session_bridge_migrations
+        WHERE migration_name = 'desktop_registry_values_v34';
+        UPDATE schema_version SET version = 33;"""
+    )
+    legacy._conn.executemany(
+        """INSERT INTO desktop_registry_baselines
+               (filename, root_id, group_name, value_json, revision, updated_at)
+           VALUES (?, ?, ?, ?, ?, 10.0)""",
+        [
+            (r["filename"], r["root_id"], r["group_name"], r["value_json"], r["revision"])
+            for r in rows
+        ],
+    )
+    legacy._conn.commit()
+    legacy.close()
+
+
+def test_desktop_registry_baselines_store_each_distinct_value_once(db) -> None:
+    """Nine rows sharing one 'mcp' blob store that blob ONCE, keyed by SHA-256.
+
+    Production before the split: 564,174 rows / 600 MB of value_json for
+    34,265 distinct values (7.7 MB). The worker-facing rows are unchanged.
+    """
+    store = SessionBridgeStore(db, clock=lambda: 100.0)
+    assert store.upsert_desktop_registry_baselines(_ten_baselines()) == 10
+
+    assert "value_json" not in _baseline_columns(db)
+    assert _values_table(db) == {
+        desktop_registry_value_hash(_MCP_BLOB): _MCP_BLOB,
+        desktop_registry_value_hash(_TITLE_BLOB): _TITLE_BLOB,
+    }
+    assert desktop_registry_value_hash(_MCP_BLOB) == hashlib.sha256(
+        _MCP_BLOB.encode("utf-8")
+    ).hexdigest()
+    references = {
+        row["value_hash"]: row["n"]
+        for row in _rows(
+            db,
+            """SELECT value_hash, COUNT(*) AS n FROM desktop_registry_baselines
+               GROUP BY value_hash""",
+        )
+    }
+    assert references == {
+        desktop_registry_value_hash(_MCP_BLOB): 9,
+        desktop_registry_value_hash(_TITLE_BLOB): 1,
+    }
+    assert _rows(db, "PRAGMA foreign_key_check") == []
+
+    loaded = store.load_desktop_registry_baselines()
+    assert len(loaded) == 10
+    assert all(
+        list(row) == ["filename", "root_id", "group_name", "value_json", "revision"]
+        for row in loaded
+    )
+    assert sorted(
+        (row["filename"], row["root_id"], row["group_name"], row["value_json"], row["revision"])
+        for row in loaded
+    ) == sorted(
+        (r["filename"], r["root_id"], r["group_name"], r["value_json"], r["revision"])
+        for r in _ten_baselines()
+    )
+
+
+def test_desktop_registry_baseline_advance_prunes_a_value_once_unreferenced(db) -> None:
+    """A blob is deleted with the upsert that replaces its LAST reference."""
+    store = SessionBridgeStore(db, clock=lambda: 100.0)
+    v1 = '{"state":"present","value":"v1"}'
+    v2 = '{"state":"present","value":"v2"}'
+    h1, h2 = desktop_registry_value_hash(v1), desktop_registry_value_hash(v2)
+    store.upsert_desktop_registry_baselines(
+        [_baseline("a.json", root, "field:title", v1) for root in ("r1", "r2", "r3")]
+        + [_baseline("b.json", "r1", "field:title", v1)]
+    )
+    assert set(_values_table(db)) == {h1}
+
+    # Two of four references move on: v1 is still held by a.json/r3 and b.json.
+    store.upsert_desktop_registry_baselines(
+        [_baseline("a.json", root, "field:title", v2, revision=2) for root in ("r1", "r2")]
+    )
+    assert set(_values_table(db)) == {h1, h2}
+
+    # The last two references move on: v1 goes with them.
+    store.upsert_desktop_registry_baselines(
+        [
+            _baseline("a.json", "r3", "field:title", v2, revision=2),
+            _baseline("b.json", "r1", "field:title", v2, revision=2),
+        ]
+    )
+    assert set(_values_table(db)) == {h2}
+    loaded = store.load_desktop_registry_baselines()
+    assert len(loaded) == 4
+    assert all(row["value_json"] == v2 for row in loaded)
+
+    # Re-asserting the same value is idempotent: nothing pruned, nothing added.
+    store.upsert_desktop_registry_baselines(
+        [_baseline("a.json", "r1", "field:title", v2, revision=3)]
+    )
+    assert set(_values_table(db)) == {h2}
+    assert _rows(db, "PRAGMA foreign_key_check") == []
+
+
+def test_desktop_registry_baselines_load_fetches_a_value_the_preload_missed(
+    db, monkeypatch
+) -> None:
+    store = SessionBridgeStore(db, clock=lambda: 100.0)
+    store.upsert_desktop_registry_baselines(
+        [_baseline("a.json", "r1", "field:title", _TITLE_BLOB)]
+    )
+    monkeypatch.setattr(store, "_load_desktop_registry_values", lambda: {})
+    assert store.load_desktop_registry_baselines() == [
+        _baseline("a.json", "r1", "field:title", _TITLE_BLOB)
+    ]
+
+
+def test_desktop_registry_baselines_load_refuses_a_dangling_reference(db) -> None:
+    """A hash with no stored blob is an error, never a silently absent baseline."""
+    store = SessionBridgeStore(db, clock=lambda: 100.0)
+    store.upsert_desktop_registry_baselines(
+        [_baseline("a.json", "r1", "field:title", _TITLE_BLOB)]
+    )
+    with db._lock:
+        # The FOREIGN KEY refuses this under enforcement; plant it the only
+        # way it could ever appear, then restore enforcement.
+        db._conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            db._conn.execute(
+                """INSERT INTO desktop_registry_baselines
+                       (filename, root_id, group_name, value_hash, revision, updated_at)
+                   VALUES ('z.json', 'r1', 'field:title', 'deadbeef', 1, 1.0)"""
+            )
+            db._conn.commit()
+        finally:
+            db._conn.execute("PRAGMA foreign_keys=ON")
+    with pytest.raises(RuntimeError, match="deadbeef"):
+        store.load_desktop_registry_baselines()
+
+
+def test_desktop_registry_baselines_load_releases_the_lock_between_batches(
+    db, monkeypatch
+) -> None:
+    """Both phases page on rowid and give up db._lock between pages.
+
+    The 2026-08-31 /health starvation came from one unbounded SELECT holding
+    the store lock for the whole table; the split must not reintroduce it
+    through the values preload.
+    """
+    store = SessionBridgeStore(db, clock=lambda: 100.0)
+    store.upsert_desktop_registry_baselines(_ten_baselines())
+    monkeypatch.setattr(SessionBridgeStore, "_DESKTOP_REGISTRY_BASELINE_BATCH", 4)
+
+    class _CountingLock:
+        def __init__(self, inner):
+            self.inner = inner
+            self.acquisitions = 0
+
+        def __enter__(self):
+            self.acquisitions += 1
+            return self.inner.__enter__()
+
+        def __exit__(self, *exc):
+            return self.inner.__exit__(*exc)
+
+    counting = _CountingLock(db._lock)
+    monkeypatch.setattr(db, "_lock", counting)
+    loaded = store.load_desktop_registry_baselines()
+    assert len(loaded) == 10
+    # values: 2 rows -> one page + the empty terminator = 2 acquisitions;
+    # baselines: 10 rows at 4 per page -> 4, 4, 2, empty = 4 acquisitions.
+    assert counting.acquisitions == 6
+
+
+def test_desktop_registry_values_migration_rewrites_a_legacy_table(tmp_path) -> None:
+    """A pre-v34 table (value_json inline) is rebuilt to the v34 shape on open.
+
+    Rows, revisions and updated_at survive byte-for-byte; equal blobs collapse
+    to one values row; the worker-facing load is indistinguishable.
+    """
+    path = tmp_path / "legacy-v33-registry.db"
+    _build_legacy_v33_registry(path, _ten_baselines())
+
+    upgraded = SessionDB(path)
+    try:
+        assert _baseline_columns(upgraded) == {
+            "filename", "root_id", "group_name", "value_hash", "revision", "updated_at",
+        }
+        assert _rows(
+            upgraded, "SELECT COUNT(*) AS n FROM desktop_registry_baselines"
+        ) == [{"n": 10}]
+        assert _rows(
+            upgraded, "SELECT DISTINCT updated_at AS t FROM desktop_registry_baselines"
+        ) == [{"t": 10.0}]
+        assert _values_table(upgraded) == {
+            desktop_registry_value_hash(_MCP_BLOB): _MCP_BLOB,
+            desktop_registry_value_hash(_TITLE_BLOB): _TITLE_BLOB,
+        }
+        assert _rows(
+            upgraded,
+            """SELECT name FROM sqlite_master
+               WHERE type = 'table' AND name LIKE 'desktop_registry_baselines_%'""",
+        ) == []
+        assert _rows(
+            upgraded,
+            """SELECT name FROM sqlite_master WHERE type = 'index'
+               AND name = 'idx_desktop_registry_baselines_value_hash'""",
+        ) == [{"name": "idx_desktop_registry_baselines_value_hash"}]
+        assert _rows(
+            upgraded,
+            """SELECT migration_name FROM session_bridge_migrations
+               WHERE migration_name = 'desktop_registry_values_v34'""",
+        ) == [{"migration_name": "desktop_registry_values_v34"}]
+        assert _rows(upgraded, "SELECT version FROM schema_version") == [
+            {"version": SCHEMA_VERSION}
+        ]
+        assert _rows(upgraded, "PRAGMA foreign_key_check") == []
+
+        store = SessionBridgeStore(upgraded, clock=lambda: 100.0)
+        loaded = store.load_desktop_registry_baselines()
+        assert sorted(
+            (r["filename"], r["root_id"], r["group_name"], r["value_json"], r["revision"])
+            for r in loaded
+        ) == sorted(
+            (r["filename"], r["root_id"], r["group_name"], r["value_json"], r["revision"])
+            for r in _ten_baselines()
+        )
+        # The upgraded table takes writes through the ordinary path.
+        assert store.upsert_desktop_registry_baselines(
+            [_baseline("a.json", "r1", "field:title", '{"state":"absent"}', revision=2)]
+        ) == 1
+        assert desktop_registry_value_hash(_TITLE_BLOB) not in _values_table(upgraded)
+    finally:
+        upgraded.close()
+
+
+def test_desktop_registry_values_migration_is_all_or_nothing(
+    tmp_path, monkeypatch
+) -> None:
+    """A failure after the first copied batch leaves the legacy table untouched.
+
+    The rewrite is one transaction: a stale pre-v34 worker must never find a
+    half-migrated table, and the next open must simply migrate again.
+    """
+    import hermes_state
+
+    path = tmp_path / "legacy-v33-registry-fault.db"
+    _build_legacy_v33_registry(path, _ten_baselines())
+    monkeypatch.setattr(SessionDB, "_DESKTOP_REGISTRY_VALUES_MIGRATION_BATCH", 3)
+    real_hash = hermes_state.desktop_registry_value_hash
+    calls = {"n": 0}
+
+    def _flaky(value_json: str) -> str:
+        calls["n"] += 1
+        if calls["n"] == 5:  # second batch, after batch one was inserted
+            raise RuntimeError("boom mid-copy")
+        return real_hash(value_json)
+
+    monkeypatch.setattr(hermes_state, "desktop_registry_value_hash", _flaky)
+    with pytest.raises(RuntimeError, match="boom mid-copy"):
+        SessionDB(path)
+    assert calls["n"] == 5
+
+    raw = sqlite3.connect(path)
+    try:
+        columns = {row[1] for row in raw.execute('PRAGMA table_info("desktop_registry_baselines")')}
+        assert "value_json" in columns and "value_hash" not in columns
+        assert raw.execute("SELECT COUNT(*) FROM desktop_registry_baselines").fetchone() == (10,)
+        assert raw.execute("SELECT COUNT(*) FROM desktop_registry_values").fetchone() == (0,)
+        assert raw.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'desktop_registry_baselines_%'"
+        ).fetchone() == (0,)
+        assert raw.execute(
+            "SELECT COUNT(*) FROM session_bridge_migrations WHERE migration_name = 'desktop_registry_values_v34'"
+        ).fetchone() == (0,)
+    finally:
+        raw.close()
+
+    monkeypatch.setattr(hermes_state, "desktop_registry_value_hash", real_hash)
+    recovered = SessionDB(path)
+    try:
+        assert "value_hash" in _baseline_columns(recovered)
+        assert len(_values_table(recovered)) == 2
+        assert len(
+            SessionBridgeStore(recovered, clock=lambda: 100.0).load_desktop_registry_baselines()
+        ) == 10
+    finally:
+        recovered.close()
