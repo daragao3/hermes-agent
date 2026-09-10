@@ -1336,3 +1336,73 @@ def test_derived_title_skips_backfill_notice_and_caps_at_120(db, tmp_path) -> No
     # sidebar_title caps at 120 INCLUDING its own "[Claude] " prefix (9 chars),
     # so after the "[Codex] " swap the longest possible title is 119.
     assert title == "[Codex] " + long_request[:111].rstrip()
+
+
+def test_run_once_hides_the_registration_prompt_of_a_visible_mirror(db, tmp_path) -> None:
+    """The worker is the ONLY caller of the prefix hide, and only for visible jobs.
+
+    It runs in the same cycle as hydration, so the in-place rewrite and the
+    append never race; the mirrored turns still chain from the registration
+    answer, whose uuid the rewrite leaves untouched.
+    """
+    from session_bridge.claude_visibility import _CURRENT_CODEX_REGISTRATION_PREAMBLE
+    from session_bridge.mirror_conversation import MirrorConversationSync
+    from session_bridge.models import is_mirrored_record, is_registration_record
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    prompt_uuid = "9ccc7524-3d7e-4a33-a064-9697b6ade415"
+    answer_uuid = "75c89ce6-cdb0-4b06-90e7-22bd99518810"
+    mirror_path.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "uuid": prompt_uuid,
+                "parentUuid": None,
+                "isSidechain": False,
+                "sessionId": identity.claude_uuid,
+                "cwd": "C:/work/project",
+                "message": {
+                    "role": "user",
+                    "content": _CURRENT_CODEX_REGISTRATION_PREAMBLE
+                    + "abc.def\nBounded metadata: {}\nYou must reply exactly REGISTERED.",
+                },
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "uuid": answer_uuid,
+                "parentUuid": prompt_uuid,
+                "isSidechain": False,
+                "sessionId": identity.claude_uuid,
+                "cwd": "C:/work/project",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "REGISTERED"}]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    worker = ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        conversation_sync=MirrorConversationSync(store),
+    )
+
+    result = worker.run_once()
+
+    assert result["hydrated"] == 1
+    records = [
+        json.loads(line)
+        for line in mirror_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert records[0]["uuid"] == prompt_uuid
+    assert records[0]["isMeta"] is True
+    assert is_registration_record(records[0])
+    assert records[1]["uuid"] == answer_uuid and "isMeta" not in records[1]
+    mirrored = [record for record in records if is_mirrored_record(record)]
+    assert len(mirrored) == 1 and mirrored[0]["parentUuid"] == answer_uuid

@@ -31,6 +31,7 @@ SOURCE_ID = f"codex:{SOURCE_NATIVE}"
 REGISTRATION_CWD = r"C:\Users\diego\.hermes"
 PREFIX_USER_UUID = "9ccc7524-3d7e-4a33-a064-9697b6ade415"
 PREFIX_ASSISTANT_UUID = "75c89ce6-cdb0-4b06-90e7-22bd99518810"
+OTHER_UUID = "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f"
 
 
 @pytest.fixture
@@ -701,3 +702,171 @@ def test_turns_drop_harness_envelope_user_turns_but_keep_quoting_assistants() ->
     assert is_envelope_user_text("<system-reminder>\nx") is True
     assert is_envelope_user_text("hello <system-reminder>") is False
     assert is_envelope_user_text(None) is False
+
+
+# --- hide_registration_prefix --------------------------------------------
+
+
+def _real_registration_prefix() -> list[dict]:
+    """The prefix with the prompt text the registrar really pastes today."""
+    from session_bridge.claude_visibility import _CURRENT_CODEX_REGISTRATION_PREAMBLE
+
+    records = _registration_prefix()
+    records[1]["message"]["content"] = (
+        _CURRENT_CODEX_REGISTRATION_PREAMBLE
+        + "abc.def\nBounded metadata: {}\nYou must reply exactly REGISTERED."
+    )
+    return records
+
+
+def test_hide_registration_prefix_marks_only_the_prompt_record(tmp_path) -> None:
+    from session_bridge.mirror_conversation import (
+        _append_records,
+        hide_registration_prefix,
+    )
+
+    path = tmp_path / f"{CLAUDE_UUID}.jsonl"
+    _write_prefix(path, _real_registration_prefix())
+    _append_records(
+        path,
+        [
+            render_mirror_record(
+                claude_uuid=CLAUDE_UUID,
+                source_session_id=SOURCE_ID,
+                cwd=REGISTRATION_CWD,
+                parent_uuid=PREFIX_ASSISTANT_UUID,
+                turn={"message_id": 1, "role": "user", "content": "hi", "timestamp": 1.0},
+            )
+        ],
+    )
+    before = path.read_bytes().split(b"\n")
+
+    assert hide_registration_prefix(path) == "hidden"
+
+    after = path.read_bytes().split(b"\n")
+    # One line re-serialized; every other byte of the file preserved, including
+    # the mirrored record after the prefix and the trailing newline.
+    assert len(after) == len(before)
+    assert [line for i, line in enumerate(after) if i != 1] == [
+        line for i, line in enumerate(before) if i != 1
+    ]
+    assert path.read_bytes().endswith(b"\n")
+    prompt = json.loads(after[1])
+    assert prompt["isMeta"] is True
+    assert prompt["hermesRegistration"]["version"] == 1
+    assert prompt["hermesRegistration"]["hidden_at"].endswith("Z")
+    assert prompt["uuid"] == PREFIX_USER_UUID
+    assert _text(prompt) == _text(_real_registration_prefix()[1])
+    assert json.loads(after[2])["message"]["content"][0]["text"] == "REGISTERED"
+
+    # Idempotent: a second call changes nothing.
+    snapshot = path.read_bytes()
+    assert hide_registration_prefix(path) == "already"
+    assert path.read_bytes() == snapshot
+
+
+def test_hide_registration_prefix_leaves_other_transcripts_alone(tmp_path) -> None:
+    from session_bridge.mirror_conversation import hide_registration_prefix
+
+    # A first user turn that is not the registration prompt.
+    records = _registration_prefix()
+    records[1]["message"]["content"] = "real work please"
+    path = tmp_path / "native.jsonl"
+    before = _write_prefix(path, records)
+    assert hide_registration_prefix(path) == "absent"
+    assert path.read_bytes() == before
+
+    # The prompt is still the first USER record when the CLI appended it after
+    # the answer (file order is not chronological; 4 of 172 live mirrors).
+    records = _real_registration_prefix()
+    records = [records[0], records[2], records[1]]
+    path = tmp_path / "answer-first.jsonl"
+    before = _write_prefix(path, records).split(b"\n")
+    assert hide_registration_prefix(path) == "hidden"
+    after = path.read_bytes().split(b"\n")
+    assert after[:2] == before[:2] and json.loads(after[2])["isMeta"] is True
+
+    # A later user turn that happens to be a registration prompt is not the
+    # first user record and is never touched.
+    records = _registration_prefix()
+    records[1]["message"]["content"] = "real work please"
+    records.append(dict(_real_registration_prefix()[1], uuid=OTHER_UUID))
+    path = tmp_path / "quoted-later.jsonl"
+    before = _write_prefix(path, records)
+    assert hide_registration_prefix(path) == "absent"
+    assert path.read_bytes() == before
+
+    # A sidechain prompt is not the mirror's own registration turn.
+    records = _real_registration_prefix()
+    records[1]["isSidechain"] = True
+    path = tmp_path / "sidechain.jsonl"
+    before = _write_prefix(path, records)
+    assert hide_registration_prefix(path) == "absent"
+    assert path.read_bytes() == before
+
+    assert hide_registration_prefix(tmp_path / "missing.jsonl") == "unreadable"
+
+
+def test_sync_hides_the_prompt_once_and_remembers_it(store, tmp_path) -> None:
+    ledger_key = "session-bridge:claude-visibility:mirror-conversation"
+    path = tmp_path / f"{CLAUDE_UUID}.jsonl"
+    _write_prefix(path, _real_registration_prefix())
+    sync = MirrorConversationSync(store, backfill_messages=2)
+
+    # A source with nothing to mirror yet: the prompt is still hidden now, and
+    # the ledger remembers it without inventing a consumed row.
+    idle = sync.sync(
+        claude_uuid=CLAUDE_UUID,
+        source_session_id=SOURCE_ID,
+        native_path=str(path),
+        cwd=REGISTRATION_CWD,
+    )
+    assert idle.status == "idle" and idle.hidden is True
+    assert _records(path)[1]["isMeta"] is True
+    entry = store.get_state(ledger_key)[CLAUDE_UUID]
+    assert entry["registration_prefix"] == "hidden"
+    assert "last_message_id" not in entry
+
+    # Rows arrive later: the first hydration still applies the backfill cap
+    # (the prefix-only ledger entry must not read as "already hydrated"), the
+    # prompt is not rewritten again, and the settled state survives the
+    # ledger rewrite.
+    store.upsert_projection(
+        _source_projection(
+            *[
+                _message(f"e{index}", f"turn {index}", timestamp=50.0 + index)
+                for index in range(1, 6)
+            ]
+        )
+    )
+    prefix_bytes = path.read_bytes()
+    result = sync.sync(
+        claude_uuid=CLAUDE_UUID,
+        source_session_id=SOURCE_ID,
+        native_path=str(path),
+        cwd=REGISTRATION_CWD,
+    )
+    assert result.status == "appended" and result.hidden is False
+    assert result.appended == 3
+    assert path.read_bytes().startswith(prefix_bytes)
+    mirrored = _mirrored(path)
+    assert "3 earlier message(s)" in _text(mirrored[0])
+    assert mirrored[0]["parentUuid"] == PREFIX_ASSISTANT_UUID
+    entry = store.get_state(ledger_key)[CLAUDE_UUID]
+    assert entry["registration_prefix"] == "hidden"
+    assert entry["mirrored"] == 3
+
+    # A transcript with no hideable prompt settles as "absent" and is not
+    # re-read on later passes either.
+    other = tmp_path / "other.jsonl"
+    records = _registration_prefix()
+    records[1]["message"]["content"] = "real work please"
+    _write_prefix(other, records)
+    plain = sync.sync(
+        claude_uuid=OTHER_UUID,
+        source_session_id=SOURCE_ID,
+        native_path=str(other),
+        cwd=REGISTRATION_CWD,
+    )
+    assert plain.hidden is False
+    assert store.get_state(ledger_key)[OTHER_UUID]["registration_prefix"] == "absent"
