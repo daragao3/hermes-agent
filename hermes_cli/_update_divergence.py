@@ -255,3 +255,106 @@ def enforce_divergence_gate(
     for line in refusal_lines(branch, ahead, project_root=root):
         printer(line)
     sys.exit(EXIT_REFUSED_DIVERGENT_UPDATE)
+
+
+def _plain_invitation(update_command: str | None) -> list[str]:
+    """The unchanged ``--check`` tail: an update is available, go install it."""
+    if update_command is None:
+        from hermes_cli.config import recommended_update_command
+
+        update_command = recommended_update_command()
+    return [f"  Run '{update_command}' to install."]
+
+
+def advisory_lines(branch: str, ahead: int, *, compare_ref=None) -> list[str]:
+    """What ``--check`` says INSTEAD of the invitation when the apply path
+    would refuse. Separated from printing, and from the git calls, so tests can
+    read it without a runner.
+
+    Deliberately shorter than :func:`refusal_lines`. This is a read-only report
+    that happens to carry a warning; the full explanation belongs to the
+    refusal, which the operator sees if they run the command anyway.
+
+    ``compare_ref`` is the ref ``--check`` counted BEHIND (``upstream/main`` on
+    a fork whose ``upstream`` remote resolves), which is NOT necessarily the ref
+    the apply path would reset ONTO (always ``origin/<branch>``). When they
+    differ, saying so is the whole point: "16807 commits behind upstream/main"
+    and "2496 local commits not on origin/main" are both true and read as a
+    contradiction unless the two refs are named.
+    """
+    commits = "commit" if ahead == 1 else "commits"
+    is_are = "is" if ahead == 1 else "are"
+    it_them = "it" if ahead == 1 else "them"
+    lines = [
+        f"  ✗ But '{_APPLY_COMMAND}' will REFUSE (exit"
+        f" {EXIT_REFUSED_DIVERGENT_UPDATE}): {ahead} local {commits} on"
+        f" '{branch}' {is_are}",
+        f"    not on origin/{branch}, and the apply path's"
+        f" 'git reset --hard origin/{branch}'",
+        f"    would discard {it_them}. The auto-stash saves uncommitted CHANGES,"
+        " not commits.",
+    ]
+    if compare_ref and compare_ref != f"origin/{branch}":
+        lines.append(
+            f"    (the count above is against {compare_ref}; the reset would be"
+            f" onto origin/{branch})"
+        )
+    lines += [
+        "",
+        f"    See what is at stake:  git log --oneline origin/{branch}..{branch}",
+        f"    Integrate instead:     git merge origin/{branch}",
+        f"    Update anyway, losing {it_them}:"
+        f"  {OVERRIDE_ENV}=1 {_APPLY_COMMAND}",
+    ]
+    return lines
+
+
+#: The command ``--check`` would otherwise invite. Not read from
+#: ``recommended_update_command()`` in the advisory, because the advisory only
+#: fires on the git apply path, where that helper returns exactly this.
+_APPLY_COMMAND = "hermes update"
+
+
+def check_advisory_lines(
+    branch: str,
+    *,
+    compare_ref=None,
+    cwd=None,
+    runner=None,
+    fetch: bool = False,
+    environ=None,
+    update_command=None,
+) -> list[str]:
+    """The tail ``hermes update --check`` prints once it has found an update.
+
+    Returns the ordinary "Run 'hermes update' to install." when the apply path
+    would proceed, and :func:`advisory_lines` when it would refuse with
+    ``EXIT_REFUSED_DIVERGENT_UPDATE``. THIS DOES NOT GATE ``--check``: it
+    changes what is printed, nothing else. ``--check`` stays read-only and
+    still exits 0 -- it is the only half of ``hermes update`` a diverged
+    checkout can safely run, and turning the report into a refusal would take
+    that away too.
+
+    ``fetch`` defaults to False, the opposite of
+    :func:`commits_that_would_be_discarded`. ``--check`` has already fetched by
+    the time it calls this, and a second network round-trip to say something
+    advisory is not worth it. The staleness that buys is one-directional and
+    harmless here: a stale ``origin/<branch>`` is OLDER, so it can only make
+    the count too HIGH, never turn a real divergence into a 0 and print the
+    invitation this function exists to withhold. Note ``--check`` prefers
+    ``upstream/<branch>`` for its own count, so on a fork ``origin/<branch>``
+    may not have been fetched in this run at all -- hence naming both refs.
+
+    The override is honored: with ``HERMES_ALLOW_DIVERGENT_UPDATE`` set the
+    apply path really will proceed, so the invitation is the truthful answer.
+    """
+    if override_active(environ):
+        return _plain_invitation(update_command)
+
+    ahead = commits_that_would_be_discarded(
+        branch, cwd=cwd, runner=runner, fetch=fetch
+    )
+    if not ahead:  # 0, or None == could not determine. Same stand-down as the gate.
+        return _plain_invitation(update_command)
+
+    return advisory_lines(branch, ahead, compare_ref=compare_ref)

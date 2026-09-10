@@ -379,8 +379,183 @@ def test_cmd_update_itself_carries_no_divergence_gate():
     assert "enforce_divergence_gate" not in source
 
 
-def test_main_py_is_untouched_by_this_feature():
+def test_main_py_carries_no_gate_and_only_the_check_advisory_call():
     """hermes_cli/main.py is the worst-conflicted file in the pending 0.21.1
-    upgrade merge. This feature must add zero surface to it."""
+    upgrade merge, so this feature is bounded there rather than forbidden.
+
+    THE GATE still adds ZERO surface -- it lives entirely at the dispatch seam.
+    What main.py gained afterwards is the ``--check`` ADVISORY, and only because
+    ``_cmd_update_check`` lives here and cannot be moved without touching far
+    more of this file. The bound: ONE import, inside ONE small helper, and no
+    gate symbol anywhere. If a future change starts spelling the policy out in
+    main.py, this goes red.
+    """
     source = inspect.getsource(cli_main)
-    assert "_update_divergence" not in source
+    assert "enforce_divergence_gate" not in source, "the GATE must stay at the seam"
+    assert source.count("from hermes_cli._update_divergence import") == 1
+
+    helper = inspect.getsource(cli_main._print_update_check_tail)
+    assert "from hermes_cli._update_divergence import" in helper
+    assert len(helper.splitlines()) <= 25, "the helper must stay a call, not a policy"
+
+
+# ---------------------------------------------------------------------------
+# --check's ADVISORY. Residual (1) of the gate work: --check is read-only and
+# ungated (correctly), but it ended with "Run 'hermes update' to install" while
+# that command refuses with exit 31 -- a dead end with no stated reason. This
+# changes WHAT IS PRINTED and nothing else. --check stays read-only, still
+# exits 0, and is still the only half of `hermes update` a diverged checkout
+# can safely run; turning the report into a refusal would take that away too.
+# ---------------------------------------------------------------------------
+
+INVITATION = "  Run 'hermes update' to install."
+
+
+def test_advisory_is_the_plain_invitation_when_not_diverged():
+    git = FakeGit(count="0")
+    lines = _update_divergence.check_advisory_lines(
+        "main",
+        compare_ref="upstream/main",
+        runner=git,
+        environ={},
+        update_command="hermes update",
+    )
+    assert lines == [INVITATION]
+
+
+def test_advisory_replaces_the_invitation_when_the_apply_path_would_refuse():
+    git = FakeGit(count="2496")
+    lines = _update_divergence.check_advisory_lines(
+        "main", compare_ref="upstream/main", runner=git, environ={}
+    )
+    text = "\n".join(lines)
+    assert "2496" in text
+    assert "REFUSE" in text
+    assert str(_update_divergence.EXIT_REFUSED_DIVERGENT_UPDATE) in text
+    assert "reset --hard origin/main" in text
+    assert INVITATION not in lines, "must not still invite a command that refuses"
+
+
+def test_advisory_stands_down_when_the_count_cannot_be_established():
+    """Same fail-open as the gate. No origin/<branch> ref means the apply path
+    would not reset either, so the ordinary invitation is the truthful answer."""
+    git = FakeGit(origin_ref=False)
+    lines = _update_divergence.check_advisory_lines(
+        "main", runner=git, environ={}, update_command="hermes update"
+    )
+    assert lines == [INVITATION]
+
+
+def test_advisory_honors_the_override_without_asking_git():
+    """With the override set the apply path really will proceed, so inviting it
+    is the truthful answer -- and there is nothing to count."""
+    git = FakeGit(count="2496")
+    lines = _update_divergence.check_advisory_lines(
+        "main",
+        runner=git,
+        environ={"HERMES_ALLOW_DIVERGENT_UPDATE": "1"},
+        update_command="hermes update",
+    )
+    assert lines == [INVITATION]
+    assert not git.calls
+
+
+def test_advisory_does_not_fetch():
+    """--check has already fetched by the time this runs. A second network
+    round-trip to say something advisory is not worth it, and the staleness it
+    buys is one-directional: a stale origin ref is OLDER, so it can only make
+    the count too HIGH, never turn a real divergence into a 0 and print the
+    invitation this exists to withhold."""
+    git = FakeGit(count="2496")
+    _update_divergence.check_advisory_lines("main", runner=git, environ={})
+    assert not git.fetched
+
+
+def test_advisory_names_both_refs_when_they_differ():
+    """--check counts behind upstream/<branch> on a fork; the apply path resets
+    onto origin/<branch>. Two different true numbers read as a contradiction
+    unless both refs are named."""
+    text = "\n".join(
+        _update_divergence.advisory_lines("main", 2496, compare_ref="upstream/main")
+    )
+    assert "upstream/main" in text
+    assert "origin/main" in text
+
+
+def test_advisory_omits_the_ref_note_when_the_refs_agree():
+    text = "\n".join(
+        _update_divergence.advisory_lines("main", 2496, compare_ref="origin/main")
+    )
+    assert "upstream" not in text
+    assert "the count above is against" not in text
+
+
+def test_advisory_honors_a_non_default_branch():
+    text = "\n".join(
+        _update_divergence.advisory_lines("dev", 4, compare_ref="origin/dev")
+    )
+    assert "reset --hard origin/dev" in text
+    assert "origin/main" not in text
+
+
+def test_advisory_reads_as_english_for_a_single_commit():
+    text = "\n".join(
+        _update_divergence.advisory_lines("dev", 1, compare_ref="origin/dev")
+    )
+    assert "1 local commit on 'dev' is" in text
+    assert "commits on" not in text
+
+
+def test_advisory_names_the_override():
+    text = "\n".join(
+        _update_divergence.advisory_lines("main", 2, compare_ref="origin/main")
+    )
+    assert _update_divergence.OVERRIDE_ENV in text
+
+
+def test_advisory_says_the_stash_does_not_protect_commits():
+    text = "\n".join(
+        _update_divergence.advisory_lines("main", 2, compare_ref="origin/main")
+    )
+    assert "not commits" in text
+
+
+def test_the_advisory_never_exits():
+    """THE WHOLE POINT, and the constraint a careless "make --check honest"
+    breaks: this REPORTS, it does not gate. --check must keep exiting 0 on a
+    diverged checkout."""
+    assert "sys.exit" not in inspect.getsource(
+        _update_divergence.check_advisory_lines
+    )
+    assert "sys.exit" not in inspect.getsource(_update_divergence.advisory_lines)
+    assert "sys.exit" not in inspect.getsource(cli_main._print_update_check_tail)
+
+
+def test_the_advisory_is_wired_at_both_git_report_sites():
+    """The shallow-clone branch and the counted branch both printed the bare
+    invitation. Wiring only one leaves half the defect in place."""
+    source = inspect.getsource(cli_main._cmd_update_check)
+    assert source.count("_print_update_check_tail(") == 2
+
+
+def test_the_helper_prints_exactly_what_the_advisory_returns(monkeypatch):
+    printed = []
+    monkeypatch.setattr(
+        _update_divergence, "check_advisory_lines", lambda *a, **kw: ["A", "B"]
+    )
+    monkeypatch.setattr("builtins.print", lambda *a, **kw: printed.append(a[0]))
+    cli_main._print_update_check_tail("main", "upstream/main")
+    assert printed == ["A", "B"]
+
+
+def test_the_helper_passes_the_branch_and_the_compare_ref(monkeypatch):
+    seen = {}
+
+    def fake(branch, *, compare_ref=None, **kw):
+        seen["branch"] = branch
+        seen["compare_ref"] = compare_ref
+        return []
+
+    monkeypatch.setattr(_update_divergence, "check_advisory_lines", fake)
+    cli_main._print_update_check_tail("dev", "origin/dev")
+    assert seen == {"branch": "dev", "compare_ref": "origin/dev"}

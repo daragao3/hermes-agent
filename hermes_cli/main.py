@@ -9087,6 +9087,25 @@ def _resolve_update_branch(args) -> str:
     return (getattr(args, "branch", None) or "main").strip() or "main"
 
 
+def _print_update_check_tail(branch: str, compare_ref: str) -> None:
+    """Print what follows ``--check``'s "Update available" headline.
+
+    Ordinarily "Run 'hermes update' to install." -- but on a checkout whose
+    history has diverged from ``origin/<branch>``, that command REFUSES with
+    ``_update_divergence.EXIT_REFUSED_DIVERGENT_UPDATE``, so the invitation
+    sends the operator into a dead end with no hint as to why. Delegated to
+    ``_update_divergence`` so this file (the worst-conflicted one in the
+    pending 0.21.1 merge) gains one call, not a policy.
+
+    ``--check`` IS NOT GATED by this and must never be: it stays read-only and
+    still exits 0. Only the wording changes.
+    """
+    from hermes_cli._update_divergence import check_advisory_lines
+
+    for line in check_advisory_lines(branch, compare_ref=compare_ref):
+        print(line)
+
+
 def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
     """Implement ``hermes update --check``: fetch and report without installing.
 
@@ -9234,9 +9253,7 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
             print("✓ Already up to date.")
         else:
             print(f"⚕ Update available (behind {compare_branch}).")
-            from hermes_cli.config import recommended_update_command
-
-            print(f"  Run '{recommended_update_command()}' to install.")
+            _print_update_check_tail(branch, compare_branch)
         return
 
     rev_result = subprocess.run(
@@ -9253,9 +9270,7 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
     else:
         commits_word = "commit" if behind == 1 else "commits"
         print(f"⚕ Update available: {behind} {commits_word} behind {compare_branch}.")
-        from hermes_cli.config import recommended_update_command
-
-        print(f"  Run '{recommended_update_command()}' to install.")
+        _print_update_check_tail(branch, compare_branch)
 
 
 def _ensure_fhs_path_guard() -> None:
