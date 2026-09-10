@@ -1338,6 +1338,67 @@ def test_derived_title_skips_backfill_notice_and_caps_at_120(db, tmp_path) -> No
     assert title == "[Codex] " + long_request[:111].rstrip()
 
 
+def _reseed_codex_source(store: SessionBridgeStore, *messages: ProjectedMessage) -> None:
+    """Replace the seed's Codex source (suffix "1") conversation wholesale.
+
+    upsert_projection APPENDS messages, so the seed's "meaningful request"
+    user turn is deleted first; otherwise it would (correctly) win the title.
+    """
+    store.db._conn.execute("DELETE FROM messages WHERE session_id = ?", ("codex:source-1",))
+    store.db._conn.commit()
+    store.upsert_projection(
+        _projection(
+            *messages,
+            provider=Provider.CODEX,
+            native_id="source-1",
+            last_active=5_000.0,
+        )
+    )
+
+
+def test_mirror_with_no_user_turn_is_titled_from_first_assistant_turn(
+    db, tmp_path
+) -> None:
+    """15 of 16 live fallback mirrors on 2026-09-09 held assistant turns only."""
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(db, store, tmp_path)
+    _reseed_codex_source(
+        store,
+        _message("a1", "I'll start with the timing gate, judged in UTC.", role="assistant"),
+        _message("a2", "Second reply that must not win.", role="assistant"),
+    )
+    _clear_catalog_title(store, identity.claude_uuid)
+    _write_registration_leaf(mirror_path, identity.claude_uuid)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+
+    result = _titled_worker(store, registry, hydrate=True).run_once()
+
+    assert result["hydrated"] == 2
+    record = _registry_records(registry)[0]
+    assert record["title"] == "[Codex] I'll start with the timing gate, judged in UTC."
+
+
+def test_user_turn_wins_over_an_earlier_assistant_turn(db, tmp_path) -> None:
+    """The assistant fallback is a fallback: any real user turn outranks it."""
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(db, store, tmp_path)
+    _reseed_codex_source(
+        store,
+        _message("a1", "Assistant opened the thread first.", role="assistant"),
+        _message("u1", "ok"),  # ack only: not meaningful, must not win either
+        _message("u2", "the real request typed later"),
+    )
+    _clear_catalog_title(store, identity.claude_uuid)
+    _write_registration_leaf(mirror_path, identity.claude_uuid)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+
+    _titled_worker(store, registry, hydrate=True).run_once()
+
+    assert _registry_records(registry)[0]["title"] == "[Codex] the real request typed later"
+
+
 def test_run_once_hides_the_registration_prompt_of_a_visible_mirror(db, tmp_path) -> None:
     """The worker is the ONLY caller of the prefix hide, and only for visible jobs.
 
