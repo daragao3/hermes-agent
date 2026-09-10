@@ -336,9 +336,20 @@ def test_the_gate_is_wired_into_the_real_dispatch(monkeypatch):
 
 
 def test_the_handler_runs_when_the_gate_passes(monkeypatch):
+    """The shared-stash gate (added after this one) is neutralized for the same
+    reason this suite neutralizes the agent gate: left live it shells out to real
+    git in the very checkout these tests run from, which is dirty and has 17
+    linked worktrees, so it would refuse with exit 32 in exactly the case that
+    asserts the DIVERGENCE gate let the command through. Its own wiring and
+    ordering are pinned in tests/hermes_cli/test_update_shared_stash_gate.py."""
+    from hermes_cli import _update_worktrees
+
     monkeypatch.setattr(_agent_session, "enforce_update_gate", lambda args: None)
     monkeypatch.setattr(
         _update_divergence, "commits_that_would_be_discarded", lambda branch, **kw: 0
+    )
+    monkeypatch.setattr(
+        _update_worktrees, "enforce_shared_stash_gate", lambda args: None
     )
     args = build_real_parser().parse_args(["update"])
     with pytest.raises(_ReachedPastGate):
@@ -355,6 +366,8 @@ def test_check_reaches_the_handler_through_both_gates(monkeypatch):
 def test_the_agent_gate_runs_before_the_divergence_gate(monkeypatch):
     """Ordering matters: the agent gate is a cheap env read, the divergence gate
     shells out to git and fetches."""
+    from hermes_cli import _update_worktrees
+
     order = []
     monkeypatch.setattr(
         _agent_session, "enforce_update_gate", lambda args: order.append("agent")
@@ -363,6 +376,12 @@ def test_the_agent_gate_runs_before_the_divergence_gate(monkeypatch):
         _update_divergence,
         "enforce_divergence_gate",
         lambda args: order.append("divergence"),
+    )
+    # The third gate would otherwise run for real against this checkout, which
+    # is dirty and has linked worktrees -- see the note in
+    # test_the_handler_runs_when_the_gate_passes.
+    monkeypatch.setattr(
+        _update_worktrees, "enforce_shared_stash_gate", lambda args: None
     )
     args = build_real_parser().parse_args(["update"])
     with pytest.raises(_ReachedPastGate):
