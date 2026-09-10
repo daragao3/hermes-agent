@@ -328,6 +328,8 @@ def conversational_turns(
             or is_envelope_user_text(content)
         ):
             continue
+        if role == "assistant" and is_automation_reply_envelope(content):
+            continue
         redacted = _redact(content).strip()
         if not redacted or _is_internal_bridge_message(redacted):
             continue
@@ -381,6 +383,27 @@ _ENVELOPE_USER_PREFIXES = (
 
 def is_envelope_user_text(value: object) -> bool:
     return isinstance(value, str) and value.lstrip().startswith(_ENVELOPE_USER_PREFIXES)
+
+
+def is_automation_reply_envelope(value: object) -> bool:
+    """An assistant turn that is a Codex automation's heartbeat REPLY, whole.
+
+    A Codex thread with automations attached answers every ``<heartbeat>``
+    wake with ``<heartbeat><automation_id/><decision/><message/></heartbeat>``
+    -- protocol, not conversation. The user-side wake was already dropped by
+    ``is_envelope_user_text``; the reply was not, and Diego saw 147 of them
+    in one ``[Codex]`` row on 2026-09-09 ("hypermark garbage"). Whole-content
+    only: an assistant that quotes or explains the envelope inside prose is
+    kept, exactly like the user-side rule.
+    """
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    return (
+        stripped.startswith("<heartbeat>")
+        and stripped.endswith("</heartbeat>")
+        and "<decision>" in stripped
+    )
 
 
 def read_codex_rollout_rows(

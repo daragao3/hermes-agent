@@ -694,14 +694,45 @@ def test_turns_drop_harness_envelope_user_turns_but_keep_quoting_assistants() ->
         {"id": 4, "role": "user", "content": "<command-message>bye</command-message>", "timestamp": 4.0},
         {"id": 5, "role": "user", "content": "please look at <heartbeat> handling", "timestamp": 5.0},
         {"id": 6, "role": "assistant", "content": "The envelope is `<heartbeat>...</heartbeat>`.", "timestamp": 6.0},
+        # A Codex automation's reply to a heartbeat wake: protocol, not prose.
+        # 147 of these sat in the arch-review [Codex] row on 2026-09-09.
+        {
+            "id": 7,
+            "role": "assistant",
+            "content": "<heartbeat>\n  <automation_id>hermes-waves</automation_id>\n"
+            "  <decision>DONT_NOTIFY</decision>\n  <message>Nothing to report.</message>\n"
+            "</heartbeat>",
+            "timestamp": 7.0,
+        },
+        # Whole-content only: an assistant that starts with the envelope and
+        # then keeps talking is a reply that happens to quote it, and stays.
+        {
+            "id": 8,
+            "role": "assistant",
+            "content": "<heartbeat><decision>NOTIFY</decision></heartbeat>\n\nHere is why I chose NOTIFY.",
+            "timestamp": 8.0,
+        },
     ]
 
     turns = conversational_turns(rows)
 
-    assert [turn["message_id"] for turn in turns] == [5, 6]
+    assert [turn["message_id"] for turn in turns] == [5, 6, 8]
     assert is_envelope_user_text("<system-reminder>\nx") is True
     assert is_envelope_user_text("hello <system-reminder>") is False
     assert is_envelope_user_text(None) is False
+
+
+def test_automation_reply_envelope_is_whole_content_only() -> None:
+    from session_bridge.mirror_conversation import is_automation_reply_envelope
+
+    reply = "<heartbeat>\n<automation_id>a</automation_id>\n<decision>DONT_NOTIFY</decision>\n<message>x</message>\n</heartbeat>"
+    assert is_automation_reply_envelope(reply) is True
+    assert is_automation_reply_envelope("  " + reply + "\n") is True
+    # The user-side WAKE carries <instructions>, not <decision>, and is the
+    # user filter's job; a reply without a decision is not this shape either.
+    assert is_automation_reply_envelope("<heartbeat><automation_id>a</automation_id><instructions>go</instructions></heartbeat>") is False
+    assert is_automation_reply_envelope("I decided <decision>NOTIFY</decision> because") is False
+    assert is_automation_reply_envelope(None) is False
 
 
 # --- hide_registration_prefix --------------------------------------------
