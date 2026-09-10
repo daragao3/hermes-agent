@@ -261,8 +261,11 @@ def match_score_node(state: JobFlowState) -> dict:
         span.set_attribute("gen_ai.request.model", DEFAULT_MODEL)
         span.set_attribute("gen_ai.operation.name", "chat")
         span.set_attribute("job.id", str(state.get("job_id") or job.get("id") or ""))
-        span.set_attribute("job.title", job.get("title", "")[:120])
-        span.set_attribute("job.company", job.get("company", "")[:80])
+        # `or ""`, not a dict default: a user-submitted job whose enrichment failed
+        # carries title/company PRESENT as None, and None[:n] took the node down
+        # before its own try/except (2026-09-10, matcher-shadow 8 consecutive failures).
+        span.set_attribute("job.title", (job.get("title") or "")[:120])
+        span.set_attribute("job.company", (job.get("company") or "")[:80])
         span.set_attribute("input.prompt_chars", len(MATCHER_SYSTEM_PROMPT) + len(user))
 
         try:
@@ -513,7 +516,7 @@ def tailor_node(state: JobFlowState) -> dict:
         span.set_attribute("gen_ai.request.model", DEFAULT_MODEL)
         span.set_attribute("gen_ai.operation.name", "chat")
         span.set_attribute("job.id", str(state.get("job_id") or job.get("id") or ""))
-        span.set_attribute("job.company", job.get("company", "")[:80])
+        span.set_attribute("job.company", (job.get("company") or "")[:80])
 
         try:
             draft: TailorDraft = codex_structured_invoke(
