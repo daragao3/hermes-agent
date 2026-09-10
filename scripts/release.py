@@ -22,6 +22,7 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -2431,6 +2432,141 @@ def generate_changelog(commits, tag_name, semver, repo_url="https://github.com/N
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# AGENT PUBLISH GATE
+#
+# WHAT --publish ACTUALLY DOES HERE. It commits a version bump, creates an
+# annotated tag, and then runs `git push origin HEAD --tags`. On THIS checkout
+# `origin` is https://github.com/NousResearch/hermes-agent.git -- UPSTREAM, not
+# Diego's fork (that remote is named `daragao3`) -- and this fork carries ~2,491
+# commits origin does not have. So an accidental --publish does not push a
+# release, it offers the entire private fork plus every local tag to the public
+# upstream repository. Today that is stopped only by the account not having
+# write access there, which is an accident rather than a safeguard: the script
+# itself treats the failure as recoverable and prints "Continue manually after
+# fixing access".
+#
+# WHY THE MACHINE-WIDE GUARD DOES NOT CATCH IT. Destructive git verbs are
+# blocked for agent sessions by ~/.claude/hooks/block-destructive-git.py, which
+# reads the ARGV of the command an agent runs. `python scripts/release.py
+# --publish` carries no git verb in its argv, and the hook deliberately treats a
+# script-path argument as DATA -- a content scan of launched scripts was
+# measured over 436 of them on 2026-09-09 and rejected, because it fires on
+# prose in the claim-gate and commit wrappers while MISSING the real pushers,
+# this file among them. The push here is a `git_result("push", ...)` call, not
+# shell syntax. Record: loops gitguard-script-file-argument-gap-20260909.
+#
+# So the enforcement lives in the script that publishes, exactly as it now does
+# in jobflow-platform's scripts/ops/refresh-ci-snapshot.ps1 (loops
+# refresh-ci-snapshot-agent-push-gate-20260909, landed 10b0add). Same shape on
+# purpose: same two evidence axes, same override spelling, same exit code, so a
+# session that has met one recognises the other.
+#
+# WHY IT RUNS FIRST. The gate is checked immediately after parse_args, before
+# the version files are touched, before the bump commit, before the tag. A
+# refusal at the push site would leave a committed bump and an annotated tag
+# behind and "nothing happened" would be a lie. Running before any mutation also
+# makes the gate testable end to end without a repository.
+#
+# LIMITS, stated rather than implied: Codex sessions are NOT detected (this box
+# runs them, but their environment has never been measured here, and a guessed
+# marker that never fires is worse than a documented gap); a human working from
+# an agent worktree or a Claude Code terminal IS detected, which is what
+# --allow-agent-push is for; and any session that can pass --publish can pass
+# the override. This is an accident-stopper, like the hook it complements. It is
+# not an authorization boundary and cannot be one.
+# ---------------------------------------------------------------------------
+EXIT_REFUSED_AGENT_PUBLISH = 30
+
+#: Environment variables Claude Code exports into every tool it runs. Matched on
+#: PRESENCE, not value -- CLAUDE_CODE_DISABLE_CRON is exported EMPTY, so a
+#: truthiness test on the value would miss a real agent session.
+_AGENT_ENV_EXACT = ("CLAUDECODE", "CLAUDE_AGENT_SDK_VERSION")
+_AGENT_ENV_PREFIX = "CLAUDE_CODE_"
+
+
+def agent_session_evidence(environ=None, cwd=None):
+    """Why this looks like an agent session, as zero or more human sentences.
+
+    An EMPTY list means "no evidence", which is the only thing the caller
+    treats as a green light.
+
+    Both inputs are parameters rather than reads of the ambient process, so the
+    tests can drive every branch with synthetic values -- including the negative
+    case, which cannot otherwise be expressed from inside an agent session.
+    """
+    environ = os.environ if environ is None else environ
+    cwd = os.getcwd() if cwd is None else cwd
+
+    evidence = []
+
+    markers = sorted(
+        name
+        for name in environ
+        if name in _AGENT_ENV_EXACT or name.startswith(_AGENT_ENV_PREFIX)
+    )
+    if markers:
+        shown = ", ".join(markers[:4])
+        if len(markers) > 4:
+            shown += f", +{len(markers) - 4} more"
+        evidence.append(f"environment: {len(markers)} agent marker(s) set -- {shown}")
+
+    if cwd:
+        # Match a whole path SEGMENT, so a directory merely named
+        # "team.claude/worktrees-archive" is not evidence. Separators are
+        # normalised because either form reaches us on Windows.
+        parts = cwd.replace("\\", "/").split("/")
+        for i in range(len(parts) - 1):
+            if parts[i] == ".claude" and parts[i + 1] == "worktrees":
+                evidence.append(f"working directory is inside an agent worktree: {cwd}")
+                break
+
+    return evidence
+
+
+def refuse_agent_publish(evidence):
+    """Print the refusal and the route that does work. Never returns."""
+    remote = "origin"
+    result = git_result("remote", "get-url", remote)
+    remote_url = result.stdout.strip() if result.returncode == 0 else "(unknown)"
+
+    print()
+    print("=" * 72)
+    print("  REFUSED: --publish from what looks like an agent session")
+    print("=" * 72)
+    print()
+    for line in evidence:
+        print(f"  * {line}")
+    print()
+    print("Nothing has been built, no version file touched, no commit, no tag.")
+    print()
+    print(f"WHY. --publish ends in `git push {remote} HEAD --tags`, and {remote} here is")
+    print(f"  {remote_url}")
+    print("which is UPSTREAM, not this fork's own remote. That push offers every local")
+    print("commit and tag this fork carries to that repository. The machine-wide git")
+    print("guard cannot see it, because it reads the argv of the command you ran and a")
+    print("script path is data to it -- so there is no block, no pending id and no grant.")
+    print()
+    print("DO THIS INSTEAD:")
+    print()
+    print("  1. Dry run, which is this script without --publish -- it prints the")
+    print("     changelog and the version it would cut, and changes nothing:")
+    print("         python scripts/release.py --bump <major|minor|patch>")
+    print()
+    print("  2. Leave the publish to Diego. If a push is genuinely wanted, issue it as a")
+    print("     plain command so the guard sees it and mints a single-use grant, and")
+    print("     name the remote you actually mean -- pushing this fork to upstream is")
+    print("     almost never it.")
+    print()
+    print("OVERRIDE. If Diego has authorized THIS release and wants the script to do it:")
+    print("         --allow-agent-push")
+    print("  That publishes without the guard ever seeing a command. It is not a way")
+    print("  around the grant -- it is the operator standing in for one.")
+    print()
+
+    sys.exit(EXIT_REFUSED_AGENT_PUBLISH)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Hermes Agent Release Tool")
     parser.add_argument("--bump", choices=["major", "minor", "patch"],
@@ -2443,7 +2579,17 @@ def main():
                         help="Mark as first release (no previous tag expected)")
     parser.add_argument("--output", type=str,
                         help="Write changelog to file instead of stdout")
+    parser.add_argument("--allow-agent-push", action="store_true",
+                        help="Publish even though this looks like an agent session "
+                             "(see the AGENT PUBLISH GATE block); does NOT make the "
+                             "push visible to the machine-wide git guard")
     args = parser.parse_args()
+
+    # AGENT PUBLISH GATE -- first, before anything is read, written or tagged.
+    if args.publish and not args.allow_agent_push:
+        evidence = agent_session_evidence()
+        if evidence:
+            refuse_agent_publish(evidence)
 
     # Determine CalVer date
     if args.date:
