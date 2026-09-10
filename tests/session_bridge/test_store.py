@@ -16980,6 +16980,51 @@ def test_desktop_registry_baselines_upsert_and_load(db) -> None:
     assert all(row["revision"] == 2 for row in loaded)
 
 
+def test_desktop_registry_baselines_load_interns_repeated_strings(db) -> None:
+    """Equal strings across rows come back as ONE object, not one per row.
+
+    Production: 562,854 rows carrying 596 MB of value_json with only 34,181
+    distinct values (the mcp group: 14,073 rows, 70 distinct blobs). sqlite3
+    returns a fresh str per row, so the naive load cost 1,475 MB per 300 s
+    worker cycle; pooling makes it 156 MB. Values are unchanged.
+    """
+    store = SessionBridgeStore(db, clock=lambda: 100.0)
+    shared = '{"state":"present","value":{"mcp":"blob"}}'
+    rows = [
+        {
+            "filename": f"{name}.json",
+            "root_id": root,
+            "group_name": "mcp",
+            "value_json": shared,
+            "revision": 1,
+        }
+        for name in ("a", "b", "c")
+        for root in ("r1", "r2", "r3")
+    ]
+    rows.append(
+        {
+            "filename": "a.json",
+            "root_id": "r1",
+            "group_name": "field:title",
+            "value_json": '{"state":"present","value":"T"}',
+            "revision": 1,
+        }
+    )
+    assert store.upsert_desktop_registry_baselines(rows) == 10
+
+    loaded = store.load_desktop_registry_baselines()
+    assert len(loaded) == 10
+    mcp = [row for row in loaded if row["group_name"] == "mcp"]
+    assert len(mcp) == 9
+    assert all(row["value_json"] == shared for row in mcp)
+    assert len({id(row["value_json"]) for row in mcp}) == 1
+    assert len({id(row["group_name"]) for row in mcp}) == 1
+    assert len({id(row["root_id"]) for row in mcp}) == 3
+    assert len({id(row["filename"]) for row in mcp}) == 3
+    title = next(row for row in loaded if row["group_name"] == "field:title")
+    assert title["value_json"] == '{"state":"present","value":"T"}'
+
+
 def test_desktop_registry_baseline_upsert_rejects_invalid_rows(db) -> None:
     store = SessionBridgeStore(db, clock=lambda: 100.0)
     with pytest.raises(ValueError):

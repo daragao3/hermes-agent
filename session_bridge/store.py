@@ -12626,7 +12626,21 @@ class SessionBridgeStore:
         # exists today. If a second writer is ever added, give this its own
         # read-only connection instead: WAL permits concurrent readers, which
         # restores atomicity AND keeps the lock free.
+        #
+        # MEMORY (2026-09-10): the table is ~14,000 records x 3 roots x ~40
+        # groups, and the mirrored roots plus the recurring ``mcp`` blob mean
+        # only a few percent of the value_json strings are distinct (562,854
+        # rows, 34,181 distinct values; the mcp group alone was 557 MB of
+        # value_json with 70 distinct blobs). sqlite3 hands back a fresh str
+        # per row, so the naive list cost 1,475 MB per cycle and was what the
+        # DesktopRegistrySyncWorker's 300 s cadence turned into the bridge's
+        # +1.5 GB sawtooth (and one MemoryError at the host commit limit on
+        # 2026-09-10 11:21). Routing every string column through a per-call
+        # pool makes equal strings one object: 156 MB for the same load.
+        # Strings are immutable, so nothing downstream can tell.
         out: list[dict[str, Any]] = []
+        pool: dict[str, str] = {}
+        intern = pool.setdefault
         last_rowid = 0
         while True:
             with self.db._lock:
@@ -12644,6 +12658,10 @@ class SessionBridgeStore:
             for row in rows:
                 record = dict(row)
                 last_rowid = int(record.pop("batch_rowid"))
+                for column in ("filename", "root_id", "group_name", "value_json"):
+                    value = record[column]
+                    if type(value) is str:
+                        record[column] = intern(value, value)
                 out.append(record)
         return out
 

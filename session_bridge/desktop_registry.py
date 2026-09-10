@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import stat
 import uuid
 from dataclasses import dataclass, field as _dataclass_field
@@ -165,7 +166,6 @@ class RegistryRecordObservation:
     filename: str
     path: Path
     session_id: str
-    exact_bytes: bytes
     byte_hash: str
     mtime_ns: int
     record: Mapping[str, Any]
@@ -188,6 +188,18 @@ class RegistryScanCache:
     A file matching all four is not re-read or re-canonicalized, which keeps a
     steady-state cycle's cost proportional to recent activity instead of store
     size. Entries for files no longer present are evicted after every scan.
+
+    MEMORY (2026-09-10). The cache is resident for the life of the service and
+    the convergence roots are byte-identical mirrors of one record set, so what
+    an observation retains is multiplied by the root count. Measured on the
+    production bridge: 3 roots x 4,643 files, 1,084 MB per root, ~3.2 GB of a
+    4.9 GB process. Three cuts keep that proportional to DISTINCT content
+    instead of root count: the raw file bytes are not retained at all
+    (``byte_hash`` carries the identity and the mutation path re-reads the
+    file), every observation whose ``byte_hash`` matches one already parsed
+    in this scan or held in the cache shares that parse's ``record`` and
+    ``group_values`` objects, and each canonical group string is interned so
+    the ~70 distinct ``mcp`` blobs that recur across ~14,000 rows exist once.
     """
 
     entries: dict[
@@ -409,6 +421,28 @@ def _root_identity(root: Path) -> tuple[str, Path]:
     return root_id, resolved
 
 
+_ParsedRecord = tuple[Mapping[str, Any], Mapping[str, str]]
+
+
+def _parses_by_hash(cache: RegistryScanCache | None) -> dict[str, _ParsedRecord]:
+    """Index the cache's parses by ``byte_hash`` so identical bytes share one.
+
+    Identical bytes parse to identical values, so a record already parsed in
+    this scan -- or held in the cache under ANY root -- can be shared rather
+    than materialised again. Both objects are read-only proxies and every
+    consumer treats them as such (``build_registry_sync_plan`` copies before
+    editing), so sharing changes no result; it only stops the mirrored roots
+    from paying for the same parse three times over. Built once per scan:
+    one dict over the entries the scan is about to walk anyway.
+    """
+
+    parsed: dict[str, _ParsedRecord] = {}
+    if cache is not None:
+        for _identity, cached in cache.entries.values():
+            parsed.setdefault(cached.byte_hash, (cached.record, cached.group_values))
+    return parsed
+
+
 def scan_desktop_registry_roots(
     roots: Iterable[Path], *, cache: RegistryScanCache | None = None
 ) -> RegistryScan:
@@ -421,6 +455,10 @@ def scan_desktop_registry_roots(
     canonical_roots: dict[str, Path] = {}
     record_observations: dict[str, dict[str, RegistryRecordObservation]] = {}
     seen_cache_keys: set[str] = set()
+    # byte_hash -> (record, group_values) already parsed, seeded from the
+    # cache and extended during THIS scan, so the mirrored roots share one
+    # parse of each distinct record; see _parses_by_hash.
+    parsed_by_hash = _parses_by_hash(cache)
 
     for root in root_list:
         root_id, resolved = _root_identity(root)
@@ -466,7 +504,23 @@ def scan_desktop_registry_roots(
                         observation = stored_observation
             if observation is None:
                 raw, record_stat = _stable_read(path)
-                record = _parse_record(raw, path)
+                byte_hash = hashlib.sha256(raw).hexdigest()
+                shared = parsed_by_hash.get(byte_hash)
+                if shared is None:
+                    record_obj = _parse_record(raw, path)
+                    record = MappingProxyType(record_obj)
+                    group_values = MappingProxyType(
+                        {
+                            group_name: sys.intern(value_json)
+                            for group_name, value_json in canonical_group_value(
+                                record_obj
+                            ).items()
+                        }
+                    )
+                    parsed_by_hash[byte_hash] = (record, group_values)
+                else:
+                    record, group_values = shared
+                del raw
                 expected_session_id = filename[: -len(".json")]
                 session_id = record.get("sessionId")
                 if (
@@ -479,11 +533,10 @@ def scan_desktop_registry_roots(
                     filename=filename,
                     path=path,
                     session_id=session_id,
-                    exact_bytes=raw,
-                    byte_hash=hashlib.sha256(raw).hexdigest(),
+                    byte_hash=byte_hash,
                     mtime_ns=record_stat.st_mtime_ns,
-                    record=MappingProxyType(record),
-                    group_values=MappingProxyType(canonical_group_value(record)),
+                    record=record,
+                    group_values=group_values,
                 )
                 if cache is not None:
                     cache.entries[cache_key] = (
