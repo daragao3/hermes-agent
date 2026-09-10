@@ -141,8 +141,14 @@ def test_migration_drops_the_duplicate_content_shadow_table(tmp_path):
 
     db = SessionDB(db_path=db_path)
     try:
-        assert db._conn.execute("SELECT version FROM schema_version").fetchone()[0] == 32
-        assert SCHEMA_VERSION == 32
+        # The fixture pins the DB at v31; opening it must migrate through v32
+        # (which introduced this conversion) up to whatever the current
+        # version is. Pinning the literal 32 here broke every later bump.
+        assert SCHEMA_VERSION >= 32
+        assert (
+            db._conn.execute("SELECT version FROM schema_version").fetchone()[0]
+            == SCHEMA_VERSION
+        )
         assert db._conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE name='messages_fts_content'"
         ).fetchone()[0] == 0
