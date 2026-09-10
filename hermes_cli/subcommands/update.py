@@ -73,4 +73,16 @@ def build_update_parser(subparsers, *, cmd_update: Callable) -> None:
         default=False,
         help="Windows: mutate the venv even while other processes are running from its interpreter (desktop backend, gateway, terminals). Those processes keep native .pyd files locked, so the dependency sync will likely fail partway and strand the install half-updated. Use only if you know the detected holders are false positives.",
     )
-    update_parser.set_defaults(func=cmd_update)
+    # AGENT UPDATE GATE. Wraps the handler rather than living inside
+    # cmd_update, so a direct cmd_update(args) call -- which is how the test
+    # suite drives the apply path, from inside an agent session -- is
+    # unaffected. See hermes_cli/_agent_session.enforce_update_gate for why,
+    # and for what this does NOT protect against: the reset --hard that
+    # `hermes update` falls back to is destructive for a human operator too.
+    def _gated_cmd_update(args):
+        from hermes_cli import _agent_session
+
+        _agent_session.enforce_update_gate(args)
+        return cmd_update(args)
+
+    update_parser.set_defaults(func=_gated_cmd_update)
