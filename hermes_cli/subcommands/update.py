@@ -79,10 +79,17 @@ def build_update_parser(subparsers, *, cmd_update: Callable) -> None:
     # unaffected. See hermes_cli/_agent_session.enforce_update_gate for why,
     # and for what this does NOT protect against: the reset --hard that
     # `hermes update` falls back to is destructive for a human operator too.
+    # DIVERGENCE GATE. Refuses the apply path when the ff-only pull cannot
+    # succeed, because the documented "reset --hard origin/<branch>" fallback
+    # then discards every local commit -- for a human operator exactly as much
+    # as for an agent, which is the hazard the agent gate above explicitly says
+    # it does not cover. See hermes_cli/_update_divergence for the measurement
+    # and for why renaming the remotes would not have fixed it.
     def _gated_cmd_update(args):
-        from hermes_cli import _agent_session
+        from hermes_cli import _agent_session, _update_divergence
 
         _agent_session.enforce_update_gate(args)
+        _update_divergence.enforce_divergence_gate(args)
         return cmd_update(args)
 
     update_parser.set_defaults(func=_gated_cmd_update)

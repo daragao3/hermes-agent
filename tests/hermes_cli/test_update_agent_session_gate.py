@@ -126,7 +126,23 @@ class _ReachedHandler(Exception):
 
 def _dispatch(monkeypatch, tmp_path, argv, *, agent_env: bool, agent_cwd: bool,
               override: bool = False):
-    """Parse `argv` with the real update parser and call the dispatched func."""
+    """Parse `argv` with the real update parser and call the dispatched func.
+
+    The dispatch wraps the handler in TWO gates -- this one and the divergence
+    gate added later (hermes_cli/_update_divergence). This suite is about the
+    agent gate, so the other one is neutralized here: left live it would shell
+    out to real git in the very checkout these tests run from, and -- because
+    that checkout IS diverged from its origin -- would refuse with exit 31 in
+    precisely the cases that assert the agent gate LET THE COMMAND THROUGH.
+    Its own wiring, including the order the two run in, is pinned in
+    tests/hermes_cli/test_update_divergence_gate.py.
+    """
+    from hermes_cli import _update_divergence
+
+    monkeypatch.setattr(
+        _update_divergence, "enforce_divergence_gate", lambda args: None
+    )
+
     for name in [n for n in os.environ
                  if n in _agent_session._AGENT_ENV_EXACT
                  or n.startswith(_agent_session._AGENT_ENV_PREFIX)]:
