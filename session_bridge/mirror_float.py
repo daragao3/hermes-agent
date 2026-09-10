@@ -14,7 +14,7 @@ from .claude_visibility import visibility_sidebar_title
 from .mirror_conversation import (
     MIRROR_CONVERSATION_STATE_KEY,
     MirrorConversationSync,
-    first_mirrored_user_text,
+    first_mirrored_title_text,
 )
 from .models import Provider, canonical_session_id
 
@@ -759,8 +759,10 @@ class ClaudeMirrorFloatWorker:
         ledger (``MIRROR_CONVERSATION_STATE_KEY``) must show at least one
         mirrored turn for this mirror -- a never-hydrated mirror (lane off,
         source unreadable) keeps the fallback rather than paying a transcript
-        read every cycle -- and the transcript must hold a mirrored user turn
-        that reads as a real request. The text goes through
+        read every cycle -- and the transcript must hold a mirrored turn that
+        reads as real text: the first meaningful USER turn, or, when the whole
+        mirror has none (chip- and import-driven sources whose user turns were
+        all envelopes), the first meaningful ASSISTANT turn. The text goes through
         ``visibility_sidebar_title``, i.e. the same sanitiser and 120-char cap
         the registration title gets, prefixed ``[Codex] `` or ``[Hermes] `` by
         the SOURCE provider. Any failure is "no title yet"; the next cycle
@@ -784,7 +786,7 @@ class ClaudeMirrorFloatWorker:
         if isinstance(mirrored, bool) or not isinstance(mirrored, int) or mirrored < 1:
             return None
         try:
-            text = first_mirrored_user_text(Path(native_path))
+            text = first_mirrored_title_text(Path(native_path))
         except OSError:
             return None
         if text is None:

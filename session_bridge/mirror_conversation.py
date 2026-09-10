@@ -518,18 +518,24 @@ def render_mirror_record(
     }
 
 
-def first_mirrored_user_text(path: Path) -> str | None:
-    """Text of the first mirrored USER turn that reads as a real request.
+def first_mirrored_title_text(path: Path) -> str | None:
+    """Text a mirror can be titled from: first real USER turn, else first ASSISTANT turn.
 
-    Walks the mirror transcript in file order and returns the content of the
-    first ``hermesMirror``-tagged user record whose text passes the sidebar's
+    Walks the mirror transcript once, in file order. The first
+    ``hermesMirror``-tagged user record whose text passes the sidebar's
     ``is_meaningful_user_text`` (so an "ok" or a bare ack does not become a
-    title). The backfill notice (``message_id`` 0, "[Hermes mirror] N earlier
-    message(s) ...") is skipped by id, never by text, so a source turn that
-    happens to quote the notice still counts. Malformed lines are skipped;
-    ``None`` means the mirror holds no such turn yet. Raises ``OSError`` for
-    an unreadable file so the caller decides what an unreadable mirror means.
+    title) wins, wherever it sits. Only when the whole transcript holds no such
+    user turn does the first meaningful assistant turn stand in -- measured
+    2026-09-09: 15 of 16 hydrated fallback-titled mirrors held assistant turns
+    ONLY, because their chip- and import-driven Codex sources had nothing but
+    harness envelopes for user turns and hydration filters those out. The
+    backfill notice (``message_id`` 0, "[Hermes mirror] N earlier message(s)
+    ...") is skipped by id, never by text, so a source turn that happens to
+    quote the notice still counts. Malformed lines are skipped; ``None`` means
+    the mirror holds nothing to title from yet. Raises ``OSError`` for an
+    unreadable file so the caller decides what an unreadable mirror means.
     """
+    first_assistant: str | None = None
     with path.open("r", encoding="utf-8", errors="replace") as stream:
         for line in stream:
             line = line.strip()
@@ -539,14 +545,38 @@ def first_mirrored_user_text(path: Path) -> str | None:
                 record = json.loads(line)
             except ValueError:
                 continue
-            if not is_mirrored_record(record) or record.get("type") != "user":
+            if not is_mirrored_record(record):
                 continue
             if record[MIRROR_RECORD_KEY].get("message_id") == 0:
                 continue
-            message = record.get("message")
-            content = message.get("content") if isinstance(message, dict) else None
-            if isinstance(content, str) and is_meaningful_user_text(content):
+            role = record.get("type")
+            content = _mirrored_record_text(record)
+            if content is None or not is_meaningful_user_text(content):
+                continue
+            if role == "user":
                 return content
+            if role == "assistant" and first_assistant is None:
+                first_assistant = content
+    return first_assistant
+
+
+def _mirrored_record_text(record: Mapping[str, Any]) -> str | None:
+    """Plain text of a mirrored record in either shape render_mirror_record writes."""
+    message = record.get("message")
+    if not isinstance(message, Mapping):
+        return None
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            block["text"]
+            for block in content
+            if isinstance(block, Mapping)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
+        ]
+        return "".join(parts) if parts else None
     return None
 
 
