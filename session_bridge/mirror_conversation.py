@@ -62,7 +62,13 @@ from .claude_visibility import (
     _is_codex_registration,
 )
 from .context_pack import _redact
-from .models import MIRROR_RECORD_KEY, Provider, is_mirrored_record
+from .models import (
+    MIRROR_RECORD_KEY,
+    REGISTRATION_RECORD_KEY,
+    Provider,
+    is_mirrored_record,
+    is_registration_record,
+)
 from .preview import _is_internal_bridge_message
 from .sidebar import is_meaningful_user_text
 from .store import SessionBridgeStore
@@ -70,6 +76,10 @@ from .store import SessionBridgeStore
 _LOG = logging.getLogger(__name__)
 
 MIRROR_RECORD_VERSION = 1
+REGISTRATION_HIDE_VERSION = 1
+# Ledger key recording that hide_registration_prefix has settled a mirror
+# ("hidden" or "absent"), so the prefix is not re-read on every cycle.
+_LEDGER_PREFIX_KEY = "registration_prefix"
 DEFAULT_BACKFILL_MESSAGES = 400
 DEFAULT_MESSAGE_CHARS = 20_000
 # Ordered by id, so a fetch page is a contiguous run of source history. Larger
@@ -90,6 +100,8 @@ class ConversationSyncResult:
     status: str  # "idle" | "appended" | "skipped"
     appended: int = 0
     reason: str | None = None
+    # True when this pass hid the mirror's registration prompt (once per mirror).
+    hidden: bool = False
 
 
 class MirrorConversationSync:
@@ -123,13 +135,42 @@ class MirrorConversationSync:
         ledger = self._load_ledger()
         entry = ledger.get(claude_uuid)
         last_id = _ledger_int(entry, "last_message_id")
+        # "First hydration" means no rows consumed yet -- not "no ledger entry":
+        # settling the registration prefix below can create the entry on a
+        # cycle that mirrors nothing, and the backfill cap must still apply
+        # when the first rows arrive.
+        first_sync = last_id is None
         leaf_uuid = _ledger_str(entry, "leaf_uuid")
         mode = self._source_mode(entry, source_session_id)
+        path = Path(native_path)
+        # Hide the registration prompt before anything else, once per mirror.
+        # This runs inside the float worker's cycle, serialized with the
+        # append below, so the in-place rewrite never races the bridge's own
+        # writer. It is recorded in the ledger even when there is nothing to
+        # mirror this cycle, so a quiet source is not re-read every pass.
+        hidden = False
+        prefix_settled = False
+        if _ledger_str(entry, _LEDGER_PREFIX_KEY) is None:
+            state = hide_registration_prefix(path)
+            if state != "unreadable":
+                entry = {
+                    **(entry or {}),
+                    _LEDGER_PREFIX_KEY: "absent" if state == "absent" else "hidden",
+                }
+                ledger[claude_uuid] = entry
+                hidden = state == "hidden"
+                prefix_settled = True
+                if hidden:
+                    _LOG.info("hid registration prompt of mirror %s", claude_uuid)
         if mode == "rollout":
             rollout = self._codex_rollout_path(source_session_id)
             if rollout is None:
+                if prefix_settled:
+                    self._save_ledger(ledger)
                 return ConversationSyncResult(
-                    "skipped", reason="codex rollout file is not readable"
+                    "skipped",
+                    reason="codex rollout file is not readable",
+                    hidden=hidden,
                 )
             rows, consumed_id = read_codex_rollout_rows(
                 rollout, after_offset=last_id
@@ -140,10 +181,12 @@ class MirrorConversationSync:
             )
             consumed_id = max((int(row["id"]) for row in rows), default=-1)
         if not rows:
-            return ConversationSyncResult("idle")
+            if prefix_settled:
+                self._save_ledger(ledger)
+            return ConversationSyncResult("idle", hidden=hidden)
         turns = conversational_turns(rows, message_chars=self._message_chars)
         dropped = 0
-        if entry is None and len(turns) > self._backfill_messages:
+        if first_sync and len(turns) > self._backfill_messages:
             dropped = len(turns) - self._backfill_messages
             turns = turns[-self._backfill_messages :]
         if not turns:
@@ -153,9 +196,8 @@ class MirrorConversationSync:
                 entry, consumed_id, leaf_uuid, 0, mode=mode
             )
             self._save_ledger(ledger)
-            return ConversationSyncResult("idle")
+            return ConversationSyncResult("idle", hidden=hidden)
 
-        path = Path(native_path)
         if leaf_uuid is None or not cwd:
             tail = transcript_tail(path)
             if leaf_uuid is None:
@@ -166,8 +208,10 @@ class MirrorConversationSync:
                 # desktop app already files this session under.
                 cwd = tail.cwd or ""
         if leaf_uuid is None:
+            if prefix_settled:
+                self._save_ledger(ledger)
             return ConversationSyncResult(
-                "skipped", reason="mirror transcript has no leaf record"
+                "skipped", reason="mirror transcript has no leaf record", hidden=hidden
             )
 
         records: list[dict[str, Any]] = []
@@ -199,7 +243,7 @@ class MirrorConversationSync:
             entry, consumed_id, parent, len(records), mode=mode
         )
         self._save_ledger(ledger)
-        return ConversationSyncResult("appended", appended=len(records))
+        return ConversationSyncResult("appended", appended=len(records), hidden=hidden)
 
     def _source_mode(
         self, entry: Mapping[str, Any] | None, source_session_id: str
@@ -626,6 +670,84 @@ def _append_records(path: Path, records: Sequence[Mapping[str, Any]]) -> None:
         os.fsync(stream.fileno())
 
 
+def hide_registration_prefix(path: Path, *, now: float | None = None) -> str:
+    """Hide a mirror's registration prompt from the desktop app, once.
+
+    The prompt the registrar pasted (``build_claude_registration_prompt``: the
+    preamble, the signed marker, the bounded metadata) is the first record of
+    every mirror, so every ``[Codex]`` row opened on ~1.1 KB of bridge
+    boilerplate before the conversation. The desktop app hides a ``user``
+    record carrying ``isMeta: true`` from its conversation view, so this marks
+    the prompt record ``isMeta`` and tags it ``hermesRegistration`` -- the tag
+    is what keeps ``claude_adapter._detect_origin`` harvesting the marker from
+    a record the adapter otherwise ignores (see ``_is_hidden_registration_record``).
+
+    Only the FIRST main-chain user record is a candidate, and only when it
+    reads as a registration prompt; a transcript shaped any other way is left
+    byte-identical. The one record is
+    re-serialized in place and every other byte of the file is preserved, so
+    the adapter's head hash changes (it covers the first 64 KiB) and the next
+    scan is a REBUILD of a file whose parse is otherwise identical -- measured
+    before landing, see the loops record named in the module docstring.
+
+    The assistant's ``REGISTERED`` reply is left alone on purpose: the app's
+    renderer dispatches assistant records before it looks at ``isMeta``, so
+    marking it would change nothing the user sees while removing the one
+    eligible record that still carries the mirror's cwd and timestamps.
+
+    Returns ``"hidden"`` (rewritten now), ``"already"`` (tagged earlier),
+    ``"absent"`` (no hideable prompt) or ``"unreadable"``.
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "unreadable"
+    lines = data.split(b"\n")
+    for index, raw in enumerate(lines):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        # File order is not chronological: Claude Code can append the prompt
+        # AFTER the answer it caused (claude_adapter, measured 2026-08-25; 4 of
+        # 172 live mirrors on 2026-09-09 open with the REGISTERED record). So
+        # the candidate is the first USER record, wherever the answer sits.
+        if record.get("type") != "user":
+            continue
+        if is_registration_record(record):
+            return "already"
+        if record.get("isSidechain") or is_mirrored_record(record):
+            return "absent"
+        message = record.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not _is_codex_registration(content):
+            return "absent"
+        record["isMeta"] = True
+        record[REGISTRATION_RECORD_KEY] = {
+            "version": REGISTRATION_HIDE_VERSION,
+            "hidden_at": _iso_timestamp(now),
+        }
+        lines[index] = json.dumps(
+            record, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+        payload = b"\n".join(lines)
+        try:
+            with path.open("r+b") as stream:
+                stream.write(payload)
+                stream.truncate()
+                stream.flush()
+                os.fsync(stream.fileno())
+        except OSError:
+            return "unreadable"
+        return "hidden"
+    return "absent"
+
+
 def _source_label(source_session_id: str) -> str:
     prefix, _, _ = source_session_id.partition(":")
     return prefix if prefix in {Provider.CODEX.value, Provider.HERMES.value} else "hermes"
@@ -657,6 +779,9 @@ def _ledger_entry(
     }
     if leaf_uuid is not None:
         entry["leaf_uuid"] = leaf_uuid
+    prefix_state = _ledger_str(previous, _LEDGER_PREFIX_KEY)
+    if prefix_state is not None:
+        entry[_LEDGER_PREFIX_KEY] = prefix_state
     return entry
 
 
