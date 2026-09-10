@@ -531,11 +531,16 @@ def test_the_advisory_never_exits():
     assert "sys.exit" not in inspect.getsource(cli_main._print_update_check_tail)
 
 
-def test_the_advisory_is_wired_at_both_git_report_sites():
-    """The shallow-clone branch and the counted branch both printed the bare
-    invitation. Wiring only one leaves half the defect in place."""
+def test_the_advisory_is_wired_at_all_four_git_report_sites():
+    """FOUR sites, two headlines x two clone shapes. The shallow-clone branch
+    and the ordinary counted branch each have an "Update available" arm (which
+    printed the bare invitation) and an "Already up to date." arm (which printed
+    nothing while the apply path still refused). Wiring a subset leaves part of
+    the defect in place, and the shallow arm is the one easiest to forget --
+    installer checkouts are the only place it runs."""
     source = inspect.getsource(cli_main._cmd_update_check)
-    assert source.count("_print_update_check_tail(") == 2
+    assert source.count("_print_update_check_tail(") == 4
+    assert source.count("update_available=False") == 2
 
 
 def test_the_helper_prints_exactly_what_the_advisory_returns(monkeypatch):
@@ -559,3 +564,139 @@ def test_the_helper_passes_the_branch_and_the_compare_ref(monkeypatch):
     monkeypatch.setattr(_update_divergence, "check_advisory_lines", fake)
     cli_main._print_update_check_tail("dev", "origin/dev")
     assert seen == {"branch": "dev", "compare_ref": "origin/dev"}
+# ---------------------------------------------------------------------------
+# AHEAD BUT NOT BEHIND. The gate counts commits AHEAD of origin; --check's
+# headline counts commits BEHIND it. Those are different questions, so a green
+# "Already up to date." can sit directly above a `hermes update` that refuses
+# with exit 31. Found 2026-09-10 while building a control for the advisory
+# above: the first control was 1-ahead/0-behind, never reached the advisory,
+# and read at a glance like the fix failing.
+# ---------------------------------------------------------------------------
+
+
+def test_up_to_date_says_nothing_when_the_apply_path_would_proceed():
+    git = FakeGit(count="0")
+    assert (
+        _update_divergence.check_advisory_lines(
+            "main", compare_ref="origin/main", update_available=False,
+            runner=git, environ={},
+        )
+        == []
+    )
+
+
+def test_up_to_date_warns_when_the_apply_path_would_still_refuse():
+    git = FakeGit(count="1")
+    lines = _update_divergence.check_advisory_lines(
+        "main", compare_ref="origin/main", update_available=False,
+        runner=git, environ={},
+    )
+    text = "\n".join(lines)
+    assert lines, "ahead-but-not-behind must not be silent"
+    assert "refuse" in text.lower()
+    assert str(_update_divergence.EXIT_REFUSED_DIVERGENT_UPDATE) in text
+    assert "origin/main" in text
+    # ROUTING, not just content. Without these two the entry point could hand
+    # back the SHOUTY refusal advisory here and no test would notice -- the
+    # gentleness is pinned only against up_to_date_advisory_lines directly,
+    # which a wrong route never reaches. (Mutation survivor, closed 2026-09-10.)
+    assert "REFUSE" not in text, "must route to the gentle note, not the refusal"
+    assert "reset --hard" not in text, "nothing can be reset with nothing to pull"
+
+
+def test_up_to_date_never_prints_the_invitation():
+    """There is no update to install, so inviting the command would be false
+    twice over -- and it is the invitation this whole change removes."""
+    git = FakeGit(count="7")
+    lines = _update_divergence.check_advisory_lines(
+        "main", update_available=False, runner=git, environ={}
+    )
+    assert INVITATION not in lines
+    assert "Run '" not in "\n".join(lines), "no invitation, in any wording"
+
+
+def test_up_to_date_stands_down_when_the_count_is_unknown():
+    git = FakeGit(origin_ref=False)
+    assert (
+        _update_divergence.check_advisory_lines(
+            "main", update_available=False, runner=git, environ={}
+        )
+        == []
+    )
+
+
+def test_up_to_date_honors_the_override():
+    git = FakeGit(count="7")
+    assert (
+        _update_divergence.check_advisory_lines(
+            "main", update_available=False, runner=git,
+            environ={"HERMES_ALLOW_DIVERGENT_UPDATE": "1"},
+        )
+        == []
+    )
+
+
+def test_up_to_date_note_is_gentler_than_the_refusal_advisory():
+    """Nothing is at risk in this state -- there is no update to pull, so
+    nothing gets reset. Shouting here trains the reader to skip the loud
+    version, which is the one that matters."""
+    text = "\n".join(
+        _update_divergence.up_to_date_advisory_lines("main", 3, compare_ref="origin/main")
+    )
+    assert "REFUSE" not in text, "reserve the shouty form for the real hazard"
+    assert "reset --hard" not in text, "no reset can happen with nothing to pull"
+    assert "nothing is at risk" in text.lower()
+
+
+def test_up_to_date_note_names_both_refs_when_they_differ():
+    text = "\n".join(
+        _update_divergence.up_to_date_advisory_lines(
+            "main", 3, compare_ref="upstream/main"
+        )
+    )
+    assert "upstream/main" in text
+    assert "origin/main" in text
+
+
+def test_up_to_date_note_omits_the_ref_note_when_the_refs_agree():
+    text = "\n".join(
+        _update_divergence.up_to_date_advisory_lines("main", 3, compare_ref="origin/main")
+    )
+    assert "the headline above is against" not in text
+
+
+def test_up_to_date_note_honors_a_non_default_branch():
+    text = "\n".join(
+        _update_divergence.up_to_date_advisory_lines("dev", 3, compare_ref="origin/dev")
+    )
+    assert "origin/dev..dev" in text
+    assert "origin/main" not in text
+
+
+def test_up_to_date_note_reads_as_english_for_a_single_commit():
+    text = "\n".join(
+        _update_divergence.up_to_date_advisory_lines("dev", 1, compare_ref="origin/dev")
+    )
+    assert "1 local commit on 'dev' is not" in text
+    assert "protect it" in text
+    assert "See it:" in text
+
+
+def test_up_to_date_note_never_exits():
+    assert "sys.exit" not in inspect.getsource(
+        _update_divergence.up_to_date_advisory_lines
+    )
+
+
+def test_the_helper_passes_update_available_through(monkeypatch):
+    seen = {}
+
+    def fake(branch, *, compare_ref=None, update_available=True, **kw):
+        seen["update_available"] = update_available
+        return []
+
+    monkeypatch.setattr(_update_divergence, "check_advisory_lines", fake)
+    cli_main._print_update_check_tail("main", "origin/main", update_available=False)
+    assert seen == {"update_available": False}
+    cli_main._print_update_check_tail("main", "origin/main")
+    assert seen == {"update_available": True}, "must default to the invitation arm"

@@ -9087,22 +9087,26 @@ def _resolve_update_branch(args) -> str:
     return (getattr(args, "branch", None) or "main").strip() or "main"
 
 
-def _print_update_check_tail(branch: str, compare_ref: str) -> None:
-    """Print what follows ``--check``'s "Update available" headline.
+def _print_update_check_tail(
+    branch: str, compare_ref: str, *, update_available: bool = True
+) -> None:
+    """Print what follows ``--check``'s headline: the invitation to install,
+    or -- when ``hermes update`` would refuse -- why it would.
 
-    Ordinarily "Run 'hermes update' to install." -- but on a checkout whose
-    history has diverged from ``origin/<branch>``, that command REFUSES with
-    ``_update_divergence.EXIT_REFUSED_DIVERGENT_UPDATE``, so the invitation
-    sends the operator into a dead end with no hint as to why. Delegated to
-    ``_update_divergence`` so this file (the worst-conflicted one in the
-    pending 0.21.1 merge) gains one call, not a policy.
+    Every reason lives in ``_update_divergence.check_advisory_lines``, so this
+    file, the worst-conflicted one in the pending 0.21.1 merge, gains one call
+    and no policy. ``update_available`` selects the headline: True for "Update
+    available", False for "Already up to date.", which still warns on a
+    checkout that is ahead-but-not-behind.
 
     ``--check`` IS NOT GATED by this and must never be: it stays read-only and
     still exits 0. Only the wording changes.
     """
     from hermes_cli._update_divergence import check_advisory_lines
 
-    for line in check_advisory_lines(branch, compare_ref=compare_ref):
+    for line in check_advisory_lines(
+        branch, compare_ref=compare_ref, update_available=update_available
+    ):
         print(line)
 
 
@@ -9251,6 +9255,7 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
         ).stdout.strip()
         if head_sha and target_sha and head_sha == target_sha:
             print("✓ Already up to date.")
+            _print_update_check_tail(branch, compare_branch, update_available=False)
         else:
             print(f"⚕ Update available (behind {compare_branch}).")
             _print_update_check_tail(branch, compare_branch)
@@ -9267,6 +9272,7 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
 
     if behind == 0:
         print("✓ Already up to date.")
+        _print_update_check_tail(branch, compare_branch, update_available=False)
     else:
         commits_word = "commit" if behind == 1 else "commits"
         print(f"⚕ Update available: {behind} {commits_word} behind {compare_branch}.")

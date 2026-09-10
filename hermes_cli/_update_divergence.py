@@ -315,10 +315,50 @@ def advisory_lines(branch: str, ahead: int, *, compare_ref=None) -> list[str]:
 _APPLY_COMMAND = "hermes update"
 
 
+def up_to_date_advisory_lines(branch: str, ahead: int, *, compare_ref=None) -> list[str]:
+    """The note under ``--check``'s "Already up to date." headline when the
+    apply path would refuse anyway.
+
+    THE STATE THIS COVERS is ahead-but-not-behind: nothing to install, and yet
+    ``hermes update`` still exits ``EXIT_REFUSED_DIVERGENT_UPDATE``, because the
+    gate counts commits AHEAD of origin while ``--check``'s headline reports
+    commits BEHIND it. Those two questions have different answers, so a green
+    "Already up to date." can sit directly above a command that refuses.
+
+    Deliberately gentler than :func:`advisory_lines`. Nothing is at risk in this
+    state -- there is no update to pull, so nothing will be reset -- and the
+    refusal is the thing PROTECTING those commits for when origin does move
+    ahead. Alarming under a green checkmark would train the reader to ignore the
+    loud version, which is the one that matters.
+    """
+    commits = "commit" if ahead == 1 else "commits"
+    is_are = "is" if ahead == 1 else "are"
+    them = "it" if ahead == 1 else "them"
+    lines = [
+        f"  ⚠ Heads up: {ahead} local {commits} on '{branch}' {is_are} not on"
+        f" origin/{branch},",
+        f"    so '{_APPLY_COMMAND}' would refuse (exit"
+        f" {EXIT_REFUSED_DIVERGENT_UPDATE}) rather than run. Nothing is at risk",
+        "    now -- there is no update to install -- but that refusal is what will"
+        f" protect {them}",
+        f"    once origin/{branch} moves ahead.",
+    ]
+    if compare_ref and compare_ref != f"origin/{branch}":
+        lines.append(
+            f"    (the headline above is against {compare_ref}; the refusal is"
+            f" about origin/{branch})"
+        )
+    lines.append(
+        f"      See {them}:  git log --oneline origin/{branch}..{branch}"
+    )
+    return lines
+
+
 def check_advisory_lines(
     branch: str,
     *,
     compare_ref=None,
+    update_available: bool = True,
     cwd=None,
     runner=None,
     fetch: bool = False,
@@ -329,7 +369,16 @@ def check_advisory_lines(
 
     Returns the ordinary "Run 'hermes update' to install." when the apply path
     would proceed, and :func:`advisory_lines` when it would refuse with
-    ``EXIT_REFUSED_DIVERGENT_UPDATE``. THIS DOES NOT GATE ``--check``: it
+    ``EXIT_REFUSED_DIVERGENT_UPDATE``.
+
+    ``update_available=False`` is the "Already up to date." headline, where
+    there is no invitation to withhold -- the tail is empty unless the apply
+    path would STILL refuse, which it can: the gate counts commits AHEAD of
+    origin and the headline counts commits BEHIND it, so ahead-but-not-behind
+    reads as up to date and refuses anyway. That case gets
+    :func:`up_to_date_advisory_lines`.
+
+    THIS DOES NOT GATE ``--check``: it
     changes what is printed, nothing else. ``--check`` stays read-only and
     still exits 0 -- it is the only half of ``hermes update`` a diverged
     checkout can safely run, and turning the report into a refusal would take
@@ -348,13 +397,22 @@ def check_advisory_lines(
     The override is honored: with ``HERMES_ALLOW_DIVERGENT_UPDATE`` set the
     apply path really will proceed, so the invitation is the truthful answer.
     """
+    def _nothing_to_say():
+        # With an update waiting, the ordinary invitation is the truthful
+        # answer. With none, there is simply no tail to print.
+        return _plain_invitation(update_command) if update_available else []
+
     if override_active(environ):
-        return _plain_invitation(update_command)
+        # The operator has accepted the loss, so the apply path really will
+        # proceed. Warning that it refuses would be false.
+        return _nothing_to_say()
 
     ahead = commits_that_would_be_discarded(
         branch, cwd=cwd, runner=runner, fetch=fetch
     )
     if not ahead:  # 0, or None == could not determine. Same stand-down as the gate.
-        return _plain_invitation(update_command)
+        return _nothing_to_say()
 
-    return advisory_lines(branch, ahead, compare_ref=compare_ref)
+    if update_available:
+        return advisory_lines(branch, ahead, compare_ref=compare_ref)
+    return up_to_date_advisory_lines(branch, ahead, compare_ref=compare_ref)
