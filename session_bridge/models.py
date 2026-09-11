@@ -17,6 +17,58 @@ class Provider(StrEnum):
     HERMES = "hermes"
 
 
+# Top-level provenance tag on a Claude transcript record the session bridge
+# wrote itself: a visibility mirror's mirrored source turn. The desktop app
+# renders such records like any other; the bridge's own adapter treats them as
+# ineligible so a mirror never re-enters the catalog as a second copy of its
+# source, never counts as a human continuation, and never has its quoted
+# marker strings harvested. See session_bridge.mirror_conversation.
+MIRROR_RECORD_KEY = "hermesMirror"
+
+
+def is_mirrored_record(record: object) -> bool:
+    return isinstance(record, dict) and isinstance(
+        record.get(MIRROR_RECORD_KEY), dict
+    )
+
+
+# Top-level provenance tag on the registration prompt record of a visibility
+# mirror after the bridge has hidden it from the desktop app. The app hides a
+# ``user`` record carrying ``isMeta: true`` from its conversation view (measured
+# 2026-09-09 against Claude 1.49585 -- the renderer skips such records unless
+# they match a known event shape), but the adapter also treats ``isMeta`` as
+# ineligible, so a hidden prompt would stop carrying the signed marker and the
+# mirror would reclassify as NATIVE. This tag is honoured by ONE consumer,
+# ``claude_adapter._detect_origin``, so that a hidden registration record is
+# still harvested for its marker while staying out of projection and out of the
+# human-turn count. See session_bridge.mirror_conversation.hide_registration_prefix.
+REGISTRATION_RECORD_KEY = "hermesRegistration"
+
+
+def is_registration_record(record: object) -> bool:
+    return isinstance(record, dict) and isinstance(
+        record.get(REGISTRATION_RECORD_KEY), dict
+    )
+
+
+# Top-level provenance tag on a CLI command-bookkeeping record of a visibility
+# mirror after the bridge has hidden it from the desktop app: the ``/exit`` the
+# registrar types at teardown and the CLI's farewell, which Claude Code records
+# as USER records after the ``REGISTERED`` reply and the app renders as turns of
+# the ``[Codex]`` row. Honoured by NO adapter consumer -- ``isMeta`` alone makes
+# the record ineligible, and a whole-content bookkeeping record was already
+# excluded from the human-turn count (``claude_adapter._is_cli_command_bookkeeping``)
+# -- so the tag exists for idempotency and audit only.
+# See session_bridge.mirror_conversation.hide_cli_teardown.
+TEARDOWN_RECORD_KEY = "hermesTeardown"
+
+
+def is_teardown_record(record: object) -> bool:
+    return isinstance(record, dict) and isinstance(
+        record.get(TEARDOWN_RECORD_KEY), dict
+    )
+
+
 class OriginKind(StrEnum):
     NATIVE = "native"
     BRIDGE_PLACEHOLDER = "bridge_placeholder"

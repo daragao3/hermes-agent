@@ -23,7 +23,6 @@ import types
 import pytest
 
 import tools.async_delegation as ad
-from tui_gateway import server
 
 
 def _session(**extra):
@@ -72,6 +71,7 @@ def _delegation_event(sid):
 
 
 def test_start_notification_poller_captures_the_db_path(homes, monkeypatch):
+    from tui_gateway import server
     """Capture happens at session start — the moment the db's meaning is fixed."""
     home_a, _ = homes
     started = {}
@@ -84,7 +84,13 @@ def test_start_notification_poller_captures_the_db_path(homes, monkeypatch):
         def start(self):
             pass
 
-    monkeypatch.setattr(server, "_wire_agent_terminal_output", lambda: None)
+        def is_alive(self):
+            return False
+
+        def join(self, timeout=None):
+            pass
+
+    monkeypatch.setattr(server, "_wire_desktop_sinks", lambda: None)
     monkeypatch.setattr(server.threading, "Thread", _RecordingThread)
 
     server._start_notification_poller("sid_capture", _session())
@@ -102,6 +108,7 @@ def test_start_notification_poller_captures_the_db_path(homes, monkeypatch):
 
 
 def test_poller_loop_delivery_stays_with_the_captured_home(homes, monkeypatch):
+    from tui_gateway import server
     from tools.process_registry import process_registry
 
     home_a, home_b = homes
@@ -114,7 +121,7 @@ def test_poller_loop_delivery_stays_with_the_captured_home(homes, monkeypatch):
     monkeypatch.setattr(server, "_emit", lambda *a, **kw: None)
     monkeypatch.setattr(server, "_run_prompt_submit", lambda *a, **kw: None)
     monkeypatch.setattr(
-        "tools.process_registry.format_process_notification",
+        "tools.process_registry_notifications.format_process_notification",
         lambda evt: "[IMPORTANT: delegation finished]",
     )
 

@@ -54,7 +54,7 @@ def _ticker_heartbeat_file():
 
 
 def _run_ticker(stop, **kwargs):
-    from hermes_cli.web_server import _start_desktop_cron_ticker
+    from hermes_cli.web_server_cron import _start_desktop_cron_ticker
 
     kwargs.setdefault("interval", 0.01)
     t = threading.Thread(
@@ -66,19 +66,19 @@ def _run_ticker(stop, **kwargs):
 
 class TestMachineGatewayAlive:
     def test_fresh_heartbeat_is_alive(self):
-        from hermes_cli.web_server import _machine_gateway_alive
+        from hermes_cli.web_server_cron import _machine_gateway_alive
 
         _write_gateway_heartbeat(age_seconds=0)
         assert _machine_gateway_alive() is True
 
     def test_stale_heartbeat_is_not_alive(self):
-        from hermes_cli.web_server import _machine_gateway_alive
+        from hermes_cli.web_server_cron import _machine_gateway_alive
 
         _write_gateway_heartbeat(age_seconds=600)
         assert _machine_gateway_alive() is False
 
     def test_missing_heartbeat_is_not_alive(self):
-        from hermes_cli.web_server import _machine_gateway_alive
+        from hermes_cli.web_server_cron import _machine_gateway_alive
 
         from events.paths import gateway_heartbeat_path
 
@@ -286,7 +286,7 @@ def _write_gateway_heartbeat_json(payload, age_seconds=0):
 class TestGatewayHeartbeatOwnerAlive:
     def test_missing_file_is_not_alive(self):
         from events.paths import gateway_heartbeat_path
-        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+        from hermes_cli.web_server_cron import _gateway_heartbeat_owner_alive
 
         assert not gateway_heartbeat_path().exists()
         assert _gateway_heartbeat_owner_alive() is False
@@ -294,13 +294,13 @@ class TestGatewayHeartbeatOwnerAlive:
     def test_legacy_non_json_payload_is_not_alive(self):
         """Older writers (and the mtime-only helper above) carry no pid: the
         ticker must fall back to the pre-hold behaviour, not defer."""
-        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+        from hermes_cli.web_server_cron import _gateway_heartbeat_owner_alive
 
         _write_gateway_heartbeat(age_seconds=600)
         assert _gateway_heartbeat_owner_alive() is False
 
     def test_payload_without_usable_pid_is_not_alive(self):
-        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+        from hermes_cli.web_server_cron import _gateway_heartbeat_owner_alive
 
         for payload in ({"ts": "x"}, {"pid": "abc"}, {"pid": True}, {"pid": 0}, {"pid": -5}, ["pid"]):
             _write_gateway_heartbeat_json(payload, age_seconds=600)
@@ -308,13 +308,13 @@ class TestGatewayHeartbeatOwnerAlive:
 
     def test_live_pid_is_alive(self):
         """Real probe, no patch: the test process itself is provably alive."""
-        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+        from hermes_cli.web_server_cron import _gateway_heartbeat_owner_alive
 
         _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=600)
         assert _gateway_heartbeat_owner_alive() is True
 
     def test_dead_pid_is_not_alive(self):
-        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+        from hermes_cli.web_server_cron import _gateway_heartbeat_owner_alive
 
         _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=600)
         with patch("gateway.status._pid_exists", return_value=False):
@@ -323,7 +323,7 @@ class TestGatewayHeartbeatOwnerAlive:
     def test_probe_error_is_not_alive(self):
         """Fail toward 'dead' (= legacy take-over), never toward deferring to
         a gateway nobody could prove is there."""
-        from hermes_cli.web_server import _gateway_heartbeat_owner_alive
+        from hermes_cli.web_server_cron import _gateway_heartbeat_owner_alive
 
         _write_gateway_heartbeat_json({"pid": os.getpid()}, age_seconds=600)
         with patch("gateway.status._pid_exists", side_effect=RuntimeError("psutil gone")):
@@ -426,8 +426,8 @@ class TestStaleHeartbeatOwnerHold:
             seen.append(value)
             return value
 
-        with patch("hermes_cli.web_server._machine_gateway_alive", side_effect=scripted_alive), \
-             patch("hermes_cli.web_server._gateway_heartbeat_owner_alive", return_value=True), \
+        with patch("hermes_cli.web_server_cron._machine_gateway_alive", side_effect=scripted_alive), \
+             patch("hermes_cli.web_server_cron._gateway_heartbeat_owner_alive", return_value=True), \
              patch("cron.scheduler.tick", side_effect=lambda *a, **k: calls.append(len(seen)) or 0):
             t = _run_ticker(stop, owner_hold_ticks=3)
             assert _wait_until(lambda: len(calls) >= 1)

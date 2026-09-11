@@ -272,3 +272,34 @@ def test_a_changed_selection_logs_again(
         assert any("catalog order" in m for m in messages), (
             "fallback selection must say it was NOT the preferred model"
         )
+
+
+@pytest.mark.parametrize("scope", [{}, None])
+def test_multiplex_scope_never_falls_back_to_sibling_key(profile, monkeypatch, scope):
+    from agent import secret_scope
+    import hermes_cli.models as models
+    monkeypatch.setattr(secret_scope, "_MULTIPLEX_ACTIVE", True)
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "sibling-key")
+    _patch_creds(monkeypatch, "sibling-pool-key")
+    from unittest.mock import Mock
+    catalog = Mock(return_value=[VISION_ITEM])
+    monkeypatch.setattr(models, "_fetch_deepinfra_models_by_tag", catalog)
+    token = secret_scope.set_secret_scope(scope)
+    try:
+        assert profile.default_vision_model() is None
+        catalog.assert_not_called()
+    finally:
+        secret_scope.reset_secret_scope(token)
+
+
+def test_scoped_key_unlocks_vision_without_process_key(profile, monkeypatch):
+    from agent import secret_scope
+    monkeypatch.setattr(secret_scope, "_MULTIPLEX_ACTIVE", True)
+    monkeypatch.delenv("DEEPINFRA_API_KEY", raising=False)
+    _patch_creds(monkeypatch, "")
+    _patch_catalog(monkeypatch, [VISION_ITEM])
+    token = secret_scope.set_secret_scope({"DEEPINFRA_API_KEY": "own-key"})
+    try:
+        assert profile.default_vision_model() == "vendor/vision-model"
+    finally:
+        secret_scope.reset_secret_scope(token)

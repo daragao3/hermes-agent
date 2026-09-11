@@ -16,7 +16,6 @@ time or on the number of seconds a retry took: a wall-clock assertion passes on
 the broken code whenever the box happens to be idle.
 """
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -40,17 +39,17 @@ class _StubAdapter:
     def __init__(self, bridge_script: str = "/nonexistent/bridge.js"):
         self._bridge_script = bridge_script
         self.fatals = []
+        self._session_path = Path(bridge_script).parent / "unpaired-session"
 
     def _set_fatal_error(self, code, message, *, retryable):
         self.fatals.append((code, retryable))
 
-    # connect() is called unbound against this stub, so only the attributes it
-    # reaches before the two environment checks need to exist.
-    connect = wa.WhatsAppAdapter.connect
+    # The upstream preflight owner contains the environment and pairing gates.
+    _preflight = wa.WhatsAppAdapter._preflight
 
 
 def _connect(adapter) -> bool:
-    return asyncio.run(_StubAdapter.connect(adapter))
+    return adapter._preflight()
 
 
 def test_node_missing_fatal_is_retryable(monkeypatch):
@@ -107,14 +106,13 @@ def test_passing_env_checks_resets_the_ceiling(monkeypatch, tmp_path):
         _connect(_StubAdapter())
     assert wa._env_fatal_attempts == 3
 
-    # Now both preconditions hold; connect() proceeds past them (and fails
-    # later, on the stub's missing attributes — that is fine, the reset
-    # happens before anything else runs).
+    # A recovered environment resets the budget before the pairing gate.
     bridge = tmp_path / "bridge.js"
     bridge.write_text("// stub", encoding="utf-8")
     monkeypatch.setattr(wa, "check_whatsapp_requirements", lambda: True)
-    with pytest.raises(AttributeError):
-        _connect(_StubAdapter(str(bridge)))
+    adapter = _StubAdapter(str(bridge))
+    assert _connect(adapter) is False
+    assert adapter.fatals == [("whatsapp_not_paired", False)]
 
     assert wa._env_fatal_attempts == 0
 
@@ -126,12 +124,10 @@ def test_not_paired_fatal_stays_non_retryable(monkeypatch, tmp_path):
     above is specific to conditions the host can fix underneath a running
     gateway.
     """
-    source = Path(wa.__file__).read_text(encoding="utf-8")
-    marker = '"whatsapp_not_paired",'
-    assert marker in source, "whatsapp_not_paired fatal was renamed or removed"
-    # Window, not same-line: the code/message/retryable kwargs are on separate
-    # lines, and the message itself is sometimes a split literal.
-    window = source.split(marker, 1)[1][:400]
-    assert "retryable=False" in window, (
-        "whatsapp_not_paired must remain non-retryable — pairing needs a human"
-    )
+    bridge = tmp_path / "bridge.js"
+    bridge.write_text("// stub", encoding="utf-8")
+    monkeypatch.setattr(wa, "check_whatsapp_requirements", lambda: True)
+    adapter = _StubAdapter(str(bridge))
+    assert _connect(adapter) is False
+    assert adapter.fatals == [("whatsapp_not_paired", False)]
+    assert wa._env_fatal_attempts == 0

@@ -118,7 +118,7 @@ def stub_doctor_externals(monkeypatch):
     always stubbed here. ``test_doctor.py`` does test it, which is why its own
     fixture carries an ``exercises_real_gh_probe`` opt-out.
     """
-    from hermes_cli import doctor as doctor_mod
+    from hermes_cli import doctor_tools, doctor_state
     from hermes_cli import install_doctor as _install_doctor
 
     _real_section_lines = _install_doctor.doctor_section_lines
@@ -127,9 +127,9 @@ def stub_doctor_externals(monkeypatch):
         return _real_section_lines(probe_fn=fake_install_probe, root=root)
 
     monkeypatch.setattr(_install_doctor, "doctor_section_lines", _stubbed_section_lines)
-    monkeypatch.setattr(doctor_mod, "agent_browser_runnable", fast_agent_browser_runnable)
+    monkeypatch.setattr(doctor_tools, "agent_browser_runnable", fast_agent_browser_runnable)
 
     # ``dca0d179a`` hoisted ``_gh_authenticated`` out of ``run_doctor`` to
     # module level precisely so it has a patchable seam; use it rather than
     # wrapping ``subprocess.run`` and having to reason about wrapper ordering.
-    monkeypatch.setattr(doctor_mod, "_gh_authenticated", lambda: False)
+    monkeypatch.setattr(doctor_state, "_gh_authenticated", lambda: False)

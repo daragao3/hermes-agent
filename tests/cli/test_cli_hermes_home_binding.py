@@ -252,12 +252,12 @@ def test_prefill_relative_path_resolves_against_the_live_home(tmp_path, monkeypa
 
 
 def test_history_file_binds_to_the_live_home(tmp_path, monkeypatch):
-    """``HermesCLI.__init__`` builds ``.hermes_history`` from the same seam."""
+    """Runtime initialization builds ``.hermes_history`` from the live-home seam."""
     home = tmp_path / "history_home"
     home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(home))
 
-    src = inspect.getsource(cli.HermesCLI.__init__)
+    src = inspect.getsource(cli.HermesCLI._init_runtime_state)
     assert 'self._history_file = _resolve_hermes_home() / ".hermes_history"' in src
     assert cli._resolve_hermes_home() / ".hermes_history" == home / ".hermes_history"
 

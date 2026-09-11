@@ -45,11 +45,15 @@ def client(monkeypatch, isolated_profiles):
 
     import hermes_state
     from hermes_constants import get_hermes_home
-    from hermes_cli.web_server import app, _SESSION_HEADER_NAME, _SESSION_TOKEN
+    from fastapi import FastAPI
+    from hermes_cli.web_routers import profiles as profile_routes
+    app = FastAPI()
+    app.include_router(profile_routes.sessions_router)
+    monkeypatch.setattr(profile_routes, "_SIDEBAR_CACHE_TTL_SECONDS", 0)
+    profile_routes._sidebar_profile_cache_clear()
 
     monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", get_hermes_home() / "state.db")
     c = TestClient(app)
-    c.headers[_SESSION_HEADER_NAME] = _SESSION_TOKEN
     return c
 
 

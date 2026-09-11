@@ -1,37 +1,9 @@
-"""
-Platform adapters for messaging integrations.
+"""Platform adapters for messaging integrations (receive, send, auth, media)."""
 
-Each adapter handles:
-- Receiving messages from a platform
-- Sending messages/responses back
-- Platform-specific authentication
-- Message formatting and media handling
-"""
+from .base import BasePlatformAdapter, SendResult
+from .event import MessageEvent
 
-from .base import BasePlatformAdapter, MessageEvent, SendResult
-
-# QQAdapter and YuanbaoAdapter were previously imported eagerly here, but
-# nothing in the codebase consumes ``from gateway.platforms import
-# QQAdapter`` (every real call site uses the long-form path
-# ``from gateway.platforms.qqbot import QQAdapter``). The eager imports
-# pulled in qqbot's chunked-upload + keyboards + onboard machinery and
-# yuanbao's websocket stack — about 48 ms wall and ~8 MB RSS on every
-# CLI invocation, even ones that never touch a gateway adapter.
-#
-# Use PEP 562 module ``__getattr__`` to keep the public re-export working
-# while deferring the actual import to first attribute access. This is
-# 100% backward-compatible for any external code that still imports the
-# adapters from the package root.
-__all__ = [
-    "BasePlatformAdapter",
-    "MessageEvent",
-    "SendResult",
-    # Resolved lazily by the PEP 562 module __getattr__ below, so these are
-    # NOT missing names — ruff's F822 cannot see __getattr__ and reports them
-    # anyway. Do not "fix" by deleting: that would drop the public re-export.
-    "QQAdapter",  # noqa: F822
-    "YuanbaoAdapter",  # noqa: F822
-]
+__all__ = ["BasePlatformAdapter", "MessageEvent", "SendResult"]
 
 
 def __getattr__(name):
@@ -43,6 +15,4 @@ def __getattr__(name):
         return YuanbaoAdapter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-
-def __dir__():
-    return sorted(__all__)
+__all__ += ["QQAdapter", "YuanbaoAdapter"]  # noqa: F822 - lazy compatibility exports

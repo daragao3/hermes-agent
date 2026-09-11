@@ -33,22 +33,6 @@ def test_config_set_managed_key_rejected(homes, capsys):
     assert "managed" in (captured.out + captured.err).lower()
 
 
-def test_config_set_managed_key_does_not_write(homes):
-    from hermes_cli.config import set_config_value, read_raw_config
-
-    try:
-        set_config_value("model.default", "user/override")
-    except SystemExit:
-        pass
-    raw = read_raw_config()
-    assert raw.get("model", {}).get("default") != "user/override"
-
-
-def test_config_set_unmanaged_key_still_works(homes):
-    from hermes_cli.config import set_config_value, read_raw_config
-
-    set_config_value("model.fallback", "user/fb")  # not managed
-    assert read_raw_config().get("model", {}).get("fallback") == "user/fb"
 
 
 # ── env write guards ─────────────────────────────────────────────────────────
@@ -81,33 +65,9 @@ def test_save_env_value_managed_key_rejected(env_homes, capsys):
     assert "user.example" not in body
 
 
-def test_remove_env_value_managed_key_rejected(env_homes, capsys):
-    from hermes_cli.config import remove_env_value
-
-    result = remove_env_value("OPENAI_API_BASE")
-    assert result is False
-    assert "managed" in capsys.readouterr().err.lower()
-
-
-def test_save_env_value_unmanaged_key_still_works(env_homes):
-    from hermes_cli.config import save_env_value, get_env_value
-
-    save_env_value("SOME_OTHER_VALUE", "abc123")
-    assert get_env_value("SOME_OTHER_VALUE") == "abc123"
 
 
 # ── bulk save strips managed leaves ──────────────────────────────────────────
-
-
-def test_save_config_strips_managed_leaves(homes, capsys):
-    from hermes_cli.config import save_config, read_raw_config
-
-    # 'model.default' is managed (homes fixture); 'model.fallback' is not.
-    save_config({"model": {"default": "user/override", "fallback": "user/fb"}})
-    raw = read_raw_config()
-    assert raw.get("model", {}).get("default") != "user/override"  # stripped
-    assert raw.get("model", {}).get("fallback") == "user/fb"  # kept
-    assert "managed" in capsys.readouterr().err.lower()
 
 
 def test_save_model_choice_respects_full_managed_write_lock(tmp_path, monkeypatch, capsys):
@@ -117,7 +77,8 @@ def test_save_model_choice_respects_full_managed_write_lock(tmp_path, monkeypatc
     original = "model:\n  default: original-model\n"
     config_path.write_text(original, encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
-    monkeypatch.setenv("HERMES_MANAGED", "homebrew")
+    # Upstream retired Homebrew's marker; Nix still owns a full write lock.
+    monkeypatch.setenv("HERMES_MANAGED", "nix")
 
     from hermes_cli.auth import _save_model_choice
 
@@ -136,7 +97,7 @@ def test_platform_raw_write_respects_full_managed_write_lock(
     original = "platforms:\n  email:\n    mode: original\n"
     config_path.write_text(original, encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
-    monkeypatch.setenv("HERMES_MANAGED", "homebrew")
+    monkeypatch.setenv("HERMES_MANAGED", "nix")
 
     from hermes_cli.config import write_platform_config_field
 

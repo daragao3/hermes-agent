@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import os
@@ -1307,7 +1308,12 @@ def test_scan_cache_rereads_changed_files_and_evicts_deleted(
         for observation in fresh.records["local_one.json"].values()
         if observation.path == path
     )
-    assert json.loads(changed.exact_bytes)["title"] == "Changed"
+    assert changed.record["title"] == "Changed"
+    assert changed.byte_hash != next(
+        observation
+        for observation in fresh.records["local_one.json"].values()
+        if observation.path != path
+    ).byte_hash
     assert "local_two.json" not in fresh.records
     assert all("local_two" not in key for key in cache.entries)
 
@@ -1335,3 +1341,76 @@ def test_scan_cache_produces_identical_plans(tmp_path) -> None:
     assert len(cached.records["local_one.json"].mutations) == len(
         uncached.records["local_one.json"].mutations
     )
+
+
+def test_scan_shares_one_parse_across_byte_identical_roots(tmp_path, monkeypatch) -> None:
+    """Mirrored roots hold the same bytes; the scan must not materialise them thrice.
+
+    Production has three convergence roots that are byte-identical copies of one
+    record set, and the cache keeps every observation resident for the life of
+    the service (measured 1,084 MB per root, ~3.2 GB for three). Equal bytes
+    parse to equal values, so the parsed record and its canonical group strings
+    are shared by identity across roots, within a scan and from the cache.
+    """
+    from session_bridge import desktop_registry as module
+    from session_bridge.desktop_registry import RegistryScanCache
+
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, title="Same")
+    _write_record(a, "local_two", mtime_ns=100, title="Different")
+    _write_record(b, "local_two", mtime_ns=100, title="Different-b")
+
+    parses: list[Path] = []
+    original = module._parse_record
+
+    def counting_parse(raw: bytes, path: Path):
+        parses.append(path)
+        return original(raw, path)
+
+    monkeypatch.setattr(module, "_parse_record", counting_parse)
+
+    cache = RegistryScanCache()
+    scan = scan_desktop_registry_roots((a, b, c), cache=cache)
+
+    # One parse for the three identical copies, one each for the two distinct ones.
+    assert len(parses) == 3
+    one = scan.records["local_one.json"]
+    assert one[_root_id(scan, a)].record is one[_root_id(scan, b)].record is one[_root_id(scan, c)].record
+    assert (
+        one[_root_id(scan, a)].group_values
+        is one[_root_id(scan, b)].group_values
+        is one[_root_id(scan, c)].group_values
+    )
+    two = scan.records["local_two.json"]
+    assert two[_root_id(scan, a)].record is not two[_root_id(scan, b)].record
+    assert two[_root_id(scan, a)].group_values["field:title"] != two[_root_id(scan, b)].group_values[
+        "field:title"
+    ]
+
+    # A copy that appears later (a fourth root, or a re-created file) shares the
+    # parse already held in the cache rather than paying for its own.
+    _write_record(c, "local_two", mtime_ns=100, title="Different")
+    parses.clear()
+    rescan = scan_desktop_registry_roots((a, b, c), cache=cache)
+    assert len(parses) == 0
+    assert (
+        rescan.records["local_two.json"][_root_id(rescan, c)].record
+        is rescan.records["local_two.json"][_root_id(rescan, a)].record
+    )
+    # Equal group strings are one object even when the records differ elsewhere.
+    assert (
+        rescan.records["local_two.json"][_root_id(rescan, c)].group_values["field:title"]
+        is rescan.records["local_two.json"][_root_id(rescan, a)].group_values["field:title"]
+    )
+
+
+def test_observation_does_not_retain_raw_bytes(tmp_path) -> None:
+    a = tmp_path / "a"
+    _write_record(a, "local_one", mtime_ns=100)
+    scan = scan_desktop_registry_roots((a,))
+    observation = scan.records["local_one.json"][_root_id(scan, a)]
+    assert not hasattr(observation, "exact_bytes")
+    assert observation.byte_hash == hashlib.sha256(
+        (a / "local_one.json").read_bytes()
+    ).hexdigest()

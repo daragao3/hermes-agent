@@ -69,7 +69,7 @@ def test_dash_m_launch_leaves_exactly_one_main_module(tmp_path):
     # cwd is the repo root so `-m` resolves hermes_cli from this checkout rather
     # than from whatever the editable install happens to point at.
     proc = subprocess.run(
-        [sys.executable, "-m", "hermes_cli.main", "version"],
+        [sys.executable, "-m", "hermes_cli.main", "--help"],
         cwd=str(REPO_ROOT),
         env=env,
         capture_output=True,

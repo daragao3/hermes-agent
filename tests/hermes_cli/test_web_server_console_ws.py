@@ -103,7 +103,7 @@ def test_console_ws_confirmed_command_executes_after_confirmation(console_client
 
 
 def test_console_ws_uses_hosted_context_for_opt_data_policy(console_client, monkeypatch):
-    monkeypatch.setattr(web_server, "_default_hermes_root_is_opt_data", lambda: True)
+    monkeypatch.setattr("hermes_cli.web_server_files._default_hermes_root_is_opt_data", lambda: True)
 
     with console_client.websocket_connect(_url()) as conn:
         ready = conn.receive_json()
@@ -120,7 +120,7 @@ def test_console_ws_cancel_returns_to_prompt(console_client, monkeypatch):
     from hermes_cli.console_engine import ConsoleResult, HermesConsoleEngine
 
     def slow_execute(self, line: str, *, confirmed: bool = False):
-        time.sleep(0.5)
+        time.sleep(0.2)
         return ConsoleResult("ok", output="late", command=line)
 
     monkeypatch.setattr(HermesConsoleEngine, "execute", slow_execute)

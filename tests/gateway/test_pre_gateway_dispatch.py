@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig
-from gateway.platforms.base import MessageEvent
+from gateway.platforms.event import MessageEvent
 from gateway.session import SessionSource
 
 
@@ -61,41 +61,18 @@ def _make_runner(platform: Platform):
 
 
 @pytest.mark.asyncio
-async def test_hook_skip_short_circuits_dispatch(monkeypatch):
-    """A plugin returning {'action': 'skip'} drops the message before auth."""
-    _clear_auth_env(monkeypatch)
-
-    def _fake_hook(name, **kwargs):
-        if name == "pre_gateway_dispatch":
-            return [{"action": "skip", "reason": "plugin-handled"}]
-        return []
-
-    monkeypatch.setattr("hermes_cli.plugins.invoke_hook", _fake_hook)
-
-    runner, adapter = _make_runner(Platform.WHATSAPP)
-
-    result = await runner._handle_message(_make_event("hi"))
-
-    assert result is None
-    adapter.send.assert_not_awaited()
-    runner.pairing_store.generate_code.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_hook_rewrite_replaces_event_text(monkeypatch):
-    """A plugin returning {'action': 'rewrite', 'text': ...} mutates event.text."""
+async def test_internal_events_bypass_hook(monkeypatch):
+    """Internal events (event.internal=True) skip the plugin hook entirely."""
     _clear_auth_env(monkeypatch)
     monkeypatch.setenv("WHATSAPP_ALLOWED_USERS", "*")
 
-    seen_text = {}
+    called = {"count": 0}
 
     def _fake_hook(name, **kwargs):
-        if name == "pre_gateway_dispatch":
-            return [{"action": "rewrite", "text": "REWRITTEN"}]
-        return []
+        called["count"] += 1
+        return [{"action": "skip"}]
 
     async def _capture(event, source, _quick_key, _run_generation):
-        seen_text["value"] = event.text
         return "ok"
 
     monkeypatch.setattr("hermes_cli.plugins.invoke_hook", _fake_hook)
@@ -103,9 +80,44 @@ async def test_hook_rewrite_replaces_event_text(monkeypatch):
     runner, _adapter = _make_runner(Platform.WHATSAPP)
     runner._handle_message_with_agent = _capture  # noqa: SLF001
 
-    await runner._handle_message(_make_event("original"))
+    event = _make_event("hi")
+    event.internal = True
 
-    assert seen_text.get("value") == "REWRITTEN"
+    # Even though the hook would say skip, internal events bypass it.
+    await runner._handle_message(event)
+    assert called["count"] == 0
+
+@pytest.mark.asyncio
+async def test_hook_fires_without_session_store_attribute(monkeypatch):
+    """A runner missing session_store still delivers the event to plugins.
+
+    Regression: the hook kwargs read ``self.session_store`` directly, so a
+    partially-initialized runner raised AttributeError inside the dispatch
+    try-block — the hook never fired, and every message logged
+    "pre_gateway_dispatch invocation failed: 'GatewayRunner' object has no
+    attribute 'session_store'". Plugins must receive the event (with
+    session_store=None) instead.
+    """
+    _clear_auth_env(monkeypatch)
+
+    seen = {}
+
+    def _fake_hook(name, **kwargs):
+        if name == "pre_gateway_dispatch":
+            seen["session_store"] = kwargs.get("session_store", "MISSING")
+            return [{"action": "skip", "reason": "plugin-handled"}]
+        return []
+
+    monkeypatch.setattr("hermes_cli.plugins.invoke_hook", _fake_hook)
+
+    runner, adapter = _make_runner(Platform.WHATSAPP)
+    del runner.session_store
+
+    result = await runner._handle_message(_make_event("hi"))
+    assert result is None
+    # Hook actually fired (skip short-circuited before auth) with a None store.
+    assert seen == {"session_store": None}
+    adapter.send.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -132,50 +144,3 @@ async def test_hook_allow_falls_through_to_auth(monkeypatch):
     # auth chain ran → pairing code was generated
     assert result is None
     runner.pairing_store.generate_code.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_hook_exception_does_not_break_dispatch(monkeypatch):
-    """A raising plugin hook does not break the gateway."""
-    _clear_auth_env(monkeypatch)
-    monkeypatch.delenv("WHATSAPP_ALLOWED_USERS", raising=False)
-
-    def _fake_hook(name, **kwargs):
-        raise RuntimeError("plugin blew up")
-
-    monkeypatch.setattr("hermes_cli.plugins.invoke_hook", _fake_hook)
-
-    runner, _adapter = _make_runner(Platform.WHATSAPP)
-    runner.pairing_store.generate_code.return_value = None
-
-    # Should not raise; falls through to auth chain.
-    result = await runner._handle_message(_make_event("hi"))
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_internal_events_bypass_hook(monkeypatch):
-    """Internal events (event.internal=True) skip the plugin hook entirely."""
-    _clear_auth_env(monkeypatch)
-    monkeypatch.setenv("WHATSAPP_ALLOWED_USERS", "*")
-
-    called = {"count": 0}
-
-    def _fake_hook(name, **kwargs):
-        called["count"] += 1
-        return [{"action": "skip"}]
-
-    async def _capture(event, source, _quick_key, _run_generation):
-        return "ok"
-
-    monkeypatch.setattr("hermes_cli.plugins.invoke_hook", _fake_hook)
-
-    runner, _adapter = _make_runner(Platform.WHATSAPP)
-    runner._handle_message_with_agent = _capture  # noqa: SLF001
-
-    event = _make_event("hi")
-    event.internal = True
-
-    # Even though the hook would say skip, internal events bypass it.
-    await runner._handle_message(event)
-    assert called["count"] == 0

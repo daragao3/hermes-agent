@@ -22,6 +22,8 @@ from pathlib import Path
 import pytest
 
 from hermes_cli import kanban_db as kb
+from hermes_cli import kanban_db_connect as kbc
+from hermes_cli import kanban_db_dispatch as kbd
 
 
 # These tests need two real OS processes: one that has already exited (to stand
@@ -36,7 +38,7 @@ from hermes_cli import kanban_db as kb
 def _spawn_dead_worker() -> subprocess.Popen:
     """A process that has already exited, for use as a dead worker's pid."""
     proc = subprocess.Popen([sys.executable, "-c", ""])
-    proc.wait()
+    proc.wait(timeout=10)
     return proc
 
 
@@ -64,7 +66,7 @@ def conn(kanban_home):
     # `with <sqlite3.Connection>` commits/rolls back but does NOT close, so the
     # handle outlived the test and kept the tmp_path DB locked on Windows —
     # which silently defeats pytest's best-effort tmp_path reclaim.
-    c = kb.connect()
+    c = kbc.connect()
     try:
         with c:
             yield c
@@ -81,7 +83,7 @@ def test_stale_crash_reset_rejected_for_reclaimed_task(conn):
     # Worker A claims, then dies.
     kb.claim_task(conn, tid, claimer=f"{host}:A")
     dead = _spawn_dead_worker()
-    kb._set_worker_pid(conn, tid, dead.pid)
+    kbd._set_worker_pid(conn, tid, dead.pid)
     old = conn.execute(
         "SELECT claim_lock, worker_pid FROM tasks WHERE id=?", (tid,)
     ).fetchone()
@@ -96,7 +98,7 @@ def test_stale_crash_reset_rejected_for_reclaimed_task(conn):
     kb.claim_task(conn, tid, claimer=f"{host}:B")
     sleeper = _spawn_live_worker()
     try:
-        kb._set_worker_pid(conn, tid, sleeper.pid)
+        kbd._set_worker_pid(conn, tid, sleeper.pid)
 
         # The stale reset for worker A — same shape as the guarded UPDATE in
         # detect_crashed_workers — must reject (rowcount 0) because B owns it.
@@ -116,6 +118,7 @@ def test_stale_crash_reset_rejected_for_reclaimed_task(conn):
         assert final["claim_lock"] == f"{host}:B"
     finally:
         sleeper.terminate()
+        sleeper.wait(timeout=10)
 
 
 def test_genuine_crash_still_reclaims(conn):
@@ -125,16 +128,16 @@ def test_genuine_crash_still_reclaims(conn):
     tid = kb.create_task(conn, title="legit", assignee="w")
     kb.claim_task(conn, tid, claimer=f"{host}:A")
     dead = _spawn_dead_worker()
-    kb._set_worker_pid(conn, tid, dead.pid)
+    kbd._set_worker_pid(conn, tid, dead.pid)
     # Rewind started_at so the launch grace window doesn't skip the check.
     conn.execute("UPDATE tasks SET started_at = started_at - 9999 WHERE id=?", (tid,))
     conn.execute(
         "UPDATE task_runs SET started_at = started_at - 9999 WHERE task_id=?", (tid,)
     )
     conn.commit()
-    kb._record_worker_exit(dead.pid, 1 << 8)  # nonzero exit → crash
+    kbd._record_worker_exit(dead.pid, 1 << 8)  # nonzero exit → crash
 
-    crashed = kb.detect_crashed_workers(conn)
+    crashed = kbd.detect_crashed_workers(conn)
     assert tid in crashed
     final = conn.execute("SELECT status FROM tasks WHERE id=?", (tid,)).fetchone()
     assert final["status"] in ("ready", "blocked", "todo")

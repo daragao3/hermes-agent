@@ -22,6 +22,7 @@ import signal
 import subprocess
 import sys
 import time
+import types
 
 import pytest
 
@@ -41,6 +42,79 @@ import pytest
 # claude/zealous-mendeleev-5e8346) for the psutil-kill self-tests; if that
 # branch lands, the two should collapse into this one.
 FOREIGN_PID = 4 if sys.platform == "win32" else 1
+
+
+# ──────────────────── fail-closed self-protection ──────────────
+#
+# This file executes REAL kill primitives — os.kill(-1, SIGTERM), os.killpg,
+# pkill -f python — and depends entirely on the autouse ``_live_system_guard``
+# fixture in tests/conftest.py to intercept them. That makes the canary
+# fail-OPEN: in any collection context where this file is present but its home
+# conftest is not, the primitives fire for real and ``os.kill(-1, SIGTERM)``
+# SIGTERMs every process the invoking user owns (a full desktop-session kill was
+# reported in the field — see issue #68311). Such contexts are not exotic:
+# published sdists that ship ``tests/`` but not ``tests/conftest.py``, trees
+# assembled by copying ``test*.py`` files (that glob does NOT match
+# ``conftest.py``), ``pytest --noconftest``, or running from a foreign rootdir.
+#
+# The fixture below makes the canary fail-CLOSED instead: it refuses to run any
+# test in this file unless the guard is provably active, so no collection
+# context can ever detonate the primitives. The one thing the canary can detect
+# about its own safety is that the guard monkeypatches ``os.kill`` with a plain
+# Python function, whereas the unguarded primitive is a C builtin.
+
+
+def _live_system_guard_is_active() -> bool:
+    """True iff tests/conftest.py's ``_live_system_guard`` has patched os.kill.
+
+    The guard replaces ``os.kill`` with a plain Python function; the raw,
+    unguarded primitive is a C builtin (``types.BuiltinFunctionType``). If
+    ``os.kill`` is still the builtin, the guard never loaded and every kill
+    primitive in this file would fire for real.
+    """
+    return not isinstance(os.kill, types.BuiltinFunctionType)
+
+
+@pytest.fixture(autouse=True)
+def _refuse_to_fire_live_weapons(request):
+    """Fail closed: refuse to run a canary test unless the guard is active.
+
+    Tests genuinely marked ``@pytest.mark.live_system_guard_bypass`` opt out
+    (they run the raw primitive deliberately and harmlessly, e.g. a signal-0
+    liveness probe of our own PID), matching the guard's own bypass contract.
+    """
+    if request.node.get_closest_marker("live_system_guard_bypass"):
+        yield
+        return
+    if not _live_system_guard_is_active():
+        pytest.fail(
+            "REFUSING TO RUN: the live-system guard from tests/conftest.py is "
+            "not active in this interpreter (os.kill is still the raw C "
+            "builtin). This canary file executes real kill primitives — "
+            "os.kill(-1, SIGTERM), os.killpg, pkill -f python — and relies on "
+            "the guard to intercept them; unguarded, they SIGTERM every process "
+            "the current user owns. This usually means the file was collected "
+            "without its home tests/conftest.py (note: a test*.py copy glob "
+            "does NOT match conftest.py). See issue #68311.",
+            pytrace=False,
+        )
+    yield
+
+
+def test_fail_closed_probe_reports_guard_active():
+    """In the real suite the guard is loaded, so the probe reports active and
+    ``_refuse_to_fire_live_weapons`` stays out of the way (no false positives
+    that would wedge CI)."""
+    assert _live_system_guard_is_active() is True
+
+
+def test_fail_closed_probe_classifies_raw_builtin_as_unguarded():
+    """The probe's discriminator, exercised against real objects: a raw C
+    builtin the guard never touches (``os.getpid``) is exactly what an
+    unguarded ``os.kill`` looks like and must read as 'guard not active', while
+    the loaded guard's ``os.kill`` is a plain Python function."""
+    assert isinstance(os.getpid, types.BuiltinFunctionType)
+    assert not isinstance(os.kill, types.BuiltinFunctionType)
 
 
 # ──────────────────── kill primitives ─────────────────────────
@@ -221,7 +295,7 @@ def _run_allowed(*extra_argv):
     returning — which is precisely what the allow-case asserts against.
     """
     return subprocess.run(
-        [sys.executable, "-c", "", *extra_argv], capture_output=True, text=True
+        [sys.executable, "-c", "", *extra_argv], capture_output=True, text=True, timeout=10
     )
 
 
@@ -476,6 +550,8 @@ def test_kill_own_subtree_passes_through():
     try:
         os.kill(p.pid, signal.SIGTERM)
     finally:
+        if p.poll() is None:
+            p.kill()
         p.wait(timeout=10)
     if sys.platform == "win32":
         # Windows has no signals: ``os.kill`` calls TerminateProcess(h, sig),
@@ -486,14 +562,6 @@ def test_kill_own_subtree_passes_through():
         assert p.returncode in {-signal.SIGTERM, 128 + int(signal.SIGTERM)}
 
 
-def test_subprocess_pkill_with_unrelated_pattern_passes_through():
-    """``pkill -f some-unrelated-pattern`` (no hermes/python) is fine."""
-    # We don't actually run pkill — just verify the guard would let it
-    # through by inspecting the matcher. Re-implementing the check here
-    # would duplicate the guard; instead spawn a noop to confirm no raise.
-    # Use 'true' so it succeeds quickly.
-    r = subprocess.run(["true"], capture_output=True)
-    assert r.returncode == 0
 
 
 def test_windows_taskkill_on_an_unrelated_pid_passes_through():
@@ -513,10 +581,6 @@ def test_windows_taskkill_on_an_unrelated_pid_passes_through():
         )
 
 
-def test_normal_subprocess_run_passes_through():
-    """Plain non-systemctl subprocess.run should work normally."""
-    r = subprocess.run(["echo", "hello"], capture_output=True, text=True)
-    assert r.stdout.strip() == "hello"
 
 
 # ──────────────────── package installs ─────────────────────────
@@ -779,16 +843,14 @@ def test_psutil_terminate_own_child_passes_through():
 
 @pytest.mark.live_system_guard_bypass
 def test_bypass_marker_disables_guard():
-    """The bypass marker exists for tests that genuinely need real signal delivery
-    (e.g. PTY tests SIGINTing their own child). Verify it works.
-
-    We use it harmlessly here by signaling our own PID 0 (own group) so we
-    don't actually kill anything — but the call goes through real os.kill.
-    """
-    # With bypass, the guard yields without installing the monkeypatch,
-    # so we get the real os.kill. Calling os.kill(os.getpid(), 0) just
-    # checks that the PID exists — harmless.
-    os.kill(os.getpid(), 0)  # No exception — guard is OFF.
+    """The bypass marker leaves the native os.kill primitive installed."""
+    # This is the exact discriminator used by the fail-closed fixture above.
+    # A guarded wrapper is a Python function, never a native builtin.
+    assert isinstance(os.kill, types.BuiltinFunctionType)
+    if sys.platform != "win32":
+        os.kill(os.getpid(), 0)  # POSIX liveness check only.
+    # Windows has no signal-zero liveness check: it terminates the target.
+    # Owned-child signal delivery is covered by the pass-through tests.
 
 
 # ──────────────────── gateway PID-scan guard ────────────────────
@@ -830,6 +892,7 @@ def test_gateway_pid_scan_stub_leaves_find_gateway_pids_real():
     assert gateway.find_gateway_pids.__name__ == "find_gateway_pids"
 
 
+@pytest.mark.windows_only
 @pytest.mark.real_gateway_pid_scan
 def test_real_gateway_pid_scan_marker_restores_the_scanner(monkeypatch):
     """Tests of the scanner itself must still get the real implementation.
@@ -845,7 +908,6 @@ def test_real_gateway_pid_scan_marker_restores_the_scanner(monkeypatch):
     """
     import hermes_cli.gateway as gateway
 
-    monkeypatch.setattr(gateway, "is_windows", lambda: True)
     monkeypatch.setattr(gateway, "_get_ancestor_pids", lambda: set())
     # wmic absent (Win11) so the PowerShell fallback is taken, as on this host.
     monkeypatch.setattr(
@@ -856,12 +918,12 @@ def test_real_gateway_pid_scan_marker_restores_the_scanner(monkeypatch):
         return subprocess.CompletedProcess(
             cmd,
             0,
-            stdout='CommandLine=C:\\v\\Scripts\\hermes.exe" gateway run\n'
+            stdout='CommandLine="C:/v/Scripts/hermes.exe" gateway run\n'
             "ProcessId=98765\n\n",
             stderr="",
         )
 
-    monkeypatch.setattr(gateway.subprocess, "run", _fake_run)
+    monkeypatch.setattr("hermes_cli._subprocess_compat.bounded_probe_run", _fake_run)
 
     assert gateway._scan_gateway_pids(set()) == [98765], (
         "the real_gateway_pid_scan marker did not restore the real scanner"
@@ -1010,7 +1072,10 @@ def test_real_local_server_probe_marker_restores_the_probe(monkeypatch):
 def test_dashboard_pid_scan_is_stubbed_by_default():
     """The host process-table walk must not run in an unmarked test."""
     from hermes_cli import main
+    from hermes_cli import main_dashboard
 
+    assert getattr(main_dashboard._find_stale_dashboard_pids, "_hermes_pid_scan_guard", False)
+    assert main_dashboard._find_stale_dashboard_pids() == []
     assert getattr(
         main._find_stale_dashboard_pids, "_hermes_pid_scan_guard", False
     ), (
@@ -1100,7 +1165,11 @@ def test_provider_auth_probes_are_stubbed_by_default():
     import hermes_cli.auth as auth
     import hermes_cli.copilot_auth as copilot_auth
 
+    from hermes_cli import auth_zai_kimi
+
+    assert auth_zai_kimi.detect_zai_endpoint("test-key-not-real") is None
     for module, attr in (
+        (auth_zai_kimi, "detect_zai_endpoint"),
         (auth, "detect_zai_endpoint"),
         (copilot_auth, "exchange_copilot_token"),
     ):
@@ -1155,7 +1224,10 @@ def test_real_provider_auth_probe_marker_restores_the_probe(monkeypatch):
         posted.append(url)
         return _Resp()
 
-    monkeypatch.setattr(auth, "httpx", types.SimpleNamespace(post=_fake_post))
+    from hermes_cli import auth_zai_kimi
+    monkeypatch.setattr(auth_zai_kimi, "httpx", types.SimpleNamespace(post=_fake_post))
+    # This canary tests marker delegation, with one deterministic endpoint.
+    monkeypatch.setattr(auth_zai_kimi, "ZAI_ENDPOINTS", [auth_zai_kimi.ZAI_ENDPOINTS[0]])
 
     result = auth.detect_zai_endpoint("test-key-not-real")
     assert posted, "the real probe never issued a request"

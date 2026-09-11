@@ -3,7 +3,18 @@ import json
 import pytest
 
 from agent import firecrawl_run_state as state
-from tools import web_tools
+from tools import web_tools, web_tools_extract
+
+
+@pytest.fixture(autouse=True)
+def _isolated_dispatch(tmp_path, monkeypatch):
+    from tools import web_result_cache as cache
+    monkeypatch.setattr(cache, "search_memo", cache.SearchMemo())
+    monkeypatch.setattr(cache, "_cache_dir", lambda: tmp_path / "web-cache")
+    monkeypatch.setattr(cache, "_web_config", lambda: {})
+    # Generic outage rescue has its own mocked-ring integration suite.
+    monkeypatch.setattr(web_tools, "_rescue_eligible", lambda provider: False)
+    monkeypatch.setattr(web_tools_extract, "_rescue_eligible", lambda provider: False)
 
 
 CREDITS = {
@@ -184,7 +195,7 @@ def _patch_extract(monkeypatch, primary, fallback, unsafe=(), policy_blocks=()):
 
     monkeypatch.setattr(web_tools, "async_is_safe_url", safe)
     monkeypatch.setattr(
-        web_tools,
+        web_tools_extract,
         "check_website_access",
         lambda url: (
             {

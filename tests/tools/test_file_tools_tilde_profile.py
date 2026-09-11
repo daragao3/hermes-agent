@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 from tests._home_isolation import redirect_home
 
-import tools.file_tools as ft
+import tools.file_tools_paths as ft
 import tools.terminal_tool as terminal_tool
 
 

@@ -13,8 +13,14 @@ import pytest
 
 
 @pytest.fixture
-def main_mod():
+def main_mod(monkeypatch):
     import hermes_cli.main as main_mod
+    from hermes_cli import main_dashboard, main_web_build
+    monkeypatch.setattr(main_dashboard, "_dashboard_listening", lambda *a: main_mod._dashboard_listening(*a))
+    def unexpected_build(*a, **k):
+        raise AssertionError("A dashboard unit test attempted a real web build")
+    monkeypatch.setattr(main_mod, "_build_web_ui", unexpected_build)
+    monkeypatch.setattr(main_web_build, "_build_web_ui", lambda *a, **k: main_mod._build_web_ui(*a, **k))
     return main_mod
 
 
@@ -379,3 +385,29 @@ class TestDashboardPortPreflight:
 
         assert exc.value.code != 0
         assert started == []
+
+
+class TestInteractiveDashboardAuthSetup:
+
+    def test_loopback_proxy_public_url_offers_auth_setup(
+        self, main_mod, monkeypatch, capsys
+    ):
+        """A TTY operator is prompted when public_url gates a loopback bind."""
+        from hermes_cli.dashboard_auth import clear_providers
+
+        monkeypatch.setenv(
+            "HERMES_DASHBOARD_PUBLIC_URL",
+            "https://dashboard.example.test:9443",
+        )
+        clear_providers()
+        monkeypatch.setattr(main_mod.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr(main_mod.sys.stdout, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda _prompt: "3")
+
+        with pytest.raises(SystemExit) as exc:
+            main_mod._maybe_setup_dashboard_auth_interactively(_args())
+
+        assert exc.value.code == 1
+        output = capsys.readouterr().out
+        assert "configured external dashboard.public_url" in output
+

@@ -46,7 +46,7 @@ def _long_markdown_message(n_lines: int = 200) -> str:
 @pytest.fixture
 def captured_sends(monkeypatch):
     """Intercept every chunk at the Bot API seam and record its text."""
-    from tools import send_message_tool
+    from tools import send_message_senders as send_message_tool
 
     sent_texts = []
 
@@ -67,7 +67,7 @@ def captured_sends(monkeypatch):
 @pytest.mark.asyncio
 async def test_standalone_send_escapes_chunk_indicator(captured_sends):
     """Every chunk's (N/M) suffix must be escaped before it reaches Telegram."""
-    from tools import send_message_tool
+    from tools import send_message_senders as send_message_tool
 
     await send_message_tool._send_telegram(
         token=FAKE_TOKEN, chat_id="123", message=_long_markdown_message()
@@ -93,7 +93,7 @@ async def test_html_mode_indicator_is_not_backslash_escaped(captured_sends):
     Guards the fix from over-reaching: a backslash is a literal character in
     HTML mode, so escaping there would corrupt the visible text.
     """
-    from tools import send_message_tool
+    from tools import send_message_senders as send_message_tool
 
     # A recognized Telegram HTML tag forces the HTML branch.
     body = chr(10).join("<b>Event %d</b> finished ok" % i for i in range(300))
@@ -113,7 +113,7 @@ async def test_html_mode_indicator_is_not_backslash_escaped(captured_sends):
 @pytest.mark.asyncio
 async def test_single_chunk_message_gets_no_indicator(captured_sends):
     """A message that fits in one chunk must be sent unchanged (no suffix)."""
-    from tools import send_message_tool
+    from tools import send_message_senders as send_message_tool
 
     await send_message_tool._send_telegram(
         token=FAKE_TOKEN, chat_id="123", message="Short message (with parens)"

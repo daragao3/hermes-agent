@@ -33,6 +33,7 @@ from .claude_adapter import (
     encode_claude_cursor,
 )
 from .claude_visibility import (
+    is_codex_import_rollout,
     CLAUDE_VISIBILITY_EXCLUSION_CODES,
     ClaudeVisibilityCandidate,
     ClaudeVisibilityClaim,
@@ -615,12 +616,19 @@ class ClaudeVisibilityCoordinator:
             candidates: list[ClaudeVisibilityCandidateResult] = []
             exclusions: list[ClaudeVisibilityExclusion] = []
             seen: set[tuple[str, Provider]] = set()
+            worktree_excluded = self._config.claude_visibility.exclude_worktree_sources
+            imports_excluded = self._config.claude_visibility.exclude_codex_imports
             for source in ordered:
                 projection = source.projection
                 activity = float(projection.last_active)
                 if not math.isfinite(activity):
                     raise ValueError("activity must be finite")
                 key = (source.source_session_id, projection.provider)
+                import_echo = (
+                    imports_excluded
+                    and projection.provider is Provider.CODEX
+                    and is_codex_import_rollout(projection.native_path)
+                )
                 if key in seen:
                     reason = "duplicate_source"
                 elif activity < after:
@@ -628,8 +636,9 @@ class ClaudeVisibilityCoordinator:
                 else:
                     reason = evaluate_claude_visibility(
                         projection,
-                        automation_only=source.automation_only,
+                        automation_only=source.automation_only or import_echo,
                         subagent_only=source.subagent_only,
+                        exclude_worktree_sources=worktree_excluded,
                     )
                     if (
                         reason == "eligible"
@@ -657,8 +666,9 @@ class ClaudeVisibilityCoordinator:
                     git_root=source.git_root,
                     git_head=source.git_head,
                     worktree_id=source.worktree_id,
-                    automation_only=source.automation_only,
+                    automation_only=source.automation_only or import_echo,
                     subagent_only=source.subagent_only,
+                    exclude_worktree_sources=worktree_excluded,
                 )
                 identity = derive_claude_visibility_identity(
                     candidate, self._marker_secret
@@ -1208,6 +1218,16 @@ _CODEX_SCAN_STAGES = frozenset({
 _CODEX_STDERR_TAIL_LINES = 12
 _CODEX_DIAGNOSTIC_MAX_LINES = 8
 _CODEX_DIAGNOSTIC_MAX_CHARS = 2048
+#: How long one standing post-scan worker fault stays quiet before it is
+#: restated.  ``catalog_scan_seconds`` defaults to 3, so an unthrottled line
+#: would emit a traceback roughly every three seconds -- about 28,800 a day per
+#: worker -- and bury itself in a log that already carries ~1 line/sec.  A
+#: repeat is still required because the service log rotates on every restart
+#: and keeps only the previous child's tail, so a fault reported once at onset
+#: leaves no evidence for anyone arriving later.  300s matches
+#: ``DesktopRegistrySyncWorker.run_min_interval_seconds``, i.e. one line per
+#: cycle of the slowest worker on the chain.
+_POST_SCAN_DIAGNOSTIC_REPEAT_SECONDS = 300.0
 _WINDOWS_TERMINAL_PATH_RE = re.compile(
     r"(?:[A-Za-z]:[\\/]+|[\\/]{2}(?:\?[\\/]+(?:UNC[\\/]+)?|[^\\/\s]+[\\/]+))"
     r"[^\r\n'\"<>|]*$"
@@ -1391,6 +1411,11 @@ class SessionBridgeCoordinator:
             for provider in (Provider.CLAUDE, Provider.CODEX)
         }
         self._recent_error_codes: list[str] = []
+        # One entry per post-scan worker error code while that worker is
+        # failing; removed on its first success.  Keyed by CODE rather than by
+        # worker object so three simultaneously broken workers each keep their
+        # own suppression window instead of masking one another.
+        self._post_scan_worker_failures: dict[str, dict[str, Any]] = {}
         self._backfill_progress: dict[Provider, dict[str, int | str]] = {}
         self._continuous_watermark: float | None = None
         self._registration_turn_fallback: bool | None = None
@@ -3976,8 +4001,113 @@ class SessionBridgeCoordinator:
             raise
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception:
+        except Exception as exc:
+            # Scope is the REPORT, not the control flow: the exception is still
+            # swallowed and still counted, so a broken worker still cannot take
+            # the scan loop down with it.  What changes is that it stops being
+            # invisible.  Before 2026-09-08 the whole handler was the
+            # _record_error_code line, and _recent_error_codes is an in-process
+            # ring readable only over MCP -- so a worker that raised on every
+            # cycle produced NO log line and NO durable row.  Measured cost:
+            # DesktopRegistrySyncWorker was down 1h53m on 2026-09-07 because
+            # build_registry_sync_plan raised on the first of 101 registry
+            # records absent from every root, and root-causing it required
+            # extracting the pre-fix planner and re-running it offline against
+            # production data.  loops sessionbridge-provider-call-stall-20260831.
             self._record_error_code(error_code)
+            self._record_post_scan_worker_diagnostic(worker, error_code, exc)
+        else:
+            self._note_post_scan_worker_success(worker, error_code)
+
+    def _record_post_scan_worker_diagnostic(
+        self,
+        worker: Any,
+        error_code: str,
+        exc: BaseException,
+    ) -> None:
+        """Name the worker, the exception and where it was raised.
+
+        Suppressed by FAULT SIGNATURE rather than by a plain rate limit: a
+        changed exception type or message reports immediately, so a new fault
+        can never hide behind a standing one.  Only an identical, still-standing
+        fault goes quiet, and even that is restated every
+        ``_POST_SCAN_DIAGNOSTIC_REPEAT_SECONDS``.
+
+        Redaction reuses the codex helper (provider-agnostic despite the name)
+        so transcript content and filesystem paths never reach the log.
+        Best-effort throughout: instrumentation must never fail a scan cycle.
+        """
+        try:
+            exc_type = type(exc).__name__
+            detail = _redacted_codex_diagnostic_text(str(exc))
+            signature = f"{exc_type}:{detail}"
+            now = float(self._monotonic())
+            state = self._post_scan_worker_failures.get(error_code)
+            if state is None or state["signature"] != signature:
+                state = {
+                    "signature": signature,
+                    "first_at": now,
+                    "failures": 0,
+                    "suppressed": 0,
+                    "logged_at": None,
+                }
+                self._post_scan_worker_failures[error_code] = state
+            state["failures"] += 1
+            logged_at = state["logged_at"]
+            if (
+                logged_at is not None
+                and now - logged_at < _POST_SCAN_DIAGNOSTIC_REPEAT_SECONDS
+            ):
+                state["suppressed"] += 1
+                return
+            frames: tuple[str, ...] = ()
+            if exc.__traceback__ is not None:
+                raw = traceback.format_tb(exc.__traceback__)[
+                    -_CODEX_DIAGNOSTIC_MAX_LINES:
+                ]
+                frames = tuple(
+                    _redacted_codex_diagnostic_text(" ".join(line.split()))
+                    for line in raw
+                )
+            _LOG.warning(
+                "post_scan_worker_diagnostic worker=%s code=%s exc=%s detail=%r "
+                "failures=%d suppressed=%d since=%ds tb=%r",
+                type(worker).__name__,
+                error_code,
+                exc_type,
+                detail,
+                state["failures"],
+                state["suppressed"],
+                int(now - state["first_at"]),
+                frames,
+            )
+            state["logged_at"] = now
+            state["suppressed"] = 0
+        except Exception:
+            pass
+
+    def _note_post_scan_worker_success(self, worker: Any, error_code: str) -> None:
+        """Close the record when a previously failing worker comes back.
+
+        An outage that ends as silently as it began is still unattributable:
+        without this line the log says a worker broke and never says it stopped
+        being broken, so a reader cannot bound the outage from the log alone.
+        Says nothing about a worker that was already healthy -- at
+        ``catalog_scan_seconds`` of 3 that would be its own flood.
+        """
+        try:
+            state = self._post_scan_worker_failures.pop(error_code, None)
+            if state is None:
+                return
+            _LOG.warning(
+                "post_scan_worker_recovered worker=%s code=%s failures=%d over=%ds",
+                type(worker).__name__,
+                error_code,
+                state["failures"],
+                int(float(self._monotonic()) - state["first_at"]),
+            )
+        except Exception:
+            pass
 
     async def _register_sidebar_after_successful_scan(self) -> bool:
         sidebar = self._config.sidebar

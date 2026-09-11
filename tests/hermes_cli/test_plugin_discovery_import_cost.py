@@ -65,6 +65,8 @@ FORBIDDEN_CLIENTS = frozenset({"requests", "httpx", "aiohttp", "urllib3"})
 # The nine that were fixed, as (import path, client). Kept explicit so the
 # per-module test names the real thing rather than whatever the scan discovers.
 FIXED_PLUGIN_MODULES = [
+    ("plugins.web.tavily.provider", "httpx"),
+    ("plugins.web.perplexity.provider", "httpx"),
     ("plugins.browser.browser_use.provider", "requests"),
     ("plugins.browser.browserbase.provider", "requests"),
     ("plugins.browser.firecrawl.provider", "requests"),

@@ -323,6 +323,15 @@ def _stage_commit_push(
     ).stdout.strip()
     if not branch:
         raise ExecutorError("worktree has no current branch")
+    # THE ONLY OUTWARD-FACING ACT IN THIS PACKAGE. It is a subprocess, so the
+    # machine-wide git guard (~/.claude/hooks/block-destructive-git.py) cannot
+    # see it -- it reads the ARGV of what an agent runs, and this carries no git
+    # verb there. DO NOT ADD AN AGENT-SESSION GATE HERE. This function is
+    # exercised by ~20 tests in tests/devflow_delegation/test_executor.py plus 2
+    # CLI-level ones, all against a real temp repo with a real local bare remote,
+    # and the suite runs inside an agent session -- a gate reading ambient
+    # environment here fails all of them. The gate lives at the typed-command
+    # seam instead: see AGENT CANARY GATE in devflow_delegation/cli.py.
     _run_checked(
         ["git", "push", "--set-upstream", target.remote, branch], cwd=worktree_path,
         timeout_seconds=90, label="git push",

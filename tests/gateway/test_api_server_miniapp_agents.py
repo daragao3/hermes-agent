@@ -256,3 +256,43 @@ async def test_api_delete_agent_kills_process(tmp_path):
     assert resp.status == 200
     assert data["ok"] is True
     kill.assert_called_once_with("proc_abc123")
+
+
+@pytest.mark.asyncio
+async def test_miniapp_document_policy_preserves_assets_and_api_isolation(tmp_path):
+    adapter = _make_adapter()
+    document = tmp_path / ".hermes" / "miniapp" / "index.html"
+    document.parent.mkdir(parents=True)
+    document.write_text('<html><script src="/assets/app.js"></script></html>')
+    app = _create_app(adapter)
+    app.router.add_get("/miniapp", adapter._handle_miniapp_index)
+    app.router.add_get("/miniapp/index.html", adapter._handle_miniapp_index)
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        async with TestClient(TestServer(app)) as client:
+            for path in ("/miniapp", "/miniapp/index.html"):
+                response = await client.get(path)
+                assert response.status == 200
+                assert '/assets/app.js' in await response.text()
+                policy = response.headers["Content-Security-Policy"]
+                assert "script-src 'self'" in policy
+                assert "connect-src 'self'" in policy
+                assert "frame-ancestors https://web.telegram.org" in policy
+                assert "X-Frame-Options" not in response.headers
+                assert response.headers["X-Content-Type-Options"] == "nosniff"
+            response = await client.get("/api/agents")
+            assert response.status == 401
+            assert response.headers["Content-Security-Policy"] == "default-src 'none'; frame-ancestors 'none'"
+            assert response.headers["X-Frame-Options"] == "DENY"
+
+
+@pytest.mark.asyncio
+async def test_missing_miniapp_document_keeps_strict_api_headers(tmp_path):
+    adapter = _make_adapter()
+    app = _create_app(adapter)
+    app.router.add_get("/miniapp", adapter._handle_miniapp_index)
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        async with TestClient(TestServer(app)) as client:
+            response = await client.get("/miniapp")
+            assert response.status == 404
+            assert response.headers["X-Frame-Options"] == "DENY"
+            assert response.headers["Content-Security-Policy"] == "default-src 'none'; frame-ancestors 'none'"

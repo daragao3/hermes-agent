@@ -37,7 +37,6 @@ import shutil
 
 import pytest
 
-from tools.environments import local as local_mod
 from tools.environments.local import (
     LocalEnvironment,
     _bash_safe_path,
@@ -46,9 +45,10 @@ from tools.environments.local import (
 from tools.file_operations import (
     ExecuteResult,
     ShellFileOperations,
-    _split_rg_files_output,
 )
 
+
+from tools.file_operations_search import _split_rg_files_output
 
 IS_WINDOWS = platform.system() == "Windows"
 HAS_RG = shutil.which("rg") is not None
@@ -60,9 +60,10 @@ windows_live = pytest.mark.skipif(
 
 
 @pytest.fixture
-def fake_windows(monkeypatch):
-    """Make the path translators behave as they do on Windows, on any host."""
-    monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+def windows_host():
+    """Exercise Windows path behavior on a real Windows host."""
+    if not IS_WINDOWS:
+        pytest.skip("Windows path behavior requires a Windows host")
 
 
 def _ops(root):
@@ -76,6 +77,10 @@ class _CapturingOps(ShellFileOperations):
     def __init__(self, results=None):
         # Deliberately skip __init__: these tests only exercise pure command
         # construction and result parsing, never the terminal backend.
+        from types import SimpleNamespace
+        self.env = SimpleNamespace(cwd=".")
+        self.cwd = "."
+        self._rg_resolution_cache = {"rg": "rg"}
         self.commands: list[str] = []
         self._results = list(results or [])
         self._command_cache = {"rg": True, "find": True, "grep": True}
@@ -93,42 +98,43 @@ class _CapturingOps(ShellFileOperations):
 
 class TestNativeExecPath:
     def test_noop_off_windows(self, monkeypatch):
-        monkeypatch.setattr(local_mod, "_IS_WINDOWS", False)
+        if IS_WINDOWS:
+            pytest.skip("POSIX path contract requires a POSIX host")
         # POSIX paths are real paths off Windows; never rewrite them.
         assert _native_exec_path("/c/Users/x") == "/c/Users/x"
         assert _native_exec_path("/home/diego/src") == "/home/diego/src"
 
-    def test_msys_form_becomes_native(self, fake_windows):
+    def test_msys_form_becomes_native(self, windows_host):
         assert _native_exec_path("/c/Users/diego/.hermes") == r"C:\Users\diego\.hermes"
         assert _native_exec_path("/d/Projects/foo bar") == r"D:\Projects\foo bar"
 
-    def test_cygwin_and_wsl_spellings(self, fake_windows):
+    def test_cygwin_and_wsl_spellings(self, windows_host):
         assert _native_exec_path("/cygdrive/c/Users/x") == r"C:\Users\x"
         assert _native_exec_path("/mnt/c/Users/x") == r"C:\Users\x"
 
-    def test_forward_slash_drive_path_is_normalized(self, fake_windows):
+    def test_forward_slash_drive_path_is_normalized(self, windows_host):
         assert _native_exec_path("C:/Users/diego/.hermes") == r"C:\Users\diego\.hermes"
 
-    def test_native_path_is_unchanged_and_idempotent(self, fake_windows):
+    def test_native_path_is_unchanged_and_idempotent(self, windows_host):
         native = r"C:\Users\diego\.hermes"
         assert _native_exec_path(native) == native
         assert _native_exec_path(_native_exec_path("/c/Users/diego/.hermes")) == native
 
-    def test_drive_root(self, fake_windows):
+    def test_drive_root(self, windows_host):
         assert _native_exec_path("/c") == "C:\\"
         assert _native_exec_path("C:/") == "C:\\"
 
-    def test_lowercase_drive_letter_is_upper_cased(self, fake_windows):
+    def test_lowercase_drive_letter_is_upper_cased(self, windows_host):
         assert _native_exec_path("c:/users/x") == r"C:\users\x"
 
-    def test_non_drive_paths_pass_through(self, fake_windows):
+    def test_non_drive_paths_pass_through(self, windows_host):
         # There is no correct drive-letter answer for these, and a relative
         # path already resolves against the shell's cwd.
         assert _native_exec_path("tools/environments") == "tools/environments"
         assert _native_exec_path("/tmp/scratch") == "/tmp/scratch"
         assert _native_exec_path("") == ""
 
-    def test_is_the_inverse_of_bash_safe_path(self, fake_windows):
+    def test_is_the_inverse_of_bash_safe_path(self, windows_host):
         # The two translations are deliberate opposites: _bash_safe_path for
         # MSYS coreutils, _native_exec_path for a native .exe.
         native = r"C:\Users\diego\.hermes"
@@ -141,30 +147,31 @@ class TestNativeExecPath:
 # ---------------------------------------------------------------------------
 
 class TestEscapers:
-    def test_literal_escaper_preserves_backslashes(self, fake_windows):
+    def test_literal_escaper_preserves_backslashes(self, windows_host):
         ops = _CapturingOps()
         # A regex, not a path: the backslash must survive verbatim.
         assert ops._escape_shell_literal(r"\d+") == r"'\d+'"
         assert ops._escape_shell_literal(r"foo\.py") == r"'foo\.py'"
 
-    def test_path_escaper_would_have_mangled_the_same_pattern(self, fake_windows):
+    def test_path_escaper_would_have_mangled_the_same_pattern(self, windows_host):
         # Documents the bug the literal escaper exists to avoid.
         ops = _CapturingOps()
         assert ops._escape_shell_arg(r"\d+") == "'/d+'"
 
-    def test_literal_escaper_still_escapes_single_quotes(self, fake_windows):
+    def test_literal_escaper_still_escapes_single_quotes(self, windows_host):
         ops = _CapturingOps()
         assert ops._escape_shell_literal("it's") == "'it'\"'\"'s'"
 
-    def test_native_path_arg_keeps_the_drive(self, fake_windows):
+    def test_native_path_arg_keeps_the_drive(self, windows_host):
         ops = _CapturingOps()
-        assert ops._escape_native_path_arg("C:/Users/x") == r"'C:\Users\x'"
-        assert ops._escape_native_path_arg("/c/Users/x") == r"'C:\Users\x'"
+        assert ops._escape_native_tool_arg("C:/Users/x") == "'C:/Users/x'"
+        assert ops._escape_native_tool_arg("/c/Users/x") == "'C:/Users/x'"
 
     def test_native_path_arg_is_a_noop_off_windows(self, monkeypatch):
-        monkeypatch.setattr(local_mod, "_IS_WINDOWS", False)
+        if IS_WINDOWS:
+            pytest.skip("POSIX path contract requires a POSIX host")
         ops = _CapturingOps()
-        assert ops._escape_native_path_arg("/home/diego/src") == "'/home/diego/src'"
+        assert ops._escape_native_tool_arg("/home/diego/src") == "'/home/diego/src'"
 
 
 # ---------------------------------------------------------------------------
@@ -172,58 +179,58 @@ class TestEscapers:
 # ---------------------------------------------------------------------------
 
 class TestSearchFilesCommand:
-    def test_absolute_drive_path_reaches_rg_in_native_form(self, fake_windows):
+    def test_absolute_drive_path_reaches_rg_in_native_form(self, windows_host):
         ops = _CapturingOps()
         ops._search_files_rg("*.json", "C:/Users/diego/.hermes/mailbox/matcher/inbox", 50, 0)
 
         cmd = ops.commands[0]
-        assert r"'C:\Users\diego\.hermes\mailbox\matcher\inbox'" in cmd
+        assert "'C:/Users/diego/.hermes/mailbox/matcher/inbox'" in cmd
         # The MSYS form is what a native rg.exe cannot resolve.
         assert "/c/Users" not in cmd
 
-    def test_stderr_is_not_discarded(self, fake_windows):
+    def test_stderr_is_not_discarded(self, windows_host):
         ops = _CapturingOps()
         ops._search_files_rg("*.json", "C:/Users/diego/inbox", 50, 0)
         for cmd in ops.commands:
             assert "2>/dev/null" not in cmd
 
-    def test_pipefail_is_set_so_the_error_guard_can_fire(self, fake_windows):
+    def test_pipefail_is_set_so_the_error_guard_can_fire(self, windows_host):
         ops = _CapturingOps()
         ops._search_files_rg("*.json", "C:/Users/diego/inbox", 50, 0)
         # Without pipefail the pipeline reports head's 0 and rg's 2 is lost.
         assert ops.commands[0].startswith("set -o pipefail; ")
 
-    def test_glob_is_quoted_literally(self, fake_windows):
+    def test_glob_is_quoted_literally(self, windows_host):
         ops = _CapturingOps()
         ops._search_files_rg(r"foo\.py", "C:/Users/diego", 50, 0)
         assert r"-g '*foo\.py'" in ops.commands[0]
 
-    def test_relative_path_is_left_alone(self, fake_windows):
+    def test_relative_path_is_left_alone(self, windows_host):
         ops = _CapturingOps()
         ops._search_files_rg("*.py", "tools", 50, 0)
         assert "'tools'" in ops.commands[0]
 
 
 class TestSearchContentCommand:
-    def test_absolute_drive_path_reaches_rg_in_native_form(self, fake_windows):
+    def test_absolute_drive_path_reaches_rg_in_native_form(self, windows_host):
         ops = _CapturingOps()
         ops._search_with_rg("needle", "C:/Users/diego/src", None, 50, 0, "content", 0)
 
         cmd = ops.commands[0]
-        assert r"'C:\Users\diego\src'" in cmd
+        assert "'C:/Users/diego/src'" in cmd
         assert "/c/Users" not in cmd
 
-    def test_regex_backslashes_survive(self, fake_windows):
+    def test_regex_backslashes_survive(self, windows_host):
         ops = _CapturingOps()
         ops._search_with_rg(r"\bdef\s+\w+", "C:/Users/diego/src", None, 50, 0, "content", 0)
         assert r"'\bdef\s+\w+'" in ops.commands[0]
 
-    def test_file_glob_backslashes_survive(self, fake_windows):
+    def test_file_glob_backslashes_survive(self, windows_host):
         ops = _CapturingOps()
         ops._search_with_rg("needle", "C:/Users/diego/src", r"foo\.py", 50, 0, "content", 0)
         assert r"--glob 'foo\.py'" in ops.commands[0]
 
-    def test_grep_fallback_keeps_msys_paths_but_literal_patterns(self, fake_windows):
+    def test_grep_fallback_keeps_msys_paths_but_literal_patterns(self, windows_host):
         # grep here is a Git Bash binary: it understands /c/... and must keep
         # getting it. Only the pattern changes.
         ops = _CapturingOps()
@@ -245,7 +252,7 @@ _RG_PATH_ERROR = (
 
 
 class TestFailedSearchIsNotEmpty:
-    def test_hard_error_is_surfaced(self, fake_windows):
+    def test_hard_error_is_surfaced(self, windows_host):
         ops = _CapturingOps(results=[
             ExecuteResult(stdout=_RG_PATH_ERROR, exit_code=2),  # --sortr attempt
             ExecuteResult(stdout=_RG_PATH_ERROR, exit_code=2),  # plain retry
@@ -258,7 +265,7 @@ class TestFailedSearchIsNotEmpty:
         # The error text must never be parsed back as a file.
         assert not result.files
 
-    def test_no_matches_is_still_an_honest_empty_result(self, fake_windows):
+    def test_no_matches_is_still_an_honest_empty_result(self, windows_host):
         # rg exits 1 when nothing matched. That is not an error.
         ops = _CapturingOps(results=[
             ExecuteResult(stdout="", exit_code=1),
@@ -269,7 +276,7 @@ class TestFailedSearchIsNotEmpty:
         assert result.error is None
         assert result.total_count == 0
 
-    def test_partial_failure_keeps_the_real_results(self, fake_windows):
+    def test_partial_failure_keeps_the_real_results(self, windows_host):
         # rg exits 2 for a single unreadable directory in a tree that
         # otherwise listed fine. Those paths are real; do not throw them away.
         stdout = "\n".join([
@@ -284,21 +291,11 @@ class TestFailedSearchIsNotEmpty:
         assert result.total_count == 2
         assert all(f.endswith(".json") for f in result.files)
 
-    def test_sortr_fallback_still_runs_before_erroring(self, fake_windows):
-        # An old rg rejects --sortr with exit 2. The unsorted retry must still
-        # happen, and its success must win.
-        ops = _CapturingOps(results=[
-            ExecuteResult(
-                stdout="rg: error parsing flag --sortr: choice 'modified' is unrecognized",
-                exit_code=2,
-            ),
-            ExecuteResult(stdout=r"C:\Users\diego\inbox\a.json", exit_code=0),
-        ])
+    def test_discovery_order_does_not_request_global_sort(self, windows_host):
+        ops = _CapturingOps(results=[ExecuteResult(stdout="C:/Users/diego/inbox/a.json", exit_code=0)])
         result = ops._search_files_rg("*.json", "C:/Users/diego/inbox", 50, 0)
-
-        assert len(ops.commands) == 2
-        assert "--sortr" in ops.commands[0]
-        assert "--sortr" not in ops.commands[1]
+        assert len(ops.commands) == 1
+        assert "--sortr" not in ops.commands[0]
         assert result.error is None
         assert result.total_count == 1
 

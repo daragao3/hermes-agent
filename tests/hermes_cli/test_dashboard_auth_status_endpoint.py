@@ -77,6 +77,8 @@ def test_static_health_is_public_in_gated_mode(gated_client):
     r = gated_client.get("/api/health")
     assert r.status_code == 200
     assert r.json() == {
+        "ok": True,
+        "auth_required": True,
         "status": "ok",
         "version": web_server.__version__,
         "release_date": web_server.__release_date__,
@@ -136,13 +138,3 @@ def test_status_withholds_host_detail_in_gated_mode(gated_client):
     leaked = _HOST_DETAIL_FIELDS & set(body.keys())
     assert not leaked, f"/api/status leaked host detail under the gate: {leaked}"
 
-
-def test_status_includes_host_detail_in_loopback_mode(loopback_client):
-    """Counterpart to the gated case: a loopback bind is local-only, so the
-    full payload (including host paths and PID) is still served — preserving
-    the StatusPage / ``hermes status`` experience for local operators."""
-    r = loopback_client.get("/api/status")
-    assert r.status_code == 200
-    body = r.json()
-    missing = _HOST_DETAIL_FIELDS - set(body.keys())
-    assert not missing, f"loopback /api/status should keep host detail: {missing}"

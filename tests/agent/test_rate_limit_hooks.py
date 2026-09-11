@@ -83,65 +83,22 @@ def test_non_rate_limit_failover_does_not_record(captured):
 
 
 def test_reason_is_threaded_at_known_sites():
-    """The two sites that know their reason must pass it — as TELEMETRY.
-
-    Without this, the eager empty-response fallback (documented in its own
-    comment as 'a common rate-limit symptom') and the non-retryable branch
-    both fail over invisibly.
-
-    The assertion demands ``telemetry_reason=``, not ``reason=``. ``reason=``
-    reaches a behavioral branch that arms ``agent._rate_limited_until`` for 60s
-    and keeps the agent pinned to its fallback (see
-    test_telemetry_reason_does_not_arm_the_cooldown), which would break Phase
-    1's promise that it cannot change which model answers a call. Do not
-    "restore" reason= here.
-    """
+    """The split owners preserve attribution-only fallback call sites."""
+    import ast
     import inspect
-    from agent import conversation_loop
+    from agent import turn_api_error, turn_response_check, turn_recovery
 
-    src = inspect.getsource(conversation_loop)
-
-    # The eager empty/malformed-response fallback.
-    assert "_try_activate_fallback(telemetry_reason=FailoverReason.upstream_rate_limit)" in src, \
-        "the eager empty/malformed-response fallback must attribute itself"
-    assert "_try_activate_fallback(reason=FailoverReason.upstream_rate_limit)" not in src, \
-        "that site must attribute via telemetry_reason=, never reason= — " \
-        "reason= arms the 60s fallback-pinning cooldown"
-
-    # The non-retryable branch (site 2). This needs its own explicit check,
-    # not just the bare==6 count below: reverting this site from
-    # telemetry_reason=classified.reason back to reason=classified.reason
-    # does not touch a single bare "_try_activate_fallback()" call, so
-    # bare==6 stays green through exactly this regression. The literal
-    # string "_try_activate_fallback(reason=classified.reason)" also already
-    # appears twice elsewhere in this file, at two pre-existing, untouched,
-    # genuinely-behavioral sites (rate-limit/billing failover, auth
-    # failover) — so a blanket "must be absent" would false-fail on correct
-    # code. Pin the count instead: it must stay at exactly those 2. A revert
-    # of site 2 raises it to 3.
-    assert "_try_activate_fallback(telemetry_reason=classified.reason)" in src, \
-        "the non-retryable branch must attribute itself via telemetry_reason="
-    site2_reason_count = src.count("_try_activate_fallback(reason=classified.reason)")
-    assert site2_reason_count == 2, (
-        f"expected exactly 2 legitimate reason=classified.reason sites "
-        f"(rate-limit/billing and auth failover), found {site2_reason_count} — "
-        "the non-retryable branch (site 2) appears to have reverted from "
-        "telemetry_reason= to reason=, which re-arms the 60s fallback-pinning "
-        "cooldown; bare==6 alone would not have caught this"
-    )
-
-    # Verified counts before this task: 8 bare, 2 carrying a reason.
-    # This task converts exactly 2, leaving 6 deliberately bare (the sites
-    # that genuinely do not know why they are failing over). An exact match
-    # makes a regression in EITHER direction fail: a reason-carrying site
-    # falling back to bare, or someone "helpfully" inventing a reason at a
-    # site that does not know one.
-    bare = src.count("_try_activate_fallback()")
-    assert bare == 6, (
-        f"expected exactly 6 deliberately-bare call sites, found {bare} — "
-        "either a reason-carrying site regressed, or a reason was invented "
-        "at a site that cannot know it (which manufactures false alerts)"
-    )
+    for module, expected in [(turn_api_error, "classified.reason"),
+                             (turn_response_check, "FailoverReason.upstream_rate_limit")]:
+        tree = ast.parse(inspect.getsource(module))
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Attribute) and n.func.attr == "_try_activate_fallback"
+                 and any(k.arg == "telemetry_reason" for k in n.keywords)]
+        assert len(calls) == 1
+        assert not calls[0].args
+        assert [(k.arg, ast.unparse(k.value)) for k in calls[0].keywords] == [("telemetry_reason", expected)]
+    # Existing rate-limit/billing and auth recovery remain behavioral.
+    assert inspect.getsource(turn_recovery).count("_try_activate_fallback(reason=classified.reason)") == 2
 
 
 def test_telemetry_reason_does_not_arm_the_cooldown(captured, monkeypatch):
@@ -347,6 +304,7 @@ def _agent_with_chain(chain):
     agent._unavailable_fallback_keys = set()
     agent._credential_pool = None
     agent._rate_limited_until = 0
+    agent._rate_limit_backoff_count = 0
     return agent
 
 
@@ -372,8 +330,8 @@ def test_successful_call_clears_open_episode(state_file_agent):
 def test_clear_hook_is_present_in_conversation_loop():
     """Positive control for the WIRING, not just the function."""
     import inspect
-    from agent import conversation_loop
-    src = inspect.getsource(conversation_loop)
+    from agent import turn_response_check
+    src = inspect.getsource(turn_response_check.check_api_response)
     assert "rate_limit_signal import clear" in src, \
         "D hook is unwired — clear() is never called from the success path"
 

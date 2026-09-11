@@ -23,6 +23,13 @@ from gateway import status
 from gateway.platforms import base as platform_base
 
 
+@pytest.fixture(autouse=True)
+def _gateway_identity(monkeypatch):
+    monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123)
+    monkeypatch.setattr(status, "_looks_like_gateway_process", lambda pid: True)
+    monkeypatch.setattr(status, "_process_is_stopped", lambda pid: False)
+
+
 class _StubPlatform:
     """Minimal Platform enum stand-in — only ``.value`` is read."""
     value = "telegram"
@@ -36,6 +43,8 @@ class _StubAdapter:
     platform = _StubPlatform()
 
     def __init__(self):
+        self._platform_lock_takeover_allowed = False
+        self._platform_lock_takeover_attempted = False
         self._platform_lock_scope = None
         self._platform_lock_identity = None
         self._fatal_error_code = None
@@ -112,7 +121,7 @@ class TestPlatformLockRecheckPath:
             "telegram-bot-token", "secret", "Telegram bot token"
         )
         assert ok is True
-        assert call_count["n"] == 2  # alive then dead — recheck path
+        assert call_count["n"] == 3  # alive, dead on recheck, dead before synthesis
 
         # Synthesis fired exactly once for the dead previous PID.
         assert captured_bus.emit.call_count == 1

@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SidebarProvider } from '@/components/ui/sidebar'
 import {
   $panesFlipped,
   $pinnedSessionIds,
-  $sidebarAgentsGrouped,
+  setSidebarAgentsGrouped,
   $sidebarPinsOpen,
   $sidebarRecentsOpen,
   $sidebarSessionOrderIds,
@@ -21,7 +21,6 @@ import {
   $projectScope,
   $projectTree,
   $projectTreeLoading,
-  $removedSessionIds,
   $reposScanning,
   ALL_PROJECTS
 } from '@/store/projects'
@@ -34,10 +33,10 @@ import {
   $sessionAllProfileTotals,
   $sessionProfileTotals,
   $sessions,
-  $sessionsLoading,
-  $sessionsTotal
+  $sessionsLoading
 } from '@/store/session'
 import { $sessionStates } from '@/store/session-states'
+import { $removedSessionIds } from '@/store/session-removal'
 import type { SessionInfo } from '@/types/hermes'
 
 import { ChatSidebar } from './index'
@@ -116,7 +115,7 @@ function renderSidebar(): void {
           onNewSessionInWorkspace={noop}
           onNewSessionSplit={noop}
           onResumeSession={noop}
-          onTriggerCronJob={noop}
+          onTriggerCronJob={async () => {}}
         />
       </SidebarProvider>
     </MemoryRouter>
@@ -127,7 +126,6 @@ beforeEach(() => {
   window.localStorage.clear()
   $panesFlipped.set(false)
   $pinnedSessionIds.set([])
-  $sidebarAgentsGrouped.set(true)
   $sidebarPinsOpen.set(true)
   $sidebarRecentsOpen.set(true)
   $sidebarSessionOrderIds.set([])
@@ -135,6 +133,7 @@ beforeEach(() => {
 
   $profiles.set([])
   $showAllProfiles.set(false)
+  setSidebarAgentsGrouped(true)
   $activeGatewayProfile.set('default')
 
   $activeProjectId.set(null)
@@ -165,7 +164,6 @@ beforeEach(() => {
   $sessionProfileTotals.set({ default: 1 })
   $sessions.set([makeSession()])
   $sessionsLoading.set(false)
-  $sessionsTotal.set(1)
   $sessionStates.set({})
 })
 
@@ -211,12 +209,13 @@ describe('ChatSidebar session visibility', () => {
   it('never replaces Sessions when the Projects view is toggled', () => {
     renderSidebar()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show sessions' }))
+    // Projects grouping is controlled by the shared sidebar filter state.
+    act(() => setSidebarAgentsGrouped(false))
 
     expect(screen.queryByRole('region', { name: 'Projects' })).toBeNull()
     expect(screen.getByRole('region', { name: 'Sessions' }).textContent).toContain('20260808_191530_b67b9d')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show projects' }))
+    act(() => setSidebarAgentsGrouped(true))
 
     expect(screen.getByRole('region', { name: 'Projects' })).toBeTruthy()
     expect(screen.getByRole('region', { name: 'Sessions' }).textContent).toContain('20260808_191530_b67b9d')
@@ -234,7 +233,6 @@ describe('ChatSidebar session visibility', () => {
 describe('scoped-but-empty profile empty state', () => {
   beforeEach(() => {
     $sessions.set([])
-    $sessionsTotal.set(0)
     $showAllProfiles.set(false)
     $activeGatewayProfile.set('main')
     $profiles.set([

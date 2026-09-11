@@ -1,14 +1,13 @@
 'use client'
 
-import type { ReactNode } from 'react'
 import * as React from 'react'
-import { useShikiHighlighter } from 'react-shiki/core'
-import { type ShikiTransformer, type ThemedToken } from 'shiki'
+import type { ShikiTransformer, ThemedToken } from 'shiki'
 
 import { chunkLines, type LineChunk, useFixedRowWindow } from '@/components/chat/fixed-row-window'
 import { exceedsHighlightBudget, SHIKI_THEME } from '@/components/chat/shiki-highlighter'
+import { ErrorBoundary } from '@/components/error-boundary'
 import { shikiLanguageForFilename } from '@/lib/markdown-code'
-import { type CuratedHighlighter, normalizeShikiLang, useCuratedHighlighter } from '@/lib/shiki-core'
+import { normalizeShikiLang, useCuratedHighlighter } from '@/lib/shiki-core'
 import { cn } from '@/lib/utils'
 
 /**
@@ -42,15 +41,15 @@ interface ParsedHunk {
 // plain renderer; the Shiki path omits it so syntax colors win, layering only
 // the background + border.
 const DIFF_KIND_TINT: Record<DiffKind, string> = {
-  add: 'border-emerald-500 bg-emerald-500/12',
+  add: 'border-(--ui-diff-add-border) bg-(--ui-diff-add-background)',
   context: 'border-transparent',
-  remove: 'border-rose-500 bg-rose-500/12'
+  remove: 'border-(--ui-diff-remove-border) bg-(--ui-diff-remove-background)'
 }
 
 const DIFF_KIND_TEXT: Record<DiffKind, string> = {
-  add: 'text-emerald-800 dark:text-emerald-200',
+  add: 'text-(--ui-diff-add-foreground)',
   context: '',
-  remove: 'text-rose-800 dark:text-rose-200'
+  remove: 'text-(--ui-diff-remove-foreground)'
 }
 
 const DIFF_LINE_BASE = 'block min-w-max whitespace-pre border-l-2 px-2.5 py-px'
@@ -277,7 +276,8 @@ function parseFullFileDiff(diff: string, fullText: string): DiffLine[] {
   return out
 }
 
-function DiffBody({ lines, syntax }: { lines: DiffLine[]; syntax?: boolean }) {
+/** Exported for the lazily-loaded SyntaxDiff (syntax-diff.tsx). */
+export function DiffBody({ lines, syntax }: { lines: DiffLine[]; syntax?: boolean }) {
   return (
     <>
       {lines.map((line, index) => (
@@ -443,7 +443,8 @@ function TokenizedDiffBody({
 
 // Shiki transformer: tag each `.line` with the diff tint for its kind, so the
 // syntax-highlighted output keeps add/remove backgrounds + the gutter accent.
-function diffLineTransformer(kinds: DiffKind[]): ShikiTransformer {
+// Exported for the lazily-loaded SyntaxDiff (syntax-diff.tsx).
+export function diffLineTransformer(kinds: DiffKind[]): ShikiTransformer {
   return {
     line(node, line) {
       const kind = kinds[line - 1] ?? 'context'
@@ -463,36 +464,25 @@ function diffLineTransformer(kinds: DiffKind[]): ShikiTransformer {
 // highlighter, and hook order must stay stable — so gate here and only mount
 // the highlighting hook once the curated core is ready.
 function SyntaxDiff({ language, lines }: { language: string; lines: DiffLine[] }) {
-  const highlighter = useCuratedHighlighter()
-
-  if (!highlighter) {
-    return <DiffBody lines={lines} />
-  }
-
-  return <SyntaxDiffReady highlighter={highlighter} language={language} lines={lines} />
+  // The Shiki hook lives in a lazily-loaded module (syntax-diff.tsx) so the
+  // multi-MB shiki chunk stays off the cold-start path. Until it (and the
+  // highlight itself) resolves, show the plain colored diff — no flash.
+  //
+  // A rejected dynamic import (e.g. a packaged app whose renderer window is
+  // pointed at the asar copy of dist/ while the chunk only exists in
+  // app.asar.unpacked, #93479) throws past Suspense, which only covers the
+  // pending state. Without a local boundary that throw reaches the workspace
+  // ContribBoundary and blanks the whole pane instead of just this diff.
+  return (
+    <ErrorBoundary fallback={() => <DiffBody lines={lines} />} label="syntax-diff">
+      <React.Suspense fallback={<DiffBody lines={lines} />}>
+        <LazySyntaxDiff language={language} lines={lines} />
+      </React.Suspense>
+    </ErrorBoundary>
+  )
 }
 
-function SyntaxDiffReady({
-  highlighter,
-  language,
-  lines
-}: {
-  highlighter: CuratedHighlighter
-  language: string
-  lines: DiffLine[]
-}) {
-  const code = React.useMemo(() => lines.map(line => line.text).join('\n'), [lines])
-  const transformers = React.useMemo(() => [diffLineTransformer(lines.map(line => line.kind))], [lines])
-
-  const highlighted = useShikiHighlighter(code, normalizeShikiLang(language), SHIKI_THEME, {
-    defaultColor: 'light-dark()',
-    highlighter,
-    transformers
-  })
-
-  // Until Shiki resolves, show the plain colored diff so there's no flash.
-  return (highlighted as ReactNode) ?? <DiffBody lines={lines} />
-}
+const LazySyntaxDiff = React.lazy(() => import('./syntax-diff'))
 
 interface DiffLinesProps extends Omit<React.ComponentProps<'pre'>, 'children'> {
   text: string
@@ -514,7 +504,7 @@ function overviewRuns(lines: DiffLine[]): { kind: 'add' | 'remove'; sizePct: num
   const total = lines.length || 1
   const runs: { kind: 'add' | 'remove'; sizePct: number; startPct: number }[] = []
 
-  for (let i = 0; i < lines.length; ) {
+  for (let i = 0; i < lines.length;) {
     const kind = lines[i].kind
 
     if (kind === 'context') {
@@ -556,7 +546,10 @@ function DiffOverviewRuler({ lines }: { lines: DiffLine[] }) {
       <div className="relative w-full" style={{ height: `min(100%, ${lines.length * PREVIEW_LINE_PX}px)` }}>
         {runs.map((run, index) => (
           <div
-            className={cn('absolute inset-x-0', run.kind === 'add' ? 'bg-(--ui-green)' : 'bg-(--ui-red)')}
+            className={cn(
+              'absolute inset-x-0',
+              run.kind === 'add' ? 'bg-(--ui-diff-add-border)' : 'bg-(--ui-diff-remove-border)'
+            )}
             key={index}
             style={{ height: `max(0.125rem, ${run.sizePct}%)`, top: `${run.startPct}%` }}
           />
@@ -658,7 +651,13 @@ export function FileDiffPanel({
       >
         {showLineNumbers ? (
           <div className="grid min-w-max grid-cols-[auto_minmax(0,1fr)]">
-            <div className="sticky left-0 z-1 select-none bg-(--ui-editor-surface-background) py-3 text-muted-foreground/55">
+            <div
+              className="sticky left-0 z-1 select-none bg-(--ui-editor-surface-background) py-3 text-muted-foreground/55"
+              // Masks the code scrolling horizontally beneath it, so it has to
+              // stay opaque when window glass thins the field. See
+              // `[data-glass-opaque]` in styles.css.
+              data-glass-opaque=""
+            >
               {beforeRows > 0 && <div aria-hidden style={{ height: beforeRows * PREVIEW_LINE_PX }} />}
               {visibleLineChunks.map(chunk => (
                 <div className="block" key={chunk.start}>

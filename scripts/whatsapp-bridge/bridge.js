@@ -36,10 +36,13 @@ import { createOutboundIdTracker } from './outbound_ids.js';
 import { classifyOwnerMessageGate } from './owner_message_gate.js';
 import {
   buildPollPayload,
+  createReconnectScheduler,
+  createVersionResolver,
   buildLocationPayload,
   buildTextSendPayload,
   createBoundedMessageStore,
   extractBridgeEvent,
+  inboundReadReceiptKeys,
   inferMediaType,
   mediaPayloadForFile,
   listenWithRetry,
@@ -98,6 +101,12 @@ const FORWARD_OWNER_MESSAGES =
   process.env &&
   typeof process.env.WHATSAPP_FORWARD_OWNER_MESSAGES === 'string' &&
   ['1', 'true', 'yes', 'on'].includes(process.env.WHATSAPP_FORWARD_OWNER_MESSAGES.toLowerCase());
+
+const SEND_READ_RECEIPTS =
+  typeof process !== 'undefined' &&
+  process.env &&
+  typeof process.env.WHATSAPP_SEND_READ_RECEIPTS === 'string' &&
+  ['1', 'true', 'yes', 'on'].includes(process.env.WHATSAPP_SEND_READ_RECEIPTS.toLowerCase());
 
 const PORT = parseInt(getArg('port', '3000'), 10);
 const SESSION_DIR = getArg('session', path.join(process.env.HOME || '~', '.hermes', 'whatsapp', 'session'));
@@ -455,42 +464,14 @@ function emitPairEvent(event) {
   } catch {}
 }
 
-// Cache the WA Web version across reconnects: fetchLatestBaileysVersion()
-// is a network fetch, and a reconnect happens precisely when the network
-// just hiccuped — failing it must not abort the reconnect.
-let cachedWaVersion = null;
-async function resolveWaVersion() {
-  try {
-    const { version } = await fetchLatestBaileysVersion();
-    cachedWaVersion = version;
-  } catch (err) {
-    console.warn(
-      `[bridge] fetchLatestBaileysVersion failed (${err?.message || err}); ` +
-      (cachedWaVersion ? 'using cached version' : 'using Baileys default')
-    );
-  }
-  return cachedWaVersion || undefined;
-}
-
-// All reconnects funnel through here so a rejected startSocket() (e.g.
-// version fetch or auth-state read failing mid network blip) retries
-// instead of surfacing as an unhandled rejection.
-function scheduleReconnect(delayMs) {
-  setTimeout(() => {
-    startSocket().catch((err) => {
-      console.error('[bridge] reconnect attempt failed:', err?.message || err);
-      scheduleReconnect(5000);
-    });
-  }, delayMs);
-}
+const scheduleReconnect = createReconnectScheduler(() => startSocket());
+const getWAVersion = createVersionResolver(fetchLatestBaileysVersion);
 
 async function startSocket() {
   const { state, saveCreds } = await useAtomicMultiFileAuthState(SESSION_DIR);
-  const version = await resolveWaVersion();
+  const version = await getWAVersion();
 
   sock = makeWASocket({
-    // Spread so an unresolved version falls through to the Baileys default
-    // instead of overriding it with undefined.
     ...(version ? { version } : {}),
     auth: state,
     logger,
@@ -1180,6 +1161,30 @@ app.post('/typing', async (req, res) => {
   }
 });
 
+// Mark an inbound message as read only after the Python adapter has accepted
+// it through the authoritative DM/group/mention intake policy.
+app.post('/read', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected' });
+  }
+
+  const receiptKeys = inboundReadReceiptKeys({
+    key: req.body?.key,
+    enabled: SEND_READ_RECEIPTS,
+  });
+  if (receiptKeys.length === 0) {
+    return res.json({ success: true, marked: false });
+  }
+
+  try {
+    await sock.readMessages(receiptKeys);
+    return res.json({ success: true, marked: true });
+  } catch (err) {
+    console.warn('[bridge] failed to send read receipt:', err.message);
+    return res.status(500).json({ error: 'Failed to send read receipt' });
+  }
+});
+
 // Chat info
 app.get('/chat/:id', async (req, res) => {
   const chatId = req.params.id;
@@ -1212,6 +1217,7 @@ app.get('/health', (req, res) => {
     queueLength: messageQueue.length,
     uptime: process.uptime(),
     scriptHash: SCRIPT_HASH,
+    sendReadReceipts: SEND_READ_RECEIPTS,
   });
 });
 

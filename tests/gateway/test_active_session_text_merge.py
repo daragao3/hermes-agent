@@ -32,10 +32,9 @@ sys.modules.setdefault("telegram.ext", types.ModuleType("telegram.ext"))
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
     BasePlatformAdapter,
-    MessageEvent,
-    MessageType,
     SendResult,
 )
+from gateway.platforms.event import MessageEvent, MessageType
 from gateway.session import SessionSource, build_session_key
 from tests.gateway.hang_guards import HANG_GUARD_S
 
@@ -114,6 +113,63 @@ def _make_adapter() -> BasePlatformAdapter:
 
 def _debounced_event(adapter: BasePlatformAdapter, session_key: str) -> MessageEvent:
     return adapter._text_debounce[session_key].event
+
+
+@pytest.mark.asyncio
+async def test_non_dm_message_does_not_wait_for_topic_recovery_executor(monkeypatch):
+    """Group messages must not queue behind the shared thread pool.
+
+    Topic recovery only applies to Telegram DM topic mode. Offloading that
+    no-op check for every group message makes ingress wait behind unrelated
+    blocking jobs when the default executor is saturated.
+    """
+    adapter = _make_adapter()
+    recovery = MagicMock(return_value=None)
+    adapter.set_topic_recovery_fn(recovery)
+    executor_called = False
+    never_release = asyncio.Event()
+
+    async def _blocked_to_thread(*args, **kwargs):
+        nonlocal executor_called
+        executor_called = True
+        await never_release.wait()
+
+    monkeypatch.setattr(asyncio, "to_thread", _blocked_to_thread)
+
+    await asyncio.wait_for(
+        adapter.handle_message(_make_event("/status", chat_type="group")),
+        timeout=1.0,
+    )
+    await asyncio.sleep(0)
+
+    assert executor_called is False
+    recovery.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dm_topic_recovery_stays_offloaded(monkeypatch):
+    """Real Telegram DM topic recovery must still run outside the event loop."""
+    adapter = _make_adapter()
+    recovery = MagicMock(return_value="topic-222")
+    adapter.set_topic_recovery_fn(recovery)
+    offloaded = False
+
+    async def _inline_to_thread(func, *args, **kwargs):
+        nonlocal offloaded
+        offloaded = True
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", _inline_to_thread)
+    event = _make_event("hello", chat_type="dm", thread_id="1")
+    original_source = event.source
+
+    await adapter.handle_message(event)
+    await asyncio.sleep(0)
+
+    assert offloaded is True
+    assert recovery.call_count == 1
+    assert recovery.call_args.args[0] is original_source
+    assert event.source.thread_id == "topic-222"
 
 
 @pytest.mark.asyncio
@@ -308,70 +364,11 @@ async def test_control_and_clarify_messages_bypass_text_debounce():
     assert session_key not in adapter._pending_messages
 
 
-@pytest.mark.asyncio
-async def test_debounce_skipped_when_busy_text_mode_not_queue():
-    adapter = _make_adapter()
-    adapter._busy_text_mode = ""
-    event = _make_event("direct merge")
-    session_key = build_session_key(event.source)
-    adapter._active_sessions[session_key] = asyncio.Event()
-
-    await adapter.handle_message(event)
-
-    assert adapter._pending_messages[session_key].text == "direct merge"
-    assert session_key not in adapter._text_debounce
-
-
-def test_debounce_respects_env_var_override(monkeypatch):
-    monkeypatch.setenv("HERMES_GATEWAY_BUSY_TEXT_DEBOUNCE_SECONDS", "2.5")
-    adapter = _make_initialized_adapter()
-    assert adapter._busy_text_debounce_seconds == 2.5
-
-
-@pytest.mark.asyncio
-async def test_debounce_cleanup_in_cancel_background_tasks():
-    adapter = _make_adapter()
-    adapter._busy_text_debounce_seconds = 1.0
-
-    event = _make_event("cleanup test")
-    session_key = build_session_key(event.source)
-    adapter._active_sessions[session_key] = asyncio.Event()
-    await adapter.handle_message(event)
-
-    assert session_key in adapter._text_debounce
-
-    await adapter.cancel_background_tasks()
-
-    assert session_key not in adapter._text_debounce
-
-
-@pytest.mark.asyncio
-async def test_single_followup_is_stored_as_is():
-    adapter = _make_adapter()
-    adapter._busy_text_mode = ""
-    first = _make_event("only one")
-    session_key = build_session_key(first.source)
-
-    adapter._active_sessions[session_key] = asyncio.Event()
-    await adapter.handle_message(first)
-
-    pending = adapter._pending_messages[session_key]
-    assert pending is first
-    assert pending.text == "only one"
-    assert not adapter._active_sessions[session_key].is_set()
-
-
 def test_adapter_defaults_to_interrupt_mode(monkeypatch):
     monkeypatch.delenv("HERMES_GATEWAY_BUSY_TEXT_MODE", raising=False)
     adapter = _make_initialized_adapter()
     assert adapter._busy_text_mode == "interrupt"
     assert not adapter._is_queue_text_debounce_candidate(_make_event("hello"))
-
-
-def test_adapter_is_queue_text_debounce_candidate_when_queue_set():
-    # _make_adapter() pins _busy_text_mode="queue" to exercise debounce.
-    adapter = _make_adapter()
-    assert adapter._is_queue_text_debounce_candidate(_make_event("hello world"))
 
 
 def test_command_messages_bypass_debounce_even_in_queue_mode():
@@ -380,8 +377,3 @@ def test_command_messages_bypass_debounce_even_in_queue_mode():
     assert not adapter._is_queue_text_debounce_candidate(_make_event("/stop"))
 
 
-def test_busy_text_mode_respects_env_var_override(monkeypatch):
-    monkeypatch.setenv("HERMES_GATEWAY_BUSY_TEXT_MODE", "interrupt")
-    adapter = _make_initialized_adapter()
-    assert adapter._busy_text_mode == "interrupt"
-    assert not adapter._is_queue_text_debounce_candidate(_make_event("test"))

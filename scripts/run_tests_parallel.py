@@ -39,7 +39,9 @@ Usage:
 
 Environment:
     HERMES_TEST_WORKERS  Override worker count (default: os.cpu_count())
-    HERMES_TEST_PATHS    Override discovery roots (colon-sep, default: 'tests')
+    HERMES_TEST_PATHS    Override discovery roots (colon-sep; on Windows
+                         ';' also works and drive letters are handled;
+                         default: 'tests')
 
     NOTE: scripts/run_tests.sh execs this script under ``env -i`` with an
     explicit allowlist, so a variable only reaches us if that allowlist
@@ -57,6 +59,7 @@ import argparse
 import atexit
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -561,6 +564,76 @@ def _split_file_list(value: str) -> List[str]:
     return files
 
 
+def _split_pathspec(value: str) -> List[str]:
+    """Split a separator-joined path list (``--paths``/``--files``/
+    ``HERMES_TEST_PATHS``) into individual paths.
+
+    POSIX: ``:``-separated, as documented.
+
+    Windows: ``;`` (``os.pathsep``) and ``:`` are both accepted as
+    separators, but a ``:`` that forms a drive letter (``C:\\...`` or
+    ``C:/...``) stays glued to its path — a naive ``split(":")`` turns
+    ``C:\\repo\\tests`` into ``['C', '\\repo\\tests']``, where the bogus
+    ``C`` becomes a phantom discovery root and the rooted remainder only
+    resolves by accident of ``Path.__truediv__`` re-anchoring it onto
+    ``repo_root``'s drive.
+    """
+    if sys.platform != "win32":
+        return [p for p in value.split(":") if p.strip()]
+    parts: List[str] = []
+    for chunk in value.split(";"):
+        raw = chunk.split(":")
+        i = 0
+        while i < len(raw):
+            part = raw[i]
+            if (
+                len(part) == 1
+                and part.isalpha()
+                and i + 1 < len(raw)
+                and raw[i + 1][:1] in ("\\", "/")
+            ):
+                part = f"{part}:{raw[i + 1]}"
+                i += 1
+            parts.append(part)
+            i += 1
+    return [p for p in parts if p.strip()]
+
+# Host-OS gating (see the ``_OS_MARKS`` block in tests/conftest.py): tests
+# marked for another host are collected and SKIPPED by the conftest hook —
+# this runner never executes them, by construction. The summary calls that
+# out explicitly so a local run isn't misread as covering macOS/Windows
+# behaviour, and names the CI lane where those tests actually execute.
+_OS_MARKERS = {
+    "linux_only": ("linux", "the main Linux CI lane"),
+    "macos_only": ("darwin", "the tests-os CI lane (macos-latest)"),
+    "windows_only": ("win32", "the tests-os CI lane (windows-latest)"),
+}
+
+
+def _off_host_marker_files(files: List[Path]) -> dict[str, int]:
+    """Count discovered files referencing each marker for an OS we are not on.
+
+    Whole-word text match, same approach as scripts/ci/list_os_marked_tests.py:
+    over-counting a prose mention is harmless here (the note is informational);
+    what matters is never reporting 0 while gated tests exist.
+    """
+    off_host = {
+        marker: re.compile(rf"\b{marker}\b")
+        for marker, (host_prefix, _) in _OS_MARKERS.items()
+        if not sys.platform.startswith(host_prefix)
+    }
+    counts = {marker: 0 for marker in off_host}
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for marker, pattern in off_host.items():
+            if pattern.search(text):
+                counts[marker] += 1
+    return {marker: n for marker, n in counts.items() if n}
+
+
 def _approximately_count_tests(
     files: List[Path], repo_root: Path
 ) -> dict[Path, int]:
@@ -795,6 +868,26 @@ def _spawn_pytest(
         basetemp.parent.mkdir(parents=True, exist_ok=True)
         cmd.append(f"--basetemp={basetemp}")
 
+    # Give this subprocess its own pytest temp root.
+    #
+    # pytest builds its tmp_path root as <temproot>/pytest-of-<user>/. At the
+    # end of a session it walks that directory with cleanup_dead_symlinks().
+    # The walk lists the directory. Then it asks whether the `pytest-current`
+    # symlink resolves. Then it unlinks the symlink.
+    #
+    # Every file shared one root. A second process replaced that symlink
+    # between the question and the unlink. The first process then died with
+    # FileNotFoundError after all of its tests passed.
+    #
+    # The risk grows with the number of processes that finish together. At 8
+    # workers it never occurred. At 144 workers it occurs.
+    #
+    # One root for each subprocess removes the shared directory that the race
+    # needs. The parent deletes the root after the attempt.
+    env = os.environ.copy()
+    temproot = tempfile.mkdtemp(prefix="hermes-pytest-tmproot-")
+    env["PYTEST_DEBUG_TEMPROOT"] = temproot
+
     subproc_start = time.monotonic()
     # launch the pytest process
     proc = subprocess.Popen(
@@ -802,8 +895,8 @@ def _spawn_pytest(
         cwd=repo_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
-        env=os.environ,
+        text=True, encoding="utf-8", errors="replace",
+        env=env,
         # POSIX: place the child at the head of its own process group so
         # _kill_tree can SIGKILL the group atomically.
         # Windows: this maps to CREATE_NEW_PROCESS_GROUP in CPython 3.12+;
@@ -847,11 +940,19 @@ def _spawn_pytest(
         _kill_tree(proc, pgid=pgid)
 
         output +=  "\n"
+    finally:
+        # Delete the temp root for this attempt. Nothing reads it after the
+        # subprocess exits. More than 3000 of them fill the disk of the
+        # runner over one suite.
+        shutil.rmtree(temproot, ignore_errors=True)
 
     if rc == 5:
-        # No tests collected — every test in the file was filtered out.
-        # Treat as a pass; surface info in a slightly distinct status
-        # so the operator can spot it.
+        # No tests collected in THIS file — legitimate per-file: a
+        # platform-gated or fully-marker-filtered file (e.g. a win32-only
+        # suite on Linux) collects nothing and must not fail the suite.
+        # Tolerated here; the RUN-level guard in main() still fails when
+        # NOTHING was collected across every file, so a broken invocation
+        # (venv without pytest, -k that matches nothing) can't report green.
         rc = 0
     summary = _parse_pytest_summary(output)
     subproc_wall = time.monotonic() - subproc_start
@@ -869,8 +970,6 @@ def _parse_pytest_summary(output: str) -> dict[str, int]:
     Returns a dict with keys ``passed``, ``failed``, ``skipped``, ``errors``,
     ``xfailed``, ``xpassed`` (only keys found in the output are present).
     """
-    import re
-
     result: dict[str, int] = {}
     # Walk backwards from the end — the summary line is always near the tail.
     for line in reversed(output.splitlines()):
@@ -1021,9 +1120,9 @@ def _load_durations(repo_root: Path) -> dict[str, float]:
     if not path.is_file():
         return {}
     try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        print("[ERROR] Failed to load json durations file! {e}")
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"[ERROR] Failed to load json durations file! {e}")
         return {}
 
 
@@ -1043,7 +1142,7 @@ def _save_durations(
         key = _format_file(f, repo_root)
         data[key] = round(t, 3)
     path = repo_root / _DURATIONS_FILE
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _compute_lpt_slices(
@@ -1208,7 +1307,33 @@ def _split_argv(argv: List[str]) -> "tuple[List[str], List[str]]":
     return our_args, bare_passthrough + explicit_passthrough
 
 
+def _make_stdio_glyph_safe() -> None:
+    """Keep status glyphs from killing the runner on narrow console encodings.
+
+    On native Windows, piped or legacy-console stdio defaults to a locale
+    codec (usually cp1252) that cannot encode the ✓/✗ progress glyphs — the
+    first per-file status line then dies with UnicodeEncodeError before a
+    single test result is reported. Declare the runner's own output UTF-8
+    (what CI and every modern terminal already are), with errors="replace"
+    as the can't-crash backstop; where the encoding can't be changed, fall
+    back to errors="replace" alone so glyphs degrade to "?" instead of
+    killing the run. On already-UTF-8 stdio this is a no-op.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            try:
+                reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
 def main() -> int:
+    _make_stdio_glyph_safe()
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1256,7 +1381,11 @@ def main() -> int:
     parser.add_argument(
         "--paths",
         default=os.environ.get("HERMES_TEST_PATHS", ":".join(_DEFAULT_ROOTS)),
-        help="Colon-separated discovery roots (default: 'tests')",
+        help=(
+            "Colon-separated discovery roots (default: 'tests'). On "
+            "Windows, ';' also separates and drive letters (C:\\...) are "
+            "kept intact."
+        ),
     )
     parser.add_argument(
         "--include-integration",
@@ -1315,9 +1444,10 @@ def main() -> int:
         "--files",
         metavar="LIST",
         help=(
-            "Explicit colon-separated list of test files to run. Bypasses "
-            "discovery entirely — used by CI matrix jobs that receive their "
-            "file list from the generate job."
+            "Explicit colon-separated list of test files to run (on "
+            "Windows, ';' also separates and drive letters are kept "
+            "intact). Bypasses discovery entirely — used by CI matrix "
+            "jobs that receive their file list from the generate job."
         ),
     )
     parser.add_argument(
@@ -1332,6 +1462,48 @@ def main() -> int:
     )
     our_args, pytest_passthrough = _split_argv(sys.argv[1:])
     args = parser.parse_args(our_args)
+
+    # ── Node-id selectors → file + ``-k`` filter ────────────────────────────
+    # This runner is FILE-granular: it spawns one ``pytest <file>`` per test
+    # file. A pytest node id (``tests/foo.py::TestBar::test_baz``) is not an
+    # existing path, so discovery silently dropped it and the run exited with
+    # "No test files to run" — the selector looked accepted but nothing ran.
+    # Translate instead: run the FILE and narrow with ``-k`` on the last
+    # segment, which is what the caller meant.
+    node_id_selectors: List[Tuple[str, str]] = []
+    if args.paths_positional:
+        translated: List[str] = []
+        for raw in args.paths_positional:
+            if "::" not in raw:
+                translated.append(raw)
+                continue
+            file_part, _, selector = raw.partition("::")
+            leaf = selector.rsplit("::", 1)[-1]
+            # Strip a parametrized id (``test_x[case]``) down to the function
+            # name; ``-k`` matches substrings, and brackets are -k syntax.
+            leaf = leaf.split("[", 1)[0]
+            node_id_selectors.append((raw, leaf))
+            translated.append(file_part)
+        if node_id_selectors:
+            args.paths_positional = translated
+            keys = [leaf for _, leaf in node_id_selectors]
+            expr = " or ".join(dict.fromkeys(keys))
+            for raw, leaf in node_id_selectors:
+                print(
+                    f"note: '{raw}' is a pytest node id; this runner is "
+                    f"file-granular. Running the file with -k {leaf!r}.",
+                    file=sys.stderr,
+                )
+            # Only inject -k when the caller didn't pass one themselves; their
+            # explicit filter wins over our inferred one.
+            if not any(
+                t == "-k" or t.startswith("-k=") or (t.startswith("-k") and len(t) > 2)
+                for t in pytest_passthrough
+            ):
+                pytest_passthrough = pytest_passthrough + ["-k", expr]
+
+    # Bare flags run before any explicit ``--`` passthrough so ordering is
+    # intuitive (``run_tests.sh tests/foo.py -q -- --tb=long`` → ``-q --tb=long``).
 
     # Parse --slice (or HERMES_TEST_SLICE) early so we can exit on bad input
     # before doing any expensive discovery.
@@ -1358,7 +1530,7 @@ def main() -> int:
 
     # --files: explicit file list from the CI generate job — skip discovery.
     if args.files:
-        files = [repo_root / f for f in _split_file_list(args.files)]
+        files = [repo_root / f for f in _split_pathspec(args.files)]
         roots = []
     else:
         # Resolve discovery roots: positional path args override --paths if any
@@ -1366,7 +1538,7 @@ def main() -> int:
         if args.paths_positional:
             roots = [repo_root / p for p in args.paths_positional]
         else:
-            roots = [repo_root / p for p in args.paths.split(":") if p]
+            roots = [repo_root / p for p in _split_pathspec(args.paths)]
 
         if args.include_integration:
             # Caller takes responsibility — typically used via explicit -k filter.
@@ -1436,10 +1608,17 @@ def main() -> int:
     fail_count = 0
     tests_passed = 0
     tests_failed = 0
+    tests_skipped = 0
+    # Every collected outcome, not just pass/fail: a legitimately all-skipped
+    # (platform-gated) file reports "2 skipped" and must NOT trip the
+    # nothing-ran guard, whereas a file that died before collection reports
+    # nothing at all and must.
+    tests_collected = 0
     lock = threading.Lock()
 
-    def _on_done(file: Path, started_at: float, fut: "Future[Tuple[Path, int, str, dict[str, int], float]]") -> None:
-        nonlocal files_done, tests_done, pass_count, fail_count, tests_passed, tests_failed
+    def _on_done(file: Path, started_at: float, fut: "Future[Tuple[Path, int, str, Dict[str, int], float]]") -> None:
+        nonlocal files_done, tests_done, pass_count, fail_count, tests_passed, tests_failed, tests_skipped
+        nonlocal tests_collected
         n_tests = test_counts.get(file, 0)
         try:
             fpath, rc, output, summary, subproc_wall = fut.result()
@@ -1463,6 +1642,11 @@ def main() -> int:
             # Accumulate test-level counts from parsed summary.
             tests_passed += summary.get("passed", 0)
             tests_failed += summary.get("failed", 0)
+            tests_skipped += summary.get("skipped", 0)
+            tests_collected += sum(
+                summary.get(k, 0)
+                for k in ("passed", "failed", "skipped", "errors", "xfailed", "xpassed")
+            )
             file_times.append((fpath, subproc_wall))
             if rc == 0:
                 pass_count += 1
@@ -1503,7 +1687,43 @@ def main() -> int:
     elapsed = time.monotonic() - started
     print()
     pct = min(100, (tests_done / approx_total_tests * 100)) if approx_total_tests else 0
-    print(f"=== Summary: {len(files)} files, {tests_passed} tests passed, {tests_failed} failed ({pct:.0f}% complete) in {elapsed:.1f}s ({args.jobs} workers) ===")
+    skipped_note = f", {tests_skipped} skipped" if tests_skipped else ""
+    print(f"=== Summary: {len(files)} files, {tests_passed} tests passed, {tests_failed} failed{skipped_note} ({pct:.0f}% complete) in {elapsed:.1f}s ({args.jobs} workers) ===")
+
+    # Host-OS gating note: tests marked for another OS were skipped by the
+    # conftest hook, not run. Say so explicitly — a green local run on Linux
+    # proves nothing about the macos_only/windows_only tests, and the reader
+    # should know where they DO run rather than misreading skips as coverage.
+    off_host = _off_host_marker_files(files)
+    if off_host:
+        print()
+        for marker, n in sorted(off_host.items()):
+            _, lane = _OS_MARKERS[marker]
+            print(
+                f"  note: {marker} tests (in {n} file{'s' if n != 1 else ''}) were "
+                f"SKIPPED on this host ({sys.platform}); they run on {lane}."
+            )
+
+    # Zero tests collected across the WHOLE run is NOT a pass. Per-file rc=5
+    # is deliberately tolerated above (platform-gated files), but if NOTHING
+    # ran anywhere the invocation itself was broken — a venv without pytest, a
+    # -k/-m filter that matched nothing, or collection erroring everywhere.
+    # The summary line above reads green at a glance ("0 failed ... 100%
+    # complete"), which has been misread as a successful verification, so say
+    # it plainly AND fail the exit code.
+    no_tests_ran_at_all = bool(files) and tests_collected == 0
+    if no_tests_ran_at_all:
+        print()
+        print(
+            "=== ✗ NO TESTS RAN — 0 collected across "
+            f"{len(files)} file{'s' if len(files) != 1 else ''}. "
+            "This is NOT a pass. ==="
+        )
+        print(
+            "  Common causes: the selected venv has no pytest; a -k/-m filter "
+            "matched nothing; or collection errored in every file."
+        )
+        print("  Check the per-file output above for the real error.")
 
     # Flaky files: failed once, passed on the automatic retry. Green, but
     # loudly reported so they get fixed instead of silently re-flaking.
@@ -1576,6 +1796,9 @@ def main() -> int:
             print(f"=== {len(no_tests_ran)} file{'s' if len(no_tests_ran) != 1 else ''} where no tests ran (collection/import error, timeout before collection, etc.) ===")
             for file, s in no_tests_ran:
                 print(f"  {_format_file(file, repo_root)}")
+        return 1
+
+    if no_tests_ran_at_all:
         return 1
 
     return 0

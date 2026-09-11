@@ -107,6 +107,8 @@ async def test_start_gateway_refuses_to_replace_a_booting_incumbent(
     markers_written = []
     requested = []
 
+    # Ownership is a separate upstream guard; this fixture represents our incumbent.
+    monkeypatch.setattr(gateway_run, "_replace_target_belongs_to_other_profile", lambda pid: False)
     monkeypatch.setattr("gateway.status.get_running_pid", lambda: INCUMBENT_PID)
     monkeypatch.setattr("gateway.status.get_process_age_seconds", lambda pid: 12.0)
     monkeypatch.setattr(
@@ -152,10 +154,12 @@ async def test_start_gateway_still_replaces_a_settled_incumbent(tmp_path, monkey
     class _Stop(Exception):
         pass
 
-    def _request(pid, *, timeout):
+    async def _request(pid, *, timeout):
         requested.append((pid, timeout))
         raise _Stop
 
+    # Ownership is a separate upstream guard; this fixture represents our incumbent.
+    monkeypatch.setattr(gateway_run, "_replace_target_belongs_to_other_profile", lambda pid: False)
     monkeypatch.setattr("gateway.status.get_running_pid", lambda: INCUMBENT_PID)
     monkeypatch.setattr("gateway.status.get_process_age_seconds", lambda pid: 9999.0)
     monkeypatch.setattr("gateway.status.write_takeover_marker", lambda pid: None)

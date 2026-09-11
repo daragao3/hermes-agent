@@ -54,7 +54,7 @@ required-version = "==0.15.12"
 # mode defaults to the system locale encoding on Windows (cp1252 on US-locale
 # installs), which silently corrupts any non-ASCII file content.  Three separate
 # Windows sandbox regressions in one debug session before this went in.
-select = ["F", "PLW1514"]
+select = ["F", "PLW1514", "ASYNC210", "ASYNC220", "ASYNC221", "ASYNC251"]
 
 [lint.per-file-ignores]
 # PERMANENT exemptions.  These are NOT backlog -- they are standing decisions.
@@ -68,8 +68,20 @@ select = ["F", "PLW1514"]
 # tests/test_lint_config.py asserts that no F code appears here at all.
 #
 # Tests can intentionally exercise locale-encoding edge cases.
-"tests/**" = ["PLW1514"]
+"tests/**" = ["PLW1514", "ASYNC210", "ASYNC220", "ASYNC221", "ASYNC251"]
 # Skills and plugins are partially user-authored -- their own conventions.
 "skills/**" = ["PLW1514"]
 "optional-skills/**" = ["PLW1514"]
 "plugins/**" = ["PLW1514"]
+
+"gateway/run.py" = ["ASYNC220"]
+
+"gateway/run_shutdown.py" = ["ASYNC220"]
+
+"gateway/slash_commands.py" = ["ASYNC220"]
+
+"hermes_cli/web_routers/profiles.py" = ["ASYNC220", "ASYNC221"]
+
+"plugins/platforms/whatsapp/adapter.py" = ["ASYNC220", "ASYNC221"]
+
+"plugins/platforms/photon/adapter.py" = ["ASYNC220"]

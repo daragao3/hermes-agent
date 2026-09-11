@@ -535,18 +535,13 @@ group_sessions_per_user: false
 
 这会将群组/频道恢复为每个房间一个共享 session，保留共享的对话上下文，但也共享 token 费用、中断状态和上下文增长。
 
-### Session 重置策略
+### 会话连续性
 
-**默认情况下 Gateway session 永不自动重置**（`mode: none`）。你可以通过 `config.yaml` 中的 `session_reset` 部分选择启用自动重置：
+Gateway 不会因空闲时间或每日时间边界而重置对话。需要新对话时使用 `/new`
+或 `/reset`；上下文压缩仍会自动运行。旧的 `session_reset` 配置、重置策略覆盖和
+重置计时环境变量均被忽略。缓存中的 agent 可以释放资源，但不会替换持久化对话。
+重启恢复的新鲜度限制仅约束自动继续执行，不会清除用户发送消息时加载的历史。
 
-- **none** — 永不自动重置（默认；上下文由 `/reset` 和压缩管理）
-- **idle** — 在 N 分钟不活跃后重置
-- **daily** — 每天在特定时间重置
-- **both** — 以先到者为准（idle 或 daily）
-
-在 session 自动重置之前，agent 会有一轮机会保存对话中的重要记忆或技能。
-
-有**活跃后台进程**的 session 永远不会自动重置，无论策略如何。
 
 ## 存储位置
 
@@ -576,29 +571,29 @@ state.db 后可安全删除。
 
 ### 自动清理
 
-- Gateway session 根据配置的重置策略自动重置
+- Gateway 会话会持续保留；请使用 `/new` 或 `/reset` 显式开始新会话
 - 重置前，agent 保存即将过期 session 中的记忆和技能
 - 可选自动清理：当 `sessions.auto_prune` 为 `true` 时，在 CLI/gateway 启动时清理早于 `sessions.retention_days`（默认 90）天的已结束 session
 - 清理**不会**回收磁盘空间。SQLite 在普通 DELETE 后不会缩小文件，而 `VACUUM` 需要整个数据库的独占锁——运行中的 gateway 无法授予，因此自动清理从不执行 VACUUM。参见下方[回收磁盘空间](#回收磁盘空间)。
 - 清理最多每 `sessions.min_interval_hours`（默认 24）小时运行一次；上次运行时间戳记录在 `state.db` 内部，因此在同一 `HERMES_HOME` 下的所有 Hermes 进程间共享
 
-默认为**关闭**——session 历史对 `session_search` 召回很有价值，静默删除可能会让用户感到意外。在 `~/.hermes/config.yaml` 中启用：
+未显式配置时默认为**开启**，已有的显式设置会保留。如需永久保留已结束的 session，请在 `~/.hermes/config.yaml` 中关闭：
 
 ```yaml
 sessions:
-  auto_prune: true          # 选择启用——默认为 false
+  auto_prune: false         # 默认 true；设为 false 以保留全部历史
   retention_days: 90        # 保留已结束 session 的天数
   min_interval_hours: 24    # 清理间隔不短于此值
 ```
 
-:::caution `vacuum_after_prune` 已失效
-旧版配置和文档中列出的 `sessions.vacuum_after_prune` 键**没有任何代码读取**。
+:::caution 自动清理不会执行 VACUUM
+`sessions.vacuum_after_prune` 不会使 CLI 或 gateway 启动路径执行 VACUUM。
 两个自动维护调用方都硬编码了 `vacuum=False`，因为运行中的多进程 gateway 无法
 授予 `VACUUM` 所需的独占锁。将其设为 `true` 不会有任何效果；保留在配置中也无害。
 请改用下方的离线方式回收空间。
 :::
 
-活跃 session 永远不会被自动清理，无论时间多长。
+清理仅删除已结束的 session，并按最后活动时间计算保留窗口。自动化来源的陈旧开放 session 可以先被关闭，经过后续保留窗口后才删除；消息平台、TUI/桌面、固定的 session 以及仍有活动轮次的 session 不会被该关闭流程处理。
 
 ### 回收磁盘空间
 
@@ -625,5 +620,7 @@ hermes sessions prune --older-than 30 --yes
 ```
 
 :::tip
-数据库增长缓慢（典型情况：数百个 session 约 10–15 MB），session 历史为跨历史对话的 `session_search` 召回提供支持，因此自动清理默认关闭。如果你运行繁重的 gateway/cron 工作负载且 `state.db` 明显影响性能（已观察到的故障模式：约 1000 个 session 的 384 MB state.db 导致 FTS5 插入和 `/resume` 列表变慢），则启用它。使用 `hermes sessions prune` 进行一次性清理，无需开启自动清理。
+自动清理对未设置的配置默认开启，已有显式设置会保留。设置
+`sessions.auto_prune: false` 可保留全部已结束的历史，或使用
+`hermes sessions prune` 进行一次性清理。删除历史不会自动缩小数据库文件。
 :::

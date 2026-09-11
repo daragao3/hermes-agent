@@ -11,7 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermes_cli import web_server
+from hermes_cli.web_routers import sessions as session_routes, profiles as profile_routes
+from hermes_cli import web_server_gateway
 from hermes_state import SessionDB
 from session_bridge.models import (
     OriginKind,
@@ -81,7 +82,7 @@ def _baseline_rows(db_path: Path) -> dict[str, dict[str, object]]:
     try:
         rows = {
             row["id"]: dict(row)
-            for row in db.list_sessions_rich(limit=20, order_by_last_active=False)
+            for row in db.list_sessions_rich(limit=20, order_by_last_active=False, compact_rows=True)
         }
     finally:
         db.close()
@@ -89,7 +90,7 @@ def _baseline_rows(db_path: Path) -> dict[str, dict[str, object]]:
     # _SESSION_LIST_HEAVY_FIELDS) unless full=1; baselines compare against
     # the projected shape the API actually returns.
     for row in rows.values():
-        for key in web_server._SESSION_LIST_HEAVY_FIELDS:
+        for key in web_server_gateway._SESSION_LIST_HEAVY_FIELDS:
             row.pop(key, None)
     return rows
 
@@ -241,9 +242,9 @@ async def test_sessions_api_preserves_rows_and_batches_bridge_metadata(
         return original(store, session_ids)
 
     monkeypatch.setattr(
-        web_server,
+        session_routes,
         "_open_session_db_for_profile",
-        lambda _profile: SessionDB(db_path=db_path),
+        lambda _profile, **kwargs: SessionDB(db_path=db_path, **kwargs),
     )
     monkeypatch.setattr(
         SessionBridgeStore,
@@ -251,7 +252,7 @@ async def test_sessions_api_preserves_rows_and_batches_bridge_metadata(
         recording_summaries,
     )
 
-    response = web_server.get_sessions(limit=20)
+    response = session_routes.get_sessions(limit=20, offset=0)
 
     assert len(calls) == 1
     assert set(calls[0]) == set(expected_ids)
@@ -308,9 +309,9 @@ async def test_sessions_api_exposes_only_sanitized_batched_sidebar_status(
             store.db._conn.set_trace_callback(None)
 
     monkeypatch.setattr(
-        web_server,
+        session_routes,
         "_open_session_db_for_profile",
-        lambda _profile: SessionDB(db_path=db_path),
+        lambda _profile, **kwargs: SessionDB(db_path=db_path, **kwargs),
     )
     monkeypatch.setattr(
         SessionBridgeStore,
@@ -318,7 +319,7 @@ async def test_sessions_api_exposes_only_sanitized_batched_sidebar_status(
         recording_summaries,
     )
 
-    response = web_server.get_sessions(limit=20)
+    response = session_routes.get_sessions(limit=20, offset=0)
 
     assert len(sidebar_queries) == 1
     rows = {row["id"]: row for row in response["sessions"]}
@@ -388,12 +389,12 @@ async def test_sessions_api_validates_visible_codex_thread_identity(
         thread_id,
     )
     monkeypatch.setattr(
-        web_server,
+        session_routes,
         "_open_session_db_for_profile",
-        lambda _profile: SessionDB(db_path=db_path),
+        lambda _profile, **kwargs: SessionDB(db_path=db_path, **kwargs),
     )
 
-    response = web_server.get_sessions(limit=20)
+    response = session_routes.get_sessions(limit=20, offset=0)
 
     row = next(
         session
@@ -430,12 +431,12 @@ async def test_sessions_api_exposes_thread_identity_only_for_visible_rows(
         secret,
     )
     monkeypatch.setattr(
-        web_server,
+        session_routes,
         "_open_session_db_for_profile",
-        lambda _profile: SessionDB(db_path=db_path),
+        lambda _profile, **kwargs: SessionDB(db_path=db_path, **kwargs),
     )
 
-    response = web_server.get_sessions(limit=20)
+    response = session_routes.get_sessions(limit=20, offset=0)
 
     row = next(
         session
@@ -475,12 +476,12 @@ async def test_sessions_api_fails_closed_for_invalid_leased_expiry(
         ignore_checks=ignore_checks,
     )
     monkeypatch.setattr(
-        web_server,
+        session_routes,
         "_open_session_db_for_profile",
-        lambda _profile: SessionDB(db_path=db_path),
+        lambda _profile, **kwargs: SessionDB(db_path=db_path, **kwargs),
     )
 
-    response = web_server.get_sessions(limit=20)
+    response = session_routes.get_sessions(limit=20, offset=0)
 
     row = next(
         session for session in response["sessions"] if session["id"] == "sidebar-leased"
@@ -533,12 +534,12 @@ async def test_sessions_api_fails_closed_for_errors_on_active_sidebar_states(
         persisted_error,
     )
     monkeypatch.setattr(
-        web_server,
+        session_routes,
         "_open_session_db_for_profile",
-        lambda _profile: SessionDB(db_path=db_path),
+        lambda _profile, **kwargs: SessionDB(db_path=db_path, **kwargs),
     )
 
-    response = web_server.get_sessions(limit=20)
+    response = session_routes.get_sessions(limit=20, offset=0)
 
     row = next(
         session for session in response["sessions"] if session["id"] == session_id
@@ -585,14 +586,14 @@ def test_profiles_sessions_api_preserves_rows_and_batches_once_per_profile(
         calls.append(tuple(session_ids))
         return original(store, session_ids)
 
-    monkeypatch.setattr(profiles_mod, "list_profiles", lambda: profiles)
+    monkeypatch.setattr(profiles_mod, "profiles_to_serve", lambda **kw: [(p.name, p.path) for p in profiles])
     monkeypatch.setattr(
         SessionBridgeStore,
         "get_bridge_summaries",
         recording_summaries,
     )
 
-    response = web_server.get_profiles_sessions(limit=20, profile="all")
+    response = profile_routes.get_profiles_sessions(limit=20, offset=0, profile="all")
 
     assert len(calls) == 2
     assert {frozenset(call) for call in calls} == {
@@ -637,14 +638,14 @@ async def test_bridge_metadata_failure_is_sanitized_and_preserves_original_rows(
     expected_ids = _seed_profile(db_path, "default")
     baseline = _baseline_rows(db_path)
     monkeypatch.setattr(
-        web_server,
+        session_routes,
         "_open_session_db_for_profile",
-        lambda _profile: SessionDB(db_path=db_path),
+        lambda _profile, **kwargs: SessionDB(db_path=db_path, **kwargs),
     )
     monkeypatch.setattr(
         profiles_mod,
-        "list_profiles",
-        lambda: [SimpleNamespace(name="default", path=home)],
+        "profiles_to_serve",
+        lambda **kw: [("default", home)],
     )
 
     def fail_summaries(
@@ -658,11 +659,11 @@ async def test_bridge_metadata_failure_is_sanitized_and_preserves_original_rows(
         fail_summaries,
     )
 
-    with caplog.at_level(logging.WARNING, logger=web_server.__name__):
+    with caplog.at_level(logging.WARNING, logger="hermes_cli.web_server"):
         if endpoint == "sessions":
-            response = web_server.get_sessions(limit=20)
+            response = session_routes.get_sessions(limit=20, offset=0)
         else:
-            response = web_server.get_profiles_sessions(limit=20, profile="all")
+            response = profile_routes.get_profiles_sessions(limit=20, offset=0, profile="all")
 
     rows = {row["id"]: row for row in response["sessions"]}
     assert set(rows) == set(expected_ids)

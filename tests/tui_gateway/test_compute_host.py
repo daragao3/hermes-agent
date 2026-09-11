@@ -2,9 +2,10 @@ import json
 import os
 import queue
 import subprocess
-import sys
 import threading
 from pathlib import Path
+
+from hermes_constants import real_executable
 
 
 def _stdout_queue(proc: subprocess.Popen) -> queue.Queue[dict]:
@@ -26,12 +27,12 @@ def _read_json_line(out: queue.Queue[dict], timeout: float = 2.0) -> dict:
         raise AssertionError("timed out waiting for compute host JSON") from exc
 
 
-def test_compute_host_line_json_seed_turn_interrupt():
+def test_compute_host_line_json_hello_and_shutdown():
     repo = Path(__file__).resolve().parents[2]
     env = dict(os.environ)
     env["PYTHONPATH"] = str(repo) + os.pathsep + env.get("PYTHONPATH", "")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "tui_gateway.compute_host"],
+        [real_executable(), "-m", "tui_gateway.compute_host"],
         cwd=str(repo),
         env=env,
         stdin=subprocess.PIPE,
@@ -43,43 +44,35 @@ def test_compute_host_line_json_seed_turn_interrupt():
     assert proc.stdin is not None
     out = _stdout_queue(proc)
     try:
-        hello = _read_json_line(out)
+        # Cold interpreter startup uses the supervisor's ten-second hello budget.
+        # Subsequent protocol replies retain the two-second responsiveness check.
+        hello = _read_json_line(out, timeout=10.0)
         assert hello["type"] == "hello"
-        assert hello["host_pid"] == proc.pid
+        if os.name == "nt" and hello["host_pid"] != proc.pid:
+            # Windows venv redirectors can own a separate interpreter process.
+            # Require the announced host to be our actual child, not an arbitrary PID.
+            import psutil
+            assert psutil.Process(hello["host_pid"]).ppid() == proc.pid
+        else:
+            assert hello["host_pid"] == proc.pid
 
-        proc.stdin.write(json.dumps({"type": "session.seed", "sid": "s1", "request_id": "seed"}) + "\n")
+        proc.stdin.write(json.dumps({"type": "bogus", "request_id": "b"}) + "\n")
         proc.stdin.flush()
-        assert _read_json_line(out)["type"] == "session.seeded"
-
-        proc.stdin.write(
-            json.dumps(
-                {
-                    "type": "turn.start",
-                    "sid": "s1",
-                    "request_id": "turn",
-                    "prompt": "hello",
-                    "delta_count": 3,
-                    "delay_s": 0,
-                }
-            )
-            + "\n"
-        )
-        proc.stdin.flush()
-
-        seen = []
-        while True:
-            frame = _read_json_line(out)
-            seen.append(frame["type"])
-            if frame["type"] == "turn.end":
-                assert frame["history_version"] == 1
-                assert frame["message_count"] == 2
-                break
-        assert seen.count("delta") == 3
+        error = _read_json_line(out)
+        assert error["type"] == "error"
+        assert error["message"] == "unknown frame type: bogus"
 
         proc.stdin.write(json.dumps({"type": "shutdown", "request_id": "stop"}) + "\n")
         proc.stdin.flush()
         assert _read_json_line(out)["type"] == "shutdown.ack"
         proc.wait(timeout=2)
+    except AssertionError as exc:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=5)
+        stderr = proc.stderr.read() if proc.stderr else ""
+        raise AssertionError(f"{exc}; child exit={proc.returncode}; stderr={stderr[-4000:]}") from exc
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)

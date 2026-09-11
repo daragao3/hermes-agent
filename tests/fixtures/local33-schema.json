@@ -1,0 +1,13 @@
+{
+  "source_commit": "b9ad9d20582cabc671df3770566099fd0faacf69",
+  "source_path": "hermes_state.py",
+  "constants": [
+    "SCHEMA_SQL",
+    "BRIDGE_SCHEMA_SQL",
+    "DEFERRED_INDEX_SQL",
+    "FTS_SQL",
+    "FTS_TRIGRAM_SQL"
+  ],
+  "sha256": "9c0854df11f284a6315eaa56eca9b341859ee14ff1795a766f204e0af37e5689",
+  "purpose": "Exact historical DDL fixture, executed by migration behavior tests; not source-text assertions"
+}

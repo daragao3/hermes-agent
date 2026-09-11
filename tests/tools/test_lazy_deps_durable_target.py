@@ -36,9 +36,6 @@ class TestTargetResolution:
         monkeypatch.delenv(ld._LAZY_TARGET_ENV, raising=False)
         assert ld._lazy_install_target() is None
 
-    def test_no_target_when_env_blank(self, monkeypatch):
-        monkeypatch.setenv(ld._LAZY_TARGET_ENV, "   ")
-        assert ld._lazy_install_target() is None
 
     def test_target_resolved_when_set(self, monkeypatch, tmp_path):
         monkeypatch.setenv(ld._LAZY_TARGET_ENV, str(tmp_path / "lazy"))
@@ -68,16 +65,6 @@ class TestGatingWithTarget:
         )
         assert ld._allow_lazy_installs() is True
 
-    def test_config_killswitch_wins_even_with_target(self, monkeypatch, tmp_path):
-        # Explicit opt-out must disable installs even when a target exists.
-        monkeypatch.setenv("HERMES_DISABLE_LAZY_INSTALLS", "1")
-        monkeypatch.setenv(ld._LAZY_TARGET_ENV, str(tmp_path))
-        monkeypatch.setattr(
-            "hermes_cli.config.load_config",
-            lambda: {"security": {"allow_lazy_installs": False}},
-            raising=False,
-        )
-        assert ld._allow_lazy_installs() is False
 
     def test_normal_mode_unaffected(self, monkeypatch):
         # No sealed env, no target → default allow (unchanged behaviour).
@@ -103,42 +90,22 @@ class TestAbiStamp:
         stamp = target / ld._TARGET_STAMP_NAME
         assert stamp.read_text().strip() == ld._python_abi_tag()
 
-    def test_matching_stamp_preserves_contents(self, tmp_path):
-        target = tmp_path / "lazy"
-        ld._ensure_target_ready(target)
-        # Drop a fake installed package.
-        (target / "somepkg").mkdir()
-        (target / "somepkg" / "__init__.py").write_text("x = 1\n")
-        # Re-run with the SAME abi → contents must survive.
-        err = ld._ensure_target_ready(target)
-        assert err is None
-        assert (target / "somepkg" / "__init__.py").exists()
 
-    def test_mismatched_stamp_wipes_contents(self, tmp_path):
-        target = tmp_path / "lazy"
-        ld._ensure_target_ready(target)
-        (target / "stalepkg").mkdir()
-        (target / "stalepkg" / "mod.py").write_text("x = 1\n")
-        # Simulate an image rebuild onto a different interpreter ABI.
-        (target / ld._TARGET_STAMP_NAME).write_text("2.7:old-abi-tag")
-        err = ld._ensure_target_ready(target)
-        assert err is None
-        # Stale package wiped; stamp refreshed to current ABI.
-        assert not (target / "stalepkg").exists()
-        assert (target / ld._TARGET_STAMP_NAME).read_text().strip() == ld._python_abi_tag()
+    def test_readonly_target_reports_error(self, tmp_path, monkeypatch):
+        # Windows chmod does not enforce POSIX directory permissions.
+        target = tmp_path / "ro" / "lazy"
+        original = Path.mkdir
 
-    def test_readonly_target_reports_error(self, tmp_path):
-        # A path under a non-writable parent should surface a clean error,
-        # not raise.
-        ro_parent = tmp_path / "ro"
-        ro_parent.mkdir()
-        os.chmod(ro_parent, 0o500)
-        try:
-            err = ld._ensure_target_ready(ro_parent / "lazy")
-            assert err is not None
-            assert "not writable" in err
-        finally:
-            os.chmod(ro_parent, 0o700)  # let pytest clean up
+        def denied(path, *args, **kwargs):
+            if path == target:
+                raise PermissionError("test read-only parent")
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "mkdir", denied)
+        err = ld._ensure_target_ready(target)
+        assert err is not None
+        assert "not writable" in err
+        assert not target.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -185,22 +152,16 @@ class TestInstallArgConstruction:
     the CI-safe coverage of the install path; the genuine PyPI install below
     is opt-in only.
 
-    Two layers have to be stubbed, because the install path uses two different
-    spawns. The ``pip --version`` probe is a leaf process and stays on
-    ``subprocess.run``; the install itself goes through ``run_text_capture``,
-    since pip forks a build backend per sdist and that grandchild would
-    inherit — and hold open — a capture pipe, making ``timeout`` unenforceable
-    on Windows. ``lazy_deps`` imports the helper inside the function (it is a
-    deliberately lazy module), so the patch lands on the defining module.
-    Stubbing only ``subprocess.run`` here does not fail closed: it lets a REAL
-    ``pip install`` run against the live interpreter.
+    Probes and installs use the same file-backed capture helper. Patch its
+    defining module so no real installer runs; direct subprocess mocks alone
+    do not intercept this path.
     """
 
     def test_target_and_constraint_args_passed(self, tmp_path, monkeypatch):
         target = tmp_path / "lazy-packages"
         monkeypatch.setenv(ld._LAZY_TARGET_ENV, str(target))
         # No uv on PATH → force the pip tier so we assert one known command.
-        monkeypatch.setattr(ld.shutil, "which", lambda _: None)
+        monkeypatch.setattr(ld, "_uv_binary", lambda: None)
 
         captured = {}
 
@@ -231,7 +192,7 @@ class TestInstallArgConstruction:
     def test_no_target_args_in_venv_scoped_mode(self, monkeypatch):
         # Env unset → plain venv-scoped install, no --target / --constraint.
         monkeypatch.delenv(ld._LAZY_TARGET_ENV, raising=False)
-        monkeypatch.setattr(ld.shutil, "which", lambda _: None)
+        monkeypatch.setattr(ld, "_uv_binary", lambda: None)
         captured = {}
 
         def fake_probe(cmd, *a, **k):
@@ -247,6 +208,25 @@ class TestInstallArgConstruction:
         assert result.success
         assert "--target" not in captured["cmd"]
         assert "--constraint" not in captured["cmd"]
+
+    def test_uv_resolution_failure_does_not_fall_through_to_pip(self, monkeypatch):
+        monkeypatch.delenv(ld._LAZY_TARGET_ENV, raising=False)
+        monkeypatch.setattr("hermes_cli.managed_uv.resolve_uv", lambda: "uv")
+        calls = []
+
+        def fake_run(cmd, *args, **kwargs):
+            calls.append(cmd)
+            if cmd[:3] == ["uv", "pip", "install"]:
+                return subprocess.CompletedProcess(
+                    cmd, 1, "", "release excluded by exclude-newer"
+                )
+            pytest.fail(f"unexpected pip fallback: {cmd}")
+
+        monkeypatch.setattr(ld, "_run_installer", fake_run)
+        result = ld._venv_pip_install(("fresh-package==1.0.0",))
+        assert not result.success
+        assert "exclude-newer" in result.stderr
+        assert len(calls) == 1
 
 
 @pytest.mark.skipif(

@@ -123,6 +123,7 @@ class TestChromeFallbackSpawnIsSafe:
         from unittest.mock import patch
 
         import tools.browser_tool as bt
+        from tools import browser_tool_session as session, browser_tool_install as install, browser_tool_lightpanda_fallback as fallback
 
         target_dir = tmp_path / "node_modules" / "agent-browser" / "bin"
         target_dir.mkdir(parents=True)
@@ -155,13 +156,13 @@ class TestChromeFallbackSpawnIsSafe:
                 os.write(out_fd, b'{"success":true,"data":{}}')
             return _Proc()
 
-        url_ok = {"success": True, "data": {"result": "https://example.com/"}}
+        url_ok = {"success": True, "data": {"url": "https://example.com/"}}
 
-        with patch.object(bt, "_run_browser_command", return_value=url_ok), \
-             patch.object(bt, "_find_agent_browser", return_value=str(shim)), \
-             patch.object(bt, "_chromium_installed", return_value=True), \
+        with patch.object(session, "_run_browser_command", return_value=url_ok), \
+             patch.object(install, "_find_agent_browser", return_value=str(shim)), \
+             patch.object(install, "_chromium_installed", return_value=True), \
              patch.object(bt.subprocess, "Popen", side_effect=_fake_popen):
-            bt._run_chrome_fallback_command("t", "eval", [js], 30)
+            fallback._run_chrome_fallback_command("t", "eval", [js], 30)
 
         assert seen, "expected the fallback path to spawn agent-browser"
         eval_argv = [a for a in seen if "eval" in a]

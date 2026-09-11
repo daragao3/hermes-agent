@@ -37,6 +37,10 @@ ALLOWED_SUBCOMMAND_IMPORT = "hermes_cli.subcommands._shared"
 # Top-level names main.py may import before the override call.  ``hermes_cli``
 # is admitted only as ``hermes_cli.subcommands.*`` (asserted separately).
 ALLOWED_PRE_OVERRIDE_ROOTS = {"hermes_bootstrap", "hermes_cli"}
+# Upstream early bootstrap helpers are stdlib-only and do not cache profile state.
+ALLOWED_EARLY_HELPERS = {
+    "hermes_cli._subprocess_compat", "hermes_cli._startup_fast", "hermes_cli._early_recovery",
+}
 
 
 def _is_repo_owned(module: str) -> bool:
@@ -60,7 +64,10 @@ def _module_level_imports(tree: ast.Module, *, package: str) -> list[tuple[str, 
                 out.append((f"{package}.{node.module}" if node.module else package,
                             node.lineno))
             elif node.module:
-                out.append((node.module, node.lineno))
+                if node.module == "hermes_cli":
+                    out.extend((f"hermes_cli.{a.name}", node.lineno) for a in node.names)
+                else:
+                    out.append((node.module, node.lineno))
     return out
 
 
@@ -97,6 +104,8 @@ def test_pre_override_imports_are_only_subcommand_parser_builders():
     for module, lineno in _pre_override_imports():
         if not _is_repo_owned(module):
             continue  # stdlib / third-party never reads HERMES_HOME
+        if module in ALLOWED_EARLY_HELPERS:
+            continue
         top = module.split(".", 1)[0]
         if top not in ALLOWED_PRE_OVERRIDE_ROOTS:
             offenders.append((module, lineno))
@@ -138,3 +147,10 @@ def test_subcommand_modules_import_nothing_heavy_at_module_level(path: Path):
         f"the function that needs it. Only {ALLOWED_SUBCOMMAND_IMPORT} (argparse-only) "
         "is allowed here."
     )
+
+
+@pytest.mark.parametrize("module", sorted(ALLOWED_EARLY_HELPERS))
+def test_early_bootstrap_helpers_have_no_eager_repo_dependencies(module):
+    path = REPO_ROOT / (module.replace(".", "/") + ".py")
+    imports = _module_level_imports(ast.parse(path.read_text(encoding="utf-8")), package="hermes_cli")
+    assert not [(mod, line) for mod, line in imports if _is_repo_owned(mod)]

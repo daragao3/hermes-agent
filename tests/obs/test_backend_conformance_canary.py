@@ -225,7 +225,7 @@ def test_manifest_harness_model_is_pinned_not_auto():
     import obs.backend_conformance_canary as canary
 
     assert canary._MANIFEST_HARNESS_MODEL != "auto"
-    assert canary._MANIFEST_HARNESS_MODEL == "openai/gpt-5.4-mini-subscription"
+    assert canary._MANIFEST_HARNESS_MODEL == "openai/gpt-5.5-subscription"
 
 
 class _FakeHarnessResponses:

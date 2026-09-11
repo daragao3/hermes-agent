@@ -137,10 +137,10 @@ def test_save_cfg_targets_the_live_home_without_writing(monkeypatch):
     file afterwards anyway.
     """
     seen: list[Path] = []
-    import hermes_cli.config as cfgmod
+    import utils as cfgmod
 
     monkeypatch.setattr(
-        cfgmod, "atomic_config_write", lambda path, data, **kw: seen.append(Path(path))
+        cfgmod, "atomic_roundtrip_yaml_save", lambda path, data, **kw: seen.append(Path(path))
     )
 
     server._save_cfg({"model": "binding/probe"})
@@ -200,5 +200,9 @@ def test_no_use_site_still_reads_the_bare_constant():
     ):
         assert banned not in after, f"a use site still reads the bare constant: {banned}"
 
-    # Nine use sites plus the import-time dotenv load.
-    assert after.count("_resolve_hermes_home()") >= 10
+    # The remaining consumers moved into extracted modules; check those too.
+    for name in ("change_watcher", "methods_config", "methods_tools", "prompt_attachments",
+                 "session_auto_continue", "methods_complete"):
+        leaf = Path(server.__file__).with_name(name + ".py").read_text(encoding="utf-8")
+        for banned in ("_hermes_home / ", "Path(_hermes_home)", "str(_hermes_home)", "else _hermes_home"):
+            assert banned not in leaf, (name, banned)

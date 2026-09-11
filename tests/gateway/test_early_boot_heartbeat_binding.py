@@ -138,19 +138,18 @@ def test_early_returns_retire_the_nous_auth_keepalive():
 
     from gateway import run as gateway_run
 
-    src = inspect.getsource(gateway_run.start_gateway)
-    start_idx = src.index("start_nous_auth_keepalive()")
-    tail = src[start_idx:]
-
-    # Every early `return` between the keepalive start and wait_for_shutdown()
-    # must retire it first.
-    shutdown_idx = tail.index("await runner.wait_for_shutdown()")
-    pre_shutdown = tail[:shutdown_idx]
-
-    assert pre_shutdown.count("_stop_nous_keepalive_quietly()") >= 2, (
-        "an early return path leaves the nous auth keepalive thread running; "
-        "it will re-resolve HERMES_HOME 60s later and write to the auth store"
-    )
+    import ast
+    import textwrap
+    tree = ast.parse(textwrap.dedent(inspect.getsource(gateway_run.start_gateway)))
+    def calls(node, name):
+        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == name for n in ast.walk(node))
+    assert any(
+        isinstance(node, ast.Try)
+        and any(calls(stmt, "_stop_nous_keepalive_quietly") for stmt in node.finalbody)
+        and any(calls(stmt, "_discover_gateway_mcp_tools") for stmt in node.body)
+        for node in ast.walk(tree)
+    ), "the entire post-keepalive boot/lifecycle must retire it in finally"
 
 
 @pytest.mark.parametrize("attr", ["_stop_nous_keepalive_quietly", "start_early_boot_heartbeat"])

@@ -16,6 +16,8 @@ from typing import Any, BinaryIO, Callable, Protocol
 import uuid
 
 from .models import (
+    is_mirrored_record,
+    is_registration_record,
     InvalidBridgeMarker,
     OriginKind,
     ProjectedMessage,
@@ -1311,9 +1313,41 @@ def _merge_entrypoints(*values: str | None) -> str | None:
 
 
 def _is_eligible_record(record: dict[str, Any]) -> bool:
-    return not bool(record.get("isSidechain", False)) and not bool(
-        record.get("isMeta", False)
+    # A mirrored source turn (session_bridge.mirror_conversation) is display
+    # content for the desktop app, not this session's own history: projecting
+    # it would catalog the source twice, counting it as a human turn would
+    # turn every hydrated mirror into a BRIDGE_CONTINUATION, and harvesting
+    # its text for markers would raise ConflictingClaudeBridgeMarkers the
+    # first time a source quotes one.
+    return (
+        not bool(record.get("isSidechain", False))
+        and not bool(record.get("isMeta", False))
+        and not is_mirrored_record(record)
     )
+
+
+def _is_hidden_registration_record(record: dict[str, Any]) -> bool:
+    """A visibility mirror's registration prompt after the bridge hid it.
+
+    ``mirror_conversation.hide_registration_prefix`` sets ``isMeta`` on the
+    prompt record so the desktop app stops showing it as the first turn of a
+    ``[Codex]`` row, and tags it ``hermesRegistration`` so THIS predicate can
+    still find it. The tag widens exactly one thing -- marker harvesting in
+    ``_detect_origin`` -- and only for a main-chain user record the bridge did
+    not itself mirror: the record stays ineligible for projection, for
+    metadata, and for ``_is_human_user``, so hiding the prompt changes what the
+    app shows and nothing about how the bridge classifies the mirror.
+    """
+    return (
+        record.get("type") == "user"
+        and is_registration_record(record)
+        and not bool(record.get("isSidechain", False))
+        and not is_mirrored_record(record)
+    )
+
+
+def _carries_bridge_marker(record: dict[str, Any]) -> bool:
+    return _is_eligible_record(record) or _is_hidden_registration_record(record)
 
 
 def _nonempty_string(value: Any) -> str | None:
@@ -1544,7 +1578,7 @@ def _detect_origin(
     marker_records: set[int] = set()
     marker_occurrences: list[tuple[int, str]] = []
     for index, record in enumerate(records):
-        if record.get("type") not in {"user", "assistant"} or not _is_eligible_record(
+        if record.get("type") not in {"user", "assistant"} or not _carries_bridge_marker(
             record
         ):
             continue

@@ -1952,3 +1952,354 @@ def test_pre_rotation_claude_marker_authenticates_via_retired_keys(tmp_path):
     assert not ClaudeSourceAdapter(
         tmp_path, marker_secret=SECRET
     ).projection_has_marker_payload(recovered, payload)
+
+
+def _mirrored_record(
+    content: str,
+    *,
+    role: str,
+    event_id: str,
+    parent: str,
+    timestamp: str,
+) -> dict:
+    """A record session_bridge.mirror_conversation appends to a mirror."""
+    message = (
+        {"role": "assistant", "content": [{"type": "text", "text": content}]}
+        if role == "assistant"
+        else {"role": "user", "content": content}
+    )
+    return {
+        "parentUuid": parent,
+        "isSidechain": False,
+        "type": role,
+        "uuid": event_id,
+        "timestamp": timestamp,
+        "sessionId": BASIC_SESSION_ID,
+        "cwd": "C:/synthetic/project",
+        "userType": "external",
+        "entrypoint": "hermes-session-bridge",
+        "hermesMirror": {
+            "version": 1,
+            "source_session_id": "codex:synthetic-source",
+            "message_id": 7,
+        },
+        "message": message,
+    }
+
+
+def _mirror_transcript(tmp_path: Path, *, tagged: bool, quoted_marker: bool) -> Path:
+    marker = encode_bridge_marker(
+        BridgeMarkerPayload(
+            bridge_id="bridge-hydrated",
+            source_session_id="codex:synthetic-source",
+            target_provider=Provider.CLAUDE,
+            policy_generation=4,
+        ),
+        SECRET,
+    )
+    other = encode_bridge_marker(
+        BridgeMarkerPayload(
+            bridge_id="bridge-quoted-by-the-source",
+            source_session_id="codex:another-source",
+            target_provider=Provider.CLAUDE,
+            policy_generation=4,
+        ),
+        SECRET,
+    )
+    user_text = f"the source pasted {other} into its own chat" if quoted_marker else (
+        "a mirrored human turn from the source"
+    )
+    records = [
+        _message_record(marker),
+        _mirrored_record(
+            user_text,
+            role="user",
+            event_id="31313131-3131-4131-8131-313131313131",
+            parent="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            timestamp="2026-01-01T00:00:01Z",
+        ),
+        _mirrored_record(
+            "a mirrored assistant turn",
+            role="assistant",
+            event_id="32323232-3232-4232-8232-323232323232",
+            parent="31313131-3131-4131-8131-313131313131",
+            timestamp="2026-01-01T00:00:02Z",
+        ),
+    ]
+    if not tagged:
+        for record in records[1:]:
+            del record["hermesMirror"]
+    path = tmp_path / "hydrated-mirror.jsonl"
+    path.write_bytes(b"".join(_json_line(record) for record in records))
+    return path
+
+
+def test_mirrored_records_are_display_only_for_the_adapter(tmp_path):
+    """A hydrated mirror projects nothing of its source and stays a placeholder.
+
+    The mirrored turns are for the desktop app. If the adapter projected them
+    the source would be cataloged twice; if it counted them as human turns the
+    mirror would read as a continuation; if it harvested their text a source
+    that quotes a marker would trip the conflict guard on the mirror's scan.
+    """
+
+    path = _mirror_transcript(tmp_path, tagged=True, quoted_marker=True)
+
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+
+    assert projection.origin_kind is OriginKind.BRIDGE_PLACEHOLDER
+    assert projection.origin_bridge_id == "bridge-hydrated"
+    assert [message.native_event_id for message in projection.messages] == [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    ]
+
+
+def test_untagged_copies_of_the_same_records_would_conflict(tmp_path):
+    """Control for the test above: the tag is what changes the outcome."""
+
+    from session_bridge.claude_adapter import ConflictingClaudeBridgeMarkers
+
+    quoted = _mirror_transcript(tmp_path, tagged=False, quoted_marker=True)
+    with pytest.raises(ConflictingClaudeBridgeMarkers):
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(quoted)
+
+    plain = _mirror_transcript(tmp_path, tagged=False, quoted_marker=False)
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(plain).projection
+    )
+    assert projection.origin_kind is OriginKind.BRIDGE_CONTINUATION
+    assert len(projection.messages) == 3
+
+
+# --- hidden registration prompt (isMeta + hermesRegistration) --------------
+#
+# mirror_conversation.hide_registration_prefix marks a mirror's registration
+# prompt record isMeta so the desktop app stops showing it, and tags it
+# hermesRegistration so origin detection can still read the signed marker out
+# of a record the adapter otherwise ignores. These tests pin the ONE thing the
+# tag widens (marker harvesting) and the things it must not widen.
+
+HIDDEN_TAG = {"version": 1, "hidden_at": "2026-09-09T23:00:00.000Z"}
+ANSWER_EVENT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+
+def _registered_answer(parent: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") -> dict:
+    return {
+        "parentUuid": parent,
+        "isSidechain": False,
+        "type": "assistant",
+        "uuid": ANSWER_EVENT_ID,
+        "timestamp": "2026-01-01T00:00:01Z",
+        "sessionId": BASIC_SESSION_ID,
+        "cwd": "C:/synthetic/project",
+        "gitBranch": "feature/synthetic",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "REGISTERED"}]},
+    }
+
+
+def _hidden_prompt(marker: str, *, tagged: bool, hidden: bool = True) -> dict:
+    prompt = _message_record(f"registration prompt {marker}")
+    if hidden:
+        prompt["isMeta"] = True
+    if tagged:
+        prompt["hermesRegistration"] = dict(HIDDEN_TAG)
+    return prompt
+
+
+def _write_records(tmp_path: Path, records: list[dict], name: str = "mirror.jsonl") -> Path:
+    path = tmp_path / name
+    path.write_bytes(b"".join(_json_line(record) for record in records))
+    return path
+
+
+def test_hidden_registration_prompt_keeps_the_mirror_a_placeholder(tmp_path):
+    """The tag lets origin detection read a marker the app no longer shows.
+
+    The prompt is isMeta, so it is not projected and not a human turn; the tag
+    is what keeps the marker harvested, so the mirror stays a placeholder with
+    its bridge id instead of reclassifying as NATIVE (which would make every
+    origin-gated consumer -- mirror_float, claude_visibility, mirror.py -- treat
+    the mirror as a real Claude session).
+    """
+    marker = _bridge_marker("bridge-hidden")
+    path = _write_records(
+        tmp_path, [_hidden_prompt(marker, tagged=True), _registered_answer()]
+    )
+
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+
+    assert projection.origin_kind is OriginKind.BRIDGE_PLACEHOLDER
+    assert projection.origin_bridge_id == "bridge-hidden"
+    assert [(m.role, m.native_event_id) for m in projection.messages] == [
+        ("assistant", ANSWER_EVENT_ID)
+    ]
+    # Metadata still comes from the eligible answer record.
+    assert projection.cwd == "C:/synthetic/project"
+    assert projection.git_branch == "feature/synthetic"
+
+
+def test_ismeta_prompt_without_the_tag_reads_native(tmp_path):
+    """Control: isMeta alone loses the marker. This is why the tag exists."""
+    marker = _bridge_marker("bridge-hidden")
+    path = _write_records(
+        tmp_path, [_hidden_prompt(marker, tagged=False), _registered_answer()]
+    )
+
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+
+    assert projection.origin_kind is OriginKind.NATIVE
+    assert projection.origin_bridge_id is None
+
+
+def test_hidden_registration_prompt_still_yields_to_a_later_human_turn(tmp_path):
+    """Hiding the prompt must not freeze the mirror as a placeholder forever."""
+    marker = _bridge_marker("bridge-hidden")
+    later = _message_record(
+        "and now a real request typed into the mirror",
+        event_id="cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        timestamp="2026-01-01T00:00:02Z",
+    )
+    path = _write_records(
+        tmp_path, [_hidden_prompt(marker, tagged=True), _registered_answer(), later]
+    )
+
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+
+    assert projection.origin_kind is OriginKind.BRIDGE_CONTINUATION
+    assert projection.origin_bridge_id == "bridge-hidden"
+    assert [m.role for m in projection.messages] == ["assistant", "user"]
+
+
+def test_registration_tag_is_ignored_off_the_main_chain(tmp_path):
+    """The tag is honoured only where the bridge writes it: a main-chain user record.
+
+    A sidechain record carrying it harvests nothing, and a mirrored source turn
+    carrying it (the source quoting a different marker) harvests nothing either
+    -- so the conflict guard the hermesMirror tag exists for is not reopened
+    through this tag.
+    """
+    marker = _bridge_marker("bridge-hidden")
+    sidechain = _hidden_prompt(marker, tagged=True)
+    sidechain["isSidechain"] = True
+    path = _write_records(tmp_path, [sidechain, _registered_answer()], "side.jsonl")
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+    assert projection.origin_kind is OriginKind.NATIVE
+    assert projection.origin_bridge_id is None
+
+    quoted = _mirrored_record(
+        f"the source pasted {_bridge_marker('bridge-quoted')} into its chat",
+        role="user",
+        event_id="31313131-3131-4131-8131-313131313131",
+        parent=ANSWER_EVENT_ID,
+        timestamp="2026-01-01T00:00:02Z",
+    )
+    quoted["isMeta"] = True
+    quoted["hermesRegistration"] = dict(HIDDEN_TAG)
+    path = _write_records(
+        tmp_path,
+        [_hidden_prompt(marker, tagged=True), _registered_answer(), quoted],
+        "quoted.jsonl",
+    )
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+    assert projection.origin_kind is OriginKind.BRIDGE_PLACEHOLDER
+    assert projection.origin_bridge_id == "bridge-hidden"
+
+
+def test_hiding_the_prefix_forces_a_rebuild_with_the_same_origin(tmp_path):
+    """The in-place rewrite invalidates the head hash; the rebuild must agree.
+
+    hide_registration_prefix re-serializes the first record, so a cursor taken
+    before it no longer matches the head sample. The adapter must notice
+    (rebuild, not a torn incremental read) and the rebuilt projection must
+    carry the same origin and bridge id as before, minus the hidden prompt.
+    """
+    from session_bridge.mirror_conversation import hide_registration_prefix
+    from session_bridge.claude_visibility import _CURRENT_CODEX_REGISTRATION_PREAMBLE
+
+    marker = _bridge_marker("bridge-hidden")
+    prompt = _message_record(
+        _CURRENT_CODEX_REGISTRATION_PREAMBLE
+        + marker.removeprefix("HERMES_SESSION_BRIDGE_V1:")
+        + "\nBounded metadata: {}\nYou must reply exactly REGISTERED."
+    )
+    path = _write_records(tmp_path, [prompt, _registered_answer()])
+    adapter = ClaudeSourceAdapter(tmp_path, marker_secret=SECRET)
+    before = adapter.parse(path)
+    assert before.projection.origin_kind is OriginKind.BRIDGE_PLACEHOLDER
+    assert [m.role for m in before.projection.messages] == ["user", "assistant"]
+
+    assert hide_registration_prefix(path) == "hidden"
+
+    after = adapter.parse(path, before.cursor)
+    assert after.rebuild is True
+    assert after.projection.origin_kind is OriginKind.BRIDGE_PLACEHOLDER
+    assert after.projection.origin_bridge_id == before.projection.origin_bridge_id
+    assert [m.role for m in after.projection.messages] == ["assistant"]
+    # A cold parse of the rewritten file agrees with the rebuild.
+    cold = ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path)
+    assert cold.projection.origin_bridge_id == before.projection.origin_bridge_id
+    assert cold.cursor == after.cursor
+
+
+def test_hidden_cli_teardown_records_keep_the_placeholder_and_leave_projection(tmp_path):
+    """After mirror_conversation.hide_cli_teardown marks the CLI's /exit
+    bookkeeping isMeta (+ hermesTeardown), the records drop out of projection
+    entirely, while the origin -- which never counted them -- is unchanged.
+    The untagged twin of this transcript is
+    test_cli_exit_bookkeeping_after_marker_stays_placeholder."""
+
+    marker = encode_bridge_marker(
+        BridgeMarkerPayload(
+            bridge_id="bridge-teardown-hidden",
+            source_session_id="codex:synthetic-source",
+            target_provider=Provider.CLAUDE,
+            policy_generation=4,
+        ),
+        SECRET,
+    )
+    tag = {"version": 1, "hidden_at": "2026-09-09T23:59:59.000Z"}
+    records = [
+        _message_record(marker),
+        dict(
+            _message_record(
+                '<command-name>/exit</command-name> <command-message>exit</command-message> <command-args></command-args>',
+                event_id="27272727-2727-4272-8272-272727272727",
+                timestamp="2026-01-01T00:00:01Z",
+            ),
+            isMeta=True,
+            hermesTeardown=tag,
+        ),
+        dict(
+            _message_record(
+                '<local-command-stdout>Goodbye!</local-command-stdout>',
+                event_id="28282828-2828-4282-8282-282828282828",
+                timestamp="2026-01-01T00:00:02Z",
+            ),
+            isMeta=True,
+            hermesTeardown=tag,
+        ),
+    ]
+    path = tmp_path / "teardown-hidden.jsonl"
+    path.write_bytes(b"".join(_json_line(record) for record in records))
+
+    projection = (
+        ClaudeSourceAdapter(tmp_path, marker_secret=SECRET).parse(path).projection
+    )
+
+    assert projection.origin_kind is OriginKind.BRIDGE_PLACEHOLDER
+    assert projection.origin_bridge_id == "bridge-teardown-hidden"
+    # Only the marker turn projects; the hidden bookkeeping is gone from the
+    # message list the app-facing catalog is built from.
+    assert [message.role for message in projection.messages] == ["user"]

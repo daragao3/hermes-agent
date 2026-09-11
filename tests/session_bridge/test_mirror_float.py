@@ -192,6 +192,8 @@ def test_floats_mirror_to_source_activity(db, tmp_path) -> None:
         "skipped": 0,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
+        "retitled": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(5_000.0)
@@ -672,6 +674,8 @@ def test_run_once_is_internally_throttled(db, tmp_path) -> None:
         "skipped": 0,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
+        "retitled": 0,
         "throttled": 1,
     }
     assert third["examined"] == 1
@@ -706,6 +710,8 @@ def test_skips_bump_within_min_interval(db, tmp_path) -> None:
         "skipped": 0,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
+        "retitled": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(1_000.0)
@@ -724,6 +730,8 @@ def test_skips_missing_mirror_file_without_raising(db, tmp_path) -> None:
         "skipped": 1,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
+        "retitled": 0,
         "throttled": 0,
     }
 
@@ -746,6 +754,8 @@ def test_refuses_mirror_with_foreign_origin(db, tmp_path) -> None:
         "skipped": 1,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
+        "retitled": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(1_000.0)
@@ -1036,6 +1046,510 @@ def test_hermes_source_resolves_via_canonical_fallback(db, tmp_path) -> None:
         "skipped": 0,
         "registered": 0,
         "archived": 0,
+        "hydrated": 0,
+        "retitled": 0,
         "throttled": 0,
     }
     assert mirror_path.stat().st_mtime == pytest.approx(5_000.0)
+
+
+def test_hydrates_visible_mirror_with_source_conversation(db, tmp_path) -> None:
+    from session_bridge.mirror_conversation import MirrorConversationSync
+    from session_bridge.models import is_mirrored_record
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    # The seed writes an unchained placeholder; give the mirror the registration
+    # turn the registrar really leaves, so there is a leaf to append after.
+    leaf = "9ccc7524-3d7e-4a33-a064-9697b6ade415"
+    mirror_path.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "uuid": leaf,
+                "parentUuid": None,
+                "sessionId": identity.claude_uuid,
+                "cwd": "C:/work/project",
+                "message": {"role": "user", "content": "signed registration"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    worker = ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        conversation_sync=MirrorConversationSync(store),
+    )
+
+    result = worker.run_once()
+
+    assert result["examined"] == 1
+    assert result["hydrated"] == 1
+    records = [
+        json.loads(line)
+        for line in mirror_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [record["uuid"] for record in records][0] == leaf
+    mirrored = [record for record in records if is_mirrored_record(record)]
+    assert len(mirrored) == 1
+    assert mirrored[0]["parentUuid"] == leaf
+    assert mirrored[0]["message"]["content"] == "meaningful request"
+    assert mirrored[0]["cwd"] == "C:/work/project"
+
+    # Second cycle: nothing new to mirror.
+    worker = ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        conversation_sync=MirrorConversationSync(store),
+    )
+    assert worker.run_once()["hydrated"] == 0
+
+
+def test_hydration_failure_does_not_stop_the_float_pass(db, tmp_path) -> None:
+    class _Broken:
+        def sync(self, **_kwargs):
+            raise OSError("disk says no")
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    _, mirror_path = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    worker = ClaudeMirrorFloatWorker(
+        store, min_interval_seconds=900.0, conversation_sync=_Broken()
+    )
+
+    result = worker.run_once()
+
+    assert result["floated"] == 1
+    assert result["hydrated"] == 0
+    assert result["skipped"] == 0
+
+
+# --- Titles derived from the first mirrored user turn (2026-09-09) -----------
+#
+# A registry record whose catalog row carries no title used to be called
+# "[Bridge] <cwd>", which Diego called meaningless. Once the mirror has
+# mirrored at least one source turn, the record is titled from the first
+# mirrored USER turn through the same sanitiser the registration title uses.
+
+_REGISTRATION_LEAF = "9ccc7524-3d7e-4a33-a064-9697b6ade415"
+
+
+def _clear_catalog_title(store: SessionBridgeStore, claude_uuid: str) -> None:
+    store.db._conn.execute(
+        "UPDATE sessions SET title = NULL WHERE id = ?", (f"claude:{claude_uuid}",)
+    )
+    store.db._conn.commit()
+
+
+def _write_registration_leaf(mirror_path: Path, claude_uuid: str) -> None:
+    """Give the mirror the registration turn the registrar really leaves."""
+    mirror_path.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "uuid": _REGISTRATION_LEAF,
+                "parentUuid": None,
+                "sessionId": claude_uuid,
+                "cwd": "C:/work/project",
+                "message": {"role": "user", "content": "signed registration"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _titled_worker(store: SessionBridgeStore, registry: Path, *, hydrate: bool):
+    from session_bridge.mirror_conversation import MirrorConversationSync
+
+    return ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        registry_root=registry,
+        conversation_sync=MirrorConversationSync(store) if hydrate else None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("provider", "prefix"),
+    [(Provider.CODEX, "[Codex] "), (Provider.HERMES, "[Hermes] ")],
+)
+def test_new_record_is_titled_from_first_mirrored_user_turn(
+    db, tmp_path, provider, prefix
+) -> None:
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(
+        db, store, tmp_path, provider=provider, source_last_active=5_000.0
+    )
+    _clear_catalog_title(store, identity.claude_uuid)
+    _write_registration_leaf(mirror_path, identity.claude_uuid)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+
+    result = _titled_worker(store, registry, hydrate=True).run_once()
+
+    # Hydration runs BEFORE registration, so the very first record already
+    # carries the derived title -- the desktop app honours fields at creation
+    # and ignores later mutation while it runs.
+    assert result["registered"] == 1
+    assert result["hydrated"] == 1
+    assert result["retitled"] == 0
+    record = _registry_records(registry)[0]
+    assert record["title"] == prefix + "meaningful request"
+    assert "[Bridge]" not in record["title"]
+
+
+def test_new_record_keeps_fallback_until_a_turn_is_mirrored(db, tmp_path) -> None:
+    """Without hydration the ledger shows nothing mirrored: fallback stands."""
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(db, store, tmp_path)
+    _clear_catalog_title(store, identity.claude_uuid)
+    _write_registration_leaf(mirror_path, identity.claude_uuid)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+
+    _titled_worker(store, registry, hydrate=False).run_once()
+
+    record = _registry_records(registry)[0]
+    assert record["title"].startswith("[Bridge] ")
+
+
+def test_fallback_titled_record_is_retitled_once_after_hydration(
+    db, tmp_path
+) -> None:
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(db, store, tmp_path)
+    _clear_catalog_title(store, identity.claude_uuid)
+    _write_registration_leaf(mirror_path, identity.claude_uuid)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    # Cycle 1 ran while hydration was off: the record wears the fallback.
+    _titled_worker(store, registry, hydrate=False).run_once()
+    path = next(registry.glob("local_*.json"))
+    before = json.loads(path.read_text(encoding="utf-8"))
+    assert before["title"].startswith("[Bridge] ")
+    assert "lastFocusedAt" not in before
+
+    # Cycle 2 with hydration: the turn lands, then the record is retitled.
+    result = _titled_worker(store, registry, hydrate=True).run_once()
+
+    assert result["hydrated"] == 1
+    assert result["retitled"] == 1
+    after = json.loads(path.read_text(encoding="utf-8"))
+    assert after["title"] == "[Codex] meaningful request"
+    # Everything but the title is byte-for-byte what was there.
+    assert {k: v for k, v in after.items() if k != "title"} == {
+        k: v for k, v in before.items() if k != "title"
+    }
+
+    # Cycle 3: nothing left to do, and a later rename by Diego is never undone.
+    assert _titled_worker(store, registry, hydrate=True).run_once()["retitled"] == 0
+    renamed = dict(after, title="what Diego typed")
+    path.write_text(json.dumps(renamed), encoding="utf-8")
+    assert _titled_worker(store, registry, hydrate=True).run_once()["retitled"] == 0
+    assert json.loads(path.read_text(encoding="utf-8"))["title"] == "what Diego typed"
+
+
+def test_non_fallback_title_is_never_touched(db, tmp_path) -> None:
+    """Control: a record titled by the catalog keeps that title through hydration."""
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(db, store, tmp_path)
+    _write_registration_leaf(mirror_path, identity.claude_uuid)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    _titled_worker(store, registry, hydrate=False).run_once()
+    path = next(registry.glob("local_*.json"))
+    assert json.loads(path.read_text(encoding="utf-8"))["title"] == "claude session"
+
+    result = _titled_worker(store, registry, hydrate=True).run_once()
+
+    assert result["hydrated"] == 1
+    assert result["retitled"] == 0
+    assert json.loads(path.read_text(encoding="utf-8"))["title"] == "claude session"
+
+
+def test_focused_fallback_record_is_never_retitled(db, tmp_path) -> None:
+    """A row the app has opened keeps its name even if it is still the fallback."""
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(db, store, tmp_path)
+    _clear_catalog_title(store, identity.claude_uuid)
+    _write_registration_leaf(mirror_path, identity.claude_uuid)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    _titled_worker(store, registry, hydrate=False).run_once()
+    path = next(registry.glob("local_*.json"))
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["title"].startswith("[Bridge] ")
+    record["lastFocusedAt"] = 5_000_001
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    result = _titled_worker(store, registry, hydrate=True).run_once()
+
+    assert result["hydrated"] == 1
+    assert result["retitled"] == 0
+    assert json.loads(path.read_text(encoding="utf-8"))["title"] == record["title"]
+
+
+def test_derived_title_skips_backfill_notice_and_caps_at_120(db, tmp_path) -> None:
+    from session_bridge.mirror_conversation import MirrorConversationSync
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(db, store, tmp_path)
+    long_request = "please " + "audit the whole fleet controller config " * 6
+    assert len(long_request) > 120
+    # Two source turns with a backfill cap of one: the mirror gets the notice
+    # record first ("[Hermes mirror] 1 earlier message(s) ...") and then only
+    # the SECOND turn, which is the one that must become the title.
+    store.upsert_projection(
+        _projection(
+            _message("source-1", "first request that is dropped by the cap"),
+            _message("source-1b", long_request),
+            provider=Provider.CODEX,
+            native_id="source-1",  # the seed's Codex source for suffix "1"
+            last_active=5_000.0,
+        )
+    )
+    _clear_catalog_title(store, identity.claude_uuid)
+    _write_registration_leaf(mirror_path, identity.claude_uuid)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    worker = ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        registry_root=registry,
+        conversation_sync=MirrorConversationSync(store, backfill_messages=1),
+    )
+
+    result = worker.run_once()
+
+    assert result["hydrated"] == 2  # notice + one turn
+    title = _registry_records(registry)[0]["title"]
+    assert title.startswith("[Codex] please audit the whole fleet")
+    assert "Hermes mirror" not in title
+    assert "dropped by the cap" not in title
+    assert len(title) <= 120
+    # sidebar_title caps at 120 INCLUDING its own "[Claude] " prefix (9 chars),
+    # so after the "[Codex] " swap the longest possible title is 119.
+    assert title == "[Codex] " + long_request[:111].rstrip()
+
+
+def _reseed_codex_source(store: SessionBridgeStore, *messages: ProjectedMessage) -> None:
+    """Replace the seed's Codex source (suffix "1") conversation wholesale.
+
+    upsert_projection APPENDS messages, so the seed's "meaningful request"
+    user turn is deleted first; otherwise it would (correctly) win the title.
+    """
+    store.db._conn.execute("DELETE FROM messages WHERE session_id = ?", ("codex:source-1",))
+    store.db._conn.commit()
+    store.upsert_projection(
+        _projection(
+            *messages,
+            provider=Provider.CODEX,
+            native_id="source-1",
+            last_active=5_000.0,
+        )
+    )
+
+
+def test_mirror_with_no_user_turn_is_titled_from_first_assistant_turn(
+    db, tmp_path
+) -> None:
+    """15 of 16 live fallback mirrors on 2026-09-09 held assistant turns only."""
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(db, store, tmp_path)
+    _reseed_codex_source(
+        store,
+        _message("a1", "I'll start with the timing gate, judged in UTC.", role="assistant"),
+        _message("a2", "Second reply that must not win.", role="assistant"),
+    )
+    _clear_catalog_title(store, identity.claude_uuid)
+    _write_registration_leaf(mirror_path, identity.claude_uuid)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+
+    result = _titled_worker(store, registry, hydrate=True).run_once()
+
+    assert result["hydrated"] == 2
+    record = _registry_records(registry)[0]
+    assert record["title"] == "[Codex] I'll start with the timing gate, judged in UTC."
+
+
+def test_user_turn_wins_over_an_earlier_assistant_turn(db, tmp_path) -> None:
+    """The assistant fallback is a fallback: any real user turn outranks it."""
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(db, store, tmp_path)
+    _reseed_codex_source(
+        store,
+        _message("a1", "Assistant opened the thread first.", role="assistant"),
+        _message("u1", "ok"),  # ack only: not meaningful, must not win either
+        _message("u2", "the real request typed later"),
+    )
+    _clear_catalog_title(store, identity.claude_uuid)
+    _write_registration_leaf(mirror_path, identity.claude_uuid)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+
+    _titled_worker(store, registry, hydrate=True).run_once()
+
+    assert _registry_records(registry)[0]["title"] == "[Codex] the real request typed later"
+
+
+def test_run_once_hides_the_registration_prompt_of_a_visible_mirror(db, tmp_path) -> None:
+    """The worker is the ONLY caller of the prefix hide, and only for visible jobs.
+
+    It runs in the same cycle as hydration, so the in-place rewrite and the
+    append never race; the mirrored turns still chain from the registration
+    answer, whose uuid the rewrite leaves untouched.
+    """
+    from session_bridge.claude_visibility import _CURRENT_CODEX_REGISTRATION_PREAMBLE
+    from session_bridge.mirror_conversation import MirrorConversationSync
+    from session_bridge.models import is_mirrored_record, is_registration_record
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    prompt_uuid = "9ccc7524-3d7e-4a33-a064-9697b6ade415"
+    answer_uuid = "75c89ce6-cdb0-4b06-90e7-22bd99518810"
+    mirror_path.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "uuid": prompt_uuid,
+                "parentUuid": None,
+                "isSidechain": False,
+                "sessionId": identity.claude_uuid,
+                "cwd": "C:/work/project",
+                "message": {
+                    "role": "user",
+                    "content": _CURRENT_CODEX_REGISTRATION_PREAMBLE
+                    + "abc.def\nBounded metadata: {}\nYou must reply exactly REGISTERED.",
+                },
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "uuid": answer_uuid,
+                "parentUuid": prompt_uuid,
+                "isSidechain": False,
+                "sessionId": identity.claude_uuid,
+                "cwd": "C:/work/project",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "REGISTERED"}]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    worker = ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        conversation_sync=MirrorConversationSync(store),
+    )
+
+    result = worker.run_once()
+
+    assert result["hydrated"] == 1
+    records = [
+        json.loads(line)
+        for line in mirror_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert records[0]["uuid"] == prompt_uuid
+    assert records[0]["isMeta"] is True
+    assert is_registration_record(records[0])
+    assert records[1]["uuid"] == answer_uuid and "isMeta" not in records[1]
+    mirrored = [record for record in records if is_mirrored_record(record)]
+    assert len(mirrored) == 1 and mirrored[0]["parentUuid"] == answer_uuid
+
+
+def test_run_once_hides_the_cli_teardown_of_a_visible_mirror(db, tmp_path) -> None:
+    """The worker hides the CLI's /exit bookkeeping in the same cycle as the
+    prefix hide, for visible jobs only; the mirrored turn still chains from the
+    farewell record, whose uuid the rewrite leaves untouched."""
+    from session_bridge.claude_visibility import _CURRENT_CODEX_REGISTRATION_PREAMBLE
+    from session_bridge.mirror_conversation import MirrorConversationSync
+    from session_bridge.models import (
+        is_mirrored_record,
+        is_registration_record,
+        is_teardown_record,
+    )
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, mirror_path = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    prompt_uuid = "9ccc7524-3d7e-4a33-a064-9697b6ade415"
+    answer_uuid = "75c89ce6-cdb0-4b06-90e7-22bd99518810"
+    exit_uuid = "1e1e1e1e-1e1e-4e1e-8e1e-1e1e1e1e1e1e"
+    farewell_uuid = "2e2e2e2e-2e2e-4e2e-8e2e-2e2e2e2e2e2e"
+
+    def record(kind, uuid, parent, content):
+        return {
+            "type": kind,
+            "uuid": uuid,
+            "parentUuid": parent,
+            "isSidechain": False,
+            "sessionId": identity.claude_uuid,
+            "cwd": "C:/work/project",
+            "message": {"role": kind, "content": content},
+        }
+
+    mirror_path.write_text(
+        "\n".join(
+            json.dumps(item)
+            for item in (
+                record(
+                    "user",
+                    prompt_uuid,
+                    None,
+                    _CURRENT_CODEX_REGISTRATION_PREAMBLE
+                    + "abc.def\nBounded metadata: {}\nYou must reply exactly REGISTERED.",
+                ),
+                record("assistant", answer_uuid, prompt_uuid, [{"type": "text", "text": "REGISTERED"}]),
+                record(
+                    "user",
+                    exit_uuid,
+                    answer_uuid,
+                    "<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>",
+                ),
+                record(
+                    "user",
+                    farewell_uuid,
+                    exit_uuid,
+                    "<local-command-stdout>Goodbye!</local-command-stdout>",
+                ),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    worker = ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        conversation_sync=MirrorConversationSync(store),
+    )
+
+    result = worker.run_once()
+
+    assert result["hydrated"] == 1
+    records = [
+        json.loads(line)
+        for line in mirror_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert records[0]["isMeta"] is True and is_registration_record(records[0])
+    assert records[1]["uuid"] == answer_uuid and "isMeta" not in records[1]
+    for index, uuid in ((2, exit_uuid), (3, farewell_uuid)):
+        assert records[index]["uuid"] == uuid
+        assert records[index]["isMeta"] is True
+        assert is_teardown_record(records[index])
+        assert not is_registration_record(records[index])
+    mirrored = [item for item in records if is_mirrored_record(item)]
+    assert len(mirrored) == 1 and mirrored[0]["parentUuid"] == farewell_uuid

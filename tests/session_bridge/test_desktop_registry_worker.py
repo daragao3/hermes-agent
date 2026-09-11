@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from hermes_state import SessionDB
+from hermes_state_bridge_schema import desktop_registry_value_hash
 from session_bridge.desktop_registry import RegistryScanError
 from session_bridge.desktop_registry_worker import (
     WORKER_HEARTBEAT_STATE_KEY,
@@ -419,3 +420,99 @@ class _StoreWithBrokenSetState:
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
+
+
+# ── Content-addressed baseline values (schema v34) ──
+
+
+def _rows(db, sql, params=()):
+    with db._lock:
+        return [dict(row) for row in db._conn.execute(sql, params).fetchall()]
+
+
+def _stored_values(db) -> dict[str, str]:
+    return {
+        row["value_hash"]: row["value_json"]
+        for row in _rows(db, "SELECT value_hash, value_json FROM desktop_registry_values")
+    }
+
+
+def _assert_values_table_is_exactly_the_referenced_set(db) -> None:
+    referenced = {
+        row["value_hash"]
+        for row in _rows(db, "SELECT DISTINCT value_hash FROM desktop_registry_baselines")
+    }
+    assert set(_stored_values(db)) == referenced
+    assert _rows(db, "PRAGMA foreign_key_check") == []
+
+
+def test_baselines_store_one_blob_per_distinct_group_value(tmp_path, store, db) -> None:
+    """Three mirrored roots x N groups produce 3N baseline rows but N blobs."""
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, title="Same")
+    _worker(store, (a, b, c)).run_once()
+
+    per_group = _rows(
+        db,
+        """SELECT group_name, COUNT(*) AS rows_, COUNT(DISTINCT value_hash) AS blobs
+           FROM desktop_registry_baselines GROUP BY group_name""",
+    )
+    assert per_group
+    assert all(row["rows_"] == 3 and row["blobs"] == 1 for row in per_group)
+    assert len(_stored_values(db)) == len(
+        {row["value_json"] for row in store.load_desktop_registry_baselines()}
+    )
+    _assert_values_table_is_exactly_the_referenced_set(db)
+
+
+def test_loaded_baselines_keep_the_worker_row_shape(tmp_path, store) -> None:
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100)
+    _worker(store, (a, b, c)).run_once()
+
+    rows = store.load_desktop_registry_baselines()
+    assert rows
+    for row in rows:
+        assert list(row) == ["filename", "root_id", "group_name", "value_json", "revision"]
+        assert isinstance(row["value_json"], str) and row["value_json"]
+        json.loads(row["value_json"])
+        assert isinstance(row["revision"], int) and row["revision"] >= 1
+    # Never leaks the hash to the planner.
+    assert not any("value_hash" in row for row in rows)
+
+
+def test_advancing_a_baseline_drops_the_superseded_blob(tmp_path, store, db) -> None:
+    """When every root moves off a group value, its blob leaves the values table."""
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100)
+    worker = _worker(store, (a, b, c))
+    worker.run_once()
+    before = {
+        (row["filename"], row["root_id"], row["group_name"]): row["value_json"]
+        for row in store.load_desktop_registry_baselines()
+    }
+
+    path = b / "local_one.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["isArchived"] = True
+    path.write_text(json.dumps(record), encoding="utf-8")
+    counters = worker.run_once()
+    assert counters["patched"] == 2
+    assert counters["baseline_rows_advanced"] > 0
+
+    after = {
+        (row["filename"], row["root_id"], row["group_name"]): row["value_json"]
+        for row in store.load_desktop_registry_baselines()
+    }
+    superseded = {before[key] for key in before if after.get(key) != before[key]}
+    assert superseded
+    stored = _stored_values(db)
+    for old in superseded:
+        assert old not in after.values()
+        assert desktop_registry_value_hash(old) not in stored
+    for new in after.values():
+        assert stored[desktop_registry_value_hash(new)] == new
+    _assert_values_table_is_exactly_the_referenced_set(db)

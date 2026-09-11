@@ -327,8 +327,8 @@ class TestScanFailureIsUserVisible:
         assert exc.value.code == 1
 
     def test_status_reports_scan_failure(self, capsys):
-        with patch("hermes_cli.main._find_stale_dashboard_pids",
-                   return_value=_failed_scan()), \
+        with patch("hermes_cli.dashboard_procs._scan_dashboard_processes",
+                   side_effect=OSError("process table unavailable")), \
              pytest.raises(SystemExit):
             main.cmd_dashboard(_ns(status=True))
         out = capsys.readouterr().out
@@ -339,7 +339,7 @@ class TestScanFailureIsUserVisible:
         """`hermes update`'s reaper exists to prevent a stale backend.  If
         the scan fails it must say so, not return as if the box were clean.
         """
-        with patch("hermes_cli.main._find_stale_dashboard_pids",
+        with patch("hermes_cli.main_dashboard._find_stale_dashboard_pids",
                    return_value=_failed_scan()):
             main._kill_stale_dashboard_processes()
         out = capsys.readouterr().out
@@ -347,7 +347,7 @@ class TestScanFailureIsUserVisible:
 
     def test_clean_box_stays_silent_in_the_reaper(self, capsys):
         """A genuinely empty result must remain a silent no-op."""
-        with patch("hermes_cli.main._find_stale_dashboard_pids",
+        with patch("hermes_cli.main_dashboard._find_stale_dashboard_pids",
                    return_value=main._DashboardPids([], scan_ok=True)):
             main._kill_stale_dashboard_processes()
         assert capsys.readouterr().out == ""

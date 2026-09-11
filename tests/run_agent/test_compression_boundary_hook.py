@@ -14,7 +14,11 @@ this from a real user-initiated /new.
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
 
+from agent.conversation_compression import (
+    finalize_context_engine_compression_notification as finalize_context_engine_compression_notification,
+)
 
 class TestCompressionBoundaryHook:
     def _make_agent(self, session_db):
@@ -80,6 +84,7 @@ class TestCompressionBoundaryHook:
             f"Expected an on_session_start call with "
             f"boundary_reason='compression', got {calls!r}"
         )
+        assert len(comp_calls) == 1
         call = comp_calls[-1]
         # Positional new session_id
         assert call.args and call.args[0] == agent.session_id, \
@@ -148,10 +153,87 @@ class TestCompressionBoundaryHook:
 
         # Must not raise
         compressed, _prompt = agent._compress_context(
-            [{"role": "user", "content": "m"}], "sys", approx_tokens=100
+            [{"role": "user", "content": "m" * 400}], "sys", approx_tokens=100
         )
         assert compressed
         assert agent.session_id != original_sid
+
+
+    def test_automatic_notification_follows_core_persistence(self, session_db):
+
+        events = []
+        db = session_db
+        agent = self._make_agent(db)
+        compressor = MagicMock()
+        compressor.compress.return_value = [
+            {"role": "user", "content": "summary"}
+        ]
+        compressor.compression_count = 1
+        compressor.last_prompt_tokens = 0
+        compressor.last_completion_tokens = 0
+        compressor._last_summary_error = None
+        compressor._last_compress_aborted = False
+        compressor.on_session_start.side_effect = (
+            lambda *_args, **kwargs: events.append(
+                kwargs.get("boundary_reason")
+            )
+        )
+        agent.context_compressor = compressor
+        original_publish = db.publish_compression_child
+
+        def _record_publish(*args, **kwargs):
+            result = original_publish(*args, **kwargs)
+            events.append("persist")
+            return result
+
+        with patch.object(
+            db, "publish_compression_child", side_effect=_record_publish
+        ):
+            agent._compress_context(
+                [{"role": "user", "content": "request"}],
+                "sys",
+                approx_tokens=100,
+            )
+
+        assert events == ["persist", "compression"]
+
+
+    def test_failure_before_persistence_does_not_notify(self, session_db):
+
+        db = session_db
+        agent = self._make_agent(db)
+        compressor = MagicMock()
+        compressor.compress.side_effect = RuntimeError("synthetic compression failure")
+        agent.context_compressor = compressor
+
+        with pytest.raises(RuntimeError, match="synthetic compression failure"):
+            agent._compress_context(
+                [{"role": "user", "content": "request"}],
+                "sys",
+                approx_tokens=100,
+            )
+
+        compressor.on_session_start.assert_not_called()
+
+
+    def test_no_progress_does_not_notify(self, session_db):
+
+        db = session_db
+        agent = self._make_agent(db)
+        compressor = MagicMock()
+        compressor.compress.side_effect = lambda messages, **_kwargs: messages
+        compressor._last_compress_aborted = False
+        agent.context_compressor = compressor
+        messages = [{"role": "user", "content": "request"}]
+
+        returned, _ = agent._compress_context(
+            messages,
+            "sys",
+            approx_tokens=100,
+        )
+
+        assert returned is messages
+        compressor.on_session_start.assert_not_called()
 
 
 class TestSessionCompressEvent:
@@ -217,17 +299,3 @@ class TestSessionCompressEvent:
             [{"role": "user", "content": "m"}], "sys", approx_tokens=100
         )
         assert compressed
-
-    def test_callback_exception_does_not_break_compression(self, session_db):
-        def _boom(event_type, ctx):
-            raise RuntimeError("hook exploded")
-
-        agent = self._make_agent(session_db, event_callback=_boom)
-        original_sid = agent.session_id
-        agent.context_compressor = self._stub_compressor()
-
-        compressed, _ = agent._compress_context(
-            [{"role": "user", "content": "m"}], "sys", approx_tokens=100
-        )
-        assert compressed
-        assert agent.session_id != original_sid

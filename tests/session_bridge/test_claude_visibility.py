@@ -339,6 +339,48 @@ def test_registration_preamble_is_excluded_whatever_marker_scheme_it_carries(
     ) == "bridge_placeholder"
 
 
+_SCHEDULED_TASK_OPENER = (
+    '<scheduled-task name="repo-test-gate-first-green-0430-verify" '
+    'file="C:\\Users\\diego\\.claude\\scheduled-tasks\\repo-test-gate-first-green'
+    '-0430-verify\\SKILL.md">\n'
+    "This is an automated run. Report what you measured."
+)
+
+
+def test_scheduled_task_codex_session_is_automation_not_user_work() -> None:
+    """A scheduled-task fire is automation, so it earns no sidebar mirror.
+
+    These are Codex sessions the scheduler starts, not sessions Diego is
+    working in. They were 21 of 45 registrations on 2026-09-07 and he named
+    them specifically as records that should not appear. The sibling envelopes
+    (<heartbeat>, "Automation: ") were already excluded on exactly this
+    reasoning; this closes the third shape.
+    """
+
+    assert evaluate_claude_visibility(
+        _projection(Provider.CODEX, content=_SCHEDULED_TASK_OPENER)
+    ) == "automation_only"
+
+
+def test_a_real_request_mentioning_a_scheduled_task_stays_eligible() -> None:
+    """The exclusion is an OPENER test, never a substring search.
+
+    Diego's own sessions discuss scheduled tasks constantly. Matching the
+    phrase anywhere would silently hide the cross-harness visibility he asked
+    for -- the failure direction that costs him work rather than clutter.
+    """
+
+    assert evaluate_claude_visibility(
+        _projection(
+            Provider.CODEX,
+            content=(
+                "Investigate why the <scheduled-task> wrapper strands prompt "
+                "dirs, then propose a fix."
+            ),
+        )
+    ) == "eligible"
+
+
 def test_codex_injected_context_does_not_hide_a_real_user_request() -> None:
     projection = replace(
         _projection(Provider.CODEX),
@@ -606,3 +648,92 @@ def test_identity_binding_accepts_pre_rotation_marker_via_retired_keys() -> None
             SECRET,
             retired_marker_secrets=(b"",),
         )
+
+
+from session_bridge.claude_visibility import is_agent_worktree_cwd
+
+
+@pytest.mark.parametrize(
+    "cwd, expected",
+    [
+        (r"C:\Users\diego\.hermes\.claude\worktrees\kind-mestorf-a297f7", True),
+        ("C:/Users/diego/.hermes/agent-src/.claude/worktrees/vigorous-maxwell", True),
+        (r"C:\Users\diego\.hermes", False),
+        ("C:/Users/diego/.hermes/agent-src", False),
+        ("C:/Users/diego/worktrees/not-claude", False),
+        (None, False),
+        ("", False),
+    ],
+)
+def test_is_agent_worktree_cwd(cwd, expected) -> None:
+    assert is_agent_worktree_cwd(cwd) is expected
+
+
+def test_worktree_sources_are_excluded_only_when_opted_in() -> None:
+    worktree = replace(
+        _projection(Provider.CODEX),
+        cwd=r"C:\Users\diego\.hermes\.claude\worktrees\kind-mestorf-a297f7",
+    )
+    root = _projection(Provider.CODEX)
+
+    assert evaluate_claude_visibility(worktree) == "eligible"
+    assert (
+        evaluate_claude_visibility(worktree, exclude_worktree_sources=True)
+        == "automation_only"
+    )
+    assert evaluate_claude_visibility(root, exclude_worktree_sources=True) == "eligible"
+    with pytest.raises(ValueError, match="automation_only"):
+        build_claude_visibility_candidate(
+            worktree, eligible_at=20.0, exclude_worktree_sources=True
+        )
+
+
+from session_bridge.claude_visibility import (
+    codex_rollout_originator,
+    is_codex_import_rollout,
+)
+
+
+def _rollout(tmp_path, originator, *, name="rollout.jsonl", first_type="session_meta"):
+    import json as _json
+
+    path = tmp_path / name
+    head = {"timestamp": "2026-09-09T17:38:40.252Z", "type": first_type,
+            "payload": {"id": "01a08740", "cwd": "C:/x", "originator": originator}}
+    path.write_text(_json.dumps(head) + "\n" + '{"type":"turn_context"}\n', encoding="utf-8")
+    return str(path)
+
+
+def test_codex_import_rollouts_are_recognised_by_originator(tmp_path) -> None:
+    assert is_codex_import_rollout(_rollout(tmp_path, "hermes-codex-import")) is True
+    assert is_codex_import_rollout(_rollout(tmp_path, "Codex Desktop", name="b.jsonl")) is False
+    assert codex_rollout_originator(_rollout(tmp_path, "codex_cli_rs", name="c.jsonl")) == "codex_cli_rs"
+    # Absent, unreadable, or not a session_meta head: NOT an import.
+    assert is_codex_import_rollout(str(tmp_path / "missing.jsonl")) is False
+    assert is_codex_import_rollout(None) is False
+    assert is_codex_import_rollout(
+        _rollout(tmp_path, "hermes-codex-import", name="d.jsonl", first_type="turn_context")
+    ) is False
+    unterminated = tmp_path / "e.jsonl"
+    unterminated.write_text('{"type":"session_meta","payload":{"originator":"hermes-codex-import"}}', encoding="utf-8")
+    assert is_codex_import_rollout(str(unterminated)) is False
+
+
+def test_codex_import_probe_reads_a_meta_line_longer_than_8kib(tmp_path) -> None:
+    """Real session_meta lines embed base_instructions and exceed 8 KiB."""
+    import json as _json
+
+    path = tmp_path / "long-meta.jsonl"
+    head = {
+        "timestamp": "2026-09-09T20:38:42.000Z",
+        "type": "session_meta",
+        "payload": {
+            "id": "01a087e4",
+            "cwd": "C:/x",
+            "originator": "hermes-codex-import",
+            "base_instructions": {"text": "x" * 40_000},
+        },
+    }
+    path.write_text(_json.dumps(head) + "\n", encoding="utf-8")
+
+    assert is_codex_import_rollout(str(path)) is True

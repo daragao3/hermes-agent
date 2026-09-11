@@ -274,7 +274,11 @@ def test_every_config_yaml_marker_write_goes_through_the_seam():
     """
     # The seam's docstring names ``mark_seen(config.yaml)`` in prose, which the
     # call-site regex would happily match — grade the file without it.
-    calls = re.findall(r"mark_seen\(\s*([^,]+),", _source_without_the_seam())
+    source = _source_without_the_seam() + "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in Path(run.__file__).parent.glob("run_*.py")
+    )
+    calls = re.findall(r"mark_seen\(\s*([^,]+),", source)
 
     assert len(calls) == 3, f"expected three mark_seen call sites, found {len(calls)}"
     for target in calls:
@@ -292,11 +296,24 @@ def test_slash_commands_does_not_copy_the_snapshot_across_the_boundary():
     They must import the seam instead — the same fix ``entry.py`` needed for
     ``_CRASH_LOG``.
     """
-    source = (Path(run.__file__).parent / "slash_commands.py").read_text(encoding="utf-8")
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in Path(run.__file__).parent.glob("slash_commands*.py")
+    )
 
     assert "import _hermes_home" not in source
     assert "_hermes_home / " not in source
-    assert source.count("_resolve_hermes_home") >= 10
+    # The split upstream handlers consolidate repeated imports. Check actual
+    # calls in both remaining path-owning modules, not a historical token count.
+    import ast
+    for name in ("slash_commands.py", "slash_commands_model.py"):
+        tree = ast.parse((Path(run.__file__).parent / name).read_text(encoding="utf-8"))
+        assert any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "_resolve_hermes_home"
+            for node in ast.walk(tree)
+        ), f"{name} lost its runtime home resolver"
+
 
 
 # ── Ported from tests/gateway/test_hermes_home_binding.py ────────────

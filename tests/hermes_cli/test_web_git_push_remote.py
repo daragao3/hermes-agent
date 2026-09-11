@@ -246,3 +246,18 @@ def test_branch_base_uses_the_resolved_remote_when_the_trunk_has_no_upstream(tmp
 
     assert base == at_fork, "diff base ignored the configured trunk remote"
     assert base != at_origin
+
+
+def test_worktree_add_uses_bounded_capture_and_native_paths(tmp_path):
+    import os
+    from pathlib import Path
+
+    repo = _work_repo(tmp_path)
+    result = web_git.worktree_add(str(repo), {
+        "name": "integration", "branch": "codex/integration", "base": "feature/x",
+    })
+    target = Path(result["path"])
+    assert (target / "tracked.txt").read_text(encoding="utf-8") == "tracked\n"
+    trees = web_git.worktree_list(str(repo))
+    assert any(t["path"] == os.path.normpath(str(target)) and t["branch"] == "codex/integration" for t in trees)
+    assert _git(target, "branch", "--show-current") == "codex/integration"

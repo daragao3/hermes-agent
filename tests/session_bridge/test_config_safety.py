@@ -737,6 +737,12 @@ _CLAUDE_VISIBILITY_DEFAULTS = {
     # used to wait for a human.
     "auto_dismiss_exhausted_after_seconds": None,
     "auto_dismiss_health_window_seconds": 86_400,
+    # Off = a mirror stays the bare registration session; on = its transcript
+    # is appended with the source conversation (2026-09-09).
+    "hydrate_conversation": False,
+    "hydrate_backfill_messages": 400,
+    "exclude_worktree_sources": False,
+    "exclude_codex_imports": False,
 }
 
 
@@ -810,6 +816,10 @@ def test_claude_visibility_config_parses_every_valid_override(
         "archive_idle_mirror_seconds": 259_200,
         "auto_dismiss_exhausted_after_seconds": 21_600,
         "auto_dismiss_health_window_seconds": 43_200,
+        "hydrate_conversation": True,
+        "hydrate_backfill_messages": 50,
+        "exclude_worktree_sources": True,
+        "exclude_codex_imports": True,
     }
 
     config = _load_with_claude_visibility(monkeypatch, configured)
@@ -991,3 +1001,32 @@ def test_claude_visibility_accepts_a_lease_with_headroom(
     assert config.claude_visibility.lease_seconds == 660
     assert config.claude_visibility.process_timeout_seconds == 360
     assert config.claude_visibility.discovery_timeout_seconds == 120
+
+
+@pytest.mark.parametrize(
+    "field, value, message",
+    [
+        (
+            "hydrate_conversation",
+            "yes",
+            "session_bridge.claude_visibility.hydrate_conversation must be a boolean",
+        ),
+        (
+            "hydrate_backfill_messages",
+            19,
+            "session_bridge.claude_visibility.hydrate_backfill_messages",
+        ),
+        (
+            "exclude_worktree_sources",
+            1,
+            "session_bridge.claude_visibility.exclude_worktree_sources must be a boolean",
+        ),
+    ],
+)
+def test_mirror_conversation_keys_reject_bad_values(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: object, message: str
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)):
+        _load_with_claude_visibility(
+            monkeypatch, {**_CLAUDE_VISIBILITY_DEFAULTS, field: value}
+        )

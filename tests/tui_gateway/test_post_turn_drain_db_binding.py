@@ -173,19 +173,35 @@ def test_the_capture_precedes_the_per_turn_home_override():
     """
     src = inspect.getsource(server._run_prompt_submit)
 
-    assert "_drain_post_turn_notifications(" in src, (
-        "the turn thread no longer calls the extracted drain"
-    )
-    drain_call = src[src.index("_drain_post_turn_notifications(") :]
+    # Upstream split the turn into preparation, finalization and followups.
+    # Check the actual forwarding chain without restoring the old closure.
+    assert "_run_post_turn_followups(" in src
+    drain_call = src[src.index("_run_post_turn_followups(") :]
     drain_call = drain_call[: drain_call.index(")") + 1]
     assert "db_path=" in drain_call, (
         "the turn thread calls the drain without carrying a captured db path"
     )
 
-    capture_idx = src.index("_db_path")
-    override_idx = src.index("set_hermes_home_override")
-    assert capture_idx < override_idx, (
+    capture_idx = src.index("_turn_db_path = _capture_notification_db_path()")
+    assert src.index("def run():") < capture_idx < src.index("_prepare_turn_input(sid"), (
         "the db path is captured AFTER the per-turn HERMES_HOME override is "
         "installed, so it binds the resumed profile's home instead of the "
         "process home the notification poller shares a delivery claim with"
     )
+    assert "set_hermes_home_override" in inspect.getsource(server._prepare_turn_input)
+
+
+def test_followups_forward_the_captured_database(homes, monkeypatch):
+    """Exercise the new followup stage through real delivery SQLite writes."""
+    home_a, home_b = homes
+    sid = "sid_followups"
+    _stub_drain(monkeypatch, sid, [(_delegation_event(sid), "[IMPORTANT: done]")])
+    monkeypatch.setattr(server, "_drain_queued_prompt", lambda *a: False)
+    monkeypatch.setenv("HERMES_HOME", str(home_b))
+
+    server._run_post_turn_followups(
+        "rid-1", sid, _session(), {}, None, db_path=home_a / "state.db"
+    )
+
+    assert (home_a / "state.db").exists()
+    assert not (home_b / "state.db").exists()

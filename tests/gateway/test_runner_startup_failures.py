@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.platforms.base import BasePlatformAdapter
-from gateway.restart import GATEWAY_FATAL_CONFIG_EXIT_CODE
+from gateway.restart import GATEWAY_FATAL_CONFIG_EXIT_CODE, is_global_startup_conflict
 from gateway.run import GatewayRunner
 from gateway.status import read_runtime_status
 
@@ -35,6 +35,26 @@ def _neutralize_eventbus_startup(monkeypatch):
     import events.gateway_integration as _ebi
 
     monkeypatch.setattr(_ebi, "startup", lambda *a, **k: None)
+
+
+@pytest.mark.parametrize(
+    "code, expected",
+    [
+        ("telegram-bot-token_lock", True),   # BasePlatformAdapter._acquire_platform_lock
+        ("discord-bot-token_lock", True),
+        ("whatsapp-session_lock", True),
+        ("feishu_app_lock", True),
+        ("lock_conflict", True),             # buzz / irc / line identity conflicts
+        ("telegram_connect_error", False),
+        ("telegram_auth_error", False),
+        ("relay_membership_required", False),
+        ("duplicate_credential", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_is_global_startup_conflict_matches_lock_code_families(code, expected):
+    assert is_global_startup_conflict(code) is expected
 
 
 class _RetryableFailureAdapter(BasePlatformAdapter):
@@ -195,6 +215,7 @@ async def test_start_gateway_verbosity_imports_redacting_formatter(monkeypatch, 
             self.adapters = {}
 
         async def start(self):
+            assert self._platform_lock_takeover_on_start is False
             return True
 
         async def stop(self):
@@ -217,6 +238,8 @@ async def test_start_gateway_verbosity_imports_redacting_formatter(monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_start_gateway_replace_force_uses_terminate_pid(monkeypatch, tmp_path):
+    monkeypatch.setattr("gateway.run._replace_target_belongs_to_other_profile", lambda pid: False)
+    monkeypatch.setattr("gateway.status.get_process_age_seconds", lambda pid: 9999.0)
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
     calls = []
@@ -251,7 +274,7 @@ async def test_start_gateway_replace_force_uses_terminate_pid(monkeypatch, tmp_p
     # force-kill reaps the process: terminate_pid(force=True) flips it dead,
     # and the post-kill re-poll via _pid_exists then sees it gone so the
     # replacement proceeds.
-    def _mock_terminate_pid(pid, force=False, reason=None):
+    def _mock_terminate_pid(pid, force=False, reason=None, **kwargs):
         calls.append((pid, force))
         if force:
             _pid_state["alive"] = False
@@ -260,7 +283,7 @@ async def test_start_gateway_replace_force_uses_terminate_pid(monkeypatch, tmp_p
     # drain inside its budget, which is what licenses the force-kill below.
     monkeypatch.setattr(
         "gateway.run._request_incumbent_shutdown",
-        lambda pid, *, timeout: False,
+        AsyncMock(return_value=False),
     )
     monkeypatch.setattr(
         "gateway.status._pid_exists", lambda pid: _pid_state["alive"]
@@ -294,6 +317,7 @@ async def test_start_gateway_replace_aborts_when_force_killed_pid_still_alive(
     file / scoped locks and start a fresh instance — that leaves two live
     gateways fighting over the same token. It should abort instead.
     """
+    monkeypatch.setattr("gateway.run._request_incumbent_shutdown", AsyncMock(return_value=False))
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
     calls = []
@@ -321,11 +345,22 @@ async def test_start_gateway_replace_aborts_when_force_killed_pid_still_alive(
     )
     monkeypatch.setattr(
         "gateway.status.terminate_pid",
-        lambda pid, force=False, reason=None: calls.append((pid, force)),
+        lambda pid, force=False, **kwargs: calls.append((pid, force)),
+    )
+    # Ownership guard (#89315): legitimate same-home replace fixture — the
+    # persisted record is bound to target pid 42 in this home.
+    monkeypatch.setattr(
+        "gateway.status._read_pid_record",
+        lambda path=None: {
+            "pid": 42,
+            "kind": "hermes-gateway",
+            "argv": ["python", "-m", "hermes_cli.main", "gateway", "run"],
+            "start_time": 0,
+            "hermes_home": str(tmp_path),
+        },
     )
     monkeypatch.setattr(
-        "gateway.run._request_incumbent_shutdown",
-        lambda pid, *, timeout: False,
+        "gateway.status._get_process_start_time", lambda pid: 0 if pid == 42 else None
     )
     # _pid_exists never goes False — the force-kill did not take.
     monkeypatch.setattr("gateway.status._pid_exists", lambda pid: True)
@@ -380,10 +415,10 @@ async def test_start_gateway_replace_writes_takeover_marker_before_sigterm(
         })
         return True
 
-    def record_terminate(pid, force=False, reason=None):
+    def record_terminate(pid, force=False, **kwargs):
         events.append(f"terminate_pid(pid={pid}, force={force})")
 
-    def record_request(pid, *, timeout):
+    async def record_request(pid, *, timeout):
         # The replace path now ASKS the incumbent to stop (planned-stop marker
         # on Windows, real SIGTERM on POSIX) and only escalates to terminate_pid
         # if that is refused. The ordering this test pins — takeover marker
@@ -412,6 +447,23 @@ async def test_start_gateway_replace_writes_takeover_marker_before_sigterm(
         _pid_state["alive"] = False
     monkeypatch.setattr("gateway.status.get_running_pid", _mock_get_running_pid)
     monkeypatch.setattr("gateway.status.remove_pid_file", _mock_remove_pid_file)
+    # Ownership guard (#89315): this test simulates a legitimate same-home
+    # replace, so the persisted pid record must be a valid BOUND record for
+    # the target pid in THIS home. start_time 0 matches the legacy fixture's
+    # convention; the live probe is patched to agree.
+    monkeypatch.setattr(
+        "gateway.status._read_pid_record",
+        lambda path=None: {
+            "pid": 42,
+            "kind": "hermes-gateway",
+            "argv": ["python", "-m", "hermes_cli.main", "gateway", "run"],
+            "start_time": 0,
+            "hermes_home": str(tmp_path),
+        },
+    )
+    monkeypatch.setattr(
+        "gateway.status._get_process_start_time", lambda pid: 0 if pid == 42 else None
+    )
     monkeypatch.setattr(
         "gateway.status.release_all_scoped_locks",
         lambda **kwargs: 0,
@@ -464,7 +516,7 @@ async def test_start_gateway_replace_clears_marker_on_permission_denied(
         })
         return True
 
-    def raise_permission(pid, force=False):
+    def raise_permission(pid, force=False, **kwargs):
         raise PermissionError("simulated EPERM")
 
     monkeypatch.setattr("gateway.status.get_running_pid", lambda: 42)
@@ -614,21 +666,115 @@ async def test_start_gateway_propagates_fatal_config_exit_code(monkeypatch, tmp_
     assert exc_info.value.code == GATEWAY_FATAL_CONFIG_EXIT_CODE
 
 
-def test_runner_warns_when_docker_gateway_lacks_explicit_output_mount(monkeypatch, tmp_path, caplog):
+class _ForeignTokenLockAdapter(BasePlatformAdapter):
+    """Connects exactly like telegram/discord do: production
+    ``_acquire_platform_lock`` first, which emits ``{scope}_lock`` with
+    ``retryable=True`` (so a mid-run reconnect can recover, #54167)."""
+
+    def __init__(self):
+        super().__init__(PlatformConfig(enabled=True, token="***"), Platform.TELEGRAM)
+
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
+        return self._acquire_platform_lock(
+            "telegram-bot-token", self.config.token, "Telegram bot token"
+        )
+
+    async def disconnect(self) -> None:
+        self._release_platform_lock()
+        self._mark_disconnected()
+
+    async def send(self, chat_id, content, reply_to=None, metadata=None):
+        raise NotImplementedError
+
+    async def get_chat_info(self, chat_id):
+        return {"id": chat_id}
+
+
+@pytest.mark.asyncio
+async def test_live_foreign_token_lock_at_startup_exits_ex_config(monkeypatch, tmp_path):
+    """Salvage of #83183 claim 1: a LIVE foreign holder of the bot token at
+    zero-connected startup is a single-writer conflict, not a transient blip.
+
+    ``_acquire_platform_lock`` deliberately emits the conflict retryable so a
+    *mid-run* reconnect can recover once the holder exits.  The startup router
+    used to key solely off that flag, so the gateway stayed alive, deaf, and
+    retry-queued forever instead of exiting 78 (EX_CONFIG)."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.setenv("TERMINAL_ENV", "docker")
-    monkeypatch.setenv("TERMINAL_DOCKER_VOLUMES", '["/etc/localtime:/etc/localtime:ro"]')
+    monkeypatch.setenv("HERMES_GATEWAY_LOCK_DIR", str(tmp_path / "locks"))
+    # A live foreign holder: acquire_scoped_lock reports (False, record).
+    monkeypatch.setattr(
+        "gateway.status.acquire_scoped_lock",
+        lambda scope, identity, metadata=None, **kwargs: (
+            False,
+            {"pid": 424242, "start_time": 1, "hermes_home": "/other/home", "profile": "other"},
+        ),
+    )
+    config = GatewayConfig(
+        platforms={Platform.TELEGRAM: PlatformConfig(enabled=True, token="***")},
+        sessions_dir=tmp_path / "sessions",
+    )
+    runner = GatewayRunner(config)
+    monkeypatch.setattr(
+        runner, "_create_adapter", lambda platform, platform_config: _ForeignTokenLockAdapter()
+    )
+
+    ok = await runner.start()
+    await asyncio.gather(*list(runner._startup_background_connects))
+
+    assert ok is True
+    assert runner.should_exit_cleanly is True
+    assert runner.exit_code == GATEWAY_FATAL_CONFIG_EXIT_CODE
+    assert runner._failed_platforms == {}
+    state = read_runtime_status()
+    assert state["gateway_state"] == "startup_failed"
+    assert state["platforms"]["telegram"]["state"] == "fatal"
+    assert state["platforms"]["telegram"]["error_code"] == "telegram-bot-token_lock"
+
+
+@pytest.mark.asyncio
+async def test_token_lock_plus_retryable_peer_stays_alive(monkeypatch, tmp_path):
+    """A lock conflict alongside a genuinely transient peer failure is the
+    NS-609 mixed mode: the lock is parked fatal, the peer keeps its retry, and
+    the gateway stays alive (no exit 78)."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("HERMES_GATEWAY_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setattr(
+        "gateway.status.acquire_scoped_lock",
+        lambda scope, identity, metadata=None, **kwargs: (False, {"pid": 424242, "start_time": 1}),
+    )
     config = GatewayConfig(
         platforms={
-            Platform.TELEGRAM: PlatformConfig(enabled=True, token="***")
+            Platform.TELEGRAM: PlatformConfig(enabled=True, token="***"),
+            Platform.DISCORD: PlatformConfig(enabled=True, token="***"),
         },
         sessions_dir=tmp_path / "sessions",
     )
+    runner = GatewayRunner(config)
 
-    with caplog.at_level("WARNING"):
-        GatewayRunner(config)
+    class _DiscordBlip(_RetryableFailureAdapter):
+        def __init__(self):
+            BasePlatformAdapter.__init__(
+                self, PlatformConfig(enabled=True, token="***"), Platform.DISCORD
+            )
 
-    assert any(
-        "host-visible output mount" in record.message
-        for record in caplog.records
+    monkeypatch.setattr(
+        runner,
+        "_create_adapter",
+        lambda platform, cfg: (
+            _ForeignTokenLockAdapter() if platform is Platform.TELEGRAM else _DiscordBlip()
+        ),
     )
+
+    ok = await runner.start()
+    await asyncio.gather(*list(runner._startup_background_connects))
+    try:
+        assert ok is True
+        assert runner.should_exit_cleanly is False
+        assert runner.exit_code is None
+        assert set(runner._failed_platforms) == {Platform.DISCORD}
+        state = read_runtime_status()
+        assert state["gateway_state"] == "running"
+        assert state["platforms"]["telegram"]["state"] == "fatal"
+        assert state["platforms"]["discord"]["state"] == "retrying"
+    finally:
+        await runner.stop()

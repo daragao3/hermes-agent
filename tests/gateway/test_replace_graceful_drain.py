@@ -33,6 +33,8 @@ These tests pin the request-then-escalate contract.
 """
 
 import pytest
+from unittest.mock import AsyncMock
+import gateway.status as gateway_status
 
 import gateway.run as gateway_run
 
@@ -157,7 +159,8 @@ def test_replace_budget_does_not_wait_out_a_wedge():
 # Windows: marker, never a signal
 # --------------------------------------------------------------------------
 
-def test_windows_requests_shutdown_via_the_planned_stop_marker(monkeypatch):
+@pytest.mark.asyncio
+async def test_windows_requests_shutdown_via_the_planned_stop_marker(monkeypatch):
     """On Windows the request MUST go through the marker channel.
 
     os.kill/SIGTERM is TerminateProcess here, so reaching terminate_pid at all
@@ -168,16 +171,16 @@ def test_windows_requests_shutdown_via_the_planned_stop_marker(monkeypatch):
     monkeypatch.setattr(gateway_run, "_IS_WINDOWS", True, raising=False)
     monkeypatch.setattr(
         gateway_run, "_drain_incumbent_via_marker",
-        lambda pid, timeout: calls["drain"].append((pid, timeout)) or True,
+        AsyncMock(side_effect=lambda pid, timeout: calls["drain"].append((pid, timeout)) or True),
         raising=False,
     )
     monkeypatch.setattr(
-        gateway_run, "_terminate_incumbent",
+        gateway_status, "terminate_pid",
         lambda pid, *, force=False: calls["terminate"].append((pid, force)),
         raising=False,
     )
 
-    exited = gateway_run._request_incumbent_shutdown(INCUMBENT_PID, timeout=42.0)
+    exited = await gateway_run._request_incumbent_shutdown(INCUMBENT_PID, timeout=42.0)
 
     assert exited is True
     assert calls["drain"] == [(INCUMBENT_PID, 42.0)]
@@ -187,7 +190,8 @@ def test_windows_requests_shutdown_via_the_planned_stop_marker(monkeypatch):
     )
 
 
-def test_windows_reports_failure_when_the_incumbent_will_not_drain(monkeypatch):
+@pytest.mark.asyncio
+async def test_windows_reports_failure_when_the_incumbent_will_not_drain(monkeypatch):
     """A refusal to drain must be reported, not silently swallowed.
 
     The caller escalates to a force-kill on False. Returning True here would
@@ -196,62 +200,66 @@ def test_windows_reports_failure_when_the_incumbent_will_not_drain(monkeypatch):
     monkeypatch.setattr(gateway_run, "_IS_WINDOWS", True, raising=False)
     monkeypatch.setattr(
         gateway_run, "_drain_incumbent_via_marker",
-        lambda pid, timeout: False, raising=False,
+        AsyncMock(return_value=False), raising=False,
     )
 
-    assert gateway_run._request_incumbent_shutdown(INCUMBENT_PID, timeout=1.0) is False
+    assert await gateway_run._request_incumbent_shutdown(INCUMBENT_PID, timeout=1.0) is False
 
 
 # --------------------------------------------------------------------------
 # POSIX: a real signal still works there
 # --------------------------------------------------------------------------
 
-def test_posix_still_sends_a_real_sigterm(monkeypatch):
+@pytest.mark.asyncio
+async def test_posix_still_sends_a_real_sigterm(monkeypatch):
     """POSIX signal delivery is genuine, so keep it -- and keep the marker
     handshake meaningful there."""
     sent = []
 
     monkeypatch.setattr(gateway_run, "_IS_WINDOWS", False, raising=False)
     monkeypatch.setattr(
-        gateway_run, "_terminate_incumbent",
+        gateway_status, "terminate_pid",
         lambda pid, *, force=False: sent.append((pid, force)), raising=False,
     )
-    monkeypatch.setattr(gateway_run, "_wait_for_pid_exit", lambda pid, timeout: True,
+    monkeypatch.setattr(gateway_run, "_wait_for_pid_exit", AsyncMock(return_value=True),
                         raising=False)
 
-    assert gateway_run._request_incumbent_shutdown(INCUMBENT_PID, timeout=5.0) is True
+    assert await gateway_run._request_incumbent_shutdown(INCUMBENT_PID, timeout=5.0) is True
     assert sent == [(INCUMBENT_PID, False)], "POSIX must get a real SIGTERM, unforced"
 
 
-def test_posix_already_gone_counts_as_exited(monkeypatch):
+@pytest.mark.asyncio
+async def test_posix_already_gone_counts_as_exited(monkeypatch):
     """ProcessLookupError means the incumbent beat us to it -- not a failure."""
     def _boom(pid, *, force=False):
         raise ProcessLookupError
 
     monkeypatch.setattr(gateway_run, "_IS_WINDOWS", False, raising=False)
-    monkeypatch.setattr(gateway_run, "_terminate_incumbent", _boom, raising=False)
+    monkeypatch.setattr(gateway_status, "terminate_pid", _boom, raising=False)
 
-    assert gateway_run._request_incumbent_shutdown(INCUMBENT_PID, timeout=5.0) is True
+    assert await gateway_run._request_incumbent_shutdown(INCUMBENT_PID, timeout=5.0) is True
 
 
-def test_permission_error_propagates(monkeypatch):
+@pytest.mark.asyncio
+async def test_permission_error_propagates(monkeypatch):
     """Cannot-signal is a real failure; start_gateway aborts the replacement
     rather than starting a second gateway."""
     def _denied(pid, *, force=False):
         raise PermissionError("nope")
 
     monkeypatch.setattr(gateway_run, "_IS_WINDOWS", False, raising=False)
-    monkeypatch.setattr(gateway_run, "_terminate_incumbent", _denied, raising=False)
+    monkeypatch.setattr(gateway_status, "terminate_pid", _denied, raising=False)
 
     with pytest.raises((PermissionError, OSError)):
-        gateway_run._request_incumbent_shutdown(INCUMBENT_PID, timeout=5.0)
+        await gateway_run._request_incumbent_shutdown(INCUMBENT_PID, timeout=5.0)
 
 
 # --------------------------------------------------------------------------
 # The marker helper itself
 # --------------------------------------------------------------------------
 
-def test_marker_drain_writes_the_marker_then_waits(monkeypatch):
+@pytest.mark.asyncio
+async def test_marker_drain_writes_the_marker_then_waits(monkeypatch):
     order = []
 
     monkeypatch.setattr(
@@ -263,13 +271,14 @@ def test_marker_drain_writes_the_marker_then_waits(monkeypatch):
         lambda pid: order.append(("poll", pid)) is not None and False,
     )
 
-    assert gateway_run._drain_incumbent_via_marker(INCUMBENT_PID, 5.0) is True
+    assert await gateway_run._drain_incumbent_via_marker(INCUMBENT_PID, 5.0) is True
     assert order[0] == ("write", INCUMBENT_PID), "marker must precede the wait"
     assert ("poll", INCUMBENT_PID) in order
 
 
-def test_marker_drain_times_out_when_the_pid_never_exits(monkeypatch):
+@pytest.mark.asyncio
+async def test_marker_drain_times_out_when_the_pid_never_exits(monkeypatch):
     monkeypatch.setattr("gateway.status.write_planned_stop_marker", lambda pid: True)
     monkeypatch.setattr("gateway.status._pid_exists", lambda pid: True)
 
-    assert gateway_run._drain_incumbent_via_marker(INCUMBENT_PID, 0.6) is False
+    assert await gateway_run._drain_incumbent_via_marker(INCUMBENT_PID, 0.6) is False

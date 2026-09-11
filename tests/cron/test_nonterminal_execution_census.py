@@ -117,7 +117,8 @@ def test_census_does_not_trust_inherited_process_uuid_without_pid_proof(
     monkeypatch, tmp_path
 ):
     executions = _point_ledger(monkeypatch, tmp_path)
-    executions._connect().close()
+    with executions._transaction():
+        pass
     with sqlite3.connect(executions.EXECUTIONS_FILE) as conn:
         conn.execute(
             """INSERT INTO executions
@@ -138,7 +139,8 @@ def test_census_does_not_trust_inherited_process_uuid_without_pid_proof(
 
 def test_census_classifies_exact_foreign_owner_evidence(monkeypatch, tmp_path):
     executions = _point_ledger(monkeypatch, tmp_path)
-    executions._connect().close()
+    with executions._transaction():
+        pass
     _insert_foreign_execution(executions, suffix="live", pid=4101, started_at=101)
     _insert_foreign_execution(executions, suffix="recycled", pid=4102, started_at=202)
     _insert_foreign_execution(executions, suffix="gone", pid=4103, started_at=303)
@@ -182,7 +184,8 @@ def test_census_classifies_exact_foreign_owner_evidence(monkeypatch, tmp_path):
 
 def test_census_treats_missing_identity_evidence_as_unprovable(monkeypatch, tmp_path):
     executions = _point_ledger(monkeypatch, tmp_path)
-    executions._connect().close()
+    with executions._transaction():
+        pass
     _insert_foreign_execution(executions, suffix="no-recorded-start", pid=4201, started_at=None)
     _insert_foreign_execution(executions, suffix="no-observed-start", pid=4202, started_at=222)
     monkeypatch.setattr("gateway.status._pid_exists", lambda _pid: True)
@@ -211,7 +214,8 @@ def test_census_treats_missing_identity_evidence_as_unprovable(monkeypatch, tmp_
 
 def test_census_treats_indeterminate_pid_probe_as_unprovable(monkeypatch, tmp_path):
     executions = _point_ledger(monkeypatch, tmp_path)
-    executions._connect().close()
+    with executions._transaction():
+        pass
     _insert_foreign_execution(executions, suffix="pid-indeterminate", pid=4250, started_at=111)
     monkeypatch.setattr("gateway.status._pid_exists", lambda _pid: None)
 
@@ -229,7 +233,8 @@ def test_census_treats_indeterminate_pid_probe_as_unprovable(monkeypatch, tmp_pa
 
 def test_census_treats_liveness_probe_errors_as_unprovable(monkeypatch, tmp_path):
     executions = _point_ledger(monkeypatch, tmp_path)
-    executions._connect().close()
+    with executions._transaction():
+        pass
     _insert_foreign_execution(executions, suffix="pid-error", pid=4301, started_at=111)
     _insert_foreign_execution(executions, suffix="start-error", pid=4302, started_at=222)
 
@@ -268,7 +273,8 @@ def test_census_treats_liveness_probe_errors_as_unprovable(monkeypatch, tmp_path
 
 def test_census_bounds_probe_error_evidence(monkeypatch, tmp_path):
     executions = _point_ledger(monkeypatch, tmp_path)
-    executions._connect().close()
+    with executions._transaction():
+        pass
     _insert_foreign_execution(executions, suffix="long-error", pid=4350, started_at=111)
     monkeypatch.setattr(
         "gateway.status._pid_exists",
@@ -290,6 +296,7 @@ def test_cross_profile_census_reads_default_and_every_named_profile(
     default_ledger = root / "cron" / "executions.db"
     tracker_ledger = root / "profiles" / "tracker" / "cron" / "executions.db"
     for ledger, suffix in ((default_ledger, "default"), (tracker_ledger, "tracker")):
+        ledger.parent.parent.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(executions, "EXECUTIONS_FILE", ledger)
         executions.create_execution(f"job-{suffix}", source="builtin")
     monkeypatch.setattr(executions, "EXECUTIONS_FILE", tracker_ledger)
@@ -321,7 +328,8 @@ def test_cross_profile_census_refuses_malformed_profile_ledger(monkeypatch, tmp_
 
 def test_census_raises_instead_of_returning_partial_rows(monkeypatch, tmp_path):
     executions = _point_ledger(monkeypatch, tmp_path)
-    executions._connect().close()
+    with executions._transaction():
+        pass
     _insert_foreign_execution(executions, suffix="good", pid=4401, started_at=111)
     _insert_foreign_execution(executions, suffix="malformed", pid=4402, started_at=222)
     with sqlite3.connect(executions.EXECUTIONS_FILE) as conn:

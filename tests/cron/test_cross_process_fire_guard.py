@@ -47,7 +47,8 @@ def tick_env(tmp_path, monkeypatch):
     sch._running_job_ids.discard(JOB_ID)
     # tick() takes an exclusive file lock derived from this hook; under xdist a
     # shared path makes lock-losers short-circuit before _process_job.
-    with patch("cron.scheduler._hermes_home", tmp_path):
+    from cron.jobs import use_cron_store
+    with patch("cron.scheduler._hermes_home", tmp_path), use_cron_store(tmp_path):
         yield tmp_path / "cron" / "executions.db"
     sch._in_flight.clear()
     sch._running_job_ids.discard(JOB_ID)
@@ -55,21 +56,22 @@ def tick_env(tmp_path, monkeypatch):
 
 def _run_tick(emitter, run_job_calls):
     """Drive one tick for JOB_ID with every side effect stubbed."""
-    def _fake_run_job(job):
+    def _fake_run_job(job, **kwargs):
         run_job_calls.append(job)
         return (True, "# output", "response", None)
 
-    job = {"id": JOB_ID, "name": JOB_NAME, "deliver": "local"}
+    from cron.jobs import save_jobs
+    job = {"id": JOB_ID, "name": JOB_NAME, "deliver": "local", "enabled": True,
+           "state": "scheduled", "prompt": "test guard", "schedule": {"kind": "interval", "minutes": 60}}
+    save_jobs([job])
     with patch("cron.scheduler.get_due_and_skipped_jobs",
                return_value=([dict(job)], [])), \
-         patch("cron.scheduler.advance_next_run"), \
+         patch("cron.scheduler.advance_next_runs"), \
          patch("cron.scheduler._get_event_emitter", return_value=emitter), \
          patch("cron.scheduler.run_job", side_effect=_fake_run_job), \
          patch("cron.scheduler.save_job_output", return_value="/tmp/out.md"), \
          patch("cron.scheduler._deliver_result", return_value=None), \
-         patch("cron.scheduler.mark_job_run"), \
-         patch("cron.jobs.load_jobs",
-               return_value=[{"id": JOB_ID, "consecutive_errors": 0}]):
+         patch("cron.scheduler._launch_external_cron_worker", return_value=False):
         from cron.scheduler import tick
         tick(verbose=False)
 

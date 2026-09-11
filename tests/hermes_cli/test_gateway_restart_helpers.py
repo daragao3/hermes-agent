@@ -78,8 +78,8 @@ class TestCleanupGatewayStateFiles:
         # Seed the surviving artefacts a non-graceful shutdown would leave.
         pid_path = isolated_hermes_home / "gateway.pid"
         lock_path = isolated_hermes_home / "gateway.lock"
-        pid_path.write_text('{"pid": 99999}')
-        lock_path.write_text("{}")
+        pid_path.write_text(json.dumps({"pid": _dead_pid()}), encoding="utf-8")
+        lock_path.write_text(json.dumps({"pid": _dead_pid()}), encoding="utf-8")
 
         removed = gw.cleanup_gateway_state_files()
 
@@ -166,8 +166,8 @@ class TestCleanupGatewayStateFiles:
         # OSError for the pid file but succeed for the lock file.
         pid_path = isolated_hermes_home / "gateway.pid"
         lock_path = isolated_hermes_home / "gateway.lock"
-        pid_path.write_text('{"pid": 99999}')
-        lock_path.write_text("{}")
+        pid_path.write_text(json.dumps({"pid": _dead_pid()}), encoding="utf-8")
+        lock_path.write_text(json.dumps({"pid": _dead_pid()}), encoding="utf-8")
 
         original_unlink = Path.unlink
         def selective_unlink(self, *args, **kwargs):
@@ -218,7 +218,7 @@ class TestLaunchGatewayDetached:
             pid = 12345
 
         def fake_popen(cmd, *, stdin, stdout, stderr, creationflags=0,
-                       start_new_session=False, close_fds):
+                       start_new_session=False, close_fds, cwd, env):
             captured["cmd"] = cmd
             captured["creationflags"] = creationflags
             captured["start_new_session"] = start_new_session
@@ -226,19 +226,11 @@ class TestLaunchGatewayDetached:
             return FakeProc()
 
         monkeypatch.setattr(gw.subprocess, "Popen", fake_popen)
-        # Pin sys.argv[0] to a recognisable string so the helper picks it
-        # up as the cli_entry. Use a fake path that exists.
-        fake_hermes = Path(__file__).parent / "hermes_fake_entry.py"
-        fake_hermes.write_text("# fake")
-        try:
-            monkeypatch.setattr(gw.sys, "argv", [str(fake_hermes)])
-            pid = gw.launch_gateway_detached()
-        finally:
-            fake_hermes.unlink(missing_ok=True)
+        monkeypatch.setattr(gw, "_gateway_run_command", lambda: ["python.exe", "-m", "hermes_cli.main", "gateway", "run", "--replace"])
+        pid = gw.launch_gateway_detached()
 
         assert pid == 12345
-        assert captured["cmd"][0] == str(fake_hermes)
-        assert captured["cmd"][1:] == ["gateway", "run"]
+        assert captured["cmd"] == ["python.exe", "-m", "hermes_cli.main", "gateway", "run"]
         assert captured["close_fds"] is True
         if sys.platform == "win32":
             # Both flags must be set: CREATE_NEW_PROCESS_GROUP=0x200,

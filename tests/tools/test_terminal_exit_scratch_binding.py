@@ -34,6 +34,25 @@ from pathlib import Path
 import tools.terminal_tool as terminal_tool
 
 
+def test_exit_without_captured_root_closes_owned_env_without_sweeping(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    import tools.terminal_tool_lifecycle as lifecycle
+
+    wait = Mock()
+    close = Mock()
+    monkeypatch.setattr(terminal_tool, "_active_environments", {"owned": SimpleNamespace(wait_for_cleanup=wait)})
+    monkeypatch.setattr(terminal_tool, "_env_scratch_dir", None)
+    monkeypatch.setattr(terminal_tool, "_stop_cleanup_thread", Mock())
+    monkeypatch.setattr(terminal_tool, "cleanup_vm", close)
+    resolve = Mock(side_effect=AssertionError("exit must not resolve a new root"))
+    monkeypatch.setattr(lifecycle, "_get_scratch_dir", resolve)
+    terminal_tool._atexit_cleanup()
+    close.assert_called_once_with("owned")
+    wait.assert_called_once_with(timeout=15.0)
+    resolve.assert_not_called()
+
+
 def test_resolve_scratch_dir_does_not_create_anything(tmp_path, monkeypatch):
     """Capturing the path at registration must not materialise a sandbox tree.
 

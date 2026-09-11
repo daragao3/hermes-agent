@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSessionListActions } from '@/app/session/hooks/use-session-list-actions'
 import type * as HermesModule from '@/hermes'
 import { $desktopBoot } from '@/store/boot'
+import { closeSecondaryGateways } from '@/store/gateway'
 import { $activeGatewayProfile, $profileScope, $showAllProfiles } from '@/store/profile'
-import { $gatewayState, $sessions, setSessions } from '@/store/session'
+import { $connection, $gatewayState, $sessions, setSessions } from '@/store/session'
 
 import { useGatewayBoot } from './use-gateway-boot'
+import { takeGatewaySurvivor } from './gateway-hmr-survivor'
 
 // Locks the boot seam between profile adoption and the first session fetch.
 //
@@ -144,6 +146,7 @@ function Harness() {
   const { refreshSessions } = useSessionListActions({ profileScope })
 
   useGatewayBoot({
+    beforeConnectionSwitch: () => undefined,
     handleGatewayEvent: () => undefined,
     onConnectionReady: () => undefined,
     onGatewayReady: () => undefined,
@@ -156,7 +159,15 @@ function Harness() {
 
 const originalWebSocket = globalThis.WebSocket
 
+function closeFixtureGateways() {
+  // Vitest enables the real HMR survivor path; each test owns a fresh fake socket.
+  takeGatewaySurvivor()?.gateway.close()
+  closeSecondaryGateways()
+  $connection.set(null)
+}
+
 beforeEach(() => {
+  closeFixtureGateways()
   vi.useFakeTimers()
   listSidebarSessions.mockClear()
   FakeWebSocket.instances = []
@@ -179,6 +190,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  closeFixtureGateways()
   vi.useRealTimers()
   ;(globalThis as { WebSocket: unknown }).WebSocket = originalWebSocket
   delete (window as { hermesDesktop?: unknown }).hermesDesktop

@@ -307,6 +307,7 @@ def _agent_with_fallback_chain(chain):
     agent._unavailable_fallback_keys = set()
     agent._credential_pool = None
     agent._rate_limited_until = 0
+    agent._rate_limit_backoff_count = 0
     agent._anthropic_prompt_cache_policy.return_value = (True, False)
     agent.context_compressor = None
     agent._try_activate_fallback = (

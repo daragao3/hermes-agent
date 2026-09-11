@@ -95,17 +95,19 @@ def test_panic_hook_writes_under_the_live_home(capsys):
     assert "unhandled exception" in written.read_text(encoding="utf-8")
 
 
-def test_turn_dispatcher_crash_write_uses_the_seam():
-    """``_run_prompt_submit``'s ``except Exception`` shares the same resolver.
-
-    Existing tests call ``server._run_prompt_submit`` directly, so this write
-    is reachable from the suite; assert it reads the seam rather than a baked
-    module constant.
-    """
-    source = Path(server.__file__).read_text(encoding="utf-8")
-    assert "os.path.dirname(_CRASH_LOG)" not in source
-    assert 'open(_CRASH_LOG, "a"' not in source
-    assert source.count("_crash_log_path()") >= 6
+def test_turn_dispatcher_crash_write_uses_the_seam(monkeypatch):
+    monkeypatch.setattr(server, "_restore_agent_history_after_turn_error", lambda *a: None)
+    monkeypatch.setattr(server, "_emit_terminal_turn_error", lambda *a, **k: None)
+    state = SimpleNamespace(agent=None, terminal_callback=None, receipt_attempted=False,
+                            receipt_committed=False, prompt_text="probe")
+    try:
+        raise RuntimeError("turn crash binding probe")
+    except RuntimeError as error:
+        server._recover_turn_exception("probe-session", {}, state, error)
+    written = _expected_log()
+    assert written.exists()
+    assert "turn crash binding probe" in written.read_text(encoding="utf-8")
+    assert "sid=probe-session" in written.read_text(encoding="utf-8")
 
 
 def test_entry_shares_the_resolver_rather_than_a_stale_string():

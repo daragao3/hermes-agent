@@ -1,4 +1,5 @@
 import subprocess
+import json
 from unittest import mock
 
 from plugins.memory.honcho import bridge
@@ -151,11 +152,16 @@ def test_parse_compiled_facts_excludes_synthesis_markers():
 # capture pipe can't hang the bridge on Windows. Tests patch the helper.
 def test_gbrain_get_returns_stdout():
     gb = bridge.GBrainAdapter()
-    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="PAGE", stderr="")
+    payload = dict(slug="hindsight/diego", source_id="default", revision=3,
+                   type="person", title="Diego", compiled_truth="PAGE", timeline="")
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=json.dumps(payload), stderr="")
     with mock.patch("plugins.memory.honcho.bridge.run_text_capture", return_value=completed) as run:
-        assert gb.get_page("hindsight/diego") == "PAGE"
+        page = gb.get_page("hindsight/diego")
+        assert "PAGE" in page
+        assert page.revision == 3
         run.assert_called_once()
-        assert run.call_args.args[0] == ["gbrain", "get", "hindsight/diego"]
+        assert run.call_args.args[0][:3] == ["gbrain", "call", "get_page"]
+        assert json.loads(run.call_args.args[0][3]) == {"slug": "hindsight/diego", "fuzzy": False}
         assert run.call_args.kwargs["timeout"] == bridge._GBRAIN_TIMEOUT
 
 
@@ -185,17 +191,18 @@ def test_gbrain_timeline_add_invokes_cli():
         ]
 
 
-def test_gbrain_put_passes_markdown_via_content_argv():
-    # Content goes via --content (argv), NOT piped stdin: `gbrain put` reads
-    # stdin by opening '/dev/stdin', which does not exist on Windows (ENOENT).
+def test_gbrain_put_passes_markdown_via_json_argv():
+    # JSON argv keeps the no-/dev/stdin Windows contract with an atomic revision.
     gb = bridge.GBrainAdapter()
-    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    completed = subprocess.CompletedProcess(args=[], returncode=0,
+        stdout=json.dumps({"slug": "hindsight/diego", "status": "updated", "revision": 4}), stderr="")
     with mock.patch("plugins.memory.honcho.bridge.run_text_capture", return_value=completed) as run:
-        assert gb.put_page("hindsight/diego", "# Diego\n") is True
+        snapshot = bridge._PageSnapshot("old", "hindsight/diego", "default", 3)
+        assert gb.put_page("hindsight/diego", "# Diego\n", snapshot=snapshot) is True
         assert "input" not in run.call_args.kwargs  # never piped on stdin
-        assert run.call_args.args[0] == [
-            "gbrain", "put", "hindsight/diego", "--content", "# Diego\n",
-        ]
+        assert run.call_args.args[0][:5] == ["gbrain", "call", "--source", "default", "put_page_conditional"]
+        assert json.loads(run.call_args.args[0][5]) == dict(
+            slug="hindsight/diego", content="# Diego\n", mode="compare_and_swap", expected_revision=3)
 
 
 def _fake_manager():
@@ -327,7 +334,7 @@ def test_export_dialectic_bounded_across_runs(tmp_path):
     gb = mock.Mock()
     gb.get_page.side_effect = lambda slug: state["page"]
 
-    def _put(slug, md):
+    def _put(slug, md, *, snapshot):
         state["page"] = md
         return True
     gb.put_page.side_effect = _put
@@ -553,7 +560,7 @@ def test_two_cycle_no_echo(tmp_path, monkeypatch):
     gb.get_page.side_effect = lambda slug: state["page"]
     gb.add_timeline.return_value = True
 
-    def _put(slug, md):
+    def _put(slug, md, *, snapshot):
         state["page"] = md
         return True
     gb.put_page.side_effect = _put

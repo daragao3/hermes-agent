@@ -49,7 +49,7 @@ def _drive(job, hermes_home):
     """
     fake_db = MagicMock()
     with patch("cron.scheduler._hermes_home", hermes_home), \
-         patch("cron.scheduler._resolve_origin", return_value=None), \
+         patch("cron.scheduler_delivery._resolve_origin", return_value=None), \
          patch("hermes_cli.env_loader.load_hermes_dotenv"), \
          patch("hermes_cli.env_loader.reset_secret_source_cache"), \
          patch("hermes_state.SessionDB", return_value=fake_db), \

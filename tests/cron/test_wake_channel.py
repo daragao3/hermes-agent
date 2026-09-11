@@ -279,7 +279,7 @@ class TestSchedulerIntegration:
         advanced = []
         monkeypatch.setattr(scheduler, "load_jobs",
                             lambda: [{"id": "j1", "name": "a", "enabled": True}])
-        monkeypatch.setattr(scheduler, "advance_next_run", lambda jid: advanced.append(jid))
+        monkeypatch.setattr(scheduler, "advance_next_runs", lambda ids: advanced.extend(ids))
 
         scheduler._collect_woken_jobs(exclude_ids=set())
 
@@ -294,26 +294,21 @@ class TestTickExecutesWokenJobs:
     """
 
     def test_tick_runs_a_job_that_only_an_event_asked_for(self, monkeypatch, tmp_path):
-        from cron import scheduler
+        from cron import jobs, scheduler
 
-        job = {"id": "j1", "name": "woken-job", "enabled": True, "no_agent": True,
-               "script": "x.py"}
-        ran: list[str] = []
-
-        monkeypatch.setattr(scheduler, "get_due_and_skipped_jobs", lambda: ([], []))
-        monkeypatch.setattr(scheduler, "load_jobs", lambda: [job])
-        monkeypatch.setattr(scheduler, "run_job",
-                            lambda j, **k: (ran.append(j["id"]), (True, "", "", None))[1])
-        monkeypatch.setattr(scheduler, "mark_job_run", lambda *a, **k: None)
-        monkeypatch.setattr(scheduler, "save_job_output", lambda *a, **k: None)
-        monkeypatch.setattr(scheduler, "advance_next_run", lambda *a, **k: None)
-        monkeypatch.setattr(scheduler, "_deliver_result", lambda *a, **k: (True, None))
+        ran = []
+        monkeypatch.setattr(scheduler, "run_job", lambda j, **kw:
+                            (ran.append(j["id"]), (True, "", "[SILENT]", None))[1])
+        monkeypatch.setattr(scheduler, "_launch_external_cron_worker", lambda job: False)
         monkeypatch.setattr(scheduler, "_running_job_ids", set())
-
-        wake_channel.request_wake("j1", caller="test", reason="score_request")
-        scheduler.tick(verbose=False, sync=True)
-
-        assert ran == ["j1"], "tick did not execute the event-woken job"
+        with jobs.use_cron_store(tmp_path):
+            job = jobs.create_job(prompt="wake only", schedule="every 1h", name="woken-job")
+            assert jobs.get_due_jobs() == []
+            wake_channel.request_wake(job["id"], caller="test", reason="score_request")
+            assert scheduler.tick(verbose=False, sync=True) == 1
+            assert ran == [job["id"]], "tick did not execute the event-woken job"
+            assert wake_channel.pending_wakes() == frozenset()
+            assert jobs.get_job(job["id"])["last_status"] == "ok"
 
     def test_tick_with_nothing_woken_and_nothing_due_runs_nothing(self, monkeypatch):
         from cron import scheduler

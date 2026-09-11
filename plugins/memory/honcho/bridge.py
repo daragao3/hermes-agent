@@ -15,6 +15,8 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 
+import yaml
+
 from hermes_cli._subprocess_compat import run_text_capture
 
 logger = logging.getLogger(__name__)
@@ -135,6 +137,15 @@ def merge_compiled_truth(page_md: str, facts: list[str]) -> str:
 _GBRAIN_TIMEOUT = 15
 
 
+class _PageSnapshot(str):
+    """Markdown and its exact source/revision from a single backend read."""
+
+    def __new__(cls, markdown, slug, source_id, revision):
+        value = super().__new__(cls, markdown)
+        value.slug, value.source_id, value.revision = slug, source_id, revision
+        return value
+
+
 class GBrainAdapter:
     """Thin wrapper over the `gbrain` CLI. All methods are best-effort."""
 
@@ -144,23 +155,56 @@ class GBrainAdapter:
         Note: an existing-but-empty page yields "" (falsy), not None.
         """
         try:
-            r = run_text_capture(["gbrain", "get", slug], timeout=_GBRAIN_TIMEOUT)
-            return r.stdout if r.returncode == 0 else None
-        except (OSError, subprocess.TimeoutExpired) as e:
+            r = run_text_capture(
+                ["gbrain", "call", "get_page", json.dumps({"slug": slug, "fuzzy": False})],
+                timeout=_GBRAIN_TIMEOUT,
+            )
+            if r.returncode != 0:
+                return None
+            page = json.loads(r.stdout)
+            if not isinstance(page, dict) or page.get("slug") != slug:
+                return None
+            revision = page.get("revision")
+            source = page.get("source_id")
+            if type(revision) is not int or not 0 < revision <= 9007199254740991:
+                return None
+            if not isinstance(source, str) or not source:
+                return None
+            body, timeline = page.get("compiled_truth"), page.get("timeline", "")
+            frontmatter = page.get("frontmatter") or {}
+            if not isinstance(body, str) or not isinstance(timeline, str) or not isinstance(frontmatter, dict):
+                return None
+            meta = {"type": page.get("type"), "title": page.get("title"), **frontmatter}
+            if page.get("tags"):
+                meta["tags"] = page["tags"]
+            markdown = "---\n" + yaml.safe_dump(meta, sort_keys=False, allow_unicode=True) + "---\n\n" + body
+            if timeline:
+                markdown += "\n\n<!-- timeline -->\n\n" + timeline
+            return _PageSnapshot(markdown + "\n", slug, source, revision)
+        except (OSError, subprocess.TimeoutExpired, ValueError, yaml.YAMLError) as e:
             logger.warning("gbrain get %s failed: %s", slug, e)
             return None
 
-    def put_page(self, slug: str, markdown: str) -> bool:
+    def put_page(self, slug: str, markdown: str, *, snapshot=None) -> bool:
+        if not isinstance(snapshot, _PageSnapshot) or snapshot.slug != slug:
+            return False
         try:
-            # Pass content via --content (argv), NOT piped stdin: `gbrain put`
-            # reads stdin by opening '/dev/stdin', which does not exist on
-            # Windows and fails with ENOENT. --content is cross-platform.
+            # JSON argv retains Windows support without /dev/stdin. A typed
+            # conflict can exit zero, so transport success alone is insufficient.
             r = run_text_capture(
-                ["gbrain", "put", slug, "--content", markdown],
+                ["gbrain", "call", "--source", snapshot.source_id, "put_page_conditional",
+                 json.dumps({"slug": slug, "content": markdown, "mode": "compare_and_swap",
+                             "expected_revision": snapshot.revision})],
                 timeout=_GBRAIN_TIMEOUT,
             )
-            return r.returncode == 0
-        except (OSError, subprocess.TimeoutExpired) as e:
+            if r.returncode != 0:
+                return False
+            result = json.loads(r.stdout)
+            return (isinstance(result, dict) and result.get("slug") == slug
+                    and result.get("status") in {"updated", "unchanged"}
+                    and type(result.get("revision")) is int
+                    and result["revision"] >= snapshot.revision)
+        except (OSError, subprocess.TimeoutExpired, ValueError) as e:
             logger.warning("gbrain put %s failed: %s", slug, e)
             return False
 
@@ -306,7 +350,7 @@ def run_export(honcho, gbrain, *, slug, date, dialectic_queries, state_path, dry
             new_page = merge_compiled_truth(page, compiled_facts) if compiled_facts else page
             if synthesis_lines:  # empty answer this run leaves any prior block intact
                 new_page = merge_dialectic_synthesis(new_page, synthesis_lines)
-            if new_page != page and not gbrain.put_page(slug, new_page):
+            if new_page != page and not gbrain.put_page(slug, new_page, snapshot=page):
                 compiled_ok = False
                 logger.warning("Honcho bridge: compiled-truth put_page failed for %s", slug)
 
