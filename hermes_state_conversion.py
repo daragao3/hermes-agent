@@ -123,6 +123,13 @@ def _verify_preserved_rows(conn, source):
         projection = ', '.join(_quoted(c) for c in columns)
         target_projection = projection
         if table == 'sessions':
+            # Local stores may already have deduplicated prompts. Compare the
+            # logical prompt on BOTH sides, rather than NULL against its text.
+            if 'system_prompt_hash' in columns and 'system_prompts' in tables:
+                projection = ', '.join(
+                    'COALESCE((SELECT prompt FROM original.system_prompts '
+                    'WHERE hash=original.sessions.system_prompt_hash), system_prompt)'
+                    if c == 'system_prompt' else _quoted(c) for c in columns)
             target_projection = ', '.join(
                 'COALESCE((SELECT prompt FROM system_prompts WHERE hash=sessions.system_prompt_hash), system_prompt)'
                 if c == 'system_prompt' else _quoted(c) for c in columns)
