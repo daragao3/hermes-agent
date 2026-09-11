@@ -14,8 +14,11 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 import pytest
-from mcp.shared.version import LATEST_PROTOCOL_VERSION
 from starlette.testclient import TestClient
+
+# Exercise the protocol revision used by the existing deployed clients.
+# MCP 2's newest advertised revision can negotiate down on this server.
+CLIENT_PROTOCOL_VERSION = "2025-11-25"
 
 from hermes_state import SessionDB
 from session_bridge.catalog import UnifiedCatalog
@@ -500,7 +503,7 @@ def _rpc(
             client,
             "initialize",
             {
-                "protocolVersion": LATEST_PROTOCOL_VERSION,
+                "protocolVersion": CLIENT_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {"name": "test", "version": "1"},
             },
@@ -797,7 +800,7 @@ def test_health_is_minimal_and_mcp_auth_is_constant_surface(db: SessionDB) -> No
             client,
             "initialize",
             {
-                "protocolVersion": LATEST_PROTOCOL_VERSION,
+                "protocolVersion": CLIENT_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {"name": "test", "version": "1"},
             },
@@ -809,7 +812,7 @@ def test_health_is_minimal_and_mcp_auth_is_constant_surface(db: SessionDB) -> No
     assert wrong.status_code == 401
     assert double_mounted.status_code == 404
     assert missing.json() == wrong.json() == {"error": "unauthorized"}
-    assert initialized["result"]["protocolVersion"] == LATEST_PROTOCOL_VERSION
+    assert initialized["result"]["protocolVersion"] == CLIENT_PROTOCOL_VERSION
     assert coordinator.started == 1
     assert coordinator.stopped == 1
 

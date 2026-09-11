@@ -270,7 +270,7 @@ def create_app(
         raise ValueError("session bridge marker key must be at least 32 bytes")
 
     try:
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server import MCPServer
         from mcp.server.transport_security import TransportSecuritySettings
         from starlette.applications import Starlette
         from starlette.middleware import Middleware
@@ -281,21 +281,11 @@ def create_app(
         raise RuntimeError("session bridge MCP dependencies are not installed") from exc
 
     authority = _host_authority(config.service.host, config.service.port)
-    mcp = FastMCP(
+    mcp = MCPServer(
         "hermes-session-bridge",
         instructions=(
             "Search, inspect, mirror, and continue Claude Code and Codex sessions "
             "through the authoritative Hermes catalog."
-        ),
-        host=config.service.host,
-        port=config.service.port,
-        streamable_http_path="/mcp",
-        json_response=True,
-        stateless_http=False,
-        transport_security=TransportSecuritySettings(
-            enable_dns_rebinding_protection=True,
-            allowed_hosts=[authority],
-            allowed_origins=[f"http://{authority}", f"https://{authority}"],
         ),
     )
 
@@ -953,7 +943,17 @@ def create_app(
     if actual_tools != EXPECTED_TOOLS:
         raise RuntimeError("session bridge MCP tool registration is incomplete")
 
-    mcp_app = mcp.streamable_http_app()
+    mcp_app = mcp.streamable_http_app(
+        host=config.service.host,
+        streamable_http_path="/mcp",
+        json_response=True,
+        stateless_http=False,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=[authority],
+            allowed_origins=[f"http://{authority}", f"https://{authority}"],
+        ),
+    )
 
     async def health(_request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
