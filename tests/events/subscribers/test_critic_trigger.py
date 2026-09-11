@@ -1,4 +1,4 @@
-"""Tests for CriticSubscriber — wakes Critic on AGENT_FAILURE_CLUSTER."""
+"""Tests for CriticSubscriber failure-cluster and loop-fault routing."""
 
 from unittest.mock import patch, MagicMock
 
@@ -28,12 +28,15 @@ class TestCriticSubscriberFiltering:
         sub = CriticSubscriber(bus, critic_script_path=critic_script)
         assert sub.subscriber_id == "critic-trigger"
 
-    def test_event_types_filter_is_agent_failure_cluster_only(
+    def test_event_types_include_failure_clusters_and_loop_faults(
         self, bus, critic_script,
     ):
         from events.subscribers.critic_trigger import CriticSubscriber
         sub = CriticSubscriber(bus, critic_script_path=critic_script)
-        assert sub.event_types == [EventType.AGENT_FAILURE_CLUSTER]
+        assert sub.event_types == [
+            EventType.AGENT_FAILURE_CLUSTER,
+            EventType.AGENT_LOOP_FAULT,
+        ]
 
     def test_ignores_other_event_types(self, bus, critic_script):
         from events.subscribers.critic_trigger import CriticSubscriber
@@ -71,6 +74,33 @@ class TestCriticSubscriberInvocation:
         cluster_arg = cmd[cmd.index("--cluster") + 1]
         assert "agent=scout" in cluster_arg
         assert "type=captcha" in cluster_arg
+
+    def test_loop_fault_uses_exception_type_as_failure_type(
+        self, bus, critic_script,
+    ):
+        from events.subscribers.critic_trigger import CriticSubscriber
+
+        sub = CriticSubscriber(bus, critic_script_path=critic_script)
+        bus.emit(
+            event_type=EventType.AGENT_LOOP_FAULT,
+            source="matcher",
+            payload={
+                "exception_type": "TypeError",
+                "error_class": "TypeError",
+                "phase": "stream_accumulation",
+            },
+            priority=Priority.HIGH,
+            correlation_id="task-471",
+        )
+
+        with patch("subprocess.Popen") as mock_popen:
+            mock_popen.return_value = MagicMock()
+            sub.poll()
+
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        cluster_arg = cmd[cmd.index("--cluster") + 1]
+        assert cluster_arg == "agent=matcher,type=TypeError"
 
     def test_subprocess_runs_detached_not_blocking(self, bus, critic_script):
         """Critic retro can take >5s; subscriber must not block the poll loop."""

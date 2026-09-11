@@ -1,8 +1,8 @@
 """CriticSubscriber — post-hoc Critic trigger.
 
-Listens for AGENT_FAILURE_CLUSTER events emitted by CronEventEmitter and
-invokes critic_retro.py with --cluster scoping so Critic produces a
-focused retro for the cluster within ~30 minutes (per Hermes Revival §6).
+Listens for AGENT_FAILURE_CLUSTER and AGENT_LOOP_FAULT events and invokes
+critic_retro.py with --cluster scoping so Critic produces a focused retro for
+the failure within ~30 minutes (per Hermes Revival §6).
 
 Subprocess-based invocation (not in-process) because:
   - Critic loads its own profile-scoped environment (~/.hermes/profiles/critic/)
@@ -98,7 +98,7 @@ CRASH_ANNOUNCED_MARKER = "CRITIC_RETRO_CRASH_ANNOUNCED"
 class CriticSubscriber(BaseSubscriber):
     subscriber_id = "critic-trigger"
     poll_interval_seconds = 5
-    event_types = [EventType.AGENT_FAILURE_CLUSTER]
+    event_types = [EventType.AGENT_FAILURE_CLUSTER, EventType.AGENT_LOOP_FAULT]
 
     def __init__(
         self,
@@ -247,7 +247,12 @@ class CriticSubscriber(BaseSubscriber):
 
     def handle(self, event: Event) -> None:
         source = event.payload.get("source") or event.source
-        failure_type = event.payload.get("failure_type", "unknown")
+        failure_type = (
+            event.payload.get("failure_type")
+            or event.payload.get("exception_type")
+            or event.payload.get("error_class")
+            or "unknown"
+        )
         cluster_key = f"{source}:{failure_type}"
 
         now = time.monotonic()

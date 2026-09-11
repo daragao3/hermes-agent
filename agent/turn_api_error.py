@@ -27,6 +27,62 @@ from agent.turn_recovery import (
 logger = logging.getLogger("agent.conversation_loop")
 
 
+def _report_agent_loop_fault(agent: Any, exc: BaseException, *, correlation_id: str) -> None:
+    """Log and emit one sanitized, best-effort fault at the API boundary."""
+    try:
+        import traceback
+
+        from agent.redact import redact_sensitive_text
+
+        def _safe(value: Any) -> str:
+            return redact_sensitive_text(
+                str(value or ""), force=True, redact_url_credentials=True,
+            )
+
+        # Preserve original frame identities without rendering raw exception text
+        # or source-code lines, either of which can contain secrets.
+        safe_frames = "\n".join(
+            _safe(f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}')
+            for frame in traceback.extract_tb(exc.__traceback__)
+        )
+        safe_exc = RuntimeError(
+            f"{_safe(type(exc).__name__)}: {_safe(exc)}\n"
+            f"Original traceback frames:\n{safe_frames}"
+        )
+        try:
+            raise safe_exc from None
+        except RuntimeError:
+            logger.warning(
+                "Agent loop stream/API boundary caught %s provider=%s model=%s "
+                "correlation_id=%s",
+                _safe(type(exc).__name__),
+                _safe(getattr(agent, "provider", "") or "unknown"),
+                _safe(getattr(agent, "model", "") or "unknown"),
+                _safe(correlation_id),
+                exc_info=True,
+            )
+    except Exception:
+        pass
+
+    try:
+        from events.loop_fault import emit_agent_loop_fault
+
+        emit_agent_loop_fault(
+            exc,
+            source_hint=getattr(agent, "log_prefix", "") or "",
+            phase="stream_accumulation",
+            provider=getattr(agent, "provider", "") or "",
+            model=getattr(agent, "model", "") or "",
+            status_code=getattr(exc, "status_code", None),
+            correlation_id=correlation_id,
+        )
+    except Exception:
+        try:
+            logger.debug("AGENT_LOOP_FAULT emit skipped")
+        except Exception:
+            pass
+
+
 @dataclass
 class ApiErrorVerdict:
     """``action``: ``"continue"`` (retry the API call), ``"break"`` (leave the retry loop:
@@ -58,6 +114,11 @@ def handle_api_error(
     """Recover from ``api_error`` in the original order. Every fallback activation must leave
     the retry loop with ``restart_with_rebuilt_messages`` armed (``"break"``) so the pre-API
     preflight re-runs against the fallback's context window (#84733)."""
+    _report_agent_loop_fault(
+        agent,
+        api_error,
+        correlation_id=(effective_task_id or turn_id or getattr(agent, "session_id", "") or ""),
+    )
     _provider_overflow_recovery_pending = False
 
     def _verdict(action: str, result: Optional[Dict[str, Any]] = None) -> ApiErrorVerdict:
@@ -313,15 +374,6 @@ def settle_unrecovered_error(
             active_system_prompt = _arm_fallback_restart(agent, api_messages, active_system_prompt, _retry)
             retry_count = compression_attempts = 0
             return _verdict("break")
-        try:
-            from events.loop_fault import emit_agent_loop_fault
-            emit_agent_loop_fault(
-                api_error, source_hint=getattr(agent, "log_prefix", "") or "",
-                phase="non_retryable_abort", provider=_provider, model=_model,
-                status_code=status_code,
-            )
-        except Exception:
-            logger.debug("AGENT_LOOP_FAULT emit skipped", exc_info=True)
         return _verdict("return", nonretryable_client_error_result(
             agent, api_error, classified, status_code=status_code, api_kwargs=api_kwargs,
             api_messages=api_messages, messages=messages, conversation_history=conversation_history,
