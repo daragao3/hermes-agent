@@ -552,7 +552,8 @@ class UnifiedCatalog:
             conn = self.db._conn
             assert conn is not None
             rows = conn.execute(
-                f"""SELECT {_BASE_COLUMNS},
+                f"""WITH matched AS MATERIALIZED (
+                    SELECT s.id AS session_id,
                            MIN(m.id) AS match_message_id,
                            MIN(messages_fts.rank) AS match_rank
                       FROM messages_fts
@@ -561,6 +562,12 @@ class UnifiedCatalog:
                       LEFT JOIN external_sessions AS e ON e.session_id = s.id
                      WHERE {" AND ".join(where)}
                      GROUP BY s.id
+                    )
+                    SELECT {_BASE_COLUMNS},
+                           matched.match_message_id, matched.match_rank
+                      FROM matched
+                      JOIN sessions AS s ON s.id = matched.session_id
+                      LEFT JOIN external_sessions AS e ON e.session_id = s.id
                      ORDER BY match_rank,
                               CASE WHEN s.source = 'cron' THEN 1 ELSE 0 END,
                               last_active DESC, s.id
