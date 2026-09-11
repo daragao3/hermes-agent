@@ -13,11 +13,10 @@ Design constraints:
   from ``run_agent.py``'s abort path). Every failure mode degrades to a debug log.
 * Lazy bus access: ``run_agent`` has no events imports; the bus is constructed
   here (``EventBus()`` defaults to the canonical ``~/.hermes/events/event_bus.db``).
-* Rate-capped per ADR-0016 ("cap at the emitter"): a small per-process token
-  budget keyed on ``(source, exception_type)`` so one wedged run cannot flood the
-  bus. Cross-process storms are additionally bounded downstream by the
-  ``watchdog_alerts`` verbosity ladder + the FailureClusterDetector coalescing
-  this event dovetails with.
+* One event per caught exception: downstream subscribers own debounce/coalescing;
+  the boundary must not silently discard later failures from the same process.
+* Sanitized payload: exception text and traceback are force-redacted before they
+  cross the event-bus boundary.
 """
 
 from __future__ import annotations
@@ -28,21 +27,6 @@ import traceback
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
-
-# Per-process emit budget. Keyed on (source, exception_type). Resets only on
-# process restart — appropriate for a cron subprocess (one run) and benign for
-# the long-lived gateway (a handful of distinct fault signatures per restart).
-_RATE_CAP_MAX = 3
-# Not thread-safe by design: under gateway multi-threading, racing get->check->set
-# may over-emit by at most (N_threads - 1) per signature — acceptable for a small
-# cap, and a lock on the abort path is not worth the added latency.
-_emit_counts: dict[tuple[str, str], int] = {}
-
-
-def reset_rate_cap() -> None:
-    """Test hook: clear the per-process emit budget."""
-    _emit_counts.clear()
-
 
 def _resolve_source(source_hint: Optional[str]) -> str:
     """Best-effort canonical agent identity for the fault.
@@ -74,36 +58,56 @@ def emit_agent_loop_fault(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     status_code: Optional[int] = None,
+    correlation_id: Optional[str] = None,
     bus: Any = None,
 ) -> bool:
     """Emit an AGENT_LOOP_FAULT event for ``exc``. Returns True if emitted.
 
-    Never raises. Honours the per-process rate cap. ``bus`` is injectable for
-    tests; production passes None and an EventBus() is built lazily.
+    Never raises. ``bus`` is injectable for tests; production passes None and
+    an EventBus() is built lazily.
     """
     try:
         from events.schema import EventType, Priority
 
-        source = _resolve_source(source_hint)
-        exc_type = type(exc).__name__
-        key = (source, exc_type)
-        count = _emit_counts.get(key, 0)
-        if count >= _RATE_CAP_MAX:
-            logger.debug("AGENT_LOOP_FAULT rate-capped for %s/%s", source, exc_type)
-            return False
+        from agent.redact import redact_sensitive_text
 
-        tb_tail = "".join(
-            traceback.format_exception(type(exc), exc, exc.__traceback__)
-        )[-2000:]
+        source = _resolve_source(source_hint)
+        redact = lambda value, limit: redact_sensitive_text(
+            str(value or ""),
+            force=True,
+            redact_url_credentials=True,
+        )[:limit]
+        safe_source = redact(source, 200) or "agent-loop"
+        exc_type = redact(type(exc).__name__, 200) or "Exception"
+        redacted_traceback = redact_sensitive_text(
+            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            force=True,
+            redact_url_credentials=True,
+        )
+        tb_tail = redacted_traceback[-2000:]
+        safe_provider = redact(provider, 200)
+        safe_model = redact(model, 200)
+        safe_correlation_id = redact(correlation_id, 200)
+        safe_status_code = (
+            status_code
+            if isinstance(status_code, int) and not isinstance(status_code, bool)
+            else None
+        )
         payload = {
             "exception_type": exc_type,
-            "message": str(exc)[:500],
-            "phase": phase,
-            "provider": provider or "",
-            "model": model or "",
-            "status_code": status_code,
+            "error_class": exc_type,
+            "message": redact(exc, 500),
+            "phase": redact(phase, 200),
+            "provider": safe_provider,
+            "model": safe_model,
+            "status_code": safe_status_code,
+            "backend": {
+                "provider": safe_provider,
+                "model": safe_model,
+                "status_code": safe_status_code,
+            },
+            "correlation_id": safe_correlation_id,
             "traceback_tail": tb_tail,
-            "rate_capped_after": _RATE_CAP_MAX,
         }
 
         if bus is None:
@@ -112,17 +116,13 @@ def emit_agent_loop_fault(
 
         bus.emit(
             event_type=EventType.AGENT_LOOP_FAULT,
-            source=source,
+            source=safe_source,
             payload=payload,
             priority=Priority.HIGH,
+            correlation_id=safe_correlation_id or None,
         )
-        # Charge the budget only on a CONFIRMED emit: if bus.emit() above raised
-        # (swallowed by the outer except), we must not burn a slot and drop a
-        # later legitimate alert early. The cap bounds delivered notifications,
-        # not failed attempts.
-        _emit_counts[key] = count + 1
-        logger.info("Emitted AGENT_LOOP_FAULT (%s) from %s", exc_type, source)
+        logger.info("Emitted AGENT_LOOP_FAULT (%s) from %s", exc_type, safe_source)
         return True
     except Exception:  # pragma: no cover - alerting must never break the loop
-        logger.debug("emit_agent_loop_fault failed (swallowed)", exc_info=True)
+        logger.debug("emit_agent_loop_fault failed (swallowed)")
         return False
