@@ -980,9 +980,9 @@ class _WinPtyProcess:
             if (
                 accept_workspace_trust
                 and not workspace_trust_submitted
-                and _workspace_trust_prompt_visible(joined)
+                and (trust_keys := _workspace_trust_accept_keys(joined)) is not None
             ):
-                self.write("\r")
+                self.write(trust_keys)
                 workspace_trust_submitted = True
                 workspace_trust_submit_offset = len(joined)
             if workspace_trust_submit_offset is not None:
@@ -2852,6 +2852,14 @@ def _workspace_trust_prompt_end(output: str) -> int | None:
         for signature in (
             (
                 "Accessing workspace:",
+                "Quick safety check",
+                "Security guide",
+                "No, exit",
+                "Yes, I trust this folder",
+                "Enter to confirm · Esc to cancel",
+            ),
+            (
+                "Accessing workspace:",
                 "Yes, I trust this folder",
                 "No, exit",
                 "Security guide",
@@ -2893,6 +2901,29 @@ def _workspace_trust_prompt_end(output: str) -> int | None:
                 latest_end = max(latest_end or 0, raw_ends[frame_cursor - 1])
             search_from = frame_start + len(signature[0])
     return latest_end
+
+
+def _workspace_trust_accept_keys(output: str) -> str | None:
+    """Accept only the latest complete trust frame and its known selection."""
+
+    start = _workspace_trust_prompt_prefix_start(output)
+    if start is None:
+        return None
+    frame = output[start:]
+    end = _workspace_trust_prompt_end(frame)
+    if end is None:
+        return None
+    text, _, _ = _compact_terminal_text_with_raw_offsets(frame[:end])
+    no_index = text.find("No,exit")
+    if 0 <= no_index < text.find("Yes,Itrustthisfolder"):
+        # Claude 2.1.266 reversed the options and defaults to No. An unknown or
+        # ambiguous cursor must never receive Enter (nor inherit an older frame).
+        no_selected = ">No,exit" in text
+        yes_selected = ">Yes,Itrustthisfolder" in text
+        if no_selected == yes_selected:
+            return None
+        return "\x1b[B\r" if no_selected else "\r"
+    return "\r"
 
 
 def _workspace_trust_prompt_prefix_start(output: str) -> int | None:

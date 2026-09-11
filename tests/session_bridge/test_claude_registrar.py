@@ -2825,6 +2825,59 @@ def test_winpty_readiness_crosses_exact_workspace_trust_gate_once() -> None:
     assert process.reads == 6
 
 
+@pytest.mark.parametrize(
+    ("selected", "footer", "expected_write"),
+    [
+        ("no", "Enter to confirm · Esc to cancel", "\x1b[B\r"),
+        ("yes", "Enter to confirm · Esc to cancel", "\r"),
+        ("none", "Enter to confirm · Esc to cancel", None),
+        ("both", "Enter to confirm · Esc to cancel", None),
+        ("no", "Enter to confirm", None),
+        ("no", "Enter to grant all permissions", None),
+    ],
+)
+def test_winpty_reversed_trust_frame_selects_only_observed_yes_once(
+    selected: str, footer: str, expected_write: str | None
+) -> None:
+    # Claude 2.1.266 paints rows and spaces with CSI, with No selected first.
+    trust = (
+        "\x1b[2J\x1b[2;1HAccessing workspace: C:\\Users\\diego"
+        "\x1b[4;1HQuick safety check: Is this a project you created or one you trust?"
+        "\x1b[7;1HSecurity guide"
+        f"\x1b[9;1H{'>' if selected in ('no', 'both') else ' '} No, exit"
+        f"\x1b[10;1H{'>' if selected in ('yes', 'both') else ' '} Yes, I trust this folder"
+        f"\x1b[12;1H{footer}"
+    ).replace(" ", "\x1b[1C")
+
+    class Process:
+        def __init__(self) -> None:
+            self.chunks = iter(
+                [trust, trust, "\x1b[?2004h\u23f5\u23f5 don't ask on"]
+                if expected_write is not None else [trust, trust, trust]
+            )
+            self.writes: list[str] = []
+
+        def read_with_timeout(self, _size: int, timeout: float) -> str | None:
+            try:
+                return next(self.chunks)
+            except StopIteration:
+                time.sleep(timeout)
+                return None
+
+        def write(self, data: str) -> None:
+            self.writes.append(data)
+
+    process = Process()
+    if expected_write is None:
+        with pytest.raises(_PtyReadinessTimeout):
+            _WinPtyProcess(process).read_until_ready(1.0, accept_workspace_trust=True)
+        assert process.writes == []
+    else:
+        output = _WinPtyProcess(process).read_until_ready(1.0, accept_workspace_trust=True)
+        assert "\u23f5\u23f5" in output
+        assert process.writes == [expected_write]
+
+
 def test_winpty_readiness_crosses_restricted_workspace_trust_gate_once() -> None:
     trust = (
         "\x1b[2JAccessing workspace:\r\n"
