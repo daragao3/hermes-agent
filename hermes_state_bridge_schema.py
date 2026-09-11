@@ -998,6 +998,52 @@ CREATE TABLE IF NOT EXISTS desktop_registry_runs (
 CREATE INDEX IF NOT EXISTS idx_desktop_registry_runs_state
     ON desktop_registry_runs(state, created_at);
 
+-- Small root-level Desktop surfaces use a separate ledger from per-session
+-- registry records. A lane is independently recoverable and cannot block the
+-- other lane's pending run.
+CREATE TABLE IF NOT EXISTS desktop_surface_values (
+    value_hash TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS desktop_surface_baselines (
+    lane TEXT NOT NULL,
+    root_id TEXT NOT NULL,
+    group_name TEXT NOT NULL,
+    value_hash TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (lane, root_id, group_name),
+    FOREIGN KEY (value_hash) REFERENCES desktop_surface_values(value_hash)
+);
+
+CREATE TABLE IF NOT EXISTS desktop_surface_runs (
+    id TEXT PRIMARY KEY,
+    lane TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (
+        state IN ('prepared', 'committed', 'conflicted', 'abandoned')
+    ),
+    grouping_version INTEGER NOT NULL CHECK (grouping_version >= 1),
+    payload_json TEXT NOT NULL,
+    resolution TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_desktop_surface_runs_pending_lane
+    ON desktop_surface_runs(lane) WHERE state = 'prepared';
+
+CREATE TABLE IF NOT EXISTS desktop_surface_conflicts (
+    lane TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    group_name TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    candidates_json TEXT NOT NULL,
+    first_seen_at REAL NOT NULL,
+    last_seen_at REAL NOT NULL,
+    PRIMARY KEY (lane, item_id, group_name)
+);
+
 CREATE TABLE IF NOT EXISTS desktop_registry_conflicts (
     filename TEXT NOT NULL,
     group_name TEXT NOT NULL,

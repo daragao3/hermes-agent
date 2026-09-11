@@ -220,6 +220,8 @@ class ClaudeVisibilityConfig:
     float_activity: bool = False
     archive_idle_chips: bool = False
     reconcile_desktop_registries: bool = False
+    reconcile_desktop_presentation: bool = False
+    reconcile_desktop_scheduled_catalogs: bool = False
     idle_chip_archive_seconds: int = 86_400
     # Scheduled-task fire records (``scheduledTaskId``, no worktree) get their
     # own, shorter idle window. ``None`` = axis OFF, so nothing inherits a new
@@ -368,6 +370,8 @@ class BridgeConfig:
                 "float_activity",
                 "archive_idle_chips",
                 "reconcile_desktop_registries",
+                "reconcile_desktop_presentation",
+                "reconcile_desktop_scheduled_catalogs",
                 "idle_chip_archive_seconds",
                 "idle_task_session_archive_seconds",
                 "archive_idle_mirror_seconds",
@@ -838,6 +842,20 @@ class BridgeConfig:
                     claude_visibility_defaults.reconcile_desktop_registries,
                 ),
                 "session_bridge.claude_visibility.reconcile_desktop_registries",
+            ),
+            reconcile_desktop_presentation=_toml_bool(
+                claude_visibility.get(
+                    "reconcile_desktop_presentation",
+                    claude_visibility_defaults.reconcile_desktop_presentation,
+                ),
+                "session_bridge.claude_visibility.reconcile_desktop_presentation",
+            ),
+            reconcile_desktop_scheduled_catalogs=_toml_bool(
+                claude_visibility.get(
+                    "reconcile_desktop_scheduled_catalogs",
+                    claude_visibility_defaults.reconcile_desktop_scheduled_catalogs,
+                ),
+                "session_bridge.claude_visibility.reconcile_desktop_scheduled_catalogs",
             ),
             idle_chip_archive_seconds=_toml_int(
                 claude_visibility.get(

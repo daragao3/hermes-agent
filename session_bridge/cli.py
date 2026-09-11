@@ -88,7 +88,17 @@ from .mcp_server import (
     resolve_marker_key,
     resolve_retired_marker_keys,
 )
+from .desktop_presentation_worker import DesktopPresentationSyncWorker
 from .desktop_registry_worker import DesktopRegistrySyncWorker
+from .desktop_scheduled_catalog_worker import DesktopScheduledCatalogSyncWorker
+from .desktop_scheduled_handoff import OWNER_STATE_KEY
+from .desktop_surface_discovery import (
+    active_user_data_root_for_writes,
+    catalog_root_for_user_data,
+    default_user_data_dirs,
+    discover_presentation_roots,
+    discover_scheduled_catalogs,
+)
 from .mirror_conversation import MirrorConversationSync
 from .mirror_float import (
     CaptureMissRecorder,
@@ -1185,6 +1195,42 @@ def should_run_idle_chip_archiver(
     to REDUCE sidebar clutter also switched off the sidebar's own de-spammer.
     """
     return bool(not catalog_only and config.claude_visibility.archive_idle_chips)
+
+
+def should_run_desktop_presentation_sync(
+    config: BridgeConfig, *, catalog_only: bool, roots: Mapping[str, object]
+) -> bool:
+    """Whether root-level Pinned presentation convergence should run."""
+    return bool(
+        not catalog_only
+        and config.claude_visibility.reconcile_desktop_presentation
+        and roots
+    )
+
+
+def read_desktop_scheduled_owner_root(store: SessionBridgeStore) -> str | None:
+    owner = store.get_state(OWNER_STATE_KEY)
+    return (
+        owner.get("root_id")
+        if isinstance(owner, Mapping) and isinstance(owner.get("root_id"), str)
+        else None
+    )
+
+
+def should_run_desktop_scheduled_catalog_sync(
+    config: BridgeConfig,
+    *,
+    catalog_only: bool,
+    roots: Mapping[str, object],
+    owner_root_id: str | None,
+) -> bool:
+    """Whether passive disabled Scheduled definition replication should run."""
+    return bool(
+        not catalog_only
+        and config.claude_visibility.reconcile_desktop_scheduled_catalogs
+        and roots
+        and owner_root_id in roots
+    )
 
 
 def should_run_desktop_registry_sync(
@@ -4206,6 +4252,48 @@ class ProductionBackend:
                 )
                 else None
             )
+            presentation_roots = discover_presentation_roots()
+            user_data_dirs = default_user_data_dirs()
+            presentation_sync = (
+                DesktopPresentationSyncWorker(
+                    self._require_store(),
+                    roots=presentation_roots,
+                    active_root=lambda: active_user_data_root_for_writes(user_data_dirs),
+                )
+                if should_run_desktop_presentation_sync(
+                    effective_config,
+                    catalog_only=catalog_only,
+                    roots=presentation_roots,
+                )
+                else None
+            )
+            scheduled_catalogs = discover_scheduled_catalogs()
+            def _scheduled_owner_root() -> str | None:
+                return read_desktop_scheduled_owner_root(self._require_store())
+
+            scheduled_owner_root_id = _scheduled_owner_root()
+
+            def _active_catalog_root() -> str | None:
+                return catalog_root_for_user_data(
+                    scheduled_catalogs, active_user_data_root_for_writes(user_data_dirs)
+                )
+
+            scheduled_catalog_sync = (
+                DesktopScheduledCatalogSyncWorker(
+                    self._require_store(),
+                    catalogs=scheduled_catalogs,
+                    source_root=_scheduled_owner_root,
+                    active_root=_active_catalog_root,
+                    prompt_root=Path.home() / ".claude" / "scheduled-tasks",
+                )
+                if should_run_desktop_scheduled_catalog_sync(
+                    effective_config,
+                    catalog_only=catalog_only,
+                    roots=scheduled_catalogs,
+                    owner_root_id=scheduled_owner_root_id,
+                )
+                else None
+            )
             convergence_roots = tuple(discover_ccd_convergence_roots())
             registry_sync = (
                 DesktopRegistrySyncWorker(
@@ -4235,6 +4323,8 @@ class ProductionBackend:
                 sidebar_executor=sidebar_executor,
                 mirror_float=mirror_float,
                 idle_chip_archiver=idle_chip_archiver,
+                presentation_sync=presentation_sync,
+                scheduled_catalog_sync=scheduled_catalog_sync,
                 registry_sync=registry_sync,
             )
             return self._coordinator

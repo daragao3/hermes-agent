@@ -724,6 +724,8 @@ _CLAUDE_VISIBILITY_DEFAULTS = {
     "float_activity": False,
     "archive_idle_chips": False,
     "reconcile_desktop_registries": False,
+    "reconcile_desktop_presentation": False,
+    "reconcile_desktop_scheduled_catalogs": False,
     "idle_chip_archive_seconds": 86_400,
     # None = the scheduled-task reaping axis is disarmed. This default is the
     # safe one on purpose: nothing inherits a new reaping axis it did not ask
@@ -811,6 +813,8 @@ def test_claude_visibility_config_parses_every_valid_override(
         "float_activity": True,
         "archive_idle_chips": True,
         "reconcile_desktop_registries": True,
+        "reconcile_desktop_presentation": True,
+        "reconcile_desktop_scheduled_catalogs": True,
         "idle_chip_archive_seconds": 43_200,
         "idle_task_session_archive_seconds": 14_400,
         "archive_idle_mirror_seconds": 259_200,
@@ -840,6 +844,16 @@ def test_claude_visibility_config_parses_every_valid_override(
             "reconcile_desktop_registries",
             "yes",
             "reconcile_desktop_registries must be a boolean",
+        ),
+        (
+            "reconcile_desktop_presentation",
+            "yes",
+            "reconcile_desktop_presentation must be a boolean",
+        ),
+        (
+            "reconcile_desktop_scheduled_catalogs",
+            "yes",
+            "reconcile_desktop_scheduled_catalogs must be a boolean",
         ),
         ("backfill_days", 0, "backfill_days must be at least 1"),
         ("backfill_days", -1, "backfill_days must be at least 1"),
