@@ -12598,6 +12598,218 @@ class SessionBridgeStore:
                 snapshots.append({"bridge_id": bridge_id, **snapshot})
         return snapshots
 
+    # ── Small Desktop surface reconciliation ledgers ──
+
+    _DESKTOP_SURFACE_LANES = frozenset({"presentation", "scheduled_catalog"})
+
+    @classmethod
+    def _desktop_surface_lane(cls, lane: object) -> str:
+        if lane not in cls._DESKTOP_SURFACE_LANES:
+            raise ValueError("desktop surface lane is invalid")
+        return str(lane)
+
+    def load_desktop_surface_baselines(self, lane: str) -> list[dict[str, Any]]:
+        normalized_lane = self._desktop_surface_lane(lane)
+        with self.db._lock:
+            rows = self.db._conn.execute(
+                """SELECT b.root_id, b.group_name, v.value_json, b.revision
+                   FROM desktop_surface_baselines AS b
+                   JOIN desktop_surface_values AS v ON v.value_hash = b.value_hash
+                   WHERE b.lane = ?
+                   ORDER BY b.root_id, b.group_name""",
+                (normalized_lane,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_desktop_surface_baselines(
+        self, lane: str, rows: Sequence[Mapping[str, Any]]
+    ) -> int:
+        normalized_lane = self._desktop_surface_lane(lane)
+        validated: list[tuple[str, str, str, str, int]] = []
+        for row in rows:
+            root_id = _exact_nonempty_text(row.get("root_id"), "desktop surface root ID")
+            group_name = _exact_nonempty_text(
+                row.get("group_name"), "desktop surface baseline group"
+            )
+            value_json = row.get("value_json")
+            if not isinstance(value_json, str) or not value_json:
+                raise ValueError("desktop surface baseline value must be nonempty JSON text")
+            revision = row.get("revision")
+            if (
+                not isinstance(revision, int)
+                or isinstance(revision, bool)
+                or revision < 1
+            ):
+                raise ValueError("desktop surface baseline revision must be positive")
+            validated.append(
+                (
+                    root_id,
+                    group_name,
+                    desktop_registry_value_hash(value_json),
+                    value_json,
+                    revision,
+                )
+            )
+
+        def _write(conn: Any) -> int:
+            now = _finite_number(self._clock(), "clock")
+            conn.executemany(
+                "INSERT OR IGNORE INTO desktop_surface_values (value_hash, value_json) VALUES (?, ?)",
+                [(value_hash, value_json) for _, _, value_hash, value_json, _ in validated],
+            )
+            conn.executemany(
+                """INSERT INTO desktop_surface_baselines
+                       (lane, root_id, group_name, value_hash, revision, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(lane, root_id, group_name) DO UPDATE SET
+                       value_hash = excluded.value_hash,
+                       revision = excluded.revision,
+                       updated_at = excluded.updated_at""",
+                [
+                    (normalized_lane, root_id, group_name, value_hash, revision, now)
+                    for root_id, group_name, value_hash, _value_json, revision in validated
+                ],
+            )
+            conn.execute(
+                """DELETE FROM desktop_surface_values
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM desktop_surface_baselines AS b
+                       WHERE b.value_hash = desktop_surface_values.value_hash
+                   )"""
+            )
+            return len(validated)
+
+        return self.db._execute_write(_write)
+
+    def pending_desktop_surface_run(self, lane: str) -> dict[str, Any] | None:
+        normalized_lane = self._desktop_surface_lane(lane)
+        with self.db._lock:
+            row = self.db._conn.execute(
+                """SELECT id, lane, state, grouping_version, payload_json, created_at
+                   FROM desktop_surface_runs
+                   WHERE lane = ? AND state = 'prepared'
+                   ORDER BY created_at LIMIT 1""",
+                (normalized_lane,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def stage_desktop_surface_run(
+        self, lane: str, run_id: str, grouping_version: int, payload_json: str
+    ) -> dict[str, Any]:
+        normalized_lane = self._desktop_surface_lane(lane)
+        normalized_id = _exact_nonempty_text(run_id, "desktop surface run ID")
+        if (
+            not isinstance(grouping_version, int)
+            or isinstance(grouping_version, bool)
+            or grouping_version < 1
+        ):
+            raise ValueError("desktop surface grouping version must be >= 1")
+        if not isinstance(payload_json, str) or not payload_json:
+            raise ValueError("desktop surface run payload must be nonempty text")
+
+        def _write(conn: Any) -> dict[str, Any]:
+            pending = conn.execute(
+                "SELECT id FROM desktop_surface_runs WHERE lane = ? AND state = 'prepared'",
+                (normalized_lane,),
+            ).fetchone()
+            if pending is not None:
+                raise ValueError(
+                    f"desktop surface run {pending['id']} is still pending for {normalized_lane}"
+                )
+            now = _finite_number(self._clock(), "clock")
+            conn.execute(
+                """INSERT INTO desktop_surface_runs
+                       (id, lane, state, grouping_version, payload_json, created_at, updated_at)
+                   VALUES (?, ?, 'prepared', ?, ?, ?, ?)""",
+                (normalized_id, normalized_lane, grouping_version, payload_json, now, now),
+            )
+            return {"id": normalized_id, "lane": normalized_lane, "state": "prepared"}
+
+        return self.db._execute_write(_write)
+
+    def finish_desktop_surface_run(
+        self, lane: str, run_id: str, state: str, *, resolution: str | None
+    ) -> None:
+        normalized_lane = self._desktop_surface_lane(lane)
+        normalized_id = _exact_nonempty_text(run_id, "desktop surface run ID")
+        if state not in {"committed", "conflicted", "abandoned"}:
+            raise ValueError(f"invalid desktop surface run state: {state}")
+
+        def _write(conn: Any) -> None:
+            row = conn.execute(
+                "SELECT state FROM desktop_surface_runs WHERE id = ? AND lane = ?",
+                (normalized_id, normalized_lane),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"unknown desktop surface run: {normalized_id}")
+            if row["state"] != "prepared":
+                raise ValueError(f"desktop surface run {normalized_id} is already {row['state']}")
+            conn.execute(
+                """UPDATE desktop_surface_runs
+                   SET state = ?, resolution = ?, updated_at = ?
+                   WHERE id = ? AND lane = ?""",
+                (
+                    state,
+                    resolution,
+                    _finite_number(self._clock(), "clock"),
+                    normalized_id,
+                    normalized_lane,
+                ),
+            )
+
+        self.db._execute_write(_write)
+
+    def replace_desktop_surface_conflicts(
+        self, lane: str, conflicts: Sequence[Mapping[str, Any]]
+    ) -> None:
+        normalized_lane = self._desktop_surface_lane(lane)
+        validated = [
+            (
+                _exact_nonempty_text(c.get("item_id"), "desktop surface conflict item"),
+                _exact_nonempty_text(c.get("group_name"), "desktop surface conflict group"),
+                _exact_nonempty_text(c.get("reason"), "desktop surface conflict reason"),
+                _exact_nonempty_text(
+                    c.get("candidates_json"), "desktop surface conflict candidates"
+                ),
+            )
+            for c in conflicts
+        ]
+
+        def _write(conn: Any) -> None:
+            now = _finite_number(self._clock(), "clock")
+            first_seen = {
+                (row["item_id"], row["group_name"]): row["first_seen_at"]
+                for row in conn.execute(
+                    """SELECT item_id, group_name, first_seen_at
+                       FROM desktop_surface_conflicts WHERE lane = ?""",
+                    (normalized_lane,),
+                )
+            }
+            conn.execute(
+                "DELETE FROM desktop_surface_conflicts WHERE lane = ?",
+                (normalized_lane,),
+            )
+            conn.executemany(
+                """INSERT INTO desktop_surface_conflicts
+                       (lane, item_id, group_name, reason, candidates_json,
+                        first_seen_at, last_seen_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (
+                        normalized_lane,
+                        item_id,
+                        group_name,
+                        reason,
+                        candidates_json,
+                        first_seen.get((item_id, group_name), now),
+                        now,
+                    )
+                    for item_id, group_name, reason, candidates_json in validated
+                ],
+            )
+
+        self.db._execute_write(_write)
+
     # ── Desktop registry reconciliation ledger ──
     #
     # Baselines are the last verified per-replica group values for the

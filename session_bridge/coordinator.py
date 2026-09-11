@@ -1313,6 +1313,8 @@ class SessionBridgeCoordinator:
         permission_preflight: Callable[[str], bool] | None = None,
         mirror_float: object | None = None,
         idle_chip_archiver: object | None = None,
+        presentation_sync: object | None = None,
+        scheduled_catalog_sync: object | None = None,
         registry_sync: object | None = None,
     ) -> None:
         if type(scan_batch_size) is not int or scan_batch_size <= 0:
@@ -1375,6 +1377,16 @@ class SessionBridgeCoordinator:
         ):
             raise TypeError("idle_chip_archiver must provide run_once() or be None")
         self._idle_chip_archiver = idle_chip_archiver
+        if presentation_sync is not None and not callable(
+            getattr(presentation_sync, "run_once", None)
+        ):
+            raise TypeError("presentation_sync must provide run_once() or be None")
+        self._presentation_sync = presentation_sync
+        if scheduled_catalog_sync is not None and not callable(
+            getattr(scheduled_catalog_sync, "run_once", None)
+        ):
+            raise TypeError("scheduled_catalog_sync must provide run_once() or be None")
+        self._scheduled_catalog_sync = scheduled_catalog_sync
         if registry_sync is not None and not callable(
             getattr(registry_sync, "run_once", None)
         ):
@@ -3975,6 +3987,16 @@ class SessionBridgeCoordinator:
         if self._idle_chip_archiver is not None:
             await self._run_post_scan_worker(
                 self._idle_chip_archiver, "idle_chip_archive_failed"
+            )
+        # Pinned presentation state lives in each user-data root rather than in
+        # session records. It is local-only and independent of provider health.
+        if self._presentation_sync is not None:
+            await self._run_post_scan_worker(
+                self._presentation_sync, "desktop_presentation_sync_failed"
+            )
+        if self._scheduled_catalog_sync is not None:
+            await self._run_post_scan_worker(
+                self._scheduled_catalog_sync, "desktop_scheduled_catalog_sync_failed"
             )
         # Desktop registry reconciliation converges the per-account session
         # record replicas against durable baselines. Local-only for the same

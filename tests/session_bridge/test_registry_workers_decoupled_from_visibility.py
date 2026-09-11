@@ -14,7 +14,10 @@ import dataclasses
 from pathlib import Path
 
 from session_bridge.cli import (
+    read_desktop_scheduled_owner_root,
+    should_run_desktop_presentation_sync,
     should_run_desktop_registry_sync,
+    should_run_desktop_scheduled_catalog_sync,
     should_run_idle_chip_archiver,
 )
 from session_bridge.config import BridgeConfig, ClaudeVisibilityConfig
@@ -29,6 +32,73 @@ def _config(**visibility) -> BridgeConfig:
 
 
 ROOTS = (Path("root-a"), Path("root-b"))
+
+
+# ----------------------------------------------------------- presentation sync
+
+
+def test_presentation_sync_runs_while_visibility_is_disabled() -> None:
+    config = _config(enabled=False, reconcile_desktop_presentation=True)
+    assert should_run_desktop_presentation_sync(
+        config, catalog_only=False, roots={"a": object()}
+    )
+
+
+def test_presentation_sync_honours_its_own_switch_and_roots() -> None:
+    config = _config(enabled=True, reconcile_desktop_presentation=False)
+    assert not should_run_desktop_presentation_sync(
+        config, catalog_only=False, roots={"a": object()}
+    )
+    on = _config(enabled=False, reconcile_desktop_presentation=True)
+    assert not should_run_desktop_presentation_sync(
+        on, catalog_only=False, roots={}
+    )
+    assert not should_run_desktop_presentation_sync(
+        on, catalog_only=True, roots={"a": object()}
+    )
+
+
+# ------------------------------------------------------- scheduled catalog sync
+
+
+def test_scheduled_owner_is_read_dynamically() -> None:
+    class Store:
+        owner = "old"
+
+        def get_state(self, key):
+            return {"root_id": self.owner}
+
+    store = Store()
+    assert read_desktop_scheduled_owner_root(store) == "old"
+    store.owner = "new"
+    assert read_desktop_scheduled_owner_root(store) == "new"
+
+
+def test_scheduled_catalog_sync_runs_only_with_durable_owner() -> None:
+    config = _config(enabled=False, reconcile_desktop_scheduled_catalogs=True)
+    assert should_run_desktop_scheduled_catalog_sync(
+        config,
+        catalog_only=False,
+        roots={"owner": object(), "target": object()},
+        owner_root_id="owner",
+    )
+    assert not should_run_desktop_scheduled_catalog_sync(
+        config,
+        catalog_only=False,
+        roots={"target": object()},
+        owner_root_id="missing",
+    )
+
+
+def test_scheduled_catalog_sync_honours_switch_and_catalog_only() -> None:
+    off = _config(enabled=True, reconcile_desktop_scheduled_catalogs=False)
+    assert not should_run_desktop_scheduled_catalog_sync(
+        off, catalog_only=False, roots={"owner": object()}, owner_root_id="owner"
+    )
+    on = _config(enabled=False, reconcile_desktop_scheduled_catalogs=True)
+    assert not should_run_desktop_scheduled_catalog_sync(
+        on, catalog_only=True, roots={"owner": object()}, owner_root_id="owner"
+    )
 
 
 # --------------------------------------------------------------- registry sync
