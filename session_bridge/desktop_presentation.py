@@ -34,14 +34,14 @@ class PresentationState:
     @property
     def canonical(self) -> str:
         return json.dumps(
-            {"starred": self.starred, "pinned_order": self.pinned_order},
+            {"starred": self.starred},
             ensure_ascii=False,
             separators=(",", ":"),
         )
 
     @property
     def empty(self) -> bool:
-        return not self.starred and not self.pinned_order
+        return not self.starred
 
 
 @dataclass(frozen=True)
@@ -138,32 +138,40 @@ def _extract_state(config: Mapping[str, object], sessions_path: Path) -> Present
     order = _list_of_unique_strings(order_raw, field="pinnedOrder")
     if any(not item.startswith("code:local_") for item in order):
         raise PresentationConflict("pinnedOrder contains a non-Code session entry")
-    ordered_ids = tuple(item.removeprefix("code:") for item in order)
-    if set(starred) != set(ordered_ids):
-        raise PresentationConflict("Pinned presentation lists have different membership")
 
-    def _known(session_id: str) -> bool:
+    def _record(session_id: str) -> Mapping[str, object] | None:
         direct = sessions_path / f"{session_id}.json"
-        if direct.is_file():
-            return True
-        try:
-            candidates = sessions_path.glob(f"*/*/{session_id}.json")
-            return any(
-                candidate.is_file()
-                and not any(
-                    marker in part.casefold()
-                    for part in candidate.parts
-                    for marker in ("junction-backup", "recovery-backup", ".real-")
-                )
-                for candidate in candidates
-            )
-        except OSError:
-            return False
+        candidates = [direct]
+        if not direct.is_file():
+            try:
+                candidates = list(sessions_path.glob(f"*/*/{session_id}.json"))
+            except OSError:
+                candidates = []
+        for candidate in candidates:
+            if any(
+                marker in part.casefold()
+                for part in candidate.parts
+                for marker in ("junction-backup", "recovery-backup", ".real-")
+            ):
+                continue
+            try:
+                value = json.loads(candidate.read_text(encoding="utf-8-sig"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(value, Mapping) and value.get("sessionId") == session_id:
+                return value
+        return None
 
-    unknown = sorted(session_id for session_id in starred if not _known(session_id))
+    records = {session_id: _record(session_id) for session_id in starred}
+    unknown = sorted(session_id for session_id, record in records.items() if record is None)
     if unknown:
         raise PresentationConflict(f"Pinned presentation references unknown session: {unknown[0]}")
-    return PresentationState(starred=starred, pinned_order=order)
+    visible = tuple(
+        session_id
+        for session_id in starred
+        if records[session_id].get("isArchived") is not True  # type: ignore[union-attr]
+    )
+    return PresentationState(starred=visible, pinned_order=order)
 
 
 def scan_presentation_roots(
@@ -197,7 +205,6 @@ def _replace_state(config: Mapping[str, object], state: PresentationState) -> by
     cloned = json.loads(json.dumps(dict(config), ensure_ascii=False))
     epitaxy = cloned["preferences"]["epitaxyPrefs"]
     epitaxy["starred-local-code-sessions"] = list(state.starred)
-    epitaxy["dframe-local-slice"]["pinnedOrder"] = list(state.pinned_order)
     return (json.dumps(cloned, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
 

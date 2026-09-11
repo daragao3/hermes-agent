@@ -38,6 +38,7 @@ def _write_root(
     *,
     order: list[str] | None = None,
     session_ids: list[str] | None = None,
+    archived_ids: tuple[str, ...] = (),
 ) -> tuple[Path, Path]:
     root.mkdir(parents=True)
     config = root / "claude_desktop_config.json"
@@ -46,7 +47,10 @@ def _write_root(
     sessions.mkdir()
     for session_id in session_ids if session_ids is not None else starred:
         (sessions / f"{session_id}.json").write_text(
-            json.dumps({"sessionId": session_id}), encoding="utf-8"
+            json.dumps(
+                {"sessionId": session_id, "isArchived": session_id in archived_ids}
+            ),
+            encoding="utf-8",
         )
     return config, sessions
 
@@ -87,30 +91,46 @@ def test_bootstrap_patches_dormant_empty_root_and_preserves_unrelated_config(tmp
     assert written["preferences"]["unrelated"] == {"keep": True}
     epitaxy = written["preferences"]["epitaxyPrefs"]
     assert epitaxy["starred-local-code-sessions"] == ["local_a"]
-    assert epitaxy["dframe-local-slice"]["pinnedOrder"] == ["code:local_a"]
+    assert epitaxy["dframe-local-slice"]["pinnedOrder"] == []
     assert verify_presentation_plan(plan, _scan(source, target)).ok
 
 
-def test_lists_must_have_same_membership_but_keep_independent_order(tmp_path: Path) -> None:
+def test_pinned_order_is_app_local_and_can_differ_from_visible_pins(tmp_path: Path) -> None:
     root = _write_root(
         tmp_path / "root",
         ["local_a", "local_b"],
-        order=["local_b", "local_a"],
+        order=[],
     )
 
     observed = _scan(root).roots["root-0"].state
 
     assert observed.starred == ("local_a", "local_b")
-    assert observed.pinned_order == ("code:local_b", "code:local_a")
+    assert observed.pinned_order == ()
 
 
-def test_malformed_membership_fails_closed(tmp_path: Path) -> None:
+def test_non_code_pinned_order_entry_fails_closed(tmp_path: Path) -> None:
+    root = _write_root(tmp_path / "root", ["local_a"])
+    document = json.loads(root[0].read_text(encoding="utf-8"))
+    document["preferences"]["epitaxyPrefs"]["dframe-local-slice"][
+        "pinnedOrder"
+    ] = ["space:not-code"]
+    root[0].write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(PresentationConflict, match="non-Code"):
+        _scan(root)
+
+
+def test_archived_star_is_filtered_from_visible_canonical_state(tmp_path: Path) -> None:
     root = _write_root(
-        tmp_path / "root", ["local_a"], order=["local_a", "local_b"]
+        tmp_path / "root",
+        ["local_visible", "local_archived"],
+        session_ids=["local_visible", "local_archived"],
+        archived_ids=("local_archived",),
     )
 
-    with pytest.raises(PresentationConflict, match="membership"):
-        _scan(root)
+    observed = _scan(root).roots["root-0"].state
+
+    assert observed.starred == ("local_visible",)
 
 
 def test_unknown_session_reference_fails_closed(tmp_path: Path) -> None:
