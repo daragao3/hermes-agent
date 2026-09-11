@@ -95,7 +95,7 @@ def is_noop_cron_output(output_summary: str) -> bool:
 
 
 def is_sustained_resource_repeat(event) -> bool:
-    """True iff this RESOURCE_PRESSURE event is an unchanged re-ping.
+    """Suppress unchanged re-pings and axis-clear state updates from chat.
 
     The producer re-samples a live episode every 900s so it stays
     reconstructable on the bus after the fact — that sampling is what made the
@@ -111,7 +111,7 @@ def is_sustained_resource_repeat(event) -> bool:
     payload = getattr(event, "payload", None) or {}
     type_string = getattr(getattr(event, "event_type", None), "type_string", "")
     return (type_string == "resource_pressure"
-            and payload.get("change") == "sustained_repeat")
+            and payload.get("change") in {"sustained_repeat", "axes_cleared"})
 
 
 # cron_failed_consecutive ladder. Base MUST track

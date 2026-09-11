@@ -16,6 +16,13 @@ NOW = 1_800_000_000.0  # fixed epoch for pure-planner tests
 USER = "BOX\\diego"
 
 
+@pytest.fixture(autouse=True)
+def fake_process_owner(monkeypatch):
+    # The canonical runner clears caller identity. Match the synthetic fleet
+    # explicitly instead of accidentally depending on the developer's login.
+    monkeypatch.setenv("USERNAME", USER)
+
+
 def rec(
     pid,
     ppid=None,

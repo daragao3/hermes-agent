@@ -744,6 +744,19 @@ class ResourcePressureMonitor:
         was_latched = set(self._latched)
         self._latched = (self._latched - comfortably_clear) | set(reasons)
 
+        # Publish falling edges even when the alert cooldown is active. P6
+        # re-reads this stream before acting; silence leaves old authority valid.
+        # A simultaneous rising edge follows the normal alert path below.
+        if was_latched - self._latched and not (set(reasons) - was_latched):
+            if not self._latched:
+                self._announced_band_edges.clear()
+            self._emit(
+                sample, reasons, growth_bytes, change="axes_cleared",
+                spawn_floor_ms=spawn_floor, latched=self._latched,
+            )
+            self._last_reasons = set(reasons)
+            return None  # State update only; no new pressure alert.
+
         if not reasons:
             # Nothing breaching right now. If every latched axis also cleared
             # comfortably, the episode is over and the next rising edge fires

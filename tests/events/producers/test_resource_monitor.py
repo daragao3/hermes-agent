@@ -62,7 +62,10 @@ def make_sample(
 
 
 def _pressure_events(bus):
-    return bus.query(event_type=EventType.RESOURCE_PRESSURE)
+    # These existing tests count pressure alerts; clear-only state updates
+    # have their own producer/authority contract in test_pressure_clear_authority.
+    return [e for e in bus.query(event_type=EventType.RESOURCE_PRESSURE)
+            if e.payload.get("change") != "axes_cleared"]
 
 
 class TestNoFalsePositive:
@@ -646,13 +649,13 @@ class TestBandRatchetAndChangeStamp:
         monitor.evaluate(make_sample(disk_free_gb=10.0), now=2000.0)
         assert "band_change" not in self._changes(bus)[1:]
 
-    def test_an_axis_dropping_out_is_a_reasons_change(self, bus):
+    def test_an_axis_dropping_out_publishes_clear_state(self, bus):
         monitor = ResourcePressureMonitor(bus)
         monitor.evaluate(make_sample(disk_free_gb=30.0, phys_pct=95.0), now=0.0)
         monitor.evaluate(make_sample(disk_free_gb=30.0, phys_pct=50.0), now=60.0)
-        last = _pressure_events(bus)[-1].payload
+        last = bus.query(event_type=EventType.RESOURCE_PRESSURE)[-1].payload
         assert last["reasons"] == ["disk_low"]
-        assert last["change"] == "reasons_change"
+        assert last["change"] == "axes_cleared"
 
     def test_a_new_episode_announces_its_band_again(self, bus):
         monitor = ResourcePressureMonitor(bus)
