@@ -925,7 +925,7 @@ class Controller:
 
         snapshot2 = self._snapshot()
         assessments2, root_count2 = self._assess_all(snapshot2, policy2, now2)
-        if root_count2 <= policy2.fleet_min_roots:
+        if root_count2 <= planner._fleet_floor(policy2, pressure2):
             return cancelled("fleet census dropped to/below the trigger floor")
 
         fresh = next(

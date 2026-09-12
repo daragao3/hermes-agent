@@ -7,6 +7,7 @@ revalidation cancellations.
 """
 
 import json
+import pytest
 
 from claude_fleet_control import controller as ctrl
 from claude_fleet_control.controller import Controller, load_policy
@@ -218,6 +219,46 @@ def test_corrupt_state_resets_strikes(tmp_path):
 
 
 # ---------------------------------------------------------------- enforce gates
+
+
+@pytest.mark.parametrize("fresh_roots, expected", [(3, "hard_terminated"), (2, "cancelled")])
+def test_action_uses_the_approved_commit_floor(tmp_path, fresh_roots, expected):
+    policy = FleetPolicy(mode="enforce", policy_version="test", fleet_min_roots=25,
+                         commit_pct_arm=90.0, commit_bypass_min_roots=2)
+    cfg = _write_config(tmp_path, mode="enforce", fleet_min_roots=25,
+                        commit_pct_arm=90, commit_bypass_min_roots=2,
+                        approved_enforce_digest=policy.digest())
+    records = _fleet(3)
+    events = [{"reasons": ["commit_high"], "commit_pct": 95, "ts": NOW - 60}]
+    _prime_second_strike(tmp_path, cfg, records, allow_enforce=True, pressure_events=events)
+    calls = []
+
+    class FakeExecutor:
+        def __init__(self, **kwargs):
+            calls.append("constructed")
+
+        def hard_terminate_tree(self, target, *, plan_id):
+            from claude_fleet_control.executor import ExecutionReport
+            return ExecutionReport(ok=True, cancelled=False, detail="fake tree exited",
+                                   exited_identities=target.member_identities)
+
+    controller, _ = _make_controller(tmp_path, records, cfg, allow_enforce=True,
+                                     pressure_events=events, executor_factory=FakeExecutor)
+    snapshot = controller._snapshot
+    seen = 0
+
+    def resample():
+        nonlocal seen
+        seen += 1
+        value = snapshot()
+        if seen == 2:
+            return ProcessSnapshot(taken_at=NOW, records=tuple(records[:fresh_roots]), complete=True)
+        return value
+
+    controller._snapshot = resample
+    _, result = controller.run_once()
+    assert result.status == expected
+    assert bool(calls) == (expected == "hard_terminated")
 
 def _prime_second_strike(tmp_path, cfg, records, **kw):
     c1, _ = _make_controller(tmp_path, records, cfg, **kw)
