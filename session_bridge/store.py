@@ -2261,6 +2261,7 @@ class SessionBridgeStore:
         cost_limit: object,
         reserved_cost: object,
         max_attempts: int,
+        allow_repeated_call: bool = True,
     ) -> dict[str, Any]:
         """Lease one paid, same-UUID authentication recovery attempt."""
 
@@ -2347,6 +2348,11 @@ class SessionBridgeStore:
                     or recovery["prompt_digest"] != prompt
                 ):
                     raise ValueError("Claude authentication recovery identity conflict")
+                # Operator recovery can grant exactly one call. Enforce that
+                # inside the write transaction, including after lease expiry;
+                # a caller's earlier read is not sufficient race protection.
+                if not allow_repeated_call and recovery["call_started_at"] is not None:
+                    return {"status": "call_already_started", "job_id": normalized_job}
                 if (
                     recovery["state"] == "leased"
                     and recovery["lease_expires_at"] <= operation_time

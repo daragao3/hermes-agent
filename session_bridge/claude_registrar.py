@@ -336,6 +336,16 @@ def _canonical_claude_startup_settings(theme: object) -> str:
     )
 
 
+def build_incomplete_registration_recovery_prompt(identity: ClaudeVisibilityIdentity) -> str:
+    return (
+        "Hermes Session Bridge incomplete registration recovery for the existing "
+        f"Claude session {identity.claude_uuid}.\n"
+        "Do not perform project work or use tools. Do not create a new session.\n"
+        f"{identity.signed_marker}\n"
+        "Reply with exactly REGISTERED and nothing else."
+    )
+
+
 def build_characterization_auth_recovery_prompt(
     reserved_uuid: str, signed_marker: str
 ) -> str:
@@ -1583,6 +1593,33 @@ class ClaudeNativeRegistrar:
             )
         return self._launch(claim, candidate, identity, stop=stop)
 
+    def inspect_incomplete_registration(
+        self, candidate: ClaudeVisibilityCandidate, identity: ClaudeVisibilityIdentity
+    ) -> Mapping[str, str]:
+        """Read exact native evidence without granting any launch authority."""
+        validate_claude_visibility_identity_binding(
+            candidate, identity, self._secret,
+            retired_marker_secrets=self._retired_secrets,
+        )
+        transcript = self._read_exact(identity.claude_uuid)
+        if transcript is None:
+            raise ValueError("incomplete registration transcript absent")
+        kind = _validate_projection(
+            transcript, candidate, identity, self._secret,
+            retired_marker_secrets=self._retired_secrets, allow_incomplete=True,
+        )
+        first = transcript.projection.messages[0]
+        evidence = hashlib.sha256(json.dumps(
+            [identity.claude_uuid, first.native_event_id, first.content],
+            ensure_ascii=True, separators=(",", ":"),
+        ).encode()).hexdigest()
+        digest = transcript.projection.native_hash
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ValueError("incomplete registration native digest unavailable")
+        return {"kind": str(kind), "evidence_digest": evidence,
+                "transcript_digest": digest,
+                "prompt": build_incomplete_registration_recovery_prompt(identity)}
+
     def resume_auth_recovery(
         self, claim: Mapping[str, Any], prompt: str
     ) -> ClaudeRegistrarOutcome:
@@ -2402,7 +2439,8 @@ def _validate_projection(
     marker_secret: bytes,
     *,
     retired_marker_secrets: tuple[bytes, ...] = (),
-) -> None:
+    allow_incomplete: bool = False,
+) -> str | None:
     projection = transcript.projection
     if transcript.parsed.malformed_lines or transcript.parsed.unknown_records:
         raise _TranscriptConflict("bridge_conflict")
@@ -2433,6 +2471,15 @@ def _validate_projection(
         retired_marker_secrets=retired_marker_secrets,
     )
     messages = list(projection.messages)
+    incomplete_kind = _classify_incomplete_registration_messages(
+        messages, expected, build_incomplete_registration_recovery_prompt(identity)
+    )
+    if incomplete_kind == "incomplete_recovered":
+        return incomplete_kind
+    if allow_incomplete:
+        if incomplete_kind == "incomplete":
+            return incomplete_kind
+        raise _TranscriptConflict("bridge_conflict")
     recovery_kind = _classify_exact_auth_recovery_messages(
         messages,
         expected,
@@ -2569,6 +2616,37 @@ def _is_exact_registered_text(content: object) -> bool:
         return False
     cleaned = _stripped_terminal_text(content)
     return _is_registered_line(cleaned.strip())
+
+
+def _classify_incomplete_registration_messages(
+    messages: Sequence[ProjectedMessage], expected_prompt: str, recovery_prompt: str
+) -> str | None:
+    original = list(messages)
+    if any(
+        message.ordinal != 0
+        or not isinstance(message.native_event_id, str)
+        or not message.native_event_id
+        or message.tool_name is not None
+        or message.tool_calls is not None
+        or message.tool_call_id is not None
+        or message.reasoning is not None
+        for message in original
+    ) or len({message.native_event_id for message in original}) != len(original):
+        return None
+    while len(original) > 3 and original[-1].role == "user" and isinstance(original[-1].content, str) and _is_cli_command_bookkeeping(original[-1].content):
+        original.pop()
+    if len(original) == 4 and original[1].role == "assistant" and original[1].content == _CLAUDE_2110_RESUME_SCAFFOLD:
+        original.pop(1)
+    if not original or original[0].role != "user" or original[0].content != expected_prompt:
+        return None
+    if len(original) == 1:
+        return "incomplete"
+    if (len(original) == 3 and original[1].role == "user"
+            and original[1].content == recovery_prompt
+            and original[2].role == "assistant"
+            and _is_exact_registered_text(original[2].content)):
+        return "incomplete_recovered"
+    return None
 
 
 def _classify_exact_auth_recovery_messages(

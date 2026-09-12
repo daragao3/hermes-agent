@@ -1133,6 +1133,9 @@ class _Backend(Protocol):
     def abort_claude_visibility_characterization(
         self, *, expected_job_id: str, expected_reserved_claude_uuid: str
     ) -> Mapping[str, Any]: ...
+    def resume_incomplete_claude_visibility_job(
+        self, *, job_id: str, reserved_claude_uuid: str, apply: bool,
+    ) -> Mapping[str, Any]: ...
     def inspect_failed_claude_visibility_job(
         self,
         *,
@@ -2929,6 +2932,38 @@ class ProductionBackend:
             )
         except ValueError as exc:
             raise RolloutGateBlocked("visibility_repair_identity_mismatch") from exc
+
+    def resume_incomplete_claude_visibility_job(
+        self, *, job_id: str, reserved_claude_uuid: str, apply: bool,
+    ) -> Mapping[str, Any]:
+        from .claude_incomplete_recovery import recover_incomplete_registration
+
+        secret = resolve_marker_key()
+        retired = resolve_retired_marker_keys(current_key=secret)
+        command = resolve_cli_executable("claude") if apply else ()
+        startup = {"theme": "light"}
+        if apply:
+            preflight = _claude_visibility_preflight_detail(command)
+            if preflight.startup is None:
+                raise ProviderDegraded(str(preflight.failure_code))
+            startup = preflight.startup
+        store = self._require_store()
+        policy = self.config.claude_visibility
+        registrar = ClaudeNativeRegistrar(
+            store, ClaudeSourceAdapter(_CLAUDE_PROJECTS_ROOT, marker_secret=secret,
+                                       retired_marker_secrets=retired),
+            marker_secret=secret, retired_marker_secrets=retired,
+            startup_theme=startup["theme"], claude_command=command,
+            process_timeout=policy.process_timeout_seconds,
+            discovery_timeout=policy.discovery_timeout_seconds,
+        )
+        try:
+            return recover_incomplete_registration(
+                store=store, registrar=registrar, job_id=job_id,
+                reserved_uuid=reserved_claude_uuid, policy=policy, apply=apply,
+            )
+        except ValueError as exc:
+            raise RolloutGateBlocked("visibility_incomplete_recovery_refused") from exc
 
     def repair_failed_claude_visibility_job(
         self,
@@ -4849,6 +4884,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="confirm native-only reconciliation when --apply is selected",
     )
 
+    resume_incomplete = commands.add_parser(
+        "claude-visibility-resume-incomplete",
+        help="resume one exact prompt-only registration once under its paid recovery ledger",
+    )
+    resume_incomplete.add_argument("--job-id", required=True)
+    resume_incomplete.add_argument("--reserved-claude-uuid", required=True)
+    resume_mode = resume_incomplete.add_mutually_exclusive_group(required=True)
+    resume_mode.add_argument("--dry-run", action="store_true")
+    resume_mode.add_argument("--apply", action="store_true")
+
     dismiss_claude_visibility = commands.add_parser(
         "claude-visibility-dismiss",
         help="acknowledge one terminally failed job so discovery can resume",
@@ -5214,6 +5259,13 @@ def _main_unscoped(
             )
             _emit(payload)
             return EXIT_OK
+        if args.command == "claude-visibility-resume-incomplete":
+            payload = dict(backend.resume_incomplete_claude_visibility_job(
+                job_id=args.job_id, reserved_claude_uuid=args.reserved_claude_uuid,
+                apply=args.apply,
+            ))
+            _emit(payload)
+            return EXIT_OK if payload.get("status") in {"visible", "resumable", "reconcilable"} else EXIT_ROLLOUT_GATE
         if args.command == "claude-visibility-repair-failed":
             if args.apply and not args.confirm_exact_terminal_repair:
                 raise RolloutGateBlocked("visibility_repair_confirmation_required")
