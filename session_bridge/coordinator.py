@@ -4358,15 +4358,17 @@ class SessionBridgeCoordinator:
         reader = getattr(self._store, "get_external_session", None)
         if not callable(reader):
             return {}
-        cataloged: dict[str, Mapping[str, Any]] = {}
-        for native_id in native_ids:
-            row = await asyncio.to_thread(
-                reader,
-                canonical_session_id(Provider.CODEX, native_id),
-            )
-            if isinstance(row, Mapping):
-                cataloged[native_id] = row
-        return cataloged
+        def read_cataloged() -> dict[str, Mapping[str, Any]]:
+            cataloged: dict[str, Mapping[str, Any]] = {}
+            for native_id in native_ids:
+                row = reader(canonical_session_id(Provider.CODEX, native_id))
+                if isinstance(row, Mapping):
+                    cataloged[native_id] = row
+            return cataloged
+
+        # The local census can contain thousands of already-cataloged IDs;
+        # dispatch the read batch once instead of one thread hop per row.
+        return await asyncio.to_thread(read_cataloged)
 
     async def _load_continuation_reconcile_cursor(self) -> str | None:
         if not _supports_scan_state(self._store):
@@ -5791,6 +5793,7 @@ class SessionBridgeCoordinator:
                 adapter,
                 include_archived=self._config.catalog.include_archived_codex,
             )
+        api_inventory_ids = {_codex_native_id(summary) for summary in discovered_summaries}
         reconciliation_inventory = getattr(adapter, "list_reconciliation_inventory", None)
         if callable(reconciliation_inventory):
             local_summaries = await self._provider_call(
@@ -5821,6 +5824,11 @@ class SessionBridgeCoordinator:
         ]
         trusted_origin_changed_ids: list[str] = []
         for native_id in inventory_ids:
+            # A metadata-only census is for missing conversations. It must not
+            # awaken historical provenance reconciliation or re-ingest adopted
+            # keyless transcripts already protected by a catalog row.
+            if native_id not in api_inventory_ids and native_id in cataloged_ids:
+                continue
             summary = summaries_by_native_id[native_id]
             trusted_bridge_id = getattr(
                 summary, "trusted_origin_bridge_id", None

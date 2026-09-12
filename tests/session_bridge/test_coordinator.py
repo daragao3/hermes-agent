@@ -2570,7 +2570,7 @@ async def test_codex_continuous_scan_uses_recent_bounded_inventory() -> None:
 @pytest.mark.asyncio
 async def test_codex_reconciliation_recovers_older_missing_and_skips_adopted() -> None:
     missing = _codex_summary("missing-old", 10.0)
-    adopted = _codex_summary("adopted", 20.0)
+    adopted = replace(_codex_summary("adopted", 20.0), trusted_origin_bridge_id="old-origin")
     operations = []
 
     class Adapter(_BacklogCodexAdapter):
