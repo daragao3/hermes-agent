@@ -4149,8 +4149,10 @@ class ProductionBackend:
                     self._codex_client = RecoveringCodexAppServerClient(
                         lambda: CodexAppServerClient(codex_bin=codex_command[0])
                     )
+                from .sidebar_skill import resolve_codex_home
                 codex_source = CodexSourceAdapter(
                     self._codex_client,
+                    native_home=resolve_codex_home(),
                     marker_secret=marker_key,
                     retired_marker_secrets=retired_marker_keys,
                     trusted_origins=lambda: load_codex_characterization_origins(
