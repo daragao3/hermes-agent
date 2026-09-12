@@ -32,6 +32,39 @@ def _subscribe(bus, subscriber_id, **kwargs):
     return bus.subscribe(subscriber_id, **kwargs)
 
 
+def test_recent_type_query_does_not_scan_type_history(bus):
+    """Fleet and silence checks must seek event time, including legacy DBs."""
+    conn = bus._get_conn()
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(event_type, created_at)"
+    )
+    kind = EventType.RESOURCE_PRESSURE.type_string
+    conn.executemany(
+        "INSERT INTO events(event_id,event_type,source,timestamp,priority) "
+        "VALUES (?,?, 'test',?, 'low')",
+        [(f"old-{i}", kind, "2020-01-01T00:00:00+00:00") for i in range(2000)]
+        + [("recent", kind, "2026-01-01T00:00:00+00:00")],
+    )
+    conn.commit()
+    steps = 0
+
+    def progress():
+        nonlocal steps
+        steps += 1
+        return 0
+
+    conn.set_progress_handler(progress, 1)
+    try:
+        found = bus.query(
+            event_type=EventType.RESOURCE_PRESSURE,
+            since="2025-01-01T00:00:00+00:00",
+        )
+    finally:
+        conn.set_progress_handler(None, 0)
+    assert [event.event_id for event in found] == ["recent"]
+    assert steps < 500, f"recent query scanned historical events: {steps} VM steps"
+
+
 class TestEmit:
     def test_emit_returns_event_id(self, bus):
         event_id = bus.emit(

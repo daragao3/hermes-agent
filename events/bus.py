@@ -33,6 +33,11 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_type_status_ts
     ON events (event_type, status, timestamp);
+-- query() filters event time without status. The legacy idx_events_type_ts
+-- indexes created_at, and status between type/time also prevents a direct
+-- range seek. Keep this additive so existing databases migrate safely.
+CREATE INDEX IF NOT EXISTS idx_events_type_event_timestamp
+    ON events (event_type, timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_source
     ON events (source, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_correlation
