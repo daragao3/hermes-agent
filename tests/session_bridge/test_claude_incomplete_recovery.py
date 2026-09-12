@@ -7,7 +7,7 @@ import pytest
 
 from session_bridge.claude_registrar import _ExactTranscript, _validate_projection
 from session_bridge.claude_visibility import derive_claude_visibility_identity
-from session_bridge.models import ProjectedMessage
+from session_bridge.models import OriginKind, ProjectedMessage
 from tests.session_bridge.test_claude_registrar import (
     SECRET,
     FakeSource,
@@ -56,7 +56,17 @@ def test_incomplete_registration_remains_failed_until_exact_native_reply(complet
 
 @pytest.mark.parametrize(
     "mutation",
-    ["wrong_prompt", "work", "tools", "duplicate", "missing_reply", "wrong_name"],
+    [
+        "wrong_prompt",
+        "work",
+        "tools",
+        "duplicate",
+        "missing_reply",
+        "wrong_name",
+        "resume_user",
+        "resume_reply",
+        "weekly_limit",
+    ],
 )
 def test_incomplete_recovery_never_accepts_unrelated_or_unanswered_work(mutation):
     from session_bridge.claude_registrar import (
@@ -83,10 +93,31 @@ def test_incomplete_recovery_never_accepts_unrelated_or_unanswered_work(mutation
         messages[2] = replace(messages[2], native_event_id="u2")
     elif mutation == "missing_reply":
         messages.pop()
+    elif mutation in {"resume_user", "resume_reply", "weekly_limit"}:
+        messages[1:1] = [
+            ProjectedMessage(
+                "resume-user", 0, "user", "Continue from where you left off.", 11
+            ),
+            ProjectedMessage(
+                "resume-assistant", 0, "assistant", "No response requested.", 11
+            ),
+        ]
+        if mutation == "resume_user":
+            messages[1] = replace(messages[1], content="Continue project work.")
+        elif mutation == "resume_reply":
+            messages[2] = replace(messages[2], content="Working on the project.")
+        else:
+            messages[-1] = replace(
+                messages[-1],
+                content="You've hit your weekly limit · resets Sep 14, 4am (America/New_York)",
+            )
     projection = replace(
         projection,
         messages=messages,
         title="wrong" if mutation == "wrong_name" else projection.title,
+        origin_kind=OriginKind.BRIDGE_CONTINUATION
+        if mutation.startswith("resume_") or mutation == "weekly_limit"
+        else projection.origin_kind,
     )
     source = FakeSource([projection])
     path = source.find_native_session(identity.claude_uuid)
@@ -101,7 +132,9 @@ def test_incomplete_recovery_never_accepts_unrelated_or_unanswered_work(mutation
 
 
 @pytest.mark.parametrize("finish", [True, False, "commit_crash"])
-def test_paid_incomplete_resume_uses_real_adapter_and_ledger_once(tmp_path, finish, monkeypatch):
+def test_paid_incomplete_resume_uses_real_adapter_and_ledger_once(
+    tmp_path, finish, monkeypatch
+):
     from hermes_state import SessionDB
     from session_bridge.store import SessionBridgeStore
     from session_bridge.claude_adapter import (
@@ -165,6 +198,16 @@ def test_paid_incomplete_resume_uses_real_adapter_and_ledger_once(tmp_path, fini
             if finish:
                 with path.open("a", encoding="utf-8") as stream:
                     for row in [
+                        record(
+                            "user",
+                            "Continue from where you left off.",
+                            "44444444-4444-4444-8444-444444444444",
+                        ),
+                        record(
+                            "assistant",
+                            "No response requested.",
+                            "55555555-5555-4555-8555-555555555555",
+                        ),
                         record("user", prompt, "22222222-2222-4222-8222-222222222222"),
                         record(
                             "assistant",
@@ -200,14 +243,21 @@ def test_paid_incomplete_resume_uses_real_adapter_and_ledger_once(tmp_path, fini
     assert factory.spawns == []
     if finish == "commit_crash":
         commit = store.commit_claude_auth_recovery
+
         def crash(**kwargs):
             raise RuntimeError("commit interrupted")
+
         monkeypatch.setattr(store, "commit_claude_auth_recovery", crash)
         with pytest.raises(RuntimeError, match="commit interrupted"):
             recover_incomplete_registration(**kwargs, apply=True)
         monkeypatch.setattr(store, "commit_claude_auth_recovery", commit)
-        assert recover_incomplete_registration(**kwargs, apply=False)["status"] == "reconcilable"
-        assert recover_incomplete_registration(**kwargs, apply=True)["status"] == "visible"
+        assert (
+            recover_incomplete_registration(**kwargs, apply=False)["status"]
+            == "reconcilable"
+        )
+        assert (
+            recover_incomplete_registration(**kwargs, apply=True)["status"] == "visible"
+        )
     elif finish:
         assert (
             recover_incomplete_registration(**kwargs, apply=True)["status"] == "visible"
@@ -277,3 +327,40 @@ def test_operator_resume_cli_passes_exact_identity_and_explicit_mode(capsys, app
             "apply": apply,
         }
     ]
+
+
+def test_resume_backend_preserves_sanitized_native_failure(monkeypatch):
+    import session_bridge.cli as cli
+    import session_bridge.claude_incomplete_recovery as recovery
+    from session_bridge.claude_registrar import ClaudeRegistrarOutcome
+    from session_bridge.config import BridgeConfig
+
+    backend = cli.ProductionBackend(BridgeConfig())
+    monkeypatch.setattr(cli, "resolve_marker_key", lambda: SECRET)
+    monkeypatch.setattr(cli, "resolve_retired_marker_keys", lambda **kwargs: ())
+    monkeypatch.setattr(backend, "_require_store", lambda: object())
+
+    def failed(**kwargs):
+        raise recovery.IncompleteRecoveryFailed(
+            ClaudeRegistrarOutcome(
+                "retry",
+                "job-1",
+                "uuid-1",
+                "creation_ambiguous",
+                "Claude provider limit interrupted authentication recovery",
+            )
+        )
+
+    monkeypatch.setattr(recovery, "recover_incomplete_registration", failed)
+    result = backend.resume_incomplete_claude_visibility_job(
+        job_id="job-1",
+        reserved_claude_uuid="uuid-1",
+        apply=False,
+    )
+    assert result == {
+        "status": "failed",
+        "job_id": "job-1",
+        "reserved_claude_uuid": "uuid-1",
+        "error_code": "creation_ambiguous",
+        "error_detail": "Claude provider limit interrupted authentication recovery",
+    }

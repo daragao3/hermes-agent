@@ -2936,7 +2936,7 @@ class ProductionBackend:
     def resume_incomplete_claude_visibility_job(
         self, *, job_id: str, reserved_claude_uuid: str, apply: bool,
     ) -> Mapping[str, Any]:
-        from .claude_incomplete_recovery import recover_incomplete_registration
+        from .claude_incomplete_recovery import IncompleteRecoveryFailed, recover_incomplete_registration
 
         secret = resolve_marker_key()
         retired = resolve_retired_marker_keys(current_key=secret)
@@ -2962,6 +2962,10 @@ class ProductionBackend:
                 store=store, registrar=registrar, job_id=job_id,
                 reserved_uuid=reserved_claude_uuid, policy=policy, apply=apply,
             )
+        except IncompleteRecoveryFailed as exc:
+            return {"status": "failed", "job_id": job_id,
+                    "reserved_claude_uuid": reserved_claude_uuid,
+                    "error_code": exc.error_code, "error_detail": exc.error_detail}
         except ValueError as exc:
             raise RolloutGateBlocked("visibility_incomplete_recovery_refused") from exc
 

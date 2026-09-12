@@ -2459,10 +2459,7 @@ def _validate_projection(
         raise _TranscriptConflict("cwd_conflict")
     if projection.title != candidate.native_name:
         raise _TranscriptConflict("name_conflict")
-    if (
-        projection.origin_bridge_id != identity.bridge_id
-        or projection.origin_kind is not OriginKind.BRIDGE_PLACEHOLDER
-    ):
+    if projection.origin_bridge_id != identity.bridge_id:
         raise _TranscriptConflict("bridge_conflict")
     expected = build_claude_registration_prompt(
         candidate,
@@ -2474,8 +2471,12 @@ def _validate_projection(
     incomplete_kind = _classify_incomplete_registration_messages(
         messages, expected, build_incomplete_registration_recovery_prompt(identity)
     )
-    if incomplete_kind == "incomplete_recovered":
+    if incomplete_kind == "incomplete_recovered" and projection.origin_kind in {
+        OriginKind.BRIDGE_PLACEHOLDER, OriginKind.BRIDGE_CONTINUATION,
+    }:
         return incomplete_kind
+    if projection.origin_kind is not OriginKind.BRIDGE_PLACEHOLDER:
+        raise _TranscriptConflict("bridge_conflict")
     if allow_incomplete:
         if incomplete_kind == "incomplete":
             return incomplete_kind
@@ -2635,6 +2636,15 @@ def _classify_incomplete_registration_messages(
         return None
     while len(original) > 3 and original[-1].role == "user" and isinstance(original[-1].content, str) and _is_cli_command_bookkeeping(original[-1].content):
         original.pop()
+    # Claude's native --resume records this exact inert pair before accepting
+    # input. It makes the adapter label the session a continuation; accept only
+    # this position and this full pair, never arbitrary resumed user turns.
+    if (len(original) == 5
+            and original[1].role == "user"
+            and original[1].content == "Continue from where you left off."
+            and original[2].role == "assistant"
+            and original[2].content == _CLAUDE_2110_RESUME_SCAFFOLD):
+        original = [original[0], *original[3:]]
     if len(original) == 4 and original[1].role == "assistant" and original[1].content == _CLAUDE_2110_RESUME_SCAFFOLD:
         original.pop(1)
     if not original or original[0].role != "user" or original[0].content != expected_prompt:

@@ -7,6 +7,17 @@ from .claude_visibility import ClaudeVisibilityCandidate, ClaudeVisibilityIdenti
 from .models import Provider
 
 
+class IncompleteRecoveryFailed(ValueError):
+    """Carry only the registrar's bounded, sanitized outcome to the CLI."""
+
+    def __init__(self, outcome):
+        super().__init__(
+            "incomplete recovery not completed: " + str(outcome.error_code)
+        )
+        self.error_code = outcome.error_code
+        self.error_detail = outcome.detail
+
+
 def recover_incomplete_registration(
     *, store, registrar, job_id, reserved_uuid, policy, apply=False, now=time.time
 ):
@@ -117,9 +128,7 @@ def recover_incomplete_registration(
         raise ValueError("incomplete registration changed before resume")
     outcome = registrar.resume_auth_recovery(claimed, prompt)
     if outcome.status != "recovered":
-        raise ValueError(
-            "incomplete recovery not completed: " + str(outcome.error_code)
-        )
+        raise IncompleteRecoveryFailed(outcome)
     final = registrar.inspect_incomplete_registration(candidate, identity)
     if (
         final["kind"] != "incomplete_recovered"
