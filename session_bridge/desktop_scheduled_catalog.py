@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import uuid
 from dataclasses import dataclass
@@ -28,6 +29,17 @@ PORTABLE_FIELDS = (
     "approvedPermissions",
     "useWorktree",
     "filePath",
+    "createdAt",
+    "userSelectedFolders",
+    "userSelectedFiles",
+    "userSelectedProjectUuids",
+    "chromePermissionMode",
+    "chromeAllowedDomains",
+    "spaceId",
+    "sourceBranch",
+    "disableJitter",
+    "dispatchSubscribed",
+    "watcher",
 )
 EXECUTION_FIELDS = (
     "enabled",
@@ -152,7 +164,12 @@ def scan_catalogs(
 
 
 def _portable(task: Mapping[str, object]) -> dict[str, object]:
-    return {field: task.get(field) for field in PORTABLE_FIELDS}
+    created = task.get("createdAt")
+    if isinstance(created, bool) or not isinstance(created, (int, float)) or not math.isfinite(created):
+        raise CatalogConflict(f"source task lacks native creation timestamp: {task.get('id')}")
+    # Native optional fields permit absence, not JSON null. In particular,
+    # omitting required createdAt makes Desktop reject the entire catalog.
+    return {field: task[field] for field in PORTABLE_FIELDS if task.get(field) is not None}
 
 
 def _portable_canonical(task: Mapping[str, object]) -> str:
@@ -226,14 +243,14 @@ def build_replication_plan(
             current = target_tasks.get(task_id)
             if current is None:
                 replacement = _portable(source_task)
-                replacement.update({field: None for field in EXECUTION_FIELDS})
                 replacement["enabled"] = False
                 target_tasks[task_id] = replacement
                 changed.append(task_id)
                 continue
-            replacement = dict(current)
+            replacement = {field: value for field, value in current.items() if value is not None}
             for field in PORTABLE_FIELDS:
-                replacement[field] = source_task.get(field)
+                replacement.pop(field, None)
+            replacement.update(_portable(source_task))
             if replacement != current:
                 target_tasks[task_id] = replacement
                 changed.append(task_id)
@@ -311,10 +328,9 @@ def build_handoff_plan(
     target_tasks = {task_id: dict(task) for task_id, task in target.tasks.items()}
     for task_id, source_task in source_tasks.items():
         replacement = _portable(source_task)
-        for field in EXECUTION_FIELDS:
-            replacement[field] = source_task.get(field)
+        replacement.update({field: value for field, value in source_task.items() if value is not None})
         replacement["enabled"] = True
-        replacement["notifySessionId"] = None
+        replacement.pop("notifySessionId", None)
         target_tasks[task_id] = replacement
     mutation = _mutation(target, target_tasks, selected)
     return CatalogPlan(

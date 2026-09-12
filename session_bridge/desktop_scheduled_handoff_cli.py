@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-root-id", required=True)
     parser.add_argument("--target-root-id", required=True)
     parser.add_argument("--task-id", action="append", required=True, dest="task_ids")
+    parser.add_argument("--recover-committed-run", help="Restore the exact missing set from this committed handoff receipt")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--plan", action="store_true")
     mode.add_argument("--apply", action="store_true")
@@ -71,12 +72,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 target_root_id=args.target_root_id,
                 task_ids=args.task_ids,
                 confirmation=args.confirm,
+                recover_committed_run=args.recover_committed_run,
             )
         else:
             payload = handoff.plan(
                 source_root_id=args.source_root_id,
                 target_root_id=args.target_root_id,
                 task_ids=args.task_ids,
+                recover_committed_run=args.recover_committed_run,
             )
             payload.pop("plan", None)
             payload["status"] = "planned"

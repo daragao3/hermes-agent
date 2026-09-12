@@ -46,7 +46,8 @@ class DesktopScheduledHandoff:
         self._clock = clock
 
     def plan(
-        self, *, source_root_id: str, target_root_id: str, task_ids: Iterable[str]
+        self, *, source_root_id: str, target_root_id: str, task_ids: Iterable[str],
+        recover_committed_run: str | None = None,
     ) -> dict[str, object]:
         selected = tuple(dict.fromkeys(task_ids))
         scan = scan_catalogs(self._catalogs, prompt_root=self._prompt_root)
@@ -69,6 +70,25 @@ class DesktopScheduledHandoff:
             target_root_id=target_root_id,
             task_ids=selected,
         )
+        if recover_committed_run is not None:
+            receipt = self._store.get_desktop_surface_run(LANE, recover_committed_run)
+            if receipt is None or receipt["state"] != "committed":
+                raise CatalogConflict("committed handoff receipt is required for recovery")
+            authority = json.loads(receipt["payload_json"])
+            owner = self._store.get_state(OWNER_STATE_KEY)
+            if (
+                authority.get("phase") != "enable_target"
+                or authority.get("source_root_id") != source_root_id
+                or authority.get("target_root_id") != target_root_id
+                or sorted(authority.get("task_ids", [])) != sorted(selected)
+                or not isinstance(owner, Mapping)
+                or owner.get("root_id") != target_root_id
+                or owner.get("source_root_id") != source_root_id
+                or plan.phase != "enable_target"
+            ):
+                raise CatalogConflict("committed handoff authority does not match recovery")
+            if any(task_id in scan.roots[target_root_id].tasks for task_id in selected):
+                raise CatalogConflict("committed recovery only restores an entirely missing task set")
         if plan.phase == "disable_old_owners":
             if self._live_status != "one" or self._live_target != target_root_id:
                 raise CatalogConflict("target is not the one live Desktop catalog")
@@ -80,15 +100,16 @@ class DesktopScheduledHandoff:
                 "target_root_id": target_root_id,
                 "task_ids": list(selected),
             }
-            if not isinstance(pending, Mapping) or any(
+            if recover_committed_run is None and (not isinstance(pending, Mapping) or any(
                 pending.get(key) != value for key, value in expected.items()
-            ):
+            )):
                 raise CatalogConflict("verified pending handoff is required")
         return {
             "phase": plan.phase,
             "source_root_id": source_root_id,
             "target_root_id": target_root_id,
             "task_ids": list(selected),
+            "recover_committed_run": recover_committed_run,
             "mutations": [
                 {
                     "root_id": mutation.root_id,
@@ -108,6 +129,7 @@ class DesktopScheduledHandoff:
         target_root_id: str,
         task_ids: Iterable[str],
         confirmation: str,
+        recover_committed_run: str | None = None,
     ) -> dict[str, object]:
         if confirmation != CONFIRMATION:
             raise CatalogConflict("scheduled handoff confirmation is required")
@@ -116,6 +138,7 @@ class DesktopScheduledHandoff:
             source_root_id=source_root_id,
             target_root_id=target_root_id,
             task_ids=selected,
+            recover_committed_run=recover_committed_run,
         )
         plan = planned.pop("plan")
         pending = self._store.pending_desktop_surface_run(LANE)
@@ -134,7 +157,7 @@ class DesktopScheduledHandoff:
         self._store.stage_desktop_surface_run(
             LANE, run_id, GROUPING_VERSION, payload
         )
-        if plan.phase == "disable_old_owners":
+        if plan.phase == "disable_old_owners" or recover_committed_run is not None:
             self._store.set_state(
                 PENDING_HANDOFF_STATE_KEY,
                 {

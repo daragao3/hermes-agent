@@ -12700,6 +12700,16 @@ class SessionBridgeStore:
 
         return self.db._execute_write(_write)
 
+    def get_desktop_surface_run(self, lane: str, run_id: str) -> dict[str, Any] | None:
+        normalized_lane = self._desktop_surface_lane(lane)
+        normalized_id = _exact_nonempty_text(run_id, "desktop surface run ID")
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT * FROM desktop_surface_runs WHERE lane = ? AND id = ?",
+                (normalized_lane, normalized_id),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def pending_desktop_surface_run(self, lane: str) -> dict[str, Any] | None:
         normalized_lane = self._desktop_surface_lane(lane)
         with self.db._lock:

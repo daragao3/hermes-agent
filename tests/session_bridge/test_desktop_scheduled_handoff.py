@@ -18,6 +18,7 @@ from session_bridge.store import SessionBridgeStore
 def _task(task_id: str, enabled: bool) -> dict:
     return {
         "id": task_id,
+        "createdAt": 1788972033605,
         "displayName": task_id,
         "cronExpression": "7 * * * *",
         "fireAt": None,
@@ -172,3 +173,63 @@ def test_live_target_mismatch_refuses_before_backup_or_write(fixture) -> None:
 
     assert source.read_bytes() == before
     assert not (tmp_path / "outside-backups").exists()
+
+@pytest.mark.parametrize("corrupt_authority", [False, True])
+def test_committed_owner_recovery_preserves_new_task_and_requires_exact_receipt(fixture, corrupt_authority):
+    handoff, store, source, target, tmp_path = fixture
+    handoff.apply(source_root_id="source", target_root_id="target", task_ids=["watch"], confirmation=CONFIRMATION)
+    handoff._live_target = None
+    handoff._live_status = "none"
+    receipt = handoff.apply(source_root_id="source", target_root_id="target", task_ids=["watch"], confirmation=CONFIRMATION)
+    new_task = _task("new-quota-check", True)
+    target.write_text(json.dumps({"scheduledTasks": [new_task]}), encoding="utf-8")
+    before = target.read_bytes()
+    kwargs = dict(source_root_id="source", target_root_id="target", task_ids=["watch"],
+                  recover_committed_run=receipt["run_id"] if not corrupt_authority else "unknown")
+    if corrupt_authority:
+        with pytest.raises(CatalogConflict, match="committed"):
+            handoff.apply(**kwargs, confirmation=CONFIRMATION)
+        assert target.read_bytes() == before
+        return
+    plan = handoff.plan(**kwargs)
+    assert target.read_bytes() == before
+    assert plan["phase"] == "enable_target"
+    result = handoff.apply(**kwargs, confirmation=CONFIRMATION)
+    tasks = {row["id"]: row for row in json.loads(target.read_text(encoding="utf-8"))["scheduledTasks"]}
+    assert tasks["new-quota-check"] == new_task
+    assert tasks["watch"]["enabled"] is True
+    assert tasks["watch"]["createdAt"] == 1788972033605
+    assert not any(row["enabled"] for row in json.loads(source.read_text(encoding="utf-8"))["scheduledTasks"])
+    backups = list(Path(result["backup"]).glob("*.scheduled-tasks.json"))
+    assert len(backups) == 1 and backups[0].read_bytes() == before
+
+
+@pytest.mark.parametrize("conflict", ["desktop_open", "owner_changed", "selection_changed", "target_present", "old_owner_enabled"])
+def test_committed_recovery_refuses_changed_authority_without_writes(fixture, conflict):
+    handoff, store, source, target, tmp_path = fixture
+    handoff.apply(source_root_id="source", target_root_id="target", task_ids=["watch"], confirmation=CONFIRMATION)
+    handoff._live_target = None
+    handoff._live_status = "none"
+    receipt = handoff.apply(source_root_id="source", target_root_id="target", task_ids=["watch"], confirmation=CONFIRMATION)
+    target.write_text(json.dumps({"scheduledTasks": []}), encoding="utf-8")
+    selected = ["watch"]
+    if conflict == "desktop_open":
+        handoff._live_status = "one"
+    elif conflict == "owner_changed":
+        store.set_state(OWNER_STATE_KEY, {"root_id": "elsewhere", "source_root_id": "source"})
+    elif conflict == "selection_changed":
+        (handoff._prompt_root / "other").mkdir()
+        (handoff._prompt_root / "other" / "SKILL.md").write_text("prompt")
+        source.write_text(json.dumps({"scheduledTasks": [_task("watch", False), _task("other", False)]}))
+        selected.append("other")
+    elif conflict == "target_present":
+        target.write_text(json.dumps({"scheduledTasks": [_task("watch", False)]}))
+    elif conflict == "old_owner_enabled":
+        source.write_text(json.dumps({"scheduledTasks": [_task("watch", True)]}))
+    before = {path: path.read_bytes() for path in (source, target)}
+    backup_dirs = set((tmp_path / "outside-backups").iterdir())
+    with pytest.raises(CatalogConflict):
+        handoff.apply(source_root_id="source", target_root_id="target", task_ids=selected,
+                      recover_committed_run=receipt["run_id"], confirmation=CONFIRMATION)
+    assert {path: path.read_bytes() for path in before} == before
+    assert set((tmp_path / "outside-backups").iterdir()) == backup_dirs

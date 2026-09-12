@@ -17,6 +17,7 @@ from session_bridge.desktop_scheduled_catalog import (
 def _task(task_id: str, *, enabled: bool, cwd: str = "C:/work", **fields) -> dict:
     return {
         "id": task_id,
+        "createdAt": 1788972033605,
         "displayName": task_id,
         "cronExpression": "7 * * * *",
         "fireAt": None,
@@ -81,8 +82,8 @@ def test_disabled_replication_copies_definition_without_execution_state(tmp_path
     assert mutation.root_id == "target"
     copied = json.loads(mutation.after_bytes)["scheduledTasks"][0]
     assert copied["enabled"] is False
-    assert copied["lastRunAt"] is None
-    assert copied["lastScheduledFor"] is None
+    assert copied.get("lastRunAt") is None
+    assert copied.get("lastScheduledFor") is None
     assert copied["cwd"] == "C:/work"
     assert copied["cronExpression"] == "7 * * * *"
 
@@ -239,3 +240,20 @@ def test_second_replication_cycle_is_idempotent(tmp_path: Path) -> None:
     )
 
     assert second.mutations == ()
+
+@pytest.mark.parametrize("mode", ["handoff", "replication"])
+def test_native_manifest_preserves_required_creation_and_omits_optional_nulls(tmp_path, mode):
+    source_task = _task("watch", enabled=False, createdAt=1788972033605,
+                        userSelectedFolders=["C:/approved"], sourceBranch="topic")
+    prompts = _prompts(tmp_path / "prompts", "watch")
+    source = _write_store(tmp_path / "source", [source_task])
+    target = _write_store(tmp_path / "target", [])
+    scan = _scan(prompts, source=source, target=target)
+    plan = (build_handoff_plan(scan, source_root_id="source", target_root_id="target", task_ids=["watch"])
+            if mode == "handoff" else build_replication_plan(scan, source_root_id="source", active_root_id=None))
+    copied = json.loads(plan.mutations[0].after_bytes)["scheduledTasks"][0]
+    assert copied["createdAt"] == source_task["createdAt"]
+    assert all(value is not None for value in copied.values())
+    assert copied["userSelectedFolders"] == source_task["userSelectedFolders"]
+    assert copied["sourceBranch"] == "topic"
+    assert "notifySessionId" not in copied
