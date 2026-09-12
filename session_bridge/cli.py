@@ -2966,25 +2966,6 @@ class ProductionBackend:
             or authority != ("reconciliation", False, False, True)
         ):
             raise RolloutGateBlocked("visibility_repair_authority_mismatch")
-        marker_secret = resolve_marker_key()
-        retired_marker_secrets = resolve_retired_marker_keys(
-            current_key=marker_secret
-        )
-        source = ClaudeSourceAdapter(
-            _CLAUDE_PROJECTS_ROOT,
-            marker_secret=marker_secret,
-            retired_marker_secrets=retired_marker_secrets,
-        )
-        registrar = ClaudeNativeRegistrar(
-            store,
-            source,
-            marker_secret=marker_secret,
-            retired_marker_secrets=retired_marker_secrets,
-            startup_theme="light",
-            claude_command=(),
-            process_timeout=policy.process_timeout_seconds,
-            discovery_timeout=policy.discovery_timeout_seconds,
-        )
         # Every exit from here that is not a committed "visible" MUST hand the
         # lease back. The claim stamped the in-progress marker, which excludes the
         # row from every reclaim path, so a refusal that keeps the lease strands
@@ -3024,6 +3005,25 @@ class ProductionBackend:
                 pass
 
         try:
+            marker_secret = resolve_marker_key()
+            retired_marker_secrets = resolve_retired_marker_keys(
+                current_key=marker_secret
+            )
+            source = ClaudeSourceAdapter(
+                _CLAUDE_PROJECTS_ROOT,
+                marker_secret=marker_secret,
+                retired_marker_secrets=retired_marker_secrets,
+            )
+            registrar = ClaudeNativeRegistrar(
+                store,
+                source,
+                marker_secret=marker_secret,
+                retired_marker_secrets=retired_marker_secrets,
+                startup_theme="light",
+                claude_command=(),
+                process_timeout=policy.process_timeout_seconds,
+                discovery_timeout=policy.discovery_timeout_seconds,
+            )
             outcome = registrar.process(claim, allow_absence=False)
         except BaseException:
             _release_lease()

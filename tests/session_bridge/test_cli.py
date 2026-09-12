@@ -10619,3 +10619,79 @@ def test_terminal_visibility_repair_releases_a_reclaimed_stranded_lease(
             "restored_error_detail": "exact transcript conflict",
         }
     ], "a re-claimed stranded lease was not released"
+
+
+def test_terminal_visibility_repair_releases_lease_when_marker_setup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ACL/setup error after claim must not strand the terminal job."""
+
+    job_id = "claude-visibility-job:test"
+    reserved_uuid = "11111111-1111-4111-8111-111111111111"
+    released: list[dict[str, object]] = []
+
+    class Claim:
+        claimed = True
+        lease_kind = "reconciliation"
+        launch_permitted = False
+        registration_reserved = False
+        requires_exact_id_reconciliation = True
+        lease_digest = "d" * 64
+        prior_error_code = "bridge_conflict"
+        prior_error_detail = "exact transcript conflict"
+
+        def __init__(self) -> None:
+            self.job_id = job_id
+            self.reserved_claude_uuid = reserved_uuid
+
+    class Store:
+        def claim_failed_claude_visibility_reconciliation(self, *args, **kwargs):
+            return Claim()
+
+        def release_failed_claude_visibility_repair(self, **kwargs):
+            released.append(kwargs)
+            return {"status": "released"}
+
+    class Registrar:
+        def process(self, claim, **kwargs):
+            return type(
+                "Outcome",
+                (),
+                {
+                    "status": "failed",
+                    "job_id": job_id,
+                    "reserved_claude_uuid": reserved_uuid,
+                    "error_code": "bridge_conflict",
+                },
+            )()
+
+    backend = ProductionBackend(BridgeConfig())
+    monkeypatch.setattr(backend, "_require_store", lambda: Store())
+    def fail_marker():
+        raise PermissionError("marker ACL unavailable")
+
+    monkeypatch.setattr("session_bridge.cli.resolve_marker_key", fail_marker)
+    monkeypatch.setattr(
+        "session_bridge.cli.ClaudeSourceAdapter", lambda *_args, **_kwargs: object()
+    )
+    monkeypatch.setattr(
+        "session_bridge.cli.ClaudeNativeRegistrar", lambda *_args, **_kwargs: Registrar()
+    )
+
+    with pytest.raises(
+        PermissionError, match="marker ACL unavailable"
+    ):
+        backend.repair_failed_claude_visibility_job(
+            job_id=job_id,
+            reserved_claude_uuid=reserved_uuid,
+            expected_error_code="bridge_conflict",
+        )
+
+    assert released == [
+        {
+            "job_id": job_id,
+            "lease_digest": "d" * 64,
+            "expected_error_code": "bridge_conflict",
+            "restored_error_detail": "exact transcript conflict",
+        }
+    ], "the repair held its own lease instead of releasing it"

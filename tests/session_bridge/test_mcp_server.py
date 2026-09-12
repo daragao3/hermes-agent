@@ -4196,3 +4196,29 @@ def test_hydration_broker_job_decodes_pre_rotation_marker_via_retired_keys() -> 
     )
     assert job["hydration_marker"] == old_marker
     assert job["codex_thread_id"] == thread_id
+
+
+@pytest.mark.windows_only
+def test_windows_acl_probe_ignores_parent_powershell_module_path(tmp_path, monkeypatch):
+    from session_bridge.mcp_server import _require_restricted_token_file
+
+    secret = tmp_path / "key"
+    secret.write_bytes(b"x" * 32)
+    monkeypatch.setenv("PSModulePath", "C:/Program Files/PowerShell/7/Modules")
+    calls = []
+
+    def run_acl(argv, **kwargs):
+        calls.append(kwargs)
+        assert not any(key.casefold() == "psmodulepath" for key in kwargs["env"])
+        assert kwargs["env"]["HERMES_SESSION_BRIDGE_ACL_PATH"] == str(secret)
+        return subprocess.CompletedProcess(argv, 0, json.dumps({
+            "current_sid": "S-1-5-21-1000",
+            "owner_sid": "S-1-5-21-1000",
+            "rules": [{"identity": "S-1-5-21-1000", "type": "Allow"},
+                      {"identity": "S-1-5-18", "type": "Allow"}],
+        }), "")
+
+    monkeypatch.setattr("session_bridge.mcp_server.subprocess.run", run_acl)
+    _require_restricted_token_file(secret)
+    assert len(calls) == 1
+    assert os.environ["PSModulePath"] == "C:/Program Files/PowerShell/7/Modules"

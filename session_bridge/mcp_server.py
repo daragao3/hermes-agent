@@ -1368,7 +1368,14 @@ $rules = @($acl.GetAccessRules(
             ],
             check=True,
             capture_output=True,
-            env={**os.environ, "HERMES_SESSION_BRIDGE_ACL_PATH": str(path)},
+            # Windows PowerShell cannot import its built-in Security module when
+            # a PowerShell 7 host's module path leaks through a Python parent.
+            # Let the child initialize its own default paths; keep ACL checks intact.
+            env={
+                **{key: value for key, value in os.environ.items()
+                   if key.casefold() != "psmodulepath"},
+                "HERMES_SESSION_BRIDGE_ACL_PATH": str(path),
+            },
             text=True,
             timeout=_WINDOWS_ACL_TIMEOUT_SECONDS,
         )
