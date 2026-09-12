@@ -4510,6 +4510,19 @@ class SessionBridgeStore:
                 )
 
             if rebuild:
+                if provider is Provider.CODEX:
+                    incoming_user_keys = {
+                        f"{message.native_event_id}:{message.ordinal}"
+                        for message, _ in projected_messages if message.role == "user"
+                    }
+                    retained_user_keys = {
+                        row["native_event_key"] for row in conn.execute(
+                            "SELECT native_event_key FROM messages WHERE session_id = ? "
+                            "AND role = 'user' AND native_event_key IS NOT NULL", (session_id,)
+                        )
+                    }
+                    if not retained_user_keys <= incoming_user_keys:
+                        raise ValueError("Codex rebuild would remove preserved user messages")
                 pending = projected_messages
                 has_new_human_user = False
             else:

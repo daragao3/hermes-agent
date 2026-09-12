@@ -37,6 +37,7 @@ from .claude_adapter import (
     _single_line_required_text,
 )
 from .sidebar import VerifiedSidebarThread
+from .codex_native import local_inventory, supplement_native_users
 from .sidebar_placement import (
     filesystem_path_identity,
     placement_paths_equivalent,
@@ -774,6 +775,7 @@ class CodexSourceAdapter:
         marker_secret: bytes,
         retired_marker_secrets: tuple[bytes, ...] = (),
         monotonic=time.monotonic,
+        native_home: Path | None = None,
         trusted_origins: Mapping[str, str]
         | Callable[[], Mapping[str, str]]
         | None = None,
@@ -784,6 +786,7 @@ class CodexSourceAdapter:
         ):
             raise ValueError("Codex source retired marker secrets are malformed")
         self._client = client
+        self._native_home = native_home
         self._marker_secret = marker_secret
         self._retired_marker_secrets = retired_marker_secrets
         self._monotonic = monotonic
@@ -1541,6 +1544,13 @@ class CodexSourceAdapter:
             git_branch=summary.git_branch,
         )
 
+    def list_reconciliation_inventory(self, *, include_archived: bool) -> list[CodexThreadSummary]:
+        if self._native_home is None:
+            return []
+        summaries = [_normalize_summary(entry, archived=entry["archived"])
+                     for entry in local_inventory(self._native_home, include_archived=include_archived)]
+        return self._refresh_trusted_origins(summaries)
+
     def project_thread(
         self,
         summary: CodexThreadSummary,
@@ -1628,6 +1638,12 @@ class CodexSourceAdapter:
                         fallback_occurrences.get(fallback_digest, 0) + 1
                     )
 
+        native_path = _nonempty_string(
+            _first(thread, "rolloutPath", "rollout_path")
+        ) or _nonempty_string(
+            _first(response, "rolloutPath", "rollout_path")
+        ) or summary.native_path
+        projected = supplement_native_users(native_path, summary.native_id, projected)
         origin_kind, origin_bridge_id = _detect_origin(
             projected,
             marker_secret=self._marker_secret,
@@ -1638,11 +1654,6 @@ class CodexSourceAdapter:
             origin_kind,
             origin_bridge_id,
         )
-        native_path = _nonempty_string(
-            _first(thread, "rolloutPath", "rollout_path")
-        ) or _nonempty_string(
-            _first(response, "rolloutPath", "rollout_path")
-        ) or summary.native_path
         message_timestamps = [message.timestamp for message in projected]
         started_at = min([summary_started_at, *message_timestamps])
         last_active = max([summary_last_active, *message_timestamps])

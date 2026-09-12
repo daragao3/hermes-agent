@@ -5791,6 +5791,17 @@ class SessionBridgeCoordinator:
                 adapter,
                 include_archived=self._config.catalog.include_archived_codex,
             )
+        reconciliation_inventory = getattr(adapter, "list_reconciliation_inventory", None)
+        if callable(reconciliation_inventory):
+            local_summaries = await self._provider_call(
+                reconciliation_inventory,
+                include_archived=self._config.catalog.include_archived_codex,
+            )
+            discovered_ids = {_codex_native_id(summary) for summary in discovered_summaries}
+            discovered_summaries = [*discovered_summaries, *(
+                summary for summary in local_summaries
+                if _codex_native_id(summary) not in discovered_ids
+            )]
         ordered_summaries = _sort_codex_summaries(discovered_summaries)
         summaries_by_native_id: dict[str, object] = {}
         inventory_ids: list[str] = []

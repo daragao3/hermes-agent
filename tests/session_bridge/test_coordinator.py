@@ -2568,6 +2568,38 @@ async def test_codex_continuous_scan_uses_recent_bounded_inventory() -> None:
 
 
 @pytest.mark.asyncio
+async def test_codex_reconciliation_recovers_older_missing_and_skips_adopted() -> None:
+    missing = _codex_summary("missing-old", 10.0)
+    adopted = _codex_summary("adopted", 20.0)
+    operations = []
+
+    class Adapter(_BacklogCodexAdapter):
+        def list_recent_inventory(self, **kwargs):
+            return []
+
+        def list_reconciliation_inventory(self, *, include_archived):
+            return [missing, adopted]
+
+    class Store(_StateStore):
+        def get_external_session(self, session_id):
+            if session_id == "codex:adopted":
+                return {"session_id": session_id, "provider": "codex", "native_id": "adopted",
+                        "origin_kind": "native", "origin_bridge_id": None}
+            return None
+
+    store = Store(operations, existing_native_ids={"adopted"})
+    store.states[_CODEX_SEEN_KEY] = {"version": 1, "native_ids": ["known"]}
+    adapter = Adapter(inventory_batches=[], summaries_by_native_id={"missing-old": missing, "adopted": adopted}, operations=operations)
+    coordinator = SessionBridgeCoordinator(config=BridgeConfig(), store=store, adapters={Provider.CODEX: adapter})
+    coordinator._continuous_watermark = 300.0
+    first = await coordinator.scan_once(Provider.CODEX)
+    second = await coordinator.scan_once(Provider.CODEX)
+    assert first.indexed == 1 and first.failed == 0
+    assert second.indexed == 0 and second.failed == 0
+    assert store.upsert_attempts == ["missing-old"]
+
+
+@pytest.mark.asyncio
 async def test_codex_deferred_thread_is_not_marked_seen() -> None:
     """A deferred thread must stay stageable.
 
