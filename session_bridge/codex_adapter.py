@@ -1304,8 +1304,24 @@ class CodexSourceAdapter:
         known_visibility_source_ids: frozenset[str] = frozenset(),
         discovery_timeout: float = _REQUEST_TIMEOUT,
         stop: Any = None,
+        skip_native_path: Callable[[object], bool] | None = None,
     ) -> tuple[Any, ...]:
-        """Read active and archived Codex sources with optional indexed reuse."""
+        """Read active and archived Codex sources with optional indexed reuse.
+
+        ``known_visibility_source_ids`` and ``skip_native_path`` both name
+        sources the caller will exclude WITHOUT looking at the conversation:
+        a source that already carries a visibility job is reported as
+        ``duplicate_source`` whatever its transcript says, and a rollout the
+        predicate rejects (the Codex importer's ``hermes-codex-import`` echoes)
+        is excluded on its session_meta line alone. Neither is worth a
+        ``thread/read``. Measured 2026-09-12: one live 264 MiB thread that was
+        already registered cost 32s per discovery cycle, and 612 import echoes
+        in the seven-day window cost a read each, so every cycle exhausted the
+        120s budget before reaching the seven genuine new threads and the lane
+        registered nothing for a day. Both classes now take the state-DB
+        projection (title, cwd, preview, native_path -- everything the
+        coordinator's exclusion needs) and no app-server read.
+        """
 
         cutoff = float(after)
         if not math.isfinite(cutoff):
@@ -1441,7 +1457,14 @@ class CodexSourceAdapter:
                     or summary.trusted_origin_bridge_id is not None
                 )
             )
-            if budget_exhausted or structurally_excluded:
+            # Already registered, or an import echo: the coordinator excludes
+            # these from metadata alone, so the transcript is never consulted
+            # and a thread/read here is pure cost (see the docstring).
+            read_not_needed = source_session_id in known_visibility_source_ids or (
+                skip_native_path is not None
+                and bool(skip_native_path(summary.native_path))
+            )
+            if budget_exhausted or structurally_excluded or read_not_needed:
                 projection = self._project_state_db_summary(summary)
                 reconciled = summary
             else:
