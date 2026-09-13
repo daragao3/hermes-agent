@@ -766,14 +766,22 @@ class GatewayConfig:
         return "public" if choice is None else choice
 
 
-def load_gateway_config() -> GatewayConfig:
-    """Load gateway configuration. Priority: env > ~/.hermes/config.yaml > legacy gateway.json > defaults."""
+def load_gateway_config(*, platform_plugin_names: set[str] | None = None) -> GatewayConfig:
+    """Load config with env > YAML > legacy JSON precedence.
+
+    None activates all configured plugins as usual; an empty set reads saved
+    metadata without activation; a nonempty set limits activation to those names.
+    Metadata for external platform names requires prior registry discovery.
+    """
     from gateway import config_loader
 
     _home = get_hermes_home()
     gw_data = config_loader.load_legacy_gateway_json(_home)
     try:
-        config_loader.load_yaml_layer(_home, gw_data)
+        if platform_plugin_names is None:
+            config_loader.load_yaml_layer(_home, gw_data)
+        else:
+            config_loader.load_yaml_layer(_home, gw_data, platform_plugin_names=platform_plugin_names)
     except Exception as e:
         logger.warning(
             # DingTalk settings → env vars: migrated to the dingtalk plugin's apply_yaml_config_fn hook
@@ -790,7 +798,10 @@ def load_gateway_config() -> GatewayConfig:
         )
 
     config = GatewayConfig.from_dict(gw_data)
-    _apply_env_overrides(config)
+    if platform_plugin_names is None:
+        _apply_env_overrides(config)
+    else:
+        _apply_env_overrides(config, platform_plugin_names=platform_plugin_names)
     _validate_gateway_config(config)
     return config
 
@@ -953,7 +964,9 @@ def _deferred_platform_may_be_configured(
         return True
 
 
-def _candidate_plugin_entries(registry: Any, config: "GatewayConfig") -> List[Any]:
+def _candidate_plugin_entries(
+    registry: Any, config: "GatewayConfig", *, platform_names: set[str] | None = None
+) -> List[Any]:
     """Plugin platform entries worth materializing for the env-enable pass.
 
     Resolves each deferred platform individually, and only when
@@ -965,6 +978,8 @@ def _candidate_plugin_entries(registry: Any, config: "GatewayConfig") -> List[An
     env_keys = _visible_env_keys()  # read once, not per platform
     # Snapshot: resolving mutates the registry's deferred map.
     for name in registry.deferred_names():
+        if platform_names is not None and name not in platform_names:
+            continue
         if _deferred_platform_may_be_configured(
             registry, name, configured_names, env_keys
         ):
@@ -976,13 +991,17 @@ def _candidate_plugin_entries(registry: Any, config: "GatewayConfig") -> List[An
                 name,
                 _EAGER_PLATFORM_PLUGINS_ENV,
             )
-    return [e for e in registry.loaded_entries() if e.source == "plugin"]
+    return [e for e in registry.loaded_entries() if e.source == "plugin"
+            and (platform_names is None or e.name in platform_names)]
 
 
-def _apply_env_overrides(config: GatewayConfig) -> None:
+def _apply_env_overrides(config: GatewayConfig, *, platform_plugin_names: set[str] | None = None) -> None:
     """Apply environment variable overrides to config (see ``gateway.config_env``)."""
     from gateway.config_env import _apply_env_overrides as _impl
-    _impl(config)
+    if platform_plugin_names is None:
+        _impl(config)
+    else:
+        _impl(config, platform_plugin_names=platform_plugin_names)
 
 
 # ---- BEGIN PLUGIN-COMPAT (revert-scheduled; see COMPAT_MANIFEST.md) ----

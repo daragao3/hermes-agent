@@ -284,7 +284,10 @@ def bridge_platform_shared_keys(
         extra.update(bridged)
 
 
-def apply_plugin_yaml_hooks(yaml_cfg: dict, gateway_platforms: Any, platforms_data: dict, registry) -> None:
+def apply_plugin_yaml_hooks(
+    yaml_cfg: dict, gateway_platforms: Any, platforms_data: dict, registry,
+    *, platform_names: set[str] | None = None,
+) -> None:
     """Plugin-owned YAML→env config bridges (``PlatformEntry.apply_yaml_config_fn``). Order: shared-key
     loop → this dispatch → core-only bridges (require_mention/signal) → ``_apply_env_overrides()``."""
     if registry is None:
@@ -297,6 +300,8 @@ def apply_plugin_yaml_hooks(yaml_cfg: dict, gateway_platforms: Any, platforms_da
         if name in seen:
             continue
         seen.add(name)
+        if platform_names is not None and name not in platform_names:
+            continue
         platform_cfg, _ = platform_section(yaml_cfg, name, gateway_platforms)
         if not isinstance(platform_cfg, dict):
             continue
@@ -343,7 +348,7 @@ def bridge_core_env_settings(yaml_cfg: dict, platforms_data: dict) -> None:
         os.environ["SIGNAL_REQUIRE_MENTION"] = str(signal_cfg["require_mention"]).lower()
 
 
-def load_yaml_layer(home: Path, gw_data: dict) -> None:
+def load_yaml_layer(home: Path, gw_data: dict, *, platform_plugin_names: set[str] | None = None) -> None:
     """Overlay ``config.yaml`` onto *gw_data* in place. Raises on any failure (caller warns + falls back)."""
     import yaml
 
@@ -364,8 +369,9 @@ def load_yaml_layer(home: Path, gw_data: dict) -> None:
     platforms_data = merge_platform_sections(yaml_cfg, gateway_section, gw_data)
 
     try:
-        from hermes_cli.plugins import discover_plugins
-        discover_plugins()  # idempotent
+        if platform_plugin_names is None or platform_plugin_names:
+            from hermes_cli.plugins import discover_plugins
+            discover_plugins()  # idempotent
         from gateway.platform_registry import platform_registry as registry
     except Exception as e:
         logger.debug("plugin discovery skipped: %s", e)
@@ -373,5 +379,9 @@ def load_yaml_layer(home: Path, gw_data: dict) -> None:
 
     targets = shared_loop_targets(registry)
     bridge_platform_shared_keys(yaml_cfg, gateway_platforms, gw_data, platforms_data, targets)
-    apply_plugin_yaml_hooks(yaml_cfg, gateway_platforms, platforms_data, registry)
+    if platform_plugin_names is None:
+        apply_plugin_yaml_hooks(yaml_cfg, gateway_platforms, platforms_data, registry)
+    elif platform_plugin_names:
+        apply_plugin_yaml_hooks(yaml_cfg, gateway_platforms, platforms_data, registry,
+                                platform_names=platform_plugin_names)
     bridge_core_env_settings(yaml_cfg, platforms_data)
