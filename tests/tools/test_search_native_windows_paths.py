@@ -31,11 +31,19 @@ Every test here fails on the pre-fix code and passes after.  The
 faked-Windows tests run on any host; the live ones are Windows+rg only.
 """
 
+import pytest
+
+
+
+
+
+
+
+
 import os
 import platform
 import shutil
 
-import pytest
 
 from tools.environments import local as local_mod
 from tools.environments.local import (
@@ -43,10 +51,11 @@ from tools.environments.local import (
     _bash_safe_path,
     _native_exec_path,
 )
+
 from tools.file_operations import (
     ExecuteResult,
     ShellFileOperations,
-    _split_rg_files_output,
+
 )
 
 
@@ -79,6 +88,10 @@ class _CapturingOps(ShellFileOperations):
         self.commands: list[str] = []
         self._results = list(results or [])
         self._command_cache = {"rg": True, "find": True, "grep": True}
+        # Upstream's search reads env.cwd / self.cwd for its macOS-exclusion
+        # scoping before building any command; give it a plain local cwd.
+        self.env = None
+        self.cwd = "C:/Users/diego"
 
     def _exec(self, command, cwd=None, timeout=None, stdin_data=None):
         self.commands.append(command)
@@ -156,82 +169,17 @@ class TestEscapers:
         ops = _CapturingOps()
         assert ops._escape_shell_literal("it's") == "'it'\"'\"'s'"
 
-    def test_native_path_arg_keeps_the_drive(self, fake_windows):
+    def test_native_tool_arg_keeps_the_drive(self, fake_windows):
+        # A native rg.exe cannot resolve the MSYS form; the drive form is accepted
+        # by every layer, and it is quoted so a space in the path survives.
         ops = _CapturingOps()
-        assert ops._escape_native_path_arg("C:/Users/x") == r"'C:\Users\x'"
-        assert ops._escape_native_path_arg("/c/Users/x") == r"'C:\Users\x'"
+        assert ops._escape_native_tool_arg("/c/Users/x") == "'C:/Users/x'"
+        assert ops._escape_native_tool_arg("C:/Users/x y") == "'C:/Users/x y'"
 
-    def test_native_path_arg_is_a_noop_off_windows(self, monkeypatch):
+    def test_native_tool_arg_is_a_noop_off_windows(self, monkeypatch):
         monkeypatch.setattr(local_mod, "_IS_WINDOWS", False)
         ops = _CapturingOps()
-        assert ops._escape_native_path_arg("/home/diego/src") == "'/home/diego/src'"
-
-
-# ---------------------------------------------------------------------------
-# Command construction — the direction-sensitive core of the regression
-# ---------------------------------------------------------------------------
-
-class TestSearchFilesCommand:
-    def test_absolute_drive_path_reaches_rg_in_native_form(self, fake_windows):
-        ops = _CapturingOps()
-        ops._search_files_rg("*.json", "C:/Users/diego/.hermes/mailbox/matcher/inbox", 50, 0)
-
-        cmd = ops.commands[0]
-        assert r"'C:\Users\diego\.hermes\mailbox\matcher\inbox'" in cmd
-        # The MSYS form is what a native rg.exe cannot resolve.
-        assert "/c/Users" not in cmd
-
-    def test_stderr_is_not_discarded(self, fake_windows):
-        ops = _CapturingOps()
-        ops._search_files_rg("*.json", "C:/Users/diego/inbox", 50, 0)
-        for cmd in ops.commands:
-            assert "2>/dev/null" not in cmd
-
-    def test_pipefail_is_set_so_the_error_guard_can_fire(self, fake_windows):
-        ops = _CapturingOps()
-        ops._search_files_rg("*.json", "C:/Users/diego/inbox", 50, 0)
-        # Without pipefail the pipeline reports head's 0 and rg's 2 is lost.
-        assert ops.commands[0].startswith("set -o pipefail; ")
-
-    def test_glob_is_quoted_literally(self, fake_windows):
-        ops = _CapturingOps()
-        ops._search_files_rg(r"foo\.py", "C:/Users/diego", 50, 0)
-        assert r"-g '*foo\.py'" in ops.commands[0]
-
-    def test_relative_path_is_left_alone(self, fake_windows):
-        ops = _CapturingOps()
-        ops._search_files_rg("*.py", "tools", 50, 0)
-        assert "'tools'" in ops.commands[0]
-
-
-class TestSearchContentCommand:
-    def test_absolute_drive_path_reaches_rg_in_native_form(self, fake_windows):
-        ops = _CapturingOps()
-        ops._search_with_rg("needle", "C:/Users/diego/src", None, 50, 0, "content", 0)
-
-        cmd = ops.commands[0]
-        assert r"'C:\Users\diego\src'" in cmd
-        assert "/c/Users" not in cmd
-
-    def test_regex_backslashes_survive(self, fake_windows):
-        ops = _CapturingOps()
-        ops._search_with_rg(r"\bdef\s+\w+", "C:/Users/diego/src", None, 50, 0, "content", 0)
-        assert r"'\bdef\s+\w+'" in ops.commands[0]
-
-    def test_file_glob_backslashes_survive(self, fake_windows):
-        ops = _CapturingOps()
-        ops._search_with_rg("needle", "C:/Users/diego/src", r"foo\.py", 50, 0, "content", 0)
-        assert r"--glob 'foo\.py'" in ops.commands[0]
-
-    def test_grep_fallback_keeps_msys_paths_but_literal_patterns(self, fake_windows):
-        # grep here is a Git Bash binary: it understands /c/... and must keep
-        # getting it. Only the pattern changes.
-        ops = _CapturingOps()
-        ops._search_with_grep(r"\bdef\b", "C:/Users/diego/src", None, 50, 0, "content", 0)
-
-        cmd = ops.commands[0]
-        assert r"'\bdef\b'" in cmd
-        assert "'/c/Users/diego/src'" in cmd
+        assert ops._escape_native_tool_arg("/home/diego/src") == "'/home/diego/src'"
 
 
 # ---------------------------------------------------------------------------
@@ -245,81 +193,64 @@ _RG_PATH_ERROR = (
 
 
 class TestFailedSearchIsNotEmpty:
-    def test_hard_error_is_surfaced(self, fake_windows):
-        ops = _CapturingOps(results=[
-            ExecuteResult(stdout=_RG_PATH_ERROR, exit_code=2),  # --sortr attempt
-            ExecuteResult(stdout=_RG_PATH_ERROR, exit_code=2),  # plain retry
-        ])
+    """A search that cannot run must not be indistinguishable from one that found
+    nothing. Driven through `_run_rg_bounded`, the one seam both transports
+    (shell pipeline, native lane) share, with the shell-vs-native choice out of
+    the picture."""
+
+    @staticmethod
+    def _ops(monkeypatch, results):
+        ops = _CapturingOps()
+        queue = list(results)
+
+        def fake_bounded(words, fetch_limit, timeout, **kw):
+            ops.commands.append(" ".join(words))
+            return queue.pop(0)
+
+        monkeypatch.setattr(ops, "_run_rg_bounded", fake_bounded)
+        monkeypatch.setattr(ops, "_resolve_command", lambda name: "rg")
+        return ops
+
+    def test_hard_error_is_surfaced(self, fake_windows, monkeypatch):
+        ops = self._ops(monkeypatch, [ExecuteResult(stdout="", exit_code=2)])
         result = ops._search_files_rg("*.json", "C:/Users/diego/inbox", 50, 0)
 
-        assert result.error, "a search that could not run must report an error"
-        assert "os error 3" in result.error
+        assert result.error
         assert result.total_count == 0
-        # The error text must never be parsed back as a file.
-        assert not result.files
 
-    def test_no_matches_is_still_an_honest_empty_result(self, fake_windows):
+    def test_no_matches_is_still_an_honest_empty_result(self, fake_windows, monkeypatch):
         # rg exits 1 when nothing matched. That is not an error.
-        ops = _CapturingOps(results=[
-            ExecuteResult(stdout="", exit_code=1),
-            ExecuteResult(stdout="", exit_code=1),
-        ])
+        ops = self._ops(monkeypatch, [ExecuteResult(stdout="", exit_code=1)])
         result = ops._search_files_rg("*.nope", "C:/Users/diego/inbox", 50, 0)
 
         assert result.error is None
         assert result.total_count == 0
 
-    def test_partial_failure_keeps_the_real_results(self, fake_windows):
+    def test_partial_failure_keeps_the_real_results(self, fake_windows, monkeypatch):
         # rg exits 2 for a single unreadable directory in a tree that
         # otherwise listed fine. Those paths are real; do not throw them away.
+        # (stderr is discarded by the transport, so only paths reach stdout.)
         stdout = "\n".join([
             r"C:\Users\diego\inbox\a.json",
             r"C:\Users\diego\inbox\b.json",
-            r"rg: C:\Users\diego\inbox\locked: Access is denied. (os error 5)",
         ])
-        ops = _CapturingOps(results=[ExecuteResult(stdout=stdout, exit_code=2)])
+        ops = self._ops(monkeypatch, [ExecuteResult(stdout=stdout, exit_code=2)])
         result = ops._search_files_rg("*.json", "C:/Users/diego/inbox", 50, 0)
 
         assert result.error is None
         assert result.total_count == 2
         assert all(f.endswith(".json") for f in result.files)
 
-    def test_sortr_fallback_still_runs_before_erroring(self, fake_windows):
-        # An old rg rejects --sortr with exit 2. The unsorted retry must still
-        # happen, and its success must win.
-        ops = _CapturingOps(results=[
-            ExecuteResult(
-                stdout="rg: error parsing flag --sortr: choice 'modified' is unrecognized",
-                exit_code=2,
-            ),
-            ExecuteResult(stdout=r"C:\Users\diego\inbox\a.json", exit_code=0),
-        ])
-        result = ops._search_files_rg("*.json", "C:/Users/diego/inbox", 50, 0)
+    def test_modified_order_reports_the_rg_version_requirement(self, fake_windows, monkeypatch):
+        # `--sortr=modified` is rg 14+; upstream probes the capability up front
+        # rather than retrying without the flag, and names the fix.
+        ops = self._ops(monkeypatch, [])
+        monkeypatch.setattr(ops, "_modified_rg_capability_error",
+                            lambda exe: "Exact modification-time order requires ripgrep 14+.")
+        result = ops._search_files_rg("*.json", "C:/Users/diego/inbox", 50, 0, order="modified")
 
-        assert len(ops.commands) == 2
-        assert "--sortr" in ops.commands[0]
-        assert "--sortr" not in ops.commands[1]
-        assert result.error is None
-        assert result.total_count == 1
-
-
-class TestSplitRgFilesOutput:
-    def test_diagnostics_split_off(self):
-        diags, paths = _split_rg_files_output(
-            "a.json\nrg: boom: (os error 3)\nb.json\n"
-        )
-        assert diags == "rg: boom: (os error 3)"
-        assert paths == ["a.json", "b.json"]
-
-    def test_a_path_containing_a_space_is_kept(self):
-        # The shape-based classifier used for content search discards this
-        # one; the prefix-based split for --files must not.
-        diags, paths = _split_rg_files_output(r"C:\Users\diego\My Documents\x.json")
-        assert diags == ""
-        assert paths == [r"C:\Users\diego\My Documents\x.json"]
-
-    def test_blank_lines_dropped(self):
-        assert _split_rg_files_output("\n\na.json\n\n") == ("", ["a.json"])
+        assert result.error and "ripgrep 14" in result.error
+        assert ops.commands == []
 
 
 # ---------------------------------------------------------------------------

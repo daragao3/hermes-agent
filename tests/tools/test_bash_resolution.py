@@ -218,20 +218,24 @@ class TestLocalFindBash:
 
 class TestCronResolveBashDelegation:
     def test_windows_branch_delegates_to_shared_helper(self, monkeypatch):
-        import cron.scheduler as scheduler
+        import cron.scheduler_script as scheduler
 
         sentinel = r"C:\Program Files\Git\bin\bash.exe"
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr(scheduler, "resolve_windows_git_bash", lambda: sentinel)
+        monkeypatch.setattr(
+            "hermes_cli._subprocess_compat.resolve_windows_git_bash", lambda: sentinel
+        )
         assert scheduler._resolve_bash() == sentinel
 
     def test_windows_branch_passes_none_through(self, monkeypatch):
         """None (no usable bash) must reach _run_job_script so it can emit
         the friendly 'bash not found' error."""
-        import cron.scheduler as scheduler
+        import cron.scheduler_script as scheduler
 
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr(scheduler, "resolve_windows_git_bash", lambda: None)
+        monkeypatch.setattr(
+            "hermes_cli._subprocess_compat.resolve_windows_git_bash", lambda: None
+        )
         assert scheduler._resolve_bash() is None
 
 

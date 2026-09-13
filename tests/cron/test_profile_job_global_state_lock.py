@@ -35,8 +35,10 @@ def test_predicate_covers_profile_not_just_workdir():
     # A profile job mutates _hermes_home + os.environ. This is the regression:
     # it was previously invisible to the lock.
     assert mutates({"profile": "financier"}) is True
-    # A workdir job mutates TERMINAL_CWD -- the original reason for the lock.
-    assert mutates({"workdir": "/project/a"}) is True
+    # A workdir job used to mutate TERMINAL_CWD (the original reason for the
+    # lock); since 0.21.1 the workdir is per execution (subprocess cwd /
+    # _SESSION_CWD ContextVar), so a workdir alone is a reader.
+    assert mutates({"workdir": "/project/a"}) is False
     assert mutates({"profile": "financier", "workdir": "/project/a"}) is True
 
     # Neither -> a pure reader, free to run on the parallel pool.
@@ -68,9 +70,7 @@ def test_partition_and_lock_agree_on_every_shape():
         {"profile": "", "workdir": ""},
     ]
     for job in shapes:
-        partition_says_sequential = bool(
-            (job.get("workdir") or "").strip() or (job.get("profile") or "").strip()
-        )
+        partition_says_sequential = bool((job.get("profile") or "").strip())
         assert sched._job_mutates_process_globals(job) is partition_says_sequential, job
 
 

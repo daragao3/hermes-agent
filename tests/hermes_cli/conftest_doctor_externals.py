@@ -132,4 +132,4 @@ def stub_doctor_externals(monkeypatch):
     # ``dca0d179a`` hoisted ``_gh_authenticated`` out of ``run_doctor`` to
     # module level precisely so it has a patchable seam; use it rather than
     # wrapping ``subprocess.run`` and having to reason about wrapper ordering.
-    monkeypatch.setattr(doctor_mod, "_gh_authenticated", lambda: False)
+    monkeypatch.setattr("hermes_cli.doctor_state._gh_authenticated", lambda: False)

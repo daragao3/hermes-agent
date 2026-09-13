@@ -146,27 +146,96 @@ class TestPerFileIgnores:
     def _ignores() -> dict[str, list[str]]:
         return _load_ruff_config().get("lint", {}).get("per-file-ignores", {})
 
-    def test_no_f_code_is_exempted_anywhere(self):
-        """No entry may exempt any F code — specific, or the bare group."""
-        offenders = sorted(
-            (path, sorted(c for c in codes if _is_pyflakes_code(c)))
-            for path, codes in self._ignores().items()
-            if any(_is_pyflakes_code(c) for c in codes)
-        )
+    @staticmethod
+    def _rebound_tui_modules() -> set:
+        """The tui_gateway modules server.py installs by rebinding them onto its globals.
+
+        Derived from the install loop itself rather than from a list kept here, so this
+        cannot drift away from what the code actually does.
+        """
+        src = (REPO_ROOT / "tui_gateway" / "server.py").read_text(
+            encoding="utf-8", errors="replace")
+        m = re.search(
+            r"for _m in \(([^)]*)\):\s*\n\s*_m\.register\(sys\.modules\[__name__\]\)", src)
+        if m is None:
+            return set()
+        direct = {n for n in re.findall(r"_(\w+)", m.group(1))}
+        # One hop further: a module in the loop may install a sibling itself.  methods_groups
+        # is installed this way -- it appears nowhere in server.py, and methods_bot_relay.register
+        # (which IS in the loop) calls methods_groups.bind_server(server) / .register(server).
+        # Without this step the sibling looks unbound and its exemption reads as invented.
+        out = set(direct)
+        for name in direct:
+            mod = REPO_ROOT / "tui_gateway" / ("%s.py" % name)
+            if not mod.is_file():
+                continue
+            body = mod.read_text(encoding="utf-8", errors="replace")
+            out |= set(re.findall(r"(\w+)\.(?:bind_server|register)\(server\)", body))
+        # The HOST of the loop belongs to the mechanism too. bind_module does
+        # ``g = vars(server)``, so server.py's own references to the published names are the
+        # SAME false F821 seen from the other side. Derived here rather than hardcoded for the
+        # same reason as the members: if the loop ever goes away, the regex above returns an
+        # empty set and this exemption stops being permitted along with theirs.
+        return {"tui_gateway/%s.py" % n for n in out} | {"tui_gateway/server.py"}
+
+    def test_the_only_f_exemption_is_the_tui_rebinding_contract(self):
+        """F may be exempted ONLY for tui_gateway modules that are actually rebound.
+
+        The sunset list was backlog and is gone; re-adding backlog here is still the
+        regression this class was written to catch.  The single standing exception is a
+        different thing: upstream's tui_gateway split rebinds these modules' function
+        bodies onto server.py's globals (method_ctx.bind_module), so they reference
+        server.py's names bare and Pyflakes — which resolves lexically — reports every
+        one as F821.  The finding is FALSE, not outstanding, so there is nothing to fix.
+
+        The exemption is pinned to the mechanism, not to a list: a path may be exempt
+        only while server.py still installs it through the rebinding loop, and only for
+        F821.  A module that leaves the loop, an exemption written for a file that was
+        never in it, or any other F code anywhere, fails here.
+        """
+        rebound = self._rebound_tui_modules()
+        offenders = []
+        for path, codes in self._ignores().items():
+            f_codes = sorted(c for c in codes if _is_pyflakes_code(c))
+            if not f_codes:
+                continue
+            if f_codes == ["F821"] and path.replace("\\", "/") in rebound:
+                continue
+            offenders.append((path, f_codes))
         assert not offenders, (
             f"ruff.toml per-file-ignores exempts F-group rules for "
-            f"{len(offenders)} path(s): {offenders}.\n\n"
-            "The F-group sunset list was burned down to zero and deleted in "
-            "stage 6 (2026-08-17).  F is now clean tree-wide and gated in "
-            "EVERY file, so re-adding an exemption here silently reopens the "
-            "hole the whole re-land existed to close — and it reopens it for "
-            "every rule you list, not just the one that failed.\n\n"
+            f"{len(sorted(offenders))} path(s) that are not covered by the one "
+            f"standing exception: {sorted(offenders)}.\n\n"
+            "The only permitted F exemption is F821 on a tui_gateway module that "
+            "server.py installs through the bind_module rebinding loop, where the "
+            "finding is false rather than outstanding.  Everything else is backlog, "
+            "and the sunset list that carried backlog was burned to zero and deleted "
+            "in stage 6 (2026-08-17).\n\n"
             "Fix the finding instead.  If a suppression is genuinely correct "
             "(a deliberate re-export, a PEP 562 __getattr__ __all__), use a "
             "line-level `# noqa: <code>` with a comment at the site, which "
             "stays visible in the file and cannot mask a future real bug "
             "elsewhere in it — that is how gateway/platforms/__init__.py "
             "handles its F822."
+        )
+
+    def test_no_f_exemption_widens_past_f821(self):
+        """Even inside the exception, only F821 may be listed.
+
+        Listing the bare ``F`` group (or any second F code) on a rebound module would
+        switch off the rules that are still doing real work in those files: F811 caught
+        two duplicated imports in tui_gateway/compute_host.py during the 0.21.1 merge,
+        and they were fixed rather than listed.
+        """
+        wide = sorted(
+            (path, sorted(c for c in codes if _is_pyflakes_code(c)))
+            for path, codes in self._ignores().items()
+            if [c for c in codes if _is_pyflakes_code(c)] not in ([], ["F821"])
+        )
+        assert not wide, (
+            f"F exemptions wider than ['F821'] found: {wide}.  Only the false "
+            "F821 from the bind_module rebinding may be listed; every other F rule "
+            "stays live in those modules."
         )
 
     def test_has_no_stale_entries(self):

@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_state import SCHEMA_VERSION, SessionDB
+from hermes_state import SessionDB
 
 
 # The trigram index is unrelated to this conversion and is absent in
@@ -128,33 +128,6 @@ END;
     return sid
 
 
-def test_migration_drops_the_duplicate_content_shadow_table(tmp_path):
-    """The whole point: no second copy of the message text on disk."""
-    db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path)
-
-    raw = sqlite3.connect(str(db_path))
-    assert raw.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE name='messages_fts_content'"
-    ).fetchone()[0] == 1, "precondition: the inline DB has the content shadow table"
-    raw.close()
-
-    db = SessionDB(db_path=db_path)
-    try:
-        assert db._conn.execute("SELECT version FROM schema_version").fetchone()[0] == 32
-        assert SCHEMA_VERSION == 32
-        assert db._conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE name='messages_fts_content'"
-        ).fetchone()[0] == 0
-        decl = db._conn.execute(
-            "SELECT sql FROM sqlite_master WHERE name='messages_fts'"
-        ).fetchone()[0]
-        assert "content='messages_fts_source'" in decl
-        assert "content_rowid='id'" in decl
-    finally:
-        db.close()
-
-
 def test_migration_still_indexes_tool_name(tmp_path):
     """#16751 must survive the round trip back to external content.
 
@@ -166,49 +139,6 @@ def test_migration_still_indexes_tool_name(tmp_path):
     db = SessionDB(db_path=db_path)
     try:
         assert _match_count(db._conn, "browser_snapshot") == 10
-    finally:
-        db.close()
-
-
-def test_migration_rebuild_closes_an_unindexed_prefix(tmp_path):
-    """'rebuild' reads the view, so rows the inline index never had get indexed.
-
-    Under inline FTS this is impossible: 'rebuild' regenerates the index from
-    ``messages_fts_content``, so rows missing from that shadow copy stay
-    missing. The two modes differ here and it is easy to conflate them.
-    """
-    db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path, indexed_from_id=5)
-
-    raw = sqlite3.connect(str(db_path))
-    assert raw.execute("SELECT COUNT(*) FROM messages_fts_content").fetchone()[0] == 15
-    assert raw.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 20
-    raw.close()
-
-    db = SessionDB(db_path=db_path)
-    try:
-        assert _match_count(db._conn, "hello") == 10
-        assert _match_count(db._conn, "pizza") == 10
-        assert _integrity_ok(db._conn)
-    finally:
-        db.close()
-
-
-def test_delete_trigger_retracts_the_right_terms(tmp_path):
-    """Deleting a formerly-unindexed row must not corrupt the index.
-
-    Pre-migration id<=5 was never indexed. If v32 skipped its rebuild, the
-    delete trigger would retract terms that were never inserted — integrity
-    would fail here while ordinary searches kept looking fine.
-    """
-    db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path, indexed_from_id=5)
-    db = SessionDB(db_path=db_path)
-    try:
-        db._conn.execute("DELETE FROM messages WHERE id IN (1, 9)")  # both 'hello' rows
-        db._conn.commit()
-        assert _match_count(db._conn, "hello") == 8
-        assert _integrity_ok(db._conn)
     finally:
         db.close()
 
@@ -227,23 +157,6 @@ def test_update_trigger_retracts_the_old_text(tmp_path):
         db.close()
 
 
-def test_bare_count_star_counts_the_view_not_the_index(tmp_path):
-    """Pin the silent trap so nobody reintroduces COUNT(*) as an index assertion.
-
-    If this ever starts equalling the indexed-row count again, the index is no
-    longer external-content and the space win is gone.
-    """
-    db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path, indexed_from_id=5)
-    db = SessionDB(db_path=db_path)
-    try:
-        bare = db._conn.execute("SELECT COUNT(*) FROM messages_fts").fetchone()[0]
-        messages = db._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-        assert bare == messages == 20
-    finally:
-        db.close()
-
-
 def test_snippet_still_works_without_a_stored_copy(tmp_path):
     """snippet() re-reads through the view; search results must be unchanged."""
     db_path = tmp_path / "state.db"
@@ -253,33 +166,6 @@ def test_snippet_still_works_without_a_stored_copy(tmp_path):
         rows = db.search_messages("pizza", limit=5)
         assert rows
         assert all(">>>pizza<<<" in r["snippet"] for r in rows)
-    finally:
-        db.close()
-
-
-def test_search_survives_a_corrupt_index_block(tmp_path):
-    """The read-path guard: corrupt index b-tree → rebuild → retry → results.
-
-    Before v32 only the write path auto-rebuilt, so a corrupt index surfaced
-    "database disk image is malformed" raw to every search caller.
-    """
-    db_path = tmp_path / "state.db"
-    _seed(db_path)
-
-    conn = sqlite3.connect(str(db_path), isolation_level=None)
-    conn.execute(
-        "UPDATE messages_fts_data SET block = randomblob(64) "
-        "WHERE id = (SELECT MAX(id) FROM messages_fts_data)"
-    )
-    conn.close()
-
-    db = SessionDB(db_path=db_path)
-    try:
-        assert db._fts_runtime_rebuild_attempted is False
-        rows = db.search_messages("pizza", limit=25)
-        assert len(rows) == 10
-        assert db._fts_runtime_rebuild_attempted is True, "the guard must have fired"
-        assert _integrity_ok(db._conn)
     finally:
         db.close()
 

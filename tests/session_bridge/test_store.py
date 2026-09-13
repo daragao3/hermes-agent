@@ -2485,8 +2485,18 @@ def test_resolve_continuation_retries_transient_lock(db, monkeypatch) -> None:
         def __getattr__(self, name):
             return getattr(self._real, name)
 
+    # 0.21.1 reads through _read_ctx() and normally borrows a pooled read-only
+    # connection, so replacing db._conn no longer reaches the resume query.
+    # Inject at the connection-provider boundary that _execute_read retries.
+    import contextlib
+
     flaky = _FlakyConn(db._conn)
-    monkeypatch.setattr(db, "_conn", flaky)
+
+    @contextlib.contextmanager
+    def _flaky_read_ctx():
+        yield flaky
+
+    monkeypatch.setattr(db, "_read_ctx", _flaky_read_ctx)
 
     resolved = UnifiedCatalog(db, store).resolve_continuation(
         session_id=candidate.source_session_id,

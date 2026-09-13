@@ -460,6 +460,7 @@ DISCORD_ALLOWED_USERS=...
 | **OpenAI** | `gpt-4o-transcribe` | 中等（约 2 秒） | 最佳 | 付费 | 是 |
 | **Mistral** | `voxtral-mini-latest` | 快 | 良好 | 付费 | 是 |
 | **xAI** | `grok-stt` | 快 | 良好 | 付费 | 是 |
+| **OpenAI** | `gpt-transcribe` | 快 | 最佳 | 付费（$0.0045/分钟） | 是 |
 
 提供商优先级（自动回退）：**本地** > **groq** > **openai**
 

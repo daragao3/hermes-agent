@@ -548,3 +548,66 @@ def pytest_configure(config):
 
     _adapter_guard_check(_GATEWAY_DIR, Path.cwd() / ".pytest-cache")
 
+
+# Grafted from the upstream side in the 0.21.1 merge: definitions the other side
+# has and this file's base side does not.
+
+@pytest.fixture(scope="session", autouse=True)
+def _bind_lark_sdk_globals_when_installed():
+    """Bind the feishu adapter's lark SDK globals once per test session.
+
+    The adapter defers ``import lark_oapi`` to first use
+    (``_load_lark_oapi`` — called from connect()/probe_bot()/standalone
+    send), so the request-builder globals (``CreateMessageRequestBody``
+    etc.) stay ``None`` at module import time. Feishu tests across many
+    files inject a mock ``_client`` and skip connect() entirely, then call
+    send paths that reference those globals. Bind them eagerly when the
+    SDK is installed; when it isn't, the affected tests already skip via
+    their own ``skipUnless`` guards.
+    """
+    try:
+        import lark_oapi  # noqa: F401
+    except ImportError:
+        yield
+        return
+    try:
+        from plugins.platforms.feishu.adapter import _load_lark_oapi
+
+        _load_lark_oapi()
+    except Exception:
+        pass  # adapter not importable in this environment — tests will skip
+    yield
+
+def _fake_str_enum(enum_name: str, **members: str):
+    """Build a ``SimpleNamespace``-like enum of :class:`_FakeEnumMember`."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        **{name: _FakeEnumMember(enum_name, name, value) for name, value in members.items()}
+    )
+
+class _FakeEnumMember(str):
+    """A python-telegram-bot-faithful stand-in for a ``StrEnum`` member.
+
+    PTB constants (``ParseMode``, ``ChatType``) are ``StrEnum`` members:
+    ``str(x)`` and equality give the *value* (``"supergroup"``) while
+    ``repr(x)`` shows the qualified *member name*
+    (``<ChatType.SUPERGROUP>``). Test stubs that pick only one of those
+    shapes break the other consumer: plain strings fail assertions like
+    ``"MARKDOWN_V2" in repr(parse_mode)``, while auto-generated MagicMock
+    attributes fail the adapter's ``str(chat.type)`` normalization
+    (``adapter.py`` ``_build_message_event``). This class satisfies both,
+    so every telegram test sees the same semantics regardless of which
+    file's mock installed first.
+    """
+
+    _qualname: str
+
+    def __new__(cls, enum_name: str, member_name: str, value: str):
+        obj = str.__new__(cls, value)
+        obj._qualname = f"{enum_name}.{member_name}"
+        return obj
+
+    def __repr__(self) -> str:  # pragma: no cover - trivial
+        return f"<{self._qualname}: {str.__repr__(self)}>"
+

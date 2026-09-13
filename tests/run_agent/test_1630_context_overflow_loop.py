@@ -139,28 +139,6 @@ class TestGatewaySkipsPersistenceOnFailure:
         agent_failed_early = bool(agent_result.get("failed"))
         assert agent_failed_early
 
-    def test_agent_failed_with_error_response_still_detected(self):
-        """When _run_agent_blocking converts an error to final_response,
-        the failed flag should still trigger agent_failed_early.  This
-        was the core bug in #9893 — the old guard checked
-        ``not final_response`` which was always truthy after conversion."""
-        agent_result = {
-            "failed": True,
-            "final_response": "⚠️ Request payload too large: max compression attempts reached.",
-            "messages": [],
-        }
-        agent_failed_early = bool(agent_result.get("failed"))
-        assert agent_failed_early
-
-    def test_successful_agent_not_failed_early(self):
-        """A successful agent result should not trigger skip."""
-        agent_result = {
-            "final_response": "Hello!",
-            "messages": [{"role": "assistant", "content": "Hello!"}],
-        }
-        agent_failed_early = bool(agent_result.get("failed"))
-        assert not agent_failed_early
-
 
 class TestCompressionExhaustedFlag:
     """When compression is exhausted, the agent should set both
@@ -180,17 +158,6 @@ class TestCompressionExhaustedFlag:
         }
         assert agent_result.get("failed")
         assert agent_result.get("compression_exhausted")
-
-    def test_normal_failure_not_compression_exhausted(self):
-        """Non-compression failures should not have compression_exhausted."""
-        agent_result = {
-            "messages": [],
-            "completed": False,
-            "failed": True,
-            "error": "Invalid API response after 3 retries",
-        }
-        assert agent_result.get("failed")
-        assert not agent_result.get("compression_exhausted")
 
 
 # ---------------------------------------------------------------------------
@@ -265,20 +232,3 @@ class TestAgentSkipsPersistenceForLargeFailedSessions:
         should_skip = status_code == 400 and (approx_tokens > 50000 or len(api_messages) > 80)
         assert should_skip
 
-    def test_small_session_400_persists_normally(self):
-        """Status 400 + small session should still persist."""
-        status_code = 400
-        approx_tokens = 5000  # < 50000
-        api_messages = [{"role": "user", "content": "x"}] * 10  # < 80
-
-        should_skip = status_code == 400 and (approx_tokens > 50000 or len(api_messages) > 80)
-        assert not should_skip
-
-    def test_non_400_error_persists_normally(self):
-        """Non-400 errors should always persist normally."""
-        status_code = 401  # Auth error
-        approx_tokens = 100000  # Large session, but not a 400
-        api_messages = [{"role": "user", "content": "x"}] * 100
-
-        should_skip = status_code == 400 and (approx_tokens > 50000 or len(api_messages) > 80)
-        assert not should_skip

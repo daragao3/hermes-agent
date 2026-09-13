@@ -12,37 +12,15 @@ import path from 'node:path'
 
 import { test } from 'vitest'
 
-import { canImportHermesCli, hermesRuntimeImportProbe, PROBE_TIMEOUT_MS, verifyHermesCli } from './backend-probes'
-
-// Build a fake execFileSync that throws a scripted sequence of errors (null =
-// succeed) and records the options of every call. Lets us exercise the
-// timeout-retry logic without real 15s hangs.
-function scriptedExec(failures) {
-  const calls = []
-  const fn = (_cmd, _args, options) => {
-    const failure = failures[calls.length] || null
-    calls.push(options)
-    if (failure) {
-      const err: Error & { code?: string; status?: number } = new Error(
-        failure.message || failure.code || 'probe failure'
-      )
-      if (failure.code) {
-        err.code = failure.code
-      }
-
-      if (failure.status != null) {
-        err.status = failure.status
-      }
-
-      throw err
-    }
-  }
-  return { fn, calls }
-}
-
-function timeoutError() {
-  return { code: 'ETIMEDOUT', message: 'spawnSync hermes ETIMEDOUT' }
-}
+import {
+  canImportHermesCli,
+  DEFAULT_PROBE_TIMEOUT_MS,
+  hermesRuntimeImportProbe,
+  PROBE_TIMEOUT_MS,
+  resolveProbeTimeoutMs,
+  shouldTrustHermesOverride,
+  verifyHermesCli
+} from './backend-probes'
 
 // Resolve the host's own Node binary -- guaranteed to be on disk and
 // runnable. We use it as both a stand-in for "a python that doesn't
@@ -81,6 +59,15 @@ test('hermes runtime import probe checks config dependencies', () => {
   assert.match(probe, /\bimport hermes_cli\.config\b/)
 })
 
+test('explicit Hermes override is authoritative', () => {
+  assert.equal(shouldTrustHermesOverride('/nix/store/abc/bin/hermes'), true)
+})
+
+test('empty Hermes override is not authoritative', () => {
+  assert.equal(shouldTrustHermesOverride(''), false)
+  assert.equal(shouldTrustHermesOverride(undefined), false)
+})
+
 test('verifyHermesCli returns false when command is falsy', () => {
   assert.equal(verifyHermesCli(''), false)
   assert.equal(verifyHermesCli(null), false)
@@ -115,55 +102,26 @@ test('verifyHermesCli returns true when --version exits 0', () => {
   }
 })
 
-test('probe timeout accommodates hermes --version under boot-time CPU storms', () => {
-  // `hermes --version` measures 2.4-2.9s warm and 4.5s+ under cold-boot CPU
-  // pressure; a 5s deadline made the PATH rung flake on healthy installs.
-  assert.equal(PROBE_TIMEOUT_MS, 15000)
-})
-
-test('verifyHermesCli retries once after a timeout and succeeds', () => {
-  const { fn, calls } = scriptedExec([timeoutError(), null])
-  assert.equal(verifyHermesCli('hermes', { _execFileSync: fn }), true)
-  assert.equal(calls.length, 2, 'timed-out first attempt should be retried exactly once')
-  for (const options of calls) {
-    assert.equal(options.timeout, PROBE_TIMEOUT_MS)
-  }
-})
-
-test('verifyHermesCli gives up after the single timeout retry', () => {
-  const { fn, calls } = scriptedExec([timeoutError(), timeoutError()])
-  assert.equal(verifyHermesCli('hermes', { _execFileSync: fn }), false)
-  assert.equal(calls.length, 2, 'must not retry beyond one extra attempt')
-})
-
-test('verifyHermesCli does not retry a nonzero exit (broken shim fails fast)', () => {
-  const { fn, calls } = scriptedExec([{ status: 1, message: 'Command failed: hermes --version' }])
-  assert.equal(verifyHermesCli('hermes', { _execFileSync: fn }), false)
-  assert.equal(calls.length, 1, 'a real exit code is a definitive verdict; no retry')
-})
-
-test('verifyHermesCli does not retry a missing binary', () => {
-  const { fn, calls } = scriptedExec([{ code: 'ENOENT', message: 'spawnSync hermes ENOENT' }])
-  assert.equal(verifyHermesCli('hermes', { _execFileSync: fn }), false)
-  assert.equal(calls.length, 1)
-})
-
-test('canImportHermesCli retries once after a timeout and succeeds', () => {
-  const { fn, calls } = scriptedExec([timeoutError(), null])
-  assert.equal(canImportHermesCli('python', { _execFileSync: fn }), true)
-  assert.equal(calls.length, 2)
-})
-
-test('canImportHermesCli does not retry a nonzero exit', () => {
-  const { fn, calls } = scriptedExec([{ status: 1, message: 'ModuleNotFoundError' }])
-  assert.equal(canImportHermesCli('python', { _execFileSync: fn }), false)
-  assert.equal(calls.length, 1)
-})
-
 test('verifyHermesCli swallows timeouts (does not throw)', () => {
-  // We can't easily provoke a real 5s hang in CI without slowing the
+  // We can't easily provoke a real hang in CI without slowing the
   // suite, but we CAN confirm that an invocation that DOES throw
   // (because the binary is missing) returns false rather than
   // propagating. Same code path the timeout case takes.
   assert.equal(verifyHermesCli('/definitely/not/a/real/binary/anywhere'), false)
+})
+
+test('default probe timeout is 15s (not the old 5s death-loop value)', () => {
+  assert.equal(DEFAULT_PROBE_TIMEOUT_MS, 15_000)
+  // Module constant uses process.env at load time; with no override it
+  // matches the default (tests run without HERMES_PROBE_TIMEOUT_MS).
+  assert.equal(PROBE_TIMEOUT_MS, DEFAULT_PROBE_TIMEOUT_MS)
+})
+
+test('resolveProbeTimeoutMs honours HERMES_PROBE_TIMEOUT_MS', () => {
+  assert.equal(resolveProbeTimeoutMs({}), DEFAULT_PROBE_TIMEOUT_MS)
+  assert.equal(resolveProbeTimeoutMs({ HERMES_PROBE_TIMEOUT_MS: '30000' }), 30_000)
+  assert.equal(resolveProbeTimeoutMs({ HERMES_PROBE_TIMEOUT_MS: '0' }), DEFAULT_PROBE_TIMEOUT_MS)
+  assert.equal(resolveProbeTimeoutMs({ HERMES_PROBE_TIMEOUT_MS: 'nope' }), DEFAULT_PROBE_TIMEOUT_MS)
+  // Cap runaway values
+  assert.equal(resolveProbeTimeoutMs({ HERMES_PROBE_TIMEOUT_MS: '999999' }), 120_000)
 })

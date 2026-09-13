@@ -54,7 +54,8 @@ class _StubAdapter:
     # helper, all of which we can monkeypatch.
     _acquire_platform_lock = platform_base.BasePlatformAdapter._acquire_platform_lock
     _synthesize_previous_gateway_stopped = (
-        platform_base.BasePlatformAdapter._synthesize_previous_gateway_stopped
+        # Renamed upstream; the behaviour is unchanged.
+        platform_base.BasePlatformAdapter._synthesize_previous_gateway_stopped_if_needed
     )
 
 

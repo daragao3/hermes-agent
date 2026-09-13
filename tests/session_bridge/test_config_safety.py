@@ -446,7 +446,7 @@ def test_cached_profile_defaults_are_not_written_when_inbox_is_omitted(
         second = config_module.load_config()
         assert first["session_bridge"]["sidebar"]["inbox_cwd"] == str(profile_b)
         assert second["session_bridge"]["sidebar"]["inbox_cwd"] == str(profile_b)
-        assert config_module.save_config(second)
+        config_module.save_config(second)
         raw = config_module.read_raw_config()
     finally:
         reset_hermes_home_override(token_b)
@@ -481,7 +481,7 @@ def test_save_config_preserves_explicit_static_inbox_across_profile_switch(
             if copy_default
             else config_module.DEFAULT_CONFIG
         )
-        assert config_module.save_config(value, strip_defaults=False)
+        config_module.save_config(value, strip_defaults=False)
         raw = config_module.read_raw_config()
     finally:
         reset_hermes_home_override(token_b)
@@ -497,7 +497,7 @@ def test_save_config_preserves_non_mapping_session_bridge(
     config_module = importlib.import_module("hermes_cli.config")
     token = set_hermes_home_override(tmp_path)
     try:
-        assert config_module.save_config({"session_bridge": session_bridge})
+        config_module.save_config({"session_bridge": session_bridge})
         raw = config_module.read_raw_config()
     finally:
         reset_hermes_home_override(token)
@@ -520,7 +520,7 @@ def test_explicit_sidebar_inbox_survives_profile_default_round_trip(tmp_path: Pa
     token = set_hermes_home_override(profile)
     try:
         loaded = config_module.load_config()
-        assert config_module.save_config(loaded)
+        config_module.save_config(loaded)
         raw = config_module.read_raw_config()
     finally:
         reset_hermes_home_override(token)

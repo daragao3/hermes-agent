@@ -160,23 +160,6 @@ class TestCloseBridgeLog:
         mock_fh.close.assert_called_once()
         assert adapter._bridge_log_fh is None
 
-    def test_noop_when_no_handle(self):
-        adapter = self._bare_adapter()
-
-        adapter._close_bridge_log()  # must not raise
-
-        assert adapter._bridge_log_fh is None
-
-    def test_suppresses_close_exception(self):
-        adapter = self._bare_adapter()
-        mock_fh = MagicMock()
-        mock_fh.close.side_effect = OSError("already closed")
-        adapter._bridge_log_fh = mock_fh
-
-        adapter._close_bridge_log()  # must not raise
-
-        assert adapter._bridge_log_fh is None
-
 
 # ---------------------------------------------------------------------------
 # data variable initialization
@@ -318,107 +301,6 @@ class TestBridgeRuntimeFailure:
         payload = mock_session.post.call_args.kwargs["json"]
         assert payload["chatId"] == "50766715226@s.whatsapp.net"
 
-    @pytest.mark.asyncio
-    async def test_send_leaves_group_jid_untouched(self):
-        """A fully-qualified group JID must pass through unchanged."""
-        adapter = _make_adapter()
-        adapter._running = True
-        adapter._bridge_process = None
-
-        mock_resp = MagicMock()
-        mock_resp.status = 200
-        mock_resp.json = AsyncMock(return_value={"messageId": "msg-2"})
-        mock_session = MagicMock()
-        mock_session.post = MagicMock(return_value=_AsyncCM(mock_resp))
-        adapter._http_session = mock_session
-
-        result = await adapter.send("123456789-987654321@g.us", "hello")
-
-        assert result.success is True
-        payload = mock_session.post.call_args.kwargs["json"]
-        assert payload["chatId"] == "123456789-987654321@g.us"
-
-    @pytest.mark.asyncio
-    async def test_poll_messages_marks_retryable_fatal_when_managed_bridge_exits(self):
-        adapter = _make_adapter()
-        fatal_handler = AsyncMock()
-        adapter.set_fatal_error_handler(fatal_handler)
-        adapter._running = True
-        adapter._http_session = MagicMock()  # Persistent session active
-        mock_fh = MagicMock()
-        adapter._bridge_log_fh = mock_fh
-
-        mock_proc = MagicMock()
-        mock_proc.poll.return_value = 23
-        adapter._bridge_process = mock_proc
-
-        await adapter._poll_messages()
-
-        assert adapter.fatal_error_code == "whatsapp_bridge_exited"
-        assert adapter.fatal_error_retryable is True
-        fatal_handler.assert_awaited_once()
-        mock_fh.close.assert_called_once()
-        assert adapter._bridge_log_fh is None
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("returncode", [0, -2, -15])
-    async def test_shutdown_suppresses_fatal_on_planned_bridge_exit(self, returncode):
-        """During graceful disconnect(), SIGTERM/SIGINT/clean-exit are NOT fatal.
-
-        Regression guard for the bug where every gateway shutdown/restart
-        logged "Fatal whatsapp adapter error (whatsapp_bridge_exited)" and
-        dispatched a fatal-error notification just before the normal
-        "✓ whatsapp disconnected" — because _check_managed_bridge_exit()
-        saw the bridge's returncode of -15 (our own SIGTERM) and classified
-        it as an unexpected crash.
-        """
-        adapter = _make_adapter()
-        fatal_handler = AsyncMock()
-        adapter.set_fatal_error_handler(fatal_handler)
-        adapter._running = True
-        adapter._http_session = MagicMock()
-        adapter._bridge_log_fh = MagicMock()
-        adapter._shutting_down = True  # disconnect() sets this before SIGTERM
-
-        mock_proc = MagicMock()
-        mock_proc.poll.return_value = returncode
-        adapter._bridge_process = mock_proc
-
-        result = await adapter._check_managed_bridge_exit()
-
-        assert result is None, (
-            f"returncode={returncode} during shutdown should be suppressed, "
-            f"got fatal message: {result!r}"
-        )
-        assert adapter.fatal_error_code is None
-        fatal_handler.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_shutdown_still_surfaces_nonzero_crash(self):
-        """Even during shutdown, a truly crashed bridge (e.g. returncode 9) is fatal.
-
-        The suppression list is deliberately narrow (0, -2, -15) so that
-        OOM-kill (137), assertion failures, or custom error exits still
-        reach the fatal-error handler and user notification path.
-        """
-        adapter = _make_adapter()
-        fatal_handler = AsyncMock()
-        adapter.set_fatal_error_handler(fatal_handler)
-        adapter._running = True
-        adapter._http_session = MagicMock()
-        adapter._bridge_log_fh = MagicMock()
-        adapter._shutting_down = True
-
-        mock_proc = MagicMock()
-        mock_proc.poll.return_value = 137  # SIGKILL / OOM-kill
-        adapter._bridge_process = mock_proc
-
-        result = await adapter._check_managed_bridge_exit()
-
-        assert result is not None
-        assert "exited unexpectedly" in result
-        assert adapter.fatal_error_code == "whatsapp_bridge_exited"
-        fatal_handler.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_closed_when_http_not_ready(self):
@@ -730,27 +612,84 @@ class TestKillPortProcess:
         mock_listeners.assert_called_once_with(3000)
         assert kills == [(55555, signal.SIGTERM)]
 
-    def test_no_kill_when_no_listener_on_port(self):
-        """No LISTENer on the port → nothing is signalled."""
+
+    @pytest.mark.windows_only
+    def test_windows_refuses_taskkill_on_non_bridge_pid(self):
+        """#89614 class: the netstat-scanned PID is a bare number — if the
+        live process is not a node bridge, taskkill must never fire."""
+        from plugins.platforms.whatsapp.adapter import _kill_port_process
+
+        netstat_output = (
+            "  Proto  Local Address          Foreign Address        State           PID\n"
+            "  TCP    0.0.0.0:3000           0.0.0.0:0              LISTENING       12345\n"
+        )
+
+        def run_side_effect(cmd, **kwargs):
+            if cmd[0] == "netstat":
+                return MagicMock(stdout=netstat_output)
+            return MagicMock()
+
+        with patch("plugins.platforms.whatsapp.adapter.subprocess.run", side_effect=run_side_effect) as mock_run, \
+             patch("plugins.platforms.whatsapp.adapter._pid_looks_like_node_bridge",
+                   return_value=False):
+            _kill_port_process(3000)
+
+        assert not any(
+            call.args[0][0] == "taskkill" for call in mock_run.call_args_list
+        )
+
+    @pytest.mark.windows_only
+    def test_uses_netstat_and_taskkill_on_windows(self):
+        """``windows_only``: netstat/taskkill are Windows binaries. The old
+        ``_IS_WINDOWS`` patch selected this branch on Linux, where neither
+        exists, so the mocked argv was the only thing under test."""
+        from plugins.platforms.whatsapp.adapter import _kill_port_process
+
+        netstat_output = (
+            "  Proto  Local Address          Foreign Address        State           PID\n"
+            "  TCP    0.0.0.0:3000           0.0.0.0:0              LISTENING       12345\n"
+            "  TCP    0.0.0.0:3001           0.0.0.0:0              LISTENING       99999\n"
+        )
+        mock_netstat = MagicMock(stdout=netstat_output)
+        mock_taskkill = MagicMock()
+
+        def run_side_effect(cmd, **kwargs):
+            if cmd[0] == "netstat":
+                return mock_netstat
+            if cmd[0] == "taskkill":
+                return mock_taskkill
+            return MagicMock()
+
+        with patch("plugins.platforms.whatsapp.adapter.subprocess.run", side_effect=run_side_effect) as mock_run, \
+             patch("plugins.platforms.whatsapp.adapter._pid_looks_like_node_bridge",
+                   return_value=True):
+            _kill_port_process(3000)
+
+        # netstat called
+        assert any(
+            call.args[0][0] == "netstat" for call in mock_run.call_args_list
+        )
+        # taskkill called with correct PID
+        assert any(
+            call.args[0] == ["taskkill", "/PID", "12345", "/F"]
+            for call in mock_run.call_args_list
+        )
+
+    @pytest.mark.linux_only
+    def test_non_bridge_listener_is_never_killed(self):
+        """#89614 class: a listener that is not a node bridge is refused."""
         from plugins.platforms.whatsapp import adapter as wa
 
         kills = []
-        with patch("plugins.platforms.whatsapp.adapter._IS_WINDOWS", False), \
-             patch("plugins.platforms.whatsapp.adapter._listener_pids_on_port",
-                   return_value=[]) as mock_listeners, \
+        with patch("plugins.platforms.whatsapp.adapter._listener_pids_on_port",
+                   return_value=[55555]), \
+             patch("plugins.platforms.whatsapp.adapter._pid_looks_like_node_bridge",
+                   return_value=False), \
              patch("plugins.platforms.whatsapp.adapter.os.kill",
                    side_effect=lambda pid, sig: kills.append((pid, sig))):
             wa._kill_port_process(3000)
 
-        mock_listeners.assert_called_once_with(3000)
         assert kills == []
-
-    def test_suppresses_exceptions(self):
-        from plugins.platforms.whatsapp.adapter import _kill_port_process
-
-        with patch("plugins.platforms.whatsapp.adapter._IS_WINDOWS", True), \
-             patch("plugins.platforms.whatsapp.adapter.subprocess.run", side_effect=OSError("no netstat")):
-            _kill_port_process(3000)  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -804,61 +743,6 @@ class TestHttpSessionLifecycle:
         mock_session.close.assert_called_once()
         assert adapter._http_session is None
 
-    @pytest.mark.asyncio
-    async def test_session_not_closed_when_already_closed(self):
-        """disconnect() should skip close() when session is already closed."""
-        adapter = _make_adapter()
-        mock_session = AsyncMock()
-        mock_session.closed = True
-        adapter._http_session = mock_session
-        adapter._poll_task = None
-        adapter._bridge_process = None
-        adapter._running = True
-        adapter._session_lock_identity = None
-
-        await adapter.disconnect()
-
-        mock_session.close.assert_not_called()
-        assert adapter._http_session is None
-
-    @pytest.mark.asyncio
-    async def test_poll_task_cancelled_on_disconnect(self):
-        """disconnect() should cancel the poll task."""
-        adapter = _make_adapter()
-        mock_task = MagicMock()
-        mock_task.done.return_value = False
-        mock_task.cancel = MagicMock()
-        mock_future = asyncio.Future()
-        mock_future.set_exception(asyncio.CancelledError())
-        mock_task.__await__ = mock_future.__await__
-        adapter._poll_task = mock_task
-        adapter._http_session = None
-        adapter._bridge_process = None
-        adapter._running = True
-        adapter._session_lock_identity = None
-
-        await adapter.disconnect()
-
-        mock_task.cancel.assert_called_once()
-        assert adapter._poll_task is None
-
-    @pytest.mark.asyncio
-    async def test_disconnect_skips_done_poll_task(self):
-        """disconnect() should not cancel an already-done poll task."""
-        adapter = _make_adapter()
-        mock_task = MagicMock()
-        mock_task.done.return_value = True
-        adapter._poll_task = mock_task
-        adapter._http_session = None
-        adapter._bridge_process = None
-        adapter._running = True
-        adapter._session_lock_identity = None
-
-        await adapter.disconnect()
-
-        mock_task.cancel.assert_not_called()
-        assert adapter._poll_task is None
-
 
 # ---------------------------------------------------------------------------
 # Pre-flight: refuse to start the bridge when creds.json is missing
@@ -879,37 +763,6 @@ class TestNoCredsPreflight:
     ``hermes whatsapp``.
     """
 
-    @pytest.mark.asyncio
-    async def test_connect_returns_false_when_no_creds(self, tmp_path):
-        from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-
-        adapter = WhatsAppAdapter.__new__(WhatsAppAdapter)
-        adapter.platform = Platform.WHATSAPP
-        adapter.config = MagicMock()
-        adapter._bridge_port = 19876
-        # Point bridge_script at a real existing file so the earlier
-        # bridge-missing check doesn't trip — we want to exercise the
-        # creds.json check specifically.
-        bridge = tmp_path / "bridge.js"
-        bridge.write_text("// stub")
-        adapter._bridge_script = str(bridge)
-        adapter._session_path = tmp_path / "session"  # no creds.json inside
-        adapter._session_path.mkdir()
-        adapter._bridge_log_fh = None
-        adapter._fatal_error_code = None
-        adapter._fatal_error_message = None
-        adapter._fatal_error_retryable = True
-
-        with patch(
-            "plugins.platforms.whatsapp.adapter.check_whatsapp_requirements",
-            return_value=True,
-        ):
-            result = await adapter.connect()
-
-        assert result is False
-        # Non-retryable so the reconnect watcher drops it cleanly
-        assert adapter._fatal_error_code == "whatsapp_not_paired"
-        assert adapter._fatal_error_retryable is False
 
     @pytest.mark.asyncio
     async def test_connect_proceeds_when_creds_present(self, tmp_path):

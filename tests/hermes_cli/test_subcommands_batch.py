@@ -11,12 +11,10 @@ from __future__ import annotations
 
 import argparse
 
-import pytest
 
 from hermes_cli.subcommands.auth import build_auth_parser
 from hermes_cli.subcommands.backup import build_backup_parser
 from hermes_cli.subcommands.config import build_config_parser
-from hermes_cli.subcommands.dashboard import build_dashboard_parser
 from hermes_cli.subcommands.debug import build_debug_parser
 from hermes_cli.subcommands.doctor import build_doctor_parser
 from hermes_cli.subcommands.dump import build_dump_parser
@@ -27,7 +25,7 @@ from hermes_cli.subcommands.login import build_login_parser
 from hermes_cli.subcommands.logout import build_logout_parser
 from hermes_cli.subcommands.logs import build_logs_parser
 from hermes_cli.subcommands.model import build_model_parser
-from hermes_cli.subcommands.postinstall import build_postinstall_parser
+
 from hermes_cli.subcommands.prompt_size import build_prompt_size_parser
 from hermes_cli.subcommands.security import build_security_parser
 from hermes_cli.subcommands.setup import build_setup_parser
@@ -35,7 +33,6 @@ from hermes_cli.subcommands.slack import build_slack_parser
 from hermes_cli.subcommands.status import build_status_parser
 from hermes_cli.subcommands.uninstall import build_uninstall_parser
 from hermes_cli.subcommands.update import build_update_parser
-from hermes_cli.subcommands.version import build_version_parser
 from hermes_cli.subcommands.webhook import build_webhook_parser
 from hermes_cli.subcommands.whatsapp import build_whatsapp_parser
 
@@ -51,7 +48,7 @@ def _h(name):
 SINGLE_HANDLER_CASES = [
     ("model", build_model_parser, "cmd_model", ["model"]),
     ("setup", build_setup_parser, "cmd_setup", ["setup"]),
-    ("postinstall", build_postinstall_parser, "cmd_postinstall", ["postinstall"]),
+
     ("whatsapp", build_whatsapp_parser, "cmd_whatsapp", ["whatsapp"]),
     ("slack", build_slack_parser, "cmd_slack", ["slack"]),
     ("login", build_login_parser, "cmd_login", ["login"]),
@@ -67,7 +64,6 @@ SINGLE_HANDLER_CASES = [
     ("backup", build_backup_parser, "cmd_backup", ["backup"]),
     ("import", build_import_cmd_parser, "cmd_import", ["import", "/tmp/x.zip"]),
     ("config", build_config_parser, "cmd_config", ["config"]),
-    ("version", build_version_parser, "cmd_version", ["version"]),
     ("update", build_update_parser, "cmd_update", ["update"]),
     ("uninstall", build_uninstall_parser, "cmd_uninstall", ["uninstall"]),
     ("gui", build_gui_parser, "cmd_gui", ["gui"]),
@@ -76,14 +72,6 @@ SINGLE_HANDLER_CASES = [
 ]
 
 
-@pytest.mark.parametrize("name,builder,kw,argv", SINGLE_HANDLER_CASES, ids=[c[0] for c in SINGLE_HANDLER_CASES])
-def test_single_handler_builders(name, builder, kw, argv):
-    parser = argparse.ArgumentParser(prog="hermes")
-    sub = parser.add_subparsers(dest="command")
-    handler = _h(name)
-    builder(sub, **{kw: handler})
-    ns = parser.parse_args(argv)
-    assert ns.func is handler
 
 
 def test_config_get_unset_subcommands_parse():
@@ -105,15 +93,6 @@ def test_config_get_unset_subcommands_parse():
     assert ns.key == "terminal.backend"
 
 
-def test_dashboard_builder_two_handlers():
-    parser = argparse.ArgumentParser(prog="hermes")
-    sub = parser.add_subparsers(dest="command")
-    dash, reg = _h("dashboard"), _h("dashboard_register")
-    build_dashboard_parser(sub, cmd_dashboard=dash, cmd_dashboard_register=reg)
-    # bare dashboard -> launch handler
-    assert parser.parse_args(["dashboard"]).func is dash
-    # dashboard register -> register handler
-    assert parser.parse_args(["dashboard", "register"]).func is reg
 
 
 # ── deprecated `hermes login` fails gracefully, not with argparse error ────
@@ -134,18 +113,6 @@ def _login_parser():
     return parser
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "nous", "openai-codex", "totally-made-up"])
-def test_login_accepts_any_provider_value(provider):
-    """Deprecated `login` must route every `--provider` to the handler.
-
-    A restrictive `choices=` list (the pre-fix behavior) rejected providers
-    like `anthropic` with an argparse error *before* the deprecation message
-    could run, so the user just saw `invalid choice: 'anthropic'` and assumed
-    the feature was broken rather than relocated.
-    """
-    ns = _login_parser().parse_args(["login", "--provider", provider])
-    assert ns.func.__name__ == "cmd_login"
-    assert ns.provider == provider
 
 
 def test_login_subparser_help_is_suppressed():

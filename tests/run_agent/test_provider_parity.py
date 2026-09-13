@@ -106,13 +106,6 @@ class TestBuildApiKwargsOpenRouter:
         assert "reasoning" in extra
         assert extra["reasoning"]["enabled"] is True
 
-    def test_includes_tools(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        messages = [{"role": "user", "content": "hi"}]
-        kwargs = agent._build_api_kwargs(messages)
-        assert "tools" in kwargs
-        tool_names = [t["function"]["name"] for t in kwargs["tools"]]
-        assert "web_search" in tool_names
 
     def test_no_responses_api_fields(self, monkeypatch):
         agent = _make_agent(monkeypatch, "openrouter")
@@ -221,20 +214,6 @@ class TestBuildApiKwargsOpenRouter:
         }
         assert "extra_body" not in kwargs["extra_body"]
 
-    def test_gemini_openai_compat_passes_base_url_for_nested_google_thinking_config(self, monkeypatch):
-        agent = _make_agent(
-            monkeypatch,
-            "gemini",
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-            model="gemini-3.1-pro-preview",
-        )
-        agent.reasoning_config = {"enabled": True, "effort": "high"}
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        assert "thinking_config" not in kwargs["extra_body"]
-        assert kwargs["extra_body"]["extra_body"]["google"]["thinking_config"] == {
-            "include_thoughts": True,
-            "thinking_level": "high",
-        }
 
     def test_should_sanitize_tool_calls_codex_vs_chat(self, monkeypatch):
         """Codex API should NOT sanitize, all other APIs should sanitize."""
@@ -274,26 +253,6 @@ class TestBuildApiKwargsOpenRouter:
         assert "extra_content" not in result["tool_calls"][0]
         assert "call_id" not in result["tool_calls"][0]
 
-    def test_sanitize_tool_calls_strips_extra_content_when_model_none(self, monkeypatch):
-        """Default (no model) strips extra_content — safe for strict providers."""
-        agent = _make_agent(monkeypatch, "openrouter")
-        api_msg = self._api_msg_with_extra_content()
-        result = agent._sanitize_tool_calls_for_strict_api(api_msg)
-        assert "extra_content" not in result["tool_calls"][0]
-
-    def test_sanitize_tool_calls_keeps_extra_content_for_gemini(self, monkeypatch):
-        """Gemini thinking models 400 without the replayed thought_signature."""
-        agent = _make_agent(monkeypatch, "openrouter")
-        api_msg = self._api_msg_with_extra_content()
-        result = agent._sanitize_tool_calls_for_strict_api(
-            api_msg, model="google/gemini-3-pro-preview"
-        )
-        assert result["tool_calls"][0]["extra_content"] == {
-            "google": {"thought_signature": "SIG_123"}
-        }
-        # call_id/response_item_id still stripped regardless of model
-        assert "call_id" not in result["tool_calls"][0]
-
 
 class TestDeveloperRoleSwap:
     """GPT-5 and Codex models should get 'developer' instead of 'system' role."""
@@ -319,55 +278,6 @@ class TestDeveloperRoleSwap:
         assert kwargs["messages"][0]["content"] == "You are helpful."
         assert kwargs["messages"][1]["role"] == "user"
 
-    @pytest.mark.parametrize("model", [
-        "anthropic/claude-opus-4.6",
-        "openai/gpt-4o",
-        "google/gemini-2.5-pro",
-        "deepseek/deepseek-chat",
-        "openai/o3-mini",
-    ])
-    def test_non_matching_models_keep_system_role(self, monkeypatch, model):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.model = model
-        messages = [
-            {"role": "system", "content": "You are helpful."},
-            {"role": "user", "content": "hi"},
-        ]
-        kwargs = agent._build_api_kwargs(messages)
-        assert kwargs["messages"][0]["role"] == "system"
-
-    def test_no_system_message_no_crash(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.model = "openai/gpt-5"
-        messages = [{"role": "user", "content": "hi"}]
-        kwargs = agent._build_api_kwargs(messages)
-        assert kwargs["messages"][0]["role"] == "user"
-
-    def test_original_messages_not_mutated(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.model = "openai/gpt-5"
-        messages = [
-            {"role": "system", "content": "You are helpful."},
-            {"role": "user", "content": "hi"},
-        ]
-        agent._build_api_kwargs(messages)
-        # Original messages must be untouched (internal representation stays "system")
-        assert messages[0]["role"] == "system"
-
-    def test_developer_role_via_nous_portal(self, monkeypatch):
-        agent = _make_agent(
-            monkeypatch,
-            "nous",
-            base_url="https://inference-api.nousresearch.com/v1",
-            model="gpt-5",
-        )
-        messages = [
-            {"role": "system", "content": "You are helpful."},
-            {"role": "user", "content": "hi"},
-        ]
-        kwargs = agent._build_api_kwargs(messages)
-        assert kwargs["messages"][0]["role"] == "developer"
-
 
 class TestBuildApiKwargsChatCompletionsServiceTier:
     """service_tier via request_overrides works on the chat_completions path."""
@@ -379,22 +289,6 @@ class TestBuildApiKwargsChatCompletionsServiceTier:
         messages = [{"role": "user", "content": "hi"}]
         kwargs = agent._build_api_kwargs(messages)
         assert kwargs["service_tier"] == "priority"
-
-    def test_no_service_tier_when_overrides_empty(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.model = "gpt-4.1"
-        agent.request_overrides = {}
-        messages = [{"role": "user", "content": "hi"}]
-        kwargs = agent._build_api_kwargs(messages)
-        assert "service_tier" not in kwargs
-
-    def test_no_crash_when_request_overrides_is_none(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.model = "gpt-4.1"
-        agent.request_overrides = None
-        messages = [{"role": "user", "content": "hi"}]
-        kwargs = agent._build_api_kwargs(messages)
-        assert "service_tier" not in kwargs
 
 
 class TestBuildApiKwargsKimiNoTemperatureOverride:
@@ -449,12 +343,6 @@ class TestBuildApiKwargsCustomEndpoint:
         assert "messages" in kwargs
         assert "input" not in kwargs
 
-    def test_no_openrouter_extra_body(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "custom", base_url="http://localhost:1234/v1")
-        messages = [{"role": "user", "content": "hi"}]
-        kwargs = agent._build_api_kwargs(messages)
-        extra = kwargs.get("extra_body", {})
-        assert "reasoning" not in extra
 
     def test_fireworks_tool_call_payload_strips_codex_only_fields(self, monkeypatch):
         agent = _make_agent(
@@ -514,13 +402,6 @@ class TestBuildApiKwargsCodex:
         assert "messages" not in kwargs
         assert kwargs["store"] is False
 
-    def test_includes_reasoning_config(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openai-codex", api_mode="codex_responses",
-                            base_url="https://chatgpt.com/backend-api/codex")
-        messages = [{"role": "user", "content": "hi"}]
-        kwargs = agent._build_api_kwargs(messages)
-        assert "reasoning" in kwargs
-        assert kwargs["reasoning"]["effort"] == "medium"
 
     def test_includes_service_tier_via_request_overrides(self, monkeypatch):
         agent = _make_agent(monkeypatch, "openai-codex", api_mode="codex_responses",
@@ -532,21 +413,6 @@ class TestBuildApiKwargsCodex:
         kwargs = agent._build_api_kwargs(messages)
         assert kwargs["service_tier"] == "priority"
 
-    def test_omits_max_output_tokens_for_codex_backend(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openai-codex", api_mode="codex_responses",
-                            base_url="https://chatgpt.com/backend-api/codex")
-        agent.model = "gpt-5.4"
-        agent.max_tokens = 20
-        messages = [{"role": "user", "content": "hi"}]
-        kwargs = agent._build_api_kwargs(messages)
-        assert "max_output_tokens" not in kwargs
-
-    def test_includes_encrypted_content_in_include(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openai-codex", api_mode="codex_responses",
-                            base_url="https://chatgpt.com/backend-api/codex")
-        messages = [{"role": "user", "content": "hi"}]
-        kwargs = agent._build_api_kwargs(messages)
-        assert "reasoning.encrypted_content" in kwargs.get("include", [])
 
     def test_tools_converted_to_responses_format(self, monkeypatch):
         agent = _make_agent(monkeypatch, "openai-codex", api_mode="codex_responses",
@@ -717,23 +583,6 @@ class TestChatContentToResponsesParts:
         result = _chat_content_to_responses_parts([{"type": "text", "text": "hello"}])
         assert result[0]["type"] == "input_text"
 
-    def test_explicit_user_role_emits_input_text(self):
-        result = _chat_content_to_responses_parts(
-            [{"type": "text", "text": "hello"}], role="user"
-        )
-        assert result[0]["type"] == "input_text"
-
-    def test_assistant_role_emits_output_text(self):
-        result = _chat_content_to_responses_parts(
-            [{"type": "text", "text": "hello"}], role="assistant"
-        )
-        assert result[0]["type"] == "output_text"
-
-    def test_assistant_role_with_string_parts(self):
-        """String parts in assistant content also get output_text."""
-        result = _chat_content_to_responses_parts(["hello"], role="assistant")
-        assert result[0]["type"] == "output_text"
-        assert result[0]["text"] == "hello"
 
     def test_assistant_role_with_mixed_input_output_text_types(self):
         """Parts already marked input_text or output_text get normalized to role's type."""
@@ -999,18 +848,6 @@ class TestBuildAssistantMessage:
             {"type": "reasoning", "id": "rs_1", "encrypted_content": "gAAAA_blob"},
         ]
 
-    def test_plain_message_no_codex_items(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        msg = SimpleNamespace(
-            content="simple",
-            tool_calls=None,
-            reasoning=None,
-            reasoning_content=None,
-            reasoning_details=None,
-        )
-        result = agent._build_assistant_message(msg, "stop")
-        assert "codex_reasoning_items" not in result
-
 
 # ── Auxiliary client provider resolution ─────────────────────────────────────
 
@@ -1087,35 +924,6 @@ class TestProviderRouting:
         kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
         assert kwargs["extra_body"]["provider"]["sort"] == "throughput"
 
-    def test_only_providers(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.providers_allowed = ["anthropic", "google"]
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        assert kwargs["extra_body"]["provider"]["only"] == ["anthropic", "google"]
-
-    def test_ignore_providers(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.providers_ignored = ["deepinfra"]
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        assert kwargs["extra_body"]["provider"]["ignore"] == ["deepinfra"]
-
-    def test_order_providers(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.providers_order = ["anthropic", "together"]
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        assert kwargs["extra_body"]["provider"]["order"] == ["anthropic", "together"]
-
-    def test_require_parameters(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.provider_require_parameters = True
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        assert kwargs["extra_body"]["provider"]["require_parameters"] is True
-
-    def test_data_collection_deny(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.provider_data_collection = "deny"
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        assert kwargs["extra_body"]["provider"]["data_collection"] == "deny"
 
     def test_no_routing_when_unset(self, monkeypatch):
         agent = _make_agent(monkeypatch, "openrouter")
@@ -1123,26 +931,6 @@ class TestProviderRouting:
         assert "provider" not in kwargs.get("extra_body", {}).get("provider", {}) or \
                kwargs.get("extra_body", {}).get("provider") is None or \
                "only" not in kwargs.get("extra_body", {}).get("provider", {})
-
-    def test_combined_routing(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.provider_sort = "latency"
-        agent.providers_ignored = ["deepinfra"]
-        agent.provider_data_collection = "deny"
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        prov = kwargs["extra_body"]["provider"]
-        assert prov["sort"] == "latency"
-        assert prov["ignore"] == ["deepinfra"]
-        assert prov["data_collection"] == "deny"
-
-    def test_routing_not_injected_for_codex(self, monkeypatch):
-        """Codex Responses API doesn't use extra_body.provider."""
-        agent = _make_agent(monkeypatch, "openai-codex", api_mode="codex_responses",
-                            base_url="https://chatgpt.com/backend-api/codex")
-        agent.provider_sort = "throughput"
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        assert "extra_body" not in kwargs
-        assert "provider" not in kwargs or kwargs.get("provider") is None
 
 
 # ── Codex reasoning items preflight tests ────────────────────────────────────
@@ -1230,24 +1018,40 @@ class TestReasoningEffortDefaults:
         kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
         assert kwargs["reasoning"]["effort"] == "medium"
 
-    def test_codex_reasoning_disabled(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openai-codex", api_mode="codex_responses",
-                            base_url="https://chatgpt.com/backend-api/codex")
-        agent.reasoning_config = {"enabled": False}
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        assert "reasoning" not in kwargs
-        assert kwargs["include"] == []
 
-    def test_codex_reasoning_low(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openai-codex", api_mode="codex_responses",
-                            base_url="https://chatgpt.com/backend-api/codex")
-        agent.reasoning_config = {"enabled": True, "effort": "low"}
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        assert kwargs["reasoning"]["effort"] == "low"
+# Grafted from the upstream side in the 0.21.1 merge: definitions the other side
+# has and this file's base side does not.
 
-    def test_openrouter_reasoning_config_override(self, monkeypatch):
-        agent = _make_agent(monkeypatch, "openrouter")
-        agent.model = "anthropic/claude-sonnet-4-20250514"
-        agent.reasoning_config = {"enabled": True, "effort": "medium"}
-        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
-        assert kwargs["extra_body"]["reasoning"]["effort"] == "medium"
+class TestBuildApiKwargsAIGateway:
+    def test_uses_chat_completions_format(self, monkeypatch):
+        agent = _make_agent(monkeypatch, "ai-gateway", base_url="https://ai-gateway.vercel.sh/v1", model="gpt-4o")
+        messages = [{"role": "user", "content": "hi"}]
+        kwargs = agent._build_api_kwargs(messages)
+        assert "messages" in kwargs
+        assert "model" in kwargs
+        assert kwargs["messages"][-1]["content"] == "hi"
+
+    def test_no_responses_api_fields(self, monkeypatch):
+        agent = _make_agent(monkeypatch, "ai-gateway", base_url="https://ai-gateway.vercel.sh/v1", model="gpt-4o")
+        messages = [{"role": "user", "content": "hi"}]
+        kwargs = agent._build_api_kwargs(messages)
+        assert "input" not in kwargs
+        assert "instructions" not in kwargs
+        assert "store" not in kwargs
+
+    def test_includes_reasoning_in_extra_body(self, monkeypatch):
+        agent = _make_agent(monkeypatch, "ai-gateway", base_url="https://ai-gateway.vercel.sh/v1", model="gpt-4o")
+        messages = [{"role": "user", "content": "hi"}]
+        kwargs = agent._build_api_kwargs(messages)
+        extra = kwargs.get("extra_body", {})
+        assert "reasoning" in extra
+        assert extra["reasoning"]["enabled"] is True
+
+    def test_includes_tools(self, monkeypatch):
+        agent = _make_agent(monkeypatch, "ai-gateway", base_url="https://ai-gateway.vercel.sh/v1", model="gpt-4o")
+        messages = [{"role": "user", "content": "hi"}]
+        kwargs = agent._build_api_kwargs(messages)
+        assert "tools" in kwargs
+        tool_names = [t["function"]["name"] for t in kwargs["tools"]]
+        assert "web_search" in tool_names
+

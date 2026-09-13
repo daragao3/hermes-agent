@@ -442,7 +442,12 @@ def test_startup_fallback_install_names_its_own_spawn(monkeypatch, install_spawn
     monkeypatch.setattr("hermes_cli.gateway.find_gateway_pids", lambda *a, **k: [])
     monkeypatch.setattr("hermes_cli.gateway._profile_arg", lambda *a, **k: "")
 
-    gateway_windows._install_startup_fallback(tmp_path / "gateway.cmd", True, "denied")
+    gateway_windows._install_startup_fallback(
+        tmp_path / "gateway.cmd",
+        True,
+        "denied",
+        reason="install:startup-fallback",
+    )
 
     assert install_spawn_reasons == ["install:startup-fallback"]
 
@@ -502,7 +507,7 @@ def test_force_terminate_records_who_killed_the_gateway(monkeypatch):
     monkeypatch.setattr(
         gateway_status,
         "terminate_pid",
-        lambda pid, force=False: killed.append(pid),
+        lambda pid, force=False, expected_start_time=None: killed.append(pid),
     )
 
     gateway_windows._force_terminate_known_gateway_pids([31337])

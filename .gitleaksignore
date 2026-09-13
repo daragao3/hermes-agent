@@ -20,3 +20,141 @@ website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/features/
 website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/discord.md:discord-client-id:265
 website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/discord.md:discord-client-id:719
 website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/messaging/discord.md:discord-client-id:792
+
+# ============================================================================
+# 0.21.1 merge (2026-09-13): upstream test fixtures + entropy false positives,
+# verified non-secrets. Same event as the 0.19.0 block at the top of this file, one
+# release later and larger, because the merge carries 16,668 upstream commits of new
+# test files. gitleaks refused the merge commit with 107 findings over 60 files; every
+# one was classified before it was listed here, and NONE is a real credential.
+#
+# Fingerprints embed a LINE NUMBER (see the note in the 0.19.0 block): these are pinned
+# to the MERGED content. Re-derive with `gitleaks detect --no-git --source <file>` if
+# any of these files shift; never edit the numbers by hand.
+# ============================================================================
+
+# --- the six non-generic rules, all synthetic fixtures -----------------------
+# tests/agent/test_redact.py IS the redaction test suite: these tokens are its
+# INPUTS and the file exists to prove they get masked. The discord id is a fake
+# snowflake; the curl header is a fake bearer in a process-registry redaction test.
+tests/agent/test_redact.py:github-pat:193
+tests/agent/test_redact.py:github-pat:197
+tests/agent/test_redact.py:github-pat:201
+tests/agent/test_redact.py:gitlab-pat:58
+tests/gateway/test_discord_plugin_setup.py:discord-client-id:53
+tests/tools/test_process_registry.py:curl-auth-header:2099
+
+# --- findings outside test files, each read line by line ---------------------
+#   anthropic_credentials.py / auth_constants.py : PUBLIC OAuth client ids, which
+#     ship in the client and are public by definition
+#   context_compressor.py                        : a comment
+#   setup_migration.py                           : the string "ELEVENLABS_API_KEY",
+#     i.e. an env var NAME, not a value
+#   ab_eval.py                                   : a literal inside a generated
+#     test script
+#   docusaurus.config.ts                         : Algolia's SEARCH-ONLY key, which
+#     is published in the built site by design
+#   native/fts5_cjk/vendor/sqlite3ext.h          : #define lines in a vendored
+#     SQLite header; pure entropy false positives
+agent/anthropic_credentials.py:generic-api-key:34
+agent/context_compressor.py:generic-api-key:3215
+hermes_cli/auth_constants.py:generic-api-key:101
+hermes_cli/auth_constants.py:generic-api-key:68
+hermes_cli/auth_constants.py:generic-api-key:94
+hermes_cli/setup_migration.py:generic-api-key:94
+native/fts5_cjk/vendor/sqlite3ext.h:generic-api-key:418
+native/fts5_cjk/vendor/sqlite3ext.h:generic-api-key:574
+native/fts5_cjk/vendor/sqlite3ext.h:generic-api-key:666
+scripts/toolperf_abeval/ab_eval.py:generic-api-key:117
+website/docusaurus.config.ts:generic-api-key:105
+
+# --- api_key="test-key"-shaped literals in test files ------------------------
+apps/desktop/electron/native-token-store.test.ts:generic-api-key:105
+apps/desktop/electron/native-token-store.test.ts:generic-api-key:106
+apps/desktop/electron/native-token-store.test.ts:generic-api-key:186
+apps/desktop/electron/native-token-store.test.ts:generic-api-key:29
+apps/desktop/electron/native-token-store.test.ts:generic-api-key:30
+apps/desktop/src/lib/preview-annotate/in-page.test.ts:generic-api-key:150
+tests/agent/test_length_continuation_window_headroom.py:generic-api-key:29
+tests/agent/test_redact.py:generic-api-key:1059
+tests/agent/test_redact.py:generic-api-key:1073
+tests/agent/test_redact.py:generic-api-key:1083
+tests/agent/test_redact.py:generic-api-key:1084
+tests/agent/test_redact.py:generic-api-key:1085
+tests/agent/test_redact.py:generic-api-key:1147
+tests/agent/test_redact.py:generic-api-key:1148
+tests/agent/test_redact.py:generic-api-key:1151
+tests/agent/test_redact.py:generic-api-key:1152
+tests/agent/test_redact.py:generic-api-key:152
+tests/agent/test_redact.py:generic-api-key:161
+tests/agent/test_redact.py:generic-api-key:166
+tests/agent/test_redact.py:generic-api-key:232
+tests/agent/test_redact.py:generic-api-key:233
+tests/agent/test_redact.py:generic-api-key:910
+tests/cli/test_focus_view.py:generic-api-key:247
+tests/cli/test_show_config_credential.py:generic-api-key:40
+tests/cli/test_show_config_credential.py:generic-api-key:48
+tests/gateway/test_agent_cache.py:generic-api-key:79
+tests/gateway/test_api_server.py:generic-api-key:638
+tests/gateway/test_env_override_explicit_disable_48820.py:generic-api-key:24
+tests/gateway/test_hosted_room_replicas.py:generic-api-key:206
+tests/gateway/test_hosted_room_replicas.py:generic-api-key:233
+tests/gateway/test_hosted_room_replicas.py:generic-api-key:244
+tests/gateway/test_multiplex_toolsets_profile_isolation.py:generic-api-key:32
+tests/gateway/test_multiplex_toolsets_profile_isolation.py:generic-api-key:33
+tests/gateway/test_teams_dotenv_isolation.py:generic-api-key:243
+tests/hermes_cli/test_agent_import.py:generic-api-key:99
+tests/hermes_cli/test_config.py:generic-api-key:1319
+tests/hermes_cli/test_config.py:generic-api-key:1328
+tests/hermes_cli/test_config.py:generic-api-key:1341
+tests/hermes_cli/test_config.py:generic-api-key:1350
+tests/hermes_cli/test_config.py:generic-api-key:1385
+tests/hermes_cli/test_xiaomi_provider.py:generic-api-key:112
+tests/plugins/dashboard_auth/test_opaque_bearer_not_unreachable.py:generic-api-key:36
+tests/plugins/test_langfuse_plugin.py:generic-api-key:1738
+tests/run_agent/test_81641_text_turn_incremental_persistence.py:generic-api-key:47
+tests/run_agent/test_92450_outer_error_retry_bound.py:generic-api-key:50
+tests/run_agent/test_background_review_input_budget.py:generic-api-key:85
+tests/run_agent/test_compression_budget_rearm.py:generic-api-key:105
+tests/run_agent/test_compression_budget_refund.py:generic-api-key:180
+tests/run_agent/test_compression_lock_defer.py:generic-api-key:99
+tests/run_agent/test_compression_timeout_terminal.py:generic-api-key:39
+tests/run_agent/test_continuation_ceiling_wedge.py:generic-api-key:28
+tests/run_agent/test_continuation_repetition_guard.py:generic-api-key:33
+tests/run_agent/test_dropped_tool_call_recovery.py:generic-api-key:38
+tests/run_agent/test_export_current_turn_boundary.py:generic-api-key:74
+tests/run_agent/test_first_chunk_at_hook.py:generic-api-key:60
+tests/run_agent/test_gemini_native_reservation.py:generic-api-key:46
+tests/run_agent/test_length_continuation_thinking_exhaustion.py:generic-api-key:98
+tests/run_agent/test_overflow_overhead_aware_tokens.py:generic-api-key:74
+tests/run_agent/test_partial_stream_finish_reason.py:generic-api-key:682
+tests/run_agent/test_per_model_threshold_init_ordering.py:generic-api-key:73
+tests/run_agent/test_post_tool_compression_attempt_cap.py:generic-api-key:104
+tests/run_agent/test_preflight_timeout_typed_result.py:generic-api-key:27
+tests/run_agent/test_primary_runtime_restore.py:generic-api-key:820
+tests/run_agent/test_proactive_prune_loop_wiring.py:generic-api-key:102
+tests/run_agent/test_reset_aware_primary_restore.py:generic-api-key:104
+tests/run_agent/test_reset_aware_primary_restore.py:generic-api-key:49
+tests/run_agent/test_run_agent.py:generic-api-key:1111
+tests/run_agent/test_run_agent.py:generic-api-key:591
+tests/run_agent/test_sanitiser_escalation.py:generic-api-key:275
+tests/run_agent/test_steer.py:generic-api-key:798
+tests/run_agent/test_thinking_prefill_trailing_turn.py:generic-api-key:38
+tests/tools/test_delegate_cron_sync_fallback.py:generic-api-key:55
+tests/tools/test_delegate_request_overrides.py:generic-api-key:30
+tests/tools/test_memory_tool.py:generic-api-key:78
+tests/tools/test_process_registry.py:generic-api-key:1271
+tests/tools/test_process_registry.py:generic-api-key:2990
+tests/tools/test_process_registry.py:generic-api-key:3014
+tests/tools/test_process_registry.py:generic-api-key:3029
+tests/tools/test_stage2_hook_api_server_keygen.py:generic-api-key:112
+tests/tools/test_stage2_hook_api_server_keygen.py:generic-api-key:116
+tests/tools/test_stage2_hook_api_server_keygen.py:generic-api-key:142
+tests/tools/test_stage2_hook_api_server_keygen.py:generic-api-key:157
+tests/tools/test_stage2_hook_api_server_keygen.py:generic-api-key:177
+tests/tools/test_voice_client_config.py:generic-api-key:135
+tests/tui_gateway/test_composite_carrier_rewind.py:generic-api-key:458
+tests/tui_gateway/test_diagnostics_share_nous.py:generic-api-key:114
+tests/tui_gateway/test_diagnostics_share_nous.py:generic-api-key:66
+tests/tui_gateway/test_diagnostics_share_nous.py:generic-api-key:83
+tests/tui_gateway/test_groups_methods.py:generic-api-key:247

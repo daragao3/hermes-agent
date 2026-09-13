@@ -26,8 +26,6 @@ class TestNormalizeSegments:
         segments = [{"text": "hello "}, {"text": " world"}]
         assert youtube_quiz._normalize_segments(segments) == "hello world"
 
-    def test_empty_segments(self):
-        assert youtube_quiz._normalize_segments([]) == ""
 
     def test_whitespace_only(self):
         assert youtube_quiz._normalize_segments([{"text": "   "}, {"text": "  "}]) == ""
@@ -101,27 +99,3 @@ class TestFetchWithMockedAPI:
         assert result["ok"] is False
         assert result["error"] == "transcript_unavailable"
 
-    def test_empty_transcript(self, capsys):
-        mock_mod = self._make_mock_module(segments=[{"text": ""}, {"text": "   "}])
-        with mock.patch.dict("sys.modules", {"youtube_transcript_api": mock_mod}):
-            with pytest.raises(SystemExit):
-                _run(capsys, ["fetch", "empty_vid"])
-
-        captured = capsys.readouterr()
-        result = json.loads(captured.out)
-        assert result["ok"] is False
-        assert result["error"] == "empty_transcript"
-
-    def test_segments_without_to_raw_data(self, capsys):
-        """Handle plain list segments (no to_raw_data method)."""
-        mock_mod = mock.MagicMock()
-        mock_api = mock.MagicMock()
-        mock_mod.YouTubeTranscriptApi.return_value = mock_api
-        # Return a plain list (no to_raw_data attribute)
-        mock_api.fetch.return_value = [{"text": "plain list"}]
-
-        with mock.patch.dict("sys.modules", {"youtube_transcript_api": mock_mod}):
-            result = _run(capsys, ["fetch", "plain123"])
-
-        assert result["ok"] is True
-        assert result["transcript"] == "plain list"

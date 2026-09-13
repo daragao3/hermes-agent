@@ -1,45 +1,27 @@
-"""Tokenising a shell command string without destroying Windows paths.
+"""Tokenising a command line without destroying Windows path separators.
 
-``shlex.split`` runs in POSIX mode by default, where a backslash escapes the
-following character and is then dropped. On Windows that quietly mangles every
-native path a command contains::
+``shlex.split`` defaults to POSIX mode, where a backslash escapes the next character and is
+then discarded — so on Windows every native path in a command becomes an unusable token, with
+no exception raised. Upstream reached the same fix independently, as
+``hermes_cli._subprocess_compat.split_command_line``, and wired it through the shell-hook
+runner. This module keeps its own name for its remaining callers, but DELEGATES rather than
+carrying a second implementation of the same tokeniser.
 
-    shlex.split(r"cat C:\\Users\\diego\\proj\\index.ts")
-    ['cat', 'C:Usersdiegoprojindex.ts']
-
-Nothing raises. The token simply stops being a path, so anything downstream
-that resolves it — an ``isfile`` check, a directory scan, a spawn — silently
-finds nothing. Features built on it degrade to "never fires" rather than
-failing loudly, which is why this class of bug survives on a Windows-only host.
-
-Clearing ``escape`` on Windows makes the backslash literal while leaving quote
-handling intact, so ``"C:\\Program Files\\app.exe"`` still tokenises as one
-argument. POSIX escape semantics are untouched on POSIX, where a backslash
-genuinely is an escape and changing it would break real commands.
-
-Two older copies of this helper exist — ``hermes_cli/kanban.py`` and
-``plugins/disk-cleanup``. They are left alone: both are correct and one lives
-in a plugin that should not import agent internals. New callers use this.
+The two implementations differ in method — this one cleared ``shlex``'s escape character,
+upstream's uses ``posix=False`` plus a quote strip — but agree on every case
+``tests/agent/test_shell_tokens.py`` pins, including POSIX escape semantics (upstream's POSIX
+branch is literally ``shlex.split``) and the ValueError on an unbalanced quote.
 """
-
 from __future__ import annotations
 
-import os
-import shlex
 from typing import List
 
-__all__ = ["split_command"]
+from hermes_cli._subprocess_compat import split_command_line
 
 
 def split_command(cmd: str) -> List[str]:
     """Split ``cmd`` into tokens, keeping Windows path separators intact.
 
-    Raises :class:`ValueError` on unbalanced quotes, exactly as
-    ``shlex.split`` does, so existing callers can keep their fallbacks.
-    """
-    lex = shlex.shlex(cmd, posix=True)
-    lex.whitespace_split = True
-    lex.commenters = ""  # as shlex.split() does — never treat "#" as a comment
-    if os.name == "nt":
-        lex.escape = ""
-    return list(lex)
+    Raises :class:`ValueError` on unbalanced quotes, exactly as ``shlex.split`` does, so
+    existing callers can keep their fallbacks."""
+    return split_command_line(cmd)

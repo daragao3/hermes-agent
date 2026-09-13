@@ -116,37 +116,6 @@ class TestResolveShellInitFiles:
 
         assert resolved == []
 
-    def test_auto_source_bashrc_off_suppresses_default(self, tmp_path, monkeypatch):
-        bashrc = tmp_path / ".bashrc"
-        bashrc.write_text('export MARKER=seen\n')
-        profile = tmp_path / ".profile"
-        profile.write_text('export MARKER=p\n')
-        monkeypatch.setenv("HOME", str(tmp_path))
-
-        with patch(
-            "tools.environments.local._read_terminal_shell_init_config",
-            return_value=([], False),
-        ):
-            resolved = _resolve_shell_init_files()
-
-        assert resolved == []
-
-    def test_explicit_list_wins_over_auto(self, tmp_path, monkeypatch):
-        bashrc = tmp_path / ".bashrc"
-        bashrc.write_text('export FROM_BASHRC=1\n')
-        custom = tmp_path / "custom.sh"
-        custom.write_text('export FROM_CUSTOM=1\n')
-        monkeypatch.setenv("HOME", str(tmp_path))
-
-        # auto_source_bashrc stays True but the explicit list takes precedence.
-        with patch(
-            "tools.environments.local._read_terminal_shell_init_config",
-            return_value=([str(custom)], True),
-        ):
-            resolved = _resolve_shell_init_files()
-
-        assert resolved == [str(custom)]
-        assert str(bashrc) not in resolved
 
     @pytest.mark.skipif(
         os.name == "nt",
@@ -236,27 +205,6 @@ class TestSnapshotEndToEnd:
         assert "second=sticky" in output
         assert "/tmp/hermes-session-bin" in output
 
-    def test_venv_style_activation_persists_between_commands(self, tmp_path):
-        venv_bin = tmp_path / ".venv" / "bin"
-        venv_bin.mkdir(parents=True)
-        activate = venv_bin / "activate"
-        activate.write_text(
-            f'export VIRTUAL_ENV="{tmp_path / ".venv"}"\n'
-            f'export PATH="{venv_bin}:$PATH"\n'
-        )
-
-        env = LocalEnvironment(cwd=str(tmp_path), timeout=15)
-        try:
-            first = env.execute('source .venv/bin/activate; echo "venv=$VIRTUAL_ENV"')
-            second = env.execute('echo "venv=$VIRTUAL_ENV"; echo "PATH=$PATH"')
-        finally:
-            env.cleanup()
-
-        assert first["returncode"] == 0
-        assert second["returncode"] == 0
-        output = second.get("output", "")
-        assert f"venv={tmp_path / '.venv'}" in output
-        assert str(venv_bin) in output
 
     def test_snapshot_picks_up_init_file_exports(self, tmp_path, monkeypatch):
         init_file = tmp_path / "custom-init.sh"

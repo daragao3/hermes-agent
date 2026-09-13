@@ -184,8 +184,7 @@ def _patch_extract(monkeypatch, primary, fallback, unsafe=(), policy_blocks=()):
 
     monkeypatch.setattr(web_tools, "async_is_safe_url", safe)
     monkeypatch.setattr(
-        web_tools,
-        "check_website_access",
+        "tools.website_policy.check_website_access",
         lambda url: (
             {
                 "host": "example.com",

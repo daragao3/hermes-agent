@@ -2,6 +2,10 @@
 
 ## Categories
 
+### Common patterns
+**File:** `common-patterns.md`
+**Pages:** 2
+
 ### Other
 **File:** `other.md`
 **Pages:** 15

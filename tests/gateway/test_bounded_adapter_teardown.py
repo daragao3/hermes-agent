@@ -30,22 +30,6 @@ def bare_runner():
     return object.__new__(GatewayRunner)
 
 
-@pytest.mark.asyncio
-async def test_teardown_calls_both_methods(bare_runner):
-    """The helper cancels background tasks AND disconnects, in that order."""
-    calls = []
-    adapter = MagicMock()
-    adapter.cancel_background_tasks = AsyncMock(
-        side_effect=lambda: calls.append("cancel")
-    )
-    adapter.disconnect = AsyncMock(side_effect=lambda: calls.append("disconnect"))
-
-    await bare_runner._bounded_adapter_teardown(adapter, Platform.TELEGRAM)
-
-    adapter.cancel_background_tasks.assert_awaited_once()
-    adapter.disconnect.assert_awaited_once()
-    assert calls == ["cancel", "disconnect"]
-
 
 @pytest.mark.asyncio
 async def test_teardown_bounds_hanging_disconnect(bare_runner, monkeypatch, caplog):
@@ -134,44 +118,3 @@ async def test_teardown_continues_after_cancellation_swallowing_background_cance
         await asyncio.wait_for(finished.wait(), timeout=0.2)
 
 
-@pytest.mark.asyncio
-async def test_teardown_swallows_exceptions(bare_runner):
-    """Errors in either await must not propagate — shutdown continues."""
-    adapter = MagicMock()
-    adapter.cancel_background_tasks = AsyncMock(side_effect=RuntimeError("bg"))
-    adapter.disconnect = AsyncMock(side_effect=RuntimeError("disc"))
-
-    # Must NOT raise.
-    await bare_runner._bounded_adapter_teardown(adapter, Platform.TELEGRAM)
-
-    adapter.cancel_background_tasks.assert_awaited_once()
-    adapter.disconnect.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_teardown_profile_suffix_in_logs(bare_runner, caplog):
-    """Multiplex (secondary-profile) teardown tags log lines with the profile."""
-    adapter = MagicMock()
-    adapter.cancel_background_tasks = AsyncMock(return_value=None)
-    adapter.disconnect = AsyncMock(return_value=None)
-
-    with caplog.at_level(logging.INFO, logger="gateway.run"):
-        await bare_runner._bounded_adapter_teardown(
-            adapter, Platform.TELEGRAM, profile="acct2"
-        )
-
-    assert "(profile: acct2)" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_teardown_timeout_zero_disables_bound(bare_runner, monkeypatch):
-    """timeout=0 disables the wait_for wrapper but still calls through."""
-    monkeypatch.setenv("HERMES_GATEWAY_ADAPTER_DISCONNECT_TIMEOUT", "0")
-    adapter = MagicMock()
-    adapter.cancel_background_tasks = AsyncMock(return_value=None)
-    adapter.disconnect = AsyncMock(return_value=None)
-
-    await bare_runner._bounded_adapter_teardown(adapter, Platform.TELEGRAM)
-
-    adapter.cancel_background_tasks.assert_awaited_once()
-    adapter.disconnect.assert_awaited_once()

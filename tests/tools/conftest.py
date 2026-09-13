@@ -8,38 +8,72 @@ depend on the registry being populated should use it explicitly or via
 ``@pytest.mark.usefixtures("web_registry_populated")``.
 """
 
-import os
 from unittest.mock import patch
 
 import pytest
 
+import os
 
-# Captured at import time, before any test patches os.name — so this is the
-# real host value ("nt" on Windows).
+
 _HOST_OS_NAME = os.name
 
 
-@pytest.hookimpl(tryfirst=True)
-def pytest_runtest_makereport(item, call):
-    """Defense-in-depth against an INTERNALERROR that aborts the whole run.
 
-    A test that patches ``os.name`` to a non-host value (e.g. "posix", to
-    exercise cross-platform code) and then fails/errors *while still patched*
-    poisons pytest's own failure formatter: ``_repr_failure_py`` calls
-    ``Path(os.getcwd())``, which raises
-    ``NotImplementedError("cannot instantiate 'PosixPath'")`` on a Windows host
-    whenever ``os.name != "nt"``. That surfaces as an INTERNALERROR and forces
-    exit code 3 instead of a clean pass/fail (see test_mcp_oauth.py).
+@pytest.fixture(autouse=True)
+def _no_host_browser_use_cli():
+    """Keep the host's browser-use/uvx install out of tests.
 
-    Restoring the host ``os.name`` here — before the report's longrepr is built
-    — keeps failure formatting from ever crashing. Returning ``None`` lets the
-    builtin makereport hook still produce the real report; the test's own
-    teardown (e.g. monkeypatch) restores the same host value afterward, so this
-    is idempotent.
+    Browser Use mode is default-on when the CLI is runnable, so a developer
+    machine with uvx on PATH would silently flip every built-in-browser test
+    into CLI mode. Pin discovery to "not installed"; tests that exercise the
+    CLI path monkeypatch ``bu_cli._find_cli`` themselves.
     """
-    if os.name != _HOST_OS_NAME:
-        os.name = _HOST_OS_NAME
-    return None
+    try:
+        import tools.browser_use_cli as bu_cli
+    except Exception:
+        yield
+        return
+    # Keep a handle to the real discovery function so TestFindCli (and any
+    # test that wants genuine PATH probing) can restore it explicitly.
+    if not hasattr(bu_cli, "_find_cli_unpatched"):
+        bu_cli._find_cli_unpatched = bu_cli._find_cli
+    with patch.object(bu_cli, "_find_cli", lambda: None):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _materialize_mcp_sdk_symbols():
+    """Materialize the lazily-imported MCP SDK before each tools test.
+
+    ``tools/mcp_tool.py`` defers the ~260ms ``mcp`` SDK import until first
+    real use (CLI startup perf). Tests in this directory patch SDK symbols
+    (``ClientSession``, ``stdio_client``, ``_MCP_HTTP_AVAILABLE``, ...) on
+    the module and expect the pre-lazy eager-import world: symbols bound,
+    availability flags reflecting the installed SDK. Ensure that state up
+    front so ``mock.patch`` sees real originals and ``_ensure_mcp_sdk()``
+    can never clobber a patched flag mid-test (it no-ops once attempted).
+    """
+    try:
+        from tools import mcp_tool
+        mcp_tool._ensure_mcp_sdk()
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_web_result_cache():
+    """Reset the web_search TTL memo between tests.
+
+    The memo is module-global state in tools/web_result_cache.py; without
+    this, a test that exercised web_search_tool leaves a cached response
+    that a later test with the same query would receive instead of its own
+    mocked provider result.
+    """
+    from tools.web_result_cache import search_memo
+    search_memo.clear()
+    yield
+    search_memo.clear()
 
 
 def register_all_web_providers():
@@ -54,8 +88,10 @@ def register_all_web_providers():
     from plugins.web.exa.provider import ExaWebSearchProvider
     from plugins.web.firecrawl.provider import FirecrawlWebSearchProvider
     from plugins.web.parallel.provider import ParallelWebSearchProvider
-    from plugins.web.searxng.provider import SearXNGWebSearchProvider
+    from plugins.web.keenable.provider import KeenableWebSearchProvider
     from plugins.web.tavily.provider import TavilyWebSearchProvider
+    from plugins.web.perplexity.provider import PerplexityWebSearchProvider
+    from plugins.web.searxng.provider import SearXNGWebSearchProvider
     from plugins.web.xai.provider import XAIWebSearchProvider
 
     _reset_for_tests()
@@ -65,8 +101,10 @@ def register_all_web_providers():
         ExaWebSearchProvider,
         FirecrawlWebSearchProvider,
         ParallelWebSearchProvider,
-        SearXNGWebSearchProvider,
+        KeenableWebSearchProvider,
         TavilyWebSearchProvider,
+        PerplexityWebSearchProvider,
+        SearXNGWebSearchProvider,
         XAIWebSearchProvider,
     ):
         register_provider(cls())
@@ -96,3 +134,30 @@ def disable_lazy_stt_install():
     """
     with patch("tools.transcription_tools._try_lazy_install_stt", return_value=False):
         yield
+
+
+# Grafted from the fork side in the 0.21.1 merge: definitions the other side
+# has and this file's base side does not.
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_makereport(item, call):
+    """Defense-in-depth against an INTERNALERROR that aborts the whole run.
+
+    A test that patches ``os.name`` to a non-host value (e.g. "posix", to
+    exercise cross-platform code) and then fails/errors *while still patched*
+    poisons pytest's own failure formatter: ``_repr_failure_py`` calls
+    ``Path(os.getcwd())``, which raises
+    ``NotImplementedError("cannot instantiate 'PosixPath'")`` on a Windows host
+    whenever ``os.name != "nt"``. That surfaces as an INTERNALERROR and forces
+    exit code 3 instead of a clean pass/fail (see test_mcp_oauth.py).
+
+    Restoring the host ``os.name`` here — before the report's longrepr is built
+    — keeps failure formatting from ever crashing. Returning ``None`` lets the
+    builtin makereport hook still produce the real report; the test's own
+    teardown (e.g. monkeypatch) restores the same host value afterward, so this
+    is idempotent.
+    """
+    if os.name != _HOST_OS_NAME:
+        os.name = _HOST_OS_NAME
+    return None
+

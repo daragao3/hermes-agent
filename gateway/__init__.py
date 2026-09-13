@@ -47,21 +47,22 @@ _LAZY_NAMES = {
     "load_gateway_config": ".config",
     "SessionContext": ".session",
     "SessionStore": ".session",
-    "SessionResetPolicy": ".session",
+    "SessionResetPolicy": ".config",  # upstream keeps it in config, not session
     "build_session_context_prompt": ".session",
     "DeliveryRouter": ".delivery",
     "DeliveryTarget": ".delivery",
 }
 
 if TYPE_CHECKING:  # pragma: no cover - type checkers only, never at runtime
-    from .config import GatewayConfig, HomeChannel, PlatformConfig, load_gateway_config
-    from .delivery import DeliveryRouter, DeliveryTarget
-    from .session import (
-        SessionContext,
+    from .config import (
+        GatewayConfig,
+        HomeChannel,
+        PlatformConfig,
         SessionResetPolicy,
-        SessionStore,
-        build_session_context_prompt,
+        load_gateway_config,
     )
+    from .delivery import DeliveryRouter, DeliveryTarget
+    from .session import SessionContext, SessionStore, build_session_context_prompt
 
 
 def __getattr__(name: str):

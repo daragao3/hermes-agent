@@ -34,9 +34,16 @@ SUBCOMMANDS_DIR = REPO_ROOT / "hermes_cli" / "subcommands"
 # The only repo-owned module a parser builder may import at module level.
 ALLOWED_SUBCOMMAND_IMPORT = "hermes_cli.subcommands._shared"
 
-# Top-level names main.py may import before the override call.  ``hermes_cli``
-# is admitted only as ``hermes_cli.subcommands.*`` (asserted separately).
-ALLOWED_PRE_OVERRIDE_ROOTS = {"hermes_bootstrap", "hermes_cli"}
+# Audited stdlib-only bootstrap modules that must run before profile resolution:
+# console suppression, fast argv/version routing, and interrupted-venv recovery.
+# They bind no profile paths at import time. Every other repo module remains
+# forbidden here; subcommand parser builders are checked separately below.
+ALLOWED_PRE_OVERRIDE_MODULES = {
+    "hermes_bootstrap",
+    "hermes_cli._subprocess_compat",
+    "hermes_cli._startup_fast",
+    "hermes_cli._early_recovery",
+}
 
 
 def _is_repo_owned(module: str) -> bool:
@@ -56,11 +63,16 @@ def _module_level_imports(tree: ast.Module, *, package: str) -> list[tuple[str, 
         elif isinstance(node, ast.ImportFrom):
             if node.module == "__future__":
                 continue
-            if node.level:  # relative import -> resolve against the package
-                out.append((f"{package}.{node.module}" if node.module else package,
-                            node.lineno))
-            elif node.module:
-                out.append((node.module, node.lineno))
+            base = (
+                f"{package}.{node.module}" if node.level and node.module
+                else package if node.level
+                else node.module
+            )
+            if base:
+                out.extend(
+                    (f"{base}.{alias.name}" if alias.name != "*" else base, node.lineno)
+                    for alias in node.names
+                )
     return out
 
 
@@ -97,11 +109,14 @@ def test_pre_override_imports_are_only_subcommand_parser_builders():
     for module, lineno in _pre_override_imports():
         if not _is_repo_owned(module):
             continue  # stdlib / third-party never reads HERMES_HOME
-        top = module.split(".", 1)[0]
-        if top not in ALLOWED_PRE_OVERRIDE_ROOTS:
-            offenders.append((module, lineno))
-        elif top == "hermes_cli" and not module.startswith("hermes_cli.subcommands"):
-            offenders.append((module, lineno))
+        if any(
+            module == allowed or module.startswith(f"{allowed}.")
+            for allowed in ALLOWED_PRE_OVERRIDE_MODULES
+        ):
+            continue
+        if module.startswith("hermes_cli.subcommands"):
+            continue
+        offenders.append((module, lineno))
 
     assert not offenders, (
         "main.py imports repo module(s) before `_apply_profile_override()`:\n  "
@@ -127,7 +142,9 @@ def test_subcommand_modules_import_nothing_heavy_at_module_level(path: Path):
     offenders = [
         (mod, lineno)
         for mod, lineno in _module_level_imports(tree, package="hermes_cli.subcommands")
-        if _is_repo_owned(mod) and mod != ALLOWED_SUBCOMMAND_IMPORT
+        if _is_repo_owned(mod)
+        and mod != ALLOWED_SUBCOMMAND_IMPORT
+        and not mod.startswith(ALLOWED_SUBCOMMAND_IMPORT + ".")
     ]
 
     assert not offenders, (

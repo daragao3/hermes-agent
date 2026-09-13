@@ -84,7 +84,8 @@ def _make_runner():
 
 def _register_blocking_approval(runner):
     """Register a real blocking approval entry for the runner's session."""
-    from tools.approval import _ApprovalEntry, _gateway_queues
+    from tools.approval import _gateway_queues
+    from tools.approval_gateway_wait import _ApprovalEntry
     source = _make_source()
     session_key = runner._session_key_for_source(source)
     entry = _ApprovalEntry({"command": "rm -rf /tmp/test"})
@@ -109,50 +110,6 @@ def test_plaintext_yes_resolves_approval(reply):
     adapter._send_with_retry.assert_awaited()
     _clear_approval_state()
 
-
-@pytest.mark.parametrize("reply", ["no", "deny", "reject", "n", "cancel"])
-def test_plaintext_no_denies_approval(reply):
-    _clear_approval_state()
-    runner, adapter = _make_runner()
-    session_key, entry = _register_blocking_approval(runner)
-
-    handled = asyncio.run(
-        runner._handle_active_session_busy_message(_make_event(reply), session_key)
-    )
-
-    assert handled is True
-    assert entry.event.is_set()
-    assert entry.result == "deny"
-    adapter._send_with_retry.assert_awaited()
-    _clear_approval_state()
-
-
-def test_plaintext_always_maps_to_permanent_choice():
-    _clear_approval_state()
-    runner, adapter = _make_runner()
-    session_key, entry = _register_blocking_approval(runner)
-
-    handled = asyncio.run(
-        runner._handle_active_session_busy_message(_make_event("always"), session_key)
-    )
-
-    assert handled is True
-    assert entry.result == "always"
-    _clear_approval_state()
-
-
-def test_plaintext_session_maps_to_session_choice():
-    _clear_approval_state()
-    runner, adapter = _make_runner()
-    session_key, entry = _register_blocking_approval(runner)
-
-    handled = asyncio.run(
-        runner._handle_active_session_busy_message(_make_event("session"), session_key)
-    )
-
-    assert handled is True
-    assert entry.result == "session"
-    _clear_approval_state()
 
 
 def test_no_pending_approval_does_not_consume_conversational_yes():

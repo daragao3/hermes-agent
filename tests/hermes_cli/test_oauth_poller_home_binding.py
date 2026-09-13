@@ -23,7 +23,9 @@ import inspect
 
 import pytest
 
-from hermes_cli import web_server
+from hermes_cli import web_server_oauth as _oauth_state
+from hermes_cli import web_server_profiles as _profiles_mod
+from hermes_cli.web_routers import oauth as _oauth_router
 
 
 @pytest.fixture()
@@ -48,17 +50,17 @@ def _resolved(path):
 def test_new_oauth_session_captures_the_request_home(homes):
     home_a, _ = homes
 
-    sid, sess = web_server._new_oauth_session("nous", "device_code")
+    sid, sess = _oauth_router._new_oauth_session("nous", "device_code")
 
     try:
         assert sess.get("hermes_home") == _resolved(home_a), (
             "the OAuth session did not capture the home it was created under, "
             "so its poller has nothing to carry and must resolve live"
         )
-        assert web_server._oauth_session_home(sid) == _resolved(home_a)
+        assert _oauth_state._oauth_session_home(sid) == _resolved(home_a)
     finally:
-        with web_server._oauth_sessions_lock:
-            web_server._oauth_sessions.pop(sid, None)
+        with _oauth_state._oauth_sessions_lock:
+            _oauth_state._oauth_sessions.pop(sid, None)
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +74,7 @@ def test_profile_scope_pins_a_captured_home_when_no_profile_is_named(homes, monk
     home_a, home_b = homes
     monkeypatch.setenv("HERMES_HOME", str(home_b))
 
-    with web_server._profile_scope(None, hermes_home=_resolved(home_a)):
+    with _profiles_mod._profile_scope(None, hermes_home=_resolved(home_a)):
         seen = _resolved(get_hermes_home())
 
     assert seen == _resolved(home_a), (
@@ -90,7 +92,7 @@ def test_profile_scope_still_resolves_live_without_a_captured_home(homes, monkey
     _, home_b = homes
     monkeypatch.setenv("HERMES_HOME", str(home_b))
 
-    with web_server._profile_scope(None):
+    with _profiles_mod._profile_scope(None):
         assert _resolved(get_hermes_home()) == _resolved(home_b)
 
 
@@ -101,9 +103,9 @@ def test_an_explicit_profile_still_wins_over_the_captured_home(homes, monkeypatc
     home_a, _ = homes
     named = tmp_path / "profiles" / "work"
     named.mkdir(parents=True)
-    monkeypatch.setattr(web_server, "_resolve_profile_dir", lambda _n: named)
+    monkeypatch.setattr(_profiles_mod, "_resolve_profile_dir", lambda _n: named)
 
-    with web_server._profile_scope("work", hermes_home=_resolved(home_a)):
+    with _profiles_mod._profile_scope("work", hermes_home=_resolved(home_a)):
         assert _resolved(get_hermes_home()) == _resolved(named)
 
 
@@ -120,7 +122,7 @@ def test_nous_poller_saves_credentials_into_the_captured_home(homes, monkeypatch
     home_a, home_b = homes
     saved_under = {}
 
-    sid, sess = web_server._new_oauth_session("nous", "device_code")
+    sid, sess = _oauth_router._new_oauth_session("nous", "device_code")
     sess.update({
         "portal_base_url": "https://portal.invalid",
         "client_id": "cid",
@@ -146,7 +148,7 @@ def test_nous_poller_saves_credentials_into_the_captured_home(homes, monkeypatch
     monkeypatch.setenv("HERMES_HOME", str(home_b))
 
     try:
-        web_server._nous_poller(sid)
+        _oauth_state._nous_poller(sid)
 
         assert sess["status"] == "approved", (
             f"poller did not complete: {sess.get('error_message')!r}"
@@ -156,8 +158,8 @@ def test_nous_poller_saves_credentials_into_the_captured_home(homes, monkeypatch
             "restored to — on a real run that is ~/.hermes/auth.json"
         )
     finally:
-        with web_server._oauth_sessions_lock:
-            web_server._oauth_sessions.pop(sid, None)
+        with _oauth_state._oauth_sessions_lock:
+            _oauth_state._oauth_sessions.pop(sid, None)
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +172,7 @@ def test_nous_poller_saves_credentials_into_the_captured_home(homes, monkeypatch
     ["_nous_poller", "_minimax_poller", "_xai_device_poller", "_codex_full_login_worker"],
 )
 def test_every_device_code_poller_carries_the_captured_home(poller):
-    src = inspect.getsource(getattr(web_server, poller))
+    src = inspect.getsource(getattr(_oauth_state, poller, None) or getattr(_oauth_router, poller))
 
     assert "_profile_scope(" in src, f"{poller} no longer scopes its auth write"
     scope_call = src[src.index("_profile_scope(") :]
@@ -180,14 +182,4 @@ def test_every_device_code_poller_carries_the_captured_home(poller):
         f"{poller} scopes its auth-store write without carrying the home "
         "captured at request time — it will resolve HERMES_HOME up to ~15 "
         "minutes later, after the request scope is gone"
-    )
-
-
-def test_the_synchronous_pkce_handler_still_resolves_live():
-    """_submit_anthropic_pkce runs inside the request — live resolve is correct."""
-    src = inspect.getsource(web_server._submit_anthropic_pkce)
-
-    assert "_profile_scope(_oauth_session_profile(session_id, profile))" in src, (
-        "the synchronous PKCE handler was changed to carry a captured home; it "
-        "runs on the request thread, where resolving live is already right"
     )

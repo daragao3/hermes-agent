@@ -19,6 +19,7 @@ re-fetch every profile.
 import pytest
 
 
+
 @pytest.fixture
 def isolated_profiles(tmp_path, monkeypatch, _isolate_hermes_home):
     from hermes_constants import get_hermes_home

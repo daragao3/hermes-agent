@@ -24,6 +24,13 @@ REPO = Path(__file__).resolve().parent.parent.parent
 DOCS = REPO / "website" / "docs"
 SKILLS_PAGES = DOCS / "user-guide" / "skills"
 
+SKILL_SOURCES = [
+    ("bundled", REPO / "skills"),
+    ("optional", REPO / "optional-skills"),
+]
+
+# Pages the user had previously hand-written in user-guide/skills/.
+# We leave these alone (they get first-class sidebar treatment separately).
 # The zh-Hans twin of SKILLS_PAGES. Generated pages are translated in place
 # under the same relative path, so pruning an English page has to prune its
 # translation too -- leaving the twin behind makes check-i18n-parity.py report
@@ -38,18 +45,9 @@ ZH_SKILLS_PAGES = (
     / "user-guide"
     / "skills"
 )
-
 # Only these subtrees of SKILLS_PAGES are generator-owned. Hand-written pages
 # live at the top level (see HAND_WRITTEN) and must never be pruned.
 GENERATED_PAGE_ROOTS = ("bundled", "optional")
-
-SKILL_SOURCES = [
-    ("bundled", REPO / "skills"),
-    ("optional", REPO / "optional-skills"),
-]
-
-# Pages the user had previously hand-written in user-guide/skills/.
-# We leave these alone (they get first-class sidebar treatment separately).
 HAND_WRITTEN = {"google-workspace.md"}
 
 
@@ -303,7 +301,7 @@ def derive_skill_meta(skill_path: Path, source_dir: Path, source_kind: str) -> d
     rel = skill_path.parent.relative_to(source_dir)
     parts = rel.parts
     if len(parts) == 1:
-        # Top-level skill (e.g. skills/dogfood/SKILL.md) -- rare
+        # Top-level skill (e.g. skills/<name>/SKILL.md with no category) -- rare
         category = parts[0]
         sub = None
         slug = parts[0]
@@ -319,9 +317,9 @@ def derive_skill_meta(skill_path: Path, source_dir: Path, source_kind: str) -> d
         "category": category,
         "sub": sub,
         "slug": slug,
-        # as_posix(), not str(): rel_path is rendered into the "Path"
-        # row and into GitHub blob URLs, both of which need forward
-        # slashes. str() yields backslashes on Windows.
+        # as_posix(), not str(): rel_path is rendered into the "Path" row and into GitHub
+        # blob URLs, both of which need forward slashes. str() yields backslashes on Windows,
+        # so every source link on the site depends on who regenerated it.
         "rel_path": rel.as_posix(),
     }
 
@@ -340,6 +338,37 @@ def page_output_path(meta: dict[str, Any]) -> Path:
         / meta["category"]
         / f"{page_id(meta)}.md"
     )
+
+
+def _truncate_on_word_boundary(text: str, limit: int) -> str:
+    """Clip `text` to at most `limit` chars, ending on a whole word.
+
+    The ellipsis counts toward the limit. Cutting at a fixed offset used to
+    slice words in half ("...reconciliation, tes..."), which reads as a bug
+    in the rendered <meta name="description"> and in search results. Back
+    off to the last space instead, then drop any dangling punctuation so the
+    ellipsis follows a word rather than a comma.
+
+    A single token longer than the budget has no boundary to back off to, so
+    it is still cut mid-word -- that is the only case where the old behaviour
+    is the best available.
+    """
+    if len(text) <= limit:
+        return text
+    clipped = text[: limit - 3]
+    # Back off only when the cut landed INSIDE a word, i.e. there is a word
+    # character on both sides of it. When either side is already whitespace
+    # we have whole words, and dropping one more shortens the text for
+    # nothing.
+    mid_word = bool(clipped) and not clipped[-1].isspace() and not text[limit - 3].isspace()
+    boundary = clipped.rfind(" ") if mid_word else -1
+    if boundary > 0:
+        clipped = clipped[:boundary]
+    # Strip whitespace, then punctuation, then whitespace AGAIN. The second
+    # pass is load-bearing: stripping a dangling dash can expose the space in
+    # front of it ("...unreal-engine) —" -> "...unreal-engine) "), and a single
+    # ordered pass leaves that space stranded before the ellipsis.
+    return clipped.rstrip().rstrip(",;:-—–").rstrip() + "..."
 
 
 def prune_orphaned_pages(
@@ -408,37 +437,6 @@ def sidebar_doc_id(meta: dict[str, Any]) -> str:
     return f"user-guide/skills/{meta['source_kind']}/{meta['category']}/{page_id(meta)}"
 
 
-def _truncate_on_word_boundary(text: str, limit: int) -> str:
-    """Clip `text` to at most `limit` chars, ending on a whole word.
-
-    The ellipsis counts toward the limit. Cutting at a fixed offset used to
-    slice words in half ("...reconciliation, tes..."), which reads as a bug
-    in the rendered <meta name="description"> and in search results. Back
-    off to the last space instead, then drop any dangling punctuation so the
-    ellipsis follows a word rather than a comma.
-
-    A single token longer than the budget has no boundary to back off to, so
-    it is still cut mid-word -- that is the only case where the old behaviour
-    is the best available.
-    """
-    if len(text) <= limit:
-        return text
-    clipped = text[: limit - 3]
-    # Back off only when the cut landed INSIDE a word, i.e. there is a word
-    # character on both sides of it. When either side is already whitespace
-    # we have whole words, and dropping one more shortens the text for
-    # nothing.
-    mid_word = bool(clipped) and not clipped[-1].isspace() and not text[limit - 3].isspace()
-    boundary = clipped.rfind(" ") if mid_word else -1
-    if boundary > 0:
-        clipped = clipped[:boundary]
-    # Strip whitespace, then punctuation, then whitespace AGAIN. The second
-    # pass is load-bearing: stripping a dangling dash can expose the space in
-    # front of it ("...unreal-engine) —" -> "...unreal-engine) "), and a single
-    # ordered pass leaves that space stranded before the ellipsis.
-    return clipped.rstrip().rstrip(",;:-—–").rstrip() + "..."
-
-
 def render_skill_page(
     meta: dict[str, Any],
     fm: dict[str, Any],
@@ -447,7 +445,7 @@ def render_skill_page(
 ) -> str:
     name = fm.get("name", meta["slug"])
     description = fm.get("description", "").strip()
-    short_desc = description.split(".")[0].strip() if description else name
+    short_desc = re.split(r"\.(?:\s|$)", description, maxsplit=1)[0].strip() if description else name
     short_desc = _truncate_on_word_boundary(short_desc, 160)
 
     # Heuristic nicer title from name
@@ -507,17 +505,14 @@ def render_skill_page(
             if skill_index is not None:
                 target_meta = skill_index.get(r)
             if target_meta is not None:
-                # Root-relative WITHOUT the `/docs` baseUrl segment.
-                # Docusaurus renders markdown links through <Link>, which
-                # calls addBaseUrl(); that prepends siteConfig.baseUrl unless
-                # the href already starts with it (useBaseUrl.js:
-                # `shouldAddBaseUrl = !url.startsWith(baseUrl)`). Writing
-                # `/docs/...` only survives because it happens to equal the
-                # `en` baseUrl -- in `zh-Hans` the baseUrl is `/docs/zh-Hans/`,
-                # the prefix no longer matches, and the link is doubled into
-                # `/docs/zh-Hans/docs/...`. Emitting the bare path lets
-                # addBaseUrl produce the right URL in every locale.
                 href = (
+                # Root-relative WITHOUT the `/docs` baseUrl segment. Docusaurus renders
+                # markdown links through <Link>, which calls addBaseUrl(); that prepends
+                # siteConfig.baseUrl unless the href ALREADY starts with it (useBaseUrl.js:
+                # `shouldAddBaseUrl = !url.startsWith(baseUrl)`). Writing `/docs/...` only
+                # survives because it happens to equal the `en` baseUrl — in `zh-Hans` the
+                # baseUrl is `/docs/zh-Hans/`, the prefix no longer matches, and the link is
+                # doubled into `/docs/zh-Hans/docs/...`. The bare path is right in every locale.
                     f"/user-guide/skills/{target_meta['source_kind']}"
                     f"/{target_meta['category']}/{page_id(target_meta)}"
                 )
@@ -867,8 +862,9 @@ def main():
         written += 1
     print(f"Wrote {written} per-skill pages under {SKILLS_PAGES}")
 
-    # Anything left under the generated subtrees that we did not just write is
-    # a page whose skill was deleted or moved.
+    # Anything left under the generated subtrees that we did not just write is a page whose
+    # skill was deleted or moved. CI regenerates before it builds, so nothing else in the
+    # pipeline can see one.
     removed = prune_orphaned_pages(entries)
     if removed:
         for path in removed:

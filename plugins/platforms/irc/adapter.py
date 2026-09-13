@@ -50,6 +50,7 @@ from gateway.platforms.base import (
     MessageType,
 )
 from gateway.config import Platform
+from gateway.platforms._shared import get_scoped_secret as _get_scoped_secret
 
 
 # ---------------------------------------------------------------------------
@@ -105,21 +106,24 @@ class IRCAdapter(BasePlatformAdapter):
 
         extra = getattr(config, "extra", {}) or {}
 
-        # Connection settings (env vars override config.yaml)
-        self.server = os.getenv("IRC_SERVER") or extra.get("server", "")
+        # The active secret scope is authoritative under multiplexing. Unscoped
+        # reads fall back to this process profile's environment through the
+        # shared helper; a scoped miss never borrows another profile's value.
+        self.server = _get_scoped_secret("IRC_SERVER") or extra.get("server", "")
         try:
-            self.port = int(os.getenv("IRC_PORT") or extra.get("port", 6697))
+            self.port = int(_get_scoped_secret("IRC_PORT") or extra.get("port", 6697))
         except (ValueError, TypeError):
             self.port = 6697
-        self.nickname = os.getenv("IRC_NICKNAME") or extra.get("nickname", "hermes-bot")
-        self.channel = os.getenv("IRC_CHANNEL") or extra.get("channel", "")
+        self.nickname = _get_scoped_secret("IRC_NICKNAME") or extra.get("nickname", "hermes-bot")
+        self.channel = _get_scoped_secret("IRC_CHANNEL") or extra.get("channel", "")
+        use_tls = _get_scoped_secret("IRC_USE_TLS")
         self.use_tls = (
-            os.getenv("IRC_USE_TLS", "").lower() in {"1", "true", "yes"}
-            if os.getenv("IRC_USE_TLS")
+            use_tls.lower() in {"1", "true", "yes"}
+            if isinstance(use_tls, str) and use_tls
             else extra.get("use_tls", True)
         )
-        self.server_password = os.getenv("IRC_SERVER_PASSWORD") or extra.get("server_password", "")
-        self.nickserv_password = os.getenv("IRC_NICKSERV_PASSWORD") or extra.get("nickserv_password", "")
+        self.server_password = _get_scoped_secret("IRC_SERVER_PASSWORD") or extra.get("server_password", "")
+        self.nickserv_password = _get_scoped_secret("IRC_NICKSERV_PASSWORD") or extra.get("nickserv_password", "")
 
         # Auth
         self.allowed_users: list = extra.get("allowed_users", [])
@@ -216,6 +220,7 @@ class IRCAdapter(BasePlatformAdapter):
         await self._send_raw(f"JOIN {self.channel}")
 
         self._mark_connected()
+        self._wire_plugin_handlers(None)
         logger.info("IRC: connected to %s:%s as %s, joined %s", self.server, self.port, self._current_nick, self.channel)
         return True
 

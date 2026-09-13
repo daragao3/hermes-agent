@@ -515,7 +515,7 @@ def test_v32_database_repairs_same_named_malformed_v33_trigger_before_advancing(
     upgraded = hermes_state.SessionDB(db_path)
     try:
         conn = upgraded._conn
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 33
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == hermes_state.SCHEMA_VERSION
         repaired_sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
             (trigger_name,),
@@ -546,15 +546,15 @@ def test_v32_v33_trigger_repair_rolls_back_before_schema_marker_on_failure(
 
     original_repair = hermes_state.SessionDB._repair_v33_sidebar_resolution_triggers
 
-    def fail_after_repair(cursor):
-        original_repair(cursor)
+    def fail_after_repair(self, cursor):
+        original_repair(self, cursor)
         cursor.execute(f'DROP TRIGGER "{trigger_name}"')
         raise RuntimeError("injected v33 repair failure")
 
     monkeypatch.setattr(
         hermes_state.SessionDB,
         "_repair_v33_sidebar_resolution_triggers",
-        staticmethod(fail_after_repair),
+        fail_after_repair,
     )
     with pytest.raises(RuntimeError, match="injected v33 repair failure"):
         hermes_state.SessionDB(db_path)
@@ -599,7 +599,7 @@ def test_v32_database_repairs_malformed_same_named_v33_ledger_before_advancing(
     try:
         assert upgraded._conn.execute(
             "SELECT version FROM schema_version"
-        ).fetchone()[0] == 33
+        ).fetchone()[0] == hermes_state.SCHEMA_VERSION
         from session_bridge.store import SessionBridgeStore
 
         assert SessionBridgeStore._sidebar_terminal_resolution_ledger_is_valid(
@@ -699,7 +699,7 @@ def test_v32_database_adds_v2_attempt_zero_ledger_preserves_rows_and_reopens(
     upgraded = hermes_state.SessionDB(db_path)
     try:
         conn = upgraded._conn
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 33
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == hermes_state.SCHEMA_VERSION
         assert tuple(
             conn.execute(
                 "SELECT id, source, started_at FROM sessions WHERE id = ?",
@@ -744,7 +744,7 @@ def test_v32_database_adds_v2_attempt_zero_ledger_preserves_rows_and_reopens(
             for row in reopened._conn.execute(
                 "SELECT version FROM schema_version"
             ).fetchall()
-        ] == [(33,)]
+        ] == [(hermes_state.SCHEMA_VERSION,)]
         assert reopened._conn.execute(
             "SELECT content FROM messages WHERE id = ?",
             (message_id,),
@@ -2056,8 +2056,10 @@ def test_bridge_schema_failure_rolls_back_ddl_and_keeps_v20(tmp_path, monkeypatc
     CREATE TABLE session_bridge_state (key TEXT PRIMARY KEY);
     THIS IS DELIBERATELY INVALID SQL;
     """
+    import hermes_state_schema
+
     monkeypatch.setattr(
-        hermes_state,
+        hermes_state_schema,
         "BRIDGE_SCHEMA_SQL",
         injected_schema,
         raising=False,

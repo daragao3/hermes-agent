@@ -25,11 +25,12 @@ from pathlib import Path
 
 import pytest
 
-import hermes_state
+import hermes_state_fts
+from hermes_state_repair import _db_opens_cleanly
 from hermes_state import (
     SessionDB,
     StateDbProbeTimeout,
-    _db_opens_cleanly,
+
     _fts_integrity_reason,
     _is_interrupted_error,
     check_state_db_fts_integrity,
@@ -249,7 +250,7 @@ def test_check_fts_integrity_converts_an_abort_to_a_timeout(tmp_path, monkeypatc
         fired = threading.Event()
         fired.set()
         monkeypatch.setattr(
-            hermes_state,
+            hermes_state_fts,
             "_arm_probe_deadline",
             lambda conn, timeout: (lambda: None, fired),
         )

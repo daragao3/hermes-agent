@@ -78,7 +78,9 @@ def test_thread_panic_hook_writes_under_the_live_home():
         exc_traceback=None,
         thread=SimpleNamespace(name="probe-worker"),
     )
-    server._thread_panic_hook(args)
+    # 0.21.1 consolidates thread and main panic handling through
+    # _record_crash; invoke the installed runtime hook, not the retired wrapper.
+    server.threading.excepthook(args)
 
     written = _expected_log()
     assert written.exists(), "thread panic hook wrote outside the per-test home"
@@ -103,9 +105,14 @@ def test_turn_dispatcher_crash_write_uses_the_seam():
     module constant.
     """
     source = Path(server.__file__).read_text(encoding="utf-8")
-    assert "os.path.dirname(_CRASH_LOG)" not in source
-    assert 'open(_CRASH_LOG, "a"' not in source
-    assert source.count("_crash_log_path()") >= 6
+    prompt_turn = Path(server.__file__).with_name("prompt_turn.py").read_text(encoding="utf-8")
+    combined = source + prompt_turn
+    assert "os.path.dirname(_CRASH_LOG)" not in combined
+    assert 'open(_CRASH_LOG, "a"' not in combined
+    # Main/thread crashes share _record_crash in server.py; turn-dispatcher
+    # crashes live in prompt_turn.py. Every owner resolves through the seam.
+    assert "crash_log = _crash_log_path()" in prompt_turn
+    assert source.count("_crash_log_path()") >= 3
 
 
 def test_entry_shares_the_resolver_rather_than_a_stale_string():

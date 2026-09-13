@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from hermes_state import SessionDB, detect_session_driver
+from hermes_state import SessionDB
+from hermes_state_sessions import detect_session_driver
 
 
 @pytest.fixture

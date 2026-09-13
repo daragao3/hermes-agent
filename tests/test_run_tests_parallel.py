@@ -962,3 +962,128 @@ def test_basetemp_root_is_reclaimed_when_the_runner_dies_without_finishing(
         f"basetemp root {root} survived a run that exited without reaching "
         "_cleanup_basetemps() -- this is the %TEMP% leak"
     )
+
+
+# Grafted from the upstream side in the 0.21.1 merge: definitions the other side
+# has and this file's base side does not.
+
+@pytest.mark.skipif(sys.platform != "win32", reason="drive-letter paths")
+def test_drive_letter_colon_is_not_a_path_separator(tmp_path: Path) -> None:
+    """An absolute ``--paths`` value stays one root on Windows.
+
+    The naive split used to produce a phantom relative root ``'C'`` (the
+    drive letter) alongside the real path; discovery only worked by the
+    accident of ``repo_root / '\\rooted\\rest'`` re-anchoring onto the
+    repo's drive.
+    """
+    probe_dir = _make_probe_dir(tmp_path)
+    proc = _run_runner(probe_dir, "-q")
+    assert proc.returncode == 0, proc.stdout
+    drive = str(probe_dir)[0]
+    assert f"['{drive}', " not in proc.stdout, (
+        f"drive letter split off as a phantom root:\n{proc.stdout}"
+    )
+    assert "Discovered 1 test files" in proc.stdout, proc.stdout
+
+def test_explicit_k_wins_over_node_id_inference(tmp_path: Path) -> None:
+    """A caller's own ``-k`` is not overridden by the node-id translation."""
+    probe_dir = _make_probe_dir(tmp_path)
+    target = probe_dir / "test_flagprobe.py"
+    repo_root = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(
+        [sys.executable, str(repo_root / "scripts" / "run_tests_parallel.py"),
+         f"{target}::test_alpha", "-k", "test_beta",
+         "-j", "1", "--file-timeout", "30"],
+        cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, timeout=60,
+    )
+    # -k test_beta wins: one test ran, and it wasn't filtered to nothing.
+    assert proc.returncode == 0, proc.stdout
+    assert "1 tests passed" in proc.stdout
+
+def test_multiple_absolute_paths_split_on_pathsep(tmp_path: Path) -> None:
+    """``--paths`` accepts ``os.pathsep``-joined absolute paths.
+
+    On Windows the absolute paths contain drive-letter colons, so a naive
+    ``split(":")`` shreds them into phantom roots and only one (or neither)
+    of the two probe dirs would be discovered.
+    """
+    dir_a = _make_probe_dir(tmp_path)
+    dir_b = tmp_path / "probe_b"
+    dir_b.mkdir()
+    (dir_b / "test_flagprobe_b.py").write_text(
+        "def test_gamma():\n    assert True\n"
+    )
+    repo_root = Path(__file__).resolve().parent.parent
+    runner = repo_root / "scripts" / "run_tests_parallel.py"
+    proc = subprocess.run(
+        [sys.executable, str(runner),
+         "--paths", os.pathsep.join([str(dir_a), str(dir_b)]),
+         "-j", "1", "--file-timeout", "30", "-q"],
+        cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        encoding="utf-8", errors="replace", timeout=60,
+    )
+    assert proc.returncode == 0, proc.stdout
+    assert "Discovered 2 test files" in proc.stdout, proc.stdout
+
+def test_node_id_selector_runs_the_named_test(tmp_path: Path) -> None:
+    """``file.py::test_alpha`` runs that test instead of discovering nothing."""
+    probe_dir = _make_probe_dir(tmp_path)
+    target = probe_dir / "test_flagprobe.py"
+    repo_root = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(
+        [sys.executable, str(repo_root / "scripts" / "run_tests_parallel.py"),
+         f"{target}::test_alpha", "-j", "1", "--file-timeout", "30"],
+        cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stdout
+    assert "No test files to run" not in proc.stdout
+    assert "node id" in proc.stdout  # explains the translation
+    # Ran exactly the one selected test, not both in the file.
+    assert "1 tests passed" in proc.stdout
+
+def test_progress_output_tolerates_legacy_stdout_encoding(tmp_path: Path) -> None:
+    """Progress glyphs must not crash the runner on non-UTF-8 consoles."""
+    repo_root = Path(__file__).resolve().parent.parent
+    runner = repo_root / "scripts" / "run_tests_parallel.py"
+
+    probe_dir = tmp_path / "probe"
+    probe_dir.mkdir()
+    probe = probe_dir / "test_probe_smoke.py"
+    probe.write_text("def test_smoke():\n    assert True\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "cp1252:strict"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(runner),
+            "--paths",
+            str(probe_dir),
+            "-j",
+            "1",
+            "--file-timeout",
+            "30",
+        ],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 0, proc.stdout
+    assert "UnicodeEncodeError" not in proc.stdout
+    assert "1 tests passed" in proc.stdout
+
+def test_zero_collected_across_run_fails_and_says_so(tmp_path: Path) -> None:
+    """A -k that matches nothing must FAIL, not report a green summary."""
+    probe_dir = _make_probe_dir(tmp_path)
+    proc = _run_runner(probe_dir, "-k", "zzz_matches_nothing")
+    assert proc.returncode == 1, proc.stdout
+    assert "NO TESTS RAN" in proc.stdout
+    assert "NOT a pass" in proc.stdout
+

@@ -46,8 +46,6 @@ def _long_markdown_message(n_lines: int = 200) -> str:
 @pytest.fixture
 def captured_sends(monkeypatch):
     """Intercept every chunk at the Bot API seam and record its text."""
-    from tools import send_message_tool
-
     sent_texts = []
 
     async def _fake_retry(bot, *, attempts=3, **kwargs):
@@ -59,7 +57,7 @@ def captured_sends(monkeypatch):
         return _Msg()
 
     monkeypatch.setattr(
-        send_message_tool, "_send_telegram_message_with_retry", _fake_retry
+        "tools.send_message_senders._send_telegram_message_with_retry", _fake_retry
     )
     return sent_texts
 

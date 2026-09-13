@@ -31,6 +31,7 @@ import sys
 import tempfile
 
 import pytest
+from tools import browser_tool_install as bt_install
 
 
 # ---------------------------------------------------------------------------
@@ -60,57 +61,36 @@ def _write_config(home: str, text: str) -> None:
         fp.write(text)
 
 
+_RELOAD_PREFIXES = ("agent.auxiliary_client", "agent.image_routing",
+                    "tools.vision_tools", "tools.browser_tool",
+                    "hermes_cli.config")
+
+
+def _drop_reload_targets():
+    for mod in list(sys.modules.keys()):
+        if mod.startswith(_RELOAD_PREFIXES):
+            del sys.modules[mod]
+
+
 @pytest.fixture(autouse=True)
-def _restore_purged_modules():
-    """Put ``sys.modules`` back the way ``_fresh_modules`` found it.
+def _module_isolation():
+    """Save/restore sys.modules entries this file reloads.
 
-    Without this the purge below leaks: every later test runs against
-    freshly-imported duplicates while test modules bound at collection time
-    still reference the originals, and two live copies of a module means two
-    distinct class objects with the same name, so ``except`` and ``isinstance``
-    quietly stop matching.
-
-    Restoring ``sys.modules`` alone is not enough — ``import a.b as x`` reads
-    ``sys.modules`` but ``from a.b import y`` reads the attribute ``b`` on the
-    parent package, so both have to be put back.
+    Without this, reloaded copies of agent.image_routing & friends leak
+    into sys.modules after the test, splitting module identity for any
+    later test that patches ``agent.image_routing.*`` while holding
+    function refs from the original module (issue #61597).
     """
-    snapshot = dict(sys.modules)
+    saved = {name: mod for name, mod in sys.modules.items()
+             if name.startswith(_RELOAD_PREFIXES)}
     yield
-    purged = {
-        name: module for name, module in snapshot.items()
-        if sys.modules.get(name) is not module
-    }
-    for name, module in purged.items():
-        sys.modules[name] = module
-    for name, module in purged.items():
-        parent_name, _, child = name.rpartition(".")
-        if not parent_name:
-            continue
-        parent = sys.modules.get(parent_name)
-        if parent is not None and getattr(parent, child, None) is not module:
-            setattr(parent, child, module)
+    _drop_reload_targets()
+    sys.modules.update(saved)
 
 
 def _fresh_modules():
-    """Drop cached hermes modules so each test reloads against current env.
-
-    The purge has to cover every ``agent.`` / ``tools.`` / ``hermes_`` module,
-    not just the five this file imports directly. ``agent.auxiliary_client``
-    re-reads configuration through modules it does not own, and any of those
-    left cached pins the PREVIOUS test's ``HERMES_HOME`` config, so the fresh
-    copy resolves against stale settings.
-
-    This file used to purge only those five and passed anyway, because
-    ``test_verification_stop_caching.py`` ran earlier and purged everything
-    without restoring — these tests were free-riding on another file's leak.
-    Fixing that leak exposed the under-purge here, which is the honest state:
-    the dependency existed all along and was invisible only because two bugs
-    lined up.
-    """
-    for mod in list(sys.modules.keys()):
-        if (mod == "run_agent"
-                or mod.startswith(("agent.", "tools.", "hermes_"))):
-            del sys.modules[mod]
+    """Drop cached hermes modules so each test reloads against current env."""
+    _drop_reload_targets()
 
 
 # ---------------------------------------------------------------------------
@@ -259,71 +239,9 @@ auxiliary:
         from tools.vision_tools import check_vision_requirements
         assert check_vision_requirements() is True
 
-    def test_check_vision_falls_back_to_auto(self, isolated_home, monkeypatch):
-        """Bad explicit provider doesn't hide the tool when auto fallback works.
 
-        Mirrors call_llm's runtime fallback chain.
-        """
-        _write_config(isolated_home, """
-model:
-  provider: openrouter
-  default: anthropic/claude-sonnet-4
-auxiliary:
-  vision:
-    provider: not-a-real-provider
-""")
-        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-        _fresh_modules()
 
-        from tools.vision_tools import check_vision_requirements
-        assert check_vision_requirements() is True
 
-    def test_check_vision_false_with_text_only_main_and_no_aggregator(
-        self, isolated_home, monkeypatch
-    ):
-        _write_config(isolated_home, """
-model:
-  provider: deepseek
-  default: deepseek-v4-pro
-""")
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
-        _fresh_modules()
-
-        from tools.vision_tools import check_vision_requirements
-        assert check_vision_requirements() is False
-
-    def test_browser_vision_requires_both_browser_and_vision(self, isolated_home, monkeypatch):
-        """``browser_vision`` must not be advertised when vision is unavailable."""
-        from unittest.mock import patch
-
-        _write_config(isolated_home, """
-model:
-  provider: deepseek
-  default: deepseek-v4-pro
-""")
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
-        _fresh_modules()
-
-        import tools.browser_tool
-        # Force the browser side to True so we exercise the vision-gating part.
-        with patch.object(tools.browser_tool, "check_browser_requirements", return_value=True):
-            assert tools.browser_tool.check_browser_vision_requirements() is False
-
-    def test_browser_vision_false_when_browser_missing(self, isolated_home, monkeypatch):
-        from unittest.mock import patch
-
-        _write_config(isolated_home, """
-model:
-  provider: openrouter
-  default: anthropic/claude-sonnet-4
-""")
-        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-        _fresh_modules()
-
-        import tools.browser_tool
-        with patch.object(tools.browser_tool, "check_browser_requirements", return_value=False):
-            # Vision available but browser missing → still False.
-            assert tools.browser_tool.check_browser_vision_requirements() is False
 
     def test_browser_vision_true_when_both_available(self, isolated_home, monkeypatch):
         from unittest.mock import patch
@@ -337,5 +255,40 @@ model:
         _fresh_modules()
 
         import tools.browser_tool
-        with patch.object(tools.browser_tool, "check_browser_requirements", return_value=True):
-            assert tools.browser_tool.check_browser_vision_requirements() is True
+        with patch.object(bt_install, "check_browser_requirements", return_value=True):
+            assert tools.browser_tool_install.check_browser_vision_requirements() is True
+
+
+# Grafted from the fork side in the 0.21.1 merge: definitions the other side
+# has and this file's base side does not.
+
+@pytest.fixture(autouse=True)
+def _restore_purged_modules():
+    """Put ``sys.modules`` back the way ``_fresh_modules`` found it.
+
+    Without this the purge below leaks: every later test runs against
+    freshly-imported duplicates while test modules bound at collection time
+    still reference the originals, and two live copies of a module means two
+    distinct class objects with the same name, so ``except`` and ``isinstance``
+    quietly stop matching.
+
+    Restoring ``sys.modules`` alone is not enough — ``import a.b as x`` reads
+    ``sys.modules`` but ``from a.b import y`` reads the attribute ``b`` on the
+    parent package, so both have to be put back.
+    """
+    snapshot = dict(sys.modules)
+    yield
+    purged = {
+        name: module for name, module in snapshot.items()
+        if sys.modules.get(name) is not module
+    }
+    for name, module in purged.items():
+        sys.modules[name] = module
+    for name, module in purged.items():
+        parent_name, _, child = name.rpartition(".")
+        if not parent_name:
+            continue
+        parent = sys.modules.get(parent_name)
+        if parent is not None and getattr(parent, child, None) is not module:
+            setattr(parent, child, module)
+

@@ -10,6 +10,11 @@ def _point_ledger(monkeypatch, tmp_path):
     import cron.executions as executions
 
     monkeypatch.setattr(executions, "EXECUTIONS_FILE", tmp_path / "cron" / "executions.db")
+    # _connect() is deliberately a raw connection; production initializes the
+    # ledger through _transaction(). These tests manually INSERT below, so
+    # initialize once through the same production boundary first.
+    with executions._transaction():
+        pass
     return executions
 
 
@@ -290,6 +295,9 @@ def test_cross_profile_census_reads_default_and_every_named_profile(
     default_ledger = root / "cron" / "executions.db"
     tracker_ledger = root / "profiles" / "tracker" / "cron" / "executions.db"
     for ledger, suffix in ((default_ledger, "default"), (tracker_ledger, "tracker")):
+        # Production profile directories already exist; this synthetic layout
+        # must create that invariant before the cron-only helper creates its DB.
+        ledger.parent.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(executions, "EXECUTIONS_FILE", ledger)
         executions.create_execution(f"job-{suffix}", source="builtin")
     monkeypatch.setattr(executions, "EXECUTIONS_FILE", tracker_ledger)

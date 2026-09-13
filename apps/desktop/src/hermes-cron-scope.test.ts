@@ -8,6 +8,7 @@ import {
   getCronJobs,
   pauseCronJob,
   resumeCronJob,
+  setApiRequestConnection,
   setApiRequestProfile,
   triggerCronJob,
   updateCronJob
@@ -29,6 +30,7 @@ describe('cron helpers are profile-scoped', () => {
 
   afterEach(() => {
     setApiRequestProfile(null)
+    setApiRequestConnection(null)
     delete (window as { hermesDesktop?: unknown }).hermesDesktop
   })
 
@@ -80,6 +82,37 @@ describe('cron helpers are profile-scoped', () => {
     expect(api.mock.calls.at(-1)?.[0].path).toBe('/api/cron/jobs/job-1/runs?limit=5')
   })
 
+  it('omits connectionId when the local pool serves the active gateway', () => {
+    void getCronJobRuns('job-1')
+    expect(api.mock.calls.at(-1)?.[0]).not.toHaveProperty('connectionId')
+  })
+
+  // Contract: with a registered gateway connection active, cron run sessions
+  // live in THAT gateway's state.db — not in any local profile's. Every cron
+  // helper must tag the owning connection so the main process routes the REST
+  // call to the same backend the job list (and its runs) actually live on.
+  // Without it, run history read a local state.db with zero cron rows and
+  // every job showed "No runs yet" (#87882).
+  it('forwards the active registry connection to every cron helper', () => {
+    setApiRequestProfile('research')
+    setApiRequestConnection('gw-tailscale')
+
+    void getCronJobs('research')
+    void getCronJob('job-1')
+    void getCronJobRuns('job-1')
+    void createCronJob({ name: 'nightly', prompt: 'run', schedule: '0 3 * * *' } as never)
+    void updateCronJob('job-1', { enabled: false } as never)
+    void pauseCronJob('job-1')
+    void resumeCronJob('job-1')
+    void triggerCronJob('job-1')
+    void deleteCronJob('job-1')
+
+    for (const call of api.mock.calls) {
+      expect((call[0] as { connectionId?: string }).connectionId).toBe('gw-tailscale')
+      expect(call[0].profile).toBe('research')
+    }
+  })
+
   it('list accepts an explicit ?profile= for endpoint-level filtering', () => {
     // profileScoped() routes the backend process; the list endpoint ALSO
     // aggregates 'all' by default, so callers pass an explicit profile to
@@ -94,50 +127,11 @@ describe('cron helpers are profile-scoped', () => {
     void getCronJobs()
     expect(api.mock.calls.at(-1)?.[0].path).toBe('/api/cron/jobs')
   })
-})
 
-// A partial cross-profile failure and an empty crontab are different facts.
-// The endpoint reports the first as { jobs, errors }; the client must preserve
-// that distinction rather than handing callers a bare row list, and must still
-// work against a gateway that predates the shape (the packaged renderer and the
-// gateway are deployed independently, so either can be the older half).
-describe('getCronJobs normalizes the list response', () => {
-  const api = vi.fn()
-
-  beforeEach(() => {
-    ;(window as { hermesDesktop?: unknown }).hermesDesktop = { api }
-    api.mockReset()
-  })
-
-  afterEach(() => {
-    setApiRequestProfile(null)
-    delete (window as { hermesDesktop?: unknown }).hermesDesktop
-  })
-
-  it('carries per-profile read failures through to the caller', async () => {
-    api.mockResolvedValue({
-      jobs: [{ enabled: true, id: 'job-1' }],
-      errors: [{ profile: 'matcher', error: 'no such table: sessions' }]
-    })
-
-    const listing = await getCronJobs('all')
-
-    expect(listing.jobs).toHaveLength(1)
-    expect(listing.errors).toEqual([{ profile: 'matcher', error: 'no such table: sessions' }])
-  })
-
-  it('reports no errors when every profile answered', async () => {
-    api.mockResolvedValue({ jobs: [{ enabled: true, id: 'job-1' }], errors: [] })
-
-    expect((await getCronJobs('all')).errors).toEqual([])
-  })
-
-  it('accepts a pre-{jobs,errors} backend answering with a bare array', async () => {
-    api.mockResolvedValue([{ enabled: true, id: 'job-1' }])
-
-    const listing = await getCronJobs('all')
-
-    expect(listing.jobs).toHaveLength(1)
-    expect(listing.errors).toEqual([])
+  it("sends NO scope for the 'default' sentinel (unselected profile is not the root profile)", () => {
+    // Measured 2026-09-07 on a box whose backend runs as a NAMED profile:
+    // ?profile=default -> 0 jobs, ?profile=main -> 85, no scope -> 85.
+    void getCronJobs('default')
+    expect(api.mock.calls.at(-1)?.[0].path).toBe('/api/cron/jobs')
   })
 })

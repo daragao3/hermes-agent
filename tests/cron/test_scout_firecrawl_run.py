@@ -264,7 +264,9 @@ def _patch_execution_pipeline(monkeypatch, emitter):
         lambda *a, **k: {"id": "execution-1"},
     )
     monkeypatch.setattr(scheduler, "finish_execution", lambda *a, **k: None)
-    monkeypatch.setattr(scheduler, "mark_execution_running", lambda *a, **k: None)
+    # Must be non-None: 0.21.1 reads a None return as "lost execution ownership before start"
+    # and returns True without running the job (every other cron test stubs it as {}).
+    monkeypatch.setattr(scheduler, "mark_execution_running", lambda *a, **k: {})
     monkeypatch.setattr(scheduler, "claim_dispatch", lambda *a, **k: True)
     monkeypatch.setattr(scheduler, "save_job_output", lambda *a, **k: "output")
     monkeypatch.setattr(scheduler, "_deliver_result", lambda *a, **k: None)
@@ -272,6 +274,13 @@ def _patch_execution_pipeline(monkeypatch, emitter):
     monkeypatch.setattr(scheduler, "_teardown_cron_agent", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "_try_register_in_flight", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "_release_in_flight", lambda *a, **k: None)
+    # 0.21.1 hands the job to a detached worker before running it in-process; without this the
+    # handoff claims the run and run_one_job returns True having executed nothing.
+    monkeypatch.setattr(scheduler, "_launch_external_cron_worker", lambda *a, **k: False)
+    # tick() claims each due job before running it (0.21.1 moved the CAS in front of the
+    # run path); without a stub the claim fails against the empty store and the job is
+    # skipped, so nothing runs and no events are emitted.
+    monkeypatch.setattr(scheduler, "claim_job_for_fire", lambda *a, **k: True)
 
 
 def test_run_one_job_installs_only_for_scout_and_resets(monkeypatch):
@@ -349,7 +358,7 @@ def test_tick_installs_and_finalizes_same_scout_lifecycle(monkeypatch):
     monkeypatch.setattr(
         scheduler, "get_due_and_skipped_jobs", lambda: ([_scout_job()], [])
     )
-    monkeypatch.setattr(scheduler, "advance_next_run", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "advance_next_runs", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "load_config", lambda: {})
     monkeypatch.setattr(scheduler, "_sweep_mcp_orphans", lambda: None, raising=False)
 
@@ -375,10 +384,14 @@ def test_tick_abandoned_scout_emits_credits_once_without_late_iteration(monkeypa
     monkeypatch.setattr(
         scheduler, "get_due_and_skipped_jobs", lambda: ([_scout_job()], [])
     )
-    monkeypatch.setattr(scheduler, "advance_next_run", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "advance_next_runs", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "load_config", lambda: {})
     monkeypatch.setattr(scheduler, "_sweep_mcp_orphans", lambda: None, raising=False)
-    monkeypatch.setattr(scheduler, "_job_timeout_seconds", lambda job: 0.01)
+    # 0.2s, not 0.01s: the deadline owner reads the firecrawl state out of the box the WORKER
+    # THREAD fills in, and a 10ms deadline can beat Windows thread start + install -- the owner
+    # then finds an empty box and emits nothing, while the worker's own finalize is correctly
+    # suppressed because the deadline elapsed. Still far below the in-run sleep.
+    monkeypatch.setattr(scheduler, "_job_timeout_seconds", lambda job: 0.2)
     worker_finished = threading.Event()
     worker_context_after_reset = []
     original_reset = scheduler._reset_scout_firecrawl_run
@@ -393,12 +406,12 @@ def test_tick_abandoned_scout_emits_credits_once_without_late_iteration(monkeypa
     def fake_run_job(job, **kwargs):
         assert state.current_firecrawl_run() is not None
         state.record_firecrawl_credits_exhausted()
-        time.sleep(0.05)
+        time.sleep(1.0)
         return True, "output", "plain response", None
 
     monkeypatch.setattr(scheduler, "run_job", fake_run_job)
     assert scheduler.tick(verbose=False, sync=True) == 0
-    assert worker_finished.wait(1)
+    assert worker_finished.wait(5)
 
     assert state.current_firecrawl_run() is None
     assert worker_context_after_reset == [None]
@@ -424,14 +437,18 @@ def test_tick_abandoned_scout_finalizes_credits_recorded_after_deadline(monkeypa
     monkeypatch.setattr(
         scheduler, "get_due_and_skipped_jobs", lambda: ([_scout_job()], [])
     )
-    monkeypatch.setattr(scheduler, "advance_next_run", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "advance_next_runs", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "load_config", lambda: {})
     monkeypatch.setattr(scheduler, "_sweep_mcp_orphans", lambda: None, raising=False)
-    monkeypatch.setattr(scheduler, "_job_timeout_seconds", lambda job: 0.01)
+    # 0.2s, not 0.01s: the deadline owner reads the firecrawl state out of the box the WORKER
+    # THREAD fills in, and a 10ms deadline can beat Windows thread start + install -- the owner
+    # then finds an empty box and emits nothing, while the worker's own finalize is correctly
+    # suppressed because the deadline elapsed. Still far below the in-run sleep.
+    monkeypatch.setattr(scheduler, "_job_timeout_seconds", lambda job: 0.2)
     worker_finished = threading.Event()
 
     def fake_run_job(job, **kwargs):
-        time.sleep(0.03)
+        time.sleep(1.0)
         state.record_firecrawl_credits_exhausted()
         return False, "output", "", "credits"
 
@@ -445,7 +462,7 @@ def test_tick_abandoned_scout_finalizes_credits_recorded_after_deadline(monkeypa
     monkeypatch.setattr(scheduler, "_reset_scout_firecrawl_run", recording_reset)
 
     assert scheduler.tick(verbose=False, sync=True) == 0
-    assert worker_finished.wait(1)
+    assert worker_finished.wait(5)
     credits = [
         call for call in emitter.bus.calls
         if call["event_type"] == EventType.AGENT_ITERATION

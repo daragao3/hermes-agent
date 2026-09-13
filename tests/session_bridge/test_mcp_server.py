@@ -10,11 +10,11 @@ from pathlib import Path
 import re
 import subprocess
 import time
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, Mapping
 
 import pytest
-from mcp.shared.version import LATEST_PROTOCOL_VERSION
+from mcp.types import LATEST_PROTOCOL_VERSION
 from starlette.testclient import TestClient
 
 from hermes_state import SessionDB
@@ -809,7 +809,9 @@ def test_health_is_minimal_and_mcp_auth_is_constant_surface(db: SessionDB) -> No
     assert wrong.status_code == 401
     assert double_mounted.status_code == 404
     assert missing.json() == wrong.json() == {"error": "unauthorized"}
-    assert initialized["result"]["protocolVersion"] == LATEST_PROTOCOL_VERSION
+    # MCP 2 has two eras: an initialize request opens the legacy handshake
+    # protocol, while 2026-07-28 uses per-request envelopes and no initialize.
+    assert initialized["result"]["protocolVersion"] == "2025-11-25"
     assert coordinator.started == 1
     assert coordinator.stopped == 1
 
@@ -3012,7 +3014,10 @@ def test_session_status_adds_evidence_from_one_sequential_composite_observation(
     monkeypatch.setattr(store, "sidebar_hydration_status", hydration_status)
     monkeypatch.setattr(store, "claude_visibility_status", visibility_status)
     timestamps = iter(float(value) for value in range(100, 113))
-    monkeypatch.setattr("session_bridge.mcp_server.time.time", lambda: next(timestamps))
+    monkeypatch.setattr(
+        "session_bridge.mcp_server.time",
+        SimpleNamespace(time=lambda: next(timestamps)),
+    )
     app = create_app(
         catalog=catalog,
         coordinator=coordinator,

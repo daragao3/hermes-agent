@@ -129,7 +129,7 @@ class TestSchedulerHonoursStopRequest:
         def _interrupt(msg):
             released.set()
 
-        def _run_conversation(prompt):
+        def _run_conversation(prompt, **_kw):
             # Filed from INSIDE the run, i.e. after the scheduler cleared any
             # stale request at session start -- the way an operator's request
             # arrives while the agent is mid-task.
@@ -171,7 +171,7 @@ class TestSchedulerHonoursStopRequest:
         agent = MagicMock()
         agent.get_activity_summary.side_effect = _active_summary
 
-        def _run_conversation(prompt):
+        def _run_conversation(prompt, **_kw):
             request_stop("stopjob", session_id="cron_stopjob_19990101_000000", by="x")
             time.sleep(0.4)  # several 0.05s polls see the mismatched request
             return {"final_response": "ok"}
@@ -282,7 +282,7 @@ class TestStopKillsInflightToolSubprocess:
         agent = MagicMock()
         agent.get_activity_summary.side_effect = _active_summary
 
-        def _run_conversation(prompt):
+        def _run_conversation(prompt, **_kw):
             state["result"] = env.execute(_sleeper_command(pid_file), timeout=120)
             return {"final_response": "should not be trusted"}
 
@@ -389,7 +389,7 @@ class TestStopKillsInflightToolSubprocess:
             released = threading.Event()
             agent.interrupt.side_effect = lambda msg: released.set()
 
-            def _run_conversation(prompt):
+            def _run_conversation(prompt, **_kw):
                 request_stop("stopjob", by="test")
                 released.wait(timeout=10)
                 return {"final_response": "x"}
@@ -489,7 +489,7 @@ class TestStopCancelsInflightToolCall:
         agent = MagicMock()
         agent.get_activity_summary.side_effect = _active_summary
 
-        def _run_conversation(prompt):
+        def _run_conversation(prompt, **_kw):
             state["tid"] = threading.current_thread().ident
             state["result"] = reg.dispatch("fake_publish_batch", {})
             state["returned_at"] = time.monotonic()
@@ -584,7 +584,7 @@ class TestStopCancelsInflightToolCall:
             released = threading.Event()
             agent.interrupt.side_effect = lambda msg: released.set()
 
-            def _run_conversation(prompt):
+            def _run_conversation(prompt, **_kw):
                 request_stop("stopjob", by="test")
                 released.wait(timeout=10)
                 return {"final_response": "x"}

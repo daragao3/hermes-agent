@@ -49,112 +49,66 @@ hermes setup --portal     # 全新安装：Nous OAuth + 将 Nous 设为提供商
 hermes model              # 将推理提供商切换为 Nous Portal——随后 Hermes 会询问是否为所有工具打开网关
 ```
 
-```bash
-hermes tools              # 按工具启用网关——为任意工具选择 “Nous Subscription”
-```
+选择工具类别（Web、Browser、Image Generation、TTS），再将提供商选为 **Nous Subscription**。这会把该类别的选择键写为 `nous`（例如 `image_gen.provider: nous`）。
 
 `hermes setup --portal` 与 `hermes model` 是“一次搞定”的路径：登录一次，并可选择把所有工具都切到网关。`hermes tools` 则是“按需点单”的路径——只打开你想要的工具，一次一个。
 
-**你不必先登录。** 使用 `hermes tools` 时，Nous 托管的后端（Web search、Image、Video、TTS、Browser）始终会列出，即使你从未登录过 Nous Portal。选中其中一个后，如果你尚未认证，Hermes 会当场执行 Portal 登录——无需事先运行 `hermes model`。如果你的 Nous OAuth 已经生效，选中该后端会立即启用，不再有额外提示。这条路径只会为你完成登录并打开你选中的那一个工具——它**不会**切换你的推理提供商，也**不会**提示你为其他所有工具启用网关。
-
-随时查看当前生效的配置：
-
-```bash
-hermes portal info        # Portal 认证状态 + Tool Gateway 路由摘要
-hermes portal tools       # 网关工具目录及每个工具的当前路由
-hermes status             # 完整系统状态（Tool Gateway 是其中一节）
-```
-
-`hermes portal info` 会显示类似这样的小节：
-
-```
-◆ Nous Tool Gateway
-  Nous Portal     ✓ managed tools available
-  Web tools       ✓ active via Nous subscription
-  Image gen       ✓ active via Nous subscription
-  TTS             ✓ active via Nous subscription
-  Browser         ○ active via Browser Use key
-```
-
-标记为 “active via Nous subscription” 的工具即经网关路由，其余则使用你自己的 Key。
-
-## 资格
-
-Tool Gateway 是**付费订阅**功能。免费档的 Nous 账号可以使用 Portal 进行推理，但不含托管工具——请 [升级你的套餐](https://portal.nousresearch.com/manage-subscription) 以解锁网关。
-
-部分账号还可享有**免费工具额度池**——一小份托管工具用量，可在没有付费订阅的情况下覆盖网关工具调用。当存在免费额度池时，网关会将其显示出来，并在首次使用时给出设置提示，你可以选择加入并立即开始使用托管工具。
-
-## 自由组合
-
-网关是按工具生效的。你可以只为需要的部分打开：
-
-- **所有工具都走 Nous** —— 最省事；一份订阅，全部搞定。
-- **网页与文生图走网关，TTS 自备** —— 保留你自己的 ElevenLabs 音色，其余交给 Nous。
-- **只为没有 Key 的能力启用网关** —— “我已经付费买了 Browserbase，但不想再开一个 Firecrawl 账号”，完全可行。
-
-随时通过以下命令切换任意工具：
-
-```bash
-hermes tools          # 各工具类别的交互式选择器
-```
-
-选择工具，并将提供商选为 **Nous Subscription**（或任意你偏好的直连提供商）。无需编辑配置文件。如果你还没有登录 Nous Portal，选择 **Nous Subscription** 会就地触发 Portal 登录——不需要先通过 `hermes model` 完成认证。
-
-## 使用单个图像模型
-
-文生图默认使用 FLUX 2 Klein 9B 以追求速度。可在调用时向 `image_generate` 工具传入模型 ID 来逐次覆盖：
-
-| 模型 | ID | 适用场景 |
-|---|---|---|
-| FLUX 2 Klein 9B | `fal-ai/flux-2/klein/9b` | 快速，良好的默认选择 |
-| FLUX 2 Pro | `fal-ai/flux-2-pro` | 更高保真度的 FLUX |
-| Z-Image Turbo | `fal-ai/z-image/turbo` | 风格化，速度快 |
-| Nano Banana Pro | `fal-ai/nano-banana-pro` | Google Gemini 3 Pro Image |
-| GPT Image 1.5 | `fal-ai/gpt-image-1.5` | OpenAI 图像生成，文本+图像 |
-| GPT Image 2 | `fal-ai/gpt-image-2` | OpenAI 最新版 |
-| Ideogram V3 | `fal-ai/ideogram/v3` | 提示词遵循度强 + 排版出色 |
-| Recraft V4 Pro | `fal-ai/recraft/v4/pro/text-to-image` | 矢量风格，平面设计 |
-| Qwen Image | `fal-ai/qwen-image` | 阿里多模态 |
-
-模型集合会不断演进——`hermes tools` → Image Generation 中显示的是当前的实时列表。
-
----
-
-## 配置参考
-
-大多数用户完全不需要碰这一节——`hermes model` 与 `hermes tools` 已经以交互方式覆盖了所有工作流。本节面向直接编写 config.yaml 或脚本化部署的场景。
-
-### 按工具的 `use_gateway` 开关
-
-每个工具的配置块都接受一个 `use_gateway` 布尔值：
+每个工具类别只有一个选择键，选 **Nous Subscription** 即写入 `nous`：
 
 ```yaml
 web:
-  backend: firecrawl
-  use_gateway: true
+  backend: nous          # 网页搜索/抓取走 Tool Gateway
 
 image_gen:
-  use_gateway: true
+  provider: nous
 
 tts:
-  provider: openai
-  use_gateway: true
+  provider: nous
+
+stt:
+  provider: nous
 
 browser:
-  cloud_provider: browser-use
-  use_gateway: true
+  cloud_provider: nous
 ```
 
 优先级：`use_gateway: true` 会强制走 Nous，无论 `.env` 中是否还有直连 Key。`use_gateway: false`（或未设置）时，若有直连 Key 则优先使用，仅在完全没有直连凭据时才回退到网关。
 
-### 关闭网关
+当某工具类别的选择键为 `nous` 时，运行时会把 API 调用路由到 Nous Tool Gateway，而不是使用直连 Key：
+
+1. **网页工具** — `web_search` / `web_extract` 走网关的 Firecrawl 端点  
+2. **文生图** — `image_generate` 走网关的 FAL 端点  
+3. **TTS** — `text_to_speech` 走网关的 OpenAI Audio 端点  
+4. **浏览器** — `browser_navigate` 等走网关的 Browser Use 端点  
+
+网关使用 Nous Portal 凭据认证（在 `hermes model` 完成后写入 `~/.hermes/auth.json`）。
+
+### 优先级
+
+运行时**始终使用已保存的选择**，凭据是否存在不会影响路由：
+
+- **选择为 `nous`** → 走网关，即使 `.env` 里仍有直连 Key（例如 `FAL_KEY` 会被忽略）
+- **选择为具体厂商**（如 `fal`、`firecrawl`）→ 直连；若对应 Key 缺失则报错并提示运行 `hermes tools`，**不会**静默回退到网关
+- **从未配置过的类别** → 按可用凭据自动检测（行为不变）；但一旦存在选择，仅往 `.env` 加 Key 不会改变路由
+
+（旧版的 `use_gateway` 布尔键已废弃：不再写入，读取时 `use_gateway: true` 等同于 `nous`。请改用 `hermes tools` 选择提供商。）
+
+## 切回直连 Key
+
+对单个工具停用网关：
+
+```bash
+hermes tools    # 选择该工具 → 选直连提供商
+```
+
+或在配置中把选择键改回具体厂商：
 
 ```yaml
 web:
-  use_gateway: false   # Hermes 此时会使用 .env 中的 FIRECRAWL_API_KEY
+  backend: firecrawl  # 此时使用 .env 中的 FIRECRAWL_API_KEY
 ```
 
-当你在 `hermes tools` 中选择非网关提供商时，该标志会被自动清除，因此通常无需手动处理。
+在 `hermes tools` 中选择非网关提供商时，选择键会被改写为该厂商名（旧的 `use_gateway` 键若存在会被一并移除），避免配置自相矛盾。
 
 ### 自建网关（进阶）
 
@@ -173,7 +127,11 @@ FIRECRAWL_GATEWAY_URL=https://...         # 单独覆盖某一个端点
 
 ### 它能配合 Telegram / Discord / 其他消息网关使用吗？
 
-可以。Tool Gateway 作用于工具执行层，而非 CLI。任何能调用工具的入口——CLI、Telegram、Discord、Slack、IRC、Teams、API 服务器等——都会透明地受益于它。
+不需要。类别选择为 **Nous Subscription**（`nous`）时，运行时会忽略该类别的直连 Key；Key 仍保留在 `.env`。之后在 `hermes tools` 里改回直连提供商，Key 即恢复生效。
+
+### 能否部分工具走网关、部分走直连？
+
+可以。选择按工具类别独立配置。例如：网页与文生图选 Nous Subscription，TTS 用 ElevenLabs，浏览器用 Browserbase。
 
 ### 订阅到期会怎样？
 

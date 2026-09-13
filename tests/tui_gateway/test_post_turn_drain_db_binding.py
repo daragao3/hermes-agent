@@ -172,18 +172,22 @@ def test_the_capture_precedes_the_per_turn_home_override():
     poller captured — and the two share a cross-consumer delivery claim.
     """
     src = inspect.getsource(server._run_prompt_submit)
+    followups = inspect.getsource(server._run_post_turn_followups)
 
-    assert "_drain_post_turn_notifications(" in src, (
-        "the turn thread no longer calls the extracted drain"
+    assert "_run_post_turn_followups(" in src
+    followup_call = src[src.index("_run_post_turn_followups(") :]
+    followup_call = followup_call[: followup_call.index(")") + 1]
+    assert "db_path=turn_db_path" in followup_call, (
+        "the turn thread does not carry its captured DB into followups"
     )
-    drain_call = src[src.index("_drain_post_turn_notifications(") :]
-    drain_call = drain_call[: drain_call.index(")") + 1]
-    assert "db_path=" in drain_call, (
-        "the turn thread calls the drain without carrying a captured db path"
+    assert "_drain_post_turn_notifications(" in followups
+    assert "db_path=db_path" in followups, (
+        "followups drop the carried DB before the drain"
     )
 
-    capture_idx = src.index("_db_path")
-    override_idx = src.index("set_hermes_home_override")
+    run_body = src[src.index("    def run():") :]
+    capture_idx = run_body.index("_delegation_db_path")
+    override_idx = run_body.index("prepared = _prepare_turn_input")
     assert capture_idx < override_idx, (
         "the db path is captured AFTER the per-turn HERMES_HOME override is "
         "installed, so it binds the resumed profile's home instead of the "

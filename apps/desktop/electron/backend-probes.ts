@@ -19,14 +19,10 @@
  * sentinel, which is exactly what we want when nothing pre-existing
  * actually works.
  *
- * Both probes are deliberately forgiving:
- *   - 15s timeout with one retry on timeout only. `hermes --version`
- *     measures 2.4-2.9s warm and 4.5s+ under boot-time CPU storms
- *     (login-storm boots with a dozen startup tasks competing), so the
- *     old 5s deadline flaked the PATH rung on perfectly healthy
- *     installs and dumped users into the bootstrap installer. A
- *     genuinely broken shim exits non-zero quickly and still fails the
- *     rung on the first attempt -- only ETIMEDOUT earns the retry.
+ * Both probes are deliberately fast and forgiving:
+ *   - default 15s timeout (5s was too short on cold Windows disks / AV;
+ *     issue #61764 death-loop) with HERMES_PROBE_TIMEOUT_MS override
+ *   - one automatic retry after a timeout before declaring the runtime dead
  *   - stdio ignored (we only care about exit code; stdout/stderr are
  *     not surfaced to the user, just to recentHermesLog for forensics
  *     via the caller's catch block if it chooses)
@@ -39,36 +35,80 @@
 
 import { execFileSync } from 'node:child_process'
 
-const PROBE_TIMEOUT_MS = 15000
-const PROBE_TIMEOUT_RETRIES = 1
+/** Default probe budget. 5s false-negativeed healthy Windows cold starts (#61764). */
+const DEFAULT_PROBE_TIMEOUT_MS = 15_000
 
-// Narrower shape than `typeof execFileSync` (which is a heavily overloaded
-// signature TS won't match a plain 3-arg test double against). Both real
-// callers and the test seam only ever call it the one way: (command, args,
-// options) -> ignored return value, throws on failure.
-type ExecFileSyncLike = (command: string, args: readonly string[], options?: unknown) => unknown
+/**
+ * Resolve the backend probe timeout (ms).
+ * Honours HERMES_PROBE_TIMEOUT_MS when it parses as a positive integer.
+ */
+function resolveProbeTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.HERMES_PROBE_TIMEOUT_MS
 
-// spawnSync surfaces a timeout kill as an error with code ETIMEDOUT (the
-// child never got to exit on its own); a real exit lands in err.status and
-// a missing binary in code ENOENT. Only the timeout is ambiguous about the
-// candidate's health, so only the timeout is worth a second attempt.
-function isProbeTimeout(err): boolean {
-  return Boolean(err) && (err.code === 'ETIMEDOUT' || err.errno === 'ETIMEDOUT')
+  if (raw == null || raw === '') {
+    return DEFAULT_PROBE_TIMEOUT_MS
+  }
+
+  const n = Number.parseInt(String(raw), 10)
+
+  if (!Number.isFinite(n) || n <= 0) {
+    return DEFAULT_PROBE_TIMEOUT_MS
+  }
+
+  // Clamp absurd values (ms) so a typo can't hang startup forever.
+  return Math.min(n, 120_000)
 }
 
-function runProbe(exec: ExecFileSyncLike, command: string, args: string[], options: unknown): boolean {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      exec(command, args, options)
+const PROBE_TIMEOUT_MS = resolveProbeTimeoutMs()
 
-      return true
-    } catch (err) {
-      if (isProbeTimeout(err) && attempt < PROBE_TIMEOUT_RETRIES) {
-        continue
-      }
+function isTimeoutError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') {
+    return false
+  }
 
-      return false
+  const e = err as { code?: string; killed?: boolean; signal?: string }
+
+  if (e.killed === true) {
+    return true
+  }
+
+  if (e.code === 'ETIMEDOUT') {
+    return true
+  }
+
+  // Node marks timed-out execFileSync with SIGTERM on some platforms.
+  if (e.signal === 'SIGTERM') {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Run execFileSync; on timeout only, retry once before failing.
+ * Non-timeout failures (ENOENT, non-zero exit) fail immediately.
+ */
+function execProbeSync(
+  command: string,
+  args: string[],
+  options: {
+    cwd?: string
+    env?: NodeJS.ProcessEnv
+    stdio: 'ignore'
+    timeout: number
+    shell?: boolean
+    windowsHide?: boolean
+  }
+): void {
+  try {
+    execFileSync(command, args, options)
+  } catch (err) {
+    if (!isTimeoutError(err)) {
+      throw err
     }
+
+    // One cold-cache / AV miss should not force hermes-setup --update (#61764).
+    execFileSync(command, args, options)
   }
 }
 
@@ -99,23 +139,25 @@ function hermesRuntimeImportProbe() {
  *
  * @param {string} pythonPath - Absolute path to a python.exe / python.
  * @param {object} [opts.env] - Additional environment for the probe.
- * @param {Function} [opts._execFileSync] - Test seam.
  * @returns {boolean}
  */
-function canImportHermesCli(
-  pythonPath: string,
-  opts: { env?: Record<string, string>; _execFileSync?: ExecFileSyncLike } = {}
-) {
+function canImportHermesCli(pythonPath: string, opts: { env?: Record<string, string> } = {}) {
   if (!pythonPath) {
     return false
   }
 
-  return runProbe(opts._execFileSync || execFileSync, pythonPath, ['-c', hermesRuntimeImportProbe()], {
-    env: { ...process.env, ...(opts.env || {}) },
-    stdio: 'ignore',
-    timeout: PROBE_TIMEOUT_MS,
-    windowsHide: true
-  })
+  try {
+    execProbeSync(pythonPath, ['-c', hermesRuntimeImportProbe()], {
+      env: { ...process.env, ...(opts.env || {}) },
+      stdio: 'ignore',
+      timeout: PROBE_TIMEOUT_MS,
+      windowsHide: true
+    })
+
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -136,20 +178,44 @@ function canImportHermesCli(
  *   .cmd/.bat shims on Windows execFileSync needs shell:true to find
  *   the cmd interpreter; mirrors the same flag isCommandScript() drives
  *   in resolveHermesBackend.
- * @param {Function} [opts._execFileSync] - Test seam.
  * @returns {boolean}
  */
-function verifyHermesCli(hermesCommand: string, opts?: { shell?: boolean; _execFileSync?: ExecFileSyncLike }) {
+/**
+ * An explicit desktop backend command is a deployment contract, not a PATH
+ * discovery candidate. In particular, the Nix desktop wrapper points this at
+ * its immutable, matching Hermes package; it must never fall through to the
+ * mutable install-script bootstrap path if a best-effort probe is slow.
+ */
+function shouldTrustHermesOverride(hermesOverride?: string) {
+  return typeof hermesOverride === 'string' && hermesOverride.trim().length > 0
+}
+
+function verifyHermesCli(hermesCommand: string, opts?: { shell?: boolean }) {
   if (!hermesCommand) {
     return false
   }
 
-  return runProbe(opts?._execFileSync || execFileSync, hermesCommand, ['--version'], {
-    stdio: 'ignore',
-    timeout: PROBE_TIMEOUT_MS,
-    shell: Boolean(opts?.shell),
-    windowsHide: true
-  })
+  try {
+    execProbeSync(hermesCommand, ['--version'], {
+      stdio: 'ignore',
+      timeout: PROBE_TIMEOUT_MS,
+      shell: Boolean(opts?.shell),
+      windowsHide: true
+    })
+
+    return true
+  } catch {
+    return false
+  }
 }
 
-export { canImportHermesCli, hermesRuntimeImportProbe, PROBE_TIMEOUT_MS, verifyHermesCli }
+export {
+  canImportHermesCli,
+  DEFAULT_PROBE_TIMEOUT_MS,
+  execProbeSync,
+  hermesRuntimeImportProbe,
+  PROBE_TIMEOUT_MS,
+  resolveProbeTimeoutMs,
+  shouldTrustHermesOverride,
+  verifyHermesCli
+}

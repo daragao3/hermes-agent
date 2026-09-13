@@ -25,6 +25,9 @@ import time
 
 import pytest
 
+import types
+
+
 # A guaranteed-foreign PID: one that is owned by the system, is never in
 # this test's subtree, and — crucially — ACTUALLY EXISTS on the platform
 # under test.
@@ -486,15 +489,6 @@ def test_kill_own_subtree_passes_through():
         assert p.returncode in {-signal.SIGTERM, 128 + int(signal.SIGTERM)}
 
 
-def test_subprocess_pkill_with_unrelated_pattern_passes_through():
-    """``pkill -f some-unrelated-pattern`` (no hermes/python) is fine."""
-    # We don't actually run pkill — just verify the guard would let it
-    # through by inspecting the matcher. Re-implementing the check here
-    # would duplicate the guard; instead spawn a noop to confirm no raise.
-    # Use 'true' so it succeeds quickly.
-    r = subprocess.run(["true"], capture_output=True)
-    assert r.returncode == 0
-
 
 def test_windows_taskkill_on_an_unrelated_pid_passes_through():
     """Widening the killer match must not block a plain pid-targeted taskkill.
@@ -512,11 +506,6 @@ def test_windows_taskkill_on_an_unrelated_pid_passes_through():
             ["C:\\guard-probe-no-such-dir\\taskkill.exe", "/PID", "4242", "/T", "/F"]
         )
 
-
-def test_normal_subprocess_run_passes_through():
-    """Plain non-systemctl subprocess.run should work normally."""
-    r = subprocess.run(["echo", "hello"], capture_output=True, text=True)
-    assert r.stdout.strip() == "hello"
 
 
 # ──────────────────── package installs ─────────────────────────
@@ -1162,3 +1151,78 @@ def test_real_provider_auth_probe_marker_restores_the_probe(monkeypatch):
     assert result is not None and result["id"] == "global", (
         "the real_provider_auth_probe marker did not restore the real probe"
     )
+
+
+# Grafted from the upstream side in the 0.21.1 merge: definitions the other side
+# has and this file's base side does not.
+
+def _live_system_guard_is_active() -> bool:
+    """True iff tests/conftest.py's ``_live_system_guard`` has patched os.kill.
+
+    The guard replaces ``os.kill`` with a plain Python function; the raw,
+    unguarded primitive is a C builtin (``types.BuiltinFunctionType``). If
+    ``os.kill`` is still the builtin, the guard never loaded and every kill
+    primitive in this file would fire for real.
+    """
+    return not isinstance(os.kill, types.BuiltinFunctionType)
+
+@pytest.fixture(autouse=True)
+def _refuse_to_fire_live_weapons(request):
+    """Fail closed: refuse to run a canary test unless the guard is active.
+
+    Tests genuinely marked ``@pytest.mark.live_system_guard_bypass`` opt out
+    (they run the raw primitive deliberately and harmlessly, e.g. a signal-0
+    liveness probe of our own PID), matching the guard's own bypass contract.
+    """
+    if request.node.get_closest_marker("live_system_guard_bypass"):
+        yield
+        return
+    if not _live_system_guard_is_active():
+        pytest.fail(
+            "REFUSING TO RUN: the live-system guard from tests/conftest.py is "
+            "not active in this interpreter (os.kill is still the raw C "
+            "builtin). This canary file executes real kill primitives — "
+            "os.kill(-1, SIGTERM), os.killpg, pkill -f python — and relies on "
+            "the guard to intercept them; unguarded, they SIGTERM every process "
+            "the current user owns. This usually means the file was collected "
+            "without its home tests/conftest.py (note: a test*.py copy glob "
+            "does NOT match conftest.py). See issue #68311.",
+            pytrace=False,
+        )
+    yield
+
+def test_fail_closed_probe_classifies_raw_builtin_as_unguarded():
+    """The probe's discriminator, exercised against real objects: a raw C
+    builtin the guard never touches (``os.getpid``) is exactly what an
+    unguarded ``os.kill`` looks like and must read as 'guard not active', while
+    the loaded guard's ``os.kill`` is a plain Python function."""
+    assert isinstance(os.getpid, types.BuiltinFunctionType)
+    assert not isinstance(os.kill, types.BuiltinFunctionType)
+
+def test_fail_closed_probe_reports_guard_active():
+    """In the real suite the guard is loaded, so the probe reports active and
+    ``_refuse_to_fire_live_weapons`` stays out of the way (no false positives
+    that would wedge CI)."""
+    assert _live_system_guard_is_active() is True
+
+def test_subprocess_popen_real_gateway_restart_blocked():
+    """``python -m hermes_cli.main gateway restart`` is a detached child that
+    inherits the pytest-tmp HERMES_HOME, resolves the developer's real
+    ``hermes-gateway`` unit, and outlives the test (39 six-day orphans squatted
+    the webhook port, 2026-09-03). Blocked at the spawn primitive."""
+    with pytest.raises(RuntimeError, match="live-system guard"):
+        subprocess.Popen(
+            [sys.executable, "-m", "hermes_cli.main", "gateway", "restart"],
+            start_new_session=True,
+        )
+
+def test_subprocess_run_gateway_status_passes_through():
+    """Only lifecycle verbs are blocked: ``gateway status`` (and every other
+    read-only subcommand) must still spawn — via the canonical matcher, not an
+    argv substring."""
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; print(sys.argv[1:])", "-m", "hermes_cli.main", "gateway", "status"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+

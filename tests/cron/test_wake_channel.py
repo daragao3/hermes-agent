@@ -279,7 +279,7 @@ class TestSchedulerIntegration:
         advanced = []
         monkeypatch.setattr(scheduler, "load_jobs",
                             lambda: [{"id": "j1", "name": "a", "enabled": True}])
-        monkeypatch.setattr(scheduler, "advance_next_run", lambda jid: advanced.append(jid))
+        monkeypatch.setattr(scheduler, "advance_next_runs", lambda jid: advanced.append(jid))
 
         scheduler._collect_woken_jobs(exclude_ids=set())
 
@@ -306,9 +306,17 @@ class TestTickExecutesWokenJobs:
                             lambda j, **k: (ran.append(j["id"]), (True, "", "", None))[1])
         monkeypatch.setattr(scheduler, "mark_job_run", lambda *a, **k: None)
         monkeypatch.setattr(scheduler, "save_job_output", lambda *a, **k: None)
-        monkeypatch.setattr(scheduler, "advance_next_run", lambda *a, **k: None)
+        monkeypatch.setattr(scheduler, "advance_next_runs", lambda *a, **k: None)
         monkeypatch.setattr(scheduler, "_deliver_result", lambda *a, **k: (True, None))
         monkeypatch.setattr(scheduler, "_running_job_ids", set())
+        # 0.21.1 put a durable claim + execution ledger in front of the run path; the woken job
+        # never reaches run_job without them. A None from mark_execution_running reads as "lost
+        # ownership before start", and the detached-worker handoff would claim the fire outright.
+        monkeypatch.setattr(scheduler, "claim_job_for_fire", lambda *a, **k: True)
+        monkeypatch.setattr(scheduler, "create_execution", lambda *a, **k: {"id": "execution-1"})
+        monkeypatch.setattr(scheduler, "mark_execution_running", lambda *a, **k: {})
+        monkeypatch.setattr(scheduler, "finish_execution", lambda *a, **k: None)
+        monkeypatch.setattr(scheduler, "_launch_external_cron_worker", lambda *a, **k: False)
 
         wake_channel.request_wake("j1", caller="test", reason="score_request")
         scheduler.tick(verbose=False, sync=True)

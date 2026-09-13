@@ -125,7 +125,7 @@ ln -sf "$PWD/venv/bin/hermes" "$PREFIX/bin/hermes"
 ### 6. 验证安装
 
 ```bash
-hermes version
+hermes --version
 hermes doctor
 ```
 

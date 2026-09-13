@@ -57,6 +57,7 @@ import argparse
 import atexit
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -534,31 +535,103 @@ def _cleanup_basetemps() -> None:
             )
 
 
+# Host-OS gating (see the ``_OS_MARKS`` block in tests/conftest.py): tests
+# marked for another host are collected and SKIPPED by the conftest hook —
+# this runner never executes them, by construction. The summary calls that
+# out explicitly so a local run isn't misread as covering macOS/Windows
+# behaviour, and names the CI lane where those tests actually execute.
+_OS_MARKERS = {
+    "linux_only": ("linux", "the main Linux CI lane"),
+    "macos_only": ("darwin", "the tests-os CI lane (macos-latest)"),
+    "windows_only": ("win32", "the tests-os CI lane (windows-latest)"),
+}
+
+def _split_pathspec(value: str) -> List[str]:
+    """Split a separator-joined path list (``--paths``/``--files``/
+    ``HERMES_TEST_PATHS``) into individual paths.
+
+    POSIX: ``:``-separated, as documented.
+
+    Windows: ``;`` (``os.pathsep``) and ``:`` are both accepted as
+    separators, but a ``:`` that forms a drive letter (``C:\\...`` or
+    ``C:/...``) stays glued to its path — a naive ``split(":")`` turns
+    ``C:\\repo\\tests`` into ``['C', '\\repo\\tests']``, where the bogus
+    ``C`` becomes a phantom discovery root and the rooted remainder only
+    resolves by accident of ``Path.__truediv__`` re-anchoring it onto
+    ``repo_root``'s drive.
+    """
+    if sys.platform != "win32":
+        return [p for p in value.split(":") if p.strip()]
+    parts: List[str] = []
+    for chunk in value.split(";"):
+        raw = chunk.split(":")
+        i = 0
+        while i < len(raw):
+            part = raw[i]
+            if (
+                len(part) == 1
+                and part.isalpha()
+                and i + 1 < len(raw)
+                and raw[i + 1][:1] in ("\\", "/")
+            ):
+                part = f"{part}:{raw[i + 1]}"
+                i += 1
+            parts.append(part)
+            i += 1
+    return [p for p in parts if p.strip()]
+
+def _off_host_marker_files(files: List[Path]) -> dict[str, int]:
+    """Count discovered files referencing each marker for an OS we are not on.
+
+    Whole-word text match, same approach as scripts/ci/list_os_marked_tests.py:
+    over-counting a prose mention is harmless here (the note is informational);
+    what matters is never reporting 0 while gated tests exist.
+    """
+    off_host = {
+        marker: re.compile(rf"\b{marker}\b")
+        for marker, (host_prefix, _) in _OS_MARKERS.items()
+        if not sys.platform.startswith(host_prefix)
+    }
+    counts = {marker: 0 for marker in off_host}
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for marker, pattern in off_host.items():
+            if pattern.search(text):
+                counts[marker] += 1
+    return {marker: n for marker, n in counts.items() if n}
+
+def _make_stdio_glyph_safe() -> None:
+    """Keep status glyphs from killing the runner on narrow console encodings.
+
+    On native Windows, piped or legacy-console stdio defaults to a locale
+    codec (usually cp1252) that cannot encode the ✓/✗ progress glyphs — the
+    first per-file status line then dies with UnicodeEncodeError before a
+    single test result is reported. Declare the runner's own output UTF-8
+    (what CI and every modern terminal already are), with errors="replace"
+    as the can't-crash backstop; where the encoding can't be changed, fall
+    back to errors="replace" alone so glyphs degrade to "?" instead of
+    killing the run. On already-UTF-8 stdio this is a no-op.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            try:
+                reconfigure(errors="replace")
+            except Exception:
+                pass
+
 def _split_file_list(value: str) -> List[str]:
-    """Split a colon-separated ``--files`` value without splitting drive roots."""
-    files: List[str] = []
-    entry_start = 0
-
-    for index, char in enumerate(value):
-        if char != ":":
-            continue
-        is_windows_drive = (
-            index == entry_start + 1
-            and value[entry_start].isalpha()
-            and index + 1 < len(value)
-            and value[index + 1] in ("/", "\\")
-        )
-        if is_windows_drive:
-            continue
-        entry = value[entry_start:index]
-        if entry.strip():
-            files.append(entry)
-        entry_start = index + 1
-
-    entry = value[entry_start:]
-    if entry.strip():
-        files.append(entry)
-    return files
+    """Split a separator-joined ``--files`` value. Kept as a name because a test imports it;
+    the implementation is :func:`_split_pathspec`, which handles the same Windows drive-letter
+    case and additionally accepts ``os.pathsep``."""
+    return _split_pathspec(value)
 
 
 def _approximately_count_tests(
@@ -802,7 +875,10 @@ def _spawn_pytest(
         cwd=repo_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
+        # encoding/errors explicitly: on Windows text mode otherwise decodes the child's
+        # output with the locale codec (cp1252 here), and one non-ASCII byte in a traceback
+        # kills the reader thread and leaves stdout None.
+        text=True, encoding="utf-8", errors="replace",
         env=os.environ,
         # POSIX: place the child at the head of its own process group so
         # _kill_tree can SIGKILL the group atomically.
@@ -849,9 +925,11 @@ def _spawn_pytest(
         output +=  "\n"
 
     if rc == 5:
-        # No tests collected — every test in the file was filtered out.
-        # Treat as a pass; surface info in a slightly distinct status
-        # so the operator can spot it.
+        # No tests collected in THIS file — legitimate per-file: a platform-gated or
+        # fully-marker-filtered file (e.g. a win32-only suite on Linux) collects nothing and
+        # must not fail the suite. Tolerated here; the RUN-level guard in main() still fails
+        # when NOTHING was collected across every file, so a broken invocation (a venv
+        # without pytest, a -k that matches nothing) cannot report green.
         rc = 0
     summary = _parse_pytest_summary(output)
     subproc_wall = time.monotonic() - subproc_start
@@ -1021,7 +1099,7 @@ def _load_durations(repo_root: Path) -> dict[str, float]:
     if not path.is_file():
         return {}
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         print("[ERROR] Failed to load json durations file! {e}")
         return {}
@@ -1043,7 +1121,7 @@ def _save_durations(
         key = _format_file(f, repo_root)
         data[key] = round(t, 3)
     path = repo_root / _DURATIONS_FILE
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _compute_lpt_slices(
@@ -1209,6 +1287,9 @@ def _split_argv(argv: List[str]) -> "tuple[List[str], List[str]]":
 
 
 def main() -> int:
+    # FIRST: on Windows a cp1252 stdout cannot encode the progress glyphs, and the
+    # very first per-file status line would die before any result is reported.
+    _make_stdio_glyph_safe()
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1366,7 +1447,7 @@ def main() -> int:
         if args.paths_positional:
             roots = [repo_root / p for p in args.paths_positional]
         else:
-            roots = [repo_root / p for p in args.paths.split(":") if p]
+            roots = [repo_root / p for p in _split_pathspec(args.paths)]
 
         if args.include_integration:
             # Caller takes responsibility — typically used via explicit -k filter.
@@ -1436,10 +1517,16 @@ def main() -> int:
     fail_count = 0
     tests_passed = 0
     tests_failed = 0
+    tests_skipped = 0
+    # EVERY collected outcome, not just pass/fail: a legitimately all-skipped
+    # (platform-gated) file reports "2 skipped" and must NOT trip the nothing-ran guard,
+    # whereas a file that died before collection reports nothing at all and must.
+    tests_collected = 0
     lock = threading.Lock()
 
     def _on_done(file: Path, started_at: float, fut: "Future[Tuple[Path, int, str, dict[str, int], float]]") -> None:
         nonlocal files_done, tests_done, pass_count, fail_count, tests_passed, tests_failed
+        nonlocal tests_skipped, tests_collected
         n_tests = test_counts.get(file, 0)
         try:
             fpath, rc, output, summary, subproc_wall = fut.result()
@@ -1463,6 +1550,11 @@ def main() -> int:
             # Accumulate test-level counts from parsed summary.
             tests_passed += summary.get("passed", 0)
             tests_failed += summary.get("failed", 0)
+            tests_skipped += summary.get("skipped", 0)
+            tests_collected += sum(
+                summary.get(k, 0)
+                for k in ("passed", "failed", "skipped", "errors", "xfailed", "xpassed")
+            )
             file_times.append((fpath, subproc_wall))
             if rc == 0:
                 pass_count += 1
@@ -1503,7 +1595,41 @@ def main() -> int:
     elapsed = time.monotonic() - started
     print()
     pct = min(100, (tests_done / approx_total_tests * 100)) if approx_total_tests else 0
-    print(f"=== Summary: {len(files)} files, {tests_passed} tests passed, {tests_failed} failed ({pct:.0f}% complete) in {elapsed:.1f}s ({args.jobs} workers) ===")
+    skipped_note = f", {tests_skipped} skipped" if tests_skipped else ""
+    print(f"=== Summary: {len(files)} files, {tests_passed} tests passed, {tests_failed} failed{skipped_note} ({pct:.0f}% complete) in {elapsed:.1f}s ({args.jobs} workers) ===")
+
+    # Host-OS gating note: tests marked for another OS were SKIPPED by the conftest hook, not
+    # run. Say so explicitly — a green local run proves nothing about the off-host tests, and
+    # the reader should know where they DO run rather than misreading skips as coverage.
+    off_host = _off_host_marker_files(files)
+    if off_host:
+        print()
+        for marker, n in sorted(off_host.items()):
+            _, lane = _OS_MARKERS[marker]
+            print(
+                f"  note: {marker} tests (in {n} file{'s' if n != 1 else ''}) were "
+                f"SKIPPED on this host ({sys.platform}); they run on {lane}."
+            )
+
+    # Zero tests collected across the WHOLE run is NOT a pass. Per-file rc=5 is deliberately
+    # tolerated (platform-gated files), but if NOTHING ran anywhere the invocation itself was
+    # broken — a venv without pytest, a -k/-m filter that matched nothing, or collection erroring
+    # everywhere. The summary line above reads green at a glance ("0 failed ... 100% complete"),
+    # which has been misread as a successful verification, so say it plainly AND fail the exit
+    # code.
+    no_tests_ran_at_all = bool(files) and tests_collected == 0
+    if no_tests_ran_at_all:
+        print()
+        print(
+            "=== ✗ NO TESTS RAN — 0 collected across "
+            f"{len(files)} file{'s' if len(files) != 1 else ''}. "
+            "This is NOT a pass. ==="
+        )
+        print(
+            "  Common causes: the selected venv has no pytest; a -k/-m filter "
+            "matched nothing; or collection errored in every file."
+        )
+        print("  Check the per-file output above for the real error.")
 
     # Flaky files: failed once, passed on the automatic retry. Green, but
     # loudly reported so they get fixed instead of silently re-flaking.
@@ -1576,6 +1702,9 @@ def main() -> int:
             print(f"=== {len(no_tests_ran)} file{'s' if len(no_tests_ran) != 1 else ''} where no tests ran (collection/import error, timeout before collection, etc.) ===")
             for file, s in no_tests_ran:
                 print(f"  {_format_file(file, repo_root)}")
+        return 1
+
+    if no_tests_ran_at_all:
         return 1
 
     return 0

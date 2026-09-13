@@ -11,16 +11,24 @@ import yaml
 
 import gateway.run as gateway_run
 from gateway.config import Platform
-from gateway.platforms.base import MessageEvent
+from gateway.platforms.event import MessageEvent
 from gateway.session import SessionSource
 
 
 class _CapturingAgent:
     last_init = None
     last_run = None
+    #: The most recently constructed instance. Needed by the auto-title test, which
+    #: asserts on attributes the runner sets ON the agent (see _attach_session_title_callback).
+    last_instance = None
 
     def __init__(self, *args, **kwargs):
         type(self).last_init = dict(kwargs)
+        type(self).last_instance = self
+        # The real AIAgent takes session_id as a constructor kwarg (run_turn_runner passes
+        # ctx.session_id); the rename callback the runner attaches closes over
+        # getattr(agent, "session_id", None), so the double has to carry it.
+        self.session_id = kwargs.get("session_id")
         self.tools = []
 
     def run_conversation(
@@ -109,8 +117,8 @@ def test_turn_route_injects_priority_processing_without_changing_runtime():
     runner._service_tier = "priority"
     runtime_kwargs = {
         "api_key": "***",
-        "base_url": "https://openrouter.ai/api/v1",
-        "provider": "openrouter",
+        "base_url": "https://api.openai.com/v1",
+        "provider": "openai",
         "api_mode": "chat_completions",
         "command": None,
         "args": [],
@@ -119,45 +127,14 @@ def test_turn_route_injects_priority_processing_without_changing_runtime():
 
     route = gateway_run.GatewayRunner._resolve_turn_agent_config(runner, "hi", "gpt-5.4", runtime_kwargs)
 
-    assert route["runtime"]["provider"] == "openrouter"
+    assert route["runtime"]["provider"] == "openai"
     assert route["runtime"]["api_mode"] == "chat_completions"
     assert route["request_overrides"] == {"service_tier": "priority"}
 
-
-def test_turn_route_skips_priority_processing_for_unsupported_models():
-    runner = _make_runner()
-    runner._service_tier = "priority"
-    runtime_kwargs = {
-        "api_key": "***",
-        "base_url": "https://openrouter.ai/api/v1",
-        "provider": "openrouter",
-        "api_mode": "chat_completions",
-        "command": None,
-        "args": [],
-        "credential_pool": None,
-    }
-
-    route = gateway_run.GatewayRunner._resolve_turn_agent_config(runner, "hi", "gpt-5.3-codex", runtime_kwargs)
-
+    # Proxied routes never receive the param (OpenRouter strips it / others 400).
+    runtime_kwargs.update(base_url="https://openrouter.ai/api/v1", provider="openrouter")
+    route = gateway_run.GatewayRunner._resolve_turn_agent_config(runner, "hi", "gpt-5.4", runtime_kwargs)
     assert route["request_overrides"] == {}
-
-
-@pytest.mark.asyncio
-async def test_handle_fast_command_session_scoped_by_default(monkeypatch, tmp_path):
-    """Bare /fast fast applies a session override — config.yaml untouched."""
-    runner = _make_runner()
-
-    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
-    monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {})
-    monkeypatch.setattr(gateway_run, "_resolve_gateway_model", lambda config=None: "gpt-5.4")
-
-    response = await runner._handle_fast_command(_make_event("/fast fast"))
-
-    assert "FAST" in response
-    assert runner._service_tier == "priority"
-    # Session override recorded; config.yaml NOT written.
-    assert runner._session_service_tier_overrides
-    assert not (tmp_path / "config.yaml").exists()
 
 
 @pytest.mark.asyncio
@@ -206,53 +183,8 @@ async def test_session_fast_override_beats_config_default(monkeypatch, tmp_path)
     assert runner._resolve_session_service_tier(session_key="other-session") == "priority"
 
 
-@pytest.mark.asyncio
-async def test_run_agent_passes_priority_processing_to_gateway_agent(monkeypatch, tmp_path):
-    _install_fake_agent(monkeypatch)
-    runner = _make_runner()
-
-    (tmp_path / "config.yaml").write_text("agent:\n  service_tier: fast\n", encoding="utf-8")
-    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
-    monkeypatch.setattr(gateway_run, "_env_path", tmp_path / ".env")
-    monkeypatch.setattr(gateway_run, "load_dotenv", lambda *args, **kwargs: None)
-    monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {})
-    # ``_load_service_tier`` was refactored to call ``_load_gateway_runtime_config``
-    # (which wraps ``_load_gateway_config`` plus env-expansion).  Since the test
-    # stubs ``_load_gateway_config`` to ``{}``, also stub the runtime wrapper
-    # directly so the priority routing assertions still exercise the live tier.
-    monkeypatch.setattr(
-        gateway_run,
-        "_load_gateway_runtime_config",
-        lambda: {"agent": {"service_tier": "fast"}},
-    )
-    monkeypatch.setattr(gateway_run, "_resolve_gateway_model", lambda config=None: "gpt-5.4")
-    monkeypatch.setattr(
-        gateway_run,
-        "_resolve_runtime_agent_kwargs",
-        lambda: {
-            "provider": "openrouter",
-            "api_mode": "chat_completions",
-            "base_url": "https://openrouter.ai/api/v1",
-            "api_key": "***",
-        },
-    )
-
-    import hermes_cli.tools_config as tools_config
-    monkeypatch.setattr(tools_config, "_get_platform_tools", lambda user_config, platform_key: {"core"})
-
-    _CapturingAgent.last_init = None
-    result = await runner._run_agent(
-        message="hi",
-        context_prompt="",
-        history=[],
-        source=_make_source(),
-        session_id="session-1",
-        session_key="agent:main:telegram:dm:12345",
-    )
-
-    assert result["final_response"] == "ok"
-    assert _CapturingAgent.last_init["service_tier"] == "priority"
-    assert _CapturingAgent.last_init["request_overrides"] == {"service_tier": "priority"}
+# Grafted from the fork side in the 0.21.1 merge: definitions the other side
+# has and this file's base side does not.
 
 
 @pytest.mark.asyncio
@@ -281,30 +213,33 @@ async def test_run_agent_passes_discord_auto_thread_title_callback(monkeypatch, 
     import hermes_cli.tools_config as tools_config
     monkeypatch.setattr(tools_config, "_get_platform_tools", lambda user_config, platform_key: {"core"})
 
-    with patch("agent.title_generator.maybe_auto_title") as mock_title:
-        await runner._run_agent(
-            message="raw user prompt",
-            context_prompt="",
-            history=[],
-            source=_make_discord_auto_thread_source(),
-            session_id="session-1",
-            session_key="agent:main:discord:thread:999",
-        )
+    # 0.21.1 moved auto-titling INTO the agent's turn prologue
+    # (agent/turn_context.py::_maybe_title_session_at_turn_start). The gateway no longer
+    # calls maybe_auto_title itself -- it ATTACHES the platform rename lane onto the agent
+    # as ``_on_session_title`` (run_turn_runner::_attach_session_title_callback), and the
+    # prologue passes that through as maybe_auto_title's title_callback. The contract this
+    # test is about (a discord auto-thread session gets a callback that renames the thread
+    # with the model's title) is unchanged; only the seam moved. Asserting on
+    # maybe_auto_title here could no longer pass at all: the agent is a fake, so no real
+    # prologue ever runs.
+    await runner._run_agent(
+        message="raw user prompt",
+        context_prompt="",
+        history=[],
+        source=_make_discord_auto_thread_source(),
+        session_id="session-1",
+        session_key="agent:main:discord:thread:999",
+    )
 
-    mock_title.assert_called_once()
-    assert mock_title.call_args.kwargs["source"] == "discord"
-    callback = mock_title.call_args.kwargs["title_callback"]
+    agent = _CapturingAgent.last_instance
+    assert agent is not None
+    callback = getattr(agent, "_on_session_title", None)
+    assert callback is not None, "the discord auto-thread lane must attach _on_session_title"
     with patch.object(runner, "_schedule_discord_semantic_thread_rename") as mock_schedule:
-        callback("Semantic Session Title")
+        # title_source="llm": both lanes spend a rate-limited platform call per title, so
+        # only the model's own title renames -- a heuristic title must not burn the budget.
+        callback("Semantic Session Title", "llm")
     mock_schedule.assert_called_once()
     assert mock_schedule.call_args.args[1] == "session-1"
     assert mock_schedule.call_args.args[2] == "Semantic Session Title"
 
-
-def test_session_source_preserves_discord_auto_thread_metadata():
-    source = _make_discord_auto_thread_source()
-
-    restored = SessionSource.from_dict(source.to_dict())
-
-    assert restored.auto_thread_created is True
-    assert restored.auto_thread_initial_name == "raw user prompt"

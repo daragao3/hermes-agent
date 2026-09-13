@@ -88,7 +88,7 @@ hermes [global-options] <command> [subcommand/options]
 | `hermes desktop`（别名 `gui`） | 构建并启动原生 Electron 桌面应用。 |
 | `hermes profile` | 管理 profile——多个隔离的 Hermes 实例。 |
 | `hermes completion` | 打印 shell 补全脚本（bash/zsh/fish）。 |
-| `hermes version` | 显示版本信息。 |
+| `hermes --version` | 显示版本信息。 |
 | `hermes update` | 拉取最新代码并重新安装依赖。`--check` 预览而不安装；`--backup` 在拉取前对 `HERMES_HOME` 进行快照。 |
 | `hermes uninstall` | 从系统中删除 Hermes。 |
 
@@ -105,7 +105,7 @@ hermes chat [options]
 | `-q`, `--query "..."` | 单次非交互式 prompt。 |
 | `-m`, `--model <model>` | 覆盖本次运行的模型。 |
 | `-t`, `--toolsets <csv>` | 启用逗号分隔的 toolset 集合。 |
-| `--provider <provider>` | 强制指定 provider：`auto`、`openrouter`、`nous`、`openai-codex`、`copilot-acp`、`copilot`、`anthropic`、`gemini`、`huggingface`、`novita`（别名 `novita-ai`、`novitaai`）、`openai-api`、`zai`、`kimi-coding`、`kimi-coding-cn`、`minimax`、`minimax-cn`、`minimax-oauth`、`kilocode`、`xiaomi`、`arcee`、`gmi`、`upstage`（别名 `solar`）、`alibaba`、`alibaba-coding-plan`（别名 `alibaba_coding`）、`deepseek`、`nvidia`、`ollama-cloud`、`xai`（别名 `grok`）、`xai-oauth`（别名 `grok-oauth`）、`qwen-oauth`、`bedrock`、`opencode-zen`、`opencode-go`、`azure-foundry`、`lmstudio`、`stepfun`、`tencent-tokenhub`（别名 `tencent`、`tokenhub`）。 |
+| `--provider <provider>` | 强制指定 provider：`auto`、`openrouter`、`nous`、`openai-codex`、`copilot-acp`、`copilot`、`anthropic`、`gemini`、`huggingface`、`novita`（别名 `novita-ai`、`novitaai`）、`openai-api`、`zai`、`kimi-coding`、`kimi-coding-cn`、`minimax`、`minimax-cn`、`minimax-oauth`、`kilocode`、`xiaomi`、`arcee`、`gmi`、`alibaba`、`alibaba-coding-plan`（别名 `alibaba_coding`）、`deepseek`、`nvidia`、`ollama-cloud`、`xai`（别名 `grok`）、`xai-oauth`（别名 `grok-oauth`）、`qwen-oauth`、`bedrock`、`opencode-zen`、`opencode-go`、`ai-gateway`、`azure-foundry`、`lmstudio`、`stepfun`、`tencent-tokenhub`（别名 `tencent`、`tokenhub`）。 |
 | `-s`, `--skills <name>` | 为会话预加载一个或多个 skill（可重复或逗号分隔）。 |
 | `-v`, `--verbose` | 详细输出。 |
 | `-Q`, `--quiet` | 程序化模式：抑制横幅/spinner/工具预览。 |
@@ -119,7 +119,7 @@ hermes chat [options]
 | `--ignore-rules` | 跳过 `AGENTS.md`、`SOUL.md`、`.cursorrules`、持久 memory 和预加载 skill 的自动注入。与 `--ignore-user-config` 组合可实现完全隔离的运行。 |
 | `--safe-mode` | 排障模式：禁用全部自定义——用户配置、rules/memory 注入、plugin、shell hook 和 MCP 服务器（隐含 `--ignore-user-config` 和 `--ignore-rules`）。用它来判断问题出在你的配置还是 Hermes 本身。 |
 | `--source <tag>` | 用于过滤的会话来源标签（默认：`cli`）。对于不应出现在用户会话列表中的第三方集成，使用 `tool`。 |
-| `--max-turns <N>` | 每个对话轮次的最大工具调用迭代次数（默认：90，或 config 中的 `agent.max_turns`）。 |
+| `--max-turns <N>` | 每个对话轮次的最大工具调用迭代次数（默认：500，或 config 中的 `agent.max_turns`）。 |
 
 示例：
 
@@ -1370,7 +1370,7 @@ hermes claw migrate [options]
 
 迁移涵盖 30+ 个类别，包括 persona、memory、skill、模型 provider、消息平台、agent 行为、会话策略、MCP 服务器、TTS 等。条目要么**直接导入**到 Hermes 等效项，要么**归档**以供手动审查。
 
-**直接导入：** SOUL.md、MEMORY.md、USER.md、AGENTS.md、skill（4 个源目录）、默认模型、自定义 provider、MCP 服务器、消息平台 token 和许可名单（Telegram、Discord、Slack、WhatsApp、Signal、Matrix、Mattermost）、agent 默认值（推理努力程度、压缩、人工延迟、时区、沙箱）、会话重置策略、审批规则、TTS 配置、浏览器设置、工具设置、执行超时、命令许可名单、gateway 配置以及来自 3 个来源的 API 密钥。
+**直接导入：** SOUL.md、MEMORY.md、USER.md、AGENTS.md、skill（4 个源目录）、默认模型、自定义 provider、MCP 服务器、消息平台 token 和许可名单（Telegram、Discord、Slack、WhatsApp、Signal、Matrix、Mattermost）、agent 默认值（推理努力程度、压缩、人工延迟、时区、沙箱）、审批规则、TTS 配置、浏览器设置、工具设置、执行超时、命令许可名单、gateway 配置以及来自 3 个来源的 API 密钥。
 
 **归档以供手动审查：** Cron 任务、plugin、hook/webhook、memory 后端（QMD）、skill 注册表配置、UI/身份、日志、多 agent 设置、频道绑定、IDENTITY.md、TOOLS.md、HEARTBEAT.md、BOOTSTRAP.md。
 
@@ -1421,6 +1421,7 @@ hermes dashboard [options]
 | `--insecure` | 关闭 | **已弃用 / 空操作。** 以前用于在绑定非回环地址时绕过鉴权。自 2026 年 6 月的加固起，公网绑定*始终*需要一个鉴权提供方（密码或 OAuth）。绑定 `127.0.0.1` 并通过隧道访问以保持本地化。 |
 | `--skip-build` | 关闭 | 跳过 Web UI 构建步骤，直接提供已有的 `dist` 目录。适用于 npm 不可用的非交互场景（Windows 计划任务、CI）。请先用 `cd web && npm run build` 预构建。 |
 | `--isolated` | 关闭 | 从具名 profile 启动时（`worker dashboard`），运行一个专用的 per-profile 服务器，而不是路由到机器级 dashboard。 |
+| `--insecure` | 关闭 | **已弃用 / 无实际作用。** 此参数曾用于在非回环绑定上绕过鉴权；自 2026 年 6 月安全加固后，公网绑定始终需要用户名/密码或 OAuth 鉴权提供方。若需保持仅本地访问，请绑定 `127.0.0.1` 并通过隧道连接。 |
 | `--stop` | — | 停止正在运行的 `hermes dashboard` 进程并退出。 |
 | `--status` | — | 列出正在运行的 `hermes dashboard` 进程并退出。 |
 
@@ -1535,7 +1536,7 @@ hermes update [--gateway] [--check] [--no-backup] [--backup] [--yes]
 
 | 命令 | 说明 |
 |---------|-------------|
-| `hermes version` | 打印版本信息。 |
+| `hermes --version` | 打印版本信息。 |
 | `hermes update` | 拉取最新变更并重新安装依赖。 |
 | `hermes postinstall` | 内部引导命令。在安装脚本预置 Hermes 之后（或在 `hermes update` 之后）运行一次，用于安装 pip 无法提供的非 Python 依赖——Node.js 运行时、无头浏览器、ripgrep、ffmpeg——并在 profile 尚未配置时触发 `hermes setup`。可幂等地重复运行。 |
 | `hermes uninstall [--full] [--gui] [--yes]` | 删除 Hermes，可选择删除所有 config/数据。`--gui` 只删除桌面 Chat GUI，保留 agent 本体；`--full` 还会删除 config/数据；`--yes` 跳过提示。 |

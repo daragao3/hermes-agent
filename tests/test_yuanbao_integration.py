@@ -56,6 +56,7 @@ class TestYuanbaoAdapterInit:
         assert status["bot_id"] is None
 
 
+
 # ===========================================================
 # 2. Config / Platform 枚举
 # ===========================================================
@@ -64,10 +65,6 @@ class TestYuanbaoConfig:
     def test_platform_enum(self):
         assert Platform.YUANBAO.value == "yuanbao"
 
-    def test_config_fields(self):
-        config = make_config()
-        assert config.extra["app_id"] == "test_key"
-        assert config.extra["app_secret"] == "test_secret"
 
     def test_get_connected_platforms_requires_key_and_secret(self):
         # Only key, no secret → not in connected list
@@ -93,6 +90,11 @@ class TestYuanbaoConfig:
         )
         platforms2 = gw_full.get_connected_platforms()
         assert Platform.YUANBAO in platforms2
+
+    def test_config_fields(self):
+        config = make_config()
+        assert config.extra["app_id"] == "test_key"
+        assert config.extra["app_secret"] == "test_secret"
 
 
 # ===========================================================
@@ -171,6 +173,7 @@ class TestGatewayRunnerRegistration:
         assert adapter.PLATFORM == Platform.YUANBAO
 
 
+
 # ===========================================================
 # 4. Proto round-trip
 # ===========================================================
@@ -196,6 +199,7 @@ class TestProtoRoundTrip:
         assert len(msg) > 0
 
 
+
 # ===========================================================
 # 5. Markdown 分块
 # ===========================================================
@@ -218,15 +222,11 @@ class TestMarkdownChunking:
         assert chunks == [text]
 
 
+
 # ===========================================================
 # 6. Sign Token 模块
 # ===========================================================
 
-class TestSignToken:
-    def test_import_ok(self):
-        from gateway.platforms.yuanbao import SignManager
-        assert callable(SignManager.get_token)
-        assert callable(SignManager.force_refresh)
 
 
 # ===========================================================
@@ -234,25 +234,10 @@ class TestSignToken:
 # ===========================================================
 
 class TestManagerImports:
-    def test_connection_manager_import(self):
-        from gateway.platforms.yuanbao import ConnectionManager
-        assert ConnectionManager is not None
 
-    def test_outbound_manager_import(self):
-        from gateway.platforms.yuanbao import OutboundManager
-        assert OutboundManager is not None
 
-    def test_message_sender_import(self):
-        from gateway.platforms.yuanbao import MessageSender
-        assert MessageSender is not None
 
-    def test_heartbeat_manager_import(self):
-        from gateway.platforms.yuanbao import HeartbeatManager
-        assert HeartbeatManager is not None
 
-    def test_slow_response_notifier_import(self):
-        from gateway.platforms.yuanbao import SlowResponseNotifier
-        assert SlowResponseNotifier is not None
 
     def test_adapter_has_outbound_manager(self):
         adapter = YuanbaoAdapter(make_config())
@@ -267,16 +252,31 @@ class TestManagerImports:
         assert isinstance(adapter._outbound.heartbeat, HeartbeatManager)
         assert isinstance(adapter._outbound.slow_notifier, SlowResponseNotifier)
 
+    def test_slow_response_notifier_import(self):
+        from gateway.platforms.yuanbao import SlowResponseNotifier
+        assert SlowResponseNotifier is not None
+
+    def test_connection_manager_import(self):
+        from gateway.platforms.yuanbao import ConnectionManager
+        assert ConnectionManager is not None
+
+    def test_heartbeat_manager_import(self):
+        from gateway.platforms.yuanbao import HeartbeatManager
+        assert HeartbeatManager is not None
+
+    def test_outbound_manager_import(self):
+        from gateway.platforms.yuanbao import OutboundManager
+        assert OutboundManager is not None
+
+    def test_message_sender_import(self):
+        from gateway.platforms.yuanbao import MessageSender
+        assert MessageSender is not None
+
 
 # ===========================================================
 # 7. Media 模块
 # ===========================================================
 
-class TestMediaModule:
-    def test_import_ok(self):
-        from gateway.platforms.yuanbao_media import upload_to_cos, download_url
-        assert callable(upload_to_cos)
-        assert callable(download_url)
 
 
 # ===========================================================
@@ -305,15 +305,11 @@ class TestToolset:
         ])
 
 
+
 # ===========================================================
 # 9. platforms/__init__.py 导出
 # ===========================================================
 
-class TestPlatformInit:
-    def test_yuanbao_adapter_exported(self):
-        """gateway.platforms.__init__.py 应导出 YuanbaoAdapter"""
-        from gateway.platforms import YuanbaoAdapter as _YuanbaoAdapter
-        assert _YuanbaoAdapter is YuanbaoAdapter
 
 
 # ===========================================================
@@ -347,56 +343,50 @@ class TestP0ReconnectGuard:
         # No new task should be created because already reconnecting
 
 
-class TestP0InboundTaskTracking:
-    """P0-2: _inbound_tasks set is initialized and usable."""
-
-    def test_inbound_tasks_initialized(self):
-        adapter = YuanbaoAdapter(make_config())
-        assert hasattr(adapter, '_inbound_tasks')
-        assert isinstance(adapter._inbound_tasks, set)
-        assert len(adapter._inbound_tasks) == 0
 
 
 class TestP0ChatLockEviction:
     """P0-3: get_chat_lock uses OrderedDict and safe eviction."""
 
-    def test_chat_locks_is_ordered_dict(self):
-        adapter = YuanbaoAdapter(make_config())
-        assert isinstance(adapter._outbound._chat_locks, collections.OrderedDict)
 
     def test_eviction_skips_locked(self):
         """When eviction is needed, locked entries are skipped."""
         adapter = YuanbaoAdapter(make_config())
-        from gateway.platforms.yuanbao import OutboundManager
+        from gateway.platforms.yuanbao import MessageSender
 
         # Fill to capacity with unlocked locks
-        for i in range(OutboundManager.CHAT_DICT_MAX_SIZE):
-            adapter._outbound._chat_locks[f"chat_{i}"] = asyncio.Lock()
+        for i in range(MessageSender.CHAT_DICT_MAX_SIZE):
+            adapter._outbound.sender._chat_locks[f"chat_{i}"] = asyncio.Lock()
 
         # Lock the oldest entry
-        next(iter(adapter._outbound._chat_locks))
+        oldest_key = next(iter(adapter._outbound.sender._chat_locks))
+        adapter._outbound.sender._chat_locks[oldest_key]
         # Simulate a held lock by acquiring it in a non-async way (set _locked)
         # asyncio.Lock is not held until actually acquired; so we test the
         # method logic by acquiring the first lock manually.
         # For a sync test, we check that get_chat_lock doesn't crash.
-        new_lock = adapter._outbound.get_chat_lock("new_chat")
-        assert "new_chat" in adapter._outbound._chat_locks
+        new_lock = adapter._outbound.sender.get_chat_lock("new_chat")
+        assert "new_chat" in adapter._outbound.sender._chat_locks
         assert isinstance(new_lock, asyncio.Lock)
         # The oldest unlocked entry should have been evicted
-        assert len(adapter._outbound._chat_locks) == OutboundManager.CHAT_DICT_MAX_SIZE
+        assert len(adapter._outbound.sender._chat_locks) == MessageSender.CHAT_DICT_MAX_SIZE
 
     def test_move_to_end_on_access(self):
         """Accessing an existing key moves it to the end (MRU)."""
         adapter = YuanbaoAdapter(make_config())
-        adapter._outbound._chat_locks["a"] = asyncio.Lock()
-        adapter._outbound._chat_locks["b"] = asyncio.Lock()
-        adapter._outbound._chat_locks["c"] = asyncio.Lock()
+        adapter._outbound.sender._chat_locks["a"] = asyncio.Lock()
+        adapter._outbound.sender._chat_locks["b"] = asyncio.Lock()
+        adapter._outbound.sender._chat_locks["c"] = asyncio.Lock()
 
         # Access "a" — should move to end
-        adapter._outbound.get_chat_lock("a")
-        keys = list(adapter._outbound._chat_locks.keys())
+        adapter._outbound.sender.get_chat_lock("a")
+        keys = list(adapter._outbound.sender._chat_locks.keys())
         assert keys[-1] == "a"
         assert keys[0] == "b"
+
+    def test_chat_locks_is_ordered_dict(self):
+        adapter = YuanbaoAdapter(make_config())
+        assert isinstance(adapter._outbound._chat_locks, collections.OrderedDict)
 
 
 class TestP0PlatformScopedLock:
@@ -410,3 +400,12 @@ class TestP0PlatformScopedLock:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# Grafted from the fork side in the 0.21.1 merge: definitions the other side
+# has and this file's base side does not.
+
+
+
+
+

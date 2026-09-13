@@ -48,8 +48,7 @@ pytestmark = pytest.mark.timeout(180)
 
 def _patch_agent_bootstrap(monkeypatch):
     monkeypatch.setattr(
-        run_agent,
-        "get_tool_definitions",
+        "model_tools.get_tool_definitions",
         lambda **kwargs: [
             {
                 "type": "function",
@@ -61,7 +60,7 @@ def _patch_agent_bootstrap(monkeypatch):
             }
         ],
     )
-    monkeypatch.setattr(run_agent, "check_toolset_requirements", lambda: {})
+    monkeypatch.setattr("model_tools.check_toolset_requirements", lambda: {})
 
 
 def _codex_message_response(text: str):
@@ -144,16 +143,19 @@ class TestNoLiveHostProbes:
             raise RuntimeError("blocked by test")
 
         monkeypatch.setattr(mm.requests, "get", _record)
-        # An hour-long module cache would also suppress the request; clear it
-        # so this asserts the stub, not a warm cache.
+        # An hour-long module cache would also suppress the request; clear it so this asserts
+        # the stub, not a warm cache. 0.21.1 stamps each entry with its own time
+        # ({key: (result, stamped_at)}), so there is no separate module-level TTL float to reset.
         monkeypatch.setattr(mm, "_codex_oauth_context_cache", {})
-        monkeypatch.setattr(mm, "_codex_oauth_context_cache_time", 0.0)
 
         # Falls back to _CODEX_OAUTH_CONTEXT_FALLBACK, exactly as the live
         # probe does when it fails.
-        assert mm._resolve_codex_oauth_context_length(
+        # 0.21.1 renamed the resolver to the _with_source form, which returns
+        # (context_length, source) so callers can tell a live probe from the fallback table.
+        context_length, _source = mm._resolve_codex_oauth_context_length_with_source(
             "gpt-5.3-codex", "codex-token"
-        ) == 272_000
+        )
+        assert context_length == 272_000
         assert calls == [], f"live outbound request(s) during a unit test: {calls}"
 
     def test_env_probe_never_spawns_a_host_probe_thread(self):
@@ -169,7 +171,7 @@ class TestNoLiveHostProbes:
 
 def test_cron_run_job_codex_path_handles_internal_401_refresh(monkeypatch):
     _patch_agent_bootstrap(monkeypatch)
-    monkeypatch.setattr(run_agent, "OpenAI", _FakeOpenAI)
+    monkeypatch.setattr("agent.process_bootstrap.OpenAI", _FakeOpenAI)
     monkeypatch.setattr(run_agent, "AIAgent", _Codex401ThenSuccessAgent)
     monkeypatch.setattr(
         "hermes_cli.runtime_provider.resolve_runtime_provider",
@@ -200,7 +202,7 @@ def test_cron_run_job_codex_path_handles_internal_401_refresh(monkeypatch):
 
 def test_gateway_run_agent_codex_path_handles_internal_401_refresh(monkeypatch):
     _patch_agent_bootstrap(monkeypatch)
-    monkeypatch.setattr(run_agent, "OpenAI", _FakeOpenAI)
+    monkeypatch.setattr("agent.process_bootstrap.OpenAI", _FakeOpenAI)
     monkeypatch.setattr(run_agent, "AIAgent", _Codex401ThenSuccessAgent)
     monkeypatch.setattr(
         gateway_run,

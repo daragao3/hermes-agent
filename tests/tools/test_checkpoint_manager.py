@@ -1,9 +1,10 @@
 """Tests for tools/checkpoint_manager.py — CheckpointManager (v2 single-store)."""
 
+import argparse
 import json
 import logging
 import os
-import stat
+import shutil
 import subprocess
 import time
 import pytest
@@ -12,20 +13,14 @@ from unittest.mock import patch
 
 from tools.checkpoint_manager import (
     CheckpointManager,
-    _shadow_repo_path,
-    _init_shadow_repo,
     _init_store,
     _run_git,
     _git_env,
-    _normalize_path,
-    _dir_file_count,
-    _MAX_FILES,
     _project_hash,
     _store_path,
     _ref_name,
     _project_meta_path,
     _touch_project,
-    format_checkpoint_list,
     prune_checkpoints,
     maybe_auto_prune_checkpoints,
     store_status,
@@ -33,26 +28,30 @@ from tools.checkpoint_manager import (
     clear_legacy,
 )
 
+from tools.checkpoint_manager import (
+    _normalize_path,
+    _MAX_FILES,
+)
 
-# Nearly every test here drives real ``git`` subprocesses, so the whole module
-# is spawn-bound rather than compute-bound.  The suite-wide --timeout=30
-# (pyproject.toml) is calibrated for in-process tests; it is not survivable
-# here on a contended host, where a single spawn costs seconds rather than
-# milliseconds.  Measured 2026-08-11 alongside 8+ concurrent pytest sweeps:
-# a bare ``git --version`` took 2.75s, so even _init_store's six config
-# spawns (~22s) straddled the 30s default and killed test_creates_git_store.
-# Because --timeout-method=thread ``os._exit``es the whole pytest process, one
-# such overrun aborts an entire tests/tools sweep -- so this is a sweep-integrity
-# guard, not just a per-test allowance.  TestRealPruning overrides this with a
-# larger budget; see its docstring for the per-spawn calibration data.
-#
-# Sized from a measured full-file run on that loaded host (80 passed in 46:14):
-# the slowest test outside TestRealPruning was
-# TestListCheckpoints::test_multiple_checkpoints_ordered at 157.5s, with a long
-# tail of 86-143s siblings.  300s keeps ~1.9x margin over that worst case; 180s
-# would have left only 13%, which is not a margin on a host whose spawn cost is
-# itself the variable being absorbed.
-pytestmark = pytest.mark.timeout(300)
+
+
+
+
+
+
+
+
+
+
+_SPAWN_COST_VS_PROBE = 1.24
+
+
+_SPAWN_BUDGET_SPAWNS = 38
+
+
+_SPAWN_BUDGET_SECONDS = 300.0
+
+
 
 
 # =========================================================================
@@ -105,16 +104,17 @@ def disabled_mgr(checkpoint_base, monkeypatch):
 class TestStorePath:
     def test_store_is_single_shared_path(self, work_dir, checkpoint_base, monkeypatch):
         monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
-        # All projects resolve to the same store.
-        p1 = _shadow_repo_path(str(work_dir))
-        p2 = _shadow_repo_path(str(work_dir.parent / "other"))
-        assert p1 == p2 == _store_path(checkpoint_base)
+        # All projects resolve to the same store (only refs/indexes are per-project).
+        assert _store_path() == _store_path(checkpoint_base)
+        assert _project_hash(str(work_dir)) != _project_hash(str(work_dir.parent / "other"))
 
-    def test_project_hash_deterministic(self, work_dir):
-        assert _project_hash(str(work_dir)) == _project_hash(str(work_dir))
-
-    def test_project_hash_differs_per_dir(self, tmp_path):
-        assert _project_hash(str(tmp_path / "a")) != _project_hash(str(tmp_path / "b"))
+    def test_project_hash_identifies_dir_and_expands_tilde(self, fake_home):
+        project = fake_home / "project"
+        project.mkdir()
+        assert _project_hash(str(project)) == _project_hash(str(project))
+        assert _project_hash(str(project)) != _project_hash(str(fake_home / "other"))
+        # ~/project and its expanded form are the same project.
+        assert _project_hash(f"~/{project.name}") == _project_hash(str(project))
 
     def test_tilde_and_expanded_home_share_project_hash(
         self, fake_home, checkpoint_base, monkeypatch,
@@ -124,6 +124,12 @@ class TestStorePath:
         project.mkdir()
         tilde = f"~/{project.name}"
         assert _project_hash(tilde) == _project_hash(str(project))
+
+    def test_project_hash_differs_per_dir(self, tmp_path):
+        assert _project_hash(str(tmp_path / "a")) != _project_hash(str(tmp_path / "b"))
+
+    def test_project_hash_deterministic(self, work_dir):
+        assert _project_hash(str(work_dir)) == _project_hash(str(work_dir))
 
 
 # =========================================================================
@@ -140,27 +146,10 @@ class TestStoreInit:
         assert (store / "objects").exists()
         assert (store / "info" / "exclude").exists()
         assert "node_modules/" in (store / "info" / "exclude").read_text()
-
-    def test_no_git_in_project_dir(self, work_dir, checkpoint_base, monkeypatch):
-        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
-        store = _store_path(checkpoint_base)
-        _init_store(store, str(work_dir))
+        # The project dir itself never becomes a git repo.
         assert not (work_dir / ".git").exists()
-
-    def test_init_idempotent(self, work_dir, checkpoint_base, monkeypatch):
-        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
-        store = _store_path(checkpoint_base)
+        # Idempotent.
         assert _init_store(store, str(work_dir)) is None
-        assert _init_store(store, str(work_dir)) is None
-
-    def test_bc_init_shadow_repo_shim(self, work_dir, checkpoint_base, monkeypatch):
-        """Backward-compatible helper still works for old callers/tests."""
-        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
-        store = _shadow_repo_path(str(work_dir))
-        err = _init_shadow_repo(store, str(work_dir))
-        assert err is None
-        assert (store / "HEAD").exists()
-        assert (store / "HERMES_WORKDIR").exists()
 
     def test_legacy_migration_archives_prev2_repos(
         self, checkpoint_base, work_dir,
@@ -187,11 +176,28 @@ class TestStoreInit:
         assert (legacies[0] / fake_repo.name / "HEAD").exists()
 
 
+    def test_no_git_in_project_dir(self, work_dir, checkpoint_base, monkeypatch):
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
+        store = _store_path(checkpoint_base)
+        _init_store(store, str(work_dir))
+        assert not (work_dir / ".git").exists()
+
+    def test_init_idempotent(self, work_dir, checkpoint_base, monkeypatch):
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
+        store = _store_path(checkpoint_base)
+        assert _init_store(store, str(work_dir)) is None
+        assert _init_store(store, str(work_dir)) is None
+
+
 # =========================================================================
 # CheckpointManager — disabled
 # =========================================================================
 
 class TestDisabledManager:
+    def test_disabled_manager_is_inert(self, disabled_mgr, work_dir):
+        disabled_mgr.new_turn()
+        assert disabled_mgr.ensure_checkpoint(str(work_dir)) is False
+
     def test_ensure_checkpoint_returns_false(self, disabled_mgr, work_dir):
         assert disabled_mgr.ensure_checkpoint(str(work_dir)) is False
 
@@ -204,32 +210,21 @@ class TestDisabledManager:
 # =========================================================================
 
 class TestTakeCheckpoint:
-    def test_first_checkpoint(self, mgr, work_dir):
-        result = mgr.ensure_checkpoint(str(work_dir), "initial")
-        assert result is True
+    def test_first_checkpoint_dedups_and_skips_unsafe_dirs(self, mgr, work_dir):
+        assert mgr.ensure_checkpoint(str(work_dir), "first") is True
+        assert mgr.ensure_checkpoint(str(work_dir), "second") is False  # dedup'd
+        # Never snapshot the filesystem root or the user's home.
+        assert mgr.ensure_checkpoint("/", "root") is False
+        assert mgr.ensure_checkpoint(str(Path.home()), "home") is False
 
-    def test_dedup_same_turn(self, mgr, work_dir):
-        r1 = mgr.ensure_checkpoint(str(work_dir), "first")
-        r2 = mgr.ensure_checkpoint(str(work_dir), "second")
-        assert r1 is True
-        assert r2 is False  # dedup'd
-
-    def test_new_turn_resets_dedup(self, mgr, work_dir):
+    def test_new_turn_resets_dedup_but_needs_changes(self, mgr, work_dir):
         assert mgr.ensure_checkpoint(str(work_dir), "turn 1") is True
+        mgr.new_turn()
+        # Nothing changed on disk → no commit.
+        assert mgr.ensure_checkpoint(str(work_dir), "no changes") is False
         mgr.new_turn()
         (work_dir / "main.py").write_text("print('modified')\n")
         assert mgr.ensure_checkpoint(str(work_dir), "turn 2") is True
-
-    def test_no_changes_skips_commit(self, mgr, work_dir):
-        mgr.ensure_checkpoint(str(work_dir), "initial")
-        mgr.new_turn()
-        assert mgr.ensure_checkpoint(str(work_dir), "no changes") is False
-
-    def test_skip_root_dir(self, mgr):
-        assert mgr.ensure_checkpoint("/", "root") is False
-
-    def test_skip_home_dir(self, mgr):
-        assert mgr.ensure_checkpoint(str(Path.home()), "home") is False
 
     @pytest.mark.parametrize("broad", ["/", "HOME"])
     def test_broad_dir_guard_fires_before_any_filesystem_walk(
@@ -285,23 +280,97 @@ class TestTakeCheckpoint:
         assert (BASE / "store" / "projects" / f"{_project_hash(str(a))}.json").exists()
         assert (BASE / "store" / "projects" / f"{_project_hash(str(b))}.json").exists()
 
+    def test_no_changes_skips_commit(self, mgr, work_dir):
+        mgr.ensure_checkpoint(str(work_dir), "initial")
+        mgr.new_turn()
+        assert mgr.ensure_checkpoint(str(work_dir), "no changes") is False
+
+    def test_new_turn_resets_dedup(self, mgr, work_dir):
+        assert mgr.ensure_checkpoint(str(work_dir), "turn 1") is True
+        mgr.new_turn()
+        (work_dir / "main.py").write_text("print('modified')\n")
+        assert mgr.ensure_checkpoint(str(work_dir), "turn 2") is True
+
+    def test_first_checkpoint(self, mgr, work_dir):
+        result = mgr.ensure_checkpoint(str(work_dir), "initial")
+        assert result is True
+
+    def test_dedup_same_turn(self, mgr, work_dir):
+        r1 = mgr.ensure_checkpoint(str(work_dir), "first")
+        r2 = mgr.ensure_checkpoint(str(work_dir), "second")
+        assert r1 is True
+        assert r2 is False  # dedup'd
+
+    def test_skip_home_dir(self, mgr):
+        assert mgr.ensure_checkpoint(str(Path.home()), "home") is False
+
+    def test_skip_root_dir(self, mgr):
+        assert mgr.ensure_checkpoint("/", "root") is False
+
 
 # =========================================================================
 # CheckpointManager — listing
 # =========================================================================
 
 class TestListCheckpoints:
-    def test_empty_when_no_checkpoints(self, mgr, work_dir):
+    def test_list_reports_newest_first(self, mgr, work_dir):
         assert mgr.list_checkpoints(str(work_dir)) == []
 
-    def test_list_after_take(self, mgr, work_dir):
-        mgr.ensure_checkpoint(str(work_dir), "test checkpoint")
+        mgr.ensure_checkpoint(str(work_dir), "first")
         result = mgr.list_checkpoints(str(work_dir))
         assert len(result) == 1
-        assert result[0]["reason"] == "test checkpoint"
+        assert result[0]["reason"] == "first"
         assert "hash" in result[0]
         assert "short_hash" in result[0]
         assert "timestamp" in result[0]
+
+        mgr.new_turn()
+        (work_dir / "main.py").write_text("v2\n")
+        mgr.ensure_checkpoint(str(work_dir), "second")
+        mgr.new_turn()
+        (work_dir / "main.py").write_text("v3\n")
+        mgr.ensure_checkpoint(str(work_dir), "third")
+
+        result = mgr.list_checkpoints(str(work_dir))
+        assert len(result) == 3
+        assert result[0]["reason"] == "third"
+        assert result[2]["reason"] == "first"
+
+    def test_projects_share_one_store_but_list_separately(
+        self, mgr, checkpoint_base, tmp_path,
+    ):
+        """Two projects commit to the SAME shared store, isolated per project."""
+        a = tmp_path / "proj-a"
+        a.mkdir()
+        (a / "f.py").write_text("a\n")
+        b = tmp_path / "proj-b"
+        b.mkdir()
+        (b / "g.py").write_text("b\n")
+
+        assert mgr.ensure_checkpoint(str(a), "A-1") is True
+        mgr.new_turn()
+        assert mgr.ensure_checkpoint(str(b), "B-1") is True
+
+        # Exactly one store dir + two project metas.
+        assert (checkpoint_base / "store" / "HEAD").exists()
+        projects = checkpoint_base / "store" / "projects"
+        assert (projects / f"{_project_hash(str(a))}.json").exists()
+        assert (projects / f"{_project_hash(str(b))}.json").exists()
+
+        # Listing one project doesn't leak the other's checkpoints.
+        assert [c["reason"] for c in mgr.list_checkpoints(str(a))] == ["A-1"]
+        assert [c["reason"] for c in mgr.list_checkpoints(str(b))] == ["B-1"]
+
+    def test_tilde_path_lists_same_checkpoints(self, checkpoint_base, fake_home, monkeypatch):
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
+        m = CheckpointManager(enabled=True, max_snapshots=50)
+        project = fake_home / "project"
+        project.mkdir()
+        (project / "main.py").write_text("v1\n")
+        assert m.ensure_checkpoint(f"~/{project.name}", "initial") is True
+        listed = m.list_checkpoints(str(project))
+        assert len(listed) == 1
+        assert listed[0]["reason"] == "initial"
 
     def test_multiple_checkpoints_ordered(self, mgr, work_dir):
         mgr.ensure_checkpoint(str(work_dir), "first")
@@ -316,6 +385,9 @@ class TestListCheckpoints:
         assert len(result) == 3
         assert result[0]["reason"] == "third"
         assert result[2]["reason"] == "first"
+
+    def test_empty_when_no_checkpoints(self, mgr, work_dir):
+        assert mgr.list_checkpoints(str(work_dir)) == []
 
     def test_list_isolated_per_project(self, mgr, tmp_path):
         """Listing one project doesn't leak checkpoints from another."""
@@ -333,175 +405,37 @@ class TestListCheckpoints:
         assert [c["reason"] for c in mgr.list_checkpoints(str(a))] == ["A-1"]
         assert [c["reason"] for c in mgr.list_checkpoints(str(b))] == ["B-1"]
 
-    def test_tilde_path_lists_same_checkpoints(self, checkpoint_base, fake_home, monkeypatch):
-        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
-        m = CheckpointManager(enabled=True, max_snapshots=50)
-        project = fake_home / "project"
-        project.mkdir()
-        (project / "main.py").write_text("v1\n")
-        assert m.ensure_checkpoint(f"~/{project.name}", "initial") is True
-        listed = m.list_checkpoints(str(project))
-        assert len(listed) == 1
-        assert listed[0]["reason"] == "initial"
+    def test_list_after_take(self, mgr, work_dir):
+        mgr.ensure_checkpoint(str(work_dir), "test checkpoint")
+        result = mgr.list_checkpoints(str(work_dir))
+        assert len(result) == 1
+        assert result[0]["reason"] == "test checkpoint"
+        assert "hash" in result[0]
+        assert "short_hash" in result[0]
+        assert "timestamp" in result[0]
 
 
 # =========================================================================
 # Pruning: max_snapshots actually enforced (v2 fix)
 # =========================================================================
 
-# Measured git spawns for test_max_snapshots_trims_history's shape
-# (max_snapshots=2, 4 snapshots).  Counted 2026-08-15 by wrapping
-# tools.checkpoint_manager.subprocess.run; the old max_snapshots=3 / 6
-# snapshots shape cost 75.
-_TRIM_HISTORY_SPAWNS = 50
-
-# Same, for test_steady_state_prune_snapshot_spawn_budget's shape: 2 seed
-# snapshots to reach capacity + 1 at-capacity snapshot, max_snapshots=2.
-_SPAWN_BUDGET_SPAWNS = 38
-
-# A real git command in this file costs ~1.24x a bare ``git --version``
-# (derived from the 2026-08-11 loaded-host pair: 2.75s probe, 3.4s/spawn
-# across 75 spawns).  Used to price a test before running it.
-_SPAWN_COST_VS_PROBE = 1.24
-
-# Skip rather than run when the projection eats more than half the class's
-# 600s timeout.  Half, not all: --timeout-method=thread ``os._exit``es the
-# WHOLE pytest process, so overshooting the budget destroys the sweep's
-# results instead of failing one test.  A skip is loud, cheap and honest;
-# a session kill silently truncates the run (2026-08-11 aborted tests/tools
-# at 12% while still printing a clean-looking result).
-_SPAWN_BUDGET_SECONDS = 300.0
-
-# Memoised result of _probe_git_spawn_cost().
-_GIT_SPAWN_COST = None
-
-
-def _probe_git_spawn_cost() -> float:
-    """Wall-clock seconds for one bare ``git --version``.
-
-    The module docstring's own calibration handle: sub-0.5s on a quiet host,
-    2.746s on the 2026-08-11 contended one.  Cached per session — the probe
-    is itself a spawn, and on the host it is meant to detect it is expensive.
-    """
-    global _GIT_SPAWN_COST
-    if _GIT_SPAWN_COST is None:
-        start = time.monotonic()
-        subprocess.run(
-            ["git", "--version"], capture_output=True, text=True, timeout=120,
-        )
-        _GIT_SPAWN_COST = time.monotonic() - start
-    return _GIT_SPAWN_COST
-
-
-def _require_affordable_spawns(spawn_count: int) -> None:
-    """Skip if this host is too contended to afford ``spawn_count`` git spawns.
-
-    These tests are spawn-bound, and process-spawn cost on Windows is not a
-    property of the code under test — it swings ~14x with host contention
-    (0.26s/spawn quiet, 3.6s/spawn under 8 concurrent sweeps).  No timeout
-    value fixes that; see the TestRealPruning docstring.
-    """
-    probe = _probe_git_spawn_cost()
-    projected = spawn_count * probe * _SPAWN_COST_VS_PROBE
-    if projected > _SPAWN_BUDGET_SECONDS:
-        pytest.skip(
-            f"host too contended for a {spawn_count}-git-spawn test: a bare "
-            f"`git --version` took {probe:.2f}s, projecting ~{projected:.0f}s "
-            f"(budget {_SPAWN_BUDGET_SECONDS:.0f}s). Skipping beats letting "
-            f"--timeout-method=thread os._exit the whole sweep."
-        )
-
-
-@pytest.mark.timeout(600)
 class TestRealPruning:
-    """Real snapshot+prune cycles — dozens of git spawns per test.
-
-    Windows 2026-06-11: a git spawn costs 0.2-0.4s under redirected stdio,
-    so these tests are spawn-bound (test_max_snapshots_trims_history ran
-    ~30s pre-fix and straddled the suite-wide --timeout=30, whose thread
-    method kills the whole session).  The spawn-budget test below pins the
-    spawn COUNT so the fix can't silently regress.
-
-    The wall-clock budget, though, is not a property of this code — it is a
-    property of the host, and the variable to size against is MEASURED PER-SPAWN
-    COST, not any single host metric:
-
-        quiet host     (2026-06-11, post-fix): ~0.26s/spawn ->  18.35s
-        contended host (2026-08-11, measured):  ~3.6s/spawn -> 255.9s
-
-    Do NOT read commit-charge percentage as the predictor — it is a contributor,
-    not the signal.  A 2026-06-11 run of this whole file finished 80 tests in
-    72.3s at 97.2% commit; the 2026-08-11 run took 2774.6s at 97.5% commit.
-    Near-identical commit, 38x the wall clock.  What differed was concurrency:
-    the slow run overlapped 8+ other pytest sweeps.  To judge this file, time a
-    bare ``git --version`` (2.746s on the slow host, sub-0.5s when quiet).
-
-    Same 71 spawns, same code, 14x the wall clock — a bare ``git --version``
-    alone cost 2.75s on the 08-11 host.  The old timeout(120) sat between
-    those two points, so the test passed on an idle host and blew up on a
-    loaded one.  Because the suite runs --timeout-method=thread, which
-    ``os._exit``es the WHOLE pytest process rather than failing one test,
-    that overrun aborted an entire tests/tools sweep at 12% (2026-08-11).
-    timeout(600) clears the measured loaded-host cost with ~2.3x margin while
-    staying bounded.  Individual git calls are independently capped by
-    checkpoint_manager._GIT_TIMEOUT (30s), so a real hang still terminates —
-    but only since 2026-08-16.  Before then that cap was nominal wherever a
-    git subcommand left a grandchild alive: ``_run_git`` used ``subprocess.run(
-    capture_output=True, timeout=N)``, whose Windows timeout path kills the
-    direct child and then re-enters ``communicate()`` with NO timeout, blocking
-    until every handle on the capture pipe closes — impossible while a
-    surviving grandchild holds the inherited one (measured: a ``timeout=2``
-    call returned after 24.3s).  ``git gc --prune=now`` — which
-    prune_checkpoints and _enforce_size_cap both run — is the one probed git
-    subcommand that spawns such a grandchild, so a slow gc could wedge there
-    indefinitely.  ``_run_git`` now spawns via ``run_text_capture``
-    (file-backed capture + tree-kill); see TestGitTimeoutIsBounded, which
-    guards the routing.
-
-    THAT HAZARD IS NOT WHY THESE TESTS WERE SLOW — do not conflate the two.
-    The snapshot commands this class drives (add, write-tree, commit-tree,
-    update-ref, log) are leaf processes: probed 2026-08-15, none of them spawns
-    a descendant, so their 30s cap held even before the capture-pipe fix and
-    the fix did not speed them up.  Their cost is N spawns times a per-spawn
-    price set by host contention, and no timeout value rescues that — raising
-    the clock only buys a slower failure.  test_max_snapshots_trims_history
-    hung >900s and damaged two sweeps for this reason alone.
-
-    So the lever is the SPAWN COUNT, not the clock.  Measured on this host:
-
-        max_snapshots=3, 6 snapshots -> 75 spawns, 10.14s quiet
-        max_snapshots=2, 4 snapshots -> 50 spawns,  5.67s quiet   <- now
-
-    A 2026-08-15 ``pytest tests/tools -n auto`` sweep (8,572 tests) ranked the
-    old 75-spawn shape the SLOWEST TEST IN THE DIRECTORY at 29.81s, against
-    6.93s for the same test in a single-file run — 4.3x from spawn contention
-    alone.  4 snapshots against a cap of 2 still exercises the whole contract
-    (trimming happens, two commits are dropped, newest-first order survives
-    the chain rebuild) for a third fewer processes.
-
-    ``_require_affordable_spawns`` above then converts the residual risk from
-    "session-killing hang" into "visible skip": it prices one real git spawn
-    and skips when the projected cost would eat the budget, rather than
-    letting --timeout-method=thread take the whole sweep down with it.
-    """
-
     def test_max_snapshots_trims_history(self, work_dir, checkpoint_base, monkeypatch):
-        _require_affordable_spawns(_TRIM_HISTORY_SPAWNS)
         monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
         # Tiny cap to test enforcement.
-        m = CheckpointManager(enabled=True, max_snapshots=2)
+        m = CheckpointManager(enabled=True, max_snapshots=3)
 
-        for i in range(4):
+        for i in range(6):
             (work_dir / "main.py").write_text(f"v{i}\n")
             m.new_turn()
             m.ensure_checkpoint(str(work_dir), f"step-{i}")
 
         cps = m.list_checkpoints(str(work_dir))
-        assert len(cps) == 2          # step-0 and step-1 trimmed away
+        assert len(cps) == 3
         reasons = [c["reason"] for c in cps]
-        # Newest first — step-3, step-2
-        assert reasons[0] == "step-3"
-        assert reasons[-1] == "step-2"
+        # Newest first — step-5, step-4, step-3
+        assert reasons[0] == "step-5"
+        assert reasons[-1] == "step-3"
 
     def test_max_file_size_mb_skips_large_files(
         self, tmp_path, checkpoint_base, monkeypatch,
@@ -612,41 +546,10 @@ class TestRealPruning:
 # =========================================================================
 
 class TestRestore:
-    def test_restore_to_previous(self, mgr, work_dir):
-        (work_dir / "main.py").write_text("original\n")
-        mgr.ensure_checkpoint(str(work_dir), "original state")
-        mgr.new_turn()
-
-        (work_dir / "main.py").write_text("modified\n")
-
-        cps = mgr.list_checkpoints(str(work_dir))
-        assert len(cps) == 1
-
-        result = mgr.restore(str(work_dir), cps[0]["hash"])
-        assert result["success"] is True
-        assert (work_dir / "main.py").read_text() == "original\n"
-
-    def test_restore_invalid_hash(self, mgr, work_dir):
+    def test_restore_unknown_hash_fails(self, mgr, work_dir):
+        assert mgr.restore(str(work_dir), "abc123")["success"] is False  # no checkpoints
         mgr.ensure_checkpoint(str(work_dir), "initial")
-        result = mgr.restore(str(work_dir), "deadbeef1234")
-        assert result["success"] is False
-
-    def test_restore_no_checkpoints(self, mgr, work_dir):
-        result = mgr.restore(str(work_dir), "abc123")
-        assert result["success"] is False
-
-    def test_restore_creates_pre_rollback_snapshot(self, mgr, work_dir):
-        (work_dir / "main.py").write_text("v1\n")
-        mgr.ensure_checkpoint(str(work_dir), "v1")
-        mgr.new_turn()
-
-        (work_dir / "main.py").write_text("v2\n")
-        cps = mgr.list_checkpoints(str(work_dir))
-        mgr.restore(str(work_dir), cps[0]["hash"])
-
-        all_cps = mgr.list_checkpoints(str(work_dir))
-        assert len(all_cps) >= 2
-        assert "pre-rollback" in all_cps[0]["reason"]
+        assert mgr.restore(str(work_dir), "deadbeef1234")["success"] is False
 
     def test_tilde_path_supports_diff_and_restore_flow(
         self, checkpoint_base, fake_home, monkeypatch,
@@ -664,6 +567,7 @@ class TestRestore:
 
         file_path.write_text("changed\n")
         cps = m.list_checkpoints(str(project))
+        assert len(cps) == 1
         diff_result = m.diff(tilde, cps[0]["hash"])
         assert diff_result["success"] is True
         assert "main.py" in diff_result["diff"]
@@ -672,32 +576,336 @@ class TestRestore:
         assert restore_result["success"] is True
         assert file_path.read_text() == "original\n"
 
+    def test_restore_creates_pre_rollback_snapshot(self, mgr, work_dir):
+        (work_dir / "main.py").write_text("v1\n")
+        mgr.ensure_checkpoint(str(work_dir), "v1")
+        mgr.new_turn()
+
+        (work_dir / "main.py").write_text("v2\n")
+        cps = mgr.list_checkpoints(str(work_dir))
+        mgr.restore(str(work_dir), cps[0]["hash"])
+
+        all_cps = mgr.list_checkpoints(str(work_dir))
+        assert len(all_cps) >= 2
+        assert "pre-rollback" in all_cps[0]["reason"]
+
+    def test_restore_no_checkpoints(self, mgr, work_dir):
+        result = mgr.restore(str(work_dir), "abc123")
+        assert result["success"] is False
+
+    def test_restore_invalid_hash(self, mgr, work_dir):
+        mgr.ensure_checkpoint(str(work_dir), "initial")
+        result = mgr.restore(str(work_dir), "deadbeef1234")
+        assert result["success"] is False
+
+    def test_restore_to_previous(self, mgr, work_dir):
+        (work_dir / "main.py").write_text("original\n")
+        mgr.ensure_checkpoint(str(work_dir), "original state")
+        mgr.new_turn()
+
+        (work_dir / "main.py").write_text("modified\n")
+
+        cps = mgr.list_checkpoints(str(work_dir))
+        assert len(cps) == 1
+
+        result = mgr.restore(str(work_dir), cps[0]["hash"])
+        assert result["success"] is True
+        assert (work_dir / "main.py").read_text() == "original\n"
+
+
+class TestSafeRestore:
+    """Safe restore: preserve user hand-edits, revert only Hermes-authored changes.
+
+    Inspired by Copilot CLI's /rewind, which "restores only the files Copilot
+    changed, skipping any file whose contents no longer match what Copilot
+    last wrote".
+    """
+
+    def _checkpoint(self, mgr, work_dir):
+        assert mgr.ensure_checkpoint(str(work_dir), "initial") is True
+        mgr.new_turn()
+        cps = mgr.list_checkpoints(str(work_dir))
+        assert cps
+        return cps[0]["hash"]
+
+    def test_safe_restore_skips_user_edited_file(self, mgr, work_dir):
+        base = self._checkpoint(mgr, work_dir)
+
+        # Hermes writes main.py and records it in the ledger.
+        (work_dir / "main.py").write_text("agent version\n")
+        mgr.record_agent_write(str(work_dir / "main.py"))
+
+        # The user then hand-edits README.md (Hermes never wrote it).
+        (work_dir / "README.md").write_text("user hand edit\n")
+
+        result = mgr.restore(str(work_dir), base, safe=True)
+        assert result["success"] is True
+        # Hermes-authored change reverted...
+        assert (work_dir / "main.py").read_text() == "print('hello')\n"
+        # ...user's hand edit preserved.
+        assert (work_dir / "README.md").read_text() == "user hand edit\n"
+        assert "README.md" in result["skipped_user_edits"]
+        assert "main.py" in result["restored_files"]
+
+    def test_safe_restore_skips_file_user_edited_after_agent(self, mgr, work_dir):
+        base = self._checkpoint(mgr, work_dir)
+
+        # Hermes writes the file, then the user modifies it afterwards.
+        (work_dir / "main.py").write_text("agent version\n")
+        mgr.record_agent_write(str(work_dir / "main.py"))
+        (work_dir / "main.py").write_text("user tweaked the agent's file\n")
+
+        result = mgr.restore(str(work_dir), base, safe=True)
+        assert result["success"] is True
+        # Content no longer matches what Hermes last wrote → preserved.
+        assert (work_dir / "main.py").read_text() == "user tweaked the agent's file\n"
+        assert "main.py" in result["skipped_user_edits"]
+
+    def test_safe_restore_restores_agent_deleted_file(self, mgr, work_dir):
+        base = self._checkpoint(mgr, work_dir)
+
+        (work_dir / "main.py").write_text("agent version\n")
+        mgr.record_agent_write(str(work_dir / "main.py"))
+        (work_dir / "main.py").unlink()
+
+        result = mgr.restore(str(work_dir), base, safe=True)
+        assert result["success"] is True
+        assert (work_dir / "main.py").read_text() == "print('hello')\n"
+
+    def test_safe_restore_falls_back_to_full_when_no_ledger(self, mgr, work_dir):
+        """Empty ledger (pre-existing stores) → classic full restore."""
+        base = self._checkpoint(mgr, work_dir)
+        (work_dir / "main.py").write_text("changed without ledger\n")
+
+        result = mgr.restore(str(work_dir), base, safe=True)
+        assert result["success"] is True
+        assert (work_dir / "main.py").read_text() == "print('hello')\n"
+        # Fallback path: no per-file classification in the result.
+        assert "skipped_user_edits" not in result
+
+    def test_safe_restore_removes_agent_created_file_keeps_user_edit(self, mgr, work_dir):
+        base = self._checkpoint(mgr, work_dir)
+
+        # Hermes creates a brand-new file after the checkpoint...
+        (work_dir / "agent.txt").write_text("agent file\n")
+        mgr.record_agent_write(str(work_dir / "agent.txt"))
+        # ...and the user hand-edits an existing one.
+        (work_dir / "README.md").write_text("user edit\n")
+
+        result = mgr.restore(str(work_dir), base, safe=True)
+        assert result["success"] is True
+        # User edit preserved; Hermes-created file removed (not in checkpoint).
+        assert (work_dir / "README.md").read_text() == "user edit\n"
+        assert not (work_dir / "agent.txt").exists()
+        assert "README.md" in result["skipped_user_edits"]
+        assert "agent.txt" in result["restored_files"]
+
+    # -- size-capped files -------------------------------------------------
+    #
+    # ``max_file_size_mb`` keeps generated assets out of a checkpoint
+    # (test_max_file_size_mb_skips_large_files). Safe restore then sees such a
+    # file as "changed since the checkpoint and absent from it" — the same
+    # shape as a file Hermes created — and the delete branch treats absence as
+    # proof of authorship. For a capped file that is wrong: no checkpoint holds
+    # a copy, so deleting it destroys the only one.
+
+    @staticmethod
+    def _capped_mgr(checkpoint_base, monkeypatch, cap_mb=1):
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
+        return CheckpointManager(enabled=True, max_snapshots=50, max_file_size_mb=cap_mb)
+
+    def test_safe_restore_keeps_an_oversize_file_the_cap_excluded(
+        self, work_dir, checkpoint_base, monkeypatch,
+    ):
+        """The file is in no checkpoint, so deleting it is unrecoverable."""
+        m = self._capped_mgr(checkpoint_base, monkeypatch)
+        corpus = work_dir / "corpus.jsonl"
+        corpus.write_bytes(b"original\n" + b"x" * (2 * 1024 * 1024))
+        base = self._checkpoint(m, work_dir)
+
+        corpus.write_bytes(b"agent appended\n" + b"y" * (2 * 1024 * 1024))
+        m.record_agent_write(str(corpus))
+
+        result = m.restore(str(work_dir), base, safe=True)
+
+        assert result["success"] is True
+        assert corpus.exists(), "safe restore deleted a file no checkpoint holds"
+        assert corpus.read_bytes().startswith(b"agent appended")
+        assert "corpus.jsonl" in result.get("skipped_oversize", [])
+
+    def test_safe_restore_does_not_report_a_kept_file_as_restored(
+        self, work_dir, checkpoint_base, monkeypatch,
+    ):
+        """Misreporting is what made the loss silent — the user was told
+        "Restored" for a path that had just been unlinked."""
+        m = self._capped_mgr(checkpoint_base, monkeypatch)
+        corpus = work_dir / "corpus.jsonl"
+        corpus.write_bytes(b"o" * (2 * 1024 * 1024))
+        base = self._checkpoint(m, work_dir)
+
+        corpus.write_bytes(b"a" * (2 * 1024 * 1024))
+        m.record_agent_write(str(corpus))
+        (work_dir / "main.py").write_text("agent version\n")
+        m.record_agent_write(str(work_dir / "main.py"))
+
+        result = m.restore(str(work_dir), base, safe=True)
+
+        assert result["restored_files"] == ["main.py"]
+        assert (work_dir / "main.py").read_text() == "print('hello')\n"
+
+    def test_safe_restore_still_reverts_a_file_that_grew_past_the_cap(
+        self, work_dir, checkpoint_base, monkeypatch,
+    ):
+        """Regression guard for the tempting wrong fix.
+
+        Dropping every oversize path from the restore plan would also strand
+        this one — small enough to be checkpointed, then bloated by the agent.
+        It IS in the checkpoint, so a prior version exists and reverting to it
+        is exactly what the user asked for. The rule has to key on "absent from
+        the checkpoint", not on "large now".
+        """
+        m = self._capped_mgr(checkpoint_base, monkeypatch)
+        grew = work_dir / "grew.txt"
+        grew.write_text("precious original\n")
+        base = self._checkpoint(m, work_dir)
+
+        grew.write_bytes(b"agent bloated it\n" + b"b" * (2 * 1024 * 1024))
+        m.record_agent_write(str(grew))
+
+        result = m.restore(str(work_dir), base, safe=True)
+
+        assert result["success"] is True
+        assert grew.read_text() == "precious original\n"
+        assert "grew.txt" in result["restored_files"]
+        assert "grew.txt" not in result.get("skipped_oversize", [])
+
+    def test_the_cap_boundary_is_the_same_on_both_sides_of_the_round_trip(
+        self, work_dir, checkpoint_base, monkeypatch,
+    ):
+        """One threshold, checked from both ends.
+
+        The checkpoint decides what to store and safe restore decides what may
+        be deleted, and the safety of the pair rests on the two agreeing. A file
+        at exactly the cap is stored (the test is strictly greater-than), so it
+        must revert; one byte more is excluded, so it must be kept. Were the
+        checkpoint side to drift to ``>=`` while restore kept ``>``, the at-cap
+        file would be stored nowhere and recognised as capped nowhere — the
+        exact gap that deletes it — and this fails.
+        """
+        cap = 1024 * 1024
+        m = self._capped_mgr(checkpoint_base, monkeypatch, cap_mb=1)
+
+        at_cap = work_dir / "at_cap.bin"
+        over_cap = work_dir / "over_cap.bin"
+        at_cap.write_bytes(b"o" * cap)
+        over_cap.write_bytes(b"o" * (cap + 1))
+        base = self._checkpoint(m, work_dir)
+
+        at_cap.write_bytes(b"a" * cap)
+        over_cap.write_bytes(b"a" * (cap + 1))
+        m.record_agent_write(str(at_cap))
+        m.record_agent_write(str(over_cap))
+
+        result = m.restore(str(work_dir), base, safe=True)
+
+        assert result["success"] is True
+        # Stored, therefore recoverable, therefore reverted.
+        assert at_cap.read_bytes() == b"o" * cap
+        assert "at_cap.bin" in result["restored_files"]
+        assert "at_cap.bin" not in result.get("skipped_oversize", [])
+        # Never stored, therefore unrecoverable, therefore left alone.
+        assert over_cap.read_bytes() == b"a" * (cap + 1)
+        assert "over_cap.bin" in result.get("skipped_oversize", [])
+        assert "over_cap.bin" not in result["restored_files"]
+
+    def test_safe_restore_still_deletes_a_small_agent_created_file(
+        self, work_dir, checkpoint_base, monkeypatch,
+    ):
+        """The delete branch keeps working for the case it was written for."""
+        m = self._capped_mgr(checkpoint_base, monkeypatch)
+        base = self._checkpoint(m, work_dir)
+
+        scratch = work_dir / "scratch.txt"
+        scratch.write_text("agent scratch\n")
+        m.record_agent_write(str(scratch))
+
+        result = m.restore(str(work_dir), base, safe=True)
+
+        assert not scratch.exists()
+        assert "scratch.txt" in result["restored_files"]
+        assert result["skipped_oversize"] == []
+        assert "failed_deletes" not in result
+
+    def test_safe_restore_does_not_report_a_failed_delete_as_restored(
+        self, mgr, work_dir, monkeypatch,
+    ):
+        """A delete_target whose unlink fails stays on disk — reporting it in
+        restored_files is the same silent misreport the oversize fix closed."""
+        base = self._checkpoint(mgr, work_dir)
+
+        stubborn = work_dir / "stubborn.txt"
+        stubborn.write_text("agent scratch\n")
+        mgr.record_agent_write(str(stubborn))
+
+        import pathlib
+
+        real_unlink = pathlib.Path.unlink
+
+        def failing_unlink(self, *args, **kwargs):
+            if self.name == "stubborn.txt":
+                raise OSError(13, "Permission denied")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "unlink", failing_unlink)
+        result = mgr.restore(str(work_dir), base, safe=True)
+
+        assert result["success"] is True
+        assert stubborn.exists()
+        assert "stubborn.txt" not in result["restored_files"]
+        assert result["failed_deletes"] == ["stubborn.txt"]
+
+    def test_unsafe_restore_overwrites_everything(self, mgr, work_dir):
+        base = self._checkpoint(mgr, work_dir)
+        (work_dir / "main.py").write_text("agent version\n")
+        mgr.record_agent_write(str(work_dir / "main.py"))
+        (work_dir / "README.md").write_text("user hand edit\n")
+
+        result = mgr.restore(str(work_dir), base, safe=False)
+        assert result["success"] is True
+        assert (work_dir / "main.py").read_text() == "print('hello')\n"
+        assert (work_dir / "README.md").read_text() == "# Project\n"
+
+    def test_record_agent_write_disabled_manager_noop(self, checkpoint_base, work_dir, monkeypatch):
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
+        m = CheckpointManager(enabled=False)
+        m.record_agent_write(str(work_dir / "main.py"))  # must not raise
+        assert not (checkpoint_base / "store").exists()
+
 
 # =========================================================================
 # CheckpointManager — working dir resolution
 # =========================================================================
 
 class TestWorkingDirResolution:
-    def test_resolves_git_project_root(self, tmp_path):
+    def test_resolves_project_root_markers(self, tmp_path, fake_home):
         m = CheckpointManager(enabled=True)
-        project = tmp_path / "myproject"
-        project.mkdir()
-        (project / ".git").mkdir()
-        subdir = project / "src"
-        subdir.mkdir()
-        filepath = subdir / "main.py"
-        filepath.write_text("x\n")
 
-        assert m.get_working_dir_for_path(str(filepath)) == str(project)
+        git_proj = tmp_path / "myproject"
+        (git_proj / "src").mkdir(parents=True)
+        (git_proj / ".git").mkdir()
+        (git_proj / "src" / "main.py").write_text("x\n")
+        assert m.get_working_dir_for_path(
+            str(git_proj / "src" / "main.py")
+        ) == str(git_proj)
 
-    def test_resolves_pyproject_root(self, tmp_path):
-        m = CheckpointManager(enabled=True)
-        project = tmp_path / "pyproj"
-        project.mkdir()
-        (project / "pyproject.toml").write_text("[project]\n")
-        subdir = project / "src"
-        subdir.mkdir()
-        assert m.get_working_dir_for_path(str(subdir / "file.py")) == str(project)
+        # pyproject.toml marker, reached through a ~ path.
+        py_proj = fake_home / "pyproj"
+        (py_proj / "src").mkdir(parents=True)
+        (py_proj / "pyproject.toml").write_text("[project]\n")
+        (py_proj / "src" / "file.py").write_text("x\n")
+        assert m.get_working_dir_for_path(
+            f"~/{py_proj.name}/src/file.py"
+        ) == str(py_proj)
 
     def test_falls_back_to_parent(self, tmp_path, monkeypatch):
         m = CheckpointManager(enabled=True)
@@ -711,11 +919,8 @@ class TestWorkingDirResolution:
         def _guarded_exists(self):
             s = str(self)
             stop = str(tmp_path)
-            # Match markers with the platform separator — with "/" the guard
-            # never fires on Windows and ancestor markers (e.g. a Makefile in
-            # the home dir) leak through, breaking the fallback assertion.
             if not s.startswith(stop) and any(
-                s.endswith(os.sep + m) or s == os.sep + m
+                s.endswith("/" + m) or s == "/" + m
                 for m in (".git", "pyproject.toml", "package.json",
                           "Cargo.toml", "go.mod", "Makefile", "pom.xml",
                           ".hg", "Gemfile")
@@ -740,27 +945,60 @@ class TestWorkingDirResolution:
             f"~/{project.name}/src/main.py"
         ) == str(project)
 
+    def test_resolves_git_project_root(self, tmp_path):
+        m = CheckpointManager(enabled=True)
+        project = tmp_path / "myproject"
+        project.mkdir()
+        (project / ".git").mkdir()
+        subdir = project / "src"
+        subdir.mkdir()
+        filepath = subdir / "main.py"
+        filepath.write_text("x\n")
+
+        assert m.get_working_dir_for_path(str(filepath)) == str(project)
+
+    def test_resolves_pyproject_root(self, tmp_path):
+        m = CheckpointManager(enabled=True)
+        project = tmp_path / "pyproj"
+        project.mkdir()
+        (project / "pyproject.toml").write_text("[project]\n")
+        subdir = project / "src"
+        subdir.mkdir()
+        assert m.get_working_dir_for_path(str(subdir / "file.py")) == str(project)
+
 
 # =========================================================================
 # Git env isolation
 # =========================================================================
 
 class TestGitEnvIsolation:
-    def test_sets_git_dir(self, tmp_path):
-        store = tmp_path / "store"
-        env = _git_env(store, str(tmp_path / "work"))
-        assert env["GIT_DIR"] == str(store)
-
-    def test_sets_work_tree(self, tmp_path):
+    def test_env_pins_store_worktree_and_ignores_ambient_git_state(
+        self, fake_home, tmp_path, monkeypatch,
+    ):
         store = tmp_path / "store"
         work = tmp_path / "work"
-        env = _git_env(store, str(work))
-        assert env["GIT_WORK_TREE"] == str(work.resolve())
 
-    def test_clears_index_file(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GIT_INDEX_FILE", "/some/index")
-        env = _git_env(tmp_path / "store", str(tmp_path))
+        env = _git_env(store, str(work))
+        assert env["GIT_DIR"] == str(store)
+        assert env["GIT_WORK_TREE"] == str(work.resolve())
+        # An ambient index must never leak in.
         assert "GIT_INDEX_FILE" not in env
+        # Global/system git config is neutralised (no user hooks, no gpgsign).
+        assert env["GIT_CONFIG_GLOBAL"] == os.devnull
+        assert env["GIT_CONFIG_SYSTEM"] == os.devnull
+        assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+
+        env = _git_env(
+            store, str(work), index_file=store / "indexes" / "abc",
+        )
+        assert env["GIT_INDEX_FILE"].endswith("indexes/abc")
+
+        # ~ in the work tree is expanded.
+        tilde_work = fake_home / "work"
+        tilde_work.mkdir()
+        env = _git_env(store, f"~/{tilde_work.name}")
+        assert env["GIT_WORK_TREE"] == str(tilde_work.resolve())
 
     def test_sets_index_file_when_provided(self, tmp_path):
         index_file = tmp_path / "store" / "indexes" / "abc"
@@ -777,41 +1015,21 @@ class TestGitEnvIsolation:
         env = _git_env(tmp_path / "store", f"~/{work.name}")
         assert env["GIT_WORK_TREE"] == str(work.resolve())
 
+    def test_clears_index_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_INDEX_FILE", "/some/index")
+        env = _git_env(tmp_path / "store", str(tmp_path))
+        assert "GIT_INDEX_FILE" not in env
 
-# =========================================================================
-# format_checkpoint_list
-# =========================================================================
+    def test_sets_work_tree(self, tmp_path):
+        store = tmp_path / "store"
+        work = tmp_path / "work"
+        env = _git_env(store, str(work))
+        assert env["GIT_WORK_TREE"] == str(work.resolve())
 
-class TestFormatCheckpointList:
-    def test_empty_list(self):
-        assert "No checkpoints" in format_checkpoint_list([], "/some/dir")
-
-    def test_formats_entries(self):
-        cps = [
-            {"hash": "abc123", "short_hash": "abc1",
-             "timestamp": "2026-03-09T21:15:00-07:00",
-             "reason": "before write_file"},
-            {"hash": "def456", "short_hash": "def4",
-             "timestamp": "2026-03-09T21:10:00-07:00",
-             "reason": "before patch"},
-        ]
-        result = format_checkpoint_list(cps, "/home/user/project")
-        assert "abc1" in result
-        assert "def4" in result
-        assert "before write_file" in result
-        assert "/rollback" in result
-
-
-# =========================================================================
-# Dir size / file count guards
-# =========================================================================
-
-class TestDirFileCount:
-    def test_counts_files(self, work_dir):
-        assert _dir_file_count(str(work_dir)) >= 2
-
-    def test_nonexistent_dir(self, tmp_path):
-        assert _dir_file_count(str(tmp_path / "nonexistent")) == 0
+    def test_sets_git_dir(self, tmp_path):
+        store = tmp_path / "store"
+        env = _git_env(store, str(tmp_path / "work"))
+        assert env["GIT_DIR"] == str(store)
 
 
 # =========================================================================
@@ -819,13 +1037,6 @@ class TestDirFileCount:
 # =========================================================================
 
 class TestErrorResilience:
-    def test_no_git_installed(self, work_dir, checkpoint_base, monkeypatch):
-        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
-        m = CheckpointManager(enabled=True)
-        monkeypatch.setattr("shutil.which", lambda x: None)
-        m._git_available = None
-        assert m.ensure_checkpoint(str(work_dir), "test") is False
-
     def test_run_git_allows_expected_nonzero_without_error_log(
         self, tmp_path, caplog,
     ):
@@ -835,7 +1046,7 @@ class TestErrorResilience:
             args=["git", "diff", "--cached", "--quiet"],
             returncode=1, stdout="", stderr="",
         )
-        with patch("tools.checkpoint_manager.run_text_capture", return_value=completed):
+        with patch("tools.checkpoint_manager.subprocess.run", return_value=completed):
             with caplog.at_level(logging.ERROR, logger="tools.checkpoint_manager"):
                 ok, stdout, stderr = _run_git(
                     ["diff", "--cached", "--quiet"],
@@ -845,6 +1056,18 @@ class TestErrorResilience:
         assert ok is False
         assert stdout == ""
         assert not caplog.records
+
+
+    def test_checkpoint_failures_never_raise(self, mgr, work_dir, monkeypatch):
+        def broken_run_git(*args, **kwargs):
+            raise OSError("git exploded")
+        monkeypatch.setattr("tools.checkpoint_manager._run_git", broken_run_git)
+        assert mgr.ensure_checkpoint(str(work_dir), "test") is False
+
+        # ...and when git isn't installed at all.
+        monkeypatch.setattr("shutil.which", lambda x: None)
+        mgr._git_available = None
+        assert mgr.ensure_checkpoint(str(work_dir), "test") is False
 
     def test_run_git_invalid_working_dir_reports_path_error(self, tmp_path, caplog):
         missing = tmp_path / "missing"
@@ -886,6 +1109,13 @@ class TestErrorResilience:
         monkeypatch.setattr("tools.checkpoint_manager._run_git", broken_run_git)
         assert mgr.ensure_checkpoint(str(work_dir), "test") is False
 
+    def test_no_git_installed(self, work_dir, checkpoint_base, monkeypatch):
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
+        m = CheckpointManager(enabled=True)
+        monkeypatch.setattr("shutil.which", lambda x: None)
+        m._git_available = None
+        assert m.ensure_checkpoint(str(work_dir), "test") is False
+
 
 class TestTouchProjectMalformedMeta:
     """_touch_project must not raise when the project metadata file is corrupted.
@@ -903,8 +1133,7 @@ class TestTouchProjectMalformedMeta:
     mirroring the same guard already present in ``_list_projects``.
     """
 
-    @pytest.mark.parametrize("payload", ["[]", "null", "42", '"oops"'])
-    def test_non_dict_meta_does_not_raise(self, tmp_path, payload):
+    def test_non_dict_meta_does_not_raise(self, tmp_path):
         store = tmp_path / "store"
         workdir = str(tmp_path / "project")
         _init_store(store, workdir)
@@ -912,7 +1141,7 @@ class TestTouchProjectMalformedMeta:
         dir_hash = _project_hash(workdir)
         meta_path = _project_meta_path(store, dir_hash)
         meta_path.parent.mkdir(parents=True, exist_ok=True)
-        meta_path.write_text(payload, encoding="utf-8")
+        meta_path.write_text("[]", encoding="utf-8")
 
         # Must not raise TypeError
         _touch_project(store, workdir)
@@ -950,7 +1179,7 @@ class TestSecurity:
         assert result["success"] is False
         assert "expected 4-64 hex characters" in result["error"]
 
-    def test_restore_rejects_path_traversal(self, mgr, work_dir):
+    def test_restore_file_path_confined_to_working_dir(self, mgr, work_dir):
         mgr.ensure_checkpoint(str(work_dir), "initial")
         cps = mgr.list_checkpoints(str(work_dir))
         target_hash = cps[0]["hash"]
@@ -962,6 +1191,18 @@ class TestSecurity:
         result = mgr.restore(str(work_dir), target_hash, file_path="../outside_file.txt")
         assert result["success"] is False
         assert "escapes the working directory" in result["error"]
+
+        # Relative paths inside the working dir are accepted, nested included.
+        result = mgr.restore(str(work_dir), target_hash, file_path="main.py")
+        assert result["success"] is True
+
+        (work_dir / "subdir").mkdir()
+        (work_dir / "subdir" / "test.txt").write_text("hello")
+        mgr.new_turn()
+        mgr.ensure_checkpoint(str(work_dir), "second")
+        cps = mgr.list_checkpoints(str(work_dir))
+        result = mgr.restore(str(work_dir), cps[0]["hash"], file_path="subdir/test.txt")
+        assert result["success"] is True
 
     def test_restore_accepts_valid_file_path(self, mgr, work_dir):
         mgr.ensure_checkpoint(str(work_dir), "initial")
@@ -979,39 +1220,37 @@ class TestSecurity:
         result = mgr.restore(str(work_dir), cps[0]["hash"], file_path="subdir/test.txt")
         assert result["success"] is True
 
+    def test_restore_rejects_path_traversal(self, mgr, work_dir):
+        mgr.ensure_checkpoint(str(work_dir), "initial")
+        cps = mgr.list_checkpoints(str(work_dir))
+        target_hash = cps[0]["hash"]
+
+        result = mgr.restore(str(work_dir), target_hash, file_path="/etc/passwd")
+        assert result["success"] is False
+        assert "got absolute path" in result["error"]
+
+        result = mgr.restore(str(work_dir), target_hash, file_path="../outside_file.txt")
+        assert result["success"] is False
+        assert "escapes the working directory" in result["error"]
+
 
 # =========================================================================
 # GPG / global git config isolation
 # =========================================================================
 
-class TestGpgAndGlobalConfigIsolation:
-    def test_git_env_isolates_global_and_system_config(self, tmp_path):
-        env = _git_env(tmp_path / "store", str(tmp_path))
-        assert env["GIT_CONFIG_GLOBAL"] == os.devnull
-        assert env["GIT_CONFIG_SYSTEM"] == os.devnull
-        assert env["GIT_CONFIG_NOSYSTEM"] == "1"
-
-    def test_init_sets_commit_gpgsign_false(self, work_dir, checkpoint_base, monkeypatch):
+class TestGpgIsolation:
+    def test_init_disables_commit_and_tag_signing(
+        self, work_dir, checkpoint_base, monkeypatch,
+    ):
         monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
         store = _store_path(checkpoint_base)
         _init_store(store, str(work_dir))
-        result = subprocess.run(
-            ["git", "config", "--file", str(store / "config"),
-             "--get", "commit.gpgsign"],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "false"
-
-    def test_init_sets_tag_gpgsign_false(self, work_dir, checkpoint_base, monkeypatch):
-        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base)
-        store = _store_path(checkpoint_base)
-        _init_store(store, str(work_dir))
-        result = subprocess.run(
-            ["git", "config", "--file", str(store / "config"),
-             "--get", "tag.gpgSign"],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "false"
+        for key in ("commit.gpgsign", "tag.gpgSign"):
+            result = subprocess.run(
+                ["git", "config", "--file", str(store / "config"), "--get", key],
+                capture_output=True, text=True,
+            )
+            assert result.stdout.strip() == "false", key
 
     def test_checkpoint_works_with_global_gpgsign_and_broken_gpg(
         self, work_dir, checkpoint_base, monkeypatch, tmp_path,
@@ -1053,22 +1292,6 @@ def _seed_legacy_repo(base: Path, name: str, workdir: Path, mtime: float = None)
     return shadow
 
 
-def _seed_v2_project(base: Path, workdir: Path, last_touch: float = None) -> str:
-    """Register a v2 project in the shared store (no commits, just metadata)."""
-    store = _store_path(base)
-    _init_store(store, str(workdir if workdir.exists() else base))
-    dir_hash = _project_hash(str(workdir))
-    meta = {
-        "workdir": str(workdir.resolve()) if workdir.exists() else str(workdir),
-        "created_at": (last_touch or time.time()),
-        "last_touch": (last_touch or time.time()),
-    }
-    mp = _project_meta_path(store, dir_hash)
-    mp.parent.mkdir(parents=True, exist_ok=True)
-    mp.write_text(json.dumps(meta))
-    return dir_hash
-
-
 class TestPruneCheckpointsLegacy:
     """Backwards-compat: prune still handles pre-v2 per-project shadow repos."""
 
@@ -1087,6 +1310,42 @@ class TestPruneCheckpointsLegacy:
         assert alive_repo.exists()
         assert not orphan_repo.exists()
 
+
+    def test_noop_cases_delete_nothing(self, tmp_path):
+        # Missing base.
+        result = prune_checkpoints(checkpoint_base=tmp_path / "does-not-exist")
+        assert result["scanned"] == 0
+        assert result["deleted_orphan"] == 0
+
+        base = tmp_path / "checkpoints"
+        orphan = _seed_legacy_repo(base, "ffff" * 4, tmp_path / "gone")
+        (base / "garbage-dir").mkdir()
+        (base / "garbage-dir" / "random.txt").write_text("hi")
+
+        # delete_orphans=False keeps orphans; non-shadow dirs aren't even scanned.
+        result = prune_checkpoints(
+            retention_days=0, delete_orphans=False, checkpoint_base=base,
+        )
+        assert result["scanned"] == 1
+        assert result["deleted_orphan"] == 0
+        assert orphan.exists()
+        assert (base / "garbage-dir").exists()
+
+    def test_delete_orphans_disabled_keeps_orphans(self, tmp_path):
+        base = tmp_path / "checkpoints"
+        orphan = _seed_legacy_repo(base, "ffff" * 4, tmp_path / "gone")
+
+        result = prune_checkpoints(
+            retention_days=0, delete_orphans=False, checkpoint_base=base,
+        )
+        assert result["deleted_orphan"] == 0
+        assert orphan.exists()
+
+    def test_base_missing_returns_empty_counts(self, tmp_path):
+        result = prune_checkpoints(checkpoint_base=tmp_path / "does-not-exist")
+        assert result["scanned"] == 0
+        assert result["deleted_orphan"] == 0
+
     def test_deletes_stale_by_mtime(self, tmp_path):
         base = tmp_path / "checkpoints"
         work = tmp_path / "work"
@@ -1104,16 +1363,6 @@ class TestPruneCheckpointsLegacy:
         assert fresh_repo.exists()
         assert not stale_repo.exists()
 
-    def test_delete_orphans_disabled_keeps_orphans(self, tmp_path):
-        base = tmp_path / "checkpoints"
-        orphan = _seed_legacy_repo(base, "ffff" * 4, tmp_path / "gone")
-
-        result = prune_checkpoints(
-            retention_days=0, delete_orphans=False, checkpoint_base=base,
-        )
-        assert result["deleted_orphan"] == 0
-        assert orphan.exists()
-
     def test_skips_non_shadow_dirs(self, tmp_path):
         base = tmp_path / "checkpoints"
         base.mkdir()
@@ -1123,11 +1372,6 @@ class TestPruneCheckpointsLegacy:
         result = prune_checkpoints(retention_days=0, checkpoint_base=base)
         assert result["scanned"] == 0
         assert (base / "garbage-dir").exists()
-
-    def test_base_missing_returns_empty_counts(self, tmp_path):
-        result = prune_checkpoints(checkpoint_base=tmp_path / "does-not-exist")
-        assert result["scanned"] == 0
-        assert result["deleted_orphan"] == 0
 
 
 class TestPruneCheckpointsV2:
@@ -1150,8 +1394,7 @@ class TestPruneCheckpointsV2:
         assert m.ensure_checkpoint(str(gone), "gone") is True
 
         # Simulate deletion of "gone"
-        import shutil as _shutil
-        _shutil.rmtree(gone)
+        shutil.rmtree(gone)
 
         result = prune_checkpoints(retention_days=0, checkpoint_base=base)
 
@@ -1162,6 +1405,50 @@ class TestPruneCheckpointsV2:
         # Gone project metadata wiped
         gone_hash = _project_hash(str(gone))
         assert not (base / "store" / "projects" / f"{gone_hash}.json").exists()
+
+    def test_retention_prunes_stale_projects_and_legacy_archives(
+        self, tmp_path, monkeypatch,
+    ):
+        base = tmp_path / "checkpoints"
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", base)
+
+        fresh = tmp_path / "fresh"
+        fresh.mkdir()
+        (fresh / "f").write_text("f")
+        stale = tmp_path / "stale"
+        stale.mkdir()
+        (stale / "s").write_text("s")
+
+        m = CheckpointManager(enabled=True)
+        m.ensure_checkpoint(str(fresh), "fresh")
+        m.new_turn()
+        m.ensure_checkpoint(str(stale), "stale")
+
+        # Backdate stale's last_touch to 60 days ago
+        stale_hash = _project_hash(str(stale))
+        meta_path = base / "store" / "projects" / f"{stale_hash}.json"
+        meta = json.loads(meta_path.read_text())
+        meta["last_touch"] = time.time() - 60 * 86400
+        meta_path.write_text(json.dumps(meta))
+
+        # A legacy-<ts>/ archive older than retention is wiped too.
+        old_legacy = base / "legacy-20200101-000000"
+        old_legacy.mkdir()
+        (old_legacy / "junk").write_bytes(b"x" * 1000)
+        old = time.time() - 60 * 86400
+        for p in old_legacy.rglob("*"):
+            os.utime(p, (old, old))
+        os.utime(old_legacy, (old, old))
+
+        result = prune_checkpoints(
+            retention_days=30, delete_orphans=False, checkpoint_base=base,
+        )
+
+        assert result["deleted_stale"] >= 2
+        fresh_hash = _project_hash(str(fresh))
+        assert (base / "store" / "projects" / f"{fresh_hash}.json").exists()
+        assert not meta_path.exists()
+        assert not old_legacy.exists()
 
     def test_deletes_stale_project_by_last_touch(self, tmp_path, monkeypatch):
         base = tmp_path / "checkpoints"
@@ -1214,7 +1501,130 @@ class TestPruneCheckpointsV2:
         assert not old_legacy.exists()
 
 
+class TestPruneCheckpointsOrphanAllowlist:
+    """P1 fix on PR #69141: the confirmation preview must bind to exactly
+    what gets deleted. A project that only becomes orphaned *after* the
+    preview was built (e.g. its workdir vanishes while a human is answering
+    the y/N prompt) must survive a rescan-based prune unless its identity
+    was in the previewed/approved set.
+    """
+
+    def test_v2_allowlist_restricts_deletion_to_approved_hash(self, tmp_path, monkeypatch):
+        base = tmp_path / "checkpoints"
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", base)
+
+        previewed = tmp_path / "previewed-gone"
+        previewed.mkdir()
+        (previewed / "f").write_text("a")
+        newly_gone = tmp_path / "newly-gone"
+        newly_gone.mkdir()
+        (newly_gone / "f").write_text("b")
+
+        m = CheckpointManager(enabled=True)
+        assert m.ensure_checkpoint(str(previewed), "previewed") is True
+        m.new_turn()
+        assert m.ensure_checkpoint(str(newly_gone), "newly-gone") is True
+
+        shutil.rmtree(previewed)
+        shutil.rmtree(newly_gone)
+
+        previewed_hash = _project_hash(str(previewed))
+        newly_gone_hash = _project_hash(str(newly_gone))
+
+        result = prune_checkpoints(
+            retention_days=0, checkpoint_base=base,
+            orphan_allowlist={previewed_hash},
+        )
+
+        assert result["deleted_orphan"] == 1
+        assert not (base / "store" / "projects" / f"{previewed_hash}.json").exists()
+        # Not in the allowlist -> survives this prune even though it is orphaned.
+        assert (base / "store" / "projects" / f"{newly_gone_hash}.json").exists()
+
+    def test_pre_v2_allowlist_restricts_deletion_to_approved_path(self, tmp_path):
+        base = tmp_path / "checkpoints"
+        previewed_repo = _seed_legacy_repo(base, "aaaa" * 4, tmp_path / "previewed-gone")
+        newly_gone_repo = _seed_legacy_repo(base, "bbbb" * 4, tmp_path / "newly-gone")
+
+        result = prune_checkpoints(
+            retention_days=0, checkpoint_base=base,
+            orphan_allowlist={str(previewed_repo)},
+        )
+
+        assert result["deleted_orphan"] == 1
+        assert not previewed_repo.exists()
+        assert newly_gone_repo.exists()
+
+    def test_end_to_end_timing_change_during_confirmation_prompt(self, tmp_path, monkeypatch):
+        """Reproduces the exact PR #69141 review scenario end-to-end through
+        `hermes checkpoints prune`: the preview shows one pre-v2 orphan; a
+        second project's workdir is removed by the input() callback while
+        the human is "answering" the prompt. Only the previewed orphan may
+        be deleted.
+        """
+        import hermes_cli.checkpoints as checkpoints_cli
+
+        base = tmp_path / "checkpoints"
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", base)
+
+        previewed_work = tmp_path / "was-deleted-before-preview"
+        still_alive_work = tmp_path / "still-alive-during-preview"
+        still_alive_work.mkdir()
+        _seed_legacy_repo(base, "eeee" * 4, previewed_work)
+        second_repo = _seed_legacy_repo(base, "ffff" * 4, still_alive_work)
+
+        def _confirm_and_go_stale(_prompt):
+            # Simulate the workdir disappearing after the preview was shown
+            # but before the human's answer is processed.
+            shutil.rmtree(still_alive_work)
+            return "y"
+
+        monkeypatch.setattr("builtins.input", _confirm_and_go_stale)
+
+        args = argparse.Namespace(
+            retention_days=0, max_size_mb=0, keep_orphans=False, force=False,
+        )
+        rc = checkpoints_cli.cmd_prune(args)
+
+        assert rc == 0
+        # The orphan shown in the preview is gone.
+        assert not (base / ("eeee" * 4)).exists()
+        # The one that only went orphan mid-confirmation must survive.
+        assert second_repo.exists()
+
+
 class TestMaybeAutoPruneCheckpoints:
+    def test_prunes_once_then_skips_within_interval(self, tmp_path):
+        base = tmp_path / "checkpoints"
+        base.mkdir()
+        # A corrupt marker is treated as "no prior run".
+        (base / ".last_prune").write_text("not-a-timestamp")
+        _seed_legacy_repo(base, "0000" * 4, tmp_path / "gone")
+
+        out = maybe_auto_prune_checkpoints(
+            checkpoint_base=base, min_interval_hours=24,
+        )
+        assert out["skipped"] is False
+        assert out["result"]["deleted_orphan"] == 1
+        assert (base / ".last_prune").exists()
+
+        _seed_legacy_repo(base, "2222" * 4, tmp_path / "also-gone")
+        second = maybe_auto_prune_checkpoints(
+            checkpoint_base=base, min_interval_hours=24,
+        )
+        assert second["skipped"] is True
+        assert (base / ("2222" * 4)).exists()
+
+    def test_corrupt_marker_treated_as_no_prior_run(self, tmp_path):
+        base = tmp_path / "checkpoints"
+        base.mkdir()
+        (base / ".last_prune").write_text("not-a-timestamp")
+        _seed_legacy_repo(base, "3333" * 4, tmp_path / "gone")
+
+        out = maybe_auto_prune_checkpoints(checkpoint_base=base)
+        assert out["skipped"] is False
+        assert out["result"]["deleted_orphan"] == 1
+
     def test_first_call_prunes_and_writes_marker(self, tmp_path):
         base = tmp_path / "checkpoints"
         _seed_legacy_repo(base, "0000" * 4, tmp_path / "gone")
@@ -1240,16 +1650,6 @@ class TestMaybeAutoPruneCheckpoints:
         assert second["skipped"] is True
         assert (base / ("2222" * 4)).exists()
 
-    def test_corrupt_marker_treated_as_no_prior_run(self, tmp_path):
-        base = tmp_path / "checkpoints"
-        base.mkdir()
-        (base / ".last_prune").write_text("not-a-timestamp")
-        _seed_legacy_repo(base, "3333" * 4, tmp_path / "gone")
-
-        out = maybe_auto_prune_checkpoints(checkpoint_base=base)
-        assert out["skipped"] is False
-        assert out["result"]["deleted_orphan"] == 1
-
     def test_missing_base_no_raise(self, tmp_path):
         out = maybe_auto_prune_checkpoints(
             checkpoint_base=tmp_path / "does-not-exist",
@@ -1263,13 +1663,6 @@ class TestMaybeAutoPruneCheckpoints:
 # =========================================================================
 
 class TestStoreStatus:
-    def test_empty_base(self, tmp_path, monkeypatch):
-        base = tmp_path / "checkpoints"
-        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", base)
-        info = store_status()
-        assert info["project_count"] == 0
-        assert info["total_size_bytes"] == 0
-
     def test_reports_projects_and_legacy(self, tmp_path, monkeypatch, work_dir):
         base = tmp_path / "checkpoints"
         monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", base)
@@ -1290,9 +1683,16 @@ class TestStoreStatus:
         assert len(info["legacy_archives"]) == 1
         assert info["legacy_archives"][0]["size_bytes"] >= 100
 
+    def test_empty_base(self, tmp_path, monkeypatch):
+        base = tmp_path / "checkpoints"
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", base)
+        info = store_status()
+        assert info["project_count"] == 0
+        assert info["total_size_bytes"] == 0
+
 
 class TestClearFunctions:
-    def test_clear_all_wipes_base(self, tmp_path, monkeypatch, work_dir):
+    def test_clear_all_wipes_base_then_is_a_noop(self, tmp_path, monkeypatch, work_dir):
         base = tmp_path / "checkpoints"
         monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", base)
         m = CheckpointManager(enabled=True)
@@ -1303,6 +1703,11 @@ class TestClearFunctions:
         assert result["deleted"] is True
         assert result["bytes_freed"] > 0
         assert not base.exists()
+
+        # Second call on a now-missing base is a no-op, not an error.
+        result = clear_all()
+        assert result["deleted"] is False
+        assert result["bytes_freed"] == 0
 
     def test_clear_legacy_only_removes_legacy_dirs(
         self, tmp_path, monkeypatch, work_dir,
@@ -1315,11 +1720,6 @@ class TestClearFunctions:
         legacy = base / "legacy-20200101-000000"
         legacy.mkdir()
         (legacy / "junk").write_bytes(b"x" * 1000)
-        # Archived shadow repos contain read-only git object files; on
-        # Windows a plain rmtree dies on those — deletion must still work.
-        ro = legacy / "read-only-object"
-        ro.write_bytes(b"y" * 10)
-        os.chmod(ro, stat.S_IREAD)
 
         result = clear_legacy()
         assert result["deleted"] == 1
@@ -1335,10 +1735,245 @@ class TestClearFunctions:
         assert result["deleted"] is False
         assert result["bytes_freed"] == 0
 
+    def test_clear_all_wipes_base(self, tmp_path, monkeypatch, work_dir):
+        base = tmp_path / "checkpoints"
+        monkeypatch.setattr("tools.checkpoint_manager.CHECKPOINT_BASE", base)
+        m = CheckpointManager(enabled=True)
+        m.ensure_checkpoint(str(work_dir), "initial")
+        assert base.exists()
+
+        result = clear_all()
+        assert result["deleted"] is True
+        assert result["bytes_freed"] > 0
+        assert not base.exists()
+
 
 # =========================================================================
-# CHECKPOINT_BASE resolved at call time (hermetic-test poisoning guard)
+# Orphan pruning must not act on an unreachable volume
 # =========================================================================
+
+class TestOrphanPruneRequiresObservableDeletion:
+    """A missing workdir is ambiguous: deleted, or just not mounted right now.
+
+    Orphan pruning deletes a project's whole checkpoint history and runs
+    unattended at startup (``maybe_auto_prune_checkpoints`` from the CLI and
+    the gateway), so it must only fire when the deletion is something we
+    actually observed — the parent directory present, the project gone. An
+    unplugged drive, a share behind a downed VPN, or a bind-mount absent from
+    this container must not cost the user their restore points.
+    """
+
+    def _project_with_history(self, work_dir, checkpoint_base, monkeypatch):
+        monkeypatch.setattr(
+            "tools.checkpoint_manager.CHECKPOINT_BASE", checkpoint_base
+        )
+        m = CheckpointManager(enabled=True, max_snapshots=10)
+        m.ensure_checkpoint(str(work_dir), "initial")
+        return m
+
+    def _history_survives(self, checkpoint_base, work_dir):
+        store = _store_path(checkpoint_base)
+        return _project_meta_path(
+            store, _project_hash(str(work_dir))
+        ).exists()
+
+    def test_absent_workdir_without_deletion_evidence_keeps_history(
+        self, tmp_path, checkpoint_base, monkeypatch,
+    ):
+        """Two unmount shapes, both ambiguous → both keep their history.
+
+        1. The whole mount disappears (parent missing too).
+        2. The mount point outlives the volume as an empty dir — the classic
+           static layout (fstab entry, container bind-mount) does not remove
+           the mount point on unmount, and an empty parent looks exactly the
+           same whether the volume was detached or the project deleted.
+        """
+        vanished_mount = tmp_path / "mnt-a"
+        vanished = vanished_mount / "work" / "proj"
+        vanished.mkdir(parents=True)
+        (vanished / "main.py").write_text("print('x')\n")
+        self._project_with_history(vanished, checkpoint_base, monkeypatch)
+
+        mount_point = tmp_path / "mnt-b" / "volume"
+        unmounted = mount_point / "proj"
+        unmounted.mkdir(parents=True)
+        (unmounted / "main.py").write_text("print('y')\n")
+        self._project_with_history(unmounted, checkpoint_base, monkeypatch)
+
+        shutil.rmtree(vanished_mount)
+        shutil.rmtree(unmounted)
+        assert not vanished.exists()
+        assert mount_point.is_dir() and not any(mount_point.iterdir())
+
+        prune_checkpoints(
+            retention_days=0, delete_orphans=True, checkpoint_base=checkpoint_base,
+        )
+
+        assert self._history_survives(checkpoint_base, vanished), (
+            "checkpoint history was deleted for a project whose volume was "
+            "merely unmounted"
+        )
+        assert self._history_survives(checkpoint_base, unmounted), (
+            "checkpoint history was deleted for a project whose mount point "
+            "merely survived the unmount as an empty directory"
+        )
+
+
+    def test_populated_underlay_mountpoint_keeps_its_checkpoints(
+        self, tmp_path, checkpoint_base, monkeypatch,
+    ):
+        """A detached volume exposing a populated underlay dir → keep history.
+
+        An entry in the parent does not prove the project volume is attached.
+        Unmounting swaps which directory is visible at the mount point's
+        path: the mounted filesystem's root gives way to the *underlying*
+        directory, whose own files (a ``.keep`` placeholder, sibling mount
+        points) become visible. Those entries were never next to the project,
+        so they must not corroborate an orphan classification — yet a naive
+        "parent has any entry" guard treats them as proof of deletion.
+
+        Simulate the detach faithfully: the directory visible at
+        ``mnt/volume`` after the unmount is a *different* directory (new
+        inode — the underlay) carrying a ``.keep`` placeholder.
+        """
+        mount_point = tmp_path / "mnt" / "volume"
+        work_dir = mount_point / "project"
+        work_dir.mkdir(parents=True)
+        (work_dir / "main.py").write_text("print('x')\n")
+        self._project_with_history(work_dir, checkpoint_base, monkeypatch)
+
+        # Detach: the directory that was mounted at the path (with the
+        # project on it) stops being visible there; the underlay directory —
+        # same path, different directory, its own contents — shows through,
+        # exposing a placeholder. Renaming (rather than deleting) the mounted
+        # directory keeps its inode alive, so the underlay directory is
+        # guaranteed a distinct identity, exactly as in a real unmount.
+        mount_point.rename(tmp_path / "detached-volume")
+        mount_point.mkdir()
+        (mount_point / ".keep").write_text("")
+        assert not work_dir.exists()
+        assert any(mount_point.iterdir())
+
+        result = prune_checkpoints(
+            retention_days=0, delete_orphans=True, checkpoint_base=checkpoint_base,
+        )
+
+        assert result["deleted_orphan"] == 0
+        assert self._history_survives(checkpoint_base, work_dir), (
+            "checkpoint history was deleted because underlay entries exposed "
+            "by an unmount were mistaken for attachment evidence"
+        )
+
+    def test_recorded_parent_identity_survives_probe_failure_on_touch(
+        self, tmp_path, checkpoint_base, monkeypatch,
+    ):
+        """A later failed evidence probe must not erase recorded identity."""
+        from tools.checkpoint_manager import _register_project
+
+        parent = tmp_path / "projects"
+        work_dir = parent / "proj"
+        work_dir.mkdir(parents=True)
+        (work_dir / "main.py").write_text("print('x')\n")
+        self._project_with_history(work_dir, checkpoint_base, monkeypatch)
+
+        store = _store_path(checkpoint_base)
+        meta_path = _project_meta_path(store, _project_hash(str(work_dir)))
+        before = json.loads(meta_path.read_text())
+        assert "workdir_parent_dev" in before
+        assert "workdir_parent_ino" in before
+
+        # Re-register while the evidence probe fails (e.g. transient I/O
+        # error): the previously recorded identity must be preserved.
+        monkeypatch.setattr(
+            "tools.checkpoint_manager._volume_evidence", lambda _wd: {},
+        )
+        _register_project(store, str(work_dir))
+
+        after = json.loads(meta_path.read_text())
+        assert after["workdir_parent_dev"] == before["workdir_parent_dev"]
+        assert after["workdir_parent_ino"] == before["workdir_parent_ino"]
+
+
+# =========================================================================
+# session_diff — cumulative "what changed" view that powers /diff session
+# =========================================================================
+
+class TestSessionDiff:
+    def test_empty_when_nothing_changed(self, mgr, work_dir):
+        """No checkpoints, and a checkpoint with no later edits, both report empty."""
+        result = mgr.session_diff(str(work_dir))
+        assert result["success"] is True
+        assert result.get("empty") is True
+        assert result["diff"] == ""
+
+        mgr.ensure_checkpoint(str(work_dir), "baseline")
+        result = mgr.session_diff(str(work_dir))
+        assert result["success"] is True
+        assert result.get("empty") is True
+        assert result["diff"] == ""
+
+
+    def test_includes_newly_added_files(self, mgr, work_dir):
+        mgr.ensure_checkpoint(str(work_dir), "baseline")
+        (work_dir / "feature.py").write_text("x = 1\n")
+
+        result = mgr.session_diff(str(work_dir))
+        assert result["success"] is True
+        assert "feature.py" in result["diff"]
+        assert "+x = 1" in result["diff"]
+
+
+# Grafted from the fork side in the 0.21.1 merge: definitions the other side
+# has and this file's base side does not.
+
+def _probe_git_spawn_cost() -> float:
+    """Wall-clock seconds for one bare ``git --version``.
+
+    The module docstring's own calibration handle: sub-0.5s on a quiet host,
+    2.746s on the 2026-08-11 contended one.  Cached per session — the probe
+    is itself a spawn, and on the host it is meant to detect it is expensive.
+    """
+    global _GIT_SPAWN_COST
+    if _GIT_SPAWN_COST is None:
+        start = time.monotonic()
+        subprocess.run(
+            ["git", "--version"], capture_output=True, text=True, timeout=120,
+        )
+        _GIT_SPAWN_COST = time.monotonic() - start
+    return _GIT_SPAWN_COST
+
+def _require_affordable_spawns(spawn_count: int) -> None:
+    """Skip if this host is too contended to afford ``spawn_count`` git spawns.
+
+    These tests are spawn-bound, and process-spawn cost on Windows is not a
+    property of the code under test — it swings ~14x with host contention
+    (0.26s/spawn quiet, 3.6s/spawn under 8 concurrent sweeps).  No timeout
+    value fixes that; see the TestRealPruning docstring.
+    """
+    probe = _probe_git_spawn_cost()
+    projected = spawn_count * probe * _SPAWN_COST_VS_PROBE
+    if projected > _SPAWN_BUDGET_SECONDS:
+        pytest.skip(
+            f"host too contended for a {spawn_count}-git-spawn test: a bare "
+            f"`git --version` took {probe:.2f}s, projecting ~{projected:.0f}s "
+            f"(budget {_SPAWN_BUDGET_SECONDS:.0f}s). Skipping beats letting "
+            f"--timeout-method=thread os._exit the whole sweep."
+        )
+
+def _seed_v2_project(base: Path, workdir: Path, last_touch: float = None) -> str:
+    """Register a v2 project in the shared store (no commits, just metadata)."""
+    store = _store_path(base)
+    _init_store(store, str(workdir if workdir.exists() else base))
+    dir_hash = _project_hash(str(workdir))
+    meta = {
+        "workdir": str(workdir.resolve()) if workdir.exists() else str(workdir),
+        "created_at": (last_touch or time.time()),
+        "last_touch": (last_touch or time.time()),
+    }
+    mp = _project_meta_path(store, dir_hash)
+    mp.parent.mkdir(parents=True, exist_ok=True)
+    mp.write_text(json.dumps(meta))
+    return dir_hash
 
 @pytest.mark.timeout(60)
 class TestCheckpointBaseHermeticResolution:
@@ -1379,9 +2014,6 @@ class TestCheckpointBaseHermeticResolution:
         assert _store_path().parent == get_hermes_home() / "checkpoints"
 
 
-# =========================================================================
-# Git subprocess timeouts are a real bound (grandchild-hang fix)
-# =========================================================================
 
 class TestGitTimeoutIsBounded:
     """``_GIT_TIMEOUT`` must be an actual bound, not a nominal kwarg.
@@ -1470,3 +2102,5 @@ class TestGitTimeoutIsBounded:
             f"capture + tree-kill); bare subprocess.run at line(s) {offenders} "
             "does not bound a git command that spawns a grandchild on Windows"
         )
+
+

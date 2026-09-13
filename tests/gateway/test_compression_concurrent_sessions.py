@@ -147,7 +147,17 @@ def test_concurrent_compressions_do_not_alias_sessions(tmp_path: Path) -> None:
     """
     db = SessionDB(db_path=tmp_path / "state.db")
 
-    n = 5
+    # Bounded by the compression pool, not chosen: 0.21.1 admits at most
+    # _COMPRESS_EXECUTOR_MAX_WORKERS concurrent compressions and REFUSES the rest rather
+    # than queueing them (#76354 -- a queued job would wait out its whole budget unstarted
+    # and then run stale). A refused caller gets its own messages back unchanged, so with
+    # n above the bound the extra agent does not rotate and the run measures SATURATION
+    # instead of the aliasing invariant this test is named for. Derived from the bound so
+    # the test keeps measuring the right thing if the bound moves.
+    from agent.conversation_compression import _COMPRESS_EXECUTOR_MAX_WORKERS
+
+    n = min(5, _COMPRESS_EXECUTOR_MAX_WORKERS)
+    assert n >= 2, "need at least two concurrent sessions to test cross-session aliasing"
     parent_ids = [f"DISTINCT_PARENT_{i:02d}" for i in range(n)]
     for sid in parent_ids:
         db.create_session(sid, source="discord")

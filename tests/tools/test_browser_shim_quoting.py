@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tools import browser_tool_session as bt_session
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -34,7 +35,7 @@ class TestEvalArgsAreBase64Encoded:
     """``eval`` expressions go over the wire base64-encoded, not raw."""
 
     def test_eval_expression_is_base64_encoded(self):
-        from tools.browser_tool import _cmd_safe_browser_args
+        from tools.browser_tool_session import _cmd_safe_browser_args
 
         js = "Array.from(document.querySelectorAll('button')).map(b=>b.outerHTML).slice(0,20)"
         args = _cmd_safe_browser_args("eval", [js])
@@ -43,7 +44,7 @@ class TestEvalArgsAreBase64Encoded:
         assert base64.b64decode(args[1]).decode("utf-8") == js
 
     def test_encoded_eval_args_contain_no_shell_metacharacters(self):
-        from tools.browser_tool import _cmd_safe_browser_args
+        from tools.browser_tool_session import _cmd_safe_browser_args
 
         js = "document.querySelector('a[href*=\"x\"]')?.outerHTML && a>b || c|d ^e %PATH% !v!"
         args = _cmd_safe_browser_args("eval", [js])
@@ -53,18 +54,18 @@ class TestEvalArgsAreBase64Encoded:
             assert meta not in joined, f"{meta!r} survived base64 encoding"
 
     def test_non_eval_args_are_untouched(self):
-        from tools.browser_tool import _cmd_safe_browser_args
+        from tools.browser_tool_session import _cmd_safe_browser_args
 
         assert _cmd_safe_browser_args("click", ["@e3"]) == ["@e3"]
         assert _cmd_safe_browser_args("console", ["--clear"]) == ["--clear"]
 
     def test_eval_with_no_args_is_untouched(self):
-        from tools.browser_tool import _cmd_safe_browser_args
+        from tools.browser_tool_session import _cmd_safe_browser_args
 
         assert _cmd_safe_browser_args("eval", []) == []
 
     def test_already_encoded_eval_is_not_double_encoded(self):
-        from tools.browser_tool import _cmd_safe_browser_args
+        from tools.browser_tool_session import _cmd_safe_browser_args
 
         pre = ["-b", base64.b64encode(b"document.title").decode("ascii")]
         assert _cmd_safe_browser_args("eval", pre) == pre
@@ -77,7 +78,7 @@ class TestWindowsShimResolution:
     """npm's ``.cmd`` shim is unwrapped to the native executable it calls."""
 
     def test_npm_cmd_shim_resolves_to_wrapped_executable(self, tmp_path):
-        from tools.browser_tool import _resolve_batch_shim
+        from tools.browser_tool_session import _resolve_batch_shim
 
         target_dir = tmp_path / "node_modules" / "agent-browser" / "bin"
         target_dir.mkdir(parents=True)
@@ -93,21 +94,21 @@ class TestWindowsShimResolution:
         assert _resolve_batch_shim(str(shim)) == str(target)
 
     def test_non_batch_path_is_returned_unchanged(self, tmp_path):
-        from tools.browser_tool import _resolve_batch_shim
+        from tools.browser_tool_session import _resolve_batch_shim
 
         exe = tmp_path / "agent-browser"
         exe.write_text("#!/bin/sh\n")
         assert _resolve_batch_shim(str(exe)) == str(exe)
 
     def test_shim_pointing_at_missing_target_falls_back_to_shim(self, tmp_path):
-        from tools.browser_tool import _resolve_batch_shim
+        from tools.browser_tool_session import _resolve_batch_shim
 
         shim = tmp_path / "agent-browser.cmd"
         shim.write_text('@ECHO off\r\n"%~dp0node_modules\\nope\\gone.exe" %*\r\n')
         assert _resolve_batch_shim(str(shim)) == str(shim)
 
     def test_unreadable_shim_falls_back_to_shim(self, tmp_path):
-        from tools.browser_tool import _resolve_batch_shim
+        from tools.browser_tool_session import _resolve_batch_shim
 
         missing = tmp_path / "not-there.cmd"
         assert _resolve_batch_shim(str(missing)) == str(missing)
@@ -122,7 +123,7 @@ class TestChromeFallbackSpawnIsSafe:
     def test_fallback_eval_argv_is_encoded_and_shim_free(self, tmp_path):
         from unittest.mock import patch
 
-        import tools.browser_tool as bt
+        import tools.browser_tool_lightpanda_fallback as fallback
 
         target_dir = tmp_path / "node_modules" / "agent-browser" / "bin"
         target_dir.mkdir(parents=True)
@@ -155,13 +156,13 @@ class TestChromeFallbackSpawnIsSafe:
                 os.write(out_fd, b'{"success":true,"data":{}}')
             return _Proc()
 
-        url_ok = {"success": True, "data": {"result": "https://example.com/"}}
+        url_ok = {"success": True, "data": {"url": "https://example.com/"}}
 
-        with patch.object(bt, "_run_browser_command", return_value=url_ok), \
-             patch.object(bt, "_find_agent_browser", return_value=str(shim)), \
-             patch.object(bt, "_chromium_installed", return_value=True), \
-             patch.object(bt.subprocess, "Popen", side_effect=_fake_popen):
-            bt._run_chrome_fallback_command("t", "eval", [js], 30)
+        with patch.object(bt_session, "_run_browser_command", return_value=url_ok), \
+             patch.object(fallback._install, "_find_agent_browser", return_value=str(shim)), \
+             patch.object(fallback._install, "_chromium_installed", return_value=True), \
+             patch.object(bt_session.subprocess, "Popen", side_effect=_fake_popen):
+            fallback._run_chrome_fallback_command("t", "eval", [js], 30)
 
         assert seen, "expected the fallback path to spawn agent-browser"
         eval_argv = [a for a in seen if "eval" in a]
@@ -202,7 +203,7 @@ class TestBatchShimReparseIsFixed:
         )
 
     def test_base64_eval_argv_creates_no_stray_file(self, tmp_path):
-        from tools.browser_tool import _cmd_safe_browser_args
+        from tools.browser_tool_session import _cmd_safe_browser_args
 
         shim = self._echo_shim(tmp_path, "safe.cmd")
         js = "Array.from(x).map(b=>b.outerHTML).slice(0,20)"
@@ -221,7 +222,7 @@ class TestBatchShimReparseIsFixed:
         """``&`` in a URL must not terminate the argument and run a command."""
         import shutil as _shutil
 
-        from tools.browser_tool import _resolve_batch_shim
+        from tools.browser_tool_session import _resolve_batch_shim
 
         # agent-browser is an npm CLI, so node is already a hard dependency.
         # Copy it in as a stand-in for the real native binary the shim wraps.

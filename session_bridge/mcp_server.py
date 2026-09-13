@@ -270,7 +270,7 @@ def create_app(
         raise ValueError("session bridge marker key must be at least 32 bytes")
 
     try:
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server import MCPServer
         from mcp.server.transport_security import TransportSecuritySettings
         from starlette.applications import Starlette
         from starlette.middleware import Middleware
@@ -281,21 +281,16 @@ def create_app(
         raise RuntimeError("session bridge MCP dependencies are not installed") from exc
 
     authority = _host_authority(config.service.host, config.service.port)
-    mcp = FastMCP(
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[authority],
+        allowed_origins=[f"http://{authority}", f"https://{authority}"],
+    )
+    mcp = MCPServer(
         "hermes-session-bridge",
         instructions=(
             "Search, inspect, mirror, and continue Claude Code and Codex sessions "
             "through the authoritative Hermes catalog."
-        ),
-        host=config.service.host,
-        port=config.service.port,
-        streamable_http_path="/mcp",
-        json_response=True,
-        stateless_http=False,
-        transport_security=TransportSecuritySettings(
-            enable_dns_rebinding_protection=True,
-            allowed_hosts=[authority],
-            allowed_origins=[f"http://{authority}", f"https://{authority}"],
         ),
     )
 
@@ -953,7 +948,13 @@ def create_app(
     if actual_tools != EXPECTED_TOOLS:
         raise RuntimeError("session bridge MCP tool registration is incomplete")
 
-    mcp_app = mcp.streamable_http_app()
+    mcp_app = mcp.streamable_http_app(
+        streamable_http_path="/mcp",
+        json_response=True,
+        stateless_http=False,
+        transport_security=transport_security,
+        host=config.service.host,
+    )
 
     async def health(_request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
@@ -1337,7 +1338,15 @@ def _require_restricted_token_file(path: Path) -> None:
         return
     script = r"""
 $ErrorActionPreference = 'Stop'
-$acl = Get-Acl -LiteralPath $env:HERMES_SESSION_BRIDGE_ACL_PATH
+$sections = (
+    [System.Security.AccessControl.AccessControlSections]::Access -bor
+    [System.Security.AccessControl.AccessControlSections]::Owner -bor
+    [System.Security.AccessControl.AccessControlSections]::Group
+)
+$acl = New-Object System.Security.AccessControl.FileSecurity(
+    $env:HERMES_SESSION_BRIDGE_ACL_PATH,
+    $sections
+)
 $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
 $rules = @($acl.GetAccessRules(

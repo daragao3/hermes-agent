@@ -54,15 +54,24 @@ def tick_env(tmp_path, monkeypatch):
 
 
 def _run_tick(emitter, run_job_calls):
-    """Drive one tick for JOB_ID with every side effect stubbed."""
-    def _fake_run_job(job):
+    """Drive one tick for JOB_ID with every side effect stubbed.
+
+    claim_job_for_fire is stubbed because 0.21.1 claims the job before running it and the
+    synthetic due job below is not in the store: without it the claim fails, the tick returns
+    early, and Guard #5 (the cross-process check these tests exist for) is never reached.
+    """
+    # 0.21.1's run path passes defer_agent_teardown / extra_prompt / cancel_event /
+    # execution_id / active_profile through to run_job; a narrow double turns into
+    # "Error processing job" and the tick looks like it refused to fire.
+    def _fake_run_job(job, **_kw):
         run_job_calls.append(job)
         return (True, "# output", "response", None)
 
     job = {"id": JOB_ID, "name": JOB_NAME, "deliver": "local"}
     with patch("cron.scheduler.get_due_and_skipped_jobs",
                return_value=([dict(job)], [])), \
-         patch("cron.scheduler.advance_next_run"), \
+         patch("cron.scheduler.advance_next_runs"), \
+         patch("cron.scheduler.claim_job_for_fire", return_value=True), \
          patch("cron.scheduler._get_event_emitter", return_value=emitter), \
          patch("cron.scheduler.run_job", side_effect=_fake_run_job), \
          patch("cron.scheduler.save_job_output", return_value="/tmp/out.md"), \

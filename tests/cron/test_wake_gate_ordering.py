@@ -31,19 +31,48 @@ def hermes_env(tmp_path, monkeypatch):
 
 @pytest.fixture
 def session_db_calls(monkeypatch):
-    """Count SessionDB constructions. The scheduler imports it lazily."""
+    """Count the post-gate session-store seam and stop before model I/O."""
     calls = []
-    import hermes_state
+    from cron import scheduler
 
-    class Spy:
-        def __init__(self, *args, **kwargs):
-            calls.append(1)
+    def _open(_job):
+        calls.append(1)
+        return None
 
-        def __getattr__(self, _name):
-            return lambda *a, **k: None
-
-    monkeypatch.setattr(hermes_state, "SessionDB", Spy)
+    monkeypatch.setattr(scheduler, "_open_cron_session_db", _open)
+    monkeypatch.setattr(
+        scheduler,
+        "_construct_cron_agent",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("stop after session seam")),
+    )
     return calls
+
+
+@pytest.fixture
+def healthy_preflight(monkeypatch):
+    """Let proceed paths reach SessionDB without real provider side effects."""
+    from cron import scheduler
+
+    monkeypatch.setattr(scheduler, "_preflight_or_block", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        scheduler,
+        "_resolve_job_runtime",
+        lambda *_a, **_k: (
+            {
+                "provider": "custom",
+                "requested_provider": "custom",
+                "api_key": "test",
+                "base_url": "http://127.0.0.1:1/v1",
+                "api_mode": "chat_completions",
+                "request_overrides": {},
+                "command": None,
+                "args": None,
+            },
+            "test-model",
+        ),
+    )
+    monkeypatch.setattr(scheduler, "_load_credential_pool", lambda *_a, **_k: None)
+    monkeypatch.setattr(scheduler, "_init_cron_mcp_tools", lambda *_a, **_k: None)
 
 
 def _gated_job(hermes_env, body):
@@ -75,7 +104,9 @@ def test_wake_gate_false_creates_no_session_or_agent(hermes_env, session_db_call
     assert session_db_calls == [], "no model-session state may exist before the gate"
 
 
-def test_wake_gate_true_still_builds_session(hermes_env, session_db_calls, monkeypatch):
+def test_wake_gate_true_still_builds_session(
+    hermes_env, session_db_calls, healthy_preflight, monkeypatch,
+):
     from cron import scheduler
     from cron.scheduler import run_job
 
@@ -97,9 +128,9 @@ def test_gate_false_runs_the_script_exactly_once(hermes_env, session_db_calls):
     runs = []
     original = scheduler._run_job_script_with_claim_heartbeat
 
-    def _counting(job, script_path):
+    def _counting(job, script_path, **kwargs):
         runs.append(script_path)
-        return original(job, script_path)
+        return original(job, script_path, **kwargs)
 
     scheduler._run_job_script_with_claim_heartbeat = _counting
     try:
@@ -110,7 +141,9 @@ def test_gate_false_runs_the_script_exactly_once(hermes_env, session_db_calls):
     assert len(runs) == 1
 
 
-def test_scriptless_job_still_reaches_the_session(hermes_env, session_db_calls, monkeypatch):
+def test_scriptless_job_still_reaches_the_session(
+    hermes_env, session_db_calls, healthy_preflight, monkeypatch,
+):
     """A job with no pre-check script has no gate and must proceed."""
     from cron import scheduler
     from cron.jobs import create_job

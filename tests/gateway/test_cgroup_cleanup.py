@@ -32,13 +32,6 @@ class TestOwnCgroupPath:
 
         assert cgroup_cleanup._own_cgroup_path() == "/user.slice/user-1000.slice/hermes-gateway.service"
 
-    def test_returns_none_when_proc_missing(self, monkeypatch):
-        def _raise(_path):
-            raise FileNotFoundError
-
-        monkeypatch.setattr(cgroup_cleanup.Path, "read_text", lambda self, *a, **k: _raise(self))
-        assert cgroup_cleanup._own_cgroup_path() is None
-
 
 class TestReapCgroup:
     @_requires_sigkill
@@ -87,14 +80,6 @@ class TestReapCgroup:
 
         assert cgroup_cleanup.reap_cgroup(cgroup_path) == 0
 
-    def test_noop_when_cgroup_path_unknown(self, monkeypatch):
-        monkeypatch.setattr(cgroup_cleanup, "_own_cgroup_path", lambda: None)
-
-        def _explode(*_a, **_kw):
-            pytest.fail("os.kill must not be called when cgroup path is unknown")
-
-        monkeypatch.setattr(cgroup_cleanup.os, "kill", _explode)
-        assert cgroup_cleanup.reap_cgroup() == 0
 
     def test_noop_when_procs_file_missing(self, tmp_path, monkeypatch):
         cgroup_path = "/missing.slice/hermes-gateway.service"

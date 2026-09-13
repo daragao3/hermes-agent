@@ -21,16 +21,14 @@ pytest.importorskip("agent.model_metadata")
 
 DICT_CACHES = (
     "_model_metadata_cache",
-    "_novita_metadata_cache",
     "_endpoint_model_metadata_cache",
     "_endpoint_model_metadata_cache_time",
     "_endpoint_probe_path_cache",
+    "_endpoint_blackhole_cache",
     "_codex_oauth_context_cache",
 )
 SCALAR_CACHES = (
     "_model_metadata_cache_time",
-    "_novita_metadata_cache_time",
-    "_codex_oauth_context_cache_time",
 )
 
 

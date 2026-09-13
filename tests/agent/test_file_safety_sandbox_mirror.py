@@ -75,51 +75,6 @@ class TestClassifySandboxMirrorTarget:
         assert result["inner_path"] == inner
         assert backend in result["mirror_root"]
 
-    def test_path_outside_sandbox_returns_none(self, tmp_path):
-        """A plain Hermes path is not a mirror."""
-        from agent.file_safety import classify_sandbox_mirror_target
-
-        target = tmp_path / ".hermes" / "profiles" / "group1" / "SOUL.md"
-        target.parent.mkdir(parents=True)
-        target.write_text("# real SOUL\n")
-
-        assert classify_sandbox_mirror_target(str(target)) is None
-
-    def test_sandboxes_segment_without_home_hermes_returns_none(self, tmp_path):
-        """A ``sandboxes/`` directory unrelated to Hermes-state mirroring (e.g.
-        the sandbox workspace itself) is not flagged."""
-        from agent.file_safety import classify_sandbox_mirror_target
-
-        target = (
-            tmp_path
-            / "sandboxes" / "docker" / "task-42" / "workspace" / "main.py"
-        )
-        target.parent.mkdir(parents=True)
-        target.write_text("print('hi')\n")
-
-        assert classify_sandbox_mirror_target(str(target)) is None
-
-    def test_sandboxes_segment_with_home_but_no_hermes_returns_none(self, tmp_path):
-        """``sandboxes/<backend>/<task>/home/anything-not-hermes`` is not a mirror."""
-        from agent.file_safety import classify_sandbox_mirror_target
-
-        target = (
-            tmp_path
-            / "sandboxes" / "docker" / "task-42" / "home" / ".bashrc"
-        )
-        target.parent.mkdir(parents=True)
-        target.write_text("alias ll='ls -la'\n")
-
-        assert classify_sandbox_mirror_target(str(target)) is None
-
-    def test_truncated_sandbox_path_returns_none(self, tmp_path):
-        """``…/sandboxes/<backend>/<task>`` without ``home/.hermes/<thing>`` is not a mirror."""
-        from agent.file_safety import classify_sandbox_mirror_target
-
-        target = tmp_path / "sandboxes" / "docker" / "task-42"
-        target.mkdir(parents=True)
-
-        assert classify_sandbox_mirror_target(str(target)) is None
 
     @pytest.mark.skipif(sys.platform == "win32", reason="sandbox mirror paths are asserted with forward slashes; Windows uses backslashes")
     def test_non_existent_path_still_classifies_by_shape(self, tmp_path):

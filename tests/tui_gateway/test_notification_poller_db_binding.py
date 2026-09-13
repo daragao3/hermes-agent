@@ -84,7 +84,7 @@ def test_start_notification_poller_captures_the_db_path(homes, monkeypatch):
         def start(self):
             pass
 
-    monkeypatch.setattr(server, "_wire_agent_terminal_output", lambda: None)
+    monkeypatch.setattr(server, "_wire_desktop_sinks", lambda: None)
     monkeypatch.setattr(server.threading, "Thread", _RecordingThread)
 
     server._start_notification_poller("sid_capture", _session())

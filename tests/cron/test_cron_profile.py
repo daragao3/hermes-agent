@@ -215,7 +215,11 @@ class TestRunJobProfileContext:
             },
         )
 
-        monkeypatch.setattr(sched, "_build_job_prompt", lambda job, prerun_script=None: "hi")
+        monkeypatch.setattr(
+            sched,
+            "_build_job_prompt",
+            lambda job, prerun_script=None, extra_prompt=None: "hi",
+        )
         monkeypatch.setattr(sched, "_resolve_origin", lambda job: None)
         monkeypatch.setattr(sched, "_resolve_delivery_target", lambda job: None)
         monkeypatch.setattr(sched, "_resolve_cron_enabled_toolsets", lambda job, cfg: None)
@@ -447,17 +451,28 @@ class TestTickProfilePartition:
             sched, "get_due_and_skipped_jobs",
             lambda: ([profile_a, profile_b, parallel_job], []),
         )
-        monkeypatch.setattr(sched, "advance_next_run", lambda *_a, **_kw: None)
+        monkeypatch.setattr(sched, "advance_next_runs", lambda *_a, **_kw: None)
+        monkeypatch.setattr(
+            sched,
+            "create_execution",
+            lambda job_id, **_kw: {"id": f"exec-{job_id}"},
+        )
+        by_id = {job["id"]: job for job in (profile_a, profile_b, parallel_job)}
+        monkeypatch.setattr(
+            sched,
+            "claim_job_for_fire",
+            lambda job_id, **_kw: dict(by_id[job_id]),
+        )
 
         calls: list[tuple[str, str]] = []
         order_lock = threading.Lock()
 
-        def fake_run_job(job):
+        def fake_run_job(job, **_kwargs):
             with order_lock:
                 calls.append((job["id"], threading.current_thread().name))
-            return True, "output", "response", None
+            return True
 
-        monkeypatch.setattr(sched, "run_job", fake_run_job)
+        monkeypatch.setattr(sched, "run_one_job", fake_run_job)
         monkeypatch.setattr(sched, "save_job_output", lambda _jid, _o: None)
         monkeypatch.setattr(sched, "mark_job_run", lambda *_a, **_kw: None)
         monkeypatch.setattr(sched, "_deliver_result", lambda *_a, **_kw: None)
@@ -469,14 +484,14 @@ class TestTickProfilePartition:
         # Sequential profile jobs preserve submission order relative to each
         # other (single-thread pool).
         assert ids.index("a") < ids.index("b")
-        # Merge (0.16.0 catch-up): sequential jobs dispatch to the persistent
-        # single-thread cron-seq pool and parallel jobs to cron-parallel (so
-        # the ticker never blocks), but each job BODY executes under the fork's
-        # per-job soft-deadline wrapper (_run_callable_with_deadline) on a
-        # dedicated "cron-job-<id>" worker thread. The thread run_job observes
-        # is therefore "cron-job-<id>", never the main/ticker thread.
-        # Serialization of a,b is guaranteed by the single-thread seq pool plus
-        # the wrapper's join (the ordering assertion above is the real invariant).
+        # Sequential jobs dispatch to the persistent single-thread cron-seq pool
+        # and parallel jobs to cron-parallel (so the ticker never blocks), but
+        # each job BODY executes under the fork's per-job soft-deadline wrapper
+        # (_run_callable_with_deadline) on a dedicated "cron-job-<id>" worker
+        # thread. The thread the stubbed run_one_job observes is therefore
+        # "cron-job-<id>", never the main/ticker thread. Serialization of a,b is
+        # guaranteed by the single-thread seq pool plus the wrapper's join (the
+        # ordering assertion above is the real invariant).
         main_name = threading.current_thread().name
         for jid in ("a", "b", "c"):
             job_thread = next(t for job_id, t in calls if job_id == jid)

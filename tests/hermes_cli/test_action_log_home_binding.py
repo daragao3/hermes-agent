@@ -21,10 +21,12 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import web_server as ws
+from hermes_cli import web_server_gateway as ws
+from hermes_cli.web_routers import actions
 
 
 WEB_SERVER_SOURCE = Path(ws.__file__)
+ACTIONS_SOURCE = Path(actions.__file__)
 
 
 def _effective_action_log_dir() -> Path:
@@ -69,10 +71,10 @@ class TestSeamShape:
         marker = "def _action_log_dir()"
         assert marker in source, "the resolver seam is missing"
         body = source[source.index(marker) :]
-        end_of_resolver = body.index("_ACTION_LOG_TAIL_MAX_BYTES")
-        remainder = body[end_of_resolver:]
-        assert "_ACTION_LOG_DIR.mkdir" not in remainder
-        assert "_ACTION_LOG_DIR /" not in remainder
+        assert "_ACTION_LOG_DIR.mkdir" not in body
+        assert "_ACTION_LOG_DIR /" not in body
+        actions_source = ACTIONS_SOURCE.read_text(encoding="utf-8")
+        assert "from hermes_cli.web_server_gateway import _action_log_dir" in actions_source
 
 
 class TestResolution:
@@ -125,7 +127,7 @@ class TestWritesFollowTheLiveHome:
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setattr(ws, "_ACTION_LOG_DIR", None)
 
-        ws._record_completed_action("hermes-update", "guidance message", exit_code=1)
+        actions._record_completed_action("hermes-update", "guidance message", exit_code=1)
 
         written = home / "logs" / ws._ACTION_LOG_FILES["hermes-update"]
         assert written.exists()
@@ -163,10 +165,10 @@ class TestWritesFollowTheLiveHome:
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setattr(ws, "_ACTION_LOG_DIR", None)
 
-        ws._record_completed_action("doctor", "tail me", exit_code=1)
+        actions._record_completed_action("doctor", "tail me", exit_code=1)
 
         assert ws._action_log_dir() == home / "logs"
-        tail = ws._tail_lines(
+        tail = actions._tail_lines(
             ws._action_log_dir() / ws._ACTION_LOG_FILES["doctor"], 50
         )
         assert any("tail me" in line for line in tail)

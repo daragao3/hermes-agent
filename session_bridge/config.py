@@ -31,8 +31,7 @@ def _sidebar_enabled_at_root() -> bool | None:
     or when anything at all goes wrong reading it.  Absence is not divergence,
     and this guard must never be the reason a load fails.
 
-    Parses the file DIRECTLY rather than going through
-    ``hermes_cli.config.load_config``.  That helper merges built-in defaults
+    Uses ``read_user_config_raw`` rather than ``load_config``. The latter merges built-in defaults
     and, on a corrupt file, silently substitutes the whole default config --
     so an ABSENT or UNPARSEABLE root key would come back as a real ``False``
     and this guard would raise a false divergence alarm against a config that
@@ -45,13 +44,12 @@ def _sidebar_enabled_at_root() -> bool | None:
         if root.resolve() == get_hermes_home().resolve():
             # Root-scoped process (the normal service case) -- nothing to compare.
             return None
-        import yaml
+        from hermes_cli.config import read_user_config_raw
 
         config_path = root / "config.yaml"
         if not config_path.is_file():
             return None
-        with config_path.open(encoding="utf-8") as handle:
-            document = yaml.safe_load(handle)
+        document = read_user_config_raw(config_path)
         if not isinstance(document, Mapping):
             return None
         section = document.get("session_bridge")

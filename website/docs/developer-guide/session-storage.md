@@ -9,8 +9,66 @@ Hermes Agent uses a SQLite database (`~/.hermes/state.db`) to persist session
 metadata, full message history, and model configuration across CLI and gateway
 sessions. This replaces the earlier per-session JSONL file approach.
 
-Source file: `hermes_state.py`
+Source files: `hermes_state.py` (facade) plus the `hermes_state_*.py` siblings (schema, fts, search, compression, portability, gateway, ...)
 
+### Desktop profile isolation and compaction generations
+
+Each named profile stores its transcript in its own `$HERMES_HOME/state.db`,
+including when one `hermes serve` process serves several profiles. In-session
+agent rebuilds (Bot Chat capability refresh and `tools.configure`) must retain
+that session's database handle and bind its profile home during construction.
+Releasing the outgoing agent must not close the handle inherited by its replacement.
+`tools.configure` resolves configuration from the live session's `profile_home`,
+even when the client supplies only `session_id`. Rebuilds prepare model configuration
+before allocating a replacement, then install the agent and transfer ownership
+together; preparation failure leaves the existing agent responsible for teardown.
+Explicit profiles that cannot be resolved or whose directory has disappeared fail
+before accessing launch configuration or history. A stale `tools.configure`
+session ID likewise returns `session not found` without changing configuration;
+omitting the session ID still supports the global settings operation.
+
+In-place compaction archives old rows with `active=0` and inserts the retained
+context as `active=1` rows. A protected message can therefore legitimately appear
+in both generations with identical content and timestamp. Do not delete these
+archive rows as duplicates. Diagnose duplicate *live* writes using `active=1`,
+and check the database's profile as well as the session ID when investigating
+history that appears to revert.
+
+
+
+## Codex app-server input ownership
+
+The agent persists an accepted user input before starting its Codex turn. Codex
+then projects that input as a leading `userMessage` notification. At the runtime
+splice boundary, Hermes excludes only that leading item when it exactly matches
+the text serialized into `turn/start`, including rich-input coercion. Later or
+nonmatching user events remain intact, as do separately accepted identical turns.
+This also applies to synthetic/keyless input; it does not depend on a platform
+message ID. Existing historical duplicates are not rewritten. The gateway skips
+its transcript write when the agent reports that it owns persistence.
+
+## Gateway exception-path input ownership
+
+A gateway exception can occur before agent construction or after its input reaches
+SQLite. The gateway gives the accepted input an owner marker in the existing
+`display_metadata` sidecar and passes it through the agent's normal persistence
+path. Provider messages never contain this metadata. Platform markers namespace
+the inbound message ID by platform, profile, scope, chat, and thread; the original
+`platform_message_id` remains unchanged for quote/reply resolution. Keyless turns
+receive a fresh marker, even for identical text and timestamps.
+
+The exception writer probes only for that marker, following the published reroute
+and canonical live compression successor, then compression ancestors. Active rows
+and compaction archives count; undone rows, observed input, and unrelated writers
+do not. An unrelated process writing the same session cannot suppress this turn.
+No whole-history baseline or archived message-body allocation is needed. Failed
+ownership reads do not authorize a speculative append; ordinary history-read
+failures retain the existing history-unavailable response.
+
+Normal agent-owned persistence is unchanged. This is failure-writer arbitration,
+not universal exactly-once delivery, content deduplication, or a schema migration.
+Historical rows are not rewritten; unmarked historical inputs cannot establish
+ownership for a redelivered event.
 
 ## Architecture Overview
 
@@ -18,12 +76,22 @@ Source file: `hermes_state.py`
 ~/.hermes/state.db (SQLite, WAL mode)
 ├── sessions              — Session metadata, token counts, billing
 ├── messages              — Full message history per session
-├── messages_fts          — FTS5 external-content index over messages_fts_source
-├── messages_fts_source   — View: content + tool_name + tool_calls per message
+├── session_model_usage   — Per-model/per-task usage attribution rows
+├── messages_fts          — FTS5 virtual table (content + tool_name + tool_calls)
 ├── messages_fts_trigram  — FTS5 virtual table with trigram tokenizer (CJK / substring search)
+├── messages_fts_cjk      — FTS5 virtual table with cjk_unicode61 tokenizer
 ├── state_meta            — Key/value metadata table
+├── gateway_routing       — Gateway routing metadata
+├── compression_locks     — Cross-process compression locking
+├── async_delegations     — Async delegation bookkeeping
+├── delivery_obligations  — Gateway outbox (owed replies); created lazily by gateway/delivery_ledger.py
 └── schema_version        — Single-row table tracking migration state
 ```
+
+`hermes sessions recover` copies the row-bearing tables above into the
+recovered database (FTS indexes and `schema_version` are regenerated), including
+the lazily-created `delivery_obligations` ledger when the source has one — its
+row count is verified like `sessions`/`messages`.
 
 Key design decisions:
 - **WAL mode** for concurrent readers + one writer (gateway multi-platform)
@@ -36,6 +104,13 @@ Key design decisions:
 ## SQLite Schema
 
 ### Sessions Table
+
+Abridged — see `SCHEMA_SQL` in `hermes_state_common.py` (applied by `hermes_state_schema.py`) for the full current column list
+(which also includes gateway routing metadata such as `session_key`, `chat_id`,
+`chat_type`, `thread_id`, `display_name`, `origin_json`, `expiry_finalized`,
+workspace fields `cwd` / `git_branch` / `git_repo_root`, handoff and
+compression-failure fields, `profile_name`, `rewind_count`, `archived`, and
+`pinned`):
 
 ```sql
 CREATE TABLE IF NOT EXISTS sessions (
@@ -66,6 +141,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     pricing_version TEXT,
     title TEXT,
     api_call_count INTEGER DEFAULT 0,
+    -- ... additional gateway/workspace/handoff/compression columns ...
     FOREIGN KEY (parent_session_id) REFERENCES sessions(id)
 );
 
@@ -77,6 +153,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_title_unique
 ```
 
 ### Messages Table
+
+Abridged — the full schema also includes `effect_disposition`,
+`platform_message_id`, `observed`, `active`, `compacted`, `api_content`,
+`display_kind`, and `display_metadata`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS messages (
@@ -95,15 +175,19 @@ CREATE TABLE IF NOT EXISTS messages (
     reasoning_details TEXT,
     codex_reasoning_items TEXT,
     codex_message_items TEXT
+    -- ... additional display/compaction columns ...
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
 ```
 
 Notes:
 - `tool_calls` is stored as a JSON string (serialized list of tool call objects)
 - `reasoning_details`, `codex_reasoning_items`, and `codex_message_items` are stored as JSON strings
+- Desktop history hydration retains assistant sidecars in both REST and JSON-RPC (`session.resume`, `session.activate`, `session.history`) projections, including rows with reasoning and tool calls. REST may return the SQLite JSON string while RPC returns decoded items; Desktop accepts both. A final Responses reply may live only in `codex_message_items` while `content` is empty. Canonical content still takes precedence, and analysis/commentary items are not promoted to reply text.
 - `reasoning` stores the raw reasoning text for providers that expose it
+- `api_content` is a byte-fidelity sidecar: the exact content string sent to the API for this message when it differs from `content` (ephemeral memory/plugin injections, persist overrides). It preserves the wire bytes for prompt-cache-stable replay — stored as sent, except lone surrogates, which sqlite3 cannot bind and which the conversation loop scrubs from every outgoing payload anyway. `NULL` means `content` was sent verbatim.
 - Timestamps are Unix epoch floats (`time.time()`)
 
 ### FTS5 Full-Text Search
@@ -122,85 +206,18 @@ FROM messages;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content,
-    content='messages_fts_source',
+    tool_name,
+    tool_calls,
+    content='messages',
     content_rowid='id'
 );
 ```
 
-Not storing a second copy of the message text is worth roughly a quarter of the
-database file — on a 5.1 GB production `state.db` the duplicate copy was 1.3 GB.
-The cost is that `snippet()` re-reads the row through the view; in practice that
-is around 0.1% of query time, because callers already join `messages` for the
-full content.
-
-Two consequences are easy to miss:
-
-- **`SELECT COUNT(*) FROM messages_fts` counts messages, not indexed rows.** A
-  full scan of an external-content table reads the view, so this returns the
-  same number whether the index is complete or empty. Use
-  `... WHERE messages_fts MATCH ?` to assert anything about the index itself.
-- **Verify with the strong integrity check.**
-  `INSERT INTO messages_fts(messages_fts, rank) VALUES('integrity-check', 1)`
-  re-derives terms from the content table and so detects both orphaned index
-  rowids and stale text. The default `rank=0` form detects neither — and
-  neither does anything else you might reach for: `PRAGMA integrity_check`
-  passes, message writes pass, and `search_messages` INNER JOINs `messages` on
-  the index rowid, so an orphan is filtered out of results rather than raising.
-  Affected messages go **silently missing from searches**; nothing looks broken.
-
-### Checking it from the CLI
-
-```bash
-hermes doctor --deep
-```
-
-Runs that check, and `--deep --fix` repairs what it finds with an in-place FTS
-`'rebuild'`. It is **not** part of a plain `hermes doctor`: rank=1 re-reads and
-re-tokenises every indexed row, measured at ~70s on a 4.9 GB `state.db` with
-576k messages. That cost is CPU-bound rather than I/O-bound, so it does not
-improve on a warm cache.
-
-The check is bounded (`HERMES_DOCTOR_FTS_PROBE_TIMEOUT`, default 300s) and gets
-its own budget rather than sharing the general `state.db` probe's — the two
-scale on different axes, and one shared deadline would let `PRAGMA
-integrity_check` consume it before the FTS check began. Running out of budget
-is reported as **unknown**, never as corruption, and never triggers `--fix`.
-
-For an unbounded check, `hermes sessions repair --check-only` runs the same
-verification with no time limit.
-
-The index is kept in sync via three triggers on `messages`. Removing an entry
-means handing FTS5 the **old** text through the `'delete'` command so it knows
-which terms to retract — a plain `DELETE FROM messages_fts` is rejected:
-
-```sql
-CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, content) VALUES (
-        new.id,
-        COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
-    );
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES (
-        'delete',
-        old.id,
-        COALESCE(old.content, '') || ' ' || COALESCE(old.tool_name, '') || ' ' || COALESCE(old.tool_calls, '')
-    );
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES (
-        'delete',
-        old.id,
-        COALESCE(old.content, '') || ' ' || COALESCE(old.tool_name, '') || ' ' || COALESCE(old.tool_calls, '')
-    );
-    INSERT INTO messages_fts(rowid, content) VALUES (
-        new.id,
-        COALESCE(new.content, '') || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
-    );
-END;
-```
+The FTS5 table is kept in sync via three triggers that fire on INSERT, UPDATE,
+and DELETE of the `messages` table. The current triggers are gated on the
+`fts_rebuild_high_water` / `fts_rebuild_progress` markers in `state_meta` (so a
+background FTS rebuild can proceed without double-indexing) and cover all three
+indexed columns — see `SCHEMA_SQL` in `hermes_state_common.py` for the exact SQL.
 
 Recovery from a corrupt or incomplete index is
 `INSERT INTO messages_fts(messages_fts) VALUES('rebuild')`, exposed as
@@ -214,7 +231,7 @@ can be disabled with `HERMES_DISABLE_MESSAGE_TRIGRAM`.
 
 ## Schema Version and Migrations
 
-Current schema version: **21**
+Current schema version: **23**
 
 The `schema_version` table stores a single integer. Simple column additions are handled declaratively by `_reconcile_columns()` (which diffs live columns against `SCHEMA_SQL` and ADDs any missing ones). The version-gated chain is reserved for data migrations and index/FTS changes that can't be expressed declaratively:
 
@@ -234,7 +251,10 @@ The `schema_version` table stores a single integer. Simple column additions are 
 | 16 | Tag delegate subagent rows in `model_config` (`$._delegate_from`) so session pickers stay clean after parent deletes orphan them |
 | 18 | Gateway metadata consolidation — backfill `display_name` / `origin_json` / `expiry_finalized` from `sessions.json` |
 | 20 | Per-model usage attribution — seed `session_model_usage` rows from historical per-session aggregate totals |
-| 32 | Convert `messages_fts` back to external-content mode over the new `messages_fts_source` view, dropping the duplicate `messages_fts_content` shadow table (~1.3 GB on a 5.1 GB DB); rewrite the triggers to the `'delete'` command form and `'rebuild'` the index. **This migration re-indexes every message and holds the write lock for tens of minutes on a large DB** — deploy it with writers stopped, not on a routine restart |
+| 22 | Task-dimension usage attribution — rebuild `session_model_usage` so the `task` column participates in the PRIMARY KEY |
+| 23 | FTS storage redesign — external-content FTS tables replacing the v11 inline-mode copies (opt-in transition for existing DBs) |
+| 29 | Cron sessions leave the trigram (substring/CJK) index; `messages_fts_trigram_src` view + triggers filter on `sessions.source`, one-time rebuild purges historical rows |
+| 30 | Delegate-child (subagent) sessions leave the trigram index too — `source='subagent'` or the `$._delegate_from` marker (`FTS_TRIGRAM_SESSION_SQL`). Rows stay in `messages` and the standard `messages_fts` word index, so `session_search` still finds them; only the ~2.6× trigram shadow tables shrink. Same one-time rebuild as v29 |
 
 Versions not listed above were declarative column additions handled by `_reconcile_columns()` (version bump only, no data migration).
 

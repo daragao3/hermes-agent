@@ -88,6 +88,8 @@ scraper had inlined here are preserved verbatim in
 
 This skill includes comprehensive documentation in `references/`:
 
+- **index.md** - Reference index and source-page map
+- **common-patterns.md** - Reusable FSDP setup and training patterns
 - **other.md** - Other documentation
 - **quick-reference-pages.md** - Full text of the pages summarised in Quick Reference above
 

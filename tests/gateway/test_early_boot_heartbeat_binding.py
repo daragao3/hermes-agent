@@ -99,57 +99,44 @@ def test_direct_callers_still_resolve_live(tmp_path, monkeypatch):
     assert (home / "gateway.heartbeat").exists()
 
 
-def test_start_gateway_stops_the_heartbeat_even_when_start_raises():
-    """The stop event must be set on the raising path, not just the happy one.
-
-    ``_early_hb_stop.set()`` sits after ``await runner.start()`` with no
-    ``finally``, so an exception there leaks the thread for the life of the
-    process. Assert the source shape rather than booting a real gateway.
-    """
+def test_start_gateway_stops_boot_scaffolding_when_start_raises():
+    """The raising path must retire every daemon started during boot."""
     import inspect
 
     from gateway import run as gateway_run
 
     src = inspect.getsource(gateway_run.start_gateway)
-    assert "_early_hb_stop" in src, "early-boot heartbeat wiring disappeared"
+    helper_start = src.index("def _retire_boot_scaffolding()")
+    helper_end = src.index("\n    try:\n        success = await runner.start()", helper_start)
+    helper = src[helper_start:helper_end]
+    assert "_early_hb_stop.set()" in helper
+    assert "_stop_nous_keepalive_quietly()" in helper
+    assert "_planned_stop_watcher_stop.set()" in helper
 
-    start_idx = src.index("_early_hb_stop = threading.Event()")
-    tail = src[start_idx:]
-    set_idx = tail.index("_early_hb_stop.set()")
-    between = tail[:set_idx]
+    raising = src[helper_end:src.index("# runner.start() brought up", helper_end)]
+    assert "except BaseException:" in raising
+    assert "_retire_boot_scaffolding()" in raising
 
-    assert "try:" in between and "finally:" in tail[:set_idx + 200], (
-        "_early_hb_stop.set() is not protected by a finally — if "
-        "runner.start() raises, the heartbeat thread runs for the life of "
-        "the process, resolving HERMES_HOME on every tick"
+
+def test_every_early_exit_retires_boot_scaffolding():
+    """All returns before normal shutdown must use the shared cleanup owner."""
+    import inspect
+
+    from gateway import run as gateway_run
+
+    src = inspect.getsource(gateway_run.start_gateway)
+    start_idx = src.index("def _retire_boot_scaffolding()")
+    cron_idx = src.index("cron_stop, cron_provider", start_idx)
+    pre_cron = src[start_idx:cron_idx]
+
+    assert pre_cron.count("_retire_boot_scaffolding()") >= 3, (
+        "an early return path bypasses the shared boot-scaffolding cleanup"
     )
-
-
-def test_early_returns_retire_the_nous_auth_keepalive():
-    """The keepalive must not outlive a start_gateway() that returns early.
-
-    ``start_nous_auth_keepalive()`` runs during boot but the only
-    ``stop_nous_auth_keepalive()`` used to sit after ``wait_for_shutdown()``,
-    so a failed start left a daemon thread that waits 60s and then re-resolves
-    HERMES_HOME to touch the auth store — i.e. the real ``~/.hermes/auth.json``
-    once a test restores the env.
-    """
-    import inspect
-
-    from gateway import run as gateway_run
-
-    src = inspect.getsource(gateway_run.start_gateway)
-    start_idx = src.index("start_nous_auth_keepalive()")
-    tail = src[start_idx:]
-
-    # Every early `return` between the keepalive start and wait_for_shutdown()
-    # must retire it first.
-    shutdown_idx = tail.index("await runner.wait_for_shutdown()")
-    pre_shutdown = tail[:shutdown_idx]
-
-    assert pre_shutdown.count("_stop_nous_keepalive_quietly()") >= 2, (
-        "an early return path leaves the nous auth keepalive thread running; "
-        "it will re-resolve HERMES_HOME 60s later and write to the auth store"
+    not_running = pre_cron[pre_cron.index("if not runner._running:"):]
+    assert "finally:" in not_running
+    assert "_retire_boot_scaffolding()" in not_running.split("finally:", 1)[1], (
+        "the not-running wait path must retire boot scaffolding even if its "
+        "shutdown wait raises"
     )
 
 
