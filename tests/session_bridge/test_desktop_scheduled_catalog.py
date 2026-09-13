@@ -6,12 +6,16 @@ from pathlib import Path
 import pytest
 
 from session_bridge.desktop_scheduled_catalog import (
+    CatalogConflict,
     CatalogMutationConflict,
     apply_catalog_mutation,
     build_replication_plan,
     build_handoff_plan,
     scan_catalogs,
 )
+
+
+_ABSENT = object()
 
 
 def _task(task_id: str, *, enabled: bool, cwd: str = "C:/work", **fields) -> dict:
@@ -122,6 +126,77 @@ def test_missing_prompt_is_quarantined_not_replicated(tmp_path: Path) -> None:
 
     assert plan.mutations == ()
     assert plan.conflicts == (("missing", "prompt_missing"),)
+
+
+# NaN/Infinity are deliberately absent: _parse_document's parse_constant hook
+# rejects them as "invalid JSON constant" while scanning, so they can never
+# reach the createdAt check through a real catalog file. _has_native_created_at
+# still tests isfinite as a defensive invariant for in-process callers.
+@pytest.mark.parametrize(
+    "bad_created",
+    [_ABSENT, None, "1788972033605", True, [1788972033605]],
+    ids=["absent", "json-null", "string", "bool", "list"],
+)
+def test_unportable_created_at_is_quarantined_not_replicated(
+    tmp_path: Path, bad_created
+) -> None:
+    prompts = _prompts(tmp_path / "prompts", "watch", "stale")
+    stale = _task("stale", enabled=True)
+    if bad_created is _ABSENT:
+        del stale["createdAt"]
+    else:
+        stale["createdAt"] = bad_created
+    source = _write_store(tmp_path / "source", [_task("watch", enabled=True), stale])
+    target = _write_store(tmp_path / "target", [])
+
+    plan = build_replication_plan(
+        _scan(prompts, source=source, target=target),
+        source_root_id="source",
+        active_root_id=None,
+    )
+
+    # The healthy task still replicates -- one unportable task must not take
+    # the whole catalog down with it.
+    assert plan.conflicts == (("stale", "created_at_missing"),)
+    assert [row["id"] for row in json.loads(plan.mutations[0].after_bytes)["scheduledTasks"]] == [
+        "watch"
+    ]
+
+
+def test_prompt_missing_wins_over_created_at_missing(tmp_path: Path) -> None:
+    prompts = _prompts(tmp_path / "prompts")
+    broken = _task("broken", enabled=True)
+    del broken["createdAt"]
+    source = _write_store(tmp_path / "source", [broken])
+    target = _write_store(tmp_path / "target", [])
+
+    plan = build_replication_plan(
+        _scan(prompts, source=source, target=target),
+        source_root_id="source",
+        active_root_id=None,
+    )
+
+    # A task with both defects keeps reporting the reason it always reported.
+    assert plan.conflicts == (("broken", "prompt_missing"),)
+    assert plan.mutations == ()
+
+
+def test_handoff_still_fails_closed_on_unportable_created_at(tmp_path: Path) -> None:
+    prompts = _prompts(tmp_path / "prompts", "watch")
+    stale = _task("watch", enabled=True)
+    del stale["createdAt"]
+    source = _write_store(tmp_path / "source", [stale])
+    target = _write_store(tmp_path / "target", [])
+
+    # A handoff names its tasks explicitly, so silently skipping one would
+    # report success for work that never happened.
+    with pytest.raises(CatalogConflict, match="native creation timestamp"):
+        build_handoff_plan(
+            _scan(prompts, source=source, target=target),
+            source_root_id="source",
+            target_root_id="target",
+            task_ids=["watch"],
+        )
 
 
 def test_replication_never_patches_active_target(tmp_path: Path) -> None:

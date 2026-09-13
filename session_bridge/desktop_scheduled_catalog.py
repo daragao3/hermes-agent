@@ -163,9 +163,21 @@ def scan_catalogs(
     return CatalogScan(MappingProxyType(observations), prompt_root)
 
 
-def _portable(task: Mapping[str, object]) -> dict[str, object]:
+def _has_native_created_at(task: Mapping[str, object]) -> bool:
     created = task.get("createdAt")
-    if isinstance(created, bool) or not isinstance(created, (int, float)) or not math.isfinite(created):
+    return (
+        not isinstance(created, bool)
+        and isinstance(created, (int, float))
+        and math.isfinite(created)
+    )
+
+
+def _portable(task: Mapping[str, object]) -> dict[str, object]:
+    # Kept as a hard invariant rather than a soft skip: every caller must decide
+    # what an unportable task means before asking for its portable form.
+    # Replication classifies it per task (created_at_missing); a handoff names
+    # its tasks explicitly, so it fails closed in _source_tasks_for_handoff.
+    if not _has_native_created_at(task):
         raise CatalogConflict(f"source task lacks native creation timestamp: {task.get('id')}")
     # Native optional fields permit absence, not JSON null. In particular,
     # omitting required createdAt makes Desktop reject the entire catalog.
@@ -223,16 +235,17 @@ def build_replication_plan(
     conflicts: list[tuple[str, str]] = []
     mutations: list[CatalogMutation] = []
     pending: list[str] = []
-    portable = {
-        task_id: task
-        for task_id, task in source.tasks.items()
-        if _prompt_exists(scan, task_id)
-    }
-    conflicts.extend(
-        (task_id, "prompt_missing")
-        for task_id in source.tasks
-        if task_id not in portable
-    )
+    portable: dict[str, Mapping[str, object]] = {}
+    for task_id, task in source.tasks.items():
+        # One source task that cannot be replicated must not block the rest of
+        # the catalog. Prompt evidence is checked first so a task missing both
+        # keeps reporting the reason it always reported.
+        if not _prompt_exists(scan, task_id):
+            conflicts.append((task_id, "prompt_missing"))
+        elif not _has_native_created_at(task):
+            conflicts.append((task_id, "created_at_missing"))
+        else:
+            portable[task_id] = task
 
     for root_id, observation in scan.roots.items():
         if root_id == source_root_id:
@@ -283,6 +296,10 @@ def _source_tasks_for_handoff(
             raise CatalogConflict(f"source task is absent: {task_id}")
         if not _prompt_exists(scan, task_id):
             raise CatalogConflict(f"source task prompt is missing: {task_id}")
+        if not _has_native_created_at(task):
+            raise CatalogConflict(
+                f"source task lacks native creation timestamp: {task_id}"
+            )
         result[task_id] = task
     return result
 
