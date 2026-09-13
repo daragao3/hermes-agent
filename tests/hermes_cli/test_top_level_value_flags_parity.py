@@ -17,7 +17,6 @@ derived from ``build_top_level_parser()`` (mirroring the
   2. the ``--reasoning`` misparse regression itself.
 """
 
-import sys
 
 import pytest
 

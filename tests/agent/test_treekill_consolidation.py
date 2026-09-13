@@ -82,7 +82,6 @@ class TestSubprocessCompatDelegation:
 
 class TestBrowserToolDelegation:
     def test_delegates_with_proc_pid(self, monkeypatch):
-        from tools import browser_tool
 
         calls = []
         monkeypatch.setattr(
@@ -93,7 +92,6 @@ class TestBrowserToolDelegation:
         assert calls == [3333]
 
     def test_swallows_delegation_raise_and_falls_back_to_legacy(self, monkeypatch):
-        from tools import browser_tool
 
         def _boom(pid, **kw):
             raise OSError("delegation broken")

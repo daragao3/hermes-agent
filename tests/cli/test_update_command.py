@@ -23,7 +23,6 @@ from unittest.mock import patch
 import pytest
 
 from cli import HermesCLI
-from hermes_cli import main_tui_launch
 
 
 def _bound(fn, instance):

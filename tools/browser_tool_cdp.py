@@ -2,7 +2,6 @@
 
 Split out of ``tools/browser_tool.py``. Facade-owned state is read through ``_bt`` (``tools.browser_tool``, resolved per call) — no import cycle."""
 
-import contextlib
 import os
 from typing import Tuple
 

@@ -18,7 +18,6 @@ completions must classify "deliver", not be terminally dropped. Explicit user
 boundaries (/new -> session_reset / user_exit) stay terminal.
 """
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest

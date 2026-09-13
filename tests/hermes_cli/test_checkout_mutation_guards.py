@@ -19,7 +19,6 @@ from pathlib import Path
 
 import hermes_cli.main as main_mod
 import hermes_cli.main_install_repair as hermes_cli_main_install_repair
-from hermes_cli import main_install_repair
 from hermes_cli import update_cmd
 from hermes_cli import _early_recovery as er
 

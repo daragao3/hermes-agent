@@ -107,7 +107,6 @@ class TestPersonalityCompletionsMemo:
 
     def test_mtime_change_reparses(self, monkeypatch, tmp_path):
         """A config file change on disk invalidates the memo."""
-        from pathlib import Path
 
         cfg_path = tmp_path / "config.yaml"
         cfg_path.write_text(

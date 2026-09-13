@@ -3,7 +3,6 @@
 Simulates the real crash: a pip/system-Python install where PROJECT_ROOT is
 site-packages and VIRTUAL_ENV=PROJECT_ROOT/venv does not exist.
 """
-import os
 import sys
 import unittest
 from pathlib import Path
@@ -82,7 +81,7 @@ class StaleVirtualEnvTest(unittest.TestCase):
 
     def test_existing_python_flag_wins(self):
         """A caller-supplied --python is not duplicated by the pin."""
-        captured = self._call(
+        self._call(
             uv_cmd=[Path("/fake/uv"), "pip"],
             venv_path=Path("/fake/project/venv"),
             fake_executable="/fake/python311/python.exe",

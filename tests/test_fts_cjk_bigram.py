@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from hermes_state import SessionDB
-from hermes_state_common import FTS_CJK_STALE_KEY
 
 REPO = Path(__file__).resolve().parent.parent
 SRC = REPO / "native" / "fts5_cjk" / "fts5_cjk.c"

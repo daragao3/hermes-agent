@@ -19,7 +19,6 @@ its guard is covered by site 1.)
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from agent.context_compressor import (
     ContextCompressor,

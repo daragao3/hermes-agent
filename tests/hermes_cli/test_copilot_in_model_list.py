@@ -46,7 +46,6 @@ def _no_other_copilot_creds(monkeypatch):
                 "COPILOT_CLI_PATH", "COPILOT_ACP_BASE_URL"):
         monkeypatch.delenv(var, raising=False)
     import hermes_cli.auth as auth
-    import hermes_cli.model_switch as model_switch
 
     monkeypatch.setattr(auth, "_load_auth_store", lambda: {})
     monkeypatch.setattr(model_switch_providers, "_credential_pool_is_usable", lambda *a, **k: False)

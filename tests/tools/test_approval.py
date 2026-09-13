@@ -12,7 +12,6 @@ import pytest
 import tools.approval as approval_module
 from tools import approval_context
 from tools import approval_smart
-from hermes_constants import get_hermes_home
 from tools.approval import approve_session, detect_dangerous_command, detect_hardline_command, is_approved, load_permanent, prompt_dangerous_approval
 from tools.approval_context import _get_approval_mode
 from tools.approval_context import _normalize_approval_mode
@@ -766,7 +765,6 @@ class TestWebhookApprovalExclusion:
         """Neutralize host leakage: yolo frozen at import time + real config."""
         import tools.approval as approval_mod
         from tools import approval_context
-        from tools import approval_context
 
         monkeypatch.setattr(approval_mod, "_YOLO_MODE_FROZEN", False)
         monkeypatch.setattr(approval_context, "_get_approval_mode", lambda: "smart")
@@ -795,7 +793,6 @@ class TestWebhookApprovalExclusion:
 
     def test_webhook_dangerous_command_approves_when_opted_in(self, monkeypatch):
         """approvals.unattended_mode: approve restores the old auto-approve path."""
-        import tools.approval as approval_mod
         from tools.approval import check_all_command_guards
 
         self._isolate(monkeypatch)
@@ -1327,8 +1324,6 @@ class TestApprovalTimeoutIsNotConsent:
     def setup_method(self):
         """Reset module state and force a tight approval timeout for fast tests."""
         from tools import approval as mod
-        from tools import approval_context
-        from tools import approval_context
         mod._gateway_queues.clear()
         mod._gateway_notify_cbs.clear()
         mod._session_approved.clear()
@@ -1361,7 +1356,6 @@ class TestApprovalTimeoutIsNotConsent:
                 os.environ[k] = v
 
     def _force_short_timeout(self, monkeypatch, seconds=0.05):
-        from tools import approval as mod
         monkeypatch.setattr(
             approval_context, "_get_approval_config",
             lambda: {"mode": "manual", "timeout": seconds},

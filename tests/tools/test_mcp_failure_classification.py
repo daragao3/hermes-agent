@@ -14,7 +14,7 @@ import logging
 import pytest
 
 from tools.mcp_tool_errors import (
-    InvalidMcpUrlError, NonMcpEndpointError, _classify_mcp_failure, _unwrap_exception_group)
+    _classify_mcp_failure, _unwrap_exception_group)
 from tools.mcp_tool import MCPServerTask
 
 

@@ -33,7 +33,7 @@ class Handler(BaseHTTPRequestHandler):
             records.append({'path':self.path,'refresh':True})
             raw=json.dumps({'access_token':refresh_reply,'refresh_token':'fixture-rotated','expires_in':3600,'token_type':'Bearer','scope':'inference:invoke'}).encode()
             self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw);return
-        body=json.loads(raw_body or '{}')
+        json.loads(raw_body or '{}')
         bearer=self.headers.get('Authorization','').removeprefix('Bearer ')
         records.append({'path':self.path,'sub':claims(bearer).get('sub') if bearer else None})
         if bearer and claims(bearer)['exp'] < time.time():
@@ -49,7 +49,6 @@ os.environ['HERMES_SHARED_AUTH_DIR']=str(home/'shared')
 from run_agent import AIAgent
 from agent.turn_iteration_prep import prepare_iteration
 import agent.client_lifecycle as lifecycle
-import hermes_cli.auth as auth
 print(json.dumps({'mode':MODE,'module':lifecycle.__file__,'has_new':hasattr(AIAgent,'_adopt_nous_key_before_expiry'),'home':str(home)}),flush=True)
 if MODE=='main':
     spec=importlib.util.spec_from_file_location('main_prep',Path(__file__).with_name('main-turn_iteration_prep.py')); mod=importlib.util.module_from_spec(spec);sys.modules[spec.name]=mod;spec.loader.exec_module(mod);prepare_iteration=mod.prepare_iteration

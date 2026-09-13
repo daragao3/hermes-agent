@@ -1,6 +1,5 @@
 """Tests for AIAgent provider=meta host-mandated api_mode."""
 
-import pytest
 
 
 def test_agent_init_meta_base_url_implies_codex_responses():

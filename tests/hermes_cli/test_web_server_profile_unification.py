@@ -369,7 +369,6 @@ class TestProfileScopedModel:
         /api/config on the same lock. The handler must scope the worker
         through _config_profile_scope (contextvar only, no lock) for the
         selected profile."""
-        import hermes_cli.web_server as web_server
 
         scopes = []
 
@@ -415,7 +414,6 @@ class TestProfileScopedPostSetup:
         """Post-setup runs in a -p scoped subprocess so hooks that read
         config / write per-profile state see the same HERMES_HOME the rest
         of the drawer's writes targeted."""
-        import hermes_cli.web_server as web_server
 
         calls = []
 
@@ -443,7 +441,6 @@ class TestProfileScopedPostSetup:
     def test_post_setup_without_profile_keeps_legacy_argv(
         self, client, isolated_profiles, monkeypatch
     ):
-        import hermes_cli.web_server as web_server
 
         calls = []
 
@@ -630,7 +627,6 @@ class TestProfileScopedTelegramOnboarding:
         self, client, isolated_profiles, monkeypatch
     ):
         import time
-        import hermes_cli.web_server as web_server
 
         with _web_server_messaging._telegram_onboarding_lock:
             _web_server_messaging._telegram_onboarding_pairings.clear()
@@ -685,7 +681,6 @@ class TestProfileScopedTelegramOnboarding:
 
 class TestProfileScopedChatPty:
     def test_chat_argv_scopes_hermes_home(self, isolated_profiles, monkeypatch):
-        import hermes_cli.web_server as web_server
 
         monkeypatch.setattr(
             "hermes_cli.main_tui_launch._make_tui_argv",
@@ -701,7 +696,6 @@ class TestProfileScopedChatPty:
     def test_chat_argv_bridges_selected_profile_terminal_config(
         self, isolated_profiles, monkeypatch
     ):
-        import hermes_cli.web_server as web_server
 
         (isolated_profiles["default"] / "config.yaml").write_text(
             "terminal:\n"
@@ -738,7 +732,6 @@ class TestProfileScopedChatPty:
     def test_chat_argv_default_profile_preserves_exported_terminal_values(
         self, isolated_profiles, monkeypatch
     ):
-        import hermes_cli.web_server as web_server
 
         (isolated_profiles["default"] / "config.yaml").write_text(
             "terminal:\n  backend: docker\n",
@@ -762,7 +755,6 @@ class TestProfileScopedChatPty:
     def test_chat_argv_placeholder_cwd_preserves_exported_value(
         self, isolated_profiles, monkeypatch, placeholder
     ):
-        import hermes_cli.web_server as web_server
 
         (isolated_profiles["default"] / "config.yaml").write_text(
             f"terminal:\n  backend: docker\n  cwd: {placeholder}\n",

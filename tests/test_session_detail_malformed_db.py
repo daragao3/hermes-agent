@@ -16,7 +16,6 @@ import sqlite3
 import pytest
 from fastapi import HTTPException
 
-from hermes_cli import web_server
 import hermes_cli.web_server_sessions as _web_server_sessions
 from hermes_cli.web_routers import sessions as sessions_router
 

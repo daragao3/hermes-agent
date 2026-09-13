@@ -7,7 +7,10 @@ import os
 import subprocess
 from typing import Any, Dict
 
-from tools.tts_command_provider import _get_provider_section as _get_stt_section
+# Aliased re-export, not used here: tools/transcription_cloud.py and
+# tools/transcription_tools.py both import _get_stt_section FROM this module.
+from tools.tts_command_provider import _get_provider_section as _get_stt_section  # noqa: F401
+
 
 # Log-record parity with the origin module.
 logger = logging.getLogger("tools.transcription_tools")

@@ -51,7 +51,6 @@ def test_all_runtime_state_follows_runtimes_root(profile_home):
     root, profile = profile_home
     from hermes_cli.local_runtime.growth import window_overrides_path
     from hermes_cli.local_runtime.presets import read_preset_decisions
-    import hermes_cli.local_runtime.binaries as binaries
 
     shared = root / "runtimes" / "llamacpp"
     assert window_overrides_path() == shared / "window_overrides.json"

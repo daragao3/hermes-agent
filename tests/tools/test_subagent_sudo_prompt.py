@@ -14,7 +14,6 @@ executor thread.
 """
 
 import contextvars
-import os
 import threading
 
 import pytest

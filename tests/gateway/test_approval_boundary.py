@@ -1,7 +1,7 @@
 """Tests for approval boundary handling in WeCom native streaming."""
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from gateway.stream_consumer import GatewayStreamConsumer, StreamConsumerConfig
 
 

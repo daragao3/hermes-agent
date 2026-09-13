@@ -1,8 +1,6 @@
 """Tests for tools/skill_linter.py — the advisory SKILL.md convention linter."""
 
-from pathlib import Path
 
-import pytest
 
 from tools.skill_linter import (
     ERROR,

@@ -140,7 +140,6 @@ def test_tree_dirtied_between_check_and_removal_preserved(
     ``--force``, git's own dirty guard re-verifies at removal time and the
     removal fails safe.
     """
-    import cli
 
     wt = _make_worktree(repo, "t_gggg7777")
     (wt / "late-wip.txt").write_text("dirtied after the check\n", encoding="utf-8")

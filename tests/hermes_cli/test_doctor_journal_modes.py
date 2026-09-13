@@ -13,7 +13,6 @@ import sqlite3
 
 import pytest
 
-import hermes_cli.doctor as doctor
 from hermes_cli.sqlite_safe_read import (
     connect_tracked,
     has_live_connection,

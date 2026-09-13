@@ -23,7 +23,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cron import scheduler as sched
 from cron import scheduler_delivery as sched_delivery
 from cron.scheduler import _deliver_result
 from cron.scheduler_delivery import _confirm_adapter_delivery

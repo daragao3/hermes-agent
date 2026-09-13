@@ -8,7 +8,6 @@ Hermes default / 100 API max, ~4KB payload) while inline mode is uncapped —
 every command and skill must be reachable through it.
 """
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 

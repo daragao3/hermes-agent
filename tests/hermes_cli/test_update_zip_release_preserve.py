@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import shutil
-from pathlib import Path
 
 
 def test_staged_apps_swap_preserves_live_release_dir(tmp_path, monkeypatch):

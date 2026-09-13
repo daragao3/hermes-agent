@@ -759,7 +759,6 @@ def test_hybrid_prefetch_fires_http_immediately(monkeypatch):
     from tools.tts_tool_speaker import stream_tts_to_speaker
 
     stream_start_times: list[float] = []
-    playback_done_times: list[float] = []
     block_first_playback = threading.Event()
 
     class _BlockingFirst(ts.StreamingTTSProvider):

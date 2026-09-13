@@ -24,12 +24,8 @@ This file drives the REAL `tick()` end-to-end against a throwaway HERMES_HOME:
 """
 from __future__ import annotations
 
-import json
-import os
-import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -117,7 +113,7 @@ class TestEAGAINRecurringRedispatches:
         state = self._make_script_eagain(env, monkeypatch)
 
         # Tick 1: EAGAIN failure.
-        n1 = S.tick(verbose=False, sync=True)
+        S.tick(verbose=False, sync=True)
         # Assert the failure was recorded.
         latest = E.latest_execution(env["job_id"])
         assert latest is not None, "tick 1 must create an execution"
@@ -135,7 +131,7 @@ class TestEAGAINRecurringRedispatches:
         J.update_job(env["job_id"], {"next_run_at": (now - timedelta(minutes=1)).isoformat()})
 
         # Tick 2: script passes -> job must fire (completed execution).
-        n2 = S.tick(verbose=False, sync=True)
+        S.tick(verbose=False, sync=True)
         latest2 = E.latest_execution(env["job_id"])
         assert latest2 is not None
         assert latest2["status"] == "completed", (
@@ -156,7 +152,7 @@ class TestEAGAINRecurringRedispatches:
         monkeypatch.setattr(S, "_hermes_home", env["home"])
 
         self._make_script_eagain(env, monkeypatch)
-        n1 = S.tick(verbose=False, sync=True)
+        S.tick(verbose=False, sync=True)
 
         # Simulate the persisted non-dispatch state: next_run_at far in the
         # future (job not due) but still enabled/scheduled — the observed
@@ -164,11 +160,11 @@ class TestEAGAINRecurringRedispatches:
         from datetime import timezone as tz
         far = datetime.now(tz.utc) + timedelta(days=1)
         update_job(env["job_id"], {"next_run_at": far.isoformat()})
-        n2 = S.tick(verbose=False, sync=True)  # not due -> no dispatch
+        S.tick(verbose=False, sync=True)  # not due -> no dispatch
 
         # Force-run (trigger_job) sets next_run_at = now -> due again.
         triggered = trigger_job(env["job_id"])
         assert triggered is not None
-        n3 = S.tick(verbose=False, sync=True)
+        S.tick(verbose=False, sync=True)
         latest = E.latest_execution(env["job_id"])
         assert latest["status"] == "completed", "force-run must clear the wedge"

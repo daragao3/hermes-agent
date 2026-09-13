@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from hermes_cli import web_server
 import hermes_cli.web_server_cron as _web_server_cron
 
 

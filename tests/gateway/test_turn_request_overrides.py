@@ -10,7 +10,6 @@ fixed key whitelist that omitted it -- so the provider's configured
 ``/fast`` service-tier overrides survived.
 """
 
-import pytest
 
 from gateway.run import GatewayRunner
 

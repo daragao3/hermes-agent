@@ -1,7 +1,6 @@
 import os, sys, json, asyncio, threading, tempfile, sqlite3, socket, subprocess, tracemalloc
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from types import SimpleNamespace
 
 ROOT = Path(sys.argv[1]).resolve()
 RECEIPT = Path(sys.argv[2]).resolve()
@@ -48,7 +47,7 @@ class Peer(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         requests.append({"path": self.path, "body": body})
-        users = [
+        [
             m.get("content") for m in body.get("messages", []) if m["role"] == "user"
         ]
         fail = fault == "http400"
@@ -124,7 +123,7 @@ server = ThreadingHTTPServer(("127.0.0.1", 0), Peer)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 from run_agent import AIAgent
 from hermes_state import SessionDB
-from gateway.session import SessionStore, AsyncSessionStore, SessionSource
+from gateway.session import SessionSource
 from gateway.config import GatewayConfig, Platform
 from gateway.platforms.event import MessageEvent
 from gateway.run import GatewayRunner

@@ -17,9 +17,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import hermes_state
 import hermes_state_wal
-from hermes_state_wal import apply_wal_with_fallback, is_sqlite_wal_reset_vulnerable, sqlite_source_id
+from hermes_state_wal import apply_wal_with_fallback, is_sqlite_wal_reset_vulnerable
 
 
 @pytest.fixture(autouse=True)

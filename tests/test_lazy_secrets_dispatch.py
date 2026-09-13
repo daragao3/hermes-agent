@@ -17,7 +17,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from hermes_cli import update_cmd
 
 
 def _run_hermes(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:

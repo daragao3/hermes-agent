@@ -21,7 +21,6 @@ the scope-aware session DB resolution on main.)
 """
 
 import json
-import logging
 import os
 import tempfile
 from pathlib import Path

@@ -14,7 +14,6 @@ The invariant pinned here: ``next_run_at`` written during a foreign-process
 tick carries the JOB-OWNING profile's configured UTC offset.
 """
 from datetime import datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest

@@ -28,7 +28,6 @@ import pytest
 
 from agent.conversation_compression import compression_skipped_due_to_lock
 from run_agent import AIAgent
-import run_agent
 
 
 LOCK_HOLDER = "pid=4242:tid=1:agent=deadbeef:nonce=abcd1234"

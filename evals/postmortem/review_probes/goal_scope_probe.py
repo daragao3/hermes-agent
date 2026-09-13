@@ -4,7 +4,7 @@ Independent-review probe (written by the /review subagent for tracking issue #10
 It reproduced a defect in the first version of the PR; the fixed head must pass it. Paths are taken
 from the command line / environment, never hard-coded. Usage: see the argument parsing at the top of the file.
 """
-import os,sys,tempfile,json,subprocess,time,queue,asyncio,contextlib
+import os,sys,tempfile,json,subprocess,time,queue,asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch

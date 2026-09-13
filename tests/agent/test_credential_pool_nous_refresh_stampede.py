@@ -16,8 +16,6 @@ Two invariants pinned here:
    untouched instead of marking it exhausted.
 """
 
-import json
-import logging
 
 import hermes_cli.auth as auth_mod
 import hermes_cli.auth_nous as auth_nous

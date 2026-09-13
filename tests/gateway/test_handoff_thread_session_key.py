@@ -123,7 +123,7 @@ def test_slack_handoff_key_uses_parent_channel_not_thread_id():
     thread_ts = "1690000000.123456"
     user_id = "U123456"
 
-    organic = _organic_slack_thread_key(channel_id, thread_ts, user_id)
+    _organic_slack_thread_key(channel_id, thread_ts, user_id)
     handoff = _handoff_key(Platform.SLACK, channel_id, thread_ts)
 
     # The handoff uses chat_type="thread" while Slack organic uses "group",

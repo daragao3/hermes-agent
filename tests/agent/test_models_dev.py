@@ -13,12 +13,10 @@ from agent.models_dev import (
     _explicit_model_override,
     _override_context_window,
     _override_for,
-    _NotModified,
     _validate_registry,
     fetch_models_dev,
     get_model_capabilities,
     get_model_info,
-    get_provider_info,
     lookup_models_dev_context,
 )
 
@@ -1230,7 +1228,6 @@ class TestModelOverrides:
         """
         import importlib
 
-        import agent.models_dev as md
         import hermes_cli.config as hc
 
         home = tmp_path / "hermes"

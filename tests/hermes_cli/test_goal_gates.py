@@ -2,7 +2,6 @@
 
 import json
 import sys
-import time
 from unittest.mock import patch
 
 import pytest
@@ -14,8 +13,6 @@ from hermes_cli.goals import (
     GoalManager,
     GoalState,
     run_gate,
-    save_goal,
-    load_goal,
 )
 
 

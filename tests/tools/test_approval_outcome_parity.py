@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pytest
 
-import tools.approval as approval_mod
 from tools import approval_context, approval_human_wait
 import tools.terminal_tool as terminal_tool
 import tools.terminal_tool_sudo as terminal_tool_sudo

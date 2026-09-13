@@ -9,13 +9,10 @@ from hermes_cli.nous_account import NousPortalAccountInfo
 from hermes_cli.models import (
     OPENROUTER_MODELS, fetch_openrouter_models, model_ids, detect_provider_for_model,
     partition_nous_models_by_tier,
-    check_nous_free_tier, _FREE_TIER_CACHE_TTL,
-    union_with_portal_free_recommendations,
+    check_nous_free_tier, union_with_portal_free_recommendations,
     union_with_portal_paid_recommendations,
 )
 import hermes_cli.models as _models_mod
-from hermes_cli import models_local
-from hermes_cli import models_validate
 
 LIVE_OPENROUTER_MODELS = [
     ("anthropic/claude-opus-4.6", "recommended"),
@@ -804,8 +801,6 @@ class TestLocalOllamaModelDiscovery:
 
     def test_clear_provider_models_cache_clears_ollama_native_tags_cache(self):
         import hermes_cli.models as models
-        from hermes_cli import models_local
-        from hermes_cli import models_validate
 
         cache = getattr(models, "_OLLAMA_LOCAL_MODELS_CACHE")
         cache["http://127.0.0.1:11434"] = ("old-model",)
@@ -814,8 +809,6 @@ class TestLocalOllamaModelDiscovery:
 
     def test_clear_provider_models_cache_custom_clears_native_tags_cache(self):
         import hermes_cli.models as models
-        from hermes_cli import models_local
-        from hermes_cli import models_validate
 
         cache = getattr(models, "_OLLAMA_LOCAL_MODELS_CACHE")
         cache["http://127.0.0.1:11434"] = ("old-model",)
@@ -824,8 +817,6 @@ class TestLocalOllamaModelDiscovery:
 
     def test_clear_provider_models_cache_does_not_remove_custom_disk_cache(self):
         import hermes_cli.models as models
-        from hermes_cli import models_local
-        from hermes_cli import models_validate
 
         disk_cache = {
             "custom": {"models": ["custom-model"]},
@@ -1349,7 +1340,6 @@ class TestLocalOllamaModelDiscovery:
     def test_ollama_failed_probe_is_cached_briefly(self):
         import hermes_cli.models as models
         from hermes_cli import models_local
-        from hermes_cli import models_validate
 
         models._OLLAMA_LOCAL_MODELS_CACHE.clear()
         models._OLLAMA_LOCAL_PROBE_FAILURE_CACHE.clear()
@@ -1364,7 +1354,6 @@ class TestLocalOllamaModelDiscovery:
     def test_empty_ollama_catalog_does_not_resurrect_stale_disk_models(self):
         import hermes_cli.models as models
         from hermes_cli import models_local
-        from hermes_cli import models_validate
 
         base_url = "http://127.0.0.1:11434"
         probe_key = models._ollama_probe_cache_key(base_url, None)
@@ -1386,7 +1375,6 @@ class TestLocalOllamaModelDiscovery:
     def test_failed_ollama_catalog_preserves_stale_disk_models(self):
         import hermes_cli.models as models
         from hermes_cli import models_local
-        from hermes_cli import models_validate
 
         base_url = "http://127.0.0.1:11434"
         probe_key = models._ollama_probe_cache_key(base_url, None)
@@ -1408,7 +1396,6 @@ class TestLocalOllamaModelDiscovery:
     def test_ollama_native_request_uses_redirect_safe_catalog_helper(self):
         import hermes_cli.models as models
         from hermes_cli import models_local
-        from hermes_cli import models_validate
 
         response = MagicMock()
         response.read.return_value = b'{"models": [{"name": "qwen3:1.7b"}]}'
@@ -1422,7 +1409,6 @@ class TestLocalOllamaModelDiscovery:
         request.assert_called_once()
 
     def test_validation_with_nonmatching_ollama_root_does_not_forward_config_headers(self):
-        import hermes_cli.models as models
         from hermes_cli import models_local
         from hermes_cli import models_validate
 

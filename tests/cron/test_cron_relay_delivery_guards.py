@@ -18,9 +18,7 @@ Two related defects on relay-fronted Slack deployments:
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
-from cron import scheduler as sched
 from cron import scheduler_delivery as sched_delivery
 from cron.scheduler_preflight import _preflight_check_delivery
 from cron.scheduler_delivery import _resolve_single_delivery_target, cron_delivery_targets

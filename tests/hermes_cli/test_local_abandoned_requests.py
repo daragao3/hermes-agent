@@ -20,7 +20,6 @@ Three contracts, one per failure link:
 from __future__ import annotations
 
 import json
-import subprocess
 import types
 
 import pytest
@@ -174,9 +173,9 @@ def test_reap_orphans_kills_only_our_parentless_binaries(tmp_path, monkeypatch):
     exe = tmp_path / "llama-server.exe"
     exe.write_text("")
 
-    orphan = _FakeChild(300)
-    adopted = _FakeChild(301)     # parent alive -> not an orphan
-    foreign = _FakeChild(302)     # different binary -> never touched
+    _FakeChild(300)
+    _FakeChild(301)     # parent alive -> not an orphan
+    _FakeChild(302)     # different binary -> never touched
 
     def _info(pid, exe_path, ppid):
         p = _FakeChild(pid)

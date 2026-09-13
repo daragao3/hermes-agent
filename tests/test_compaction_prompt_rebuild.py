@@ -169,7 +169,7 @@ class TestWorkspaceSnapshotPinnedAcrossCompaction(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_workspace_snapshot_reprobes_when_cwd_changes(self):
-        import tempfile, shutil, subprocess
+        import tempfile, shutil
         from pathlib import Path
         from agent.system_prompt import build_system_prompt
 

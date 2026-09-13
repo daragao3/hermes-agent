@@ -28,7 +28,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from evals.compaction.fixtures import (  # noqa: E402
-    estimate_tokens,
     load_transcript,
     total_tokens,
 )
@@ -312,7 +311,6 @@ def main():
 
     summaries = []
     if args.also_uncompacted:
-        spec = {"ctor": {}, "attrs": {"tail_token_budget": 10**9}}
         # control: no compression at all — answer from the full transcript
         context_text = serialize_for_exam(messages, char_cap=900_000)
         results = []

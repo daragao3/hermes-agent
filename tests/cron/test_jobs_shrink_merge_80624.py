@@ -59,7 +59,7 @@ def test_stale_empty_save_preserves_concurrent_no_agent_create(hermes_env):
 
 def test_remove_other_job_preserves_concurrent_create(hermes_env):
     """``cron remove`` of job A must not drop job B created mid-flight."""
-    from cron.jobs import create_job, load_jobs, remove_job, save_jobs
+    from cron.jobs import create_job, load_jobs, save_jobs
 
     agent = create_job(
         prompt="hello",
@@ -187,7 +187,7 @@ def test_merge_does_not_mutate_caller_list(hermes_env):
     not grow as a side effect of save_jobs()."""
     from cron.jobs import create_job, save_jobs
 
-    job = create_job(
+    create_job(
         prompt=None,
         schedule="every 2m",
         script="watch.sh",

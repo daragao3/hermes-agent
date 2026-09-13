@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import pathlib
 import subprocess
-from unittest.mock import patch
 
 import pytest
 
@@ -206,7 +205,6 @@ def test_agent_provider_timeout_delivery_keeps_fallback_guidance(hermes_env, mon
     """Provider timeout classification remains available to agent-backed jobs."""
     from cron.jobs import create_job
     import cron.scheduler as scheduler
-    from cron import scheduler_script as sched_script
 
     job = create_job(
         prompt="Summarize the overnight logs.",

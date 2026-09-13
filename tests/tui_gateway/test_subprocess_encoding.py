@@ -14,10 +14,8 @@ the crash class cannot silently regress.
 
 from __future__ import annotations
 
-import subprocess
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 import tui_gateway.server as server
 
@@ -75,7 +73,7 @@ def test_cli_exec_uses_utf8_replace():
     handler = server._methods["cli.exec"]
     with patch("subprocess.run", return_value=_make_completed_process()) as mock_run:
         # Non-interactive argv that passes _cli_exec_blocked.
-        resp = handler(1, {"argv": ["--version"]})
+        handler(1, {"argv": ["--version"]})
         assert mock_run.called, "subprocess.run was not invoked"
         kwargs = mock_run.call_args[1]
         assert kwargs.get("encoding") == "utf-8", (
@@ -97,7 +95,7 @@ def test_shell_exec_uses_utf8_replace():
         # A harmless, non-dangerous command that passes the approval gate.
         with patch("tools.approval_detection.detect_hardline_command", return_value=(False, "")), \
              patch("tools.approval_detection.detect_dangerous_command", return_value=(False, None, "")):
-            resp = handler(1, {"command": "echo hello"})
+            handler(1, {"command": "echo hello"})
         assert mock_run.called, "subprocess.run was not invoked"
         kwargs = mock_run.call_args[1]
         assert kwargs.get("encoding") == "utf-8", (
@@ -121,7 +119,7 @@ def test_quick_command_exec_uses_utf8_replace():
              "quick_commands": {"runcmd": {"type": "exec", "command": "echo hi"}}
          }), \
          patch("tools.environments.local._sanitize_subprocess_env", return_value={"PATH": "/usr/bin"}):
-        resp = handler(1, {"name": "runcmd", "arg": "", "session_id": ""})
+        handler(1, {"name": "runcmd", "arg": "", "session_id": ""})
         assert mock_run.called, "subprocess.run was not invoked for quick-command exec"
         kwargs = mock_run.call_args[1]
         assert kwargs.get("encoding") == "utf-8", (

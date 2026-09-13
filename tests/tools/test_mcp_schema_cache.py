@@ -176,7 +176,6 @@ class TestWriteThroughPreservesSchema:
         """The whole point of the cache: a lazy server re-advertises params."""
         from unittest.mock import patch
 
-        import tools.mcp_tool as mt
         from tools import mcp_tool_registration as _mcp_registration
         from tools.registry import ToolRegistry
 

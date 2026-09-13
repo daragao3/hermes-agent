@@ -6,7 +6,6 @@ coarse workspace identity derived from fields already recorded on sessions
 NOT part of the key.
 """
 
-import hermes_state_sessions
 from hermes_state_sessions import workspace_key
 
 

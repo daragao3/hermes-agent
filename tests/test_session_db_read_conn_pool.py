@@ -499,7 +499,6 @@ def test_idle_permits_are_reclaimed_from_a_peer_instance(db):
 @pytest.mark.requires_wal
 def test_peak_is_bounded_across_many_database_files(tmp_path):
     """Read connections must be capped for the PROCESS, not just per file."""
-    import hermes_state
     from hermes_state import SessionDB, _READ_POOL_MAX
     from hermes_state_readpool import _READ_POOL_PROCESS_MAX
 

@@ -11,8 +11,6 @@ import copy
 
 from tools.schema_sanitizer import (
     sanitize_tool_schemas,
-    strip_pattern_and_format,
-    strip_slash_enum,
 )
 
 
@@ -270,7 +268,7 @@ def test_strip_responses_mixed_formats():
 # in the tools array 400s the whole request on Anthropic/Bedrock/Vertex/Azure.
 # ---------------------------------------------------------------------------
 
-from tools.schema_sanitizer import sanitize_property_key, unrename_tool_args
+from tools.schema_sanitizer import sanitize_property_key
 
 
 def test_sanitize_property_key_empty_falls_back():

@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import types
 
-import pytest
 
 from hermes_state import SessionDB
 
@@ -136,7 +135,7 @@ def _build_turn_context_for_test(build_turn_context, agent, **overrides):
     Mirrors ``tests/agent/test_turn_context.py::_build`` but is kept local so
     this file stays self-contained.
     """
-    from tests.agent.test_turn_context import _FakeAgent, _stub_runtime_main
+    from tests.agent.test_turn_context import _FakeAgent
 
     fake = _FakeAgent()
     kwargs = dict(

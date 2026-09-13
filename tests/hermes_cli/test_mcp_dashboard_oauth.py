@@ -29,7 +29,6 @@ def _clear_flows():
 
 
 def test_hosted_auth_start_returns_public_authorization_url(monkeypatch):
-    from hermes_cli import web_server
 
     client = _client()
     client.post(
@@ -89,7 +88,6 @@ def test_hosted_callback_bypasses_gated_cookie_auth(monkeypatch):
 
 
 def test_hosted_auth_allows_same_server_name_in_different_profiles(tmp_path, monkeypatch):
-    from hermes_cli import web_server
     from tools.mcp_dashboard_oauth import DashboardOAuthFlow
 
     profile_home = tmp_path / "profiles" / "work"
@@ -120,7 +118,6 @@ def test_hosted_auth_allows_same_server_name_in_different_profiles(tmp_path, mon
 
 
 def test_flow_status_does_not_expose_authorization_code():
-    from hermes_cli import web_server
     from tools.mcp_dashboard_oauth import DashboardOAuthFlow
 
     flow = DashboardOAuthFlow(

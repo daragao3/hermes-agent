@@ -6,7 +6,6 @@ Live-QA findings (Aug 2026, locked KDE desktop):
 2. `_call_tool_via_cli` retried 4x with ~3.5s of sleeps on "daemon is not
    running", a permanent condition for that invocation.
 """
-from typing import Any, Dict
 
 import pytest
 

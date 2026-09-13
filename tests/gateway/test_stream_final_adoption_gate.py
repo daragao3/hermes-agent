@@ -17,7 +17,6 @@ through turn_finalizer.finalize_turn which computes completed=True.
 Gate: completed is not False AND not interrupted AND not failed.
 """
 
-from types import SimpleNamespace
 
 
 def _adoption_gate(result) -> bool:

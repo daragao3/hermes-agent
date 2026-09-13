@@ -1,11 +1,9 @@
 """MiniMax TTS region, endpoint, and credential selection tests."""
 
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tools.tts_tool import (
-    _generate_minimax_tts,
     _resolve_minimax_tts_runtime,
     check_tts_requirements,
 )

@@ -76,13 +76,11 @@ class TestDashboardCodeSkewGuard:
     """Dashboard mirror of the gateway's model-switch skew guard (#86207)."""
 
     def test_dashboard_guard_returns_none_without_skew(self, monkeypatch):
-        from hermes_cli import web_server
 
         monkeypatch.setattr(code_skew, "detect_code_skew", lambda: None)
         assert _web_server_config._dashboard_code_skew_guard() is None
 
     def test_dashboard_guard_message_names_revs_and_restart(self, monkeypatch):
-        from hermes_cli import web_server
 
         monkeypatch.delenv("HERMES_SERVE_HEADLESS", raising=False)
         monkeypatch.setattr(code_skew, "detect_code_skew", lambda: ("abc1234567", "def4567890"))
@@ -95,7 +93,6 @@ class TestDashboardCodeSkewGuard:
         assert "systemctl" not in msg
 
     def test_serve_guard_message_points_at_desktop_backend(self, monkeypatch):
-        from hermes_cli import web_server
 
         monkeypatch.setenv("HERMES_SERVE_HEADLESS", "1")
         monkeypatch.setattr(code_skew, "detect_code_skew", lambda: ("abc1234567", "def4567890"))
@@ -118,7 +115,6 @@ class TestModelOptionsSkewGuard:
 
     def test_stale_dashboard_returns_503_and_skips_payload_build(self, monkeypatch):
         from fastapi import HTTPException
-        from hermes_cli import web_server
 
         monkeypatch.setattr(code_skew, "detect_code_skew", lambda: ("abc1234567", "def4567890"))
 
@@ -137,7 +133,6 @@ class TestModelOptionsSkewGuard:
         assert payload_calls == []
 
     def test_fresh_dashboard_builds_payload_unchanged(self, monkeypatch):
-        from hermes_cli import web_server
 
         monkeypatch.setattr(code_skew, "detect_code_skew", lambda: None)
 

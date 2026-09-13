@@ -7,9 +7,7 @@ Covers two robustness gaps left unaddressed when #54843 merged:
 """
 from __future__ import annotations
 
-import re
 
-import tools.web_tools as wt
 from tools import web_tools_truncate
 
 

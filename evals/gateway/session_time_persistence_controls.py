@@ -1,7 +1,5 @@
 """Isolated production-library controls; no transport/provider calls."""
-import contextlib
 import importlib.util
-import io
 import json
 import os
 import sys
@@ -20,7 +18,7 @@ for key in list(os.environ):
 os.environ.update(HOME=str(home), HERMES_HOME=str(home / ".hermes"), SESSION_IDLE_MINUTES="1", SESSION_RESET_HOUR="0")
 sys.path.insert(0, str(repo))
 import yaml
-from gateway.config import load_gateway_config, GatewayConfig, Platform
+from gateway.config import load_gateway_config, Platform
 from gateway.session import SessionStore, SessionSource
 from gateway.run import GatewayRunner
 from gateway.agent_cache_pressure import AgentCacheBounds

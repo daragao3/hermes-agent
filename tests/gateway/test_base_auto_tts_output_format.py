@@ -24,7 +24,6 @@ from gateway.platforms.base import (
 )
 from gateway.platforms.event import MessageEvent, MessageType
 from gateway.session import SessionSource, build_session_key
-from tools.tts_tool import OPUS_VOICE_PLATFORMS
 
 
 class _DummyAdapter(BasePlatformAdapter):

@@ -22,7 +22,6 @@ Pinned surfaces:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -331,7 +330,6 @@ class TestSignalBoundary:
     def test_unprovable_ownership_never_signals(self, profile_env):
         """Unprovable ownership → start_gateway returns False WITHOUT calling
         terminate_pid or writing a takeover marker."""
-        from unittest.mock import MagicMock
 
         def configure(stack):
             guard = stack.enter_context(

@@ -1,8 +1,6 @@
 """Tests for gateway/shutdown_flush.py — pending message durability (#72680)."""
 
 import json
-import os
-import stat
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -157,7 +155,6 @@ def test_get_flush_dir_uses_get_hermes_home(tmp_path, monkeypatch):
     captured = {}
 
     def fake_get_hermes_home():
-        from pathlib import Path
         captured["called"] = True
         return tmp_path
 

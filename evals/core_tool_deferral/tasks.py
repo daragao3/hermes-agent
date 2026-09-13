@@ -14,7 +14,6 @@ final_answer, todo_dump.
 """
 import json
 import os
-import re
 
 
 # Planted ground truths

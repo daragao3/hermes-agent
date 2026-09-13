@@ -34,7 +34,6 @@ import sqlite3
 import sys
 from pathlib import Path
 
-import hermes_state
 from hermes_state import repair_state_db_schema
 from hermes_state_repair import _connect_repair_durable
 

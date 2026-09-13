@@ -12,7 +12,6 @@ carried the truncation footer.
 from __future__ import annotations
 
 import collections
-import json
 import re
 import statistics
 from typing import Any, Dict, List

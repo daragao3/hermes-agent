@@ -10,7 +10,6 @@ long-dead gateways never false-positive.
 
 import json
 import os
-from pathlib import Path
 
 import hermes_cli.update_receipt as ur
 

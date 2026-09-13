@@ -245,7 +245,6 @@ class TestGuidanceNeverNamesLiveDb:
     def test_forensic_backup_refusals_name_safe_lane(self):
         """The low-disk and stat-failure forensic backup refusal strings
         must not embed a raw sqlite3 command against the live path."""
-        import hermes_state
 
         body = inspect.getsource(hermes_state_repair._backup_db_file)
         assert ".recover\"`" not in body

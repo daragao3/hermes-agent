@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import textwrap
-from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import hermes_cli.main as m
 import hermes_cli.main_install_repair as hermes_cli_main_install_repair
 from hermes_cli import main_install_repair
-from hermes_cli import update_cmd
 import pytest
 
 

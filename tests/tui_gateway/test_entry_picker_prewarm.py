@@ -26,9 +26,7 @@ from __future__ import annotations
 
 import io
 
-import hermes_cli.model_switch as ms
 from tui_gateway import entry
-import hermes_cli.model_switch_providers
 from hermes_cli import model_switch_providers
 
 

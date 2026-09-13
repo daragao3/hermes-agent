@@ -15,7 +15,6 @@ its ``_session_db.db_path`` and passes it explicitly.
 import re
 import threading
 
-import pytest
 
 
 def _skills_body(prompt: str) -> str:

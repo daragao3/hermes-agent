@@ -64,7 +64,6 @@ def _make_delete_db_with_content(path) -> None:
 @pytest.fixture(autouse=True)
 def _reset_dedup():
     """Order-independence: the warning is deduped per process per db_label."""
-    import hermes_state
 
     hermes_state_wal._journal_upgrade_warned_paths.clear()
     yield

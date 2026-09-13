@@ -23,7 +23,6 @@ import json
 import os
 import random
 import statistics
-import sys
 from pathlib import Path
 
 SKIP_TOP = {".git", "node_modules", "apps", "website", "build", ".venv", "venv", "MagicMock", "__pycache__", ".worktrees", "dist", "evals", "skills", "optional-skills", "docs", "tests"}

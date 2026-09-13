@@ -14,7 +14,6 @@ indicator said 1). The fix has two halves:
 
 import io
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

@@ -6,7 +6,6 @@ on the copy with a devtools port (see hermes_cli.browser_connect). These tests
 exercise the real functions with real file I/O wherever possible — the mocks
 are limited to OS detection and process launch.
 """
-import json
 import os
 import ntpath
 from unittest.mock import Mock, patch
@@ -353,7 +352,6 @@ class TestRealProfileCdpLaunch:
         own session) survives holding the copy dir: re-attach, never re-run the snapshot.
         A DevToolsActivePort left by a crash whose port was recycled by ANOTHER CDP server
         (browser id mismatch) must not be attached to; the normal launch path runs."""
-        import tools.browser_tool as bt
         self._reset()
         (tmp_path / "DevToolsActivePort").write_text("41000\n/devtools/browser/x\n")
         version = Mock()

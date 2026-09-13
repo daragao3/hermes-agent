@@ -12,7 +12,6 @@ runs once per distinct slot, not once per create() iteration.
 
 import types  # noqa: F401  (used by _fake_response)
 
-import pytest
 
 
 def _make_preset_config() -> dict:

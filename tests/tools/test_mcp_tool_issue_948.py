@@ -1,12 +1,10 @@
 import asyncio
 import os
-import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
 from tools.mcp_tool import MCPServerTask, _MCP_AVAILABLE
-from tools.mcp_tool_errors import _format_connect_error
 from tools.mcp_tool_config import _resolve_stdio_command
 
 # Ensure the mcp module symbols exist for patching even when the SDK isn't installed

@@ -16,7 +16,6 @@ import pytest
 
 from gateway.shutdown_watchdog import (
     loop_heartbeat_forever,
-    _arm_loop_floor_timer,
     start_loop_liveness_watchdog,
 )
 

@@ -108,7 +108,10 @@ def _normalize_family_key(c: str) -> Optional[str]:
 
 def _resolve_family(explicit: Optional[str]) -> Tuple[str, Dict[str, Any]]:
     """Decide which FAL family to use. Returns ``(family_id, meta)``."""
-    import os
+    # Local import on purpose: the only module-level `import os` lives in the
+    # PLUGIN-COMPAT block, which internal code MUST NOT depend on (it is removed
+    # by reverting the commit that added it). F811 flags the shadowing; keep it.
+    import os  # noqa: F811
     try:
         from hermes_cli.config import load_config
         cfg = load_config()

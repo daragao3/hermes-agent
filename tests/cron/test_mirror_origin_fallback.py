@@ -155,7 +155,6 @@ class TestFallbackMirrorEndToEnd:
 
         mirror_calls = []
 
-        import cron.scheduler as sched
 
         def fake_mirror(platform, chat_id, text, source_label="cli",
                         thread_id=None, user_id=None, role="assistant"):

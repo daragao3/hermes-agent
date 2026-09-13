@@ -240,7 +240,6 @@ class _Collector:
         """Claim events on one board, appending delivery dicts to ``deliveries``."""
         if not self._board_has_subs(slug):
             return
-        kb = self.kb
         try:
             conn = _kbc().connect(board=slug)
         except Exception as exc:

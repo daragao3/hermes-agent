@@ -100,7 +100,6 @@ class TestProfileScopedHubActions:
         """Hub installs must go through a fresh ``hermes -p <profile>``
         subprocess — the in-process scope can't reach skills_hub's
         import-time SKILLS_DIR binding."""
-        import hermes_cli.web_server as web_server
 
         calls = []
 

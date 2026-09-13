@@ -8,7 +8,6 @@ than replacing them with an empty dict.
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import threading
 import types

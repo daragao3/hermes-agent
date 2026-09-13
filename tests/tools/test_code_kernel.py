@@ -18,7 +18,6 @@ tests patch ``_load_config`` directly, mirroring test_code_execution_modes.
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile

@@ -6,7 +6,6 @@ capability keys the schema builder reads (test below fails when a new
 model is added without them), and the plugin provider ABC's capabilities()
 default fails closed to text-only/no-upscale.
 """
-import json
 import os
 import sys
 import unittest
@@ -41,7 +40,6 @@ class TestCatalogCapabilityCoverage(unittest.TestCase):
     def test_provider_abc_default_fails_closed(self):
         from agent.image_gen_provider import ImageGenProvider
 
-        caps_src = ImageGenProvider.capabilities
         # Instantiate via a minimal concrete subclass.
         class _P(ImageGenProvider):
             name = "t"
@@ -63,7 +61,6 @@ class TestCatalogCapabilityCoverage(unittest.TestCase):
         supports_upscale — and vice versa, so a stale declaration can't
         advertise an upscale that silently no-ops. modalities and
         max_reference_images must always be declared."""
-        import ast
         import pathlib
 
         plugins_dir = (pathlib.Path(__file__).resolve().parents[2]

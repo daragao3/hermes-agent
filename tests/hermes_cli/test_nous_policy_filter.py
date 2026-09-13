@@ -11,7 +11,6 @@ import json
 
 import pytest
 
-import hermes_cli.models as models_mod
 from hermes_cli import models_pricing
 import hermes_cli.nous_account as account_mod
 from hermes_cli.models_pricing import _NOUS_POLICY_APPEND_MAX, nous_policy_allowed_ids, restrict_to_nous_policy

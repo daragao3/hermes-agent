@@ -17,7 +17,6 @@ Contract pinned here:
 """
 
 import os
-import sys
 from pathlib import Path
 from unittest import mock
 

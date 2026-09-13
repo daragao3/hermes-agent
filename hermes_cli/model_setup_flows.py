@@ -19,9 +19,12 @@ from hermes_cli.model_setup_flows_common import (
     _load_config_model_section, _models_dev_merged, _oauth_gate, _persist_model, _pick_model_or_prompt,
     _print_numbered, _prompt_auth_credentials_choice,
     _run_login, _say, _show_curated)
-from hermes_cli.model_setup_flows_custom import _model_flow_custom, _model_flow_named_custom
-from hermes_cli.model_setup_flows_azure import _model_flow_azure_foundry
-from hermes_cli.model_setup_flows_bedrock import _model_flow_bedrock
+# Re-exported, not used here: hermes_cli/main.py imports these four names FROM
+# this module (see its `from hermes_cli.model_setup_flows import (...)` block),
+# so dropping them as unused breaks the CLI at import time.
+from hermes_cli.model_setup_flows_custom import _model_flow_custom, _model_flow_named_custom  # noqa: F401
+from hermes_cli.model_setup_flows_azure import _model_flow_azure_foundry  # noqa: F401
+from hermes_cli.model_setup_flows_bedrock import _model_flow_bedrock  # noqa: F401
 
 
 def _env_base_url(base_url_env: str) -> str:

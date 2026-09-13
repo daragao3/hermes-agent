@@ -61,7 +61,7 @@ def main() -> int:
         outbox_directory=scratch / "outbox",
     )
 
-    today = datetime.now(timezone.utc).date().isoformat()
+    datetime.now(timezone.utc).date().isoformat()
     # The generator only exports COMPLETED periods, so the realistic E2E
     # package is yesterday's. It also has to be: the consent gate only
     # releases a package once its whole period is confirmed consented, and

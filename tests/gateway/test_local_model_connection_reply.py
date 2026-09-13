@@ -1,6 +1,5 @@
 """Regression tests for #86570: gateway provider error connection messaging."""
 
-import pytest
 
 from gateway.run import (
     _GATEWAY_CONNECTION_ERROR_RE,

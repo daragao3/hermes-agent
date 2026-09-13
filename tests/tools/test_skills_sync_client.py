@@ -574,7 +574,7 @@ class TestEndToEnd:
         home, skills, identity = synced_env
         client = ssc.SyncClient(base, identity["api_key"])
         # First push establishes a base head we record locally.
-        first = ssc.push_skills(client, identity=identity)
+        ssc.push_skills(client, identity=identity)
         # Inject a divergent server head: change beta server-side so the next
         # CAS loses. We simulate by forcing one 409 whose actual == current head
         # (the server keeps the same tree, so no overlap on alpha which we edit).

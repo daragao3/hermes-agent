@@ -31,7 +31,6 @@ def test_build_welcome_banner_title_falls_back_when_no_tag():
     from unittest.mock import patch as _patch
     import hermes_cli.banner as _banner
     import model_tools as _mt
-    import tools.mcp_tool as _mcp
     from tools import mcp_tool_discovery as _mcp_discovery
 
     _banner._latest_release_cache = None

@@ -29,7 +29,6 @@ execution row, no re-dispatch); with the recovery it re-fires and completes.
 from __future__ import annotations
 
 import sys
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -106,7 +105,7 @@ class TestPersistedStaleErrorRecovery:
 
         job = J.get_job(job_id)
         with mock.patch("cron.jobs.load_jobs", return_value=[job]):
-            n = S.tick(verbose=False, sync=True)
+            S.tick(verbose=False, sync=True)
 
         latest = E.latest_execution(job_id)
         assert latest is not None, (

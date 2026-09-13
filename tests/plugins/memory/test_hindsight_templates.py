@@ -3,7 +3,6 @@
 import json
 from contextlib import contextmanager
 
-import pytest
 
 from plugins.memory.hindsight import templates as tpl
 

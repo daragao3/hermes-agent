@@ -106,7 +106,6 @@ class TestRepeatRestartWithinCooldown:
         Completed action children get reaped out of that table, and a guard
         that disappears when the child is reaped is the bug this fixes.
         """
-        import hermes_cli.web_server as web_server
         from hermes_cli.web_server import _spawn_gateway_restart
 
         mock_spawn.return_value = _exited_proc()

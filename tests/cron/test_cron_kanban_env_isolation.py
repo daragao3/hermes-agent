@@ -274,7 +274,6 @@ class TestRunJobKanbanIsolation:
 
     def test_agent_runs_as_non_dispatcher(self, monkeypatch, worker_env):
         import cron.scheduler as sched
-        from cron import scheduler_delivery as sched_delivery
 
         observed: dict = {}
         self._install_stubs(monkeypatch, observed)
@@ -288,7 +287,6 @@ class TestRunJobKanbanIsolation:
         """The whole point of the ContextVar: os.environ must not be mutated, so
         the worker's claim heartbeat and the gateway watchers keep working."""
         import cron.scheduler as sched
-        from cron import scheduler_delivery as sched_delivery
 
         before = {
             k: v for k, v in os.environ.items() if k.startswith("HERMES_KANBAN_")
@@ -311,7 +309,6 @@ class TestRunJobKanbanIsolation:
 
     def test_context_reset_after_job(self, monkeypatch, worker_env):
         import cron.scheduler as sched
-        from cron import scheduler_delivery as sched_delivery
         from agent.delegation_context import is_dispatcher_owned_worker_context
 
         observed: dict = {}
@@ -322,7 +319,6 @@ class TestRunJobKanbanIsolation:
 
     def test_context_reset_even_when_job_raises(self, monkeypatch, worker_env):
         import cron.scheduler as sched
-        from cron import scheduler_delivery as sched_delivery
         from agent.delegation_context import is_dispatcher_owned_worker_context
 
         class ExplodingAgent:
@@ -352,7 +348,6 @@ class TestRunJobKanbanIsolation:
         restore this permanently destroyed the worker's identity; a ContextVar is
         per-thread and cannot."""
         import cron.scheduler as sched
-        from cron import scheduler_delivery as sched_delivery
 
         before = {
             k: v for k, v in os.environ.items() if k.startswith("HERMES_KANBAN_")

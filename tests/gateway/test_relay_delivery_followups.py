@@ -30,9 +30,7 @@ Four review findings on the original branch:
 """
 
 import asyncio
-import os
 from datetime import datetime
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

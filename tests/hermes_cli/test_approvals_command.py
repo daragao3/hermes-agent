@@ -1,11 +1,7 @@
 """Cross-surface contract for the persistent /approvals mode command."""
 
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
-import yaml
 
-from cli import HermesCLI
 from hermes_cli.commands import GATEWAY_KNOWN_COMMANDS, SUBCOMMANDS, gateway_help_lines, resolve_command
 from hermes_cli.commands_completion import SlashCommandCompleter
 from hermes_cli.commands_platforms import telegram_bot_commands

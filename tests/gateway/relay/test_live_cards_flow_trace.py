@@ -5,12 +5,8 @@ op sequence the connector sees (finding #4/#5 forensics — Alice canary).
 Run: python -m pytest tests/gateway/relay/test_live_cards_flow_trace.py -q -s
 """
 import asyncio
-import sys
-import types
 
-import pytest
 
-from gateway.relay.adapter import RelayAdapter
 
 
 class TraceTransport:
@@ -70,7 +66,7 @@ def test_trace_multisegment_draft_flow():
         )
         return r3
 
-    r3 = loop.run_until_complete(turn())
+    loop.run_until_complete(turn())
     print("\n--- OP TIMELINE ---")
     for i, op in enumerate(t.ops):
         print(f"{i:2d} {op['op']:<16} final={op.get('final')} draft_id={op.get('draft_id')} "

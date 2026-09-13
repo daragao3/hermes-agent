@@ -10,7 +10,6 @@ status route's `loading` field and the chat's load notice."""
 from __future__ import annotations
 
 import json
-import time
 
 import hermes_cli.local_runtime.load_progress as lp
 

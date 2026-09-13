@@ -35,7 +35,6 @@ def _disable_vulnerable_gate(monkeypatch: pytest.MonkeyPatch) -> None:
 def _reset_configured_delete_override_warned_paths():
     """Reset the configured-delete-override warned-paths set so the
     once-per-process-per-db_label dedup doesn't leak between tests."""
-    import hermes_state
 
     hermes_state_wal._delete_overridden_warned_paths.clear()
     yield
@@ -243,7 +242,7 @@ def test_real_db_openers_honor_configured_delete(monkeypatch, tmp_path):
     from cron import executions
     from gateway import delivery_ledger
     from gateway.platforms.api_server import ResponseStore
-    from hermes_cli import kanban_db, projects_db
+    from hermes_cli import projects_db
     from hermes_cli import kanban_db_connect as kbc
     from hermes_state import SessionDB
     from plugins.memory.holographic.store import MemoryStore

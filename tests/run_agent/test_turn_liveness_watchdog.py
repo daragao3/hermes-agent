@@ -949,7 +949,7 @@ def test_declined_abort_parks_and_leaves_fence_operational():
     # cancel_before_commit (the started-commit branch waits for
     # finish_commit without cancelling).
     assert fence.begin_commit() is True
-    entered = threading.Event()
+    threading.Event()
     resumed = threading.Event()
 
     result = {}

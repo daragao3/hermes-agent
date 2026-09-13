@@ -8,7 +8,6 @@ failures pointing at provider/key. The reader mirrors `_goal_judge_max_tokens`
 (max_tokens is wired, timeout was not).
 """
 
-import pytest
 
 import hermes_cli.goals as goals
 from hermes_cli.goals import DEFAULT_JUDGE_TIMEOUT, _goal_judge_timeout

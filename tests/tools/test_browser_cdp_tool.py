@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-import time
 from typing import Any, Dict, List
 
 import pytest
@@ -646,7 +645,6 @@ def test_check_fn_does_not_probe_network(monkeypatch):
 def test_check_fn_false_when_browser_requirements_fail(monkeypatch):
     """Even with a CDP URL, gate closes if the overall browser toolset is
     unavailable (e.g. agent-browser not installed)."""
-    import tools.browser_tool as bt
 
     monkeypatch.setattr(bt_install, "check_browser_requirements", lambda: False)
     monkeypatch.setattr(

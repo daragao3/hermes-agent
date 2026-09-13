@@ -16,7 +16,6 @@ but NEVER when multiple streams are open (a duplicate message is
 recoverable; sealing someone else's stream is not).
 """
 
-import asyncio
 
 import pytest
 

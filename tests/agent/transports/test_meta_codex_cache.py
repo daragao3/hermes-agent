@@ -1,7 +1,5 @@
 """Tests for Meta api.meta.ai prompt_cache_retention and transport plumbing."""
 
-import json
-from types import SimpleNamespace
 
 import pytest
 

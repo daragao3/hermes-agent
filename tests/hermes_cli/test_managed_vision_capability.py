@@ -117,7 +117,6 @@ def test_webp_transcodes_to_png_for_managed_provider(hermes_home, monkeypatch, t
     saw. Measured live: the same red square answered 'Red' as PNG and
     'Unseen' as WebP."""
     pytest.importorskip("PIL")
-    import io
 
     from PIL import Image
 

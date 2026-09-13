@@ -21,14 +21,11 @@ The fix:
 
 These tests pin the corrected behavior.
 """
-import asyncio
 import json
 import time
-from datetime import datetime, timezone
 from unittest.mock import patch
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 from hermes_cli.web_server import _SESSION_TOKEN, app
@@ -115,7 +112,6 @@ def test_minimax_login_does_not_launch_anthropic_flow():
 
 
 def test_oauth_provider_status_uses_profile_query(tmp_path, monkeypatch):
-    from hermes_cli import web_server as ws
     from hermes_constants import get_hermes_home
 
     profile_home = _make_profile_home(tmp_path, monkeypatch)
@@ -142,7 +138,6 @@ def test_oauth_provider_status_uses_profile_query(tmp_path, monkeypatch):
 
 
 def test_oauth_start_stores_profile_for_background_completion(tmp_path, monkeypatch):
-    from hermes_cli import web_server as ws
 
     _make_profile_home(tmp_path, monkeypatch)
     fake_user_code_resp = {
@@ -179,7 +174,6 @@ def test_oauth_session_cannot_be_polled_or_cancelled_from_another_profile(
     tmp_path, monkeypatch
 ):
     """A named-profile OAuth session must reject default-profile retargeting."""
-    from hermes_cli import web_server as ws
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     (tmp_path / "profiles" / "worker").mkdir(parents=True)
@@ -220,7 +214,6 @@ def test_oauth_session_cannot_be_polled_or_cancelled_from_another_profile(
 
 
 def test_codex_dashboard_start_rewords_device_authorization_error(monkeypatch):
-    from hermes_cli import web_server as ws
 
     before_sessions = set(_web_server_oauth._oauth_sessions)
 
@@ -455,7 +448,6 @@ def test_cancel_oauth_session_marks_dict_cancelled_before_popping(tmp_path, monk
     it can only observe cancellation if the flag is set on that shared
     object prior to (or instead of) removal from the global session map.
     """
-    from hermes_cli import web_server as ws
 
     _make_profile_home(tmp_path, monkeypatch, profile="coder")
     session_id = "cancel-flag-test"
@@ -483,7 +475,6 @@ def test_cancel_oauth_session_marks_dict_cancelled_before_popping(tmp_path, monk
 
 def test_nous_dashboard_poller_preserves_effective_scope_when_token_omits_scope(monkeypatch):
     from hermes_cli import auth as auth_mod
-    from hermes_cli import web_server as ws
 
     session_id = "nous-effective-scope-test"
     _web_server_oauth._oauth_sessions[session_id] = {
@@ -545,7 +536,6 @@ def test_xai_oauth_listed_as_device_code_flow():
 
 def test_anthropic_dashboard_oauth_is_removed_and_external():
     """Anthropic subscription OAuth is not minted by the dashboard anymore."""
-    from hermes_cli import web_server as ws
 
     resp = client.get("/api/providers/oauth", headers=HEADERS)
     assert resp.status_code == 200, resp.text
@@ -664,7 +654,6 @@ def test_xai_dashboard_poller_seeds_single_entry_and_clears_suppression(tmp_path
     xai-oauth``.
     """
     from hermes_cli import auth as auth_mod
-    from hermes_cli import web_server as ws
     from agent.credential_pool import load_pool
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
@@ -755,7 +744,6 @@ def test_status_falls_through_to_generic_dispatcher_for_catalog_only_provider():
     logged-out; now they dispatch to hermes_cli.auth.get_auth_status (the
     canonical slug dispatcher) so membership AND status both auto-extend.
     """
-    import hermes_cli.web_server as ws
 
     fake_status = {
         "logged_in": True,

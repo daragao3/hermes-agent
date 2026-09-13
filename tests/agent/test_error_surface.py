@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from agent.error_surface import (
     LAYER_AUTH,

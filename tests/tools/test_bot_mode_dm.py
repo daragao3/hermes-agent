@@ -643,7 +643,7 @@ def test_successful_spawn_transfers_cleanup_to_runner(tmp_path, monkeypatch):
 
 
 def test_write_dm_file_unlinks_partial_file_on_write_exception(tmp_path, monkeypatch):
-    dm_file = tmp_path / "partial.txt"
+    tmp_path / "partial.txt"
     real_mkstemp = bot_mode_dm.tempfile.mkstemp
 
     def fixed_mkstemp(**kwargs):

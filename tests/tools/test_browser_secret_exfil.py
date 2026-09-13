@@ -1,7 +1,7 @@
 """Tests for secret exfiltration prevention in browser and web tools."""
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import pytest
 
 

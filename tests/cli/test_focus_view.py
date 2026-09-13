@@ -24,10 +24,7 @@ from hermes_cli.focus_view import (
     FOCUS_STATUSBAR_LABEL,
     FOCUS_TOOL_PROGRESS_MODE,
     focus_statusbar_segment,
-    format_focus_status,
-    format_focus_toggle_message,
     format_hidden_line,
-    normalize_tool_progress_mode,
     resolve_focus_arg,
     would_display_tool_line,
 )

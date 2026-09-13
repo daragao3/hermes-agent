@@ -131,7 +131,6 @@ def test_aux_task_picker_requests_exhausted_pool_visibility(monkeypatch):
     so silently hiding a provider whose keys are all exhausted is exactly the
     bug the #66584 picker fix addressed, one interactive picker over.
     """
-    import hermes_cli.main as main
 
     recorded: dict = {}
     monkeypatch.setattr(

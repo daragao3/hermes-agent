@@ -5,7 +5,6 @@ import io
 import os
 import tarfile
 import threading
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 

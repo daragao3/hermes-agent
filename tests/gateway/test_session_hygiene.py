@@ -1575,7 +1575,7 @@ async def test_hygiene_fence_cancel_records_cooldown_without_abort_flag(
     """
     from hermes_state import SessionDB
 
-    gateway_run = importlib.import_module("gateway.run")
+    importlib.import_module("gateway.run")
     session_id = "sess-fence-cancel"
 
     class FenceCancelCompressAgent:

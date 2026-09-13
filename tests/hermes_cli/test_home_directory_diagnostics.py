@@ -1,5 +1,4 @@
 """Home initialization must respect operator-owned links and diagnose storage."""
-from pathlib import Path
 
 import pytest
 

@@ -9,7 +9,6 @@ docker/nix/apt heuristics second; refusals record a `refused` receipt.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
