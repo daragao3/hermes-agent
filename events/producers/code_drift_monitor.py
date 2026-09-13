@@ -33,8 +33,8 @@ it reaches Telegram when the operator is away from the machine.
 Emission policy
 ---------------
 Edge-triggered on the WALL clock (state is persisted across restarts):
-fire on the rising edge of drift, fire immediately when the drift *shape*
-(state, behind, ahead) changes, re-ping a sustained episode every 6 h, and
+fire on the rising edge of drift, fire when source/deployment condition
+changes (not when commit counts change), re-ping a sustained episode every 6 h, and
 emit a single status="resolved" event on the falling edge — but only if
 the episode actually alerted. Episode state lives in
 ~/.hermes/notifications/code_drift_state.json so the resolved ping
@@ -175,12 +175,15 @@ class DriftSample:
     executed_gated: bool = False
     executed_changed: bool = False
     executed_files: Tuple[str, ...] = ()
+    deployment_state: str = "unknown"
+    accepted_commit: str = ""
+    deployment_detail: str = ""
 
     @property
     def shape(self) -> List:
         """The identity of a drift episode: a change here re-alerts
         immediately (list, not tuple, so it round-trips through JSON)."""
-        return [self.state, self.behind_count, self.ahead_count]
+        return [self.state, self.dirty, self.deployment_state]
 
     @property
     def alerts(self) -> bool:
@@ -197,6 +200,8 @@ class DriftSample:
         cannot compute an executed diff at all, so silence there would
         recreate the exact fail-silent hole this rewrite closes.
         """
+        if self.deployment_state in {"unaccepted", "unverified"}:
+            return True
         if self.state == "in_sync":
             return False
         if self.state == "trunk_missing":
@@ -274,12 +279,17 @@ def sample_code_drift(
         return None
     trunk = trunk.strip()
 
-    rc_status, status = _git(repo, "status", "--porcelain")
+    rc_status, status = _git(repo, "status", "--porcelain", "-z")
     if rc_status != 0:
         return None
     dirty = bool(status.strip())
 
     common = dict(repo_name=repo_name, trunk_ref=trunk_ref, branch=branch)
+    if repo_name == "agent-src":
+        from events.producers.deployment_acceptance import changed_paths, deployment_evidence
+        common.update(deployment_evidence(
+            repo, head, changed_paths(status), _hermes_root() / "ops" / "agent-src-deployment-baseline.json",
+        ))
     if head == trunk:
         return DriftSample(state="in_sync", head=head, trunk=trunk,
                            dirty=dirty, **common)
@@ -497,6 +507,7 @@ class CodeDriftMonitor:
         key = sample.repo_name or self._repo_name
         return {
             "key": key,
+            "incident_key": f"code-drift:{key}",
             "repo": self._repo_str(),
             "repo_name": key,  # back-compat alias
             "trunk_ref": measured_trunk_ref,
@@ -504,6 +515,10 @@ class CodeDriftMonitor:
             "trunk": sample.trunk[:9],
             "main": sample.trunk[:9],  # back-compat alias
             "branch": sample.branch,
+            "deployment_state": sample.deployment_state,
+            "accepted_commit": sample.accepted_commit,
+            "deployment_detail": sample.deployment_detail,
+            "loaded_runtime": "unknown",
         }
 
     def _emit_drift(self, sample: DriftSample) -> str:

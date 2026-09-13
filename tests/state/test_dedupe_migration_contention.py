@@ -13,6 +13,14 @@ Contract:
   as a read fallback for unmigrated rows.
 - Rows migrated before the failure stay migrated; unmigrated rows remain
   readable and are picked up by a later successful run.
+
+SEEDING ORDER IS LOAD-BEARING. Merge ``8586e305a2`` widened the migration
+gate from ``current_version < 25`` to "below v25 **or** any inline prompt
+still remains", so ``SessionDB.__init__`` now resumes the dedupe on an
+already-current schema. Legacy rows written before the store is opened are
+therefore migrated by ``__init__`` itself, leaving the proxy below nothing to
+fail on. Seed through the raw connection *after* the store is open; the last
+test pins the init-resume behaviour that forces this ordering.
 """
 
 import sqlite3
@@ -20,34 +28,33 @@ import sqlite3
 
 from hermes_state import SessionDB
 
+_N_ROWS = 5
 
-def _make_legacy_db(tmp_path, n_rows=5):
-    """Open a real SessionDB, then regress it to a pre-v25 shape."""
+
+def _make_db(tmp_path):
+    """Create a real SessionDB file at the current schema, then close it."""
     db_path = tmp_path / "state.db"
-    db = SessionDB(db_path=db_path)
-    db.close()
+    SessionDB(db_path=db_path).close()
+    return db_path
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
+
+def _seed_legacy_rows(cursor, n_rows=_N_ROWS):
+    """Regress *n_rows* to the pre-v25 shape: inline prompt, no hash."""
     for i in range(n_rows):
-        cur.execute(
+        cursor.execute(
             "INSERT OR IGNORE INTO sessions (id, source, started_at) "
             "VALUES (?, 'test', 1.0)",
             (f"sess-{i}",),
         )
-        cur.execute(
+        cursor.execute(
             "UPDATE sessions SET system_prompt = ?, system_prompt_hash = NULL "
             "WHERE id = ?",
             (f"legacy prompt {i}", f"sess-{i}"),
         )
-    conn.commit()
-    inserted = cur.execute(
-        "SELECT COUNT(*) FROM sessions WHERE id LIKE 'sess-%'"
+    seeded = cursor.execute(
+        "SELECT COUNT(*) FROM sessions WHERE system_prompt IS NOT NULL"
     ).fetchone()[0]
-    conn.close()
-    assert inserted == n_rows, f"fixture only created {inserted}/{n_rows} rows"
-    return db_path
+    assert seeded == n_rows, f"fixture only seeded {seeded}/{n_rows} legacy rows"
 
 
 class _FailAfterN:
@@ -70,12 +77,14 @@ class _FailAfterN:
 
 
 def test_mid_loop_lock_error_returns_instead_of_raising(tmp_path):
-    db_path = _make_legacy_db(tmp_path)
+    db_path = _make_db(tmp_path)
     db = SessionDB(db_path=db_path)
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         raw = conn.cursor()
+        _seed_legacy_rows(raw)  # after the open: see the module docstring
+        conn.commit()
         proxy = _FailAfterN(raw, fail_after=2)
         # Must NOT raise even though the third UPDATE hits "database is locked".
         db._dedupe_legacy_system_prompts(proxy)
@@ -98,14 +107,22 @@ def test_mid_loop_lock_error_returns_instead_of_raising(tmp_path):
 
 
 def test_later_run_completes_the_remainder(tmp_path):
-    db_path = _make_legacy_db(tmp_path)
+    db_path = _make_db(tmp_path)
     db = SessionDB(db_path=db_path)
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         raw = conn.cursor()
+        _seed_legacy_rows(raw)  # after the open: see the module docstring
+        conn.commit()
         db._dedupe_legacy_system_prompts(_FailAfterN(raw, fail_after=2))
         conn.commit()
+        # The pause must be real, or the second run below proves nothing.
+        paused = raw.execute(
+            "SELECT COUNT(*) FROM sessions "
+            "WHERE id LIKE 'sess-%' AND system_prompt IS NOT NULL"
+        ).fetchone()[0]
+        assert 0 < paused < _N_ROWS, f"expected a partial migration, got {paused}"
         # Second run with no failures finishes the job.
         db._dedupe_legacy_system_prompts(raw)
         conn.commit()
@@ -117,3 +134,33 @@ def test_later_run_completes_the_remainder(tmp_path):
         conn.close()
     finally:
         db.close()
+
+
+def test_schema_init_resumes_the_migration_at_the_current_version(tmp_path):
+    """Pin the init-resume behaviour the two tests above are ordered around.
+
+    Merge ``8586e305a2`` widened the gate in ``hermes_state_schema`` so a
+    paused v25 dedupe resumes from the data that actually remains rather than
+    from the stored schema version. Nothing else asserts that, and reverting it
+    would silently restore the crash-loop shape the field report describes:
+    inline prompts stranded forever on an already-current DB.
+    """
+    db_path = _make_db(tmp_path)
+    conn = sqlite3.connect(db_path)
+    _seed_legacy_rows(conn.cursor())
+    conn.commit()
+    conn.close()
+
+    SessionDB(db_path=db_path).close()  # schema init alone must pick them up
+
+    conn = sqlite3.connect(db_path)
+    remaining = conn.execute(
+        "SELECT COUNT(*) FROM sessions WHERE system_prompt IS NOT NULL"
+    ).fetchone()[0]
+    hashed = conn.execute(
+        "SELECT COUNT(*) FROM sessions "
+        "WHERE id LIKE 'sess-%' AND system_prompt_hash IS NOT NULL"
+    ).fetchone()[0]
+    conn.close()
+    assert remaining == 0, "schema init left inline prompts on a current-version DB"
+    assert hashed == _N_ROWS

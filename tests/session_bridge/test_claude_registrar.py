@@ -402,6 +402,9 @@ class FakeStore:
     def __init__(self):
         self.calls: list[tuple[Any, ...]] = []
 
+    def upsert_projection(self, projection: SessionProjection) -> None:
+        pass
+
     def commit_claude_visibility_job(self, *args: Any) -> dict[str, Any]:
         self.calls.append(("commit", *args))
         return {"state": "claude_visible"}

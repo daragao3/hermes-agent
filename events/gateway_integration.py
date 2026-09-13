@@ -562,6 +562,12 @@ def emit_gateway_stopped(stop_payload: Optional[Dict[str, Any]] = None) -> Optio
         )
     if stop_payload:
         payload.update(stop_payload)
+    payload.pop("maintenance_context", None)
+    if payload.get("exit_reason") in {"graceful", "restart"}:
+        from events.maintenance_context import gateway_maintenance_context
+        context = gateway_maintenance_context()
+        if context is not None:
+            payload["maintenance_context"] = context
     try:
         from events.schema import EventType
         event_id = _bus.emit(

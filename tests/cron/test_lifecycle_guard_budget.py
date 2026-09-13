@@ -98,6 +98,14 @@ def test_repeated_path_does_not_spend_unique_path_budget(monkeypatch, tmp_path):
 
 
 def test_remote_read_budget_charged_before_remote_read(monkeypatch):
+    """The remote read is CHARGED against the budget before it is issued.
+
+    Also pins the reference spelling: the remote is asked for the path as the command
+    wrote it. This assertion was red on Windows until the walk started carrying the
+    original token alongside the Path (see tests/cron/test_lifecycle_guard_remote_reference.py);
+    a Path-only walk re-spelled /remote/a.sh to a local drive path, the read returned
+    nothing, and the walk continued past a script it never read.
+    """
     monkeypatch.setattr(lifecycle_guard, "_MAX_LIFECYCLE_SCAN_REMOTE_READS", 1)
     reads: list[str] = []
 
@@ -177,7 +185,13 @@ def test_line_budget_fails_closed_before_tokenizing_every_line(
         return real_shlex(*args, **kwargs)
 
     monkeypatch.setattr(lifecycle_guard.shlex, "shlex", counting)
-    root = f"bash {script}"
+    # as_posix(): a path interpolated into a SHELL command must be spelled the way
+    # the shell will parse it. str(tmp_path) is backslashed on Windows, and an
+    # unquoted backslash is an escape to POSIX shlex AND to the Git Bash that
+    # actually runs these commands -- so a native-path reference resolves for
+    # neither. No-op on POSIX, where as_posix() == str(). See test_windows_path_
+    # forms_track_what_bash_can_execute for the pinned tokenizer contract.
+    root = f"bash {script.as_posix()}"
     assert guard(root) is True
     # Only the one-line root was tokenized (a handful of lexers across the
     # direct scans); the 10-line script never was.
@@ -229,13 +243,51 @@ def test_default_budget_admits_a_wide_benign_wrapper_graph(tmp_path):
         child.write_text("echo step && ls -la /tmp\n" * 20, encoding="utf-8")
         children.append(child)
     hub = tmp_path / "hub.sh"
-    hub.write_text("".join(f"bash {c}\n" for c in children), encoding="utf-8")
+    hub.write_text("".join(f"bash {c.as_posix()}\n" for c in children), encoding="utf-8")
 
-    assert guard(f"bash {hub}") is False
+    assert guard(f"bash {hub.as_posix()}") is False
 
     # ...and a lifecycle command hidden behind the 200 benign scripts is still
     # found: the budget bounds work, it does not stop the walk early.
     evil = tmp_path / "evil.sh"
     evil.write_text("hermes gateway restart\n", encoding="utf-8")
-    hub.write_text(hub.read_text() + f"bash {evil}\n", encoding="utf-8")
-    assert guard(f"bash {hub}") is True
+    hub.write_text(hub.read_text() + f"bash {evil.as_posix()}\n", encoding="utf-8")
+    assert guard(f"bash {hub.as_posix()}") is True
+
+
+
+def test_windows_path_forms_track_what_bash_can_execute(tmp_path):
+    r"""The guard tokenizes with POSIX shlex, and that is CORRECT on Windows too.
+
+    Both call sites execute through bash and nothing else: the terminal tool runs
+    ``[bash, -c, command]`` (tools/environments/local.py ``_run_bash``) and cron
+    dispatches ``.sh``/``.bash`` to Git Bash, everything else to sys.executable
+    (cron/scheduler_script.py ``_script_argv``). Git Bash applies the same
+    backslash-escape rule POSIX shlex does, so an UNQUOTED native Windows path is
+    a path to neither: ``bash C:\dir\restart.sh`` makes bash look for
+    ``C:dirrestart.sh`` and fail with "No such file or directory". The one form
+    the guard does not resolve is exactly the form that cannot run, and every
+    form that DOES run is caught.
+
+    Pinned in both directions on purpose. Retokenizing with ``posix=False`` to
+    "fix" the unquoted case would RETAIN the quote characters inside each token
+    (``bash "C:\d\r.sh"`` -> ``['bash', '"C:\\d\\r.sh"']``), so the two quoted
+    forms below -- which bash runs happily -- would stop resolving, and quoted
+    POSIX paths would regress the same way on Linux. That trades one unreachable
+    miss for three real holes.
+    """
+    script = tmp_path / "restart.sh"
+    script.write_text("hermes gateway restart\n", encoding="utf-8")
+    native = str(script)
+    posix = script.as_posix()
+
+    # Executable by bash => MUST be caught.
+    assert guard("bash " + posix) is True
+    assert guard('bash "' + native + '"') is True
+    assert guard("bash '" + native + "'") is True
+
+    # Not executable by bash (unquoted backslashes are escapes) => need not be.
+    # On POSIX there is no backslash to eat and this is the same string as the
+    # forward-slash case above, so only assert it where the forms differ.
+    if native != posix:
+        assert guard("bash " + native) is False

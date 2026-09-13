@@ -29,27 +29,80 @@ logger = logging.getLogger("hermes_cli.main")
 _BYTECODE_FINGERPRINT_FILE = ".bytecode-fingerprint"
 
 
-def _record_bytecode_fingerprint() -> None:
-    """Persist the current checkout fingerprint after a bytecode sweep. Never raises."""
+def _record_bytecode_fingerprint(fingerprint: str | None = None) -> None:
+    """Persist the inspected revision, never a newer HEAD observed after cleanup."""
     from hermes_cli.main import PROJECT_ROOT, _read_git_revision_fingerprint
     try:
-        fingerprint = _read_git_revision_fingerprint(PROJECT_ROOT)
+        if fingerprint is None:
+            fingerprint = _read_git_revision_fingerprint(PROJECT_ROOT)
         if not fingerprint:
             return
         stamp_path = PROJECT_ROOT / _BYTECODE_FINGERPRINT_FILE
-        tmp_path = stamp_path.with_name(stamp_path.name + ".tmp")
+        tmp_path = stamp_path.with_name(stamp_path.name + f".{os.getpid()}.{threading.get_ident()}.tmp")
         tmp_path.write_text(fingerprint, encoding="utf-8")
         tmp_path.replace(stamp_path)
     except OSError as exc:
         logger.debug("Could not record bytecode fingerprint: %s", exc)
 
 
+def _clear_changed_python_bytecode(root: Path, recorded: str, current: str) -> int | None:
+    """Use verified, clean Git deltas; None requests the conservative full sweep."""
+    revisions = [value.rpartition(":")[2] for value in (recorded, current)]
+    if any(not value.startswith("git:") for value in (recorded, current)) or any(
+        len(revision) not in (40, 64) or any(c not in "0123456789abcdef" for c in revision)
+        for revision in revisions
+    ):
+        return None
+    deadline = _time.monotonic() + 10
+
+    def git(*args: str) -> bytes:
+        result = subprocess.run(
+            ["git", "--no-optional-locks", "-C", str(root), *args],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True,
+            timeout=max(0.001, deadline - _time.monotonic()),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if len(result.stdout) > 2 * 1024 * 1024:
+            raise ValueError("oversized Git delta")
+        return result.stdout
+
+    try:
+        if git("status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "*.py", "*.pyw"):
+            return None  # A commit delta cannot describe dirty/untracked Python.
+        changed = git("diff", "--no-ext-diff", "--name-only", "-z", "--no-renames", *revisions, "--", "*.py", "*.pyw")
+        if changed and not changed.endswith(b"\0"):
+            return None
+        owned_root = root.resolve()
+        caches = set()
+        excluded = {"venv", ".venv", "node_modules", ".git", ".worktrees", ".claude", ".hermes-runtime"}
+        for raw in changed.split(b"\0"):
+            if not raw:
+                continue
+            relative = Path(os.fsdecode(raw))
+            if relative.is_absolute() or relative.drive or ".." in relative.parts:
+                return None
+            parent = root
+            for part in relative.parts[:-1]:
+                parent /= part
+                if part in excluded or (parent / ".git").exists() or (parent / "pyvenv.cfg").is_file():
+                    break
+            else:
+                cache = parent / "__pycache__"
+                if cache.is_dir() and cache.resolve().is_relative_to(owned_root):
+                    caches.add(cache)
+        for cache in caches:
+            shutil.rmtree(cache)
+        return len(caches)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def _sweep_stale_bytecode_if_checkout_changed() -> None:
     """Clear ``__pycache__`` at launch when the checkout fingerprint changed since the last sweep.
 
     Update-time clears can't close the stale-bytecode class: ``hermes update`` runs
-    the PRE-pull updater code and manual pulls never run it. Cheap file reads, no
-    git subprocess. Never raises.
+    the PRE-pull updater code and manual pulls never run it. A bounded Git delta
+    preserves unaffected caches; uncertain history falls back to a full sweep.
 
     The stale-bytecode bug class (issues #6207, #60242; Dhruv's WhatsApp ``cannot import name
     'parse_model_flags_detailed'`` report) has one shared shape: the checkout's ``.py`` files change (git
@@ -69,13 +122,15 @@ def _sweep_stale_bytecode_if_checkout_changed() -> None:
             recorded = ""
         if recorded == fingerprint:
             return
-        removed = _clear_bytecode_cache(PROJECT_ROOT)
+        removed = _clear_changed_python_bytecode(PROJECT_ROOT, recorded, fingerprint)
+        if removed is None:
+            removed = _clear_bytecode_cache(PROJECT_ROOT)
         if removed:
             logger.info(
                 "Checkout changed since last launch (%s -> %s): cleared %d stale __pycache__ director%s",
                 recorded or "unknown", fingerprint, removed, "y" if removed == 1 else "ies",
             )
-        _record_bytecode_fingerprint()
+        _record_bytecode_fingerprint(fingerprint)
     except Exception as exc:
         logger.debug("Stale-bytecode launch sweep failed: %s", exc)
 

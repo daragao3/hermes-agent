@@ -143,38 +143,22 @@ def _(rid, params, pdb, conn) -> dict:
         "branch": git_probe.branch(cwd)})
 
 
-def _non_workspace_dirs() -> set[str]:
-    """Never-a-workspace dirs: ``/``, the user's home, the dir homes live in, plus both POSIX
-    spellings on every host (remote shells hand back Linux paths; promoting one mints a
-    catch-all project)."""
-    home = os.path.realpath(os.path.expanduser("~"))
-    candidates = (os.sep, home, os.path.dirname(home), "/home", "/Users")
-    return {os.path.normcase(os.path.realpath(path)) for path in candidates if path}
+def _project_path_policy():
+    from hermes_constants import get_hermes_home
+    from tui_gateway.project_paths import ProjectPathPolicy
+    return ProjectPathPolicy(str(get_hermes_home()))
 
 
 def _is_repo_junk(root: str) -> bool:
     """A git root never auto-surfaced as a project: a non-workspace dir or anything under
     HERMES_HOME. User-created projects pointing there are still honored."""
-    if not root:
-        return True
-    from hermes_constants import get_hermes_home
-    real = os.path.realpath(root)
-    hermes_home = os.path.realpath(str(get_hermes_home()))
-    return (
-        os.path.normcase(real) in _non_workspace_dirs()
-        or real == hermes_home
-        or real.startswith(hermes_home + os.sep))
+    return not root or _project_path_policy().is_junk_root(root)
 
 
 def _is_session_cwd_junk(cwd: str) -> bool:
     """A non-git cwd that stays in flat Recents. A DESCENDANT of HERMES_HOME may be an
     intentional prose/data workspace, so only HERMES_HOME itself is excluded here."""
-    if not cwd:
-        return True
-    from hermes_constants import get_hermes_home
-    real = os.path.normcase(os.path.realpath(cwd))
-    hermes_home = os.path.normcase(os.path.realpath(str(get_hermes_home())))
-    return real in _non_workspace_dirs() or real == hermes_home
+    return not cwd or _project_path_policy().is_junk_cwd(cwd)
 
 
 def _repo_discovery_policy(raw: dict | None = None) -> dict:
@@ -376,34 +360,22 @@ def _project_tree_inputs(
     return sessions, projects, discovered, active_id
 
 
-# Per-build memo for `_dir_exists_cached`; cleared by every `_build_project_tree`.
-_DIR_EXISTS_CACHE: dict[str, bool] = {}
-
-
-def _dir_exists_cached(path: str) -> bool:
-    """``os.path.isdir`` memoized per build — ``build_tree`` asks per SESSION, not per path."""
-    hit = _DIR_EXISTS_CACHE.get(path)
-    if hit is None:
-        hit = _DIR_EXISTS_CACHE[path] = os.path.isdir(path)
-    return hit
-
-
 def _build_project_tree(
     db, *, preview_limit: int, hydrate: bool, session_limit: int, include_discovered: bool
 ) -> tuple[dict, str | None]:
     """Gather inputs and run the one authoritative builder. Returns (tree, active_id)."""
     from tui_gateway import project_tree
-    _DIR_EXISTS_CACHE.clear()
     sessions, projects, discovered, active_id = _project_tree_inputs(
         db, session_limit, include_discovered=include_discovered)
     # build_tree also resolves declared project folders and discovered roots — warm them too.
     git_probe.warm_roots(
         [str(f.get("path") or "") for p in projects for f in (p.get("folders") or [])]
         + [str(r.get("root") or "") for r in discovered])
+    paths = _project_path_policy()
     tree = project_tree.build_tree(
         projects, sessions, discovered, git_probe.resolve, preview_limit=preview_limit,
-        hydrate=hydrate, is_junk_root=_is_repo_junk, is_junk_cwd=_is_session_cwd_junk,
-        exists=_dir_exists_cached)
+        hydrate=hydrate, is_junk_root=paths.is_junk_root, is_junk_cwd=paths.is_junk_cwd,
+        exists=paths.exists)
     return tree, active_id
 
 

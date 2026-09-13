@@ -57,6 +57,12 @@ import pytest
 # level, where the cost lands in collection (untimed) and only they pay it.
 # See that module's docstring, and
 # ``tests/gateway/test_feishu_sdk_warm_placement.py`` which enforces this.
+#
+# An intermediate fix (33558add85) kept the fixture but made it opt-in via
+# ``usefixtures``, which did clear the directory-wide breakage. This goes the
+# rest of the way: with no SDK-loading fixture at all, re-adding ``autouse``
+# cannot bring the original failure back, and the placement test can enforce
+# that structurally rather than by convention.
 
 
 def make_async_session_db(sync_mock=None):
@@ -616,4 +622,3 @@ def pytest_configure(config):
         return
 
     _adapter_guard_check(_GATEWAY_DIR, Path.cwd() / ".pytest-cache")
-

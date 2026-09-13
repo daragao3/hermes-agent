@@ -46,6 +46,7 @@ class CronStaleMonitor(BaseSubscriber):
         EventType.CRON_STARTED,
         EventType.CRON_COMPLETED,
         EventType.CRON_FAILED,
+        EventType.CRON_STALE,
         # A gateway shutdown kills its in-flight crons. Without this the
         # monitor cannot tell those from a wedge: it keeps them in
         # ``_open_jobs`` and fires a generic HIGH cron_stale ~20 minutes
@@ -88,6 +89,7 @@ class CronStaleMonitor(BaseSubscriber):
         super().__init__(bus)
         # (started_at, job_name) — job_name is the key for override lookup
         self._open_jobs: Dict[str, Tuple[datetime, str]] = {}
+        self._execution_ids: Dict[str, str] = {}
         self._alerted: Set[str] = set()
         # cron_started event_id -> job_id. GATEWAY_STOPPED identifies the runs
         # it killed by *correlation id* (the cron_started event_id, matching
@@ -464,12 +466,19 @@ class CronStaleMonitor(BaseSubscriber):
                 return
             job_name = event.payload.get("job_name") or event.source or job_id
             self._open_jobs[job_id] = (started_at, job_name)
+            self._execution_ids.pop(job_id, None)
+            if event.payload.get("execution_id"):
+                self._execution_ids[job_id] = event.payload["execution_id"]
             self._alerted.discard(job_id)
             # A fresh run supersedes any earlier correlation id for this job.
             self._forget_started_ids_for(job_id)
             self._drop_pending_shutdown_for(job_id)
             self._started_event_ids[event.event_id] = job_id
         elif event.event_type in (EventType.CRON_COMPLETED, EventType.CRON_FAILED):
+            expected_execution = self._execution_ids.get(job_id)
+            if expected_execution and event.payload.get("execution_id") != expected_execution:
+                return
+            self._execution_ids.pop(job_id, None)
             self._open_jobs.pop(job_id, None)
             self._alerted.discard(job_id)
             # It finished on its own, so a later shutdown did not kill it.
@@ -478,6 +487,10 @@ class CronStaleMonitor(BaseSubscriber):
             # the gateway's snapshot is taken before it drains, so this run was
             # in flight then and landed anyway.
             self._drop_pending_shutdown_for(job_id)
+        elif event.event_type == EventType.CRON_STALE:
+            execution_id = event.payload.get("execution_id")
+            if execution_id and self._execution_ids.get(job_id) == execution_id:
+                self._alerted.add(job_id)
 
     def poll(self) -> int:
         count = super().poll()
@@ -565,6 +578,8 @@ class CronStaleMonitor(BaseSubscriber):
                         "job_name": job_name,
                         "age_seconds": int(age),
                         "threshold_seconds": threshold,
+                        **({"execution_id": self._execution_ids[job_id]}
+                           if job_id in self._execution_ids else {}),
                     },
                     priority=Priority.HIGH,
                 )

@@ -354,3 +354,132 @@ def test_render_both_emitted_link_and_job_url():
     assert " · " in body
 
 
+
+# ─── render_comment ("all good!" verdict banner) ──────────────────────
+#
+# The banner is gated on the absence of blocking severities, NOT on the
+# absence of all items: a healthy run still emits info/debug items, so
+# gating on "no items" withheld the verdict from exactly the runs that
+# earned it. render_comment's docstring specified this from the file's
+# first commit (b9f82ed39f) but the gate was computed and never read, so
+# nothing failed when the branch went missing.
+
+
+def test_info_only_run_shows_the_verdict_banner():
+    """A green run that still reported info must carry the verdict."""
+    body = _mod.render_comment([
+        ReviewItem(severity="info", title="lockfile", summary="No changes.")
+    ])
+    assert "all good!" in body
+    # The banner is a verdict, not a replacement: info stays visible.
+    assert "## ℹ️ Info" in body
+    assert "### lockfile" in body
+    # …and it is at the top, above the sections.
+    assert body.index("all good!") < body.index("## ℹ️ Info")
+
+
+def test_debug_only_run_shows_the_verdict_banner():
+    """Debug items are non-blocking too, so they do not suppress it."""
+    body = _mod.render_comment([
+        ReviewItem(severity="debug", title="env", summary="dump")
+    ])
+    assert "all good!" in body
+    assert "<details>" in body
+
+
+def test_blocking_severity_suppresses_the_verdict_banner():
+    """The proof that blocking and non-blocking render differently."""
+    for severity in _mod._BLOCKING_SEVERITIES:
+        body = _mod.render_comment([
+            ReviewItem(severity=severity, title="t", summary="s")
+        ])
+        assert "all good" not in body, f"{severity} must not render the verdict"
+        assert _mod._SEVERITY_GROUP_HEADER[severity] in body
+
+
+def test_blocking_item_beside_info_still_suppresses_the_banner():
+    """One blocking finding is enough, however much else is green."""
+    body = _mod.render_comment([
+        ReviewItem(severity="info", title="lockfile", summary="No changes."),
+        ReviewItem(severity="warning", title="CI timings", summary="Slower."),
+    ])
+    assert "all good" not in body
+    assert "## ⚠️ Warnings" in body
+    assert "## ℹ️ Info" in body
+
+
+def test_pending_jobs_withhold_the_verdict_banner():
+    """The verdict is final, so it waits for the pending jobs."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="info", title="lockfile", summary="No changes.")],
+        pending_jobs=["docker"],
+    )
+    assert "all good" not in body
+    assert "Still running 1 job" in body
+
+
+def test_waiting_run_with_info_withholds_the_verdict_banner():
+    """Guards the fix in 8359e760be: never look final while waiting."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="info", title="lockfile", summary="No changes.")],
+        waiting=True,
+    )
+    assert "all good" not in body
+    assert "waiting for more jobs to start" in body
+
+
+# ─── render_comment (live-status line is a footer) ────────────────────
+#
+# The pre-existing pending/waiting tests assert substring presence only, so
+# they stayed green while the line rendered ABOVE every section. These pin
+# the position with the index-comparison idiom used above.
+
+
+def test_pending_footer_renders_below_the_sections():
+    """b9f82ed39f's example layout puts 'Still running' below all content."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="info", title="lockfile", summary="No changes.")],
+        pending_jobs=["docker"],
+    )
+    assert body.index("## ℹ️ Info") < body.index("Still running 1 job")
+    assert body.index("### lockfile") < body.index("Still running 1 job")
+
+
+def test_pending_footer_renders_below_a_blocking_section():
+    """Job failures must not be pushed under the live-status line."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="error", title="tests", summary="boom")],
+        pending_jobs=["docker"],
+    )
+    assert body.index("## ❌ Job failures") < body.index("Still running 1 job")
+
+
+def test_waiting_footer_renders_below_the_sections():
+    """The waiting variant is the same footer and sits in the same place."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="info", title="lockfile", summary="No changes.")],
+        waiting=True,
+    )
+    assert body.index("### lockfile") < body.index("waiting for more jobs to start")
+
+
+def test_pending_footer_is_separated_from_the_content_above_it():
+    """No glued heading, no doubled blank line -- the defect this fixes."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="info", title="lockfile", summary="No changes.")],
+        pending_jobs=["docker"],
+    )
+    # The footer gets the same rule every other block gets...
+    assert "\n\n---\n\n<sub>Still running 1 job: `docker`</sub>" in body
+    # ...and nothing is glued directly to an ATX heading.
+    assert "</sub>\n#" not in body
+    # A three-newline run is the doubled-blank-line signature.
+    assert "\n\n\n" not in body
+
+
+def test_pending_footer_alone_gets_no_rule_above_it():
+    """With no sections there is nothing to separate it from."""
+    body = _mod.render_comment([], pending_jobs=["ci-timings"])
+    assert "---" not in body
+    assert "\n\n\n" not in body
+    assert body.endswith("<sub>Still running 1 job: `ci-timings`</sub>")

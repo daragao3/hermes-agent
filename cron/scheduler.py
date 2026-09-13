@@ -1286,6 +1286,9 @@ def _run_no_agent_job(
     """no_agent short-circuit — the script IS the job (no AIAgent, no tokens). stdout → delivered
     verbatim; empty stdout or wakeAgent=false → silent success; non-zero exit/timeout → error alert.
     """
+    from cron.scheduler_diagnostics import set_stage
+
+    set_stage("no_agent_environment")
     # Load .env first so auto-delivery can resolve *_HOME_CHANNEL: the agent path's per-run dotenv
     # reload never runs for no_agent jobs. Does not override existing values.
     try:
@@ -1304,6 +1307,7 @@ def _run_no_agent_job(
         return _block_and_pause_job(job_id, job_name, NO_AGENT_WITHOUT_SCRIPT_ERROR)
 
     # Pass workdir as subprocess cwd; never os.chdir() (leaks into concurrent gateway sessions).
+    set_stage("workdir_resolution")
     _job_workdir = _resolve_job_workdir(job, job_id)
     try:
         ok, output = _run_job_script_with_claim_heartbeat(
@@ -2311,8 +2315,10 @@ def _resolve_cron_agent_setup(job: dict, job_id: str, job_name: str, jc) -> _Cro
         job, job_id, _cfg, setup.runtime, primary_provider_for_drift, primary_model_for_drift)
     setup.fallback_model = get_fallback_chain(_cfg) or None
     setup.credential_pool = _load_credential_pool(setup.runtime, job_id)
-    # MCP servers must be registered before AIAgent is constructed.
-    _init_cron_mcp_tools(job_id)
+    # Honor the explicit opt-out before discovery can connect to any server.
+    # Other jobs retain the existing idempotent initialization before AIAgent.
+    if "no_mcp" not in (job.get("enabled_toolsets") or []):
+        _init_cron_mcp_tools(job_id)
     return setup
 
 
@@ -2396,16 +2402,22 @@ def run_job(
     cancel_event: Optional[_CancelEventLike] = None, execution_id: Optional[str] = None,
 ) -> tuple[bool, str, str, Optional[str]]:
     """Bind the per-job profile across all early gates and the upstream run lifecycle."""
+    from cron.scheduler_diagnostics import set_stage
+
     writes_globals = _job_mutates_process_globals(job)
     acquire = _terminal_cwd_lock.acquire_write if writes_globals else _terminal_cwd_lock.acquire_read
     release = _terminal_cwd_lock.release_write if writes_globals else _terminal_cwd_lock.release_read
+    set_stage("isolation_wait")
     acquire()
+    set_stage("profile_setup")
     prerun_token = _prerun_script_failure.set(None)
     worker_state = {}
     try:
         if _current_deadline_elapsed():
             return False, "", "", "Soft deadline exceeded before acquiring job isolation."
-        with _job_profile_context(job["id"], job.get("profile")):
+        with _job_profile_context(job["id"], job.get("profile")) as active_profile:
+            if active_profile is not None:
+                worker_state["profile_home"] = _get_hermes_home()
             recorder = None
             try:
                 policy = _resolve_cron_activity_policy(job)
@@ -2423,6 +2435,7 @@ def run_job(
                 recorder = None
             activity_token = _cron_activity_current.set({"recorder": recorder, "finished": False})
             try:
+                set_stage("job_execution")
                 result = _run_job_impl(
                     job, defer_agent_teardown=defer_agent_teardown, extra_prompt=extra_prompt,
                     cancel_event=cancel_event, execution_id=execution_id, _worker_state=worker_state,
@@ -2437,12 +2450,14 @@ def run_job(
                 raise
             finally:
                 _cron_activity_current.reset(activity_token)
+                set_stage("worker_cleanup")
                 future = worker_state.get("future")
                 if writes_globals and future is not None and not future.done():
                     # A hard timeout interrupts cooperatively; the model may
                     # still be using this profile's environment. Restore it
                     # only after that worker actually exits.
                     concurrent.futures.wait([future])
+                set_stage("profile_restore")
     finally:
         _prerun_script_failure.reset(prerun_token)
         future = worker_state.get("future")
@@ -2518,6 +2533,23 @@ def _run_job_impl(
         if setup.blocked is not None:
             return setup.blocked
         model = setup.model
+
+        profile_home = _worker_state.get("profile_home")
+        if profile_home is not None:
+            from hermes_cli.plugins import get_plugin_manager
+
+            # Validate tool-only contributions before an agent snapshots its
+            # profile's registry. A broken enabled plugin must fail the run.
+            manager = get_plugin_manager()
+            from cron.scheduler_diagnostics import set_stage
+
+            set_stage("profile_plugins")
+            manager.load_profile_tools(profile_home)
+            manager.discover_and_load()
+            manager.load_profile_tools(profile_home)
+            if _current_deadline_elapsed():
+                return False, "", "", "Soft deadline exceeded while loading profile plugins."
+            set_stage("job_execution")
 
         # Open state.db only after every early-return gate has passed.
         _session_db = _open_cron_session_db(job)
@@ -2929,9 +2961,12 @@ def _save_compose_deliver(
 ) -> None:
     """Save output, compose the notice and deliver it (both side effects run under the fire-claim
     fence; a lost claim raises ``_FireClaimLostDuringSideEffect`` for the caller)."""
+    from cron.scheduler_diagnostics import set_stage
+
     job = d.job
     if _current_deadline_elapsed():
         return
+    set_stage("output_save")
     with fence.side_effect_fence() as owns_output:
         if not owns_output:
             raise _FireClaimLostDuringSideEffect
@@ -2950,6 +2985,7 @@ def _save_compose_deliver(
             "(tool subprocess was killed mid-flight)."
         )
 
+    set_stage("delivery_compose")
     (
         deliver_content, d.blocked_config, _silent_alert, d.incident_acked, d.failure_incident_id,
     ) = _compose_run_delivery(
@@ -2976,6 +3012,7 @@ def _save_compose_deliver(
         _normalize_deliver_value(_delivery_lane_value(job, for_failure=not d.success)) == "origin"
         and not _resolve_delivery_targets(job, for_failure=not d.success)
     )
+    set_stage("delivery_send")
     try:
         with fence.side_effect_fence() as owns_delivery:
             if _current_deadline_elapsed():
@@ -3026,6 +3063,7 @@ def _emit_cron_completion(emitter, job, success, error, response, started) -> No
         current = next((row for row in load_jobs() if row["id"] == job["id"]), {})
         emitter.on_job_completed(
             job_id=job["id"], job_name=job.get("name") or job["id"],
+            execution_id=job.get("execution_id"),
             success=success, duration=round(time.monotonic() - started, 1),
             output_summary=_summarize_for_event_bus(response) if success else None,
             error=error, consecutive_errors=current.get("consecutive_errors", 0),
@@ -3188,7 +3226,8 @@ def _run_one_job_body(
         if emitter is not None:
             try:
                 event_id = emitter.on_job_started(job_id=job["id"],
-                    job_name=job.get("name") or job["id"], schedule=job.get("schedule_display", ""))
+                    job_name=job.get("name") or job["id"], schedule=job.get("schedule_display", ""),
+                    execution_id=execution_id)
                 _attach_started_event_id(job["id"], event_id, expected_record=registered_run)
             except Exception:
                 logger.warning("Cron started event failed for %s", job["id"], exc_info=True)
@@ -3229,6 +3268,9 @@ def _run_one_job_body(
         _deferred_agents: list = []
 
         def _teardown_deferred() -> None:
+            from cron.scheduler_diagnostics import set_stage
+
+            set_stage("agent_cleanup")
             # run_job's finally still hands back the agent when it raises; tear it down here so a failed run
             # never leaks its async resources (#10200), then re-raise into the outer handler. BaseException
             # (not just Exception) so a KeyboardInterrupt/SystemExit mid-run still triggers teardown before
@@ -3309,6 +3351,9 @@ def _run_one_job_body(
             return True
 
         success = d.success
+        from cron.scheduler_diagnostics import set_stage
+
+        set_stage("terminal_persistence")
         processed = _finish_completed_run(d, fire_owner, execution_id,
                                           emitter=emitter, response=final_response, started=started)
         if d.side_effect_ownership_lost:
@@ -4816,9 +4861,11 @@ def _run_callable_with_deadline(job, process_fn, abandon_on_timeout, ctx, *, wai
       process-global state (os.environ snapshot/restore, Hermes-home
       override), so racing a successor against the runaway's eventual
       restore could corrupt the successor's environment. The deadline
-      only ALERTS (failure-shaped event for operator visibility) and then
+      emits an overdue/running observation (never a terminal failure) and then
       keeps waiting, preserving the sequential invariant.
     """
+    from cron.scheduler_diagnostics import emit_overdue, run_with_evidence, snapshot
+
     timeout_s = _job_timeout_seconds(job)
     if timeout_s <= 0:
         return ctx.run(process_fn, job)
@@ -4826,6 +4873,8 @@ def _run_callable_with_deadline(job, process_fn, abandon_on_timeout, ctx, *, wai
     job_id = job["id"]
     job_name = job.get("name", job_id)
     abandoned = threading.Event()
+    evidence = {"job_id": job_id, "execution_id": job.get("execution_id"),
+                "stage": ("dispatch", time.monotonic())}
     box: dict = {
         "terminal_lock": threading.Lock(),
         "deadline_decided": threading.Event(),
@@ -4845,7 +4894,7 @@ def _run_callable_with_deadline(job, process_fn, abandon_on_timeout, ctx, *, wai
                 key: value for key, value in {"_abandoned": abandoned, "_deadline_box": box}.items()
                 if accepts_kwargs or key in parameters
             }
-            box["result"] = ctx.run(process_fn, job, **worker_kwargs)
+            box["result"] = ctx.run(run_with_evidence, evidence, process_fn, job, worker_kwargs)
         except Exception:
             logger.exception("Deadline worker for cron job %s crashed", job_id)
             box["result"] = False
@@ -4871,7 +4920,8 @@ def _run_callable_with_deadline(job, process_fn, abandon_on_timeout, ctx, *, wai
         "; worker abandoned (daemon thread)" if abandon_on_timeout
         else "; sequential job — tick keeps waiting",
     )
-    logger.error("Cron job '%s' (%s): %s", job_name, job_id, msg)
+    log_deadline = logger.error if abandon_on_timeout else logger.warning
+    log_deadline("Cron job '%s' (%s): %s", job_name, job_id, msg)
     emitter = _get_event_emitter()
 
     def emit_deadline():
@@ -4879,13 +4929,17 @@ def _run_callable_with_deadline(job, process_fn, abandon_on_timeout, ctx, *, wai
             try:
                 emitter.on_job_completed(
                     job_id=job_id, job_name=job_name, success=False,
+                    execution_id=job.get("execution_id"),
                     duration=round(timeout_s, 1), output_summary=None,
                     error=msg, consecutive_errors=0)
             except Exception as ee:
                 logger.warning("Event emit failed for deadline timeout: %s", ee)
 
+    diagnostic = snapshot(evidence, t)
+    logger.warning("Cron overdue execution=%s job=%s diagnostic=%s",
+                   job.get("execution_id"), job_id, diagnostic)
     if not abandon_on_timeout:
-        emit_deadline()
+        emit_overdue(emitter, job, timeout_s, diagnostic)
         t.join()
         return bool(box.get("result", False))
 

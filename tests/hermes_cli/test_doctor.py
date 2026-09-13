@@ -1,6 +1,7 @@
 """Tests for hermes_cli.doctor."""
 
 import importlib.util
+import inspect
 import os
 import shutil
 
@@ -44,8 +45,9 @@ from tools import browser_tool_install as bt_install
 # test called ``run_doctor`` first (that alone blew the 30s per-test cap).
 # ``_stub_doctor_externals`` now puts a stub in ``sys.modules`` instead, so the
 # real module is never imported at all and nothing pays for it. That matters
-# for the OTHER cap: ``scripts/run_tests_parallel.py`` enforces a 300s
-# wall-clock budget per FILE, and unlike pytest-timeout it does count
+# for the OTHER cap: ``scripts/run_tests_parallel.py`` enforces a per-FILE
+# wall-clock budget (``_DEFAULT_FILE_TIMEOUT_SECONDS``, 1800s since 2026-08-12;
+# it was 300s when this note was written), and unlike pytest-timeout it counts
 # collection -- so for that budget, moving cost into collection is not a fix,
 # only removing it is.
 
@@ -317,6 +319,52 @@ class TestDoctorToolAvailabilitySummary:
 
         assert [item["name"] for item in filtered] == ["web"]
 
+    # First test in the file to call ``_doctor_web_capability_rows()``, so it
+    # pays that call's one-time warm-up and nothing else does. The warm-up is
+    # budgeted here rather than hoisted to module scope, and the reason is NOT
+    # the one an earlier version of this comment gave.
+    #
+    # It is NOT ``agent.web_search_registry``'s import. That module is cheap:
+    # ``python -X importtime -c "import agent.web_search_registry"`` is 0.073s
+    # cumulative in a COLD interpreter, and inside a pytest process that has
+    # already imported ``hermes_constants``/``agent.provider_registry`` -- which
+    # this module's own imports do -- the marginal cost is 0.003-0.25s, median
+    # 0.007s. Hoisting that import relocates single-digit milliseconds.
+    #
+    # The real one-time cost, measured inside a pytest process over four runs,
+    # 2026-09-13 (ranges, not points -- the spread IS the story here):
+    #
+    #   import tools.web_tools               0.5-3.5s  (httpx, yaml, plugins.web.*)
+    #   _ensure_web_plugins_loaded()         2.6-7.8s  -> _ensure_plugins_discovered
+    #   first _doctor_web_capability_rows()  0.5-2.1s
+    #   every later call                     0.1-1.3s
+    #   ---------------------------------------------
+    #   one-time warm-up, nothing pre-warmed 4.1-13.7s
+    #
+    # (In this file it lands at the low end: the module-scope imports above have
+    # already paid part of that graph. And ``_ensure_plugins_discovered`` does
+    # NOT drag in ``model_tools`` -- checked in all four runs -- so the hazard
+    # the top-of-file note guards against is not what rules module scope out
+    # here. What rules it out is the next paragraph.)
+    #
+    # The dominant slice is a RUNTIME CALL, not an import, so there is no import
+    # statement to hoist: "warm it at module scope" here means running plugin
+    # discovery as a side effect of COLLECTING this file -- unbounded by
+    # pytest-timeout, and paid by every run of the file even when these two
+    # tests are deselected. See the note at the top of this file. A module- or
+    # class-scoped autouse fixture is no better, because pytest-timeout covers
+    # setup as well as call (observed: 23.78s setup on this class).
+    #
+    # It would also not remove the need for this mark. What pushes this test at
+    # the cap is LOAD, not the warm-up. All on one unchanged tree,
+    # 2026-09-13, whole-file runs (88 passed / 8 skipped both times): this test
+    # 4.34s and 9.43s, against its warm sibling's 2.42s and 3.21s -- a
+    # first-caller premium of 1.9-6.2s, i.e. the warm-up above and nothing
+    # larger. Running this class ALONE three times gives 16.27/13.01/8.98s
+    # against 4.03/4.00/3.73s: identical work, a 4x spread on ambient load. The
+    # 31.9s that first motivated this mark is the top of that spread, and no
+    # amount of warming shortens the tail.
+    @pytest.mark.timeout(180)
     def test_web_capability_rows_warn_when_selected_provider_not_ready(self, monkeypatch):
         """#78412: selected firecrawl with is_available=False must warn."""
         class _Unavailable:
@@ -369,6 +417,13 @@ class TestDoctorEnvFileEncoding:
     Chinese locale (GBK) because `.env` was read with Path.read_text() which
     defaults to the system locale encoding, not UTF-8."""
 
+    # Runs the whole of run_doctor (install-integrity, SSL bundle, ...), so it
+    # straddles the repo-wide `addopts --timeout=30`: measured 2026-09-13 at
+    # 16.6s / 26.0s / 41.2s on the same tree, purely on machine load. Without
+    # this mark it is killed by pytest-timeout on a busy box and reads as a
+    # regression in whatever change happens to be under test. 180s, not 120s:
+    # with three heavy tests contending the natural call reached ~70s.
+    @pytest.mark.timeout(180)
     def test_doctor_reads_env_as_utf8_even_when_locale_is_not_utf8(
         self, monkeypatch, tmp_path
     ):
@@ -415,6 +470,10 @@ class TestDoctorEnvFileEncoding:
             doctor_mod.run_doctor(Namespace(fix=False))
 
 
+    # Same whole-run_doctor cost as its neighbour above, and an even wider
+    # spread: measured 2026-09-13 at 3.8s warm but 29.8s / 30.3s under load,
+    # i.e. straight through the 30s cap.
+    @pytest.mark.timeout(180)
     def test_doctor_reads_invalid_utf8_env_via_latin1_fallback(
         self, monkeypatch, tmp_path
     ):
@@ -1874,6 +1933,33 @@ class TestDoctorDeprecatedConfigAndEnv:
         assert "⚠" in out or "Deprecated" in out
 
 
+def _patch_db_opens_cleanly(monkeypatch, stub):
+    """Stub ``hermes_state_repair._db_opens_cleanly``, refusing a drifted stub.
+
+    A stub that declares parameters production does not have cannot fail when
+    production changes, and it makes a dead parameter look alive to ``grep``.
+    That is not hypothetical: these stubs carried ``include_fts_integrity`` for
+    a month after the deep-FTS check was split out into the standalone
+    ``check_state_db_fts_integrity``, and the leftover kwarg sent a later
+    investigation looking for a seam that no longer existed.
+
+    ``autospec`` does not close this: it validates each *call* against the real
+    signature, and the only caller (``doctor_state``) passes just
+    ``timeout_seconds`` -- so a phantom keyword-only parameter is never
+    exercised and an autospec'd stub stays green. Comparing the declared
+    parameters is what actually catches it.
+    """
+    import hermes_state_repair
+
+    real = list(inspect.signature(hermes_state_repair._db_opens_cleanly).parameters)
+    got = list(inspect.signature(stub).parameters)
+    assert got == real, (
+        "probe stub has drifted from hermes_state_repair._db_opens_cleanly: "
+        f"stub declares {got}, production declares {real}"
+    )
+    monkeypatch.setattr("hermes_state_repair._db_opens_cleanly", stub)
+
+
 class TestStateDbProbeBudget:
     """`hermes doctor` must terminate on a state.db too large to scan.
 
@@ -1903,7 +1989,7 @@ class TestStateDbProbeBudget:
         db.create_session(session_id="probe-budget-test", source="cli")
         db.close()
 
-        monkeypatch.setattr("hermes_state_repair._db_opens_cleanly", probe)
+        _patch_db_opens_cleanly(monkeypatch, probe)
         repaired = []
         monkeypatch.setattr(
             "hermes_state_repair.repair_state_db_schema",
@@ -1919,7 +2005,7 @@ class TestStateDbProbeBudget:
         """Doctor must never call the probe unbounded — that is the hang."""
         seen = {}
 
-        def probe(path, *, timeout_seconds=None, include_fts_integrity=False):
+        def probe(db_path, *, timeout_seconds=None):
             seen["timeout_seconds"] = timeout_seconds
             return None
 
@@ -1935,7 +2021,7 @@ class TestStateDbProbeBudget:
     ):
         import hermes_state
 
-        def probe(path, *, timeout_seconds=None, include_fts_integrity=False):
+        def probe(db_path, *, timeout_seconds=None):
             raise hermes_state.StateDbProbeTimeout(
                 "PRAGMA integrity_check", float(timeout_seconds or 5)
             )
@@ -1962,13 +2048,13 @@ class TestStateDbProbeBudget:
         db.create_session(session_id="probe-budget-fix", source="cli")
         db.close()
 
-        def probe(path, *, timeout_seconds=None, include_fts_integrity=False):
+        def probe(db_path, *, timeout_seconds=None):
             raise hermes_state.StateDbProbeTimeout(
                 "PRAGMA integrity_check", float(timeout_seconds or 5)
             )
 
         repaired = []
-        monkeypatch.setattr("hermes_state_repair._db_opens_cleanly", probe)
+        _patch_db_opens_cleanly(monkeypatch, probe)
         monkeypatch.setattr(
             "hermes_state_repair.repair_state_db_schema",
             lambda *a, **k: repaired.append(a) or {"repaired": True},
@@ -2014,9 +2100,21 @@ class TestNpmAuditBudget:
         """The measured hang: the child outlives its parent holding the pipe."""
         import psutil
 
+        # The scratch processes must outlive `bounded_ceiling` by a wide margin
+        # or a merely SLOW bounded call is indistinguishable from an unbounded
+        # one that waited for the child to exit. Measured 2026-09-13 on a loaded
+        # box: a correctly bounded call takes 16-31s for a 3s budget, because
+        # the implementation's best-effort process-tree teardown dominates, not
+        # the budget. The old pair (sleep 60 / ceiling 30) left only a 2x margin
+        # and went red under load on a healthy implementation.
+        scratch_sleep = 180
+        bounded_ceiling = 60
+
         wedged = tmp_path / "wedged_npm.py"
         descendant = tmp_path / "npm_descendant.py"
-        descendant.write_text("import time; time.sleep(60)\n", encoding="utf-8")
+        descendant.write_text(
+            f"import time; time.sleep({scratch_sleep})\n", encoding="utf-8"
+        )
         parent_pid = tmp_path / "parent.pid"
         child_pid = tmp_path / "child.pid"
         wedged.write_text(
@@ -2028,7 +2126,7 @@ class TestNpmAuditBudget:
             # pipes and lingers, so the write end never reaches EOF.
             "child = subprocess.Popen([sys.executable, str(root / 'npm_descendant.py')])\n"
             "(root / 'child.pid').write_text(str(child.pid))\n"
-            "time.sleep(60)\n",
+            f"time.sleep({scratch_sleep})\n",
             encoding="utf-8",
         )
 
@@ -2040,7 +2138,7 @@ class TestNpmAuditBudget:
                 )
             elapsed = time.monotonic() - start
             assert child_pid.exists(), "the descendant was never spawned"
-            assert elapsed < 30, (
+            assert elapsed < bounded_ceiling, (
                 f"raised TimeoutExpired but took {elapsed:.1f}s — "
                 "the npm timeout did not remain bounded"
             )
@@ -2301,9 +2399,9 @@ class TestStateDbDeepProbe:
 
         # The general probe always passes here; these tests are about the FTS
         # check that runs beside it.
-        monkeypatch.setattr(
-            "hermes_state_repair._db_opens_cleanly",
-            lambda path, *, timeout_seconds=None, include_fts_integrity=False: None,
+        _patch_db_opens_cleanly(
+            monkeypatch,
+            lambda db_path, *, timeout_seconds=None: None,
         )
         calls = []
 

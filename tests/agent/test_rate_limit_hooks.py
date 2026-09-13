@@ -234,8 +234,12 @@ def test_nous_signal_fires_even_when_the_state_write_fails(
     from agent import nous_rate_guard
     monkeypatch.setattr(nous_rate_guard, "_state_path",
                         lambda: str(tmp_path / "nous.json"))
+    # The module writes its breaker file with ``atomic_write_text`` (imported at
+    # nous_rate_guard.py:17), not ``atomic_replace``: that name reaches this module
+    # only through the revert-scheduled PLUGIN-COMPAT lazy map and nothing here ever
+    # reads it, so patching it raised nothing and this test's premise never fired.
     monkeypatch.setattr(
-        nous_rate_guard, "atomic_replace",
+        nous_rate_guard, "atomic_write_text",
         lambda *a, **k: (_ for _ in ()).throw(
             PermissionError(13, "Access is denied")),
     )

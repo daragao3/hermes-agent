@@ -21,6 +21,22 @@ SCRIPT = REPO_ROOT / "scripts" / "ci" / "list_os_marked_tests.py"
 
 
 def _run(*args: str) -> subprocess.CompletedProcess:
+    """Invoke the helper as a child process.
+
+    The 120 s cap guards against a genuinely hung child. It is NOT the bound
+    that decides whether the real-tree tests pass: ``addopts`` in
+    ``pyproject.toml`` pins a 30 s per-test cap, so a scan taking 35 s fails on
+    the pytest cap long before this one is reached. Raising this number buys a
+    slow scan no room at all -- the fix for a slow scan is to make the scan
+    fast, which is why ``find_marked_files`` reads concurrently.
+
+    Worth knowing when reading a failure here: ``tests/_nonfatal_timeout``
+    answers the 30 s cap by raising into the main thread, which cannot notice a
+    pending exception while blocked inside ``subprocess.wait``. The stack it
+    dumps is therefore full of ``subprocess``/``threading`` frames and reads
+    like a ``TimeoutExpired`` from this call even when the 120 s cap was never
+    reached. Check the reported duration before believing which cap fired.
+    """
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         capture_output=True,
@@ -88,6 +104,24 @@ def test_exits_nonzero_when_no_file_carries_the_marker(tmp_path):
     assert "renamed or dropped" in result.stderr
 
 
+def test_output_is_sorted(tmp_path):
+    """The scan reads concurrently; the output must still come back sorted.
+
+    Flat filenames only, so the expected order is the same whether it is
+    derived from ``Path`` objects or from the emitted strings.
+    """
+    body = "import pytest\n\npytestmark = pytest.mark.windows_only\n\n\ndef test_x():\n    pass\n"
+    for name in ("test_c.py", "test_a.py", "test_b.py"):
+        _write(tmp_path, name, body)
+
+    result = _run("windows_only", str(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    listed = result.stdout.split()
+    assert len(listed) == 3, listed
+    assert listed == sorted(listed), listed
+
+
 def test_rejects_unknown_marker(tmp_path):
     result = _run("bsd_only", str(tmp_path))
 
@@ -120,17 +154,24 @@ def test_emits_repo_relative_posix_paths():
         assert not Path(line).is_absolute()
 
 
-def test_real_tree_selects_files_for_every_marker():
+@pytest.mark.parametrize("marker", ["linux_only", "macos_only", "windows_only"])
+def test_real_tree_selects_files_for_every_marker(marker):
     """Against the actual ``tests/`` tree each marker resolves to real files.
 
     This is the invariant the CI lanes depend on — not a snapshot of which
     files those are, only that each marker is in use and every listed path
     exists.
+
+    Parametrized rather than looped so each marker gets its own 30 s per-test
+    budget. As one test the three full-tree scans shared a single budget, which
+    let the slowest machine state -- a freshly created worktree, where nothing
+    is in the page cache -- decide the verdict for all three, and reported one
+    opaque failure instead of naming the marker that was slow.
     """
-    for marker in ("linux_only", "macos_only", "windows_only"):
-        result = _run(marker)
-        assert result.returncode == 0, f"{marker}: {result.stderr}"
-        listed = result.stdout.split()
-        assert listed, f"{marker} selected no files"
-        for rel in listed:
-            assert (REPO_ROOT / rel).is_file(), f"{marker} listed missing {rel}"
+    result = _run(marker)
+
+    assert result.returncode == 0, f"{marker}: {result.stderr}"
+    listed = result.stdout.split()
+    assert listed, f"{marker} selected no files"
+    for rel in listed:
+        assert (REPO_ROOT / rel).is_file(), f"{marker} listed missing {rel}"

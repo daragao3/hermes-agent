@@ -51,7 +51,11 @@ async def test_force_replacement_keeps_identity_and_requires_confirmed_exit(monk
     monkeypatch.setattr(status, "release_all_scoped_locks", release)
     monkeypatch.setattr(status, "reap_gateway_children", reap)
     monkeypatch.setattr(status, "clear_takeover_marker", takeover)
-    monkeypatch.setattr(status, "clear_planned_stop_marker", planned)
+    # gateway.run vendored clear_planned_stop_marker's body: that helper lives in
+    # status.py's revert-scheduled PLUGIN-COMPAT block and is deleted on
+    # COMPAT_REMOVAL_DATE, so run.py now unlinks the marker path directly. Assert the
+    # surviving seam -- the marker is still cleared exactly once.
+    monkeypatch.setattr(status, "_get_planned_stop_marker_path", lambda: planned)
     assert await run._start_gateway_replace_existing_instance(424242, True) is exits
     terminate.assert_called_once_with(424242, force=True, expected_start_time=12345)
     assert remove.call_count == int(exits)
@@ -60,7 +64,7 @@ async def test_force_replacement_keeps_identity_and_requires_confirmed_exit(monk
     if exits:
         release.assert_called_once_with(owner_pid=424242, owner_start_time=12345)
     takeover.assert_called_once()
-    planned.assert_called_once()
+    planned.unlink.assert_called_once_with(missing_ok=True)
 
 
 @pytest.mark.asyncio

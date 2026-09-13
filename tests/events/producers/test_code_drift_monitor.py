@@ -11,6 +11,8 @@ tmp_path repo.
 
 import shutil
 import subprocess
+import hashlib
+import json
 
 import pytest
 
@@ -93,6 +95,39 @@ def repo(tmp_path, _repo_template):
 
 
 class TestSampleCodeDrift:
+    def test_accepted_branch_successor_and_receipt_tamper(self, repo, tmp_path, monkeypatch):
+        monkeypatch.setattr(drift_module, "_hermes_root", lambda: tmp_path)
+        ops = tmp_path / "ops"
+        ops.mkdir()
+        receipt = tmp_path / "validated.json"
+        receipt.write_text('{"status": "passed"}', encoding="utf-8")
+        head = drift_module._git(repo, "rev-parse", "HEAD")[1].strip()
+        baseline = {
+            "schema_version": 1, "state": "accepted", "repo_path": str(repo), "commit": head,
+            "validation_receipt": str(receipt), "reload_receipt": str(receipt),
+            "validation_receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+            "reload_receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+        }
+        (ops / "agent-src-deployment-baseline.json").write_text(json.dumps(baseline))
+        _git(repo, "checkout", "-b", "accepted-work")
+        sample = sample_code_drift(repo)
+        assert getattr(sample, "deployment_state", None) == "accepted"
+        assert sample.state == "behind"  # Integration backlog remains visible.
+        baseline["excluded_dirty_paths"] = ["a.txt"]
+        (ops / "agent-src-deployment-baseline.json").write_text(json.dumps(baseline))
+        (repo / "a.txt").write_text("explicitly excluded change")
+        assert sample_code_drift(repo).deployment_state == "accepted"
+        (repo / "unapproved.py").write_text("print('new runtime source')")
+        assert sample_code_drift(repo).deployment_state == "unaccepted"
+        (repo / "unapproved.py").unlink()
+        (repo / "a.txt").write_text("one")
+        _git(repo, "checkout", "main")
+        sample = sample_code_drift(repo)
+        assert sample.deployment_state == "unaccepted"
+        assert sample.alerts  # Even source equal to trunk needs acceptance.
+        receipt.write_text("tampered", encoding="utf-8")
+        assert sample_code_drift(repo).deployment_state == "unverified"
+
     def test_git_probe_disables_optional_locks(self, tmp_path, monkeypatch):
         """Even read-only commands must not refresh or lock the Git index."""
         seen = {}
@@ -198,7 +233,7 @@ class TestSampleCodeDrift:
     def test_shape_property(self):
         s = DriftSample(state="behind", head="a" * 9, trunk="b" * 9,
                         behind_count=3)
-        assert s.shape == ["behind", 3, 0]
+        assert s.shape == DriftSample(state="behind", head="other", trunk="other", behind_count=4).shape
 
 
 class TestBranchIdentity:
@@ -539,11 +574,12 @@ class TestSustainedEpisode:
         assert m.evaluate(behind(3), now=6 * 3600.0) is not None
         assert len(_drift_events(bus)) == 2
 
-    def test_shape_change_bypasses_cooldown(self, bus, tmp_path):
+    def test_count_change_respects_cooldown(self, bus, tmp_path):
         m = make_monitor(bus, tmp_path)
         m.evaluate(behind(3), now=0.0)
-        # Two more commits land on main 10 min later: alert NOW.
-        assert m.evaluate(behind(5), now=600.0) is not None
+        # Development progress updates measurements, not incident identity.
+        assert m.evaluate(behind(5), now=600.0) is None
+        assert m.evaluate(behind(5), now=6 * 3600.0) is not None
         assert _drift_events(bus)[-1].payload["behind_count"] == 5
 
 

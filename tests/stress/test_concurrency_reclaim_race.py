@@ -44,13 +44,14 @@ def worker_loop(worker_id: int, hermes_home: str, result_file: str) -> None:
     os.environ["HOME"] = hermes_home
     sys.path.insert(0, WT)
     from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kb_connect
 
     events = []
     start = time.monotonic()
     idle = 0
 
     while time.monotonic() - start < 40:
-        conn = kb.connect()
+        conn = kb_connect.connect()
         try:
             row = conn.execute(
                 "SELECT id FROM tasks WHERE status='ready' AND claim_lock IS NULL LIMIT 1"
@@ -101,11 +102,12 @@ def reclaimer_loop(hermes_home: str, result_file: str) -> None:
     os.environ["HOME"] = hermes_home
     sys.path.insert(0, WT)
     from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kb_connect
 
     events = []
     start = time.monotonic()
     while time.monotonic() - start < 42:
-        conn = kb.connect()
+        conn = kb_connect.connect()
         try:
             try:
                 n = kb.release_stale_claims(conn)
@@ -131,9 +133,10 @@ def _run_reclaim_race(home):
     os.environ["HOME"] = home
     sys.path.insert(0, WT)
     from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kb_connect
 
     kb.init_db()
-    conn = kb.connect()
+    conn = kb_connect.connect()
     for i in range(NUM_TASKS):
         kb.create_task(conn, title=f"t{i}", assignee="shared",
                        tenant="reclaim-race")
@@ -186,7 +189,7 @@ def _run_reclaim_race(home):
 
     # Invariant checks
     failures = []
-    conn = kb.connect()
+    conn = kb_connect.connect()
     try:
         # Any task stuck with current_run_id pointing at a closed run?
         bad = conn.execute("""

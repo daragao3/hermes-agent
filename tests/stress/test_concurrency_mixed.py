@@ -36,13 +36,14 @@ def worker_loop(worker_id: int, hermes_home: str, result_file: str) -> None:
     os.environ["HOME"] = hermes_home
     sys.path.insert(0, WT)
     from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kb_connect
 
     events = []
     start = time.monotonic()
     idle_rounds = 0
 
     while time.monotonic() - start < RUN_DURATION_S:
-        conn = kb.connect()
+        conn = kb_connect.connect()
         try:
             op = random.random()
 
@@ -163,11 +164,12 @@ def reclaimer_loop(hermes_home: str, result_file: str) -> None:
     os.environ["HOME"] = hermes_home
     sys.path.insert(0, WT)
     from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kb_connect
 
     events = []
     start = time.monotonic()
     while time.monotonic() - start < RUN_DURATION_S + 2:
-        conn = kb.connect()
+        conn = kb_connect.connect()
         try:
             try:
                 reclaimed = kb.release_stale_claims(conn)
@@ -197,9 +199,10 @@ def _run_mixed_stress(home):
     os.environ["HOME"] = home
     sys.path.insert(0, WT)
     from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kb_connect
 
     kb.init_db()
-    conn = kb.connect()
+    conn = kb_connect.connect()
     for i in range(NUM_TASKS):
         kb.create_task(
             conn, title=f"t#{i}", assignee="shared", tenant="mixed-stress",
@@ -291,7 +294,7 @@ def _run_mixed_stress(home):
             failures.append(f"  ... and {len(sqlite_errs) - 5} more sqlite errs")
 
     # DB final state — every task should be in a clean terminal state.
-    conn = kb.connect()
+    conn = kb_connect.connect()
     try:
         # Invariant: current_run_id NULL iff latest run is terminal
         inconsistent = conn.execute("""

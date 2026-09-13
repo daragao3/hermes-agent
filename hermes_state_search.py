@@ -490,8 +490,12 @@ class SessionSearchMixin:
         """True when `optimize_fts_storage()` has work: legacy inline FTS or a v23 trigram still
         carrying ``tool_calls`` (``_db_needs_fts_storage_upgrade``), an interrupted optimize
         (markers/trash), a CJK backfill on this tokenizer-capable host, or an empty external
-        index without markers. False when FTS5 is unavailable."""
-        if not self._fts_enabled or self.read_only:
+        index without markers. Deferred stale repair is also explicit maintenance work."""
+        if self.read_only:
+            return False
+        if self._fts_stale:
+            return bool(getattr(self, "_fts5_available", False))
+        if not self._fts_enabled:
             return False
         with self._read_ctx() as conn:
             return (
@@ -601,10 +605,27 @@ class SessionSearchMixin:
         legacy-v22 inline -> external-content, or a v23 ``messages_fts_trigram`` that still stores
         ``tool_calls``. Re-running resumes. ``progress_cb`` receives {"phase", "percent",
         "indexed", "total"}. A missing trigram tokenizer is not fatal (CJK falls back to LIKE)."""
-        if not self._fts_enabled:
-            return {"ok": False, "reason": "fts5_unavailable"}
         if self.read_only:
             return {"ok": False, "reason": "read_only"}
+        if self._fts_stale:
+            if not getattr(self, "_fts5_available", False):
+                return {"ok": False, "reason": "fts5_unavailable"}
+            # Explicit maintenance entry (the CLI performs disk/confirmation
+            # preflight before invoking it), not ordinary open or housekeeping.
+            with self._lock:
+                try:
+                    cursor = self._conn.cursor()
+                    recovered = self._recover_stale_fts(
+                        cursor, legacy=self._db_has_legacy_inline_fts(cursor), _maintenance=True,
+                    )
+                    self._conn.commit()
+                except BaseException:
+                    self._conn.rollback()
+                    raise
+            if not recovered:
+                return {"ok": False, "reason": "fts_recovery_deferred"}
+        if not self._fts_enabled:
+            return {"ok": False, "reason": "fts5_unavailable"}
 
         # Heal bookkeeping BEFORE deciding whether to demote again.
         self._repair_optimize_bookkeeping()

@@ -431,6 +431,11 @@ class TestPluginDiscovery:
             mgr.discover_and_load()
             assert registry.get_entry("profile_only_tool") is None
 
+            from hermes_constants import hermes_home_key
+
+            with pytest.raises(ValueError, match="profile's own plugin manager"):
+                mgr.load_profile_tools(profile_home)
+            mgr = PluginManager(scope_key=hermes_home_key(profile_home))
             first = mgr.load_profile_tools(profile_home)
             generation = registry._generation
             second = mgr.load_profile_tools(profile_home)
@@ -438,8 +443,10 @@ class TestPluginDiscovery:
             assert first == ["profile_only_tool"]
             assert second == ["profile_only_tool"]
             assert registry._generation == generation
-            assert registry.get_entry("profile_only_tool") is not None
+            assert registry.get_entry("profile_only_tool") is None
+            assert registry.get_entry("profile_only_tool", scope=mgr.scope_key) is not None
         finally:
+            mgr.unload()
             registry.deregister("profile_only_tool")
             sys.modules.pop("hermes_plugins.profile_tool", None)
 
@@ -525,12 +532,13 @@ class TestPluginDiscovery:
             mgr.discover_and_load(force=True)
 
             assert "profile_force_tool" not in mgr._plugin_tool_names
+            assert registry.get_entry("profile_force_tool") is None
             assert mgr.load_profile_tools(profile_home) == ["profile_force_tool"]
             assert "profile_force_tool" in mgr._plugin_tool_names
             assert mgr._plugins["profile_tool"].tools_registered == [
                 "profile_force_tool"
             ]
-            assert registry._generation == generation
+            assert registry._generation > generation
         finally:
             registry.deregister("profile_force_tool")
             sys.modules.pop("hermes_plugins.profile_tool", None)
@@ -679,6 +687,7 @@ class TestPluginDiscovery:
                 path=str(tmp_path / "bundled" / "global_plugin"),
             ),
             enabled=True,
+            error=None,
         )
 
         assert mgr.load_profile_tools(profile_home) == []
@@ -736,7 +745,7 @@ class TestPluginDiscovery:
         mgr = PluginManager()
         try:
             mgr.load_profile_tools(first_home)
-            with pytest.raises(ValueError, match="different path"):
+            with pytest.raises(ValueError, match="profile's own plugin manager"):
                 mgr.load_profile_tools(second_home)
 
             assert registry.get_entry("first_profile_tool") is not None
@@ -789,17 +798,28 @@ class TestPluginDiscovery:
 
         registry.deregister("hyphen_tool")
         registry.deregister("underscore_tool")
+        from hermes_constants import hermes_home_key, reset_hermes_home_override, set_hermes_home_override
+
         mgr = PluginManager()
+        second_mgr = PluginManager(scope_key=hermes_home_key(second_home))
         try:
             mgr.load_profile_tools(first_home)
-            mgr.load_profile_tools(second_home)
+            second_mgr.load_profile_tools(second_home)
 
             assert registry.dispatch("hyphen_tool", {}) == "HYPHEN"
-            assert registry.dispatch("underscore_tool", {}) == "UNDERSCORE"
+            assert registry.get_entry("underscore_tool") is None
+            token = set_hermes_home_override(second_home)
+            try:
+                assert registry.dispatch("underscore_tool", {}) == "UNDERSCORE"
+                assert registry.get_entry("hyphen_tool") is None
+            finally:
+                reset_hermes_home_override(token)
             first_module = mgr._plugins["alpha-beta"].module
-            second_module = mgr._plugins["alpha_beta"].module
+            second_module = second_mgr._plugins["alpha_beta"].module
             assert first_module.__name__ != second_module.__name__
         finally:
+            mgr.unload()
+            second_mgr.unload()
             registry.deregister("hyphen_tool")
             registry.deregister("underscore_tool")
             for name in list(sys.modules):
@@ -850,7 +870,7 @@ class TestPluginDiscovery:
         mgr = PluginManager()
         try:
             mgr.discover_and_load()
-            with pytest.raises(ValueError, match="different path"):
+            with pytest.raises(ValueError, match="profile's own plugin manager"):
                 mgr.load_profile_tools(profile_home)
 
             assert registry.get_entry("profile_replacement_tool") is None

@@ -627,8 +627,9 @@ class TestRunJobEnvVarCleanup:
         ):
             monkeypatch.delenv(key, raising=False)
 
-        # Build a job with origin info that will fail during execution
-        # (no valid model, no API key — will raise inside try block)
+        # Fail deterministically after the real run scope is entered. Depending
+        # on absent credentials used to import/discover every model tool first,
+        # timing out under host I/O pressure without testing cleanup at all.
         job = {
             "id": "test-envleak",
             "name": "env-leak-test",
@@ -641,13 +642,25 @@ class TestRunJobEnvVarCleanup:
             },
         }
 
-        from cron.scheduler import run_job
+        from cron import scheduler
+        from gateway.session_context import _VAR_MAP, _UNSET
 
-        # Expect it to fail (no model/API key), but env vars must be cleaned
-        try:
-            run_job(job)
-        except Exception:
-            pass
+        monkeypatch.setitem(sys.modules, "run_agent", SimpleNamespace(AIAgent=object))
+        entered = []
+
+        def fail_after_scope(job):
+            entered.append(_VAR_MAP["HERMES_CRON_SESSION"].get())
+            raise RuntimeError("fixture early setup failure")
+
+        monkeypatch.setattr(scheduler, "_reload_dotenv_and_publish_delivery_target", fail_after_scope)
+        success, _, _, error = scheduler.run_job(job)
+        assert not success
+        assert "fixture early setup failure" in error
+        assert entered == ["1"]
+        # clear_session_vars is deliberately non-nestable: ordinary session
+        # identity is cleared; cron policy returns to the legacy env fallback.
+        assert _VAR_MAP["HERMES_CRON_SESSION"].get() is _UNSET
+        assert _VAR_MAP["HERMES_SESSION_PLATFORM"].get() == ""
 
         # Verify env vars were cleaned up by the finally block
         assert os.environ.get("HERMES_SESSION_PLATFORM") is None

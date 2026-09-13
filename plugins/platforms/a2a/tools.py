@@ -13,8 +13,6 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 
-from gateway.platforms._shared import coerce_port as _coerce_int
-
 from . import protocol, security
 
 logger = logging.getLogger(__name__)
@@ -225,6 +223,8 @@ def a2a_list(args: dict | None = None, **_: Any) -> str:
 
 def a2a_history(args: dict, **_: Any) -> str:
     """Recall a persisted A2A conversation (survives compaction/restarts)."""
+    from gateway.platforms._shared import coerce_port as _coerce_int
+
     context_id = str(args.get("context_id") or args.get("contextId") or "").strip()
     if not context_id:
         return "Error: 'context_id' is required (see a2a_list for known conversations)."

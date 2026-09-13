@@ -23,7 +23,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "compat_manifest.json"
-SKIP_DIRS = {".git", "node_modules", "website", "skills", "optional-skills", "apps", "evals", "build", "MagicMock", ".worktrees", "__pycache__"}
+SKIP_DIRS = {".git", "node_modules", "website", "skills", "optional-skills", "apps", "evals", "build", "MagicMock", ".worktrees", "__pycache__",
+             ".claude", ".venv", "venv"}
+# ``.claude`` holds this repo's per-session git worktrees (".claude/worktrees/<name>"),
+# each a full ~13k-file checkout. Without it this walk covers ~20 sibling trees, takes
+# over ten minutes, and reports other sessions' files as if they were ours. ".worktrees"
+# above never matched anything here -- it is not the path this repo actually uses.
 
 
 def _py_files():

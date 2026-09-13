@@ -376,7 +376,12 @@ def evaluate_outcome(event: Event) -> OutcomeVerdict:
         failed.append(
             _evidence("failure_event_type", "event.event_type", event.event_type.type_string)
         )
-    if event.event_type in _DEGRADED_EVENT_TYPES:
+    overdue_running = (event.event_type is EventType.CRON_STALE
+                       and payload.get("state") == "overdue_running"
+                       and payload.get("reason") == "soft_deadline")
+    if overdue_running:
+        pending.append(_evidence("soft_deadline_running", "payload.state", "overdue_running"))
+    if event.event_type in _DEGRADED_EVENT_TYPES and not overdue_running:
         degraded.append(
             _evidence("degraded_event_type", "event.event_type", event.event_type.type_string)
         )

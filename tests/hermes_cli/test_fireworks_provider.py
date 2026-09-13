@@ -103,6 +103,17 @@ class TestFireworksDoctor:
 
         assert "FIREWORKS_API_KEY" in _PROVIDER_ENV_HINTS
 
+    # Runs the whole of ``run_doctor``, so it is legitimately slow rather than
+    # hung -- and it straddles the repo-wide 30s ``--timeout`` cap from
+    # ``pyproject.toml``. Measured on this host: 18.53s alone, 63.54s as part of
+    # the full file under load -- a 3.4x swing on identical code -- so at the
+    # default cap it is a reproducible ``Timeout (>30.0s) from pytest-timeout``
+    # that lands on whatever change happens to be under test. Cold imports are
+    # NOT the cause: ``conftest_doctor_externals`` already warms the two
+    # dominant ones and every remaining unwarmed lazy import in the doctor
+    # modules totals 6.41s. 180 leaves ~2.8x over the 63.54s worst observed; a
+    # file-wide cap change would hide the next real hang instead.
+    @pytest.mark.timeout(180)
     def test_slash_form_model_is_not_flagged_as_vendor_prefixed(self, monkeypatch, tmp_path):
         """Fireworks' native model IDs are slash-form (accounts/fireworks/...),
         so doctor must NOT warn that provider should be 'openrouter' / the prefix

@@ -141,12 +141,13 @@ async def test_runner_stays_alive_for_retryable_startup_errors(monkeypatch, tmp_
 
     # Telegram now connects in the BACKGROUND (see _BACKGROUND_CONNECT_PLATFORMS),
     # so its retryable failure is recorded by the background task shortly after
-    # start() returns rather than inline. Wait for it to land in the retry queue
-    # before asserting — same async semantics as WhatsApp's background connect.
-    for _ in range(300):  # ~3s ceiling
-        if Platform.TELEGRAM in runner._failed_platforms:
-            break
-        await asyncio.sleep(0.01)
+    # start() returns rather than inline. Await those settlement tasks — each one
+    # writes _failed_platforms (via _start_aggregate_connect_results) before it
+    # finishes, so this is a completion signal, not a wall-clock guess. The fixed
+    # ~3s poll ceiling this replaced was load-sensitive, and it waited on the wrong
+    # thing: _failed_platforms is in-memory, while the assertions below read the
+    # runtime-status FILE that the same settlement task writes.
+    await asyncio.gather(*list(getattr(runner, "_startup_background_connects", ())))
 
     state = read_runtime_status()
     assert state["gateway_state"] in {"degraded", "running"}

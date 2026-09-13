@@ -58,8 +58,8 @@ MARKER = "<!-- hermes-ci-review-bot -->"
 # Severity ordering for display.
 _SEVERITY_ORDER = ["error", "action_required", "warning", "info", "debug"]
 
-# Severities that trigger the "blocking issues" layout (vs. the
-# "looks good!" banner).
+# Severities that render as top-level sections, in this order. Their
+# absence is what selects the "all good!" banner instead.
 _BLOCKING_SEVERITIES = ("error", "action_required", "warning")
 
 _SEVERITY_GROUP_HEADER = {
@@ -253,9 +253,14 @@ def _render_debug_details(items: list[ReviewItem]) -> str:
 
 
 def _render_pending_items(pending_jobs: list[str]) -> str:
-    """Render the dimmed ``<sub>`` items for jobs still running."""
+    """Render the dimmed ``<sub>`` footer naming the jobs still running.
+
+    Returns the bare element. render_comment appends it as the last block
+    of the comment, so the ``---`` separator above it is the same join
+    every other block gets rather than something this helper carries.
+    """
     job_list = ", ".join(f"`{j}`" for j in sorted(pending_jobs))
-    return f"\n\n---\n\n<sub>Still running {len(pending_jobs)} job{'s' if len(pending_jobs) != 1 else ''}: {job_list}</sub>\n"
+    return f"<sub>Still running {len(pending_jobs)} job{'s' if len(pending_jobs) != 1 else ''}: {job_list}</sub>"
 
 
 def render_comment(
@@ -270,11 +275,15 @@ def render_comment(
     by ``---``. Errors and action_required items are always visible.
     Warnings are shown only when present. Info items are visible; debug items
     are in a collapsible ``<details>`` block. If ``pending_jobs`` is non-empty, a dimmed
-    ``<sub>`` footer is appended listing jobs still running.
+    ``<sub>`` footer listing the jobs still running is appended as the final
+    block, below every section -- the layout b9f82ed39f's commit message
+    renders as the example comment.
 
     When there are no errors, action_required, or warnings, an "all good!"
     banner is shown at the top. Info items remain visible and debug items
-    follow in collapsible ``<details>`` blocks.
+    follow in collapsible ``<details>`` blocks. The banner is a final
+    verdict, so it is withheld while any job is still pending or the run
+    is still ``waiting``.
 
     ``waiting`` means a workflow run is still queued or in progress even
     though no individual job is visibly pending — GitHub has not spawned
@@ -291,7 +300,7 @@ def render_comment(
 
     info = by_severity.get("info", [])
     debug = by_severity.get("debug", [])
-    any(by_severity.get(s) for s in _BLOCKING_SEVERITIES)
+    has_blocking = any(by_severity.get(s) for s in _BLOCKING_SEVERITIES)
 
     body = f"{MARKER}\n# ૮ >ﻌ< ა ci review\n\n"
 
@@ -302,6 +311,13 @@ def render_comment(
         if waiting:
             return f"{body}<sub>waiting for jobs to start…</sub>"
         return f"{body}all good!"
+
+    # A green run still emits info/debug items, so "no items at all" is the
+    # wrong test for the banner -- the more a healthy run reported, the less
+    # verdict it would get. Gate on the absence of blocking severities
+    # instead, and withhold the verdict while the run is not yet final.
+    if not has_blocking and not pending and not waiting:
+        body += "all good!\n\n"
 
     sections: list[str] = []
 
@@ -317,10 +333,14 @@ def render_comment(
     if debug:
         sections.append(_render_debug_details(debug))
 
+    # The live-status line is a footer: the docstring has always called it one
+    # and b9f82ed39f's example layout puts it below every section. Appending it
+    # as the last block keeps it there and gives it the same separator as the
+    # rest, instead of gluing it to the first section's heading.
     if pending:
-        body += _render_pending_items(pending)
+        sections.append(_render_pending_items(pending))
     elif waiting:
-        body += "\n\n---\n\n<sub>waiting for more jobs to start…</sub>\n"
+        sections.append("<sub>waiting for more jobs to start…</sub>")
 
     if sections:
         body += "\n\n---\n\n".join(sections)

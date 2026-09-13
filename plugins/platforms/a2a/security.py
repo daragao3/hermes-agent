@@ -16,7 +16,6 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 from typing import Optional
-from gateway.platforms._shared import profile_scoped as _profile_scoped
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +23,8 @@ logger = logging.getLogger(__name__)
 def _startup_env(name: str) -> str:
     """One A2A setting from the active profile's scope, else the env. Inside a secondary
     profile's scope a miss yields "" and never falls through to the default profile's env."""
+    from gateway.platforms._shared import profile_scoped as _profile_scoped
+
     if _profile_scoped():
         from agent.secret_scope import get_secret
         return (get_secret(name) or "").strip()

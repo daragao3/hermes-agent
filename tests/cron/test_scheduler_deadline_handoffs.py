@@ -12,7 +12,7 @@ def test_global_override_soft_deadline_alerts_and_keeps_waiting(monkeypatch, ove
     from cron import scheduler
     release, alert = threading.Event(), threading.Event()
     emitter = MagicMock()
-    emitter.on_job_completed.side_effect = lambda **kw: alert.set()
+    emitter.bus.emit.side_effect = lambda **kw: alert.set()
     monkeypatch.setattr(scheduler, "_get_event_emitter", lambda: emitter)
     monkeypatch.setattr(scheduler, "_job_timeout_seconds", lambda job: 0.1)
     monkeypatch.setattr(scheduler, "mark_job_run", MagicMock(side_effect=AssertionError("alert must not overwrite verdict")))
@@ -33,7 +33,8 @@ def test_global_override_soft_deadline_alerts_and_keeps_waiting(monkeypatch, ove
         finally:
             release.set()
         assert future.result(timeout=5) is True
-    assert emitter.on_job_completed.call_count == 1
+    emitter.on_job_completed.assert_not_called()
+    assert emitter.bus.emit.call_args.kwargs["payload"]["state"] == "overdue_running"
 
 
 def test_forwarding_callback_receives_deadline_identity(monkeypatch):

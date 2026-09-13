@@ -16,8 +16,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from gateway.platforms._shared import coerce_port as _coerce_int
-
 PROTOCOL_VERSION = "1.0"
 
 # A2A v1.0 task lifecycle states + message roles.
@@ -42,6 +40,8 @@ _RATE_LIMIT_DEFAULT, _RATE_WINDOW = 60, 60.0  # requests per minute, window seco
 
 
 def _env_int(name: str, default: int) -> int:
+    from gateway.platforms._shared import coerce_port as _coerce_int
+
     return _coerce_int(os.getenv(name, default), default)
 
 

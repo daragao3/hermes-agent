@@ -1,5 +1,7 @@
 import json
 
+import requests
+
 import pytest
 
 from agent import firecrawl_run_state as state
@@ -120,8 +122,12 @@ async def test_scout_activation_stops_later_firecrawl_and_emits_one_credits_acti
         delete_calls.append((url, kwargs))
         return Response(status_code=204)
 
-    monkeypatch.setattr(browser_provider_module.requests, "post", fake_post)
-    monkeypatch.setattr(browser_provider_module.requests, "delete", fake_delete)
+    # ``provider.requests`` is just the real ``requests`` module, handed back by a
+    # special case in that module's revert-scheduled PLUGIN-COMPAT __getattr__ (the
+    # provider's own code never uses the name). Patch the module directly: same
+    # object, same effect, and it survives COMPAT_REMOVAL_DATE.
+    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr(requests, "delete", fake_delete)
     monkeypatch.setattr(browser_tool, "_active_sessions", {})
     monkeypatch.setattr(browser_tool, "_cached_cloud_provider", None)
     monkeypatch.setattr(browser_tool, "_cloud_provider_resolved", False)

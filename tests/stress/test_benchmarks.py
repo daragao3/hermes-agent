@@ -65,6 +65,8 @@ def _run_benchmarks(home):
     os.environ["HOME"] = home
     sys.path.insert(0, WT)
     from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kb_connect
+    from hermes_cli import kanban_db_dispatch as kb_dispatch
 
     kb.init_db()
 
@@ -79,11 +81,11 @@ def _run_benchmarks(home):
         os.makedirs(home)
         kb._INITIALIZED_PATHS.clear()
         kb.init_db()
-        conn = kb.connect()
+        conn = kb_connect.connect()
         seed_tasks(conn, kb, n, assignee=None)  # no assignee → won't spawn
         r = bench(
             f"dispatch_once (n={n}, no spawn)",
-            lambda: kb.dispatch_once(conn, spawn_fn=lambda *_: None),
+            lambda: kb_dispatch.dispatch_once(conn, spawn_fn=lambda *_: None),
             iterations=5,
         )
         print(f"  min={r['min_ms']:.1f} median={r['median_ms']:.1f} max={r['max_ms']:.1f} ms")
@@ -98,7 +100,7 @@ def _run_benchmarks(home):
         os.makedirs(home)
         kb._INITIALIZED_PATHS.clear()
         kb.init_db()
-        conn = kb.connect()
+        conn = kb_connect.connect()
         ids = seed_tasks(conn, kb, n, assignee=None, with_parents=True)
         # Complete the first 100 so some todo tasks might get promoted
         for tid in ids[:min(100, n // 10)]:
@@ -120,7 +122,7 @@ def _run_benchmarks(home):
         os.makedirs(home)
         kb._INITIALIZED_PATHS.clear()
         kb.init_db()
-        conn = kb.connect()
+        conn = kb_connect.connect()
         # Create parents, complete them with summaries+metadata
         parent_ids = []
         for i in range(parent_count):
@@ -153,7 +155,7 @@ def _run_benchmarks(home):
         os.makedirs(home)
         kb._INITIALIZED_PATHS.clear()
         kb.init_db()
-        conn = kb.connect()
+        conn = kb_connect.connect()
         seed_tasks(conn, kb, n)
         r = bench(
             f"list_tasks (n={n})",
@@ -172,7 +174,7 @@ def _run_benchmarks(home):
         os.makedirs(home)
         kb._INITIALIZED_PATHS.clear()
         kb.init_db()
-        conn = kb.connect()
+        conn = kb_connect.connect()
         seed_tasks(conn, kb, n)
         r = bench(
             f"board_stats (n={n})",
@@ -191,7 +193,7 @@ def _run_benchmarks(home):
         os.makedirs(home)
         kb._INITIALIZED_PATHS.clear()
         kb.init_db()
-        conn = kb.connect()
+        conn = kb_connect.connect()
         tid = kb.create_task(conn, title="x", assignee="w")
         # Create N attempts via claim/release
         for i in range(n):

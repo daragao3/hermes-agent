@@ -34,6 +34,7 @@ from events.noise_guards import (
 )
 from events.outcomes import agent_iteration_backlog
 from events.paths import notifier_batch_path
+from events.batch_observations import queued_message, remember_observation, render_batch, repeated_cron_stale
 from events.routing_policy import (
     Attention,
     Route,
@@ -151,6 +152,12 @@ class TelegramNotifier(BaseSubscriber):
         # undelivered (confirmed live 2026-07-21 00:44Z).
         self._batch_started_at: Dict[str, str] = {}
         saved = load_state(notifier_batch_path(), default={})
+        self._batch_metadata = saved.get("metadata", {})
+        if not isinstance(self._batch_metadata, dict):
+            self._batch_metadata = {}
+        self._latest_observations = saved.get("latest_observations", {})
+        if not isinstance(self._latest_observations, dict):
+            self._latest_observations = {}
         if isinstance(saved.get("buffer"), dict):
             self._batch_buffer = {k: list(v) for k, v in saved["buffer"].items()}
         saved_started = saved.get("started_at")
@@ -236,6 +243,11 @@ class TelegramNotifier(BaseSubscriber):
         # doesn't eventually flush and re-trigger the loop.
         if event.event_type in _NEVER_CONSUME:
             return
+
+        # Record occurrence order even when routing/repeat guards suppress a
+        # notification. An older recovery cannot replace a newer failed probe.
+        if remember_observation(self._latest_observations, event):
+            self._persist_batch_buffer()
 
         # Hot-reload verbosity config on each cycle (spec: hot-reloadable)
         self._reload_verbosity()
@@ -388,6 +400,12 @@ class TelegramNotifier(BaseSubscriber):
             return
 
         message = self.format_message(event, route=route)
+        keyed_stale = event.event_type == EventType.CRON_STALE and bool(event.payload.get("execution_id"))
+        if keyed_stale:
+            repeated = repeated_cron_stale(self._latest_observations, event)
+            self._persist_batch_buffer()
+            if repeated:
+                return
         if flap_note:
             message = f"{message}\n{flap_note}"
 
@@ -413,6 +431,7 @@ class TelegramNotifier(BaseSubscriber):
         ladder_rung = event.event_type == EventType.CRON_FAILED_CONSECUTIVE
         if (route.wa_tier != WA_IMMEDIATE
                 and not ladder_rung
+                and not keyed_stale  # already guarded by exact execution identity
                 and self._repeat_guard.is_repeat(
                     thread_id, message, sliding=not sustained_critical)):
             return
@@ -424,7 +443,10 @@ class TelegramNotifier(BaseSubscriber):
                 self._batch_buffer[key] = []
                 self._batch_timestamps[key] = time.monotonic()
                 self._batch_started_at[key] = datetime.now(timezone.utc).isoformat()
+            metadata = self._batch_metadata.setdefault(key, [])
+            metadata.extend([None] * (len(self._batch_buffer[key]) - len(metadata)))
             self._batch_buffer[key].append(message)
+            metadata.append(queued_message(message, event))
             if len(self._batch_buffer[key]) >= BATCH_MAX_MESSAGES:
                 self._flush_batch_key(key)
             self._persist_batch_buffer()
@@ -633,6 +655,10 @@ class TelegramNotifier(BaseSubscriber):
                 lines.append("")
                 lines.append(options)
             return "\n".join(lines)
+
+        if et == EventType.GATEWAY_STOPPED:
+            from events.maintenance_context import gateway_stop_body
+            return gateway_stop_body(p)
 
         if et == EventType.GATEWAY_HEALTH:
             # Lead with the plain-language diagnosis; keep the raw error
@@ -847,6 +873,7 @@ class TelegramNotifier(BaseSubscriber):
         event: Optional[Event] = None,
         topic_key: Optional[str] = None,
         batch_count: Optional[int] = None,
+        batch_context: Optional[dict] = None,
         buttons: Optional[List[List[Dict[str, str]]]] = None,
     ) -> bool:
         """Send a message to a Telegram chat/thread. Returns True when
@@ -925,7 +952,7 @@ class TelegramNotifier(BaseSubscriber):
                 )
             elif batch_count is not None:
                 self._safe_emit_batch_delivered(
-                    chat_id, thread_id, topic_key, latency_ms, batch_count,
+                    chat_id, thread_id, topic_key, latency_ms, batch_count, batch_context,
                 )
             return True
         except Exception as exc:
@@ -937,7 +964,7 @@ class TelegramNotifier(BaseSubscriber):
                 )
             elif batch_count is not None:
                 self._safe_emit_batch_failed(
-                    chat_id, thread_id, topic_key, latency_ms, batch_count, exc,
+                    chat_id, thread_id, topic_key, latency_ms, batch_count, exc, batch_context,
                 )
             return False
 
@@ -983,6 +1010,7 @@ class TelegramNotifier(BaseSubscriber):
         topic_key: Optional[str],
         latency_ms: int,
         batch_count: int,
+        batch_context: Optional[dict] = None,
     ) -> None:
         """Emit ONE synthetic NOTIFICATION_DELIVERED for a successful
         batch flush (original_event_type="batch_flush", no
@@ -998,6 +1026,7 @@ class TelegramNotifier(BaseSubscriber):
                 payload={
                     "original_event_type": "batch_flush",
                     "batch_count": batch_count,
+                    **(batch_context or {}),
                     "platform": "telegram",
                     "target": {
                         "chat_id": chat_id,
@@ -1066,6 +1095,7 @@ class TelegramNotifier(BaseSubscriber):
         latency_ms: int,
         batch_count: int,
         exc: Exception,
+        batch_context: Optional[dict] = None,
     ) -> None:
         """Emit ONE synthetic NOTIFICATION_FAILED for a failed batch flush
         — the failure twin of _safe_emit_batch_delivered (same
@@ -1081,6 +1111,7 @@ class TelegramNotifier(BaseSubscriber):
                 payload={
                     "original_event_type": "batch_flush",
                     "batch_count": batch_count,
+                    **(batch_context or {}),
                     "platform": "telegram",
                     "target": {
                         "chat_id": chat_id,
@@ -1142,17 +1173,24 @@ class TelegramNotifier(BaseSubscriber):
             self._cap_batch_key(key)
             return
         messages = self._batch_buffer.pop(key, [])
+        metadata = self._batch_metadata.pop(key, [])
         prior_ts = self._batch_timestamps.pop(key, None)
         prior_started_at = self._batch_started_at.pop(key, None)
         if not messages:
             return
         parts = key.split(":", 1)
         chat_id, thread_id = parts[0], parts[1] if len(parts) > 1 else ""
-        combined = f"Batched ({len(messages)} events):\n\n" + "\n---\n".join(messages)
+        combined, batch_context = render_batch(
+            [metadata[i] if i < len(metadata) and isinstance(metadata[i], dict)
+             and metadata[i].get("message") == message else message
+             for i, message in enumerate(messages)],
+            self._latest_observations, prior_started_at,
+        )
         if self._deliver(
             chat_id, thread_id, combined,
             topic_key=self._thread_id_to_key(thread_id),
             batch_count=len(messages),
+            batch_context=batch_context,
         ):
             self._batch_retry_at.pop(key, None)
             return
@@ -1161,6 +1199,7 @@ class TelegramNotifier(BaseSubscriber):
         # keep the key's original age so the retry isn't treated as a
         # fresh batch.
         self._batch_buffer[key] = messages + self._batch_buffer.get(key, [])
+        self._batch_metadata[key] = metadata + self._batch_metadata.get(key, [])
         self._batch_timestamps[key] = (
             prior_ts if prior_ts is not None else time.monotonic()
         )
@@ -1178,6 +1217,8 @@ class TelegramNotifier(BaseSubscriber):
         if not buf or len(buf) <= BATCH_MAX_MESSAGES:
             return
         dropped = len(buf) - BATCH_MAX_MESSAGES
+        if key in self._batch_metadata:
+            del self._batch_metadata[key][:dropped]
         del buf[:dropped]
         logger.warning(
             "TelegramNotifier: batch %s over cap while sends fail — "
@@ -1189,6 +1230,11 @@ class TelegramNotifier(BaseSubscriber):
         try:
             save_state(notifier_batch_path(), {
                 "buffer": {k: list(v) for k, v in self._batch_buffer.items()},
+                "latest_observations": self._latest_observations,
+                # Keep the legacy string buffer readable by the previous
+                # notifier on rollback; all timing metadata is additive.
+                "metadata": {key: values for key, values in self._batch_metadata.items()
+                             if key in self._batch_buffer},
                 # Wall-clock first-buffered stamps: what lets the NEXT process
                 # resume aging instead of restarting the 3600s window. Only
                 # keys still buffered are persisted (flushes pop both dicts).

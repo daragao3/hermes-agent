@@ -6108,7 +6108,11 @@ class SessionBridgeCoordinator:
         # promising it is "retried next cycle". Measured residue: 65 threads.
         # Only terminal ids may be marked seen. Deferred ids are deliberately
         # absent, which is what makes the retry real.
-        await self._save_codex_seen_ids(seen_ids | terminal_ids)
+        # Avoid rewriting the whole seen snapshot on an unchanged scan. Besides
+        # contending for state.db's writer, a stale no-op save can overwrite a
+        # peer's newer snapshot. Only newly terminal IDs require persistence.
+        if terminal_ids - seen_ids:
+            await self._save_codex_seen_ids(seen_ids | terminal_ids)
         # The frontier may only advance when this cycle finished everything it
         # staged. A partial batch, a deferral or a vanished-thread drop all mean
         # the next cycle must still be able to page back to where it started.

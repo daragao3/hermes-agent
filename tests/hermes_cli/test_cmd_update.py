@@ -1876,6 +1876,33 @@ class TestClearBytecodeCacheSkipList:
             "different repo"
         )
 
+    def test_prunes_retained_virtualenvs_and_managed_runtime(self, tmp_path, monkeypatch):
+        """A renamed environment still owns its caches; do not even scan it."""
+        import os
+
+        protected = []
+        for name in (".venv.stale.runtime-123", "custom-python"):
+            environment = tmp_path / name
+            environment.mkdir()
+            (environment / "pyvenv.cfg").write_text("home = unused\n")
+            protected.append(environment)
+        protected.append(tmp_path / ".hermes-runtime")
+        caches = [self._pkg_with_cache(path) for path in protected]
+        own = self._pkg_with_cache(tmp_path / ".venv.stale.notes")
+        scanned = []
+        real_scandir = os.scandir
+
+        def scandir(path):
+            scanned.append(os.fspath(path))
+            return real_scandir(path)
+
+        monkeypatch.setattr(os, "scandir", scandir)
+        removed = _real_clear_bytecode_cache(tmp_path)
+
+        assert removed == 1 and not own.exists()
+        assert all(cache.exists() for cache in caches)
+        assert not any(os.fspath(path) in scanned for path in protected)
+
 
 def test_update_flow_does_not_clear_bytecode_on_the_real_checkout(monkeypatch):
     """The autouse stub fixture must also cover ``_clear_bytecode_cache``.
