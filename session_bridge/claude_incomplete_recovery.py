@@ -86,9 +86,27 @@ def recover_incomplete_registration(
     ):
         raise ValueError("incomplete recovery authority conflict")
     complete = evidence["kind"] == "incomplete_recovered"
+    # A SECOND paid call, authorized by Diego 2026-09-13, and deliberately
+    # keyed to NATIVE TRANSCRIPT EVIDENCE rather than to an operator flag: the
+    # transcript must show that every recovery turn so far ended in a provider
+    # limit banner. An operator cannot assert their way to another attempt, and
+    # the ordinary "one apply grants one call" rule is untouched for every other
+    # outcome -- an ambiguous or crashed call still demands exact reconciliation,
+    # because there the transcript does NOT prove the turn was refused.
+    #
+    # The spend stays bounded by the store, not by this flag:
+    # claim_claude_auth_recovery still enforces max_attempts, the daily
+    # registration limit and the reserved cost ceiling, and it is the thing that
+    # books the new attempt.
+    provider_limited = evidence["kind"] == "incomplete_provider_limited"
     if complete and (not recovery or recovery["call_started_at"] is None):
         raise ValueError("incomplete recovery call authority absent")
-    if not complete and recovery and recovery["call_started_at"] is not None:
+    if (
+        not complete
+        and not provider_limited
+        and recovery
+        and recovery["call_started_at"] is not None
+    ):
         raise ValueError(
             "incomplete recovery already started; exact reconciliation required"
         )
@@ -97,6 +115,9 @@ def recover_incomplete_registration(
         "reserved_claude_uuid": reserved_uuid,
         "status": "reconcilable" if complete else "resumable",
     }
+    if provider_limited:
+        # Say so in the preview: --apply here SPENDS another attempt.
+        public["provider_limit_retry"] = True
     if not apply:
         return public
     if complete:
@@ -122,7 +143,7 @@ def recover_incomplete_registration(
         cost_limit=policy.emergency_daily_cost_usd,
         reserved_cost=policy.reserved_cost_per_attempt_usd,
         max_attempts=policy.max_attempts,
-        allow_repeated_call=False,
+        allow_repeated_call=provider_limited,
     )
     if claimed.get("status") != "claimed":
         raise ValueError(

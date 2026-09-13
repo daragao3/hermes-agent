@@ -417,7 +417,7 @@ def test_provider_limit_banner_leaves_the_registration_resumably_incomplete(
         _validate_projection(
             transcript, candidate(), identity, SECRET, allow_incomplete=True
         )
-        == "incomplete"
+        == "incomplete_provider_limited"
     )
     # Widening the INCOMPLETE verdict must never widen the launch path: an
     # unanswered recovery turn is still not a registration.
@@ -452,7 +452,7 @@ def test_repeated_provider_limit_banners_classify_only_within_the_attempt_bound(
         _validate_projection(
             bounded, candidate(), identity, SECRET, allow_incomplete=True
         )
-        == "incomplete"
+        == "incomplete_provider_limited"
     )
 
     over, over_identity = _transcript_for(attempts(_MAX_AUTH_RECOVERY_ATTEMPTS + 1))
@@ -634,3 +634,265 @@ def test_blocked_gate_payload_carries_the_reason_only_when_there_is_one(capsys, 
     if reason is not None:
         expected["reason"] = reason
     assert json.loads(capsys.readouterr().out) == expected
+
+
+
+def test_second_attempt_transcript_still_classifies_with_its_own_scaffold():
+    """The shape an AUTHORIZED second attempt writes must stay readable.
+
+    Every native --resume records its own inert scaffold. If only the leading
+    one were tolerated, the retry this policy exists to permit would itself
+    make the job unclassifiable again on the attempt after it.
+    """
+
+    recovery_prompt = _recovery_prompt()
+    messages = [projection_for(claim()).messages[0]]
+    for attempt in range(2):
+        messages += [
+            ProjectedMessage(
+                "scaffold-%d" % attempt,
+                0,
+                "assistant",
+                "No response requested.",
+                10 + 3 * attempt,
+            ),
+            ProjectedMessage(
+                "retry-u%d" % attempt, 0, "user", recovery_prompt, 11 + 3 * attempt
+            ),
+            ProjectedMessage(
+                "retry-a%d" % attempt,
+                0,
+                "assistant",
+                _WEEKLY_LIMIT_BANNER,
+                12 + 3 * attempt,
+            ),
+        ]
+    transcript, identity = _transcript_for(messages)
+
+    assert (
+        _validate_projection(
+            transcript, candidate(), identity, SECRET, allow_incomplete=True
+        )
+        == "incomplete_provider_limited"
+    )
+
+
+def test_a_resume_that_recorded_nothing_is_not_a_provider_refusal():
+    """A trailing scaffold is a call that may still be in flight, not a refusal."""
+
+    recovery_prompt = _recovery_prompt()
+    messages = [
+        projection_for(claim()).messages[0],
+        ProjectedMessage("u2", 0, "user", recovery_prompt, 12),
+        ProjectedMessage("a2", 0, "assistant", _WEEKLY_LIMIT_BANNER, 13),
+        ProjectedMessage("scaffold", 0, "assistant", "No response requested.", 14),
+    ]
+    transcript, identity = _transcript_for(messages)
+
+    with pytest.raises(Exception, match="bridge_conflict"):
+        _validate_projection(
+            transcript, candidate(), identity, SECRET, allow_incomplete=True
+        )
+
+
+class _RecordingStore:
+    """Minimal store that records how the paid claim was asked for."""
+
+    def __init__(self, job, recovery):
+        self._job = job
+        self._recovery = recovery
+        self.claims = []
+
+        class _DB:
+            def __init__(self, outer):
+                self._outer = outer
+                self._lock = __import__("threading").Lock()
+
+            @property
+            def _conn(self):
+                return self._outer
+
+        self.db = _DB(self)
+
+    def execute(self, sql, params):
+        row = self._job if "session_claude_visibility_jobs" in sql else self._recovery
+
+        class _Cursor:
+            def fetchone(self_inner):
+                return row
+
+        return _Cursor()
+
+    def inspect_failed_claude_visibility_reconciliation(self, **kwargs):
+        return {"status": "repairable"}
+
+    def claim_claude_auth_recovery(self, **kwargs):
+        self.claims.append(kwargs)
+        return {"status": "no_due_job"}
+
+
+def _recovery_job_row():
+    identity = derive_claude_visibility_identity(candidate(), SECRET)
+    value = candidate()
+    return {
+        "state": "claude_failed",
+        "operator_cleared_at": None,
+        "lease_digest": None,
+        "error_code": "bridge_conflict",
+        "error_detail": "exact transcript conflict",
+        "source_session_id": value.source_session_id,
+        "source_provider": value.source_provider.value,
+        "native_name": value.native_name,
+        "source_cwd": value.source_cwd,
+        "git_root": value.git_root,
+        "git_branch": value.git_branch,
+        "git_head": value.git_head,
+        "worktree_id": value.worktree_id,
+        "eligible_at": value.eligible_at,
+        "bridge_id": identity.bridge_id,
+        "idempotency_key": identity.idempotency_key,
+        "signed_marker": identity.signed_marker,
+        "attempts": 2,
+    }
+
+
+class _KindRegistrar:
+    def __init__(self, kind):
+        self._kind = kind
+
+    def inspect_incomplete_registration(self, candidate_value, identity):
+        from session_bridge.claude_registrar import (
+            build_incomplete_registration_recovery_prompt,
+        )
+
+        return {
+            "kind": self._kind,
+            "evidence_digest": "e" * 64,
+            "transcript_digest": "d" * 64,
+            "prompt": build_incomplete_registration_recovery_prompt(identity),
+        }
+
+
+def _recovery_row(prompt, call_started):
+    import hashlib
+
+    identity = derive_claude_visibility_identity(candidate(), SECRET)
+    return {
+        "operation_id": "incomplete-registration:" + identity.job_id,
+        "evidence_digest": "e" * 64,
+        "prompt_digest": hashlib.sha256(prompt.encode()).hexdigest(),
+        "reserved_claude_uuid": identity.claude_uuid,
+        "call_started_at": call_started,
+        "state": "retry",
+    }
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [("incomplete_provider_limited", True), ("incomplete", False)],
+)
+def test_only_a_provider_limited_transcript_authorizes_a_repeated_paid_call(
+    kind, expected
+):
+    """The second call is granted by NATIVE EVIDENCE, never by an operator flag.
+
+    Diego authorized a second paid call after a provider limit on 2026-09-13.
+    A plain incomplete registration whose call already started must still
+    demand exact reconciliation, because there the transcript does not prove
+    the provider refused the turn.
+    """
+
+    from session_bridge.claude_incomplete_recovery import (
+        recover_incomplete_registration,
+    )
+    from session_bridge.claude_registrar import (
+        build_incomplete_registration_recovery_prompt,
+    )
+
+    identity = derive_claude_visibility_identity(candidate(), SECRET)
+    prompt = build_incomplete_registration_recovery_prompt(identity)
+    store = _RecordingStore(_recovery_job_row(), _recovery_row(prompt, 500.0))
+    policy = SimpleNamespace(
+        lease_seconds=60,
+        daily_registration_limit=25,
+        emergency_daily_cost_usd="1.00",
+        reserved_cost_per_attempt_usd="0.02",
+        max_attempts=5,
+    )
+    kwargs = dict(
+        store=store,
+        registrar=_KindRegistrar(kind),
+        job_id=identity.job_id,
+        reserved_uuid=identity.claude_uuid,
+        policy=policy,
+        now=lambda: 1000.0,
+    )
+
+    if not expected:
+        with pytest.raises(ValueError, match="already started"):
+            recover_incomplete_registration(**kwargs, apply=False)
+        assert store.claims == []
+        return
+
+    preview = recover_incomplete_registration(**kwargs, apply=False)
+    assert preview["status"] == "resumable"
+    # The preview must SAY that --apply spends another attempt.
+    assert preview["provider_limit_retry"] is True
+    assert store.claims == []
+
+    with pytest.raises(ValueError, match="incomplete recovery unavailable"):
+        recover_incomplete_registration(**kwargs, apply=True)
+    assert len(store.claims) == 1
+    assert store.claims[0]["allow_repeated_call"] is True
+    # The ceilings are still handed to the store, which is what books the spend.
+    assert store.claims[0]["max_attempts"] == 5
+    assert store.claims[0]["daily_limit"] == 25
+    assert store.claims[0]["cost_limit"] == "1.00"
+
+
+def test_repeated_paid_call_is_still_refused_past_the_store_ceiling(tmp_path):
+    """Relaxing the flag must not relax the spend ceiling the store enforces."""
+
+    from hermes_state import SessionDB
+    from session_bridge.store import SessionBridgeStore
+    from tests.session_bridge.test_store import (
+        _seed_claude_visibility_native_source,
+    )
+
+    db = SessionDB(tmp_path / "state.db")
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    value = candidate()
+    identity = derive_claude_visibility_identity(value, SECRET)
+    store.enqueue_claude_visibility_job(value, identity, SECRET)
+    _seed_claude_visibility_native_source(db, store, value)
+    launch = store.claim_claude_visibility_job(100.0, 60, 25, "1.00", "0.02")
+    store.fail_claude_visibility_job(
+        identity.job_id, launch.lease_digest, "bridge_conflict",
+        "exact transcript conflict",
+    )
+    shared = dict(
+        job_id=identity.job_id,
+        reserved_claude_uuid=identity.claude_uuid,
+        operation_id="incomplete-registration:" + identity.job_id,
+        evidence_digest="a" * 64,
+        prompt_digest="b" * 64,
+        lease_seconds=60,
+        daily_limit=25,
+        cost_limit="1.00",
+        reserved_cost="0.02",
+    )
+    first = store.claim_claude_auth_recovery(
+        **shared, now=100.0, max_attempts=5, allow_repeated_call=True
+    )
+    assert first["status"] == "claimed"
+    store.begin_claude_auth_recovery(identity.job_id, first["lease_digest"])
+    store.retry_claude_auth_recovery(
+        identity.job_id, first["lease_digest"], "creation_ambiguous", 150.0
+    )
+
+    # Authorized repeat, but the job has already spent its allowance.
+    exhausted = store.claim_claude_auth_recovery(
+        **shared, now=200.0, max_attempts=1, allow_repeated_call=True
+    )
+    assert exhausted["status"] == "max_attempts_exhausted"
+    db.close()
