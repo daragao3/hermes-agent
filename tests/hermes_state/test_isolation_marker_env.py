@@ -19,10 +19,22 @@ import subprocess
 import sys
 from pathlib import Path
 
-import hermes_state
+import pytest
+
+# NOTE: ``hermes_state`` is deliberately NOT imported here -- the parent process
+# never touches it; every assertion below is about a spawned child. It was an
+# unused import (ruff F401, which this repo enforces tree-wide with no
+# suppressions) and blocked the commit that repaired these probes.
 import hermes_state_guard
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Each probe below spawns a child that imports ``hermes_state``, which pulls in
+# the agent stack: ~9s warm and ~33s cold on this host.  ``_spawn_probe``
+# already budgets 60s for that, which the repo-wide 30s pytest cap (pyproject
+# addopts) cannot honour -- the cap fires first and the test reads as a hang.
+# 180s keeps the child's own 60s ceiling as the real limit.
+_child_import_budget = pytest.mark.timeout(180)
 
 _CHILD_PROBE = r"""
 import json, os, sys
@@ -61,6 +73,14 @@ def _minimal_env(**extra) -> dict:
         "HOME": os.environ.get("HOME", ""),
         "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),  # Windows needs it
         "LOCALAPPDATA": os.environ.get("LOCALAPPDATA", ""),
+        # Windows resolves ~ from USERPROFILE (then HOMEDRIVE+HOMEPATH) and
+        # never from HOME.  Without them ``Path.home()`` raises "Could not
+        # determine home directory" while ``hermes_constants`` is imported --
+        # the child dies before it can answer the question under test, and the
+        # probe fails for a reason that has nothing to do with the guard.
+        "USERPROFILE": os.environ.get("USERPROFILE", ""),
+        "HOMEDRIVE": os.environ.get("HOMEDRIVE", ""),
+        "HOMEPATH": os.environ.get("HOMEPATH", ""),
     }
     env = {k: v for k, v in env.items() if v}
     env.update(extra)
@@ -92,6 +112,7 @@ def test_no_signals_reports_production(monkeypatch):
     assert hermes_state_guard._running_under_pytest() is False
 
 
+@_child_import_budget
 def test_child_with_rebuilt_env_keeping_marker_refuses_production_db():
     """THE regression: a child whose env was rebuilt from scratch (PYTEST_*
     stripped, HERMES_HOME lost) but which keeps the marker must still refuse
@@ -105,6 +126,7 @@ def test_child_with_rebuilt_env_keeping_marker_refuses_production_db():
     )
 
 
+@_child_import_budget
 def test_child_bypass_env_disarms_guard_even_with_marker():
     """The sanctioned escape hatch for children that genuinely need a real
     DB: HERMES_STATE_DB_GUARD_BYPASS=1, not marker-stripping."""
@@ -116,6 +138,7 @@ def test_child_bypass_env_disarms_guard_even_with_marker():
     assert result["fired"] is False
 
 
+@_child_import_budget
 def test_child_inheriting_full_test_env_refuses_production_db():
     """Default inheritance (env=None equivalent): everything rides along."""
     result = _spawn_probe(dict(os.environ))

@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,27 @@ from hermes_state import (
     StateDbReplacedError,
     classify_persistence_error,
     divert_session_transcript_jsonl,
+)
+
+
+# A live-handle inode swap cannot be simulated on Windows: CPython's sqlite3
+# opens the database file without FILE_SHARE_DELETE, so os.replace/os.unlink
+# over the still-open file raise WinError 5/32 inside the test helper, long
+# before the code under test is reached (measured 2026-09-13 with a bare
+# sqlite3.connect, so it is a platform invariant, not a Hermes behaviour).
+# b114641c88 restored these as real swaps on the stated grounds that the files
+# "carry no windows_only marker so they never run on Windows" -- absence of
+# that marker means they run EVERYWHERE, so the swaps have failed on this host
+# ever since.  The guarded contract itself still holds on Windows; only the
+# simulation is impossible.  See loops
+# hermes-state-15-preexisting-failures-wave2-20260913.
+_needs_live_handle_swap = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "live-handle inode swap is unsimulatable on Windows: sqlite3 holds the "
+        "file without FILE_SHARE_DELETE, so os.replace/os.unlink raise "
+        "WinError 5/32 before the code under test runs"
+    ),
 )
 
 
@@ -33,6 +55,7 @@ def _require_identity(db: SessionDB) -> None:
         pytest.skip("filesystem does not expose st_dev/st_ino for identity checks")
 
 
+@_needs_live_handle_swap
 def test_replace_with_new_inode_fails_loudly_without_fts_repair(tmp_path):
     live = tmp_path / "state.db"
     other = tmp_path / "other.db"
@@ -56,6 +79,7 @@ def test_replace_with_new_inode_fails_loudly_without_fts_repair(tmp_path):
     db.close()
 
 
+@_needs_live_handle_swap
 def test_second_write_after_halt_does_not_attempt_repair(tmp_path):
     live = tmp_path / "state.db"
     other = tmp_path / "other.db"
@@ -125,6 +149,7 @@ def test_new_sessiondb_on_replaced_path_records_new_identity(tmp_path):
         reopened.close()
 
 
+@_needs_live_handle_swap
 def test_fts_scoped_error_on_replaced_file_skips_fts_fail_open(tmp_path):
     """Even FTS-provenance corruption must not authorize surgery on a
     replaced file. (A generic malformed error never reaches fail-open at

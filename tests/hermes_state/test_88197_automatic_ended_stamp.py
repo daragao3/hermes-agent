@@ -146,6 +146,12 @@ class TestRotationEndToEnd:
         agent.compression_in_place = False  # rotation path
         return agent
 
+    # The repo-wide cap is 30s (pyproject addopts).  This test is over it on
+    # cost alone, not because anything hangs: importing ``run_agent`` costs
+    # ~9s warm and ~33s cold (plugin discovery + the model stack), and the
+    # real rotation it then drives reports ~18.5s of compression work.  All
+    # ten tests in this file pass under --timeout=300 (measured 2026-09-13).
+    @pytest.mark.timeout(300)
     def test_dirty_tui_shutdown_stamp_does_not_wedge_rotation(
         self, db: SessionDB
     ) -> None:
