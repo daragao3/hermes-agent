@@ -823,8 +823,26 @@ class ClaudeMirrorFloatWorker:
 
     def _resolve_source_activity(self, source_session_id: str) -> float:
         if ":" in source_session_id:
-            # External (codex/claude) sources carry an indexed watermark.
+            # External (codex/claude) sources carry an indexed watermark --
+            # but the catalog advances it only when it re-indexes the thread,
+            # and the persistent Codex scan stages NEW ids only. Measured
+            # 2026-09-12: a Codex thread the user worked in daily kept its
+            # watermark at its 09-07 creation time, so its mirror's
+            # lastActivityAt never floated and the 3-day idle rule archived
+            # the live session at exactly creation + 3 days. The rollout file
+            # itself is appended on every turn, so its mtime is a source-owned
+            # activity reading that needs no app-server call; take whichever
+            # of the two is newer. A missing or unreadable rollout falls back
+            # to the watermark alone, exactly as before.
             activity = self._store.get_external_activity(source_session_id)
+            native_activity = self._native_source_activity(source_session_id)
+            if native_activity is not None and (
+                not isinstance(activity, (int, float))
+                or isinstance(activity, bool)
+                or not math.isfinite(float(activity))
+                or native_activity > float(activity)
+            ):
+                activity = native_activity
         else:
             # Hermes sources are host-native rows in the local SessionDB.
             activity = self._hermes_last_active(source_session_id)
@@ -835,6 +853,24 @@ class ClaudeMirrorFloatWorker:
         ):
             raise _MirrorFloatSkip("source activity unavailable")
         return float(activity)
+
+    def _native_source_activity(self, source_session_id: str) -> float | None:
+        """Return the source rollout's mtime, or None when it cannot be read."""
+        reader = getattr(self._store, "get_external_session", None)
+        if not callable(reader):
+            return None
+        try:
+            row = reader(source_session_id)
+        except Exception:
+            return None
+        native_path = row.get("native_path") if isinstance(row, Mapping) else None
+        if not isinstance(native_path, str) or not native_path:
+            return None
+        try:
+            mtime = float(os.stat(native_path).st_mtime)
+        except (OSError, ValueError, OverflowError):
+            return None
+        return mtime if math.isfinite(mtime) else None
 
     def _hermes_last_active(self, source_session_id: str) -> float | None:
         rows = self._store.db.list_sessions_rich(

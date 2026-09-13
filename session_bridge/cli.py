@@ -55,6 +55,7 @@ from .claude_visibility import (
     ClaudeVisibilityCandidate,
     build_claude_visibility_candidate,
     derive_claude_visibility_identity,
+    is_codex_import_rollout,
     normalized_claude_visibility_repair_rows,
 )
 from .claude_visibility_codes import (
@@ -3871,6 +3872,15 @@ class ProductionBackend:
                     self.config.claude_visibility.discovery_timeout_seconds
                 ),
                 stop=stop,
+                # Same predicate the coordinator applies after the fact; here
+                # it spares the thread/read the coordinator would then ignore.
+                # Passed only when it applies, so an adapter without the
+                # parameter keeps working while the feature is off.
+                **(
+                    {"skip_native_path": is_codex_import_rollout}
+                    if self.config.claude_visibility.exclude_codex_imports
+                    else {}
+                ),
             )
         except _VisibilityInventoryCancelled:
             raise _VisibilityCycleCancelled() from None

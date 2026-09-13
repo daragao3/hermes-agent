@@ -412,6 +412,88 @@ def test_active_mirror_is_not_auto_archived(db, tmp_path) -> None:
     assert json.loads(record_path.read_text(encoding="utf-8"))["isArchived"] is False
 
 
+def test_live_rollout_mtime_beats_a_stale_catalog_watermark(db, tmp_path) -> None:
+    """The catalog re-indexes a Codex thread only when it is NEW, so the
+    activity watermark of a thread the user keeps working in freezes at its
+    creation time. Measured 2026-09-12: a daily-used thread's mirror was
+    archived at exactly creation + 3 days while the source was live. The
+    rollout file is appended on every turn, so its mtime is the source-owned
+    liveness reading; the float must take the newer of the two and float the
+    record to it.
+    """
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    candidate, identity = _identity("1", provider=Provider.CODEX)
+    rollout = tmp_path / "rollout-live.jsonl"
+    rollout.write_text("{}\n", encoding="utf-8")
+    recent = _FOUR_DAYS_AFTER - 600.0
+    os.utime(rollout, (recent, recent))
+    # Watermark frozen at 5_000 (creation); the rollout says ten minutes ago.
+    store.upsert_projection(
+        _projection(
+            _message("source-1", "meaningful request"),
+            provider=Provider.CODEX,
+            native_id=candidate.source_session_id.removeprefix("codex:"),
+            last_active=5_000.0,
+            native_path=str(rollout),
+        )
+    )
+    store.enqueue_claude_visibility_job(candidate, identity, _SECRET)
+    claim = store.claim_claude_visibility_job(100.0, 60, 25, "0.50", "0.02")
+    store.commit_claude_visibility_job(
+        identity.job_id, claim.lease_digest, "a" * 64, 100.0
+    )
+    mirror_path = tmp_path / f"{identity.claude_uuid}.jsonl"
+    mirror_path.write_text("{}\n", encoding="utf-8")
+    os.utime(mirror_path, (1_000.0, 1_000.0))
+    store.upsert_projection(
+        _projection(
+            _message("target-1", "signed registration"),
+            native_id=identity.claude_uuid,
+            native_path=str(mirror_path),
+            origin_kind=OriginKind.BRIDGE_PLACEHOLDER,
+            origin_bridge_id=identity.bridge_id,
+        )
+    )
+    record_path = _seed_unarchived_record(
+        tmp_path / "registry", identity, last_activity=5_000_000
+    )
+
+    ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        registry_root=tmp_path / "registry",
+        archive_idle_seconds=3 * 86_400,
+        wall_clock=lambda: _FOUR_DAYS_AFTER,
+    ).run_once()
+
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["isArchived"] is False
+    assert record["lastActivityAt"] == int(recent * 1000)
+
+
+def test_unreadable_rollout_falls_back_to_the_watermark(db, tmp_path) -> None:
+    """No rollout on disk: the watermark alone decides, exactly as before."""
+
+    store = SessionBridgeStore(db, clock=lambda: 100.0, local_timezone=timezone.utc)
+    identity, _ = _seed_visible_mirror(
+        db, store, tmp_path, source_last_active=5_000.0, mirror_mtime=1_000.0
+    )
+    record_path = _seed_unarchived_record(
+        tmp_path / "registry", identity, last_activity=5_000_000
+    )
+
+    ClaudeMirrorFloatWorker(
+        store,
+        min_interval_seconds=900.0,
+        registry_root=tmp_path / "registry",
+        archive_idle_seconds=3 * 86_400,
+        wall_clock=lambda: _FOUR_DAYS_AFTER,
+    ).run_once()
+
+    assert json.loads(record_path.read_text(encoding="utf-8"))["isArchived"] is True
+
+
 def test_auto_archive_never_overrides_a_manual_unarchive(db, tmp_path) -> None:
     """Each record is auto-archived AT MOST ONCE, so a human's undo is final.
 

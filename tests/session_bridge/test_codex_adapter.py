@@ -1830,6 +1830,91 @@ class TestInventory:
         assert candidate.git_head == sha
         assert candidate.subagent_only is True
 
+    def test_visibility_skips_thread_read_for_known_sources_and_import_echoes(
+        self,
+    ) -> None:
+        """A registered source and an import echo are excluded from metadata
+        alone, so neither may cost an app-server ``thread/read``.
+
+        Measured 2026-09-12: a registered 264 MiB thread cost 32s per cycle and
+        612 import echoes cost a read each, and discovery never reached the new
+        threads inside its 120s budget.
+        """
+
+        def entry(native_id: str, updated: int) -> dict[str, object]:
+            return {
+                "id": native_id,
+                "name": native_id,
+                "preview": f"preview for {native_id}",
+                "path": f"C:/codex/sessions/{native_id}.jsonl",
+                "cwd": f"C:/work/{native_id}",
+                "createdAt": updated - 10,
+                "updatedAt": updated,
+                "source": "vscode",
+            }
+
+        client = FakeInitializingClient({
+            "thread/list": [
+                {
+                    "data": [
+                        entry("registered", 400),
+                        entry("echo", 350),
+                        entry("fresh", 300),
+                    ]
+                },
+                {"data": []},
+            ],
+            # Exactly ONE read is scripted: the fresh source. A second read
+            # would pop an empty list and fail loudly.
+            "thread/read": [
+                {
+                    "thread": {
+                        **entry("fresh", 300),
+                        "turns": [
+                            {
+                                "items": [
+                                    {
+                                        "type": "userMessage",
+                                        "id": "fresh-user",
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": "Hydrate only the fresh source",
+                                            }
+                                        ],
+                                    }
+                                ]
+                            }
+                        ],
+                    }
+                }
+            ],
+        })
+
+        sources = CodexSourceAdapter(
+            client, marker_secret=SECRET
+        ).list_claude_visibility_sources(
+            after=250,
+            state_db_only=True,
+            known_visibility_source_ids=frozenset({"codex:registered"}),
+            skip_native_path=lambda path: path == "C:/codex/sessions/echo.jsonl",
+        )
+
+        reads = [params for method, params, _ in client.calls if method == "thread/read"]
+        assert [params.get("threadId") for params in reads] == ["fresh"]
+        by_id = {source.projection.native_id: source for source in sources}
+        assert set(by_id) == {"registered", "echo", "fresh"}
+        # The two skipped sources still carry what the coordinator's exclusion
+        # needs: identity, activity and the rollout path.
+        assert by_id["registered"].projection.native_path == (
+            "C:/codex/sessions/registered.jsonl"
+        )
+        assert by_id["echo"].projection.native_path == "C:/codex/sessions/echo.jsonl"
+        assert by_id["registered"].projection.last_active == 400.0
+        assert by_id["fresh"].projection.messages[0].content == (
+            "Hydrate only the fresh source"
+        )
+
     @pytest.mark.parametrize(
         "source_kind",
         ["unknown", {"custom": "future-source"}, None, {"subAgent": None}],
