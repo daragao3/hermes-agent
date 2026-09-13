@@ -207,6 +207,13 @@ def _ensure_test_isolation(db_path: Path) -> None:
     except Exception:
         return
     roots = [r for r in (_real_platform_state_root(),) if r is not None]
+    if sys.platform == "win32":
+        # Windows can resolve its default home to the initialized legacy root.
+        # Guard both layouts, even when tests redirect HERMES_HOME/Path.home.
+        try:
+            roots.append((Path(os.path.expanduser("~")) / ".hermes").resolve())
+        except (OSError, RuntimeError):
+            pass
     for extra in _STATE_DB_GUARD_EXTRA_DENY_ROOTS:
         try:
             roots.append(Path(extra).expanduser().resolve())
