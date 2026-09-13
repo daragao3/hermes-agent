@@ -17,6 +17,27 @@ from cron.lifecycle_guard import contains_gateway_lifecycle_command as _contains
 from hermes_cli.cron import cron_command
 
 
+def _can_create_symlink() -> bool:
+    """Creating a symlink is a PRIVILEGE on Windows (SeCreateSymbolicLinkPrivilege:
+    admin, or Developer Mode), not a platform capability -- so probe for it rather
+    than skipping on ``os.name``. Unprivileged Windows raises WinError 1314."""
+    import pathlib
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        target = root / "target"
+        target.write_text("x", encoding="utf-8")
+        try:
+            (root / "link").symlink_to(target)
+        except (OSError, NotImplementedError, AttributeError):
+            return False
+        return True
+
+
+_SYMLINKS_AVAILABLE = _can_create_symlink()
+
+
 # ---------------------------------------------------------------------------
 # Defense 2: _contains_gateway_lifecycle_command pattern tests
 # ---------------------------------------------------------------------------
@@ -564,7 +585,7 @@ class TestTerminalToolGatewayLifecycleGuard:
         script.write_text("#!/bin/bash\nsleep 45\nhermes gateway restart\n", encoding="utf-8")
         self._patch_env(monkeypatch, self._make_fake_env(), inside_gateway=True)
 
-        result = json.loads(tt.terminal_tool(command=f"/bin/bash {script}"))
+        result = json.loads(tt.terminal_tool(command=f"/bin/bash {script.as_posix()}"))
 
         assert result["exit_code"] == 1
         assert "referenced script" in result["error"]
@@ -579,7 +600,7 @@ class TestTerminalToolGatewayLifecycleGuard:
         result = json.loads(tt.terminal_tool(
             command=(
                 "launchctl submit -l ai.hermes.delayed-ops -- "
-                f"/bin/bash {script}"
+                f"/bin/bash {script.as_posix()}"
             )
         ))
 
@@ -702,7 +723,7 @@ class TestTerminalToolGatewayLifecycleGuard:
         )
         self._patch_env(monkeypatch, self._make_fake_env(), inside_gateway=True)
 
-        result = json.loads(tt.terminal_tool(command=f"/bin/bash {script}"))
+        result = json.loads(tt.terminal_tool(command=f"/bin/bash {script.as_posix()}"))
 
         assert result["exit_code"] == 1
         assert "referenced script" in result["error"]
@@ -734,7 +755,7 @@ class TestTerminalToolGatewayLifecycleGuard:
         script.chmod(0o700)
         self._patch_env(monkeypatch, self._make_fake_env(), inside_gateway=True)
 
-        result = json.loads(tt.terminal_tool(command=str(script)))
+        result = json.loads(tt.terminal_tool(command=script.as_posix()))
 
         assert result["exit_code"] == 1
 
@@ -757,7 +778,7 @@ class TestTerminalToolGatewayLifecycleGuard:
         self._patch_env(monkeypatch, self._make_fake_env(), inside_gateway=True)
 
         result = json.loads(tt.terminal_tool(
-            command=f"/bin/bash -O extglob {script}"
+            command=f"/bin/bash -O extglob {script.as_posix()}"
         ))
 
         assert result["exit_code"] == 1
@@ -798,10 +819,16 @@ class TestTerminalToolGatewayLifecycleGuard:
 
         self._patch_env(monkeypatch, _FakeEnv(), inside_gateway=True)
 
-        result = json.loads(tt.terminal_tool(command=f"/bin/bash {outer}"))
+        result = json.loads(tt.terminal_tool(command=f"/bin/bash {outer.as_posix()}"))
 
         assert result["exit_code"] == 1
 
+    @pytest.mark.skipif(
+        not hasattr(os, "mkfifo"),
+        reason="os.mkfifo is POSIX-only. The contract is NOT skipped on Windows: "
+        "test_non_regular_referenced_script_fails_closed_windows_device pins the "
+        "same fail-closed branch with the non-regular file this platform has.",
+    )
     def test_non_regular_referenced_script_fails_closed(self, monkeypatch, tmp_path):
         import tools.terminal_tool as tt
 
@@ -809,7 +836,29 @@ class TestTerminalToolGatewayLifecycleGuard:
         os.mkfifo(fifo)
         self._patch_env(monkeypatch, self._make_fake_env(), inside_gateway=True)
 
-        result = json.loads(tt.terminal_tool(command=f"/bin/bash {fifo}"))
+        result = json.loads(tt.terminal_tool(command=f"/bin/bash {fifo.as_posix()}"))
+
+        assert result["exit_code"] == 1
+
+    @pytest.mark.skipif(os.name != "nt", reason="reserved device names are Windows-only")
+    def test_non_regular_referenced_script_fails_closed_windows_device(
+        self, monkeypatch, tmp_path
+    ):
+        """Windows twin of the FIFO case: the guard must fail closed on anything
+        that is neither a regular file nor a directory.
+
+        ``_read_referenced_script`` keys that on ``S_ISREG``/``S_ISDIR``, not on
+        the FIFO bit, so a character device reaches the identical branch. Windows
+        resolves the reserved name ``NUL`` from ANY directory, and ``os.fstat``
+        on it reports ``S_IFCHR`` -- verified on this box before this test was
+        written, not assumed.
+        """
+        import tools.terminal_tool as tt
+
+        device = tmp_path / "NUL"
+        self._patch_env(monkeypatch, self._make_fake_env(), inside_gateway=True)
+
+        result = json.loads(tt.terminal_tool(command=f"/bin/bash {device.as_posix()}"))
 
         assert result["exit_code"] == 1
 
@@ -852,7 +901,7 @@ class TestTerminalToolGatewayLifecycleGuard:
         monkeypatch.setattr(
             tt, "_check_all_guards", lambda cmd, env, **kwargs: {"approved": True}
         )
-        command = f"/bin/bash {script}"
+        command = f"/bin/bash {script.as_posix()}"
 
         result = json.loads(tt.terminal_tool(command=command))
 
@@ -901,7 +950,7 @@ class TestLifecycleGuardModule:
         script = tmp_path / "restart.sh"
         script.write_text("#!/bin/bash\nhermes gateway restart\n")
         assert (
-            contains_gateway_lifecycle_command_or_referenced_script(f". {script}")
+            contains_gateway_lifecycle_command_or_referenced_script(f". {script.as_posix()}")
             is True
         )
 
@@ -919,7 +968,7 @@ class TestLifecycleGuardModule:
         script = tmp_path / "padded.sh"
         script.write_bytes(b"#!/bin/bash\n# pad\x00\nhermes gateway restart\n")
         assert (
-            contains_gateway_lifecycle_command_or_referenced_script(f"bash {script}")
+            contains_gateway_lifecycle_command_or_referenced_script(f"bash {script.as_posix()}")
             is True
         )
 
@@ -931,7 +980,7 @@ class TestLifecycleGuardModule:
         script = tmp_path / "restart.sh"
         script.write_text("#!/bin/bash\nhermes gateway restart\n")
         assert (
-            contains_gateway_lifecycle_command_or_referenced_script(f"source {script}")
+            contains_gateway_lifecycle_command_or_referenced_script(f"source {script.as_posix()}")
             is True
         )
 
@@ -944,7 +993,7 @@ class TestLifecycleGuardModule:
         script = tmp_path / "activate.sh"
         script.write_text("#!/bin/bash\nexport PATH=/usr/bin:$PATH\n")
         assert (
-            contains_gateway_lifecycle_command_or_referenced_script(f". {script}")
+            contains_gateway_lifecycle_command_or_referenced_script(f". {script.as_posix()}")
             is False
         )
 
@@ -960,7 +1009,7 @@ class TestLifecycleGuardModule:
         script = tmp_path / "padded_noshebang.sh"
         script.write_bytes(b"# ok\n# pad\x00\nhermes gateway restart\n")
         assert (
-            contains_gateway_lifecycle_command_or_referenced_script(f"bash {script}")
+            contains_gateway_lifecycle_command_or_referenced_script(f"bash {script.as_posix()}")
             is True
         )
 
@@ -976,7 +1025,7 @@ class TestLifecycleGuardModule:
         binary = tmp_path / "tool"
         binary.write_bytes(b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 64 + b"/usr/bin/x\x00")
         assert (
-            contains_gateway_lifecycle_command_or_referenced_script(f"{binary} --version")
+            contains_gateway_lifecycle_command_or_referenced_script(f"{binary.as_posix()} --version")
             is False
         )
 
@@ -993,7 +1042,7 @@ class TestLifecycleGuardModule:
             binary.write_bytes(magic + b"\x00" * 64)
             assert (
                 contains_gateway_lifecycle_command_or_referenced_script(
-                    f"{binary} --version"
+                    f"{binary.as_posix()} --version"
                 )
                 is False
             )
@@ -1010,7 +1059,7 @@ class TestLifecycleGuardModule:
         script = tmp_path / "huge.sh"
         script.write_bytes(b"#!/bin/bash\n# \x00" + b"x" * (1024 * 1024 + 64) + b"\n")
         assert (
-            contains_gateway_lifecycle_command_or_referenced_script(f"bash {script}")
+            contains_gateway_lifecycle_command_or_referenced_script(f"bash {script.as_posix()}")
             is True
         )
 
@@ -1022,7 +1071,7 @@ class TestLifecycleGuardModule:
         script = tmp_path / "safe.sh"
         script.write_bytes(b"#!/bin/bash\necho hello\n")
         assert (
-            contains_gateway_lifecycle_command_or_referenced_script(f"bash {script}")
+            contains_gateway_lifecycle_command_or_referenced_script(f"bash {script.as_posix()}")
             is False
         )
 
@@ -1219,6 +1268,13 @@ class TestLifecycleGuardModule:
         with pytest.raises(GatewayLifecycleBlocked):
             check_gateway_lifecycle("daily ops", str(script))
 
+    @pytest.mark.skipif(
+        not _SYMLINKS_AVAILABLE,
+        reason="creating a symlink needs SeCreateSymbolicLinkPrivilege (admin or "
+        "Developer Mode) on Windows. The resolved-path half of _on_cloud_path is "
+        "NOT left uncovered there: test_cloud_backed_junction_fails_closed_without_"
+        "opening_target pins it with a directory junction, which needs no privilege.",
+    )
     def test_cloud_backed_symlink_fails_closed_without_opening_target(
         self, tmp_path, monkeypatch
     ):
@@ -1258,7 +1314,59 @@ class TestLifecycleGuardModule:
         monkeypatch.setattr(lifecycle_guard.os, "open", reject_cloud_open)
 
         assert lifecycle_guard.contains_gateway_lifecycle_command_or_referenced_script(
-            str(launcher)
+            launcher.as_posix()
+        ) is True
+
+    @pytest.mark.skipif(os.name != "nt", reason="directory junctions are Windows-only")
+    def test_cloud_backed_junction_fails_closed_without_opening_target(
+        self, tmp_path, monkeypatch
+    ):
+        """Windows twin of the cloud-backed symlink case.
+
+        ``_on_cloud_path`` is lexical OR resolved; only the RESOLVED half catches a
+        link whose own path carries no cloud marker. A directory junction is the
+        link Windows creates without any privilege, and ``Path.resolve()`` follows
+        it, so this reaches the same half the POSIX symlink test does. The
+        ``_is_cloud_placeholder_path`` assertion below is what keeps that true: it
+        fails if the fixture ever stops being lexically clean, which would silently
+        demote this to a duplicate of the lexical tests.
+        """
+        import subprocess
+
+        import cron.lifecycle_guard as lifecycle_guard
+
+        cloud_dir = (
+            tmp_path
+            / "Library"
+            / "Mobile Documents"
+            / "com~apple~CloudDocs"
+            / "scripts"
+        )
+        cloud_dir.mkdir(parents=True)
+        (cloud_dir / "helper").write_text("#!/bin/sh\necho safe\n", encoding="utf-8")
+
+        bin_dir = tmp_path / "bin"
+        created = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(bin_dir), str(cloud_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if created.returncode != 0:
+            pytest.skip(f"mklink /J unavailable: {created.stderr.strip()}")
+        launcher = bin_dir / "helper"
+        assert lifecycle_guard._is_cloud_placeholder_path(launcher) is False
+
+        real_open = lifecycle_guard.os.open
+
+        def reject_cloud_open(path, flags, *args, **kwargs):
+            if str(path) == str(launcher):
+                pytest.fail("lifecycle guard opened a cloud-backed junction")
+            return real_open(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(lifecycle_guard.os, "open", reject_cloud_open)
+
+        assert lifecycle_guard.contains_gateway_lifecycle_command_or_referenced_script(
+            launcher.as_posix()
         ) is True
 
     def test_third_party_cloudstorage_path_fails_closed_without_opening(
@@ -1291,7 +1399,7 @@ class TestLifecycleGuardModule:
         monkeypatch.setattr(lifecycle_guard.os, "open", reject_cloud_open)
 
         assert lifecycle_guard.contains_gateway_lifecycle_command_or_referenced_script(
-            str(script)
+            script.as_posix()
         ) is True
 
     def test_read_referenced_script_choke_point_refuses_cloud_paths(
@@ -1517,17 +1625,17 @@ class TestDotSourceIsScannedLikeSource:
 
     @pytest.mark.parametrize("form", [". {path}", "source {path}"])
     def test_both_spellings_block_a_referenced_script(self, tmp_path, helper, form):
-        assert self._scan(form.format(path=helper), cwd=str(tmp_path)) is True
+        assert self._scan(form.format(path=helper.as_posix()), cwd=str(tmp_path)) is True
 
     @pytest.mark.parametrize("form", [". ./helper.sh", "source ./helper.sh"])
     def test_both_spellings_block_a_relative_reference(self, tmp_path, helper, form):
         assert self._scan(form, cwd=str(tmp_path)) is True
 
     def test_env_assignment_prefix_does_not_hide_dot_source(self, tmp_path, helper):
-        assert self._scan(f"FOO=1 . {helper}", cwd=str(tmp_path)) is True
+        assert self._scan(f"FOO=1 . {helper.as_posix()}", cwd=str(tmp_path)) is True
 
     def test_dot_source_nested_in_shell_c_is_blocked(self, tmp_path, helper):
-        assert self._scan(f"sh -c '. {helper}'", cwd=str(tmp_path)) is True
+        assert self._scan(f"sh -c '. {helper.as_posix()}'", cwd=str(tmp_path)) is True
 
     @pytest.mark.parametrize("command", [
         # `.` as a plain path argument is not a source and must stay allowed —
@@ -1545,7 +1653,7 @@ class TestDotSourceIsScannedLikeSource:
     def test_sourcing_a_clean_script_is_allowed(self, tmp_path):
         clean = tmp_path / "ok.sh"
         clean.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
-        assert self._scan(f". {clean}", cwd=str(tmp_path)) is False
+        assert self._scan(f". {clean.as_posix()}", cwd=str(tmp_path)) is False
 
 
 class TestTransparentWrapperPrefixes:
@@ -1577,16 +1685,16 @@ class TestTransparentWrapperPrefixes:
         "env FOO=bar", "timeout 60", "timeout -k 5 60", "sudo --",
     ])
     def test_wrapped_script_reference_is_scanned(self, tmp_path, helper, prefix):
-        assert self._scan(f"{prefix} bash {helper}", cwd=str(tmp_path)) is True
+        assert self._scan(f"{prefix} bash {helper.as_posix()}", cwd=str(tmp_path)) is True
 
     @pytest.mark.parametrize("prefix", ["sudo", "env", "nohup", "timeout 60"])
     def test_wrapped_dot_source_is_scanned(self, tmp_path, helper, prefix):
-        assert self._scan(f"{prefix} . {helper}", cwd=str(tmp_path)) is True
+        assert self._scan(f"{prefix} . {helper.as_posix()}", cwd=str(tmp_path)) is True
 
     @pytest.mark.parametrize("prefix", ["sudo", "env", "nohup"])
     def test_wrapped_shell_c_payload_is_scanned(self, tmp_path, helper, prefix):
         assert self._scan(
-            f"{prefix} sh -c 'bash {helper}'", cwd=str(tmp_path)
+            f"{prefix} sh -c 'bash {helper.as_posix()}'", cwd=str(tmp_path)
         ) is True
 
     @pytest.mark.parametrize("prefix", ["sudo", "env", "nohup", "setsid"])
@@ -1609,7 +1717,7 @@ class TestTransparentWrapperPrefixes:
     def test_privilege_and_namespace_wrappers_are_scanned(
         self, tmp_path, helper, prefix
     ):
-        assert self._scan(f"{prefix} bash {helper}", cwd=str(tmp_path)) is True
+        assert self._scan(f"{prefix} bash {helper.as_posix()}", cwd=str(tmp_path)) is True
 
     @pytest.mark.parametrize("command", [
         # An option carrying a COMMAND STRING is shell source, not an opaque
@@ -1621,7 +1729,7 @@ class TestTransparentWrapperPrefixes:
         "runuser -u root -c 'bash {path}'",
     ])
     def test_command_string_options_are_rescanned(self, tmp_path, helper, command):
-        assert self._scan(command.format(path=helper), cwd=str(tmp_path)) is True
+        assert self._scan(command.format(path=helper.as_posix()), cwd=str(tmp_path)) is True
 
     @pytest.mark.parametrize("command", [
         # The same wrappers around ordinary work must not start blocking.
@@ -1664,12 +1772,12 @@ class TestTransparentWrapperPrefixes:
         script = tmp_path / name
         script.write_text("#!/bin/sh\nhermes gateway restart\n", encoding="utf-8")
         assert self._scan(f"./{name}", cwd=str(tmp_path)) is True
-        assert self._scan(str(script), cwd=str(tmp_path)) is True
+        assert self._scan(script.as_posix(), cwd=str(tmp_path)) is True
 
     def test_wrapped_clean_script_is_allowed(self, tmp_path):
         clean = tmp_path / "ok.sh"
         clean.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
-        assert self._scan(f"sudo bash {clean}", cwd=str(tmp_path)) is False
+        assert self._scan(f"sudo bash {clean.as_posix()}", cwd=str(tmp_path)) is False
 
 
 class TestRelativePathDoesNotDisableDataExemption:
@@ -1855,6 +1963,13 @@ class TestTerminalToolGatewayLifecycleGuardRemote:
         )
 
     def test_remote_backend_script_read_uses_env_execute(self, monkeypatch, tmp_path):
+        """Remote POSIX references retain remote path semantics on every host.
+
+        The literal POSIX script exists only on the remote backend. Local Windows
+        path normalization must not prepend a drive or change its separators
+        before the remote reader receives it; otherwise an unread script could
+        incorrectly pass the lifecycle guard.
+        """
         import tools.terminal_tool as tt
 
         # Path only exists on the remote backend; locally it is absent, so the
@@ -2003,7 +2118,7 @@ class TestLifecycleGuardNeverRaises:
         crash on the binary's decoded bytes."""
         binary = tmp_path / "python3.11"
         binary.write_bytes(b"\x7fELF\x02\x01\x01" + bytes(64) + b"\x90" * 256)
-        assert self._scan(f"{binary} -m json.tool /tmp/x.json") is False
+        assert self._scan(f"{binary.as_posix()} -m json.tool /tmp/x.json") is False
 
     @pytest.mark.parametrize("command", [
         "run /tmp/foo\x00bar/baz.sh",
@@ -2017,7 +2132,7 @@ class TestLifecycleGuardNeverRaises:
     def test_non_utf8_referenced_file_never_raises(self, tmp_path):
         weird = tmp_path / "weird.sh"
         weird.write_bytes(b"\xff\xfe\x00\x01 not really a script")
-        assert self._scan(f"bash {weird}") is False
+        assert self._scan(f"bash {weird.as_posix()}") is False
 
     def test_sourced_zshrc_docker_completions_dir_is_not_blocked(self, tmp_path):
         """#86753: Docker Desktop writes ``fpath=(~/.docker/completions …)``
@@ -2065,7 +2180,7 @@ class TestLifecycleGuardNeverRaises:
         # Directories are not scripts (#86753). Devices stay fail-closed
         # where the OS actually exposes them (POSIX /dev/null).
         # The important contract is: verdict, not exception.
-        assert self._scan(f"bash {tmp_path}") is False
+        assert self._scan(f"bash {tmp_path.as_posix()}") is False
         if os.name != "nt":
             assert self._scan("bash /dev/null") is True
 
