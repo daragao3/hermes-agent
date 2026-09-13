@@ -418,7 +418,7 @@ def _enable_plugin_platform(config: GatewayConfig, entry) -> None:
             )
 
 
-def _enable_plugin_platforms_from_env(config: GatewayConfig) -> None:
+def _enable_plugin_platforms_from_env(config: GatewayConfig, *, platform_names: set[str] | None = None) -> None:
     """Registry-driven enable for plugin platforms (built-ins have rows in ``_ENV_STEPS``).
 
     Enabled when credentials are configured (``is_connected`` MUST gate: ``check_fn`` alone would
@@ -430,7 +430,9 @@ def _enable_plugin_platforms_from_env(config: GatewayConfig) -> None:
         discover_plugins()  # idempotent
         from gateway.platform_registry import platform_registry
         from gateway.config import _candidate_plugin_entries
-        for entry in _candidate_plugin_entries(platform_registry, config):
+        entries = (_candidate_plugin_entries(platform_registry, config) if platform_names is None
+                   else _candidate_plugin_entries(platform_registry, config, platform_names=platform_names))
+        for entry in entries:
             _enable_plugin_platform(config, entry)
     except Exception as e:
         logger.debug("Plugin platform enable pass failed: %s", e)
@@ -625,7 +627,11 @@ _ENV_STEPS: tuple = (
 )
 
 
-def _apply_env_overrides(config: GatewayConfig) -> None:
+def _apply_env_overrides(config: GatewayConfig, *, platform_plugin_names: set[str] | None = None) -> None:
     """Apply environment variable overrides to *config* (see ``_ENV_STEPS``)."""
     for step in _ENV_STEPS:
+        if platform_plugin_names is not None and step is _enable_plugin_platforms_from_env:
+            if platform_plugin_names:
+                step(config, platform_names=platform_plugin_names)
+            continue
         step(config)

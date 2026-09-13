@@ -387,7 +387,18 @@ def _get_config_home_channel(platform_name: str):
     may exist solely in config.yaml, so reading only the env mirror would drop their delivery."""
     try:
         from gateway.config import load_gateway_config, Platform
-        return load_gateway_config().get_home_channel(Platform(platform_name.lower()))
+        name = platform_name.lower()
+        try:
+            platform = Platform(name)
+        except ValueError:
+            from hermes_cli.plugins import discover_plugins
+            discover_plugins()
+            platform = Platform(name)
+        if name in _HOME_TARGET_ENV_VARS:
+            return load_gateway_config(platform_plugin_names=set()).get_home_channel(platform)
+        # Plugins may derive a home from a channel/topic setting. Preserve that
+        # precedence even over saved homes, while resolving only this platform.
+        return load_gateway_config(platform_plugin_names={name}).get_home_channel(platform)
     except Exception:
         logger.debug(
             "config home_channel lookup failed for platform %r", platform_name, exc_info=True)
