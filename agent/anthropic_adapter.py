@@ -303,8 +303,8 @@ def _attribution_headers() -> Dict[str, str]:
 
 
 def _client_timeout(timeout):
-    """httpx.Timeout with the caller's read timeout (default 900s) and a 10s connect."""
-    from httpx import Timeout
+    """SDK-compatible timeout with the caller's read limit and a 10s connect."""
+    from anthropic import Timeout
     read = timeout if (isinstance(timeout, (int, float)) and timeout > 0) else 900.0
     return Timeout(timeout=float(read), connect=10.0)
 
@@ -336,7 +336,10 @@ def _build_anthropic_client_with_bearer_hook(
     normalize_proxy_env_vars()
     from agent.azure_identity_adapter import build_bearer_http_client
     normalized_base_url, kwargs = _base_client_kwargs(base_url, timeout)
-    kwargs["http_client"] = build_bearer_http_client(token_provider, timeout=kwargs["timeout"])
+    kwargs["http_client"] = build_bearer_http_client(
+        token_provider, client_factory=sdk.DefaultHttpxClient,
+        timeout=kwargs["timeout"], follow_redirects=False,
+    )
     kwargs["auth_token"] = "entra-id-bearer-via-http-hook"
     headers = _beta_header(_common_betas_for_base_url(normalized_base_url, drop_context_1m_beta=drop_context_1m_beta))
     return _new_sdk_client(sdk, kwargs, headers)

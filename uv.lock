@@ -8,144 +8,145 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-30T01:54:12.1690142Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
-setuptools = false
-opentelemetry-api = "2026-09-13T01:35:27Z"
-googleapis-common-protos = "2026-09-13T01:35:27Z"
-lxml = "2026-09-13T01:35:27Z"
-modal = false
-numpy = false
-pyyaml = false
-mistralai = false
-firecrawl-py = false
-parallel-web = false
-google-api-core = "2026-09-13T01:35:27Z"
-ruff = false
-pathspec = false
-openwakeword = false
-defusedxml = false
-websockets = false
-exa-py = false
-mcp = false
-python-olm = false
-propcache = "2026-09-13T01:35:27Z"
-wrapt = "2026-09-13T01:35:27Z"
-setuptools-rust = false
-multidict = "2026-09-13T01:35:27Z"
-slack-bolt = false
-fal-client = false
-asyncpg = false
-boto3 = false
-huggingface-hub = false
-pytest-asyncio = false
-slack-sdk = false
-unpaddedbase64 = false
-discord-py = false
-httptools = "2026-09-13T01:35:27Z"
-opentelemetry-proto = "2026-09-13T01:35:27Z"
-certifi = false
-honcho-ai = false
-packaging = false
-attrs = "2026-09-13T01:35:27Z"
-wcwidth = "2026-09-13T01:35:27Z"
-h2 = false
-youtube-transcript-api = false
-psycopg = "2026-09-13T01:35:27Z"
-sse-starlette = "2026-09-13T01:35:27Z"
-websocket-client = "2026-09-13T01:35:27Z"
-ai-edge-litert = false
-aiohttp-socks = false
-croniter = false
-microsoft-teams-apps = false
-rpds-py = "2026-09-13T01:35:27Z"
-azure-identity = false
-lark-oapi = false
-firecrawl-anydoc = false
-mem0ai = false
-vercel = false
-aiosqlite = false
-uvicorn = false
-python-dotenv = false
-zipp = "2026-09-13T01:35:27Z"
-nemo-relay = false
-requests = false
-psycopg2-binary = "2026-09-13T01:35:27Z"
-opentelemetry-exporter-otlp-proto-common = "2026-09-13T01:35:27Z"
-httplib2 = false
-annotated-types = "2026-09-13T01:35:27Z"
-concurrent-log-handler = false
-cryptography = false
 agent-client-protocol = false
-fire = false
-python-multipart = false
-tokenizers = "2026-09-13T01:35:27Z"
-google-auth-httplib2 = false
-openai = false
-psutil = false
-dingtalk-stream = false
-elevenlabs = false
-langfuse = "2026-09-13T01:35:27Z"
-maturin = false
-pvporcupine = false
-starlette = false
-google-auth = false
+ai-edge-litert = false
 aiohttp = false
-darabonba-core = "2026-09-13T01:35:27Z"
-markdown = false
-opentelemetry-sdk = false
-prompt-toolkit = false
-fastapi = false
-anthropic = false
-psycopg-binary = "2026-09-13T01:35:27Z"
-wheel = false
-primp = "2026-09-13T01:35:27Z"
-s3transfer = "2026-09-13T01:35:27Z"
-pytest = false
-pillow = false
-langchain-core = "2026-09-13T01:35:27Z"
-tenacity = false
-pyjwt = false
-ruamel-yaml = false
-anyio = "2026-09-13T01:35:27Z"
-sherpa-onnx = false
-tqdm = "2026-09-13T01:35:27Z"
-pydantic-settings = "2026-09-13T01:35:27Z"
-rich = false
-faster-whisper = false
-debugpy = false
-filelock = "2026-09-13T01:35:27Z"
-supermemory = false
-edge-tts = false
-onnxruntime = false
-sentencepiece = false
-ctranslate2 = "2026-09-13T01:35:27Z"
-opentelemetry-exporter-otlp-proto-http = false
-qrcode = false
-google-api-python-client = false
-brotlicffi = false
-watchfiles = "2026-09-13T01:35:27Z"
-tzdata = false
-importlib-metadata = "2026-09-13T01:35:27Z"
-daytona = false
-mcp-types = "2026-09-13T01:35:27Z"
-httpx = false
-pyasn1 = false
-snowballstemmer = false
-pydantic-core = "2026-09-13T01:35:27Z"
-pydantic = false
-httpx2 = false
-google-auth-oauthlib = false
-ty = false
-mautrix = false
-python-telegram-bot = false
-botocore = "2026-09-13T01:35:27Z"
-jinja2 = false
-hindsight-client = false
-sounddevice = false
+aiohttp-socks = false
+aiosqlite = false
 alibabacloud-dingtalk = false
+annotated-types = "2026-09-13T01:35:27Z"
+anthropic = false
+anyio = "2026-09-13T01:35:27Z"
+asyncpg = false
+attrs = "2026-09-13T01:35:27Z"
+azure-identity = false
+boto3 = false
+botocore = "2026-09-13T01:35:27Z"
+brotlicffi = false
+certifi = false
+concurrent-log-handler = false
+croniter = false
+cryptography = false
+ctranslate2 = "2026-09-13T01:35:27Z"
+darabonba-core = "2026-09-13T01:35:27Z"
+daytona = false
+debugpy = false
+defusedxml = false
+dingtalk-stream = false
+discord-py = false
+edge-tts = false
+elevenlabs = false
+exa-py = false
+fal-client = false
+fastapi = false
+faster-whisper = false
+filelock = "2026-09-13T01:35:27Z"
+fire = false
+firecrawl-anydoc = false
+firecrawl-py = false
+google-api-core = "2026-09-13T01:35:27Z"
+google-api-python-client = false
+google-auth = false
+google-auth-httplib2 = false
+google-auth-oauthlib = false
+googleapis-common-protos = "2026-09-13T01:35:27Z"
+h2 = false
+hindsight-client = false
+honcho-ai = false
+httplib2 = false
+httptools = "2026-09-13T01:35:27Z"
+httpx = false
+httpx2 = false
+huggingface-hub = false
+importlib-metadata = "2026-09-13T01:35:27Z"
+jinja2 = false
+langchain-core = "2026-09-13T01:35:27Z"
+langfuse = "2026-09-13T01:35:27Z"
+lark-oapi = false
+lxml = "2026-09-13T01:35:27Z"
+markdown = false
+maturin = false
+mautrix = false
+mcp = false
+mcp-types = "2026-09-13T01:35:27Z"
+mem0ai = false
+microsoft-teams-apps = false
+mistralai = false
+modal = false
+multidict = "2026-09-13T01:35:27Z"
+nemo-relay = false
+numpy = false
+onnxruntime = false
+openai = false
+opentelemetry-api = "2026-09-13T01:35:27Z"
+opentelemetry-exporter-otlp-proto-common = "2026-09-13T01:35:27Z"
+opentelemetry-exporter-otlp-proto-http = false
+opentelemetry-proto = "2026-09-13T01:35:27Z"
+opentelemetry-sdk = false
+openwakeword = false
+packaging = false
+parallel-web = false
+pathspec = false
+pillow = false
+primp = "2026-09-13T01:35:27Z"
+prompt-toolkit = false
+propcache = "2026-09-13T01:35:27Z"
+psutil = false
+psycopg = "2026-09-13T01:35:27Z"
+psycopg-binary = "2026-09-13T01:35:27Z"
+psycopg2-binary = "2026-09-13T01:35:27Z"
+pvporcupine = false
+pyasn1 = false
+pydantic = false
+pydantic-core = "2026-09-13T01:35:27Z"
+pydantic-settings = "2026-09-13T01:35:27Z"
+pyjwt = false
+pytest = false
+pytest-asyncio = false
+pytest-timeout = false
+python-dotenv = false
+python-multipart = false
+python-olm = false
+python-telegram-bot = false
+pyyaml = false
+qrcode = false
+requests = false
+rich = false
+rpds-py = "2026-09-13T01:35:27Z"
+ruamel-yaml = false
+ruff = false
+s3transfer = "2026-09-13T01:35:27Z"
+sentencepiece = false
+setuptools = false
+setuptools-rust = false
+sherpa-onnx = false
+slack-bolt = false
+slack-sdk = false
+snowballstemmer = false
+sounddevice = false
+sse-starlette = "2026-09-13T01:35:27Z"
+starlette = false
+supermemory = false
+tenacity = false
+tokenizers = "2026-09-13T01:35:27Z"
+tqdm = "2026-09-13T01:35:27Z"
+ty = false
+tzdata = false
+unpaddedbase64 = false
+uvicorn = false
+vercel = false
+watchfiles = false
+wcwidth = "2026-09-13T01:35:27Z"
+websocket-client = "2026-09-13T01:35:27Z"
+websockets = false
+wheel = false
+wrapt = "2026-09-13T01:35:27Z"
+youtube-transcript-api = false
+zipp = "2026-09-13T01:35:27Z"
 
 [manifest]
 constraints = [
@@ -466,21 +467,20 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "0.87.0"
+version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "distro" },
     { name = "docstring-parser" },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "jiter" },
     { name = "pydantic" },
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d6/8f/3281edf7c35cbac169810e5388eb9b38678c7ea9867c2d331237bd5dff08/anthropic-0.87.0.tar.gz", hash = "sha256:098fef3753cdd3c0daa86f95efb9c8d03a798d45c5170329525bb4653f6702d0", size = 588982, upload-time = "2026-03-31T17:52:41.697Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/43/6f3f6006f5216d43a059a1a856d275ef6536cdfa94883b64cc04d7873cb7/anthropic-1.5.0.tar.gz", hash = "sha256:b25f87f5758861f25993383a5c9bf274eb6e0f1b010c84019ad91854cb4e1bc6", size = 1156657, upload-time = "2026-09-10T17:45:35.93Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/02/99bf351933bdea0545a2b6e2d812ed878899e9a95f618351dfa3d0de0e69/anthropic-0.87.0-py3-none-any.whl", hash = "sha256:e2669b86d42c739d3df163f873c51719552e263a3d85179297180fb4fa00a236", size = 472126, upload-time = "2026-03-31T17:52:40.174Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/1c/c32fce35ca0be0205f2377d2238e3ed73dea5abc2be09d15fbd032091d60/anthropic-1.5.0-py3-none-any.whl", hash = "sha256:d9ce04b29ad1f7025dda3e3bc478cde8d2924d2de5417d2d4a4bb0378ecbc2a6", size = 1235236, upload-time = "2026-09-10T17:45:34.216Z" },
 ]
 
 [[package]]
@@ -1984,7 +1984,7 @@ requires-dist = [
     { name = "aiohttp-socks", marker = "extra == 'matrix'", specifier = "==0.11.0" },
     { name = "aiosqlite", marker = "extra == 'matrix'", specifier = "==0.22.1" },
     { name = "alibabacloud-dingtalk", marker = "extra == 'dingtalk'", specifier = "==2.2.59" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = "==0.87.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = "==1.5.0" },
     { name = "asyncpg", marker = "extra == 'matrix'", specifier = "==0.31.0" },
     { name = "azure-identity", marker = "extra == 'azure-identity'", specifier = "==1.25.3" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = "==1.43.93" },
@@ -4159,7 +4159,7 @@ resolution-markers = [
     "python_full_version < '3.12'",
 ]
 dependencies = [
-    { name = "numpy", marker = "python_full_version < '3.12'" },
+    { name = "numpy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7a/97/5a3609c4f8d58b039179648e62dd220f89864f56f7357f5d4f45c29eb2cc/scipy-1.17.1.tar.gz", hash = "sha256:95d8e012d8cb8816c226aef832200b1d45109ed4464303e997c5b13122b297c0", size = 30573822, upload-time = "2026-02-23T00:26:24.851Z" }
 wheels = [
@@ -4214,7 +4214,7 @@ resolution-markers = [
     "python_full_version == '3.12.*'",
 ]
 dependencies = [
-    { name = "numpy", marker = "python_full_version >= '3.12'" },
+    { name = "numpy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a7/25/c2700dfaf6442b4effaa91af24ebce5dc9d31bb4a69706313aae70d72cd0/scipy-1.18.0.tar.gz", hash = "sha256:67b2ad2ad54c72ca6d04975a9b2df8c3638c34ddd5b28738e94fc2b57929d378", size = 30774447, upload-time = "2026-06-19T15:01:43.456Z" }
 wheels = [
@@ -4839,11 +4839,11 @@ name = "vercel-workers"
 version = "0.0.25"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "python_full_version >= '3.12'" },
-    { name = "httpx", marker = "python_full_version >= '3.12'" },
-    { name = "pydantic", marker = "python_full_version >= '3.12'" },
-    { name = "python-dotenv", marker = "python_full_version >= '3.12'" },
-    { name = "vercel", marker = "python_full_version >= '3.12'" },
+    { name = "anyio" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "vercel" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/30/df/04d37021ad7ca53b7599c313e411d91623c7a005c741f491d1eefb7a9f0c/vercel_workers-0.0.25.tar.gz", hash = "sha256:212ded01400b524be51d251df49f801caf115ad7d48cca7eb168cbeceda3def3", size = 64149, upload-time = "2026-06-20T19:26:27.177Z" }
 wheels = [
