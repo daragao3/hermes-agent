@@ -193,7 +193,13 @@ class TestTranscriptWritePatience:
 class TestOpenLockPatience:
     def test_open_survives_multi_second_lock_hold(self, tmp_path):
         """SessionDB() open must wait out a sibling's lock hold instead of
-        disabling persistence for the whole run."""
+        disabling persistence for the whole run.
+
+        End-to-end only. A 3.0s hold is absorbed by SQLite's busy handler, so
+        this does NOT exercise the retry loop in
+        ``_connect_and_init_with_lock_patience`` — see
+        ``test_open_retries_a_locked_open_inside_its_own_patience_loop``.
+        """
         db_path = tmp_path / "state.db"
         # Create + close so the schema exists (open still runs reconcile DDL
         # through the same 1s-timeout connection).
@@ -214,6 +220,85 @@ class TestOpenLockPatience:
             db.create_session("s-open", "cli")
             db.append_message(session_id="s-open", role="user", content="ok")
             assert len(db.get_messages("s-open")) == 1
+        finally:
+            db.close()
+
+    def test_open_retries_a_locked_open_inside_its_own_patience_loop(
+        self, tmp_path, monkeypatch
+    ):
+        """The open path must RETRY a locked open in its own patience loop.
+
+        The test above cannot pin that, and measurement says so rather than
+        intuition: with a 3.0s hold, SQLite's busy handler absorbs the whole
+        thing — ``_init_schema`` blocks ~3.2s and then SUCCEEDS — so
+        ``_connect_and_init`` is called exactly ONCE (5/5 instrumented runs,
+        2026-09-13) and the retry branch never executes. Deleting the retry
+        outright left that test green 8 runs out of 8. It pins the end-to-end
+        contract; it is vacuous with respect to the loop.
+
+        Two things make this one bind. Shrink the writer connection's busy
+        window so contention surfaces to Python in seconds instead of ~20s,
+        and assert the retry happened INSIDE ONE
+        ``_connect_and_init_with_lock_patience`` call: ``__init__`` has a
+        malformed-schema repair fallback that re-opens after a locked open
+        escapes, which masks a removed retry by succeeding anyway.
+        """
+        db_path = tmp_path / "state.db"
+        SessionDB(db_path=db_path).close()  # schema exists; patches go on after
+
+        real_open = SessionDB._open_writer_conn
+
+        def _surface_contention_fast(self):
+            conn = real_open(self)
+            conn.execute("PRAGMA busy_timeout=50")
+            return conn
+
+        entries, attempts = [], []
+        real_patience = SessionDB._connect_and_init_with_lock_patience
+        real_connect = SessionDB._connect_and_init
+        started, release = threading.Event(), threading.Event()
+
+        def _count_patience_entry(self):
+            entries.append(time.monotonic())
+            return real_patience(self)
+
+        def _count_attempt(self):
+            attempts.append(time.monotonic())
+            if len(attempts) >= 2:
+                release.set()  # the loop retried: that is the whole contract
+            return real_connect(self)
+
+        monkeypatch.setattr(SessionDB, "_open_writer_conn", _surface_contention_fast)
+        monkeypatch.setattr(
+            SessionDB, "_connect_and_init_with_lock_patience", _count_patience_entry
+        )
+        monkeypatch.setattr(SessionDB, "_connect_and_init", _count_attempt)
+
+        db = None
+        holder = threading.Thread(
+            target=_hold_write_lock_until,
+            args=(db_path, started, release),
+            kwargs={"max_hold_s": 30.0},
+        )
+        holder.start()
+        try:
+            assert started.wait(5.0)
+            db = SessionDB(db_path=db_path)  # must NOT raise
+        finally:
+            release.set()
+            holder.join(timeout=15.0)
+        assert not holder.is_alive()
+        try:
+            assert len(attempts) >= 2, (
+                "open never retried a locked open — the patience loop did not run"
+            )
+            assert len(entries) == 1, (
+                "open was retried by __init__'s repair fallback, not by the "
+                "patience loop (entries=%d)" % len(entries)
+            )
+            db.create_session("s-retry", "cli")
+            db.append_message(session_id="s-retry", role="user", content="ok")
+            assert len(db.get_messages("s-retry")) == 1
         finally:
             db.close()
 
