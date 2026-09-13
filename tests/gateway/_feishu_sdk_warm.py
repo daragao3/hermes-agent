@@ -50,3 +50,32 @@ def warm_feishu_sdk() -> None:
         import lark_oapi  # noqa: F401
     except Exception:  # noqa: BLE001 — best-effort warm, never fatal
         pass
+
+
+def bind_feishu_sdk_globals() -> None:
+    """Warm the SDK *and* bind the feishu adapter's module globals; never raise.
+
+    :func:`warm_feishu_sdk` only puts ``lark_oapi`` in ``sys.modules``. The
+    adapter's request-builder globals (``CreateMessageRequestBody`` etc., the
+    block at ``plugins/platforms/feishu/adapter.py``) are bound by
+    ``_load_lark_oapi()``, which the adapter defers to first use — so after a
+    plain warm they are still ``None``.
+
+    Feishu tests across many files inject a mock ``_client`` and skip
+    ``connect()`` entirely, then call send paths that reference those globals.
+    Those files call this instead of :func:`warm_feishu_sdk`, at MODULE level,
+    for the same reason and with the same guarantees: the cost lands in
+    collection, which the per-test ``--timeout`` does not cover, and only the
+    files that need it pay.
+
+    Like the warm, this is strictly best-effort and must never decide whether
+    tests run — files gate their ``skipUnless`` on a separate on-disk spec
+    probe.
+    """
+    warm_feishu_sdk()
+    try:
+        from plugins.platforms.feishu.adapter import _load_lark_oapi
+
+        _load_lark_oapi()
+    except Exception:  # noqa: BLE001 — best-effort bind, never fatal
+        pass

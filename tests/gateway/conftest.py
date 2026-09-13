@@ -39,32 +39,30 @@ from unittest.mock import MagicMock
 import pytest
 
 
-@pytest.fixture(scope="session")
-def _bind_lark_sdk_globals_when_installed():
-    """Opt-in binding for Feishu integration tests that need SDK builders.
-
-    The adapter defers ``import lark_oapi`` to first use
-    (``_load_lark_oapi`` — called from connect()/probe_bot()/standalone
-    send), so the request-builder globals (``CreateMessageRequestBody``
-    etc.) stay ``None`` at module import time. Feishu tests across many
-    files inject a mock ``_client`` and skip connect() entirely, then call
-    send paths that reference those globals. Those suites explicitly request
-    this fixture with usefixtures. It must not be autouse: unrelated gateway
-    tests would otherwise import the large SDK and run aiohttp host/TLS probes
-    during setup. When the SDK is absent, the existing skipUnless guards apply.
-    """
-    try:
-        import lark_oapi  # noqa: F401
-    except ImportError:
-        yield
-        return
-    try:
-        from plugins.platforms.feishu.adapter import _load_lark_oapi
-
-        _load_lark_oapi()
-    except Exception:
-        pass  # adapter not importable in this environment — tests will skip
-    yield
+# NOTE: there is deliberately no SDK-loading fixture here.
+#
+# A session-scoped autouse fixture that did ``import lark_oapi`` /
+# ``_load_lark_oapi()`` lived at this spot (upstream f84e3687d8, 2026-08-03).
+# It had to go: the import costs far more than the repo's default
+# ``--timeout``, pytest-timeout bills session-fixture setup to whichever test
+# requests it first, and conftest is imported once per pytest process — so the
+# per-file runner made all ~200 gateway files pay it, and every one of them
+# errored with a "Timeout ... at setup" naming a test that has nothing to do
+# with feishu.
+#
+# Its *reason* was sound and is preserved: feishu tests inject a mock
+# ``_client`` and skip ``connect()``, so the adapter's deferred import leaves
+# the request-builder globals ``None``. The files that need those globals now
+# call ``tests.gateway._feishu_sdk_warm.bind_feishu_sdk_globals()`` at MODULE
+# level, where the cost lands in collection (untimed) and only they pay it.
+# See that module's docstring, and
+# ``tests/gateway/test_feishu_sdk_warm_placement.py`` which enforces this.
+#
+# An intermediate fix (33558add85) kept the fixture but made it opt-in via
+# ``usefixtures``, which did clear the directory-wide breakage. This goes the
+# rest of the way: with no SDK-loading fixture at all, re-adding ``autouse``
+# cannot bring the original failure back, and the placement test can enforce
+# that structurally rather than by convention.
 
 
 def make_async_session_db(sync_mock=None):

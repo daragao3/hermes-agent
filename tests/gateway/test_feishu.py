@@ -14,13 +14,8 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Dict
 from unittest.mock import AsyncMock, Mock, patch
 
-import pytest
-
 from gateway.platforms.event import ProcessingOutcome
-
-# These integration cases inject clients and skip connect(), while still
-# exercising real request builders and SDK callback types.
-pytestmark = pytest.mark.usefixtures("_bind_lark_sdk_globals_when_installed")
+from tests.gateway._feishu_sdk_warm import bind_feishu_sdk_globals
 
 if TYPE_CHECKING:
     from plugins.platforms.feishu.adapter import FeishuAdapter
@@ -64,11 +59,17 @@ except (ImportError, ValueError):
 # same one-time cost in an untimed place -- not a new one.  Kept separate from
 # the probe on purpose: a failure here must never flip tests to SKIPPED, so the
 # boolean stays derived from the on-disk spec and this is best-effort only.
+#
+# BIND, not merely import: ``import lark_oapi`` alone leaves the adapter's
+# request-builder globals (``CreateMessageRequestBody`` etc.) at ``None``,
+# because the adapter defers binding them to ``_load_lark_oapi()``. Tests
+# here inject a mock ``_client`` and skip ``connect()``, so nothing else ever
+# calls it. A session-scoped autouse conftest fixture used to cover that gap
+# (upstream f84e3687d8); it was removed because fixture setup IS timed and it
+# billed the import to every gateway file. See
+# ``tests/gateway/_feishu_sdk_warm.py``.
 if _HAS_LARK_OAPI:
-    try:
-        import lark_oapi  # noqa: F401
-    except Exception:
-        pass
+    bind_feishu_sdk_globals()
 
 
 class _FakeRequestContent:
