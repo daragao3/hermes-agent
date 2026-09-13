@@ -253,9 +253,14 @@ def _render_debug_details(items: list[ReviewItem]) -> str:
 
 
 def _render_pending_items(pending_jobs: list[str]) -> str:
-    """Render the dimmed ``<sub>`` items for jobs still running."""
+    """Render the dimmed ``<sub>`` footer naming the jobs still running.
+
+    Returns the bare element. render_comment appends it as the last block
+    of the comment, so the ``---`` separator above it is the same join
+    every other block gets rather than something this helper carries.
+    """
     job_list = ", ".join(f"`{j}`" for j in sorted(pending_jobs))
-    return f"\n\n---\n\n<sub>Still running {len(pending_jobs)} job{'s' if len(pending_jobs) != 1 else ''}: {job_list}</sub>\n"
+    return f"<sub>Still running {len(pending_jobs)} job{'s' if len(pending_jobs) != 1 else ''}: {job_list}</sub>"
 
 
 def render_comment(
@@ -270,7 +275,9 @@ def render_comment(
     by ``---``. Errors and action_required items are always visible.
     Warnings are shown only when present. Info items are visible; debug items
     are in a collapsible ``<details>`` block. If ``pending_jobs`` is non-empty, a dimmed
-    ``<sub>`` footer is appended listing jobs still running.
+    ``<sub>`` footer listing the jobs still running is appended as the final
+    block, below every section -- the layout b9f82ed39f's commit message
+    renders as the example comment.
 
     When there are no errors, action_required, or warnings, an "all good!"
     banner is shown at the top. Info items remain visible and debug items
@@ -326,10 +333,14 @@ def render_comment(
     if debug:
         sections.append(_render_debug_details(debug))
 
+    # The live-status line is a footer: the docstring has always called it one
+    # and b9f82ed39f's example layout puts it below every section. Appending it
+    # as the last block keeps it there and gives it the same separator as the
+    # rest, instead of gluing it to the first section's heading.
     if pending:
-        body += _render_pending_items(pending)
+        sections.append(_render_pending_items(pending))
     elif waiting:
-        body += "\n\n---\n\n<sub>waiting for more jobs to start…</sub>\n"
+        sections.append("<sub>waiting for more jobs to start…</sub>")
 
     if sections:
         body += "\n\n---\n\n".join(sections)
