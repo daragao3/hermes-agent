@@ -380,6 +380,8 @@ class InteractivePtyFactory(Protocol):
 
 
 class ClaudeVisibilityStore(Protocol):
+    def upsert_projection(self, projection: SessionProjection) -> object: ...
+
     def commit_claude_visibility_job(
         self,
         job_id: str,
@@ -2465,6 +2467,17 @@ class ClaudeNativeRegistrar:
                     sort_keys=True,
                 ).encode()
             ).hexdigest()
+        try:
+            # Validation above authenticates the exact reserved transcript. Publish
+            # its catalog row before terminal visibility, so completion can commit
+            # the visible state and lineage link together without a scanner delay.
+            self._store.upsert_projection(projection)
+        except Exception:
+            _log_swallowed_store_failure("upsert_projection", claim)
+            return ClaudeRegistrarOutcome(
+                "retry", claim.job_id, identity.claude_uuid,
+                "session_bridge_unavailable", "store transition unavailable",
+            )
         try:
             self._store.commit_claude_visibility_job(
                 claim.job_id or "", claim.lease_digest or "", digest, self._clock()
