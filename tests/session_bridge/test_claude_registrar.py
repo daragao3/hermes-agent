@@ -30,6 +30,9 @@ from session_bridge.claude_registrar import (
     ClaudeNativeRegistrar,
     PtyCleanupResult,
     WindowsConPtyFactory,
+    _ExactTranscript,
+    _is_own_startup_stub,
+    _unlink_transcript,
     _PtyReadinessTimeout,
     _RegistrarCancelled,
     _PtyResponseTimeout,
@@ -5004,35 +5007,34 @@ def test_startup_stub_conflict_names_its_shape_and_launch_failure_in_the_log(
     logs nothing: _log_claude_visibility_launch_failed is skipped whenever
     discovery is attempted. No log on the box named the job.
 
-    The outcome must not change here (the detail string is matched by the
-    auto-dismiss and the incomplete-recovery verb); the log line must name the
-    shape and carry the launch failure that discovery swallowed.
+    Since 2026-09-13 the registrar deletes its own stub at this site
+    (test_startup_stub_left_by_a_dead_launch_is_discarded_and_retried), so
+    this test drives the one branch where the stub SURVIVES: the delete
+    fails. Then the outcome must not change (the detail string is matched by
+    the auto-dismiss and the incomplete-recovery verb); the log must name the
+    failed delete, the shape, and the launch failure that discovery swallowed.
     """
 
     item = claim()
-    stub = projection_for(
-        item,
-        messages=[],
-        cwd=None,
-        origin_kind=OriginKind.NATIVE,
-        origin_bridge_id=None,
-    )
-    source = FakeSource(
-        [None, stub],
-        entrypoint=None,
-        project_name=claude_project_directory_name(item.source_cwd or ""),
-    )
+    source = startup_stub_source(item)
     process = FakePty(ready_error=RuntimeError("PTY closed before readiness"))
     store = FakeStore()
+    discarder = RecordingDiscarder(PermissionError("transcript held open"))
 
     with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
-        result = registrar(source, FakeFactory(process), store).process(item)
+        result = registrar(
+            source, FakeFactory(process), store, discard_transcript=discarder
+        ).process(item)
 
     assert result.status == "failed"
     assert result.error_code == "bridge_conflict"
     assert result.detail == "exact transcript conflict"
     assert [call[0] for call in store.calls] == ["fail"]
+    assert len(discarder.paths) == 1, "the delete was not attempted"
     text = caplog.text
+    assert "claude_visibility_startup_stub_discard_failed" in text
+    assert "PermissionError" in text
+    assert "transcript held open" in text
     assert "claude_visibility_exact_transcript_conflict" in text
     assert "startup_stub=True" in text
     assert "messages=0" in text
@@ -5040,6 +5042,316 @@ def test_startup_stub_conflict_names_its_shape_and_launch_failure_in_the_log(
     assert "interactive PTY unavailable" in text, "launch failure reason lost"
     assert "creation_ambiguous" in text
     assert str(item.job_id) in text
+    assert "claude_visibility_startup_stub_discarded" not in text
+
+
+def startup_stub_source(
+    item: ClaudeVisibilityClaim, *, project_name: str | None = None
+) -> FakeSource:
+    """A source whose second lookup returns the CLI's session-init stub.
+
+    The shape measured 2026-09-13 on job 53edc76e: zero messages, no record
+    carrying entrypoint, no bridge origin, no cwd -- 689 bytes of preamble.
+    """
+
+    stub = projection_for(
+        item,
+        messages=[],
+        cwd=None,
+        origin_kind=OriginKind.NATIVE,
+        origin_bridge_id=None,
+    )
+    return FakeSource(
+        [None, stub],
+        entrypoint=None,
+        project_name=project_name
+        or claude_project_directory_name(item.source_cwd or ""),
+    )
+
+
+class RecordingDiscarder:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.paths: list[Path] = []
+        self.error = error
+
+    def __call__(self, path: Path) -> None:
+        self.paths.append(path)
+        if self.error is not None:
+            raise self.error
+
+
+def test_startup_stub_left_by_a_dead_launch_is_discarded_and_retried(
+    caplog,
+) -> None:
+    """The fix Diego chose 2026-09-13 (option a): delete the own stub, keep the uuid.
+
+    A launch that dies before turn 1 (here: the PTY closes before readiness,
+    a retryable creation_ambiguous with the process terminated and closed)
+    leaves the preamble stub under the reserved uuid. Instead of handing it
+    to the validator -- fatal, and permanent, since claude.exe refuses
+    --session-id for an existing transcript -- the registrar removes the file
+    it created and reports the ORIGINAL launch failure as a retry. The
+    reconciliation lease that follows a creation_ambiguous retry then finds
+    nothing, records the uuid absent, and the next launch reuses the uuid.
+    """
+
+    item = claim()
+    source = startup_stub_source(item)
+    process = FakePty(ready_error=RuntimeError("PTY closed before readiness"))
+    store = FakeStore()
+    discarder = RecordingDiscarder()
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(
+            source, FakeFactory(process), store, discard_transcript=discarder
+        ).process(item)
+
+    assert result.status == "retry"
+    assert result.error_code == "creation_ambiguous"
+    assert result.detail == "interactive PTY unavailable"
+    assert [call[0] for call in store.calls] == ["retry"]
+    assert process.terminated and process.closed
+    expected_path = (
+        Path("C:/Users/test/.claude/projects")
+        / claude_project_directory_name(item.source_cwd or "")
+        / f"{item.reserved_claude_uuid}.jsonl"
+    )
+    assert discarder.paths == [expected_path]
+    text = caplog.text
+    assert "claude_visibility_startup_stub_discarded" in text
+    assert str(item.reserved_claude_uuid) in text
+    assert "claude_visibility_launch_failed" in text
+    assert "interactive PTY unavailable" in text
+    assert "claude_visibility_exact_transcript_conflict" not in text
+
+    # The path forward after the retry: the reconciliation lease sees no
+    # transcript for the uuid and records it absent, which is what re-arms
+    # the launch lease with the SAME reserved uuid.
+    reconciliation = claim(
+        lease_kind="reconciliation",
+        launch_permitted=False,
+        registration_reserved=False,
+        requires_exact_id_reconciliation=True,
+        attempt_ordinal=2,
+    )
+    after = FakeStore()
+    outcome = registrar(FakeSource(), FakeFactory(), after).process(reconciliation)
+    assert outcome.status == "absent"
+    assert outcome.reserved_claude_uuid == item.reserved_claude_uuid
+    assert [call[0] for call in after.calls] == ["absent"]
+
+
+def test_startup_stub_after_a_provider_limit_is_discarded_too(caplog) -> None:
+    """provider_limit_observed is the other road into the discovery poll.
+
+    It is only kept set when terminate and close both succeeded, so the
+    process is dead here as well; a stub left behind is the registrar's own.
+    """
+
+    item = claim()
+    source = startup_stub_source(item)
+    process = FakePty(
+        output="You've hit your weekly limit " + chr(183)
+        + " resets Sep 14, 4am (America/New_York)" + chr(13) + chr(10)
+    )
+    store = FakeStore()
+    discarder = RecordingDiscarder()
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(
+            source, FakeFactory(process), store, discard_transcript=discarder
+        ).process(item)
+
+    assert result.status == "retry"
+    assert result.error_code == "creation_ambiguous"
+    assert result.detail == "Claude provider limit interrupted registration"
+    assert [call[0] for call in store.calls] == ["retry"]
+    assert len(discarder.paths) == 1
+    assert "claude_visibility_startup_stub_discarded" in caplog.text
+
+
+def test_startup_stub_in_a_foreign_project_directory_is_not_discarded(
+    caplog,
+) -> None:
+    """The location guard: a stub outside the job's own project dir is not ours."""
+
+    item = claim()
+    source = startup_stub_source(item, project_name="C--Users-someone-else")
+    process = FakePty(ready_error=RuntimeError("PTY closed before readiness"))
+    store = FakeStore()
+    discarder = RecordingDiscarder()
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(
+            source, FakeFactory(process), store, discard_transcript=discarder
+        ).process(item)
+
+    assert result.status == "failed"
+    assert result.error_code == "bridge_conflict"
+    assert result.detail == "exact transcript conflict"
+    assert [call[0] for call in store.calls] == ["fail"]
+    assert discarder.paths == []
+    assert "claude_visibility_exact_transcript_conflict" in caplog.text
+    assert "startup_stub=True" in caplog.text
+    assert "claude_visibility_startup_stub_discarded" not in caplog.text
+
+
+def test_startup_stub_under_another_uuid_is_not_discarded(caplog) -> None:
+    """The identity guard: only a file named by the reserved uuid is deleted."""
+
+    item = claim()
+
+    class RenamedSource(FakeSource):
+        def find_native_session(self, native_id: str) -> Path | None:
+            found = super().find_native_session(native_id)
+            if found is None:
+                return None
+            return found.with_name("00000000-0000-5000-8000-000000000000.jsonl")
+
+    stub = projection_for(
+        item,
+        messages=[],
+        cwd=None,
+        origin_kind=OriginKind.NATIVE,
+        origin_bridge_id=None,
+    )
+    source = RenamedSource(
+        [None, stub],
+        entrypoint=None,
+        project_name=claude_project_directory_name(item.source_cwd or ""),
+    )
+    process = FakePty(ready_error=RuntimeError("PTY closed before readiness"))
+    store = FakeStore()
+    discarder = RecordingDiscarder()
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(
+            source, FakeFactory(process), store, discard_transcript=discarder
+        ).process(item)
+
+    assert result.status == "failed"
+    assert result.detail == "exact transcript conflict"
+    assert discarder.paths == []
+    assert "claude_visibility_startup_stub_discarded" not in caplog.text
+
+
+def test_startup_stub_after_a_clean_registered_exit_is_not_discarded(
+    caplog,
+) -> None:
+    """No launch failure, no self-clean: a stub after REGISTERED + clean /exit
+    is a genuine conflict (the CLI answered but persisted no turn), and the
+    validator keeps the last word.
+    """
+
+    item = claim()
+    source = startup_stub_source(item)
+    store = FakeStore()
+    discarder = RecordingDiscarder()
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(
+            source, FakeFactory(FakePty()), store, discard_transcript=discarder
+        ).process(item)
+
+    assert result.status == "failed"
+    assert result.error_code == "bridge_conflict"
+    assert result.detail == "exact transcript conflict"
+    assert [call[0] for call in store.calls] == ["fail"]
+    assert discarder.paths == []
+    assert "claude_visibility_exact_transcript_conflict" in caplog.text
+    assert "launch_failure=None" in caplog.text
+
+
+def test_default_discarder_is_wired_when_none_is_injected() -> None:
+    """Without an injected discarder the registrar unlinks for real.
+
+    The fake path does not exist, and _unlink_transcript treats an absent
+    file as done -- so a registrar whose default discarder were missing or
+    miswired would fall through to the fatal conflict instead of retrying.
+    """
+
+    item = claim()
+    source = startup_stub_source(item)
+    process = FakePty(ready_error=RuntimeError("PTY closed before readiness"))
+    store = FakeStore()
+
+    result = registrar(source, FakeFactory(process), store).process(item)
+
+    assert result.status == "retry"
+    assert result.error_code == "creation_ambiguous"
+    assert [call[0] for call in store.calls] == ["retry"]
+
+
+def test_registrar_rejects_a_non_callable_discarder() -> None:
+    with pytest.raises(TypeError):
+        registrar(FakeSource(), FakeFactory(), discard_transcript="rm")  # type: ignore[arg-type]
+
+
+def test_unlink_transcript_removes_the_file_and_tolerates_absence(tmp_path) -> None:
+    stub = tmp_path / "057fe73b-35c8-51e2-b0a1-384e21b1dd49.jsonl"
+    stub.write_text('{"type":"custom-title"}\n', encoding="utf-8")
+
+    _unlink_transcript(stub)
+    assert not stub.exists()
+    _unlink_transcript(stub)  # already gone: not an error
+    assert not stub.exists()
+
+
+def _own_stub_transcript(
+    item: ClaudeVisibilityClaim, **changes: Any
+) -> _ExactTranscript:
+    projection = projection_for(
+        item,
+        messages=[],
+        cwd=None,
+        origin_kind=OriginKind.NATIVE,
+        origin_bridge_id=None,
+    )
+    path = (
+        Path("C:/Users/test/.claude/projects")
+        / claude_project_directory_name(item.source_cwd or "")
+        / f"{item.reserved_claude_uuid}.jsonl"
+    )
+    parse = FakeParse(projection, entrypoint=None)
+    fields = {"path": path, "parsed": parse}
+    fields.update(changes)
+    return _ExactTranscript(**fields)
+
+
+def test_is_own_startup_stub_accepts_only_the_registrar_s_own_preamble() -> None:
+    item = claim()
+    value = candidate()
+    identity = derive_claude_visibility_identity(value, SECRET)
+    ok = _own_stub_transcript(item)
+    assert _is_own_startup_stub(item, value, identity, ok) is True
+
+    # Shape guards.
+    with_message = _own_stub_transcript(
+        item, parsed=FakeParse(projection_for(item), entrypoint=None)
+    )
+    assert _is_own_startup_stub(item, value, identity, with_message) is False
+    with_entrypoint = _own_stub_transcript(
+        item, parsed=FakeParse(ok.projection, entrypoint="cli")
+    )
+    assert _is_own_startup_stub(item, value, identity, with_entrypoint) is False
+
+    # Identity guards.
+    other_stem = _own_stub_transcript(
+        item, path=ok.path.with_name("00000000-0000-5000-8000-000000000000.jsonl")
+    )
+    assert _is_own_startup_stub(item, value, identity, other_stem) is False
+    other_suffix = _own_stub_transcript(item, path=ok.path.with_suffix(".json"))
+    assert _is_own_startup_stub(item, value, identity, other_suffix) is False
+    foreign_claim = replace(
+        item, reserved_claude_uuid="00000000-0000-5000-8000-000000000000"
+    )
+    assert _is_own_startup_stub(foreign_claim, value, identity, ok) is False
+
+    # Location guard.
+    elsewhere = _own_stub_transcript(
+        item, path=Path("C:/Users/test/.claude/projects/C--elsewhere") / ok.path.name
+    )
+    assert _is_own_startup_stub(item, value, identity, elsewhere) is False
 
 
 def test_prompt_only_conflict_after_a_provider_limit_is_logged_with_its_shape(
@@ -5063,13 +5375,18 @@ def test_prompt_only_conflict_after_a_provider_limit_is_logged_with_its_shape(
         output="You've hit your weekly limit " + chr(183)
         + " resets Sep 14, 4am (America/New_York)" + chr(13) + chr(10)
     )
+    discarder = RecordingDiscarder()
 
     with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
-        result = registrar(source, FakeFactory(process)).process(item)
+        result = registrar(
+            source, FakeFactory(process), discard_transcript=discarder
+        ).process(item)
 
     assert result.status == "failed"
     assert result.error_code == "bridge_conflict"
     assert result.detail == "exact transcript conflict"
+    # Not a startup stub: a transcript with a message is never deleted.
+    assert discarder.paths == []
     text = caplog.text
     assert "claude_visibility_exact_transcript_conflict" in text
     assert "startup_stub=False" in text
