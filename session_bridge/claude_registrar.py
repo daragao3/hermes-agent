@@ -2669,7 +2669,7 @@ def _validate_projection(
     if projection.origin_kind is not OriginKind.BRIDGE_PLACEHOLDER:
         raise _TranscriptConflict("bridge_conflict")
     if allow_incomplete:
-        if incomplete_kind == "incomplete":
+        if incomplete_kind in {"incomplete", "incomplete_provider_limited"}:
             return incomplete_kind
         raise _TranscriptConflict("bridge_conflict")
     recovery_kind = _classify_exact_auth_recovery_messages(
@@ -2862,19 +2862,62 @@ def _classify_incomplete_registration_messages(
     # another attempt, and claim_claude_auth_recovery bounds those
     # independently on attempts, daily count and reserved cost. Bounded by
     # _MAX_AUTH_RECOVERY_ATTEMPTS so an unbounded transcript cannot classify.
-    if (
-        len(original) % 2 == 1
-        and 3 <= len(original) <= 1 + 2 * _MAX_AUTH_RECOVERY_ATTEMPTS
-        and all(
-            original[index].role == "user"
-            and original[index].content == recovery_prompt
-            and original[index + 1].role == "assistant"
-            and _is_exact_provider_limit_banner(original[index + 1].content)
-            for index in range(1, len(original), 2)
-        )
-    ):
-        return "incomplete"
+    if _is_provider_limited_recovery_tail(original, recovery_prompt):
+        return "incomplete_provider_limited"
     return None
+
+
+def _is_provider_limited_recovery_tail(
+    messages: Sequence[ProjectedMessage], recovery_prompt: str
+) -> bool:
+    """True when EVERY recovery turn after the prompt ended in a limit banner.
+
+    ``messages[0]`` is already proven to be the registration prompt. This walks
+    the rest as a sequence of (recovery prompt, provider limit banner) pairs.
+
+    Each native ``--resume`` may record its own inert scaffold before accepting
+    input, so ONE is tolerated immediately ahead of each recovery prompt and
+    nowhere else -- without that, a SECOND authorized attempt would write a
+    shape this function could no longer read, and the job would go
+    unclassifiable again on exactly the retry the policy exists to allow.
+
+    A TRAILING scaffold is refused: it means a resume mounted and recorded
+    nothing, which is not evidence that the provider refused the turn, and may
+    be a call still in flight.
+
+    Bounded by ``_MAX_AUTH_RECOVERY_ATTEMPTS``.
+    """
+
+    if not messages or not (
+        messages[-1].role == "assistant"
+        and _is_exact_provider_limit_banner(messages[-1].content)
+    ):
+        return False
+    index = 1
+    attempts = 0
+    while index < len(messages):
+        message = messages[index]
+        if (
+            message.role == "assistant"
+            and message.content == _CLAUDE_2110_RESUME_SCAFFOLD
+        ):
+            index += 1
+            continue
+        if index + 1 >= len(messages):
+            return False
+        recovery_user, response = messages[index], messages[index + 1]
+        if (
+            recovery_user.role != "user"
+            or recovery_user.content != recovery_prompt
+            or response.role != "assistant"
+            or not _is_exact_provider_limit_banner(response.content)
+        ):
+            return False
+        attempts += 1
+        if attempts > _MAX_AUTH_RECOVERY_ATTEMPTS:
+            return False
+        index += 2
+    return attempts >= 1
 
 
 def _classify_exact_auth_recovery_messages(
