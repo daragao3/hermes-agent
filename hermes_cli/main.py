@@ -2182,8 +2182,11 @@ def _clear_bytecode_cache(root: Path) -> int:
         dirnames[:] = [
             d
             for d in dirnames
-            if d not in {"venv", ".venv", "node_modules", ".git", ".worktrees", ".claude"}
+            if d not in {"venv", ".venv", "node_modules", ".git", ".worktrees", ".claude", ".hermes-runtime"}
             and not os.path.exists(os.path.join(dirpath, d, ".git"))
+            # Retained or custom-named virtualenvs own their installed bytecode.
+            # Prune structurally so runtime rollback directories are not walked.
+            and not os.path.isfile(os.path.join(dirpath, d, "pyvenv.cfg"))
         ]
         if os.path.basename(dirpath) == "__pycache__":
             try:
