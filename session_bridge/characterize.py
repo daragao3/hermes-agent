@@ -2022,6 +2022,18 @@ class LiveCharacterizationError(RuntimeError):
 # it, resumes it and disposes of it.  They enter the closure only as type and
 # helper imports, and they are the highest-churn files in the package, so
 # tracking them would invalidate every proof for changes it never measured.
+#
+# The converse test is *execution*, not import shape: a module belongs in the
+# digest when the live run actually runs it.  ``codex_native`` is a small leaf,
+# but it parses the Codex rollout file itself and the codex read stage reaches
+# it -- ``project_thread`` calls ``supplement_native_users`` before origin
+# detection -- so a change there moves the very projection the proof checks.
+# That parser is coupled to a file format the Codex CLI owns, which is exactly
+# what a version-drift proof is for, so it is tracked.  It is only partly
+# exercised (``local_inventory`` serves the reconciliation census, which
+# characterization never calls); the manifest is module-granular and accepts
+# that over-approximation, as it already does for ``claude_adapter`` under
+# ``codex``.
 BRIDGE_REVISION_EXCLUDED_MODULES = frozenset({
     "context_pack",
     "sidebar",
@@ -2054,6 +2066,7 @@ BRIDGE_REVISION_MODULES: Mapping[str, tuple[str, ...]] = {
         "characterize",
         "claude_adapter",
         "codex_adapter",
+        "codex_native",
         "models",
     ),
 }

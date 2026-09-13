@@ -792,6 +792,27 @@ def test_bridge_revision_moves_only_for_the_provider_whose_module_changed(
     assert after["codex"] == before["codex"]
 
 
+def test_bridge_revision_moves_for_codex_alone_when_the_rollout_parser_changes(
+    tmp_path: Path,
+) -> None:
+    """``codex_native`` is tracked, and tracked on the codex side only.
+
+    The codex read stage runs it -- ``project_thread`` supplements the
+    projection from the native rollout file before origin detection -- so a
+    change to that parser must invalidate the codex proof.  Claude never
+    reaches it, so its proof must not move.
+    """
+
+    root = _fake_package_root(tmp_path)
+    before = current_bridge_revisions(package_root=root)
+
+    (root / "codex_native.py").write_text("# changed parser\n", encoding="utf-8")
+    after = current_bridge_revisions(package_root=root)
+
+    assert after["codex"] != before["codex"]
+    assert after["claude"] == before["claude"]
+
+
 def test_bridge_revision_moves_for_both_when_the_harness_changes(
     tmp_path: Path,
 ) -> None:
