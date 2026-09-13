@@ -774,14 +774,26 @@ _HERMES_BEHAVIORAL_VARS = frozenset({
     "HERMES_DASHBOARD_PORTAL_URL",
     # state.db trigram opt-out. Operators set this to reclaim the multi-GB
     # `messages_fts_trigram` index (CJK/substring search only); on this box it
-    # is a *User-level* Windows env var, so every shell inherits it. Left set,
-    # SessionDB drops the trigram FTS at open and the suite silently measures a
-    # one-index schema: `optimize_fts()` returns 1 instead of 2 and the v9
-    # migration test's `messages_fts_trigram MATCH` raises "no such table".
-    # `scripts/run_tests.sh` never saw this because its `env -i` allowlist
-    # drops the var, so the gap only bit a direct `python -m pytest` run.
-    # Tests that want the index absent opt IN explicitly with
-    # `monkeypatch.setenv` (see tests/test_state_db_fts_external_content.py).
+    # is a *User-level* Windows env var, so every shell inherits it and a direct
+    # `python -m pytest` run sees it. `scripts/run_tests.sh` never did, because
+    # its `env -i` allowlist drops the var -- which is why the gap below only
+    # ever bit a direct run.
+    #
+    # NOTHING ON THIS BRANCH READS IT. The deep-FTS split left the trigram index
+    # built unconditionally, so setting the var opts out of nothing. Do NOT
+    # "opt in" with `monkeypatch.setenv` to get a one-index schema: the second
+    # index is built anyway, `check_fts_integrity()` returns two entries, and an
+    # assertion expecting one reads the extra entry as index corruption. Two
+    # modules learned that the expensive way and their no-op fixtures were
+    # removed -- see the notes in tests/test_state_db_fts_external_content.py
+    # and tests/test_state_db_fts_integrity_probe.py.
+    #
+    # It stays on this scrub list regardless, for the case it was added for:
+    # `main` still reads it (hermes_state.py `os.getenv`), so an integration
+    # from there makes the var live again. Left set with a reader present, the
+    # suite silently measures a one-index schema -- `optimize_fts()` returns 1
+    # instead of 2 and the v9 migration test's `messages_fts_trigram MATCH`
+    # raises "no such table".
     "HERMES_DISABLE_MESSAGE_TRIGRAM",
     # Claude Code's session markers. detect_session_driver() reads either one
     # and stamps origin_json {"driver": "claude-code"} onto every cli/tui

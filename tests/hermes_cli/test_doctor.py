@@ -1,6 +1,7 @@
 """Tests for hermes_cli.doctor."""
 
 import importlib.util
+import inspect
 import os
 import shutil
 
@@ -1874,6 +1875,33 @@ class TestDoctorDeprecatedConfigAndEnv:
         assert "⚠" in out or "Deprecated" in out
 
 
+def _patch_db_opens_cleanly(monkeypatch, stub):
+    """Stub ``hermes_state_repair._db_opens_cleanly``, refusing a drifted stub.
+
+    A stub that declares parameters production does not have cannot fail when
+    production changes, and it makes a dead parameter look alive to ``grep``.
+    That is not hypothetical: these stubs carried ``include_fts_integrity`` for
+    a month after the deep-FTS check was split out into the standalone
+    ``check_state_db_fts_integrity``, and the leftover kwarg sent a later
+    investigation looking for a seam that no longer existed.
+
+    ``autospec`` does not close this: it validates each *call* against the real
+    signature, and the only caller (``doctor_state``) passes just
+    ``timeout_seconds`` -- so a phantom keyword-only parameter is never
+    exercised and an autospec'd stub stays green. Comparing the declared
+    parameters is what actually catches it.
+    """
+    import hermes_state_repair
+
+    real = list(inspect.signature(hermes_state_repair._db_opens_cleanly).parameters)
+    got = list(inspect.signature(stub).parameters)
+    assert got == real, (
+        "probe stub has drifted from hermes_state_repair._db_opens_cleanly: "
+        f"stub declares {got}, production declares {real}"
+    )
+    monkeypatch.setattr("hermes_state_repair._db_opens_cleanly", stub)
+
+
 class TestStateDbProbeBudget:
     """`hermes doctor` must terminate on a state.db too large to scan.
 
@@ -1903,7 +1931,7 @@ class TestStateDbProbeBudget:
         db.create_session(session_id="probe-budget-test", source="cli")
         db.close()
 
-        monkeypatch.setattr("hermes_state_repair._db_opens_cleanly", probe)
+        _patch_db_opens_cleanly(monkeypatch, probe)
         repaired = []
         monkeypatch.setattr(
             "hermes_state_repair.repair_state_db_schema",
@@ -1919,7 +1947,7 @@ class TestStateDbProbeBudget:
         """Doctor must never call the probe unbounded — that is the hang."""
         seen = {}
 
-        def probe(path, *, timeout_seconds=None, include_fts_integrity=False):
+        def probe(db_path, *, timeout_seconds=None):
             seen["timeout_seconds"] = timeout_seconds
             return None
 
@@ -1935,7 +1963,7 @@ class TestStateDbProbeBudget:
     ):
         import hermes_state
 
-        def probe(path, *, timeout_seconds=None, include_fts_integrity=False):
+        def probe(db_path, *, timeout_seconds=None):
             raise hermes_state.StateDbProbeTimeout(
                 "PRAGMA integrity_check", float(timeout_seconds or 5)
             )
@@ -1962,13 +1990,13 @@ class TestStateDbProbeBudget:
         db.create_session(session_id="probe-budget-fix", source="cli")
         db.close()
 
-        def probe(path, *, timeout_seconds=None, include_fts_integrity=False):
+        def probe(db_path, *, timeout_seconds=None):
             raise hermes_state.StateDbProbeTimeout(
                 "PRAGMA integrity_check", float(timeout_seconds or 5)
             )
 
         repaired = []
-        monkeypatch.setattr("hermes_state_repair._db_opens_cleanly", probe)
+        _patch_db_opens_cleanly(monkeypatch, probe)
         monkeypatch.setattr(
             "hermes_state_repair.repair_state_db_schema",
             lambda *a, **k: repaired.append(a) or {"repaired": True},
@@ -2301,9 +2329,9 @@ class TestStateDbDeepProbe:
 
         # The general probe always passes here; these tests are about the FTS
         # check that runs beside it.
-        monkeypatch.setattr(
-            "hermes_state_repair._db_opens_cleanly",
-            lambda path, *, timeout_seconds=None, include_fts_integrity=False: None,
+        _patch_db_opens_cleanly(
+            monkeypatch,
+            lambda db_path, *, timeout_seconds=None: None,
         )
         calls = []
 
