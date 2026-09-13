@@ -364,3 +364,273 @@ def test_resume_backend_preserves_sanitized_native_failure(monkeypatch):
         "error_code": "creation_ambiguous",
         "error_detail": "Claude provider limit interrupted authentication recovery",
     }
+
+
+_WEEKLY_LIMIT_BANNER = (
+    "You've hit your weekly limit \u00b7 resets Sep 14, 4am (America/New_York)"
+)
+
+
+def _transcript_for(messages):
+    """One placeholder-origin transcript carrying exactly these messages."""
+
+    identity = derive_claude_visibility_identity(candidate(), SECRET)
+    projection = replace(projection_for(claim()), messages=messages)
+    source = FakeSource([projection])
+    path = source.find_native_session(identity.claude_uuid)
+    return _ExactTranscript(path, source.parse(path)), identity
+
+
+def _recovery_prompt():
+    from session_bridge.claude_registrar import (
+        build_incomplete_registration_recovery_prompt,
+    )
+
+    return build_incomplete_registration_recovery_prompt(
+        derive_claude_visibility_identity(candidate(), SECRET)
+    )
+
+
+@pytest.mark.parametrize("scaffolded", [False, True])
+def test_provider_limit_banner_leaves_the_registration_resumably_incomplete(
+    scaffolded,
+):
+    """The exact shape job aba0f323 held after its 2026-09-12 18:09Z resume.
+
+    A paid resume that reached the CLI and drew a weekly-limit banner instead
+    of a reply used to classify as nothing at all, so the operator verb refused
+    a job whose only problem was a rate-limited account.
+    """
+
+    messages = [projection_for(claim()).messages[0]]
+    if scaffolded:
+        messages.append(
+            ProjectedMessage("scaffold", 0, "assistant", "No response requested.", 11)
+        )
+    messages += [
+        ProjectedMessage("u2", 0, "user", _recovery_prompt(), 12),
+        ProjectedMessage("a2", 0, "assistant", _WEEKLY_LIMIT_BANNER, 13),
+    ]
+    transcript, identity = _transcript_for(messages)
+
+    assert (
+        _validate_projection(
+            transcript, candidate(), identity, SECRET, allow_incomplete=True
+        )
+        == "incomplete"
+    )
+    # Widening the INCOMPLETE verdict must never widen the launch path: an
+    # unanswered recovery turn is still not a registration.
+    with pytest.raises(Exception, match="bridge_conflict"):
+        _validate_projection(transcript, candidate(), identity, SECRET)
+
+
+def test_repeated_provider_limit_banners_classify_only_within_the_attempt_bound():
+    from session_bridge.claude_registrar import _MAX_AUTH_RECOVERY_ATTEMPTS
+
+    recovery_prompt = _recovery_prompt()
+
+    def attempts(count):
+        messages = [projection_for(claim()).messages[0]]
+        for index in range(count):
+            messages += [
+                ProjectedMessage(
+                    "retry-u%d" % index, 0, "user", recovery_prompt, 12 + 2 * index
+                ),
+                ProjectedMessage(
+                    "retry-a%d" % index,
+                    0,
+                    "assistant",
+                    _WEEKLY_LIMIT_BANNER,
+                    13 + 2 * index,
+                ),
+            ]
+        return messages
+
+    bounded, identity = _transcript_for(attempts(_MAX_AUTH_RECOVERY_ATTEMPTS))
+    assert (
+        _validate_projection(
+            bounded, candidate(), identity, SECRET, allow_incomplete=True
+        )
+        == "incomplete"
+    )
+
+    over, over_identity = _transcript_for(attempts(_MAX_AUTH_RECOVERY_ATTEMPTS + 1))
+    with pytest.raises(Exception, match="bridge_conflict"):
+        _validate_projection(
+            over, candidate(), over_identity, SECRET, allow_incomplete=True
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["wrong_prompt", "banner_with_prose", "banner_from_user", "answered_with_work"],
+)
+def test_provider_limit_widening_still_refuses_everything_else(mutation):
+    messages = [
+        projection_for(claim()).messages[0],
+        ProjectedMessage("u2", 0, "user", _recovery_prompt(), 12),
+        ProjectedMessage("a2", 0, "assistant", _WEEKLY_LIMIT_BANNER, 13),
+    ]
+    if mutation == "wrong_prompt":
+        messages[1] = replace(messages[1], content="continue")
+    elif mutation == "banner_with_prose":
+        messages[2] = replace(
+            messages[2], content=_WEEKLY_LIMIT_BANNER + "\nI will stop here."
+        )
+    elif mutation == "banner_from_user":
+        messages[2] = replace(messages[2], role="user")
+    else:
+        messages[2] = replace(messages[2], content="Working on the project.")
+    transcript, identity = _transcript_for(messages)
+
+    with pytest.raises(Exception, match="bridge_conflict"):
+        _validate_projection(
+            transcript, candidate(), identity, SECRET, allow_incomplete=True
+        )
+
+
+def test_every_refusal_the_recovery_module_raises_has_a_named_cause():
+    """No refusal in the wrapped module may reach the operator unnamed.
+
+    cli.py collapses every ValueError out of recover_incomplete_registration
+    into one gate name. This walks the module's own raise sites, so adding a
+    refusal without adding its slug fails here instead of quietly restoring the
+    "nine causes, one name" defect.
+    """
+
+    import ast
+    import inspect as inspect_module
+
+    import session_bridge.claude_incomplete_recovery as recovery
+    from session_bridge.cli import _incomplete_recovery_refusal_reason
+
+    tree = ast.parse(inspect_module.getsource(recovery))
+    messages = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
+            continue
+        if getattr(node.exc.func, "id", None) != "ValueError" or not node.exc.args:
+            continue
+        argument = node.exc.args[0]
+        if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+            messages.append(argument.value)
+        elif isinstance(argument, ast.BinOp) and isinstance(
+            argument.left, ast.Constant
+        ):
+            # "incomplete recovery unavailable: " + <bounded store status>
+            messages.append(argument.left.value + "no_due_job")
+        else:
+            raise AssertionError("unrecognized refusal shape: " + ast.dump(argument))
+
+    assert len(messages) >= 9
+    assert [
+        message
+        for message in messages
+        if _incomplete_recovery_refusal_reason(ValueError(message)) == "unrecognized"
+    ] == []
+
+
+def test_refusal_reason_names_bounded_causes_and_never_echoes_free_text():
+    from session_bridge.claude_registrar import _TranscriptConflict
+    from session_bridge.cli import _incomplete_recovery_refusal_reason
+
+    assert (
+        _incomplete_recovery_refusal_reason(
+            ValueError("incomplete recovery job already dismissed")
+        )
+        == "job_already_dismissed"
+    )
+    assert (
+        _incomplete_recovery_refusal_reason(
+            ValueError("exact failed Claude visibility job required")
+        )
+        == "no_exact_uncleared_failed_job"
+    )
+    assert (
+        _incomplete_recovery_refusal_reason(_TranscriptConflict("bridge_conflict"))
+        == "native_transcript_bridge_conflict"
+    )
+    assert (
+        _incomplete_recovery_refusal_reason(
+            ValueError("incomplete recovery unavailable: max_attempts_exhausted")
+        )
+        == "recovery_lease_unavailable_max_attempts_exhausted"
+    )
+    # A status that is not a plain slug is reported without its payload.
+    assert (
+        _incomplete_recovery_refusal_reason(
+            ValueError("incomplete recovery unavailable: C:/secret path")
+        )
+        == "recovery_lease_unavailable"
+    )
+    # Anything unaccounted for is named, never echoed.
+    assert (
+        _incomplete_recovery_refusal_reason(
+            ValueError("transcript said: my password is hunter2")
+        )
+        == "unrecognized"
+    )
+    assert (
+        _incomplete_recovery_refusal_reason(_TranscriptConflict("Not A Slug"))
+        == "native_transcript_conflict"
+    )
+
+
+def test_resume_backend_reports_which_cause_refused_without_changing_the_gate(
+    monkeypatch,
+):
+    import session_bridge.claude_incomplete_recovery as recovery
+    import session_bridge.cli as cli
+    from session_bridge.config import BridgeConfig
+
+    backend = cli.ProductionBackend(BridgeConfig())
+    monkeypatch.setattr(cli, "resolve_marker_key", lambda: SECRET)
+    monkeypatch.setattr(cli, "resolve_retired_marker_keys", lambda **kwargs: ())
+    monkeypatch.setattr(backend, "_require_store", lambda: object())
+
+    def refuse(**kwargs):
+        raise ValueError(
+            "incomplete recovery already started; exact reconciliation required"
+        )
+
+    monkeypatch.setattr(recovery, "recover_incomplete_registration", refuse)
+
+    with pytest.raises(cli.RolloutGateBlocked) as blocked:
+        backend.resume_incomplete_claude_visibility_job(
+            job_id="job-1", reserved_claude_uuid="uuid-1", apply=False
+        )
+
+    assert blocked.value.gate == "visibility_incomplete_recovery_refused"
+    assert blocked.value.reason == "recovery_call_already_started"
+
+
+@pytest.mark.parametrize("reason", [None, "job_already_dismissed"])
+def test_blocked_gate_payload_carries_the_reason_only_when_there_is_one(capsys, reason):
+    from session_bridge.cli import RolloutGateBlocked
+    from tests.session_bridge.test_cli import FakeBackend, _run
+
+    class Backend(FakeBackend):
+        def resume_incomplete_claude_visibility_job(self, **kwargs):
+            raise RolloutGateBlocked("visibility_incomplete_recovery_refused", reason)
+
+    exit_code = _run(
+        [
+            "claude-visibility-resume-incomplete",
+            "--job-id",
+            "job-1",
+            "--reserved-claude-uuid",
+            "11111111-1111-4111-8111-111111111111",
+            "--dry-run",
+        ],
+        Backend(),
+    )
+
+    assert exit_code != 0
+    expected = {
+        "error": "rollout_gate_blocked",
+        "gate": "visibility_incomplete_recovery_refused",
+    }
+    if reason is not None:
+        expected["reason"] = reason
+    assert json.loads(capsys.readouterr().out) == expected

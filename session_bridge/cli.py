@@ -1180,11 +1180,98 @@ class ProviderDegraded(RuntimeError):
 
 
 class RolloutGateBlocked(RuntimeError):
-    """A mutation was refused before its first durable write."""
+    """A mutation was refused before its first durable write.
 
-    def __init__(self, gate: str) -> None:
-        super().__init__(gate)
+    ``gate`` is the stable machine name operators, tests and the store's
+    auto-dismiss rules match on; it never varies with the cause.  ``reason`` is
+    an OPTIONAL bounded slug naming WHICH of a gate's causes fired, for the
+    gates that collapse several.  It is resolved from a CLOSED allowlist at the
+    raise site -- never free text, and never anything a native transcript can
+    influence -- because it is emitted to the operator's terminal.
+    """
+
+    def __init__(self, gate: str, reason: str | None = None) -> None:
+        super().__init__(gate if reason is None else gate + ":" + reason)
         self.gate = gate
+        self.reason = reason
+
+
+# Every ValueError message that can reach the incomplete-recovery gate, mapped
+# to the slug reported to the operator. Written out one by one, rather than
+# echoing str(exc), so that widening a refusal upstream can never turn this
+# into an exfiltration path for native transcript text.
+_INCOMPLETE_RECOVERY_REFUSAL_REASONS = {
+    # session_bridge.claude_incomplete_recovery preconditions
+    "incomplete recovery requires a failed job state": "job_not_failed",
+    "incomplete recovery job already dismissed": "job_already_dismissed",
+    "incomplete recovery job is leased": "job_leased",
+    "incomplete recovery requires bridge_conflict": "job_error_code_mismatch",
+    "incomplete recovery requires an exact transcript conflict": (
+        "job_error_detail_mismatch"
+    ),
+    "incomplete recovery authority conflict": "recovery_authority_conflict",
+    "incomplete recovery call authority absent": "recovery_call_authority_absent",
+    "incomplete recovery already started; exact reconciliation required": (
+        "recovery_call_already_started"
+    ),
+    "incomplete registration changed before resume": (
+        "native_evidence_changed_before_resume"
+    ),
+    "incomplete recovery not completed in native transcript": (
+        "recovery_not_completed_in_native_transcript"
+    ),
+    # session_bridge.claude_registrar.inspect_incomplete_registration
+    "incomplete registration transcript absent": "native_transcript_absent",
+    "incomplete registration native digest unavailable": "native_digest_unavailable",
+    # session_bridge.store.inspect_failed_claude_visibility_reconciliation.
+    # A job that an operator already DISMISSED lands on the first of these:
+    # operator_cleared_at is set, so the row is no longer an open failure.
+    "exact failed Claude visibility job required": "no_exact_uncleared_failed_job",
+    "sole open Claude visibility job required": "another_visibility_job_is_open",
+    "terminal repair requires bridge_conflict": "expected_error_code_not_supported",
+    # session_bridge.claude_visibility.validate_claude_visibility_identity_binding
+    "Claude visibility candidate is malformed": "candidate_malformed",
+    "Claude visibility identity is malformed": "identity_malformed",
+    "Claude visibility identity does not match candidate": "identity_mismatch",
+    "Claude visibility signed marker is malformed": "signed_marker_malformed",
+    "Claude visibility signed marker does not match candidate": (
+        "signed_marker_mismatch"
+    ),
+    "Claude visibility retired marker secrets are malformed": (
+        "retired_marker_secrets_malformed"
+    ),
+}
+_INCOMPLETE_RECOVERY_UNAVAILABLE_PREFIX = "incomplete recovery unavailable: "
+_REFUSAL_REASON_SLUG_RE = re.compile(r"[a-z][a-z0-9_]{0,39}")
+
+
+def _incomplete_recovery_refusal_reason(exc: BaseException) -> str:
+    """Name one bounded cause of ``visibility_incomplete_recovery_refused``.
+
+    The gate wraps the whole recovery call, so a single name covered at least
+    nine unrelated refusals and an operator could not tell which had fired --
+    measured live on job aba0f323, refused for two different reasons on two
+    different days (2026-09-12). The gate NAME stays fixed for compatibility;
+    this only adds the cause beside it.
+    """
+
+    from .claude_registrar import _TranscriptConflict
+
+    if isinstance(exc, _TranscriptConflict):
+        code = getattr(exc, "code", None)
+        if isinstance(code, str) and _REFUSAL_REASON_SLUG_RE.fullmatch(code):
+            return "native_transcript_" + code
+        return "native_transcript_conflict"
+    message = str(exc)
+    named = _INCOMPLETE_RECOVERY_REFUSAL_REASONS.get(message)
+    if named is not None:
+        return named
+    if message.startswith(_INCOMPLETE_RECOVERY_UNAVAILABLE_PREFIX):
+        status = message[len(_INCOMPLETE_RECOVERY_UNAVAILABLE_PREFIX) :]
+        if _REFUSAL_REASON_SLUG_RE.fullmatch(status):
+            return "recovery_lease_unavailable_" + status
+        return "recovery_lease_unavailable"
+    return "unrecognized"
 
 
 def should_run_idle_chip_archiver(
@@ -2968,7 +3055,10 @@ class ProductionBackend:
                     "reserved_claude_uuid": reserved_claude_uuid,
                     "error_code": exc.error_code, "error_detail": exc.error_detail}
         except ValueError as exc:
-            raise RolloutGateBlocked("visibility_incomplete_recovery_refused") from exc
+            raise RolloutGateBlocked(
+                "visibility_incomplete_recovery_refused",
+                _incomplete_recovery_refusal_reason(exc),
+            ) from exc
 
     def repair_failed_claude_visibility_job(
         self,
@@ -5348,7 +5438,12 @@ def _main_unscoped(
             return _mirror_command(args, config=config, backend=backend)
         raise ConfigurationFailure("unknown_command")
     except RolloutGateBlocked as exc:
-        _emit({"error": "rollout_gate_blocked", "gate": exc.gate})
+        blocked = {"error": "rollout_gate_blocked", "gate": exc.gate}
+        # Omitted rather than null when a gate has exactly one cause, so every
+        # existing consumer of this payload keeps reading the shape it knows.
+        if getattr(exc, "reason", None) is not None:
+            blocked["reason"] = exc.reason
+        _emit(blocked)
         return EXIT_ROLLOUT_GATE
     except ConfigurationFailure as exc:
         _log_suppressed_exception("dispatch.configuration", exc, command=args.command)

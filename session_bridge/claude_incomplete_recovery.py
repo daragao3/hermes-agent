@@ -39,14 +39,20 @@ def recover_incomplete_registration(
         ).fetchone()
         job = dict(row)
         recovery = dict(recovery) if recovery else None
-    if (
-        job["state"] != "claude_failed"
-        or job["operator_cleared_at"] is not None
-        or job["lease_digest"] is not None
-        or job["error_code"] != "bridge_conflict"
-        or job["error_detail"] != "exact transcript conflict"
-    ):
-        raise ValueError("exact unleased incomplete registration required")
+    # One condition per raise. These were a single compound test until
+    # 2026-09-13; cli.py collapses every ValueError here into one gate name, so
+    # five unrelated refusals reached the operator as one sentence and the
+    # cheapest question -- "which of these is it?" -- could not be answered.
+    if job["state"] != "claude_failed":
+        raise ValueError("incomplete recovery requires a failed job state")
+    if job["operator_cleared_at"] is not None:
+        raise ValueError("incomplete recovery job already dismissed")
+    if job["lease_digest"] is not None:
+        raise ValueError("incomplete recovery job is leased")
+    if job["error_code"] != "bridge_conflict":
+        raise ValueError("incomplete recovery requires bridge_conflict")
+    if job["error_detail"] != "exact transcript conflict":
+        raise ValueError("incomplete recovery requires an exact transcript conflict")
     candidate = ClaudeVisibilityCandidate(
         source_session_id=job["source_session_id"],
         source_provider=Provider(job["source_provider"]),

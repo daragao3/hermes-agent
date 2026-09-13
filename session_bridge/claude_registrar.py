@@ -2736,6 +2736,33 @@ def _classify_incomplete_registration_messages(
             and original[2].role == "assistant"
             and _is_exact_registered_text(original[2].content)):
         return "incomplete_recovered"
+    # A recovery turn the provider never answered leaves the registration
+    # exactly as incomplete as it was before the attempt: the paid resume did
+    # reach the CLI, and the CLI persisted a weekly/session limit banner where
+    # the reply belongs. Until 2026-09-13 that shape classified as None, so
+    # inspect_incomplete_registration raised _TranscriptConflict and the
+    # operator verb refused a job whose only problem was a rate-limited
+    # account -- job aba0f323, resumed 2026-09-12 18:09Z into
+    # "You've hit your weekly limit".
+    #
+    # Only the INCOMPLETE verdict is widened here, never "incomplete_recovered".
+    # That distinction is the safety argument: this cannot make a session
+    # visible or commit anything, it can only let the job be OFFERED for
+    # another attempt, and claim_claude_auth_recovery bounds those
+    # independently on attempts, daily count and reserved cost. Bounded by
+    # _MAX_AUTH_RECOVERY_ATTEMPTS so an unbounded transcript cannot classify.
+    if (
+        len(original) % 2 == 1
+        and 3 <= len(original) <= 1 + 2 * _MAX_AUTH_RECOVERY_ATTEMPTS
+        and all(
+            original[index].role == "user"
+            and original[index].content == recovery_prompt
+            and original[index + 1].role == "assistant"
+            and _is_exact_provider_limit_banner(original[index + 1].content)
+            for index in range(1, len(original), 2)
+        )
+    ):
+        return "incomplete"
     return None
 
 
