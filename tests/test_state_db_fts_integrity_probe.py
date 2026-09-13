@@ -269,6 +269,14 @@ def test_check_fts_integrity_unbounded_still_reports_corruption(tmp_path):
         db.close()
 
 
+# Over the repo-wide 30s cap (pyproject addopts --timeout=30) by construction,
+# not flakily: this test seeds 25,000 rows and then runs the rank=1 check three
+# times over the resulting index. Measured call time on a loaded box: 26.5s,
+# 31.8s, 33.6s across three runs -- i.e. it straddles the cap, so it fails more
+# often than it passes there. Every other test in this file is under 2s, so the
+# budget is raised for this one test rather than for the file. 92 other tests in
+# this tree already carry a per-test mark for the same reason.
+@pytest.mark.timeout(120)
 def test_a_real_deadline_aborts_the_check(tmp_path):
     """End-to-end: a live rank=1 really is interruptible.
 
