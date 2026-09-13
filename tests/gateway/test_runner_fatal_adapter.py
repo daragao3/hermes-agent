@@ -125,10 +125,10 @@ async def test_runner_requests_clean_exit_for_nonretryable_startup_conflict(monk
 
     assert ok is True
 
-    for _ in range(300):  # ~3s ceiling
-        if runner.should_exit_cleanly:
-            break
-        await asyncio.sleep(0.01)
+    # The background settlement task is what classifies the fatal and requests the
+    # clean exit, so await it rather than polling a wall clock (a fixed ceiling is
+    # load-sensitive on a box running many concurrent worktrees).
+    await asyncio.gather(*list(getattr(runner, "_startup_background_connects", ())))
 
     assert runner.should_exit_cleanly is True
     assert "already using this Telegram bot token" in runner.exit_reason
