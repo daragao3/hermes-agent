@@ -38,15 +38,15 @@ dependencies = [
   # user picks that backend. Smaller `dependencies` = smaller blast
   # radius for the next supply-chain attack.
   "openai==2.24.0",
-  "certifi==2026.5.20",
-  "python-dotenv==1.2.2",
+  "certifi==2026.7.22",
+  "python-dotenv==1.2.3",
   "fire==0.7.1",
   "httpx[socks]==0.28.1",
-  "rich==14.3.3",
+  "rich==15.0.0",
   "tenacity==9.1.4",
   "pyyaml==6.0.3",
-  "ruamel.yaml==0.18.17",
-  "requests==2.33.0",  # CVE-2026-25645
+  "ruamel.yaml==0.19.1",
+  "requests==2.34.2",  # CVE-2026-25645
   "jinja2==3.1.6",
   # Document-to-Markdown extraction for read_file (PDF, legacy Office,
   # OpenDocument, RTF, EPUB) + typed NeedsOcrError for scanned pages.
@@ -61,11 +61,11 @@ dependencies = [
   # pydantic-core 2.41.5 (pulled by 2.12.5) segfaults when the OpenAI SDK's
   # Responses API resource is exercised from a non-main thread, which is the
   # codex_responses dispatch in agent/chat_completion_helpers.py:_call.
-  "pydantic==2.13.4",
+  "pydantic==2.13.5",
   # Interactive CLI (prompt_toolkit is used directly by cli.py)
-  "prompt_toolkit==3.0.52",
+  "prompt_toolkit==3.0.53",
   # Cron scheduler (built-in feature — scheduled cron/interval jobs use croniter).
-  "croniter==6.0.0",
+  "croniter==6.2.4",
   # Snowball stemming for tool_search's BM25 (tools/tool_search.py) —
   # official Snowball project package, pure Python, zero transitive deps.
   # Applied at index AND query time so morphological variants match
@@ -80,7 +80,7 @@ dependencies = [
   # hermes_cli/main.py drops to naive requirement parsing. Pure-Python
   # py3-none-any wheel, no compiled extensions — safe to ship everywhere.
   # Pinned to the version already resolved in uv.lock (no resolution churn).
-  "packaging==26.0",
+  "packaging==26.3",
   # Markdown -> HTML conversion for rich message delivery (Matrix
   # `formatted_body`, and the `send_message` tool's HTML path). Now on the
   # DEFAULT delivery path, not matrix-specific: without it both
@@ -90,9 +90,9 @@ dependencies = [
   # (~108KB, no compiled extensions, no platform constraints), so unlike the
   # matrix extra's `mautrix`/`python-olm` it's safe to ship everywhere — keeps
   # it out of the lazy-install path that exists only for the heavy matrix deps.
-  "Markdown==3.10.2",
+  "Markdown==3.10.3",
   # Skills Hub (GitHub App JWT auth — optional, only needed for bot identity)
-  "PyJWT[crypto]==2.13.0",  # PYSEC-2026-175/177/178/179
+  "PyJWT[crypto]==2.14.0",  # PYSEC-2026-175/177/178/179
   # urllib3 2.7.0 fixes GHSA-mf9v-mfxr-j63j (decompression-bomb bypass)
   # and GHSA-qccp-gfcp-xxvc (header leak across origins).
   "urllib3>=2.7.0,<3",
@@ -107,13 +107,13 @@ dependencies = [
   # A pin here is not sufficient on its own. alibabacloud-tea-openapi caps
   # cryptography<49, so [tool.uv] also holds an override. Read that comment
   # before you move this version.
-  "cryptography==50.0.0",  # CVE-2026-69247, GHSA-m2h6-j472-rp4c, GHSA-jwv3-5hgf-82ww, CVE-2026-39892, CVE-2026-34073, GHSA-537c-gmf6-5ccf
+  "cryptography==50.0.1",  # CVE-2026-69247, GHSA-m2h6-j472-rp4c, GHSA-jwv3-5hgf-82ww, CVE-2026-39892, CVE-2026-34073, GHSA-537c-gmf6-5ccf
   # Windows has no IANA tzdata shipped with the OS, so Python's ``zoneinfo``
   # (PEP 615) raises ``ZoneInfoNotFoundError`` for every non-UTC timezone
   # out of the box.  ``tzdata`` ships the Olson database as a data package
   # Python resolves automatically.  No-op on Linux/macOS (which have
   # /usr/share/zoneinfo).  Credits: PR #13182 (@sprmn24).
-  "tzdata==2025.3; sys_platform == 'win32'",
+  "tzdata==2026.4; sys_platform == 'win32'",
   # Cross-platform process / PID management.  `psutil` is the canonical
   # answer for "is this PID alive" and process-tree walking across Linux,
   # macOS and Windows.  It replaces POSIX-only idioms like `os.kill(pid, 0)`
@@ -185,21 +185,21 @@ anthropic = ["anthropic==0.87.0"]  # CVE-2026-34450, CVE-2026-34452
 # Web search backends — each only loaded when the user picks it as their
 # search provider (configured via `hermes tools` or config.yaml).
 exa = ["exa-py==2.10.2"]
-firecrawl = ["firecrawl-py==4.17.0"]
+firecrawl = ["firecrawl-py==4.42.0"]
 parallel-web = ["parallel-web==0.4.2"]
 # Image generation backends
 fal = ["fal-client==0.13.1"]
 # Edge TTS — default TTS provider but still optional (users can pick
 # ElevenLabs / OpenAI / MiniMax instead).
-edge-tts = ["edge-tts==7.2.7"]
-modal = ["modal==1.3.4"]
+edge-tts = ["edge-tts==7.2.8"]
+modal = ["modal==1.5.5"]
 daytona = ["daytona==0.155.0"]
 vercel = ["vercel==0.7.2"]
 hindsight = ["hindsight-client==0.6.1"]
-dev = ["debugpy==1.8.20", "pytest==9.1.1", "pytest-timeout==2.4.0", "pytest-asyncio==1.3.0", "mcp==2.0.0", "httpx2==2.12.0", "starlette==1.3.1", "ty==0.0.21", "ruff==0.15.12", "setuptools==83.0.0"]  # starlette: CVE-2026-48710; setuptools: 83 (torch >=2.13 requires setuptools 83)
-messaging = ["python-telegram-bot[webhooks]==22.8", "discord.py[voice]==2.7.1", "aiohttp==3.14.3", "brotlicffi==1.2.0.2", "slack-bolt==1.30.0", "slack-sdk==3.43.0", "qrcode==7.4.2"]  # aiohttp 3.14.3: prior CVEs + GHSA-cq5v-8q36-5273/GHSA-mfx4-hv73-q22v/GHSA-mq44-7p77-q5h7
+dev = ["debugpy==1.8.21", "pytest==9.1.1", "pytest-timeout==2.4.0", "pytest-asyncio==1.4.0", "mcp==2.2.0", "httpx2==2.12.0", "starlette==1.6.0", "ty==0.0.80", "ruff==0.16.7", "setuptools==83.0.0"]  # starlette: CVE-2026-48710; setuptools: 83 (torch >=2.13 requires setuptools 83)
+messaging = ["python-telegram-bot[webhooks]==22.8", "discord.py[voice]==2.7.1", "aiohttp==3.14.3", "brotlicffi==1.2.0.2", "slack-bolt==1.30.0", "slack-sdk==3.44.1", "qrcode==8.2"]  # aiohttp 3.14.3: prior CVEs + GHSA-cq5v-8q36-5273/GHSA-mfx4-hv73-q22v/GHSA-mq44-7p77-q5h7
 cron = []  # croniter is now a core dependency; this extra kept for back-compat
-slack = ["slack-bolt==1.30.0", "slack-sdk==3.43.0", "aiohttp==3.14.3"]
+slack = ["slack-bolt==1.30.0", "slack-sdk==3.44.1", "aiohttp==3.14.3"]
 matrix = ["mautrix[encryption]==0.21.1", "aiosqlite==0.22.1", "asyncpg==0.31.0", "aiohttp-socks==0.11.0", "aiohttp==3.14.3"]  # aiohttp 3.14.3: prior CVEs + GHSA-cq5v-8q36-5273/GHSA-mfx4-hv73-q22v/GHSA-mq44-7p77-q5h7 (mautrix/aiohttp-socks only cap aiohttp<4 / >=3.10, so pin the patched floor directly)
 # WeCom callback-mode adapter — parses untrusted XML POST bodies from
 # WeCom-controlled callback endpoints, so we use defusedxml (drop-in
@@ -211,7 +211,7 @@ tts-premium = ["elevenlabs==1.59.0"]
 voice = [
   # Local STT pulls in wheel-only transitive deps (ctranslate2, onnxruntime).
   "faster-whisper==1.2.1",
-  "sounddevice==0.5.5",
+  "sounddevice==0.5.6",
   "numpy==2.4.3",
 ]
 # "Hey Hermes" wake word — on-device hotword detection. All engines are
@@ -226,7 +226,7 @@ wake = [
   "sherpa-onnx==1.13.4",
   "sentencepiece==0.2.2",
   "pvporcupine==4.0.3",
-  "sounddevice==0.5.5",
+  "sounddevice==0.5.6",
   "numpy==2.4.3",
   # openWakeWord's onnx embedding model scores near-zero on macOS ARM64
   # (dscripka/openWakeWord#336), so the wake word runs on tflite there.
@@ -234,7 +234,7 @@ wake = [
   # macOS equivalent, bridged in tools/wake_word.py.
   "ai-edge-litert==2.1.6; platform_system == 'Darwin'",
 ]
-honcho = ["honcho-ai==2.2.0"]
+honcho = ["honcho-ai==2.4.0"]
 # Cloud memory providers — opt-in, lazy-installed via tools/lazy_deps.py
 # (memory.supermemory / memory.mem0) at first use. Exact pins MUST match the
 # LAZY_DEPS pins (enforced by tests/test_project_metadata.py). Deliberately
@@ -268,7 +268,7 @@ pty = []
 # resolution. Hermes' own `httpx[socks]==0.28.1` in [dependencies] is
 # unaffected — the two distributions install side by side under different
 # module names.
-mcp = ["mcp==2.0.0", "httpx2==2.12.0", "starlette==1.3.1", "watchfiles==1.1.1"]  # starlette: CVE-2026-48710
+mcp = ["mcp==2.2.0", "httpx2==2.12.0", "starlette==1.6.0", "watchfiles==1.2.0"]  # starlette: CVE-2026-48710
 # Backwards-compatible no-op alias. Relay is a core dependency on supported
 # wheel targets and intentionally unavailable on other platforms.
 nemo-relay = []
@@ -279,7 +279,7 @@ teams = ["microsoft-teams-apps==2.0.13.4", "aiohttp==3.14.3"]  # aiohttp 3.14.3:
 # The cua-driver binary itself is installed via `hermes tools` post-setup
 # (curl install script); this extra just pins the MCP client used to talk
 # to it, which is already provided by the `mcp` extra.
-computer-use = ["mcp==2.0.0", "httpx2==2.12.0", "starlette==1.3.1"]  # starlette: CVE-2026-48710
+computer-use = ["mcp==2.2.0", "httpx2==2.12.0", "starlette==1.6.0"]  # starlette: CVE-2026-48710
 acp = ["agent-client-protocol==0.9.0"]
 # mistral: Voxtral STT + TTS. Pinned to an exact verified-clean version.
 # The `mistralai` PyPI project was quarantined 2026-05-12 after the malicious
@@ -289,14 +289,14 @@ acp = ["agent-client-protocol==0.9.0"]
 # tools/lazy_deps.py (stt.mistral / tts.mistral) at first use — deliberately
 # NOT re-added to [all] so a future quarantined release can't break fresh
 # installs (see [all] policy comment below).
-mistral = ["mistralai==2.4.8"]
+mistral = ["mistralai==2.10.0"]
 # OTLP gateway monitoring export (optional). Provides the OpenTelemetry SDK +
 # OTLP/HTTP exporter for monitoring.gateway_health_export. Lazy-installed via
 # tools/lazy_deps.py on first use; never a core dependency and deliberately
 # NOT in [all].
-otlp = ["opentelemetry-sdk==1.39.1", "opentelemetry-exporter-otlp-proto-http==1.39.1"]
-bedrock = ["boto3==1.42.89"]
-vertex = ["google-auth==2.55.1"]
+otlp = ["opentelemetry-sdk==1.44.0", "opentelemetry-exporter-otlp-proto-http==1.44.0"]
+bedrock = ["boto3==1.43.93"]
+vertex = ["google-auth==2.58.0"]
 azure-identity = ["azure-identity==1.25.3"]
 termux = [
   # Baseline Android / Termux path for reliable fresh installs.
@@ -318,17 +318,17 @@ termux-all = [
   "hermes-agent[web]",
   "hermes-agent[pty]",
 ]
-dingtalk = ["dingtalk-stream==0.24.3", "alibabacloud-dingtalk==2.2.42", "qrcode==7.4.2"]
-feishu = ["lark-oapi==1.6.8", "qrcode==7.4.2"]
+dingtalk = ["dingtalk-stream==0.24.3", "alibabacloud-dingtalk==2.2.59", "qrcode==8.2"]
+feishu = ["lark-oapi==1.7.3", "qrcode==8.2"]
 google = [
   # Required by the google-workspace skill (Gmail, Calendar, Drive, Contacts,
   # Sheets, Docs).  Declared here so dev environments (`uv sync --extra google`)
   # and packagers ship them without hitting runtime `pip install` paths that
   # fail in environments without pip (e.g. Nix-managed Python).
-  "google-api-python-client==2.194.0",
-  "google-auth==2.55.1",
-  "google-auth-oauthlib==1.3.1",
-  "google-auth-httplib2==0.3.1",
+  "google-api-python-client==2.200.0",
+  "google-auth==2.58.0",
+  "google-auth-oauthlib==1.4.1",
+  "google-auth-httplib2==0.4.2",
   # The Google SDKs permit older vulnerable transitives, so unlocked installs
   # must carry the same fixed floors as uv.lock and the runtime installers:
   # httplib2 0.32.0 (GHSA-j5g9-f88f-gfj3 decompression bomb DoS),
@@ -344,9 +344,9 @@ youtube = [
   "youtube-transcript-api==1.2.4",
 ]
 # `hermes dashboard` (localhost SPA + API).  Not in core to keep the default install lean.
-# starlette==1.3.1 pinned for CVE-2026-48710 (BadHost) — fastapi pulls Starlette
+# starlette==1.6.0 pinned for CVE-2026-48710 (BadHost) — fastapi pulls Starlette
 # transitively and pre-1.0.1 is the vulnerable range. See the mcp extra above.
-web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0", "starlette==1.3.1", "python-multipart==0.0.32"]
+web = ["fastapi==0.141.1", "uvicorn[standard]==0.52.4", "starlette==1.6.0", "python-multipart==0.0.32"]
 all = [
   # Policy (2026-05-12): `[all]` includes only extras that genuinely
   # CAN'T be lazy-installed via `tools/lazy_deps.py` — i.e. things every
@@ -396,7 +396,7 @@ hermes-session-bridge = "session_bridge.entrypoint:main"
 
 [tool.uv]
 # SR-501 audited transitive security floors; do not add optional packages to core.
-constraint-dependencies = ["pydantic-settings==2.14.2", "tornado>=6.5.8,<7"]
+constraint-dependencies = ["pydantic-settings==2.15.0", "tornado>=6.5.8,<7"]
 override-dependencies = [
   # discord.py's latest published version, 2.7.1, pins pynacl at <1.6. however, pynacl 1.5.0 has known vulnerabilities.
   # discord.py has updated pynacl to 1.6 on `main`, but has not yet published a patch release.
@@ -409,7 +409,7 @@ override-dependencies = [
   # [project].dependencies). The package uses cryptography only to sign
   # requests with RSA and AES, and that API did not break in 49 or 50.
   # Remove this line when alibabacloud-tea-openapi lifts the cap.
-  "cryptography>=50,<51",
+  "cryptography==50.0.1",
 ]
 exclude-newer = "14 days"
 # h2: temporary exclude-newer exception for the CVE-2026-71554 (GHSA-6hr6-w5qg-qmwg,
@@ -460,6 +460,48 @@ exclude-newer = "14 days"
 # environment resolves under the same cutoff ("Failed to resolve
 # requirements from build-system.requires ... maturin>=1.9,<2").
 [tool.uv.exclude-newer-package]
+pytest-timeout = false
+# Reviewed dependency currency targets, 2026-09-12.
+# Fixed review timestamp admits reviewed releases without admitting later uploads.
+# Compatibility evidence in architecture-map/wave-execution/2026-09-12-python-remaining.
+annotated-types = "2026-09-13T01:35:27Z"
+anyio = "2026-09-13T01:35:27Z"
+attrs = "2026-09-13T01:35:27Z"
+botocore = "2026-09-13T01:35:27Z"
+ctranslate2 = "2026-09-13T01:35:27Z"
+darabonba-core = "2026-09-13T01:35:27Z"
+filelock = "2026-09-13T01:35:27Z"
+google-api-core = "2026-09-13T01:35:27Z"
+googleapis-common-protos = "2026-09-13T01:35:27Z"
+httptools = "2026-09-13T01:35:27Z"
+huggingface-hub = "2026-09-13T01:35:27Z"
+importlib-metadata = "2026-09-13T01:35:27Z"
+langchain-core = "2026-09-13T01:35:27Z"
+langfuse = "2026-09-13T01:35:27Z"
+lxml = "2026-09-13T01:35:27Z"
+mcp-types = "2026-09-13T01:35:27Z"
+multidict = "2026-09-13T01:35:27Z"
+opentelemetry-api = "2026-09-13T01:35:27Z"
+opentelemetry-exporter-otlp-proto-common = "2026-09-13T01:35:27Z"
+opentelemetry-proto = "2026-09-13T01:35:27Z"
+primp = "2026-09-13T01:35:27Z"
+propcache = "2026-09-13T01:35:27Z"
+psycopg = "2026-09-13T01:35:27Z"
+psycopg-binary = "2026-09-13T01:35:27Z"
+psycopg2-binary = "2026-09-13T01:35:27Z"
+pydantic-core = "2026-09-13T01:35:27Z"
+pydantic-settings = "2026-09-13T01:35:27Z"
+rpds-py = "2026-09-13T01:35:27Z"
+s3transfer = "2026-09-13T01:35:27Z"
+sse-starlette = "2026-09-13T01:35:27Z"
+tokenizers = "2026-09-13T01:35:27Z"
+tqdm = "2026-09-13T01:35:27Z"
+watchfiles = false
+wcwidth = "2026-09-13T01:35:27Z"
+websocket-client = "2026-09-13T01:35:27Z"
+wrapt = "2026-09-13T01:35:27Z"
+zipp = "2026-09-13T01:35:27Z"
+
 agent-client-protocol = false
 ai-edge-litert = false
 aiohttp = false
