@@ -699,9 +699,14 @@ class TestSaveConfigAtomicity:
             config_path = tmp_path / "config.yaml"
             assert config_path.exists()
 
-            # Simulate a crash during yaml.dump by making atomic_yaml_write's
-            # yaml.dump raise after the temp file is created but before replace.
-            with patch("utils.yaml.dump", side_effect=OSError("disk full")):
+            # Simulate a crash during the dump, after the temp file is created but
+            # before replace. save_config prefers the comment-preserving ruamel
+            # round trip and only falls back to PyYAML when that path cannot
+            # complete, so BOTH dumps must fail for the crash to reach disk.
+            with (
+                patch("utils.atomic_roundtrip_yaml_dump", side_effect=OSError("disk full")),
+                patch("utils.yaml.dump", side_effect=OSError("disk full")),
+            ):
                 try:
                     config["model"] = "should-not-persist"
                     save_config(config)
@@ -718,7 +723,12 @@ class TestSaveConfigAtomicity:
             config = load_config()
             save_config(config)
 
-            with patch("utils.yaml.dump", side_effect=OSError("disk full")):
+            # Both dumps must fail: the ruamel round trip is preferred and PyYAML is
+            # only the fallback (see test_no_partial_write_on_crash).
+            with (
+                patch("utils.atomic_roundtrip_yaml_dump", side_effect=OSError("disk full")),
+                patch("utils.yaml.dump", side_effect=OSError("disk full")),
+            ):
                 try:
                     save_config(config)
                 except OSError:
@@ -2508,6 +2518,100 @@ class TestLocalYamlRoundtripCarry:
         # The whole point is that this stayed on the comment-preserving path
         # rather than silently degrading to the plain dump.
         assert "keep me" in written
+
+    def test_save_config_preserves_comments(self, tmp_path):
+        """``save_config`` is the write behind mutate_config and ~60 callers; it must
+        take the same comment-preserving path as ``atomic_config_write``.
+
+        Measured 2026-09-12: ordinary save_config calls had deleted all 271 comment
+        lines from the root config.yaml and all 52 from profiles/main, because
+        save_config dumped through PyYAML directly with ``extra_content`` set.
+        """
+        from hermes_cli.config import load_config, save_config
+
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "agent:\n"
+            "  # keep me: explains why the value below is what it is\n"
+            "  max_turns: 90\n"
+            "sessions:\n"
+            "  # INERT: both live callers hardcode vacuum=False\n"
+            "  vacuum_after_prune: true\n",
+            encoding="utf-8",
+        )
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            cfg = load_config()
+            cfg["agent"]["max_turns"] = 120
+            assert save_config(cfg) is True
+
+        written = config_path.read_text(encoding="utf-8")
+        assert "keep me: explains why" in written, "comment was destroyed"
+        assert "INERT: both live callers" in written, "comment was destroyed"
+        reloaded = yaml.safe_load(written)
+        assert reloaded["agent"]["max_turns"] == 120
+        assert reloaded["sessions"]["vacuum_after_prune"] is True
+
+    def test_save_config_keeps_quote_and_flow_style_of_unchanged_leaves(self, tmp_path):
+        """Re-assigning an equal plain value over a ruamel scalar/sequence used to
+        re-emit it in ruamel's default style (``"0.60"`` -> ``'0.60'``, a flow-style
+        list -> block). Unchanged leaves must be left alone."""
+        from hermes_cli.config import load_config, save_config
+
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "agent:\n"
+            "  max_turns: 90\n"
+            "mcp_servers:\n"
+            "  memory_gateway:\n"
+            "    command: C:/x/python.exe\n"
+            "    args: [C:/x/run-gateway.py]\n"
+            "    enabled: true\n"
+            "session_bridge:\n"
+            "  claude_visibility:\n"
+            "    emergency_daily_cost_usd: \"0.60\"\n",
+            encoding="utf-8",
+        )
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            cfg = load_config()
+            cfg["agent"]["max_turns"] = 91
+            assert save_config(cfg) is True
+
+        written = config_path.read_text(encoding="utf-8")
+        assert 'emergency_daily_cost_usd: "0.60"' in written
+        assert "args: [C:/x/run-gateway.py]" in written
+        assert yaml.safe_load(written)["agent"]["max_turns"] == 91
+
+    def test_save_config_new_file_still_gets_the_commented_examples(self, tmp_path):
+        """With no document to preserve, the plain dump (and its appended commented
+        example sections) is still the path taken."""
+        from hermes_cli.config import _FALLBACK_COMMENT, save_config
+
+        config_path = tmp_path / "config.yaml"
+        assert not config_path.exists()
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            assert save_config({"agent": {"max_turns": 7}}) is True
+
+        written = config_path.read_text(encoding="utf-8")
+        assert yaml.safe_load(written)["agent"]["max_turns"] == 7
+        assert _FALLBACK_COMMENT.strip().splitlines()[0] in written
+
+    def test_roundtrip_leaf_unchanged_never_conflates_types(self):
+        """``True == 1`` and ``1 == 1.0`` in Python; a real type change must still
+        be written, while an equal string keeps its ruamel-styled object."""
+        from ruamel.yaml.scalarstring import DoubleQuotedScalarString
+
+        from hermes_cli.config import _roundtrip_leaf_unchanged
+
+        assert _roundtrip_leaf_unchanged(DoubleQuotedScalarString("0.60"), "0.60")
+        assert _roundtrip_leaf_unchanged([1, 2], [1, 2])
+        assert not _roundtrip_leaf_unchanged(True, 1)
+        assert not _roundtrip_leaf_unchanged(1, True)
+        assert not _roundtrip_leaf_unchanged(1, 1.0)
+        assert not _roundtrip_leaf_unchanged("1", 1)
+        assert not _roundtrip_leaf_unchanged({"a": 1}, {"a": 1})
 
     def test_atomic_config_write_falls_back_when_roundtrip_cannot_parse(self, tmp_path):
         """A file ruamel refuses must still be writable.

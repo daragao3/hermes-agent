@@ -1528,10 +1528,14 @@ class ClaudeNativeRegistrar:
         retry_delay: float = 30.0,
         poll_interval: float = 0.1,
         debug_log_dir: Path | None = None,
+        discard_transcript: Callable[[Path], None] | None = None,
     ) -> None:
         if debug_log_dir is not None and not isinstance(debug_log_dir, Path):
             raise TypeError("debug_log_dir must be a Path or None")
         self._debug_log_dir = debug_log_dir
+        if discard_transcript is not None and not callable(discard_transcript):
+            raise TypeError("discard_transcript must be callable or None")
+        self._discard_transcript = discard_transcript or _unlink_transcript
         if type(retired_marker_secrets) is not tuple or any(
             type(value) is not bytes or not value
             for value in retired_marker_secrets
@@ -2271,6 +2275,24 @@ class ClaudeNativeRegistrar:
                     claim, "creation_ambiguous", "visibility cycle cancelled"
                 )
             if found is not None:
+                # A launch that failed retryably and whose process is verified
+                # dead (this poll is only reached with lifecycle_verified, or
+                # with a provider limit that terminate/close confirmed) may
+                # have left the CLI's session-init preamble under the
+                # reserved uuid. Handing that stub to the validator is FATAL
+                # and unrecoverable -- claude.exe refuses --session-id for an
+                # existing transcript -- so the registrar discards its own
+                # stub first and lets the launch failure stay retryable. The
+                # reconciliation lease then records the uuid as absent and
+                # the next launch reuses it (Diego decision 2026-09-13,
+                # loops registrar-startup-stub-selfclean-20260913).
+                if pending is not None and self._discard_own_startup_stub(
+                    claim, candidate, identity, found, pending
+                ):
+                    _log_claude_visibility_launch_failed(
+                        claim, pending[1], pending[2], failure_frame, prompt_frame
+                    )
+                    return self._retry(claim, pending[1], pending[2])
                 return self._validate_and_commit(
                     claim, candidate, identity, found, launch_failure=pending
                 )
@@ -2333,6 +2355,56 @@ class ClaudeNativeRegistrar:
         except OSError:
             return None
         return directory / f"{stem}-att{int(attempt)}.log"
+
+    def _discard_own_startup_stub(
+        self,
+        claim: ClaudeVisibilityClaim,
+        candidate: ClaudeVisibilityCandidate,
+        identity: ClaudeVisibilityIdentity,
+        transcript: _ExactTranscript,
+        launch_failure: tuple[str, str, str],
+    ) -> bool:
+        """Delete the registrar's own startup stub; True when it is gone.
+
+        Only a transcript that _is_own_startup_stub accepts is touched: the
+        CLI's session-init preamble alone, under the job's reserved uuid, in
+        the project directory of the job's own source cwd. Anything else --
+        a transcript with messages, another uuid, another project directory --
+        is left for _validate_projection to judge exactly as before.
+
+        A failure to delete is logged and reported as False, so the caller
+        falls through to the validator and the outcome is what it was before
+        this method existed (fatal "exact transcript conflict"). The stub is
+        deleted at most once per attempt; nothing here retries.
+        """
+
+        if not _is_own_startup_stub(claim, candidate, identity, transcript):
+            return False
+        path = transcript.path
+        try:
+            self._discard_transcript(path)
+        except Exception as exc:
+            _LOG.warning(
+                "claude_visibility_startup_stub_discard_failed job=%s attempt=%s "
+                "uuid=%s path=%s error=%s: %s",
+                claim.job_id,
+                claim.attempt_ordinal,
+                identity.claude_uuid,
+                path,
+                type(exc).__name__,
+                str(exc)[:200],
+            )
+            return False
+        _LOG.warning(
+            "claude_visibility_startup_stub_discarded job=%s attempt=%s uuid=%s "
+            "path=%s launch_failure=%r",
+            claim.job_id,
+            claim.attempt_ordinal,
+            identity.claude_uuid,
+            path,
+            tuple(str(value)[:200] for value in launch_failure[1:]),
+        )
+        return True
 
     def _read_exact(self, native_id: str) -> _ExactTranscript | None:
         fresh = getattr(self._source, "find_native_sessions_by_stem_fresh", None)
@@ -2450,7 +2522,8 @@ def _is_claude_startup_stub(transcript: _ExactTranscript) -> bool:
     zero projected messages and no record carrying `entrypoint`, so
     _validate_projection rejects it on its very first check. The CLI then
     refuses `--session-id` for that uuid ("Session ID ... is already in use"),
-    so the stub cannot be retried past and the job is terminal.
+    so the stub cannot be retried past: unless the registrar deletes it (see
+    _is_own_startup_stub and _launch's discovery poll) the job is terminal.
     """
 
     try:
@@ -2458,6 +2531,44 @@ def _is_claude_startup_stub(transcript: _ExactTranscript) -> bool:
     except Exception:
         return False
     return not messages and transcript.parsed.entrypoint is None
+
+
+def _is_own_startup_stub(
+    claim: ClaudeVisibilityClaim,
+    candidate: ClaudeVisibilityCandidate,
+    identity: ClaudeVisibilityIdentity,
+    transcript: _ExactTranscript,
+) -> bool:
+    """True only for a startup stub the registrar itself is entitled to delete.
+
+    Three independent guards, all required. The shape: _is_claude_startup_stub
+    (zero projected messages, no entrypoint record). The identity: the file's
+    stem is the identity's claude uuid AND that uuid is the claim's reserved
+    uuid -- the v5 derivation from the bridge id that only the registrar ever
+    mints, so no human session can carry it. The location: the file sits in
+    claude_project_directory_name(candidate.source_cwd), the directory the
+    registrar's own launch (spawned with cwd=source_cwd) writes into; a stub
+    under any other project directory is not this launch's and is left alone.
+    """
+
+    if not _is_claude_startup_stub(transcript):
+        return False
+    uuid = identity.claude_uuid
+    if not isinstance(uuid, str) or not uuid or uuid != claim.reserved_claude_uuid:
+        return False
+    path = transcript.path
+    if not isinstance(path, Path) or path.suffix != ".jsonl" or path.stem != uuid:
+        return False
+    source_cwd = candidate.source_cwd
+    if not isinstance(source_cwd, str) or not source_cwd:
+        return False
+    return path.parent.name == claude_project_directory_name(source_cwd)
+
+
+def _unlink_transcript(path: Path) -> None:
+    """Default transcript discarder: remove the file; an absent file is done."""
+
+    path.unlink(missing_ok=True)
 
 
 def _log_exact_transcript_conflict(
