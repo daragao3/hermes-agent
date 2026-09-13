@@ -656,6 +656,10 @@ class TelegramNotifier(BaseSubscriber):
                 lines.append(options)
             return "\n".join(lines)
 
+        if et == EventType.GATEWAY_STOPPED:
+            from events.maintenance_context import gateway_stop_body
+            return gateway_stop_body(p)
+
         if et == EventType.GATEWAY_HEALTH:
             # Lead with the plain-language diagnosis; keep the raw error
             # below it — Telegram is the diagnostic surface.
