@@ -10,10 +10,32 @@ the only safe policy is to stop touching the file.
 """
 
 import sqlite3
+import sys
 
 import pytest
 
 from hermes_state import SessionDB, StateDbCorruptError
+
+
+# A live-handle inode swap cannot be simulated on Windows: CPython's sqlite3
+# opens the database file without FILE_SHARE_DELETE, so os.replace/os.unlink
+# over the still-open file raise WinError 5/32 inside the test helper, long
+# before the code under test is reached (measured 2026-09-13 with a bare
+# sqlite3.connect, so it is a platform invariant, not a Hermes behaviour).
+# b114641c88 restored these as real swaps on the stated grounds that the files
+# "carry no windows_only marker so they never run on Windows" -- absence of
+# that marker means they run EVERYWHERE, so the swaps have failed on this host
+# ever since.  The guarded contract itself still holds on Windows; only the
+# simulation is impossible.  See loops
+# hermes-state-15-preexisting-failures-wave2-20260913.
+_needs_live_handle_swap = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "live-handle inode swap is unsimulatable on Windows: sqlite3 holds the "
+        "file without FILE_SHARE_DELETE, so os.replace/os.unlink raise "
+        "WinError 5/32 before the code under test runs"
+    ),
+)
 
 
 class _MalformedConn:
@@ -163,6 +185,7 @@ class TestQuarantineScope:
         finally:
             db.close()
 
+    @_needs_live_handle_swap
     def test_replaced_file_takes_precedence_over_corrupt(self, tmp_path):
         import os
 

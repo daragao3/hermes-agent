@@ -19,6 +19,7 @@ Covers the three ownership invariants the PR review demanded:
 
 import os
 import shutil
+import sys
 import threading
 import time
 from pathlib import Path
@@ -45,6 +46,27 @@ def _clean_registry():
     registry._tearing_down.clear()
 
 
+# A live-handle inode swap cannot be simulated on Windows: CPython's sqlite3
+# opens the database file without FILE_SHARE_DELETE, so os.replace/os.unlink
+# over the still-open file raise WinError 5/32 inside the test helper, long
+# before the code under test is reached (measured 2026-09-13 with a bare
+# sqlite3.connect, so it is a platform invariant, not a Hermes behaviour).
+# b114641c88 restored these as real swaps on the stated grounds that the files
+# "carry no windows_only marker so they never run on Windows" -- absence of
+# that marker means they run EVERYWHERE, so the swaps have failed on this host
+# ever since.  The guarded contract itself still holds on Windows; only the
+# simulation is impossible.  See loops
+# hermes-state-15-preexisting-failures-wave2-20260913.
+_needs_live_handle_swap = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "live-handle inode swap is unsimulatable on Windows: sqlite3 holds the "
+        "file without FILE_SHARE_DELETE, so os.replace/os.unlink raise "
+        "WinError 5/32 before the code under test runs"
+    ),
+)
+
+
 def _replace_file_preserving_schema(src: Path, dst: Path) -> None:
     """Simulate snapshot-restore / recovery: new inode, same logical DB.
 
@@ -57,6 +79,7 @@ def _replace_file_preserving_schema(src: Path, dst: Path) -> None:
     os.rename(tmp, dst)
 
 
+@_needs_live_handle_swap
 class TestInodeReplacement:
     def test_live_holders_keep_working_handle_across_replacement(self, tmp_path):
         """Two active refs → inode replacement → third caller gets NEW
@@ -542,6 +565,7 @@ class TestMultiGenerationTeardownBarrier:
         assert current is not old
         return db_path, old, current
 
+    @_needs_live_handle_swap
     def test_retired_drain_does_not_lift_a_pending_current_teardown(self, tmp_path, monkeypatch):
         """close_all() must not report a finished sweep over a pending close."""
         db_path, old, current = self._two_generations(tmp_path, monkeypatch)
@@ -584,6 +608,7 @@ class TestMultiGenerationTeardownBarrier:
         assert current._conn is None
         assert registry._tearing_down.get(resolved) is None
 
+    @_needs_live_handle_swap
     def test_replacement_is_not_published_before_the_last_close_settles(self, tmp_path, monkeypatch):
         """acquire() must not open a writer on top of an unfinished close."""
         db_path, old, current = self._two_generations(tmp_path, monkeypatch)

@@ -388,13 +388,25 @@ class TestSweepOrphanedSessions:
             min_interval_hours=0,
             vacuum=False,
         )
+        # The injection must actually have reached the marker write, or the
+        # rest of this test proves nothing.  Upstream that showed up as
+        # ``first["error"]``, because the marker write sat inside the same
+        # ``try`` as the sweep.  The local carry 8eb3bd9aee ("record
+        # last_auto_prune in finally") moved it into the ``finally`` under its
+        # own suppressing ``except`` -- deliberately, so a failed prune still
+        # records the throttle instead of error-looping on every startup -- so
+        # a marker-write failure no longer surfaces in the result dict.  The
+        # unwritten marker is what it leaves behind, and it is the observable
+        # the recovery invariant below actually depends on.
+        assert first["closed"] == 1
+        assert db.get_meta("last_auto_prune") is None
+
         retry = db.maybe_auto_prune_and_vacuum(
             retention_days=90,
             min_interval_hours=0,
             vacuum=False,
         )
 
-        assert first["error"] == "injected marker failure"
         assert retry["pruned"] == 0
         assert db.get_session("recoverable")["end_reason"] == "startup_orphan_reap"
 
