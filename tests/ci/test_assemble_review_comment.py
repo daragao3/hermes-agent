@@ -354,3 +354,75 @@ def test_render_both_emitted_link_and_job_url():
     assert " · " in body
 
 
+
+# ─── render_comment ("all good!" verdict banner) ──────────────────────
+#
+# The banner is gated on the absence of blocking severities, NOT on the
+# absence of all items: a healthy run still emits info/debug items, so
+# gating on "no items" withheld the verdict from exactly the runs that
+# earned it. render_comment's docstring specified this from the file's
+# first commit (b9f82ed39f) but the gate was computed and never read, so
+# nothing failed when the branch went missing.
+
+
+def test_info_only_run_shows_the_verdict_banner():
+    """A green run that still reported info must carry the verdict."""
+    body = _mod.render_comment([
+        ReviewItem(severity="info", title="lockfile", summary="No changes.")
+    ])
+    assert "all good!" in body
+    # The banner is a verdict, not a replacement: info stays visible.
+    assert "## ℹ️ Info" in body
+    assert "### lockfile" in body
+    # …and it is at the top, above the sections.
+    assert body.index("all good!") < body.index("## ℹ️ Info")
+
+
+def test_debug_only_run_shows_the_verdict_banner():
+    """Debug items are non-blocking too, so they do not suppress it."""
+    body = _mod.render_comment([
+        ReviewItem(severity="debug", title="env", summary="dump")
+    ])
+    assert "all good!" in body
+    assert "<details>" in body
+
+
+def test_blocking_severity_suppresses_the_verdict_banner():
+    """The proof that blocking and non-blocking render differently."""
+    for severity in _mod._BLOCKING_SEVERITIES:
+        body = _mod.render_comment([
+            ReviewItem(severity=severity, title="t", summary="s")
+        ])
+        assert "all good" not in body, f"{severity} must not render the verdict"
+        assert _mod._SEVERITY_GROUP_HEADER[severity] in body
+
+
+def test_blocking_item_beside_info_still_suppresses_the_banner():
+    """One blocking finding is enough, however much else is green."""
+    body = _mod.render_comment([
+        ReviewItem(severity="info", title="lockfile", summary="No changes."),
+        ReviewItem(severity="warning", title="CI timings", summary="Slower."),
+    ])
+    assert "all good" not in body
+    assert "## ⚠️ Warnings" in body
+    assert "## ℹ️ Info" in body
+
+
+def test_pending_jobs_withhold_the_verdict_banner():
+    """The verdict is final, so it waits for the pending jobs."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="info", title="lockfile", summary="No changes.")],
+        pending_jobs=["docker"],
+    )
+    assert "all good" not in body
+    assert "Still running 1 job" in body
+
+
+def test_waiting_run_with_info_withholds_the_verdict_banner():
+    """Guards the fix in 8359e760be: never look final while waiting."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="info", title="lockfile", summary="No changes.")],
+        waiting=True,
+    )
+    assert "all good" not in body
+    assert "waiting for more jobs to start" in body

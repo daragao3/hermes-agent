@@ -58,8 +58,8 @@ MARKER = "<!-- hermes-ci-review-bot -->"
 # Severity ordering for display.
 _SEVERITY_ORDER = ["error", "action_required", "warning", "info", "debug"]
 
-# Severities that trigger the "blocking issues" layout (vs. the
-# "looks good!" banner).
+# Severities that render as top-level sections, in this order. Their
+# absence is what selects the "all good!" banner instead.
 _BLOCKING_SEVERITIES = ("error", "action_required", "warning")
 
 _SEVERITY_GROUP_HEADER = {
@@ -274,7 +274,9 @@ def render_comment(
 
     When there are no errors, action_required, or warnings, an "all good!"
     banner is shown at the top. Info items remain visible and debug items
-    follow in collapsible ``<details>`` blocks.
+    follow in collapsible ``<details>`` blocks. The banner is a final
+    verdict, so it is withheld while any job is still pending or the run
+    is still ``waiting``.
 
     ``waiting`` means a workflow run is still queued or in progress even
     though no individual job is visibly pending — GitHub has not spawned
@@ -291,7 +293,7 @@ def render_comment(
 
     info = by_severity.get("info", [])
     debug = by_severity.get("debug", [])
-    any(by_severity.get(s) for s in _BLOCKING_SEVERITIES)
+    has_blocking = any(by_severity.get(s) for s in _BLOCKING_SEVERITIES)
 
     body = f"{MARKER}\n# ૮ >ﻌ< ა ci review\n\n"
 
@@ -302,6 +304,13 @@ def render_comment(
         if waiting:
             return f"{body}<sub>waiting for jobs to start…</sub>"
         return f"{body}all good!"
+
+    # A green run still emits info/debug items, so "no items at all" is the
+    # wrong test for the banner -- the more a healthy run reported, the less
+    # verdict it would get. Gate on the absence of blocking severities
+    # instead, and withhold the verdict while the run is not yet final.
+    if not has_blocking and not pending and not waiting:
+        body += "all good!\n\n"
 
     sections: list[str] = []
 
