@@ -284,7 +284,7 @@ WHATSAPP_TITLE_BY_EVENT = {
     EventType.OFFER_SIGNAL:                "JOB OFFER",
     EventType.SECRET_DETECTED:             "SECRET DETECTED",
     EventType.RESOURCE_PRESSURE:           "RESOURCE PRESSURE",
-    EventType.CODE_DRIFT:                  "STALE CODE RUNNING",
+    EventType.CODE_DRIFT:                  "CODE DRIFT",
     EventType.DIGEST_GENERATED:            "MORNING DIGEST",
     EventType.BOOT_SUMMARY:                "BOOT PROBLEMS",
 }
@@ -743,11 +743,27 @@ def code_drift_body(p: dict) -> str:
             )
         return "\n".join(lines)
 
+    deployment = p.get("deployment_state", "unknown")
+    if deployment != "unknown":
+        lines = [f"{label} ({where}): source/trunk state {state} "
+                 f"({p.get('behind_count', 0)} behind / {p.get('ahead_count', 0)} ahead)."]
+        accepted = p.get("accepted_commit") or "unverified"
+        lines.append(f"Accepted deployment: {accepted}; source acceptance: {deployment}.")
+        if p.get("dirty"):
+            lines.append("Working tree is DIRTY; changes are explicitly excluded from acceptance."
+                         if deployment == "accepted" else
+                         "Working tree is DIRTY; review unaccepted changes against the deployment scope.")
+        if p.get("deployment_detail"):
+            lines.append(str(p["deployment_detail"]))
+        lines.append("Loaded process code is unknown to this source probe. "
+                     "Review integration backlog and deployment evidence separately.")
+        return "\n".join(lines)
+
     lines = []
     if state == "behind":
         lines.append(
             f"{label} ({where}) LAGS {trunk_name} by "
-            f"{p.get('behind_count', '?')} commit(s) — landed fixes are NOT running."
+            f"{p.get('behind_count', '?')} commit(s) — trunk changes are absent from this source checkout."
         )
         for subj in (p.get("missed_subjects") or [])[:5]:
             lines.append(f"  missed: {subj}")
@@ -771,16 +787,10 @@ def code_drift_body(p: dict) -> str:
     if p.get("dirty"):
         lines.append("Working tree is DIRTY (uncommitted changes).")
     if state == "behind":
-        if branch and branch not in {"HEAD", trunk_name}:
-            lines.append(
-                f"Fix: re-point {repo} from {branch} to {trunk_name}, then "
-                "restart the gateway."
-            )
-        else:
-            lines.append(
-                f"Fix: git -C {repo} merge --ff-only {trunk_name}, "
-                "then restart the gateway."
-            )
+        lines.append(
+            f"Review the {trunk_name} integration backlog and deployment evidence "
+            "before changing the checkout or reloading affected services."
+        )
     return "\n".join(lines)
 
 
@@ -833,6 +843,13 @@ def cron_stale_body(p: dict) -> str:
     p = p or {}
     scope = p.get("scope")
     job_name = p.get("job_name") or p.get("job_id") or "?"
+
+    if p.get("state") == "overdue_running" and p.get("reason") == "soft_deadline":
+        return (f"{job_name} exceeded its soft deadline and is still running "
+                f"({format_duration(p.get('age_seconds', 0))} elapsed; "
+                f"budget {format_duration(p.get('threshold_seconds', 0))}).\n"
+                f"Current stage: {p.get('stage') or 'unknown'}. "
+                "The terminal outcome has not been recorded yet.")
 
     if scope == "ticker":
         return (

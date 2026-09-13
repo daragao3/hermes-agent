@@ -47,6 +47,8 @@ class CronEventEmitter:
         job_id: str,
         job_name: str,
         schedule: str,
+        *,
+        execution_id: Optional[str] = None,
     ) -> str:
         """Emit cron_started event before job execution."""
         return self.bus.emit(
@@ -56,6 +58,7 @@ class CronEventEmitter:
                 "job_id": job_id,
                 "job_name": job_name,
                 "schedule": schedule,
+                **({"execution_id": execution_id} if execution_id else {}),
             },
         )
 
@@ -167,6 +170,7 @@ class CronEventEmitter:
         consecutive_errors: int = 0,
         *,
         failure_details: Optional[Dict[str, Any]] = None,
+        execution_id: Optional[str] = None,
     ) -> str:
         """Emit cron_completed or cron_failed event after job execution.
 
@@ -204,6 +208,7 @@ class CronEventEmitter:
                     "job_name": job_name,
                     "duration": duration,
                     "output_summary": output_summary or "",
+                    **({"execution_id": execution_id} if execution_id else {}),
                 },
             )
         else:
@@ -216,6 +221,7 @@ class CronEventEmitter:
                     "duration": duration,
                     "error": safe_error or "Unknown error",
                     "consecutive_errors": consecutive_errors,
+                    **({"execution_id": execution_id} if execution_id else {}),
                 },
             )
 
@@ -227,6 +233,7 @@ class CronEventEmitter:
                         "job_id": job_id,
                         "job_name": job_name,
                         "consecutive_errors": consecutive_errors,
+                        **({"execution_id": execution_id} if execution_id else {}),
                         "error": safe_error or "Unknown error",
                     },
                 )

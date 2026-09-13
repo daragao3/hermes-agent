@@ -34,11 +34,8 @@ member would mean a fresh three-way pairing across schema.py,
 EVENT_TYPE_EMOJI and routing_policy._POLICY — a pairing that has broken four
 times on record — to buy nothing this payload cannot already say.
 
-There is deliberately NO falling-edge "recovered" event. The only fitting type
-(``DEVFLOW_BUILD_SUCCEEDED``) is TRACE, which the notifier batches hourly into
-``devflow_firehose`` — an all-clear arriving up to an hour late in a different
-topic than the alarm is worse than none. The falling edge still clears episode
-state, so the NEXT break re-alerts.
+The measured falling edge emits DEVFLOW_BUILD_SUCCEEDED. Routing keeps this
+gate's recovery in Alerts, with the same incident identity as its failure.
 
 Read-only contract
 ------------------
@@ -275,11 +272,9 @@ def run_ruff(repo: Path, timeout: float = DEFAULT_RUFF_TIMEOUT_SECONDS) -> RuffS
 
 
 def _shape(sample: RuffSample) -> str:
-    """Identity of a red episode.
+    """Last announced rule counts, used to detect increased impact.
 
-    Keyed on the rule codes and their counts, NOT on file/line: a session
-    reformatting unrelated code shifts every line number, and re-alerting on
-    that would defeat the debounce this whole module exists to provide.
+    File/line churn and improving counts never bypass the episode cooldown.
     """
     return ",".join(f"{code}={count}" for code, count in sorted(sample.codes.items()))
 
@@ -357,14 +352,20 @@ class RuffGateProbe:
         if not sample.red:
             if self._alerting:
                 logger.info("RuffGateProbe: gate is green again — episode cleared")
+                event_id = self._emit(sample)
                 self._alerting = False
                 self._last_shape = ""
                 self._save()
+                return event_id
             return None
 
         shape = _shape(sample)
         rising_edge = not self._alerting
-        shape_changed = shape != self._last_shape
+        # Compare with the last announced impact, not the previous poll. An
+        # improving count (including a removed rule) is the same incident.
+        previous_codes = dict(part.split("=", 1) for part in self._last_shape.split(",") if "=" in part)
+        shape_changed = any(count > int(previous_codes.get(code, 0))
+                            for code, count in sample.codes.items())
         cooldown_elapsed = (
             self.re_alert_cooldown_seconds > 0
             and (now - self._last_emit) >= self.re_alert_cooldown_seconds
@@ -385,11 +386,12 @@ class RuffGateProbe:
     def _emit(self, sample: RuffSample) -> str:
         identity = describe_checkout(self._repo)
         summary = _summary(sample)
-        logger.warning(
-            "Ruff gate RED in %s on %s: %s", self._repo, identity["branch"], summary,
+        logger.info(
+            "Ruff gate %s in %s on %s: %s", "RED" if sample.red else "GREEN",
+            self._repo, identity["branch"], summary,
         )
         return self.bus.emit(
-            event_type=EventType.DEVFLOW_BUILD_FAILED,
+            event_type=EventType.DEVFLOW_BUILD_FAILED if sample.red else EventType.DEVFLOW_BUILD_SUCCEEDED,
             source=SOURCE,
             payload={
                 # Keys the WhatsApp escalator's build_failed branch renders.
@@ -404,6 +406,8 @@ class RuffGateProbe:
                 "codes": sample.codes,
                 "sample": sample.sample,
                 "gate": "ruff",
+                "status": "failed" if sample.red else "recovered",
+                "incident_key": f"ruff:{self._repo}",
             },
             priority=Priority.HIGH,
             tags=["ruff", "lint", "gate"],

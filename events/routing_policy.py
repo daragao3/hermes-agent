@@ -518,6 +518,12 @@ def classify(
             attention = Attention.INFO   # recovery / heartbeat
             wa = "none"
 
+    elif (et == EventType.DEVFLOW_BUILD_SUCCEEDED
+          and event.source == "ruff-gate-probe" and payload.get("gate") == "ruff"):
+        attention = Attention.INFO
+        topic_key = ALERTS
+        wa = "none"
+
     elif et == EventType.CODE_DRIFT:
         if payload.get("status") == "resolved":
             attention = Attention.INFO   # recovery — closure telemetry

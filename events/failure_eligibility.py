@@ -47,5 +47,12 @@ def failure_cluster_eligible(event: Event | Mapping[str, Any]) -> bool:
         return False
     if candidate.event_type in _DERIVED_ALERT_TYPES:
         return False
+    # These describe a monitored condition, not a failed execution of the
+    # reporting agent. Keep their normal routing and raw event history.
+    if candidate.event_type in {EventType.MODEL_RATE_LIMITED, EventType.SECRET_DETECTED}:
+        return False
+    if (candidate.event_type == EventType.DEVFLOW_BUILD_FAILED
+            and candidate.source == "ruff-gate-probe" and payload.get("gate") == "ruff"):
+        return False
 
     return evaluate_outcome(candidate).state is OutcomeState.FAILED
