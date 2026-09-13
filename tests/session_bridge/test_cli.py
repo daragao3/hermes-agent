@@ -8257,7 +8257,11 @@ def test_sidebar_continuous_full_managed_rejects_without_runtime_drift(
         strip_defaults=False,
     )
     original = (tmp_path / "config.yaml").read_text(encoding="utf-8")
-    monkeypatch.setenv("HERMES_MANAGED", "homebrew")
+    # A SUPPORTED managed system. "homebrew"/"brew" are deliberately ignored
+    # markers (config._IGNORED_MANAGED_VALUES) since the brew rip-out in
+    # d84e11af4d, so they no longer block a config write -- see
+    # tests/hermes_cli/test_managed_install_shapes.py.
+    monkeypatch.setenv("HERMES_MANAGED", "nix")
     backend = ProductionBackend(BridgeConfig())
 
     exit_code = main(
