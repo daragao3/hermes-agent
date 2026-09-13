@@ -19,7 +19,7 @@ import uuid
 
 import httpx
 import pytest
-from mcp.shared.version import LATEST_PROTOCOL_VERSION
+from mcp.types import LATEST_PROTOCOL_VERSION
 from starlette.testclient import TestClient
 
 from hermes_constants import get_hermes_home
