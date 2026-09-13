@@ -72,6 +72,8 @@ def test_deadline_only_amends_its_exact_attempt(tmp_path, monkeypatch, state):
         else:
             assert executions.get_execution(attempt["id"])["status"] == "completed"
         assert emitter.on_job_completed.call_count == (1 if state in {"owned", "successor"} else 0)
+        if emitter.on_job_completed.called:
+            assert emitter.on_job_completed.call_args.kwargs["execution_id"] == attempt["id"]
 
 
 @pytest.mark.parametrize("phase", ["model", "save", "error", "successor"])

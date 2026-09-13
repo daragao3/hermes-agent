@@ -399,6 +399,9 @@ def _run_job_script(
     Optional absolute path to use as the script's cwd. When set, the subprocess runs in this directory
     instead of the scripts-dir parent. See #69396.
     """
+    from cron.scheduler_diagnostics import set_stage
+
+    set_stage("script_resolve")
     path, err = _resolve_script_path(script_path)
     if path is None:
         return False, err
@@ -407,12 +410,14 @@ def _run_job_script(
     except (TypeError, ValueError, OverflowError):
         script_timeout = None
     script_timeout = script_timeout or _get_script_timeout()
+    set_stage("script_environment")
     try:
         from hermes_cli.env_loader import load_hermes_dotenv, reset_secret_source_cache
         reset_secret_source_cache()
         load_hermes_dotenv(hermes_home=_sched._get_hermes_home())
     except Exception as exc:
         logger.warning("Script-slot .env reload failed (continuing with process env): %s", exc)
+    set_stage("script_argv")
     argv, env_overlay, err = _script_argv(path)
     if argv is None:
         return False, err
@@ -430,6 +435,7 @@ def _run_job_script(
                 # reader threads on non-UTF-8 Windows (#45099).
                 "encoding": "utf-8",
                 "errors": "replace"}
+        set_stage("script_child_environment")
         env = build_subprocess_env()
         env.update(env_overlay)
         # Subprocess cwd only (default: scripts-dir parent). NEVER os.chdir() the process.
@@ -439,17 +445,21 @@ def _run_job_script(
         # File-backed capture avoids inherited pipe EOF stalls while retaining
         # upstream cancel/timeout tree termination and the ownership heartbeat.
         with tempfile.TemporaryFile() as out_file, tempfile.TemporaryFile() as err_file:
+            set_stage("script_spawn")
             proc = subprocess.Popen(
                 argv, stdout=out_file, stderr=err_file, stdin=subprocess.DEVNULL,
                 cwd=workdir or str(path.parent), env=env, **popen_kwargs)
+            set_stage("script_wait")
             deadline = time.monotonic() + script_timeout
             while True:
                 if cancel_event is not None and cancel_event.is_set():
+                    set_stage("script_cancel_cleanup")
                     _terminate_cron_script_tree(proc)
                     _drain_script_pipes(proc)
                     return False, "Script cancelled because cron fire ownership was lost"
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    set_stage("script_timeout_cleanup")
                     _terminate_cron_script_tree(proc)
                     _drain_script_pipes(proc)
                     return False, f"Script timed out after {script_timeout}s: {path}"
@@ -458,11 +468,13 @@ def _run_job_script(
                     break
                 except subprocess.TimeoutExpired:
                     continue
+            set_stage("script_output_read")
             out_file.seek(0)
             err_file.seek(0)
             stdout_raw = out_file.read().decode("utf-8", errors="replace")
             stderr_raw = err_file.read().decode("utf-8", errors="replace")
 
+        set_stage("script_output_redact")
         stdout = (stdout_raw or "").strip()
         stderr = (stderr_raw or "").strip()
 
