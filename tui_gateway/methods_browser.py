@@ -3,6 +3,18 @@ status). Bodies are rebound onto server.py's globals at install time (method_ctx
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _emit,
+        _err,
+        _ok,
+        contextlib,
+        os,
+        time,
+    )
+
 from .method_ctx import HandlerRegistry, bind_module
 
 _registry = HandlerRegistry()

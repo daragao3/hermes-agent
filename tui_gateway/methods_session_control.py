@@ -9,6 +9,18 @@ TUI command use the public manager API. A successful action emits one matching
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _emit,
+        _err,
+        _methods,
+        _ok,
+        _sess_nowait,
+        _session_profile_runtime_scope,
+    )
+
 import hashlib
 import json
 import logging

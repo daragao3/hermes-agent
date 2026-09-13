@@ -6,6 +6,20 @@ Chat delivery on the TARGET gateway, returns the reply), ``reply`` (write the re
 the SENDER gateway for its waiter). Plumbing: ``tools/bot_relay.py``; handlers are rebound onto
 server.py's globals (method_ctx.py) and reference ``_ok``/``_err`` bare."""
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _err,
+        _methods,
+        _ok,
+        _profile_home,
+        _session_live_title,
+        _session_lookup_key,
+        _sessions,
+        contextlib,
+    )
+
 import os
 import subprocess
 from pathlib import Path

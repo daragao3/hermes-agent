@@ -11,6 +11,17 @@ Bodies are rebound onto server.py's globals (bind_module publishes this module's
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _err,
+        _ok,
+        _sessions,
+        _sessions_lock,
+        current_transport,
+    )
+
 import hashlib
 import logging
 

@@ -1,5 +1,16 @@
 """Desktop foreign-history browsing, scoped to the serving backend and profile."""
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _db_unavailable_error,
+        _err,
+        _ok,
+        _profile_db,
+        _response_profile_name,
+    )
+
 from .method_ctx import HandlerRegistry, bind_module
 
 _registry = HandlerRegistry()

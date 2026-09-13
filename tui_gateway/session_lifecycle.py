@@ -5,6 +5,40 @@ globals at install time (method_ctx.bind_module), so they reference server.py gl
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        Any,
+        Callable,
+        Path,
+        Transport,
+        _TURN_SETTLE_BEFORE_CLOSE_SECONDS,
+        _WS_ORPHAN_ACTIVITY_STALE_S,
+        _WS_ORPHAN_INTERRUPT_REAP_MAX_POLLS,
+        _WS_ORPHAN_INTERRUPT_REAP_POLL_S,
+        _WS_ORPHAN_REAP_GRACE_S,
+        _broadcast_global_event,
+        _clear_inflight_turn,
+        _clear_pending,
+        _detached_ws_transport,
+        _err,
+        _get_compute_host_supervisor,
+        _get_db,
+        _load_cfg,
+        _resolve_agent_platform,
+        _session_db,
+        _session_resume_lock,
+        _session_source,
+        _session_uses_compute_host,
+        _sessions,
+        _sessions_lock,
+        _transport_is_dead,
+        logger,
+        threading,
+        time,
+    )
+
 import contextlib
 
 from .method_ctx import bind_module

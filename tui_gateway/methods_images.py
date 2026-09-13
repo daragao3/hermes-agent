@@ -4,6 +4,16 @@ gateway file path and hosted URLs are often CORS-opaque to a renderer canvas. Bo
 rebound onto server.py's globals (method_ctx.bind_module) and reference them bare.
 """
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _err,
+        _ok,
+        is_truthy_value,
+        json,
+    )
+
 from .method_ctx import HandlerRegistry, bind_module
 
 _registry = HandlerRegistry()

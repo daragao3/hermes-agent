@@ -4,6 +4,31 @@ server.py's globals at install time (method_ctx.bind_module), so they use them b
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        Any,
+        _clear_inflight_turn,
+        _context_cwd_is_launch_artifact,
+        _drain_queued_prompt,
+        _emit,
+        _err,
+        _load_cfg,
+        _load_dashboard_process_isolation_config,
+        _ok,
+        _session_cwd,
+        _session_info,
+        _session_source,
+        _sessions,
+        _sessions_lock,
+        _status_update,
+        os,
+        time,
+        uuid,
+        write_json,
+    )
+
 import contextlib
 import threading
 
