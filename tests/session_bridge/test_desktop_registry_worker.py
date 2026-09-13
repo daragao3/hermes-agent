@@ -684,6 +684,56 @@ def test_baseline_error_records_the_reason_durably(
     assert "expected 3 roots, found 2" in recorded["error"]
 
 
+def test_a_raise_inside_the_window_is_followed_by_a_throttled_call(
+    tmp_path, store, monkeypatch
+) -> None:
+    """The worker-side half of the false-recovery shape, on the real class.
+
+    ``_last_run_at`` is stamped before the body can raise, so any exception
+    the body still lets escape (here: the store failing to load baselines,
+    which no guard in run_once covers) is followed, inside
+    ``run_min_interval_seconds``, by a call that returns ``throttled=1``
+    and beats nothing.  The coordinator keys on exactly that flag to keep
+    its failure record open (test_post_scan_worker_failure_is_named), so
+    this pins that the flag is what a post-raise call actually emits.
+    Moving the stamp to the completion path would make a raising worker
+    retry every scan loop instead of every 300s; deliberately not done.
+    """
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, title="One")
+    clock = [0.0]
+    worker = DesktopRegistrySyncWorker(
+        store,
+        registry_roots=(a, b, c),
+        run_min_interval_seconds=300.0,
+        monotonic=lambda: clock[0],
+        wall_clock=lambda: 5_000.0,
+    )
+
+    def _store_unavailable():
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(store, "load_desktop_registry_baselines", _store_unavailable)
+    with pytest.raises(RuntimeError, match="database is locked"):
+        worker.run_once()
+
+    clock[0] = 2.0
+    counters = worker.run_once()
+
+    assert counters["throttled"] == 1
+    assert counters["examined"] == 0
+    assert _heartbeat(store) is None
+
+    monkeypatch.undo()
+    clock[0] = 301.0
+    counters = worker.run_once()
+
+    assert counters["throttled"] == 0
+    assert counters["examined"] == 1
+    assert _heartbeat(store) is not None
+
+
 def test_baseline_error_stays_a_valueerror_for_existing_callers() -> None:
     """The narrower type must not break anyone already catching ValueError.
 

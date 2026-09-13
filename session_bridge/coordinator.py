@@ -4039,7 +4039,7 @@ class SessionBridgeCoordinator:
     async def _run_post_scan_worker(self, worker: Any, error_code: str) -> None:
         worker_task = asyncio.create_task(asyncio.to_thread(worker.run_once))
         try:
-            await asyncio.shield(worker_task)
+            result = await asyncio.shield(worker_task)
         except asyncio.CancelledError:
             await asyncio.gather(worker_task, return_exceptions=True)
             raise
@@ -4061,7 +4061,7 @@ class SessionBridgeCoordinator:
             self._record_error_code(error_code)
             self._record_post_scan_worker_diagnostic(worker, error_code, exc)
         else:
-            self._note_post_scan_worker_success(worker, error_code)
+            self._note_post_scan_worker_success(worker, error_code, result)
 
     def _record_post_scan_worker_diagnostic(
         self,
@@ -4130,7 +4130,9 @@ class SessionBridgeCoordinator:
         except Exception:
             pass
 
-    def _note_post_scan_worker_success(self, worker: Any, error_code: str) -> None:
+    def _note_post_scan_worker_success(
+        self, worker: Any, error_code: str, result: object = None
+    ) -> None:
         """Close the record when a previously failing worker comes back.
 
         An outage that ends as silently as it began is still unattributable:
@@ -4138,8 +4140,28 @@ class SessionBridgeCoordinator:
         being broken, so a reader cannot bound the outage from the log alone.
         Says nothing about a worker that was already healthy -- at
         ``catalog_scan_seconds`` of 3 that would be its own flood.
+
+        A THROTTLED call is not a recovery.  The throttling workers
+        (``DesktopRegistrySyncWorker`` and its presentation, scheduled-catalog
+        and mirror-float siblings) stamp ``_last_run_at`` before their body
+        can raise, so the call after a raise -- at the 3s scan cadence, 0-2s
+        later -- lands inside the ``run_min_interval_seconds`` window and
+        returns a counters dict carrying ``throttled=1`` having done nothing.
+        Measured three for three on 2026-09-12 (23:18:06, 23:23:07/09,
+        23:27:57): every ``post_scan_worker_diagnostic`` was followed within
+        2s by ``post_scan_worker_recovered ... failures=1 over=0s`` while the
+        leg re-raised every 300s and its heartbeat stayed pinned.  Anything
+        keying on this line to close an episode closed every episode
+        instantly.  So a throttled result leaves the record open; it closes
+        on the first call that ran to completion, and ``over=`` then spans
+        the whole outage.  Keying on the worker's own flag rather than moving
+        ``_last_run_at`` to the completion path keeps the 300s retry cadence
+        for a raising worker.  Workers whose ``run_once`` returns something
+        other than a mapping (the sidebar executors) are unaffected.
         """
         try:
+            if _post_scan_worker_result_was_throttled(result):
+                return
             state = self._post_scan_worker_failures.pop(error_code, None)
             if state is None:
                 return
@@ -6531,6 +6553,23 @@ def _safe_native_token(value: object) -> str:
         return "unknown"
     cleaned = "".join(char for char in text if char.isalnum() or char in "._-")
     return cleaned[:64] or "unknown"
+
+
+def _post_scan_worker_result_was_throttled(result: object) -> bool:
+    """True when a post-scan worker declined to run this call at all.
+
+    The throttling workers return their counters dict with ``throttled=1``
+    from the ``run_min_interval_seconds`` branch, before any work.  Anything
+    else -- a completed counters dict, a sidebar ``*ExecutionResult``, ``None``
+    -- is a call that ran, and the caller treats it as one.  Defensive on
+    shape because this sits on the scan loop's success path.
+    """
+    if not isinstance(result, Mapping):
+        return False
+    try:
+        return bool(result.get("throttled"))
+    except Exception:
+        return False
 
 
 def _redacted_codex_diagnostic_text(value: object) -> str:

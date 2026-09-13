@@ -30,6 +30,7 @@ _MIGRATION_METHODS = [
     "_apply_claude_characterization_abort_trigger_migration",
     "_apply_claude_characterization_events_v28_migration",
     "_apply_claude_auth_recovery_call_started_migration",
+    "_apply_desktop_registry_values_migration",
 ]
 
 
