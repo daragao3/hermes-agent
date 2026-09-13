@@ -3415,10 +3415,19 @@ class SessionBridgeStore:
         requiring one after the failure could never be satisfied and the gate
         would deadlock closed forever. Do not "tighten" it that way.
 
-        Only ``max_attempts_exhausted`` is eligible. The conflict and lineage
-        codes stay fail-closed for a human, because those assert a contested
-        identity and clearing one unattended risks a wrong or duplicate
-        registration; exhaustion asserts only that paid attempts ran out.
+        Two failures are eligible. ``max_attempts_exhausted`` asserts only that
+        paid attempts ran out. ``bridge_conflict`` with the exact detail
+        ``exact transcript conflict`` is the registrar's OWN outcome for its
+        own reserved uuid: the ``claude -p`` run left a transcript under that
+        uuid that does not validate as the registration (a stub, measured
+        689 bytes on 2026-09-12), so identity is not contested -- nobody else
+        wrote there -- and a retry cannot succeed because the registrar
+        re-finds the same transcript and re-raises. It struck twice in one
+        evening (2026-09-12, Diego: "extend auto-dismiss to the exact
+        transcript conflict case"), each time blocking discovery until a
+        hand dismiss. Every OTHER conflict detail (``duplicate_uuid``, a
+        foreign marker) and the lineage codes still wait for a human, because
+        those DO assert a contested identity.
 
         The write is byte-identical to the operator CLI's: ``operator_cleared_at``
         is stamped BESIDE the verdict, and state, attempts, error_code and
@@ -3446,10 +3455,16 @@ class SessionBridgeStore:
             # clearing it would be pointless and, worse, HOLDING it would raise
             # a "the lane is fail-closed" alert about a lane that is open.
             candidates = conn.execute(
-                """SELECT id, attempts, error_code, updated_at
+                """SELECT id, attempts, error_code, error_detail, updated_at
                    FROM session_claude_visibility_jobs AS job
                    WHERE job.state = 'claude_failed'
-                     AND job.error_code = 'max_attempts_exhausted'
+                     AND (
+                         job.error_code = 'max_attempts_exhausted'
+                         OR (
+                             job.error_code = 'bridge_conflict'
+                             AND job.error_detail = 'exact transcript conflict'
+                         )
+                     )
                      AND job.operator_cleared_at IS NULL
                      AND NOT EXISTS (
                          SELECT 1
@@ -3509,6 +3524,8 @@ class SessionBridgeStore:
                     entry = {
                         "job_id": job_id,
                         "attempts": int(row["attempts"]),
+                        "error_code": row["error_code"],
+                        "error_detail": row["error_detail"],
                         "reason": reason,
                         "age_seconds": age,
                         "terminal_at": (
@@ -3542,6 +3559,7 @@ class SessionBridgeStore:
                     "job_id": job_id,
                     "attempts": int(row["attempts"]),
                     "error_code": row["error_code"],
+                    "error_detail": row["error_detail"],
                     "age_seconds": age,
                     "terminal_at": float(updated_at),
                     "operator_cleared_at": check_time,

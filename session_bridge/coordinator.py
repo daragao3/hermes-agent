@@ -394,6 +394,26 @@ def _claude_visibility_enqueue_gates(
     return open_reasons, tuple(sorted(fatal))
 
 
+def _describe_terminal_failure(entry: Mapping[str, Any]) -> str:
+    """One clause naming WHY the job is terminal, for the operator notes.
+
+    Exhaustion and the exact-transcript-conflict class are the two failures
+    auto-dismiss may clear; the note must say which, because the recovery
+    command's --expected-error-code differs and an operator reading "exhausted"
+    about a one-attempt conflict would be misled.
+    """
+
+    code = entry.get("error_code") or "max_attempts_exhausted"
+    attempts = entry.get("attempts")
+    if code == "bridge_conflict":
+        return (
+            f"failed its registration attempt {attempts} with an exact transcript "
+            "conflict (the run left a stub transcript under the job's own reserved "
+            "uuid; a retry re-finds it)"
+        )
+    return f"exhausted {attempts} paid attempts"
+
+
 def _describe_seconds(value: object) -> str:
     """Render an age for a human, without inventing precision it does not have."""
 
@@ -855,16 +875,17 @@ class ClaudeVisibilityCoordinator:
 
         for entry in outcome.get("dismissed", ()):
             _LOG.warning(
-                "claude_visibility_auto_dismissed job=%s attempts=%s age_seconds=%s",
+                "claude_visibility_auto_dismissed job=%s code=%s attempts=%s age_seconds=%s",
                 entry.get("job_id"),
+                entry.get("error_code"),
                 entry.get("attempts"),
                 entry.get("age_seconds"),
             )
             self._notify(
-                "Claude visibility: exhausted job auto-cleared",
+                "Claude visibility: terminal job auto-cleared",
                 (
-                    f"Job {entry.get('job_id')} exhausted "
-                    f"{entry.get('attempts')} paid attempts and sat terminal for "
+                    f"Job {entry.get('job_id')} {_describe_terminal_failure(entry)} "
+                    f"and sat terminal for "
                     f"{_describe_seconds(entry.get('age_seconds'))}. The lane was "
                     "healthy (last successful registration "
                     f"{_describe_epoch(entry.get('last_success_at'))}), so the row "
@@ -885,8 +906,8 @@ class ClaudeVisibilityCoordinator:
             self._notify(
                 "Claude visibility: lane fail-closed and NOT auto-cleared",
                 (
-                    f"Job {entry.get('job_id')} exhausted "
-                    f"{entry.get('attempts')} paid attempts and is old enough to "
+                    f"Job {entry.get('job_id')} {_describe_terminal_failure(entry)} "
+                    "and is old enough to "
                     "clear, but the lane has produced no successful registration "
                     f"within the health window (last success "
                     f"{_describe_epoch(entry.get('last_success_at'))}). Clearing "
@@ -895,7 +916,8 @@ class ClaudeVisibilityCoordinator:
                     "instead. Discovery stays blocked until a human looks. "
                     "Dismiss with: hermes-session-bridge claude-visibility-dismiss "
                     f"--job-id {entry.get('job_id')} --expected-error-code "
-                    f"max_attempts_exhausted --expected-attempts "
+                    f"{entry.get('error_code') or 'max_attempts_exhausted'} "
+                    f"--expected-attempts "
                     f"{entry.get('attempts')} --confirm-terminal-failure"
                 ),
             )

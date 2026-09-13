@@ -15406,6 +15406,7 @@ def _fail_claude_visibility_job(
     *,
     attempts: int = 7,
     error_code: str = "max_attempts_exhausted",
+    error_detail: str = "maximum paid launch attempts exhausted",
 ) -> None:
     """Put one job in the terminal state the exhaustion path writes."""
 
@@ -15414,9 +15415,9 @@ def _fail_claude_visibility_job(
         db._conn.execute(
             """UPDATE session_claude_visibility_jobs
                SET state = 'claude_failed', attempts = ?, error_code = ?,
-                   error_detail = 'maximum paid launch attempts exhausted'
+                   error_detail = ?
                WHERE id = ?""",
-            (attempts, error_code, job_id),
+            (attempts, error_code, error_detail, job_id),
         )
         db._conn.commit()
 
@@ -15574,10 +15575,71 @@ def test_auto_dismiss_holds_an_exhaustion_that_is_not_old_enough(
     }
 
 
-def test_auto_dismiss_never_touches_conflict_or_lineage_codes(
+def test_auto_dismiss_clears_an_aged_exact_transcript_conflict_when_healthy(
     db: SessionDB,
 ) -> None:
-    """Only exhaustion is eligible; a contested identity always waits."""
+    """The registrar's own stub transcript is not a contested identity.
+
+    Measured 2026-09-12: two such rows in one evening, each fail-closing
+    discovery until a hand dismiss. Same gates as exhaustion (age, lane
+    health), same stamp beside the verdict."""
+
+    now = 1_000_000.0
+    store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
+    healthy = _claude_visibility_identity("healthy")
+    _enqueue_claude_visibility_job(store, *healthy)
+    _make_claude_visibility_job_visible(db, healthy[1].job_id, visible_at=now - 60.0)
+    stub = _claude_visibility_identity("stub")
+    _enqueue_claude_visibility_job(store, *stub)
+    _fail_claude_visibility_job(
+        db, stub[1].job_id, attempts=1, error_code="bridge_conflict",
+        error_detail="exact transcript conflict",
+    )
+    _age_claude_visibility_failure(db, stub[1].job_id, terminal_at=now - 30_000.0)
+
+    outcome = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+    after = store.claude_visibility_status(now)
+
+    assert outcome["status"] == "dismissed"
+    assert [entry["job_id"] for entry in outcome["dismissed"]] == [stub[1].job_id]
+    assert outcome["dismissed"][0]["error_code"] == "bridge_conflict"
+    assert outcome["dismissed"][0]["error_detail"] == "exact transcript conflict"
+    assert after["failed_codes"] == {}
+    with db._lock:
+        assert db._conn is not None
+        row = db._conn.execute(
+            "SELECT state, attempts, error_code, error_detail, operator_cleared_at "
+            "FROM session_claude_visibility_jobs WHERE id = ?",
+            (stub[1].job_id,),
+        ).fetchone()
+    # The verdict survives verbatim; only the stamp is new.
+    assert tuple(row)[:4] == ("claude_failed", 1, "bridge_conflict", "exact transcript conflict")
+    assert row["operator_cleared_at"] == now
+
+    # The same age gate applies: a fresh conflict is held, not cleared.
+    fresh = _claude_visibility_identity("fresh")
+    _enqueue_claude_visibility_job(store, *fresh)
+    _fail_claude_visibility_job(
+        db, fresh[1].job_id, attempts=1, error_code="bridge_conflict",
+        error_detail="exact transcript conflict",
+    )
+    _age_claude_visibility_failure(db, fresh[1].job_id, terminal_at=now - 60.0)
+    outcome = store.auto_dismiss_exhausted_claude_visibility_jobs(
+        now, min_age_seconds=21_600, health_window_seconds=86_400
+    )
+    assert outcome["dismissed"] == []
+    assert [(h["job_id"], h["reason"]) for h in outcome["held"]] == [
+        (fresh[1].job_id, "too_recent")
+    ]
+
+
+def test_auto_dismiss_never_touches_other_conflict_details_or_lineage_codes(
+    db: SessionDB,
+) -> None:
+    """A bridge_conflict with ANY other detail asserts a contested identity
+    (duplicate_uuid, a foreign marker) and always waits for a human."""
 
     now = 1_000_000.0
     store = SessionBridgeStore(db, clock=lambda: now, local_timezone=timezone.utc)
@@ -15587,7 +15649,8 @@ def test_auto_dismiss_never_touches_conflict_or_lineage_codes(
     conflicted = _claude_visibility_identity("conflicted")
     _enqueue_claude_visibility_job(store, *conflicted)
     _fail_claude_visibility_job(
-        db, conflicted[1].job_id, attempts=1, error_code="bridge_conflict"
+        db, conflicted[1].job_id, attempts=1, error_code="bridge_conflict",
+        error_detail="duplicate_uuid",
     )
     _age_claude_visibility_failure(
         db, conflicted[1].job_id, terminal_at=now - 900_000.0
