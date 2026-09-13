@@ -14,7 +14,13 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Dict
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
 from gateway.platforms.event import ProcessingOutcome
+
+# These integration cases inject clients and skip connect(), while still
+# exercising real request builders and SDK callback types.
+pytestmark = pytest.mark.usefixtures("_bind_lark_sdk_globals_when_installed")
 
 if TYPE_CHECKING:
     from plugins.platforms.feishu.adapter import FeishuAdapter
@@ -2635,5 +2641,4 @@ class TestChatLockEviction(unittest.TestCase):
 
         adapter = self._make_adapter()
         self.assertIsInstance(adapter._chat_locks, _collections.OrderedDict)
-
 

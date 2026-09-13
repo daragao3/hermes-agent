@@ -39,18 +39,19 @@ from unittest.mock import MagicMock
 import pytest
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def _bind_lark_sdk_globals_when_installed():
-    """Bind the feishu adapter's lark SDK globals once per test session.
+    """Opt-in binding for Feishu integration tests that need SDK builders.
 
     The adapter defers ``import lark_oapi`` to first use
     (``_load_lark_oapi`` — called from connect()/probe_bot()/standalone
     send), so the request-builder globals (``CreateMessageRequestBody``
     etc.) stay ``None`` at module import time. Feishu tests across many
     files inject a mock ``_client`` and skip connect() entirely, then call
-    send paths that reference those globals. Bind them eagerly when the
-    SDK is installed; when it isn't, the affected tests already skip via
-    their own ``skipUnless`` guards.
+    send paths that reference those globals. Those suites explicitly request
+    this fixture with usefixtures. It must not be autouse: unrelated gateway
+    tests would otherwise import the large SDK and run aiohttp host/TLS probes
+    during setup. When the SDK is absent, the existing skipUnless guards apply.
     """
     try:
         import lark_oapi  # noqa: F401
@@ -623,4 +624,3 @@ def pytest_configure(config):
         return
 
     _adapter_guard_check(_GATEWAY_DIR, Path.cwd() / ".pytest-cache")
-
