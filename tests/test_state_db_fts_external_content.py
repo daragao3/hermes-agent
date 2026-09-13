@@ -20,6 +20,22 @@ loudly, which the rest of the file covers:
   still answers queries.
 * ``SELECT COUNT(*) FROM messages_fts`` counts the *view* (every message), not
   index entries — so it can no longer be used to assert that indexing happened.
+
+THIS BRANCH DOES NOT CONVERT AN EXISTING INLINE INSTALL, which is why the tests
+below assert PRESERVATION rather than the migration they were written for. A
+fresh database still gets the external-content shape described above, but
+``_init_fts`` branches on ``_db_has_legacy_inline_fts`` (the stored CREATE lacks
+``tool_name``) — shape, not version — and deliberately leaves a legacy install
+in its inline shape: *"OPT-IN v23 boundary: a legacy v22 inline install keeps
+its inline schema + triggers (the v23 DDL would create the trigram source VIEW
+and leave a mixed state)"*. So on such a database the second copy of the text
+survives and the space win described above is NOT collected.
+
+What holds on the preserved index regardless, and is what most of these tests
+now pin: ``tool_name`` stays indexed, the delete/update triggers retract the
+right terms, and an unindexed prefix is closed when the database is opened.
+
+Measured 2026-09-13. Full reasoning: loops wave2-fts-preservation-tests-20260913.
 """
 import sqlite3
 import uuid
@@ -30,57 +46,12 @@ import pytest
 from hermes_state import SCHEMA_VERSION, SessionDB
 
 
-# The trigram index is unrelated to this conversion and is absent in
-# production; disabling it keeps these tests focused and fast.
-@pytest.fixture(autouse=True)
-def _no_trigram(monkeypatch):
-    monkeypatch.setenv("HERMES_DISABLE_MESSAGE_TRIGRAM", "1")
-
-
-_BOUNDARY_SKIP_REASON = (
-    "This branch preserves legacy inline FTS instead of converting it. Every test "
-    "below asserts the v31 -> v32 conversion to external content, which belongs to "
-    "the LOCAL migration history; the deployed branch runs the UPSTREAM domain "
-    "(SCHEMA_VERSION 30) where _init_fts branches on _db_has_legacy_inline_fts -- "
-    "shape, not version -- and deliberately leaves such a database alone: "
-    "'OPT-IN v23 boundary: a legacy v22 inline install keeps its inline schema + "
-    "triggers (the v23 DDL would create the trigram source VIEW and leave a mixed "
-    "state)'. Measured 2026-09-13: with the local-history stamp cleared so the "
-    "migration-domain guard is not what is being measured, messages_fts stays "
-    "CREATE VIRTUAL TABLE messages_fts USING fts5(content) and the "
-    "messages_fts_content shadow table survives. No renumbering makes these pass. "
-    "See loops wave2-schema-history-fixture-tests-20260913."
-)
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _requires_the_external_content_conversion(tmp_path_factory):
-    """Skip this module unless the runtime actually performs the v31 conversion.
-
-    Deliberately BEHAVIOURAL rather than a version comparison, so it un-skips
-    itself: the day this branch adopts the conversion, the probe below sees an
-    external-content table and every test here runs again as written. A
-    ``skipif`` on SCHEMA_VERSION would have gone on hiding them forever.
-    """
-    probe = tmp_path_factory.mktemp("fts-conversion-probe") / "state.db"
-    _make_inline_v31(probe)
-    try:
-        db = SessionDB(db_path=probe)
-    except RuntimeError as exc:
-        # The fixture stamps the LOCAL v31 marker. An upstream-domain runtime
-        # refuses to open it at all, which is itself proof the conversion this
-        # module describes is not reachable here.
-        if "migration-domain conversion" not in str(exc):
-            raise
-        pytest.skip(_BOUNDARY_SKIP_REASON)
-    try:
-        declaration = db._conn.execute(
-            "SELECT sql FROM sqlite_master WHERE name = 'messages_fts'"
-        ).fetchone()[0]
-    finally:
-        db.close()
-    if "content='messages_fts_source'" not in "".join((declaration or "").split()):
-        pytest.skip(_BOUNDARY_SKIP_REASON)
+# NOTE: this module used to set HERMES_DISABLE_MESSAGE_TRIGRAM=1 here "to keep
+# these tests focused and fast". Nothing on this branch reads that variable any
+# more -- the trigram index is built unconditionally -- so the fixture was a
+# no-op that made two tests below look broken (a second index shows up in
+# check_fts_integrity(), and rebuild_fts() rebuilds two indexes rather than
+# one). Removed rather than repaired: the tests now state the real index set.
 
 
 def _seed(db_path: Path, count: int = 10) -> str:
@@ -125,8 +96,14 @@ def _integrity_ok(conn: sqlite3.Connection) -> bool:
         return False
 
 
-def _make_inline_v31(db_path: Path, *, indexed_from_id: int = 0) -> str:
-    """Build a DB and force it back to the pre-v32 inline FTS shape.
+def _make_legacy_inline(db_path: Path, *, indexed_from_id: int = 0) -> str:
+    """Build a DB and force it back to the legacy inline FTS shape.
+
+    Stamped at the CURRENT schema version on purpose: this represents a legacy
+    install that has already been carried up to today's version and kept its
+    inline index, which is the state this branch preserves. Stamping the local
+    v31 marker instead would only trip the migration-domain guard and prove
+    nothing about FTS.
 
     ``indexed_from_id`` reproduces production's unindexed prefix: rows at or
     below it exist in ``messages`` but were never added to the index, which is
@@ -168,16 +145,23 @@ END;
         f"SELECT id, {concat} FROM messages WHERE id > ?",
         (indexed_from_id,),
     )
-    conn.execute("UPDATE schema_version SET version = 31")
+    conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
     conn.close()
     return sid
 
 
-def test_migration_drops_the_duplicate_content_shadow_table(tmp_path):
-    """The whole point: no second copy of the message text on disk."""
+def test_open_preserves_the_legacy_inline_shape_and_its_shadow_table(tmp_path):
+    """Opening a legacy inline install leaves it inline -- the opt-in boundary.
+
+    The inverse of what this test asserted when the module was written for the
+    conversion. Nothing here is an endorsement of paying for the second copy;
+    it pins that this branch KNOWINGLY leaves it in place, so that adopting the
+    conversion later shows up as this test failing rather than as a silent
+    change of on-disk shape.
+    """
     db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path)
+    _make_legacy_inline(db_path)
 
     raw = sqlite3.connect(str(db_path))
     assert raw.execute(
@@ -187,28 +171,38 @@ def test_migration_drops_the_duplicate_content_shadow_table(tmp_path):
 
     db = SessionDB(db_path=db_path)
     try:
-        assert db._conn.execute("SELECT version FROM schema_version").fetchone()[0] == 32
-        assert SCHEMA_VERSION == 32
+        # The open must not relabel the database either.
+        assert (
+            db._conn.execute("SELECT version FROM schema_version").fetchone()[0]
+            == SCHEMA_VERSION
+        )
+        decl = " ".join(
+            db._conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name='messages_fts'"
+            ).fetchone()[0].split()
+        )
+        assert "content='messages_fts_source'" not in decl, "must NOT be converted"
+        assert "USING fts5(content)" in decl
+        # The duplicate copy survives, and still holds real text: that is the
+        # cost of the boundary, stated rather than implied.
         assert db._conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE name='messages_fts_content'"
-        ).fetchone()[0] == 0
-        decl = db._conn.execute(
-            "SELECT sql FROM sqlite_master WHERE name='messages_fts'"
-        ).fetchone()[0]
-        assert "content='messages_fts_source'" in decl
-        assert "content_rowid='id'" in decl
+        ).fetchone()[0] == 1
+        assert db._conn.execute(
+            "SELECT COUNT(*) FROM messages_fts_content"
+        ).fetchone()[0] > 0
     finally:
         db.close()
 
 
-def test_migration_still_indexes_tool_name(tmp_path):
-    """#16751 must survive the round trip back to external content.
+def test_preserved_inline_index_still_indexes_tool_name(tmp_path):
+    """#16751 must hold on the preserved index too.
 
     This is the requirement that caused v11 to abandon external content in the
-    first place, so it is the one most likely to regress.
+    first place. Preserving the inline shape must not quietly drop it.
     """
     db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path)
+    _make_legacy_inline(db_path)
     db = SessionDB(db_path=db_path)
     try:
         assert _match_count(db._conn, "browser_snapshot") == 10
@@ -216,15 +210,19 @@ def test_migration_still_indexes_tool_name(tmp_path):
         db.close()
 
 
-def test_migration_rebuild_closes_an_unindexed_prefix(tmp_path):
-    """'rebuild' reads the view, so rows the inline index never had get indexed.
+def test_open_closes_an_unindexed_prefix_on_the_preserved_index(tmp_path):
+    """An unindexed prefix is closed on open even though the index stays inline.
 
-    Under inline FTS this is impossible: 'rebuild' regenerates the index from
-    ``messages_fts_content``, so rows missing from that shadow copy stay
-    missing. The two modes differ here and it is easy to conflate them.
+    Worth pinning because it is the surprise: this test was written believing
+    the gap could only be closed by converting to external content ("under
+    inline FTS this is impossible: 'rebuild' regenerates the index from
+    messages_fts_content, so rows missing from that shadow copy stay missing").
+    On this branch the preserved index is repopulated from ``messages``
+    instead, so the prefix closes with the inline shape intact -- measured
+    2026-09-13 as 15 indexed rows of 20 before the open and 20 after.
     """
     db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path, indexed_from_id=5)
+    _make_legacy_inline(db_path, indexed_from_id=5)
 
     raw = sqlite3.connect(str(db_path))
     assert raw.execute("SELECT COUNT(*) FROM messages_fts_content").fetchone()[0] == 15
@@ -243,12 +241,12 @@ def test_migration_rebuild_closes_an_unindexed_prefix(tmp_path):
 def test_delete_trigger_retracts_the_right_terms(tmp_path):
     """Deleting a formerly-unindexed row must not corrupt the index.
 
-    Pre-migration id<=5 was never indexed. If v32 skipped its rebuild, the
-    delete trigger would retract terms that were never inserted — integrity
+    id<=5 was never indexed by the fixture. If the open skipped its repopulate,
+    the delete trigger would retract terms that were never inserted — integrity
     would fail here while ordinary searches kept looking fine.
     """
     db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path, indexed_from_id=5)
+    _make_legacy_inline(db_path, indexed_from_id=5)
     db = SessionDB(db_path=db_path)
     try:
         db._conn.execute("DELETE FROM messages WHERE id IN (1, 9)")  # both 'hello' rows
@@ -261,7 +259,7 @@ def test_delete_trigger_retracts_the_right_terms(tmp_path):
 
 def test_update_trigger_retracts_the_old_text(tmp_path):
     db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path)
+    _make_legacy_inline(db_path)
     db = SessionDB(db_path=db_path)
     try:
         db._conn.execute("UPDATE messages SET content='zebra' WHERE id=11")
@@ -273,27 +271,45 @@ def test_update_trigger_retracts_the_old_text(tmp_path):
         db.close()
 
 
-def test_bare_count_star_counts_the_view_not_the_index(tmp_path):
-    """Pin the silent trap so nobody reintroduces COUNT(*) as an index assertion.
+def test_bare_count_star_counts_index_rows_on_the_preserved_index(tmp_path):
+    """The space win is NOT collected here, and COUNT(*) is why it looked like it was.
 
-    If this ever starts equalling the indexed-row count again, the index is no
-    longer external-content and the space win is gone.
+    This test previously read ``bare == messages == 20`` and PASSED on this
+    branch -- for the wrong reason. Its own docstring said that equality means
+    "the index is no longer external-content and the space win is gone", which
+    is exactly the state of a preserved inline install; the numbers agreed only
+    because the open re-indexes the unindexed prefix, so index rows reach the
+    message count anyway. A green test asserting the opposite of the truth is
+    worse than a red one, so the assertion is now on the fact that actually
+    distinguishes the two shapes: whether a second copy of the text is on disk.
     """
     db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path, indexed_from_id=5)
+    _make_legacy_inline(db_path, indexed_from_id=5)
     db = SessionDB(db_path=db_path)
     try:
         bare = db._conn.execute("SELECT COUNT(*) FROM messages_fts").fetchone()[0]
         messages = db._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-        assert bare == messages == 20
+        shadow = db._conn.execute(
+            "SELECT COUNT(*) FROM messages_fts_content"
+        ).fetchone()[0]
+        assert messages == 20
+        # Inline: COUNT(*) is the index's own rows, which the shadow copy mirrors
+        # one-for-one. Under external content the shadow table would not exist at
+        # all, so this pairing is the discriminator -- not the bare number.
+        assert bare == shadow
     finally:
         db.close()
 
 
-def test_snippet_still_works_without_a_stored_copy(tmp_path):
-    """snippet() re-reads through the view; search results must be unchanged."""
+def test_snippet_works_on_the_preserved_inline_index(tmp_path):
+    """Search results must be unchanged by the boundary.
+
+    Renamed: on a preserved inline index there IS a stored copy, so the old
+    name ("without a stored copy") asserted something false here even while the
+    body passed.
+    """
     db_path = tmp_path / "state.db"
-    _make_inline_v31(db_path)
+    _make_legacy_inline(db_path)
     db = SessionDB(db_path=db_path)
     try:
         rows = db.search_messages("pizza", limit=5)
@@ -303,11 +319,31 @@ def test_snippet_still_works_without_a_stored_copy(tmp_path):
         db.close()
 
 
-def test_search_survives_a_corrupt_index_block(tmp_path):
-    """The read-path guard: corrupt index b-tree → rebuild → retry → results.
+def test_a_corrupt_index_block_propagates_instead_of_failing_open(tmp_path):
+    """A corrupt index block reaches the search caller raw. Deliberate, and costly.
 
-    Before v32 only the write path auto-rebuilt, so a corrupt index surfaced
-    "database disk image is malformed" raw to every search caller.
+    This test was written for the opposite contract -- "corrupt index b-tree →
+    rebuild → retry → results", guarding the very symptom named in this
+    module's own history: "a corrupt index surfaced 'database disk image is
+    malformed' raw to every search caller". That guard
+    (``_fts_runtime_rebuild_attempted``) no longer exists on this branch. The
+    replacement is ``_enter_fts_fail_open``: detach the derived indexes and
+    answer from canonical rows, because "a live search never runs the unbounded
+    rebuild".
+
+    But that replacement DOES NOT FIRE HERE, by an explicit decision in
+    ``_is_fts_write_corruption_error``: it fails open only for corruption
+    SQLite scopes to the virtual table (``SQLITE_CORRUPT_VTAB``, 267), on the
+    stated grounds that "a bare malformed image is structural". Damaging an
+    FTS index block raises bare ``SQLITE_CORRUPT`` (11), so the fail-open arm
+    is unreachable for it and the error propagates.
+
+    The cost, asserted below so it cannot be overlooked: the damage is confined
+    to the FTS index and every canonical row is still readable, yet search
+    raises. Whether that is the right call is a judgement about masking
+    possible whole-file corruption versus keeping search alive; this test only
+    pins which way the branch currently decides, and fails loudly if either the
+    classifier or the policy moves.
     """
     db_path = tmp_path / "state.db"
     _seed(db_path)
@@ -321,11 +357,17 @@ def test_search_survives_a_corrupt_index_block(tmp_path):
 
     db = SessionDB(db_path=db_path)
     try:
-        assert db._fts_runtime_rebuild_attempted is False
-        rows = db.search_messages("pizza", limit=25)
-        assert len(rows) == 10
-        assert db._fts_runtime_rebuild_attempted is True, "the guard must have fired"
-        assert _integrity_ok(db._conn)
+        with pytest.raises(sqlite3.DatabaseError) as caught:
+            db.search_messages("pizza", limit=25)
+        assert "malformed" in str(caught.value)
+        # WHY it propagates: not scoped to the vtable, so not fail-open eligible.
+        assert getattr(caught.value, "sqlite_errorcode", None) == 11
+        assert getattr(caught.value, "sqlite_errorcode", None) != getattr(
+            sqlite3, "SQLITE_CORRUPT_VTAB", 267
+        )
+        assert db._is_fts_write_corruption_error(caught.value) is False
+        # ...and the canonical rows were fine the whole time.
+        assert db._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 20
     finally:
         db.close()
 
@@ -358,7 +400,10 @@ def test_search_ignores_orphaned_index_rowids(tmp_path):
         rows = db.search_messages("hello", limit=25)
         assert len(rows) == 9, "orphan is skipped, not raised"
 
-        assert db.rebuild_fts() == 1
+        # Two indexes are rebuilt, not one: the trigram index is built
+        # unconditionally on this branch (see the note where the old
+        # HERMES_DISABLE_MESSAGE_TRIGRAM fixture used to be).
+        assert db.rebuild_fts() == 2
         assert _integrity_ok(db._conn), "'rebuild' repairs it"
     finally:
         db.close()
@@ -370,7 +415,11 @@ def test_check_fts_integrity_reports_the_orphan(tmp_path):
     _seed(db_path)
     db = SessionDB(db_path=db_path)
     try:
-        assert db.check_fts_integrity() == {"messages_fts": None}
+        # Every enabled index is reported, and the trigram is always enabled
+        # on this branch, so the report is keyed on both.
+        healthy = db.check_fts_integrity()
+        assert set(healthy) == {"messages_fts", "messages_fts_trigram"}
+        assert all(v is None for v in healthy.values())
 
         ddl = db._conn.execute(
             "SELECT sql FROM sqlite_master WHERE name='messages_fts_delete'"
@@ -381,11 +430,13 @@ def test_check_fts_integrity_reports_the_orphan(tmp_path):
         db._conn.commit()
 
         report = db.check_fts_integrity()
-        assert set(report) == {"messages_fts"}
+        assert set(report) == {"messages_fts", "messages_fts_trigram"}
         assert report["messages_fts"] is not None
         assert "malformed" in report["messages_fts"]
 
         db.rebuild_fts()
-        assert db.check_fts_integrity() == {"messages_fts": None}
+        repaired = db.check_fts_integrity()
+        assert set(repaired) == {"messages_fts", "messages_fts_trigram"}
+        assert all(v is None for v in repaired.values())
     finally:
         db.close()
