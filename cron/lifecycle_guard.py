@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import logging
 import os
+import posixpath
 import re
 import shlex
 import stat
 from pathlib import Path
-from typing import Callable, Iterator, Optional
+from typing import Callable, Iterator, NamedTuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -636,18 +637,50 @@ def _expand_candidate_path(candidate: str) -> Optional[Path]:
         return None
 
 
-def _resolved_or_nothing(candidate: str, cwd: Optional[str]) -> Iterator[Path]:
+class _ScriptReference(NamedTuple):
+    """One referenced script, carried in BOTH spellings the walk needs.
+
+    ``path`` is the local-semantics :class:`Path`, for the local read, the cloud-placeholder
+    check and dedup. ``remote`` is what a remote backend must be asked for -- a remote is POSIX
+    whatever this host is, and ``PureWindowsPath`` cannot round-trip a POSIX path, so the Path
+    form is safe for LOCAL operations only. Carrying one spelling for both made a Windows host
+    ask a remote for a drive-letter path that cannot exist there; the read returned nothing and
+    the walk `continue`d past a script it never read, i.e. it failed OPEN.
+    """
+
+    path: Path
+    remote: str
+
+
+def _remote_reference(candidate: str, cwd: Optional[str]) -> str:
+    """Spell *candidate* the way a POSIX remote backend must be asked for it.
+
+    Deliberately string-only: ``pathlib`` would re-spell a POSIX path with this host's
+    separators. ``~`` is left intact because only the remote can expand its own HOME -- a
+    local ``expanduser`` names a directory that need not exist there. ``os.path.isabs`` is
+    host-aware on purpose: ``C:/x`` is absolute on Windows but a genuinely RELATIVE name on
+    POSIX, where it must still be anchored on *cwd*.
+    """
+    if candidate.startswith("~") or posixpath.isabs(candidate) or os.path.isabs(candidate):
+        return candidate
+    if cwd:
+        return posixpath.join(str(cwd).replace("\\", "/"), candidate)
+    return candidate
+
+
+def _resolved_or_nothing(candidate: str, cwd: Optional[str]) -> Iterator[_ScriptReference]:
     """Yield *candidate* anchored on *cwd* (or the process cwd) when it is a real path."""
     path = _expand_candidate_path(candidate)
     if path is None:
         return
+    remote = _remote_reference(candidate, cwd)
     if not path.is_absolute():
         try:
             path = Path(cwd or Path.cwd()) / path
         except OSError:
             # Path.cwd() can raise when the process cwd was deleted.
             return
-    yield path
+    yield _ScriptReference(path, remote)
 
 
 def _resolve_script_path(script_path: str) -> Optional[Path]:
@@ -692,7 +725,7 @@ def _iter_option_values(segment: list[str], start: int, option: str) -> Iterator
             yield token[len(prefix):]
 
 
-def _references_at(segment: list[str], index: int, cwd: Optional[str]) -> Iterator[Path]:
+def _references_at(segment: list[str], index: int, cwd: Optional[str]) -> Iterator[_ScriptReference]:
     """Yield the scripts the token at *index* executes, if any."""
     if index >= len(segment):
         return
@@ -731,7 +764,9 @@ def _references_at(segment: list[str], index: int, cwd: Optional[str]) -> Iterat
         yield from _resolved_or_nothing(executable, cwd)
 
 
-def _iter_referenced_shell_scripts(command: str, *, cwd: Optional[str] = None) -> Iterator[Path]:
+def _iter_referenced_shell_scripts(
+    command: str, *, cwd: Optional[str] = None,
+) -> Iterator[_ScriptReference]:
     """Yield scripts executed directly or through a POSIX shell. Each segment is read at the
     original token AND at the peeled wrapper target — additive on purpose: peeling must never REMOVE
     a reference (a local ``./timeout`` is a script, not the coreutils wrapper)."""
@@ -903,7 +938,8 @@ def _contains_unsafe_gateway_action(
         if recurse(payload, cwd):
             return True
 
-    for script_path in _iter_referenced_shell_scripts(command, cwd=cwd):
+    for reference in _iter_referenced_shell_scripts(command, cwd=cwd):
+        script_path = reference.path
         # Do not touch a FileProvider path even to discover whether the file is hydrated.
         if _on_cloud_path(script_path):
             return True
@@ -918,20 +954,31 @@ def _contains_unsafe_gateway_action(
         script_text, unsafe = _read_referenced_script(script_path, max_bytes=budget.bytes_remaining)
         if unsafe:
             return True
+        from_remote = False
         if script_text is None and read_remote_script is not None:
             # Local path missing; the remote backend's output crosses the same trust boundary as a
             # local read — sanitize identically (binary skip + size fail-closed).
             if not budget.charge_remote_read():
                 return _budget_exhausted("remote reads", depth)
             script_text, unsafe = _sanitize_remote_script_text(
-                read_remote_script(str(script_path)), max_bytes=budget.bytes_remaining
+                # reference.remote, NOT str(script_path): the Path spelling is this host's,
+                # and a remote is POSIX regardless. See _ScriptReference.
+                read_remote_script(reference.remote), max_bytes=budget.bytes_remaining
             )
             if unsafe:
                 return True
+            from_remote = True
         if not script_text:
             continue
         # Relative references inside a script resolve against that script's directory, not the cwd.
-        if recurse(script_text, _resolve_script_directory(str(resolved)) or cwd):
+        # A script READ FROM THE REMOTE must hand its children the REMOTE directory: deriving it
+        # from the local Path spelling re-anchors them on this host and fails open one level down.
+        nested_cwd = (
+            posixpath.dirname(reference.remote) or None
+            if from_remote
+            else _resolve_script_directory(str(resolved))
+        )
+        if recurse(script_text, nested_cwd or cwd):
             return True
     return False
 

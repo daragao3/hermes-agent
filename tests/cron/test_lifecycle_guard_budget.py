@@ -98,24 +98,13 @@ def test_repeated_path_does_not_spend_unique_path_budget(monkeypatch, tmp_path):
 
 
 def test_remote_read_budget_charged_before_remote_read(monkeypatch):
-    """REMAINS RED ON WINDOWS, DELIBERATELY -- it is the only signal of a real
-    guard defect, and the assertion below is asserting the CORRECT behaviour.
+    """The remote read is CHARGED against the budget before it is issued.
 
-    The referenced-script walk carries paths as ``pathlib.Path``, so a remote
-    POSIX path is re-spelled with LOCAL semantics before ``read_remote_script``
-    ever sees it: on Windows ``/remote/a.sh`` is not absolute, gets anchored to
-    the local drive, and the remote backend is asked for ``C:\remote\a.sh``.
-    That read returns nothing and the walk hits ``if not script_text: continue``
-    -- it FAILS OPEN, skipping a script it never managed to read.
-
-    Unreachable on this box today (the terminal-tool guard is gated on
-    ``_is_supervised_gateway_process()``, whose markers -- systemd INVOCATION_ID,
-    launchd XPC_SERVICE_NAME, s6 -- have no Windows-native form), so it needs a
-    Windows host + supervised gateway + remote backend to bite. Fixing it means
-    threading the raw token alongside the Path through _resolved_or_nothing /
-    _references_at / _iter_referenced_shell_scripts; ``Path`` cannot round-trip a
-    POSIX path on Windows, so no local rewrite fixes it. Not folded in here:
-    that is a restructure of a security guard's hot path, not a test fix.
+    Also pins the reference spelling: the remote is asked for the path as the command
+    wrote it. This assertion was red on Windows until the walk started carrying the
+    original token alongside the Path (see tests/cron/test_lifecycle_guard_remote_reference.py);
+    a Path-only walk re-spelled /remote/a.sh to a local drive path, the read returned
+    nothing, and the walk continued past a script it never read.
     """
     monkeypatch.setattr(lifecycle_guard, "_MAX_LIFECYCLE_SCAN_REMOTE_READS", 1)
     reads: list[str] = []
