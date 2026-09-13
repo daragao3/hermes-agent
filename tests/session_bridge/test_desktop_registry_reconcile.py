@@ -1225,6 +1225,69 @@ def test_baseline_requires_every_root_and_group(tmp_path: Path) -> None:
         build_registry_sync_plan(scan, baselines=incomplete)
 
 
+def test_baselines_for_unenrolled_roots_are_pruned_not_fatal(tmp_path: Path) -> None:
+    """The enrolled set shrank (2026-09-12: three account dirs became junctions
+    onto one store).  Rows for the vanished roots are set aside and reported,
+    the enrolled root's rows still plan, and nothing raises."""
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100)
+    three = _scan(a, b, c)
+    initial = build_registry_sync_plan(three, baselines=())
+    b_id, c_id = _root_id(three, b), _root_id(three, c)
+
+    one = _scan(a)
+    plan = build_registry_sync_plan(one, baselines=initial.proposed_baselines)
+
+    assert plan.stale_root_ids == tuple(sorted((b_id, c_id)))
+    assert {row.root_id for row in plan.stale_baselines} == {b_id, c_id}
+    assert len(plan.stale_baselines) == 2 * len(initial.proposed_baselines) // 3
+    assert "local_one.json" in plan.records
+    assert plan.records["local_one.json"].mutations == ()
+    assert all(row.root_id == _root_id(one, a) for row in plan.proposed_baselines)
+    # Steady state on the surviving root: a later edit there is accepted, and
+    # the vanished roots never reappear in what the planner proposes.
+    _write_record(a, "local_one", mtime_ns=200, title="Edited")
+    follow = build_registry_sync_plan(
+        _scan(a),
+        baselines=[
+            row
+            for row in initial.proposed_baselines
+            if row.root_id == _root_id(one, a)
+        ],
+    )
+    assert follow.stale_baselines == ()
+    assert follow.records["local_one.json"].desired_groups["field:title"] == (
+        '{"state":"present","value":"Edited"}'
+    )
+
+
+def test_unenrolled_root_pruning_keeps_torn_coverage_fatal(tmp_path: Path) -> None:
+    """Pruning removes rows for roots OUTSIDE the scan only.  A row missing for
+    a root INSIDE the scan is still the torn-write signature and still raises,
+    even alongside stale rows."""
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100)
+    three = _scan(a, b, c)
+    initial = build_registry_sync_plan(three, baselines=())
+    b_id = _root_id(three, b)
+
+    two = _scan(a, b)
+    build_registry_sync_plan(two, baselines=initial.proposed_baselines)
+
+    torn = next(
+        row
+        for row in initial.proposed_baselines
+        if row.root_id == b_id and row.group_name == "field:title"
+    )
+    with pytest.raises(ValueError, match="incomplete baseline"):
+        build_registry_sync_plan(
+            two,
+            baselines=[row for row in initial.proposed_baselines if row != torn],
+        )
+
+
 def test_absent_record_does_not_relax_torn_baseline_guard(tmp_path):
     roots = tuple(tmp_path / name for name in ("a", "b", "c"))
     for root in roots:

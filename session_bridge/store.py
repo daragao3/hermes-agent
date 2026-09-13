@@ -13169,6 +13169,69 @@ class SessionBridgeStore:
             written += self.db._execute_write(_write)
         return written
 
+    def delete_desktop_registry_baselines(
+        self, rows: Sequence[Mapping[str, Any]]
+    ) -> int:
+        """Delete baseline rows by key and drop values nothing references.
+
+        The caller names rows for roots it no longer enrols (see
+        ``DesktopRegistrySyncWorker``); this is the inverse of
+        :meth:`upsert_desktop_registry_baselines` and keeps the same
+        invariant, that ``desktop_registry_values`` holds exactly the
+        referenced set.  Keyed on the primary key so each batch is point
+        deletes, and batched so no single write holds ``db._lock`` across
+        the whole table (2026-09-12: 381,956 stale rows).  A batch that is
+        retried after lock contention re-deletes nothing, so it is safe under
+        ``_execute_write``'s retry.
+        """
+        keys: list[tuple[str, str, str]] = []
+        for row in rows:
+            keys.append(
+                (
+                    _exact_nonempty_text(
+                        row.get("filename"), "desktop registry baseline filename"
+                    ),
+                    _exact_nonempty_text(
+                        row.get("root_id"), "desktop registry baseline root ID"
+                    ),
+                    _exact_nonempty_text(
+                        row.get("group_name"), "desktop registry baseline group"
+                    ),
+                )
+            )
+        if not keys:
+            return 0
+        deleted = 0
+        batch_size = self._DESKTOP_REGISTRY_BASELINE_BATCH
+        for start in range(0, len(keys), batch_size):
+            batch = keys[start : start + batch_size]
+
+            def _delete(conn: Any, batch: list = batch) -> int:
+                before = conn.total_changes
+                conn.executemany(
+                    """DELETE FROM desktop_registry_baselines
+                       WHERE filename = ? AND root_id = ? AND group_name = ?""",
+                    batch,
+                )
+                return int(conn.total_changes - before)
+
+            deleted += self.db._execute_write(_delete)
+        if deleted:
+
+            def _prune_values(conn: Any) -> int:
+                before = conn.total_changes
+                conn.execute(
+                    """DELETE FROM desktop_registry_values
+                       WHERE NOT EXISTS (
+                           SELECT 1 FROM desktop_registry_baselines b
+                           WHERE b.value_hash = desktop_registry_values.value_hash
+                       )"""
+                )
+                return int(conn.total_changes - before)
+
+            self.db._execute_write(_prune_values)
+        return deleted
+
     def pending_desktop_registry_run(self) -> dict[str, Any] | None:
         with self.db._lock:
             row = self.db._conn.execute(
