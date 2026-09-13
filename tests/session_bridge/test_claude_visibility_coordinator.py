@@ -1245,6 +1245,61 @@ def test_auto_dismiss_notifies_the_operator_about_each_cleared_job() -> None:
     assert "audit row is preserved" in detail
 
 
+def test_auto_dismiss_note_names_an_exact_transcript_conflict_as_such() -> None:
+    """A one-attempt conflict must not be described as 'exhausted', and the
+    held note's recovery command must carry the row's own error code."""
+
+    store = FakeStore()
+    store.auto_dismiss_outcome = {
+        "status": "held",
+        "dismissed": [
+            {
+                "job_id": "claude-visibility-job:stub",
+                "attempts": 1,
+                "error_code": "bridge_conflict",
+                "error_detail": "exact transcript conflict",
+                "age_seconds": 30_000.0,
+                "terminal_at": NOW - 30_000.0,
+                "operator_cleared_at": NOW,
+                "last_success_at": NOW - 3_600.0,
+            }
+        ],
+        "held": [],
+        "newly_held": [
+            {
+                "job_id": "claude-visibility-job:held",
+                "attempts": 1,
+                "error_code": "bridge_conflict",
+                "error_detail": "exact transcript conflict",
+                "reason": "lane_unhealthy",
+                "age_seconds": 30_000.0,
+                "terminal_at": NOW - 30_000.0,
+                "last_success_at": None,
+            }
+        ],
+        "healthy": False,
+        "last_success_at": None,
+    }
+    notes: list[tuple[str, str]] = []
+    coordinator, _calls = _coordinator(
+        [],
+        store=store,
+        config=_auto_dismiss_config(),
+        notifier=lambda headline, detail: notes.append((headline, detail)),
+    )
+
+    coordinator.run_once()
+
+    assert len(notes) == 2
+    cleared_headline, cleared_detail = notes[0]
+    assert "auto-cleared" in cleared_headline
+    assert "exact transcript conflict" in cleared_detail
+    assert "exhausted" not in cleared_detail
+    _held_headline, held_detail = notes[1]
+    assert "--expected-error-code bridge_conflict" in held_detail
+    assert "--expected-attempts 1" in held_detail
+
+
 def test_auto_dismiss_notifies_when_it_refuses_on_an_unhealthy_lane() -> None:
     store = FakeStore()
     store.auto_dismiss_outcome = {
