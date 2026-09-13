@@ -28,13 +28,24 @@ from pathlib import Path
 import hermes_logging
 
 
+def _rotating_file_handlers() -> list:
+    """The live rotating file handlers.
+
+    Vendored from ``hermes_logging``'s revert-scheduled PLUGIN-COMPAT block
+    (``rotating_file_handlers``, removed on COMPAT_REMOVAL_DATE 2026-09-14).
+    The handlers hang off the async ``QueueListener`` rather than the root
+    logger, so scanning ``logging.getLogger().handlers`` does not find them.
+    """
+    return list(hermes_logging._queued_file_handlers)
+
+
 def test_setup_logging_registers_a_handler_under_this_tests_home():
     """Precondition for the isolation check below: a handler really is
     registered, and it really does point into this test's throwaway home."""
     home = Path(os.environ["HERMES_HOME"])
     hermes_logging.setup_logging(hermes_home=home, force=True)
 
-    handlers = hermes_logging.rotating_file_handlers()
+    handlers = _rotating_file_handlers()
     assert handlers, "setup_logging() registered no rotating file handlers"
     log_dir = (home / "logs").resolve()
     assert all(
@@ -48,7 +59,7 @@ def test_no_handler_survives_into_the_next_test():
     Its HERMES_HOME is a tmp_path that pytest has already deleted, so any
     surviving handler writes into a vanished directory on the listener thread.
     """
-    leaked = [h.baseFilename for h in hermes_logging.rotating_file_handlers()]
+    leaked = [h.baseFilename for h in _rotating_file_handlers()]
     assert leaked == [], (
         "rotating file handlers leaked from the previous test; they point at "
         f"deleted tmp dirs and spew logging errors from the listener thread: {leaked}"

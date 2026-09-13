@@ -276,7 +276,7 @@ def cleanup_all_environments(*, scratch_dir: Optional[Path] = None, _sweep_orpha
     then ``rmtree``s every ``hermes-*`` entry under it, including the
     ``hermes-overlays`` directory of a *live* process.
     """
-    from tools.terminal_tool import _active_environments, cleanup_vm
+    from tools.terminal_tool import _active_environments
     task_ids = list(_active_environments.keys())
     cleaned = 0
 

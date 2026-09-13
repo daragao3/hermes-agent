@@ -21,6 +21,17 @@ import hermes_logging
 from hermes_logging import RotatingFileHandler
 
 
+def _rotating_file_handlers() -> list:
+    """The live rotating file handlers.
+
+    Vendored from ``hermes_logging``'s revert-scheduled PLUGIN-COMPAT block
+    (``rotating_file_handlers``, removed on COMPAT_REMOVAL_DATE 2026-09-14).
+    The handlers hang off the async ``QueueListener`` rather than the root
+    logger, so scanning ``logging.getLogger().handlers`` does not find them.
+    """
+    return list(hermes_logging._queued_file_handlers)
+
+
 def _assert_still_logging(handler, base: Path, marker: str) -> None:
     """Assert *handler* can still write to *base* after a rollover.
 
@@ -300,7 +311,7 @@ class TestGatewayMode:
 
         logging.getLogger()
         gw_handlers = [
-            h for h in hermes_logging.rotating_file_handlers()
+            h for h in _rotating_file_handlers()
             if isinstance(h, RotatingFileHandler)
             and Path(getattr(h, "baseFilename", "")).name == "gateway.log"
         ]
@@ -323,7 +334,7 @@ class TestGatewayForensicsLog:
         logging.getLogger()
 
         forensics_handlers = [
-            h for h in hermes_logging.rotating_file_handlers()
+            h for h in _rotating_file_handlers()
             if isinstance(h, RotatingFileHandler)
             and Path(getattr(h, "baseFilename", "")).name == "gateway-forensics.log"
         ]
@@ -336,7 +347,7 @@ class TestGatewayForensicsLog:
         logging.getLogger()
 
         forensics_handlers = [
-            h for h in hermes_logging.rotating_file_handlers()
+            h for h in _rotating_file_handlers()
             if isinstance(h, RotatingFileHandler)
             and Path(getattr(h, "baseFilename", "")).name == "gateway-forensics.log"
         ]
@@ -380,19 +391,19 @@ class TestGatewayForensicsLog:
         logging.getLogger()
 
         custom_handlers = [
-            h for h in hermes_logging.rotating_file_handlers()
+            h for h in _rotating_file_handlers()
             if isinstance(h, RotatingFileHandler)
             and Path(getattr(h, "baseFilename", "")).resolve() == custom_path.resolve()
         ]
         assert len(custom_handlers) == 1, (
             f"expected handler at {custom_path}, got: "
-            f"{[getattr(h, 'baseFilename', '') for h in hermes_logging.rotating_file_handlers()]}"
+            f"{[getattr(h, 'baseFilename', '') for h in _rotating_file_handlers()]}"
         )
 
         # Default path is NOT used when override is set.
         default_path = hermes_home / "logs" / "gateway-forensics.log"
         default_handlers = [
-            h for h in hermes_logging.rotating_file_handlers()
+            h for h in _rotating_file_handlers()
             if isinstance(h, RotatingFileHandler)
             and Path(getattr(h, "baseFilename", "")).resolve() == default_path.resolve()
         ]
@@ -412,13 +423,13 @@ class TestGatewayForensicsLog:
 
         expected = (tmp_path / "my-forensics.log").resolve()
         matching = [
-            h for h in hermes_logging.rotating_file_handlers()
+            h for h in _rotating_file_handlers()
             if isinstance(h, RotatingFileHandler)
             and Path(getattr(h, "baseFilename", "")).resolve() == expected
         ]
         assert len(matching) == 1, (
             f"expected handler at {expected}, got: "
-            f"{[getattr(h, 'baseFilename', '') for h in hermes_logging.rotating_file_handlers()]}"
+            f"{[getattr(h, 'baseFilename', '') for h in _rotating_file_handlers()]}"
         )
 
     def test_forensics_handler_idempotent_on_repeat_call(self, hermes_home, monkeypatch):
@@ -428,7 +439,7 @@ class TestGatewayForensicsLog:
 
         logging.getLogger()
         forensics_handlers = [
-            h for h in hermes_logging.rotating_file_handlers()
+            h for h in _rotating_file_handlers()
             if isinstance(h, RotatingFileHandler)
             and Path(getattr(h, "baseFilename", "")).name == "gateway-forensics.log"
         ]
@@ -444,7 +455,7 @@ class TestGatewayForensicsLog:
 
         logging.getLogger()
         forensics_handlers = [
-            h for h in hermes_logging.rotating_file_handlers()
+            h for h in _rotating_file_handlers()
             if isinstance(h, RotatingFileHandler)
             and Path(getattr(h, "baseFilename", "")).name == "gateway-forensics.log"
         ]
@@ -473,7 +484,7 @@ class TestGatewayForensicsLog:
         # Curated gateway.log handler stays attached even when forensics fails.
         logging.getLogger()
         gw_handlers = [
-            h for h in hermes_logging.rotating_file_handlers()
+            h for h in _rotating_file_handlers()
             if isinstance(h, RotatingFileHandler)
             and Path(getattr(h, "baseFilename", "")).name == "gateway.log"
         ]
@@ -838,7 +849,7 @@ class TestRoleScopedCatchAll:
         # File handlers live behind the async QueueListener, not on the root
         # logger — root only carries the _NonFormattingQueueHandler.
         return [
-            h for h in hermes_logging.rotating_file_handlers()
+            h for h in _rotating_file_handlers()
             if isinstance(h, RotatingFileHandler)
             and Path(getattr(h, "baseFilename", "")).name == name
         ]

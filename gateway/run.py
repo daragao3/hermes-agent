@@ -4874,8 +4874,9 @@ async def _request_incumbent_shutdown(existing_pid: int, *, timeout: float) -> b
 def _clear_replace_markers_quiet() -> None:
     _clear_takeover_marker_quiet()
     try:
-        from gateway.status import clear_planned_stop_marker
-        clear_planned_stop_marker()
+        # Vendored from the revert-scheduled gateway.status PLUGIN-COMPAT block.
+        from gateway.status import _get_planned_stop_marker_path
+        _get_planned_stop_marker_path().unlink(missing_ok=True)
     except Exception:
         pass
 

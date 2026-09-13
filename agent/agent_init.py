@@ -2266,8 +2266,9 @@ def _apply_model_override(agent) -> None:
         anthropic_native_state = None
         if new_api_mode == "anthropic_messages":
             from agent.anthropic_adapter import (
-                build_anthropic_client, resolve_anthropic_token, _is_oauth_token,
+                build_anthropic_client, _is_oauth_token,
             )
+            from agent.anthropic_credentials import resolve_anthropic_token
 
             _new_key = getattr(new_client, "api_key", "") or ""
             effective_key = (

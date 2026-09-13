@@ -8,6 +8,17 @@ import pytest
 import hermes_logging as hl
 
 
+def _rotating_file_handlers() -> list:
+    """The live rotating file handlers.
+
+    Vendored from ``hermes_logging``'s revert-scheduled PLUGIN-COMPAT block
+    (``rotating_file_handlers``, removed on COMPAT_REMOVAL_DATE 2026-09-14).
+    The handlers hang off the async ``QueueListener`` rather than the root
+    logger, so scanning ``logging.getLogger().handlers`` does not find them.
+    """
+    return list(hl._queued_file_handlers)
+
+
 def test_gateway_upgrade_keeps_forensics_and_profile_routing(tmp_path, monkeypatch):
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
@@ -18,7 +29,7 @@ def test_gateway_upgrade_keeps_forensics_and_profile_routing(tmp_path, monkeypat
     hl.setup_logging(hermes_home=home, mode="cli", force=True)
     hl.setup_logging(hermes_home=home, mode="gateway")
     hl.setup_logging(hermes_home=home, mode="gateway")
-    paths = [Path(h.baseFilename) for h in hl.rotating_file_handlers()]
+    paths = [Path(h.baseFilename) for h in _rotating_file_handlers()]
     assert len(paths) == len(set(paths))
     assert {"agent-gateway.log", "errors-gateway.log", "gateway-forensics.log"} <= {p.name for p in paths}
     assert hl.enable_profile_log_routing([home, other])
