@@ -131,11 +131,15 @@ class TestForwardRelayFrontedRun:
             cronjob_tools, "_relay_fronted_delivery_platforms", return_value={"discord"}
         ), patch("httpx.post", side_effect=fake_post):
             cronjob_tools._forward_relay_fronted_run(
-                {"id": "j1"}, extra_prompt="focus on EU numbers"
+                {"id": "j1"}, extra_prompt="focus on EU numbers",
+                caller="test:operator", reason="review EU figures",
             )
-        assert sent["json"] == {"prompt": "focus on EU numbers"}
+        assert sent["json"] == {
+            "prompt": "focus on EU numbers",
+            "caller": "test:operator", "reason": "review EU figures",
+        }
 
-    def test_empty_body_without_prompt(self):
+    def test_default_provenance_without_prompt(self):
         sent = {}
 
         def fake_post(url, headers=None, json=None, timeout=None):
@@ -146,7 +150,7 @@ class TestForwardRelayFrontedRun:
             cronjob_tools, "_relay_fronted_delivery_platforms", return_value={"discord"}
         ), patch("httpx.post", side_effect=fake_post):
             cronjob_tools._forward_relay_fronted_run({"id": "j1"})
-        assert sent["json"] == {}
+        assert sent["json"] == {"caller": None, "reason": None}
 
 
 class TestManualRunPromptConsumption:
