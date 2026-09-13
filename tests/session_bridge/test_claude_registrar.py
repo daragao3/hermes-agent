@@ -65,6 +65,8 @@ from session_bridge.models import (
 )
 from session_bridge.store import SessionBridgeStore
 
+from tests.timeout_budget import scaled
+
 
 SECRET = b"registrar-test-marker-secret"
 
@@ -3766,6 +3768,35 @@ def test_offline_fixture_named_terminating_scenarios_record_exit(
 # as the reader settles, so a large ceiling costs nothing on the happy path.
 _REAL_CONPTY_GUARD_SECONDS = 120.0
 
+# The detached-cancellation test below re-runs itself as a CHILD pytest, so
+# three bounds stack.  Per tests/timeout_budget.py rule 2 these are incidental
+# safety nets around a spawn -- the assertions are about cancellation semantics
+# and cleanup, never about a duration -- so each gets a generous base scaled by
+# HERMES_TEST_TIMEOUT_SCALE.  They MUST stay ordered inner < outer <
+# pytest-level: a child bound sitting above the pytest-level cap is inert,
+# because pytest-timeout kills the parent first.
+#
+# That inversion was the defect.  The 120s ``child.wait`` guard sat beneath the
+# 30s addopts cap, so it could never fire; instead pytest-timeout killed the
+# parent blind at 30s while the child was still legitimately working, and the
+# orphaned child kept a real ConPTY grandchild alive.  Measured on a loaded box
+# (69 python processes, 100% CPU): the child's own pytest bootstrap and
+# collection cost ~22s before any of the ~7s of ConPTY work being asserted on.
+_DETACHED_CHILD_MARKER = "SESSION_BRIDGE_DETACHED_CONPTY_CHILD"
+_DETACHED_CHILD_TEST_BUDGET_S = scaled(60.0)
+_DETACHED_CHILD_WAIT_S = scaled(_REAL_CONPTY_GUARD_SECONDS)
+_DETACHED_PARENT_BUDGET_S = scaled(180.0)
+# Both legs are the SAME test function, so a single marker value cannot serve
+# both -- and a pytest-timeout MARKER overrides ``--timeout`` on the child's
+# command line (verified: a marked 8s sleep survives ``--timeout=3``), so
+# passing the inner bound as an argument would itself be inert.  Read the
+# spawn marker at import time, before any fixture touches the environment.
+_DETACHED_ITEM_BUDGET_S = (
+    _DETACHED_CHILD_TEST_BUDGET_S
+    if os.environ.get(_DETACHED_CHILD_MARKER) == "1"
+    else _DETACHED_PARENT_BUDGET_S
+)
+
 
 def _wait_for_fixture_event(record: Path, event: str, timeout: float) -> None:
     """Block until the fake Claude fixture has recorded ``event``.
@@ -3957,10 +3988,11 @@ def test_real_windows_conpty_timeout_terminates_and_releases_resources(
 
 
 @pytest.mark.skipif(not _real_conpty_available(), reason="Windows ConPTY unavailable")
+@pytest.mark.timeout(_DETACHED_ITEM_BUDGET_S)
 def test_detached_redirected_registrar_cancellation_is_ambiguous_and_cleans_up(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    child_marker = "SESSION_BRIDGE_DETACHED_CONPTY_CHILD"
+    child_marker = _DETACHED_CHILD_MARKER
     if os.environ.get(child_marker) != "1":
         stdout_path = tmp_path / "detached-stdout.txt"
         stderr_path = tmp_path / "detached-stderr.txt"
@@ -3983,7 +4015,15 @@ def test_detached_redirected_registrar_cancellation_is_ambiguous_and_cleans_up(
                 stderr=stderr,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            return_code = child.wait(timeout=_REAL_CONPTY_GUARD_SECONDS)
+            try:
+                return_code = child.wait(timeout=_DETACHED_CHILD_WAIT_S)
+            finally:
+                if child.poll() is None:
+                    # A wedged child owns a real ConPTY grandchild that sleeps
+                    # for an hour.  Leaving it behind feeds the host contention
+                    # that made this wait expire in the first place.
+                    child.kill()
+                    child.wait()
         output = stdout_path.read_text(encoding="utf-8", errors="replace")
         errors = stderr_path.read_text(encoding="utf-8", errors="replace")
         assert return_code == 0, errors
