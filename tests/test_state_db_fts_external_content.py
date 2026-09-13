@@ -44,7 +44,7 @@ from pathlib import Path
 import pytest
 
 from hermes_state import SessionDB
-from hermes_state_common import SCHEMA_VERSION
+from hermes_state_common import FTS_STALE_KEY, SCHEMA_VERSION
 
 
 # NOTE: this module used to set HERMES_DISABLE_MESSAGE_TRIGRAM=1 here "to keep
@@ -320,31 +320,30 @@ def test_snippet_works_on_the_preserved_inline_index(tmp_path):
         db.close()
 
 
-def test_a_corrupt_index_block_propagates_instead_of_failing_open(tmp_path):
-    """A corrupt index block reaches the search caller raw. Deliberate, and costly.
+def test_a_corrupt_index_block_degrades_to_canonical_rows(tmp_path):
+    """A corrupt index block costs the INDEX, not search. Non-destructively.
 
-    This test was written for the opposite contract -- "corrupt index b-tree →
-    rebuild → retry → results", guarding the very symptom named in this
-    module's own history: "a corrupt index surfaced 'database disk image is
-    malformed' raw to every search caller". That guard
-    (``_fts_runtime_rebuild_attempted``) no longer exists on this branch. The
-    replacement is ``_enter_fts_fail_open``: detach the derived indexes and
-    answer from canonical rows, because "a live search never runs the unbounded
-    rebuild".
+    Policy decision, Diego, 2026-09-13 (loops
+    ``wave2-fts-read-path-fail-open-20260913``). This test previously pinned the
+    opposite contract -- the error reaching the caller raw -- which was the very
+    symptom this module's history names as the defect it was written to fix: "a
+    corrupt index surfaced 'database disk image is malformed' raw to every search
+    caller".
 
-    But that replacement DOES NOT FIRE HERE, by an explicit decision in
-    ``_is_fts_write_corruption_error``: it fails open only for corruption
-    SQLite scopes to the virtual table (``SQLITE_CORRUPT_VTAB``, 267), on the
-    stated grounds that "a bare malformed image is structural". Damaging an
-    FTS index block raises bare ``SQLITE_CORRUPT`` (11), so the fail-open arm
-    is unreachable for it and the error propagates.
+    WHY IT REGRESSED: ``_enter_fts_fail_open`` fails open only for corruption SQLite
+    scopes to the virtual table (``SQLITE_CORRUPT_VTAB``, 267). Damaging an index
+    block raises bare ``SQLITE_CORRUPT`` (11), so that arm was unreachable for the
+    commonest index-corruption shape.
 
-    The cost, asserted below so it cannot be overlooked: the damage is confined
-    to the FTS index and every canonical row is still readable, yet search
-    raises. Whether that is the right call is a judgement about masking
-    possible whole-file corruption versus keeping search alive; this test only
-    pins which way the branch currently decides, and fails loudly if either the
-    classifier or the policy moves.
+    WHY THE CLASSIFIER WAS NOT SIMPLY WIDENED: the write path is defined as its exact
+    complement (``_is_structural_corruption_error``), so accepting 11 there would take
+    whole-file corruption out of the quarantine arm and retry canonical writes into a
+    damaged file. The read path instead degrades on its own wider predicate,
+    ``_is_fts_corruption_class_error``, and the write path is untouched.
+
+    WHY THIS DOES NOT MASK WHOLE-FILE CORRUPTION: nothing infers "FTS-only" from the
+    error code. The canonical scan IS the test -- it answers here, and raises when the
+    damage is not confined to the index (pinned by the companion test below).
     """
     db_path = tmp_path / "state.db"
     _seed(db_path)
@@ -358,17 +357,100 @@ def test_a_corrupt_index_block_propagates_instead_of_failing_open(tmp_path):
 
     db = SessionDB(db_path=db_path)
     try:
+        # MEASURED 2026-09-13, and the reason an error code cannot carry this decision:
+        # ONE damaged block surfaces under EITHER code depending on the QUERY SHAPE.
+        # A bare ``MATCH rowid`` gets SQLITE_CORRUPT_VTAB (267); the production search
+        # SQL, which joins the index against ``messages`` for the snippet, gets bare
+        # SQLITE_CORRUPT (11) -- same damage, same file, same open. So 267-vs-11 does
+        # not tell you whether the damage is confined to the index, and the narrow
+        # predicate's premise ("a bare malformed image is structural") does not hold
+        # for the shape the real search path actually sees.
+        with pytest.raises(sqlite3.DatabaseError) as bare:
+            db._read_all("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("pizza",))
+        assert getattr(bare.value, "sqlite_errorcode", None) == getattr(
+            sqlite3, "SQLITE_CORRUPT_VTAB", 267
+        )
+
+        sql, params = db._fts_match_sql(
+            "messages_fts", "pizza", order_by_sql="ORDER BY rank", limit=25, offset=0,
+            include_inactive=False, source_filter=None, exclude_sources=None, role_filter=None,
+        )
+        with pytest.raises(sqlite3.DatabaseError) as caught:
+            db._read_all(sql, params)
+        assert "malformed" in str(caught.value)
+        assert getattr(caught.value, "sqlite_errorcode", None) == 11
+
+        # The gap this policy closes: the narrow (write) predicate rejects the shape the
+        # real search path sees, while accepting the bare-MATCH shape of identical damage.
+        assert db._is_fts_write_corruption_error(caught.value) is False
+        assert db._is_fts_write_corruption_error(bare.value) is True
+        # The wide (read) predicate accepts both.
+        assert db._is_fts_corruption_class_error(caught.value) is True
+        assert db._is_fts_corruption_class_error(bare.value) is True
+
+        # ...and search answers anyway, from the canonical rows.
+        matches = db.search_messages("pizza", limit=25)
+        assert matches, "search must degrade to canonical rows, not raise"
+
+        # NON-DESTRUCTIVE: no detach, no breadcrumb, nothing written to a file that may
+        # be damaged beyond the index. This is what separates this policy from the
+        # 267 path, so assert it rather than trusting the branch taken.
+        assert db._fts_stale is False
+        assert db._fts_enabled is True
+        assert db._conn.execute(
+            "SELECT COUNT(*) FROM state_meta WHERE key = ?", (FTS_STALE_KEY,)
+        ).fetchone()[0] == 0
+        assert db._conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+            "AND name LIKE 'messages_fts%'"
+        ).fetchone()[0] > 0
+
+        # The canonical rows were fine the whole time.
+        assert db._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 20
+    finally:
+        db.close()
+
+
+def test_corruption_outside_the_index_still_reaches_the_search_caller(tmp_path):
+    """The degrade above is bounded by the canonical scan, not by the error code.
+
+    This is the falsifier for the policy. If the canonical fallback could not fail the
+    change would amount to "swallow every corruption error", which is exactly the
+    masking the conservative reading warns about. Here the index damage is REAL (so the
+    MATCH raises the genuine bare-``SQLITE_CORRUPT`` shape and the degrade arm is
+    entered for real) and only the canonical fallback is made to fail, standing in for
+    damage that reaches ``messages`` too. The original MATCH error must still reach the
+    caller.
+
+    Note the fallback is the ONLY thing stubbed. An earlier draft stubbed ``_read_all``
+    wholesale and passed even when the re-raise was deleted -- a later call re-raised
+    the same object and the test never noticed. Killing that mutant is the whole point
+    of this test, so keep the stub this narrow.
+    """
+    db_path = tmp_path / "state.db"
+    _seed(db_path)
+
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute(
+        "UPDATE messages_fts_data SET block = randomblob(64) "
+        "WHERE id = (SELECT MAX(id) FROM messages_fts_data)"
+    )
+    conn.close()
+
+    db = SessionDB(db_path=db_path)
+    try:
+        def _canonical_is_damaged_too(*args, **kwargs):
+            raise sqlite3.DatabaseError("database disk image is malformed")
+
+        db._search_messages_like_fallback = _canonical_is_damaged_too
+
         with pytest.raises(sqlite3.DatabaseError) as caught:
             db.search_messages("pizza", limit=25)
         assert "malformed" in str(caught.value)
-        # WHY it propagates: not scoped to the vtable, so not fail-open eligible.
+        # It is the MATCH's own error that surfaces, with the failed canonical scan
+        # chained beneath it as the evidence that the damage was not FTS-only.
         assert getattr(caught.value, "sqlite_errorcode", None) == 11
-        assert getattr(caught.value, "sqlite_errorcode", None) != getattr(
-            sqlite3, "SQLITE_CORRUPT_VTAB", 267
-        )
-        assert db._is_fts_write_corruption_error(caught.value) is False
-        # ...and the canonical rows were fine the whole time.
-        assert db._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 20
+        assert isinstance(caught.value.__context__, sqlite3.DatabaseError)
     finally:
         db.close()
 

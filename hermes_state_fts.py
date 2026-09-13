@@ -9,6 +9,7 @@ from pathlib import Path
 
 from hermes_constants import get_hermes_home
 from hermes_state_common import FTS_CJK_STALE_KEY, FTS_STALE_KEY, _FTS_CJK_TRIGGERS, _FTS_TRIGGERS
+from hermes_state_errors import classify_persistence_error
 
 # caplog tests pin the "hermes_state" logger name.
 logger = logging.getLogger("hermes_state")
@@ -306,6 +307,31 @@ class SessionFtsSetupMixin:
             return error_code == getattr(sqlite3, "SQLITE_CORRUPT_VTAB", 267)
         msg = str(exc).lower()
         return msg.startswith("fts5:") and "corrupt structure" in msg
+
+    @staticmethod
+    def _is_fts_corruption_class_error(exc: sqlite3.DatabaseError) -> bool:
+        """Any corruption-class error a MATCH can raise, FTS-scoped or bare.
+
+        READ PATH ONLY. Deliberately WIDER than ``_is_fts_write_corruption_error``,
+        which must stay narrow because the write path is defined as its exact
+        complement (``_is_structural_corruption_error``): widening that one would take
+        whole-file corruption out of the quarantine arm and retry canonical writes into
+        a damaged file. A read carries no such risk, so it may degrade on evidence a
+        write may not act on.
+
+        Damaging an FTS index block raises bare ``SQLITE_CORRUPT`` (11), not
+        ``SQLITE_CORRUPT_VTAB`` (267), so the narrow predicate does not cover the
+        commonest index-corruption shape -- the symptom this module's history names as
+        the defect it was written to fix ("a corrupt index surfaced 'database disk
+        image is malformed' raw to every search caller"). Callers pair this with a
+        canonical-row fallback that is ITSELF the discriminator: it succeeds when the
+        damage is confined to the derived indexes and raises when it is not, so nothing
+        here has to guess which from an error code SQLite declined to scope.
+        """
+        return (
+            SessionFtsSetupMixin._is_fts_write_corruption_error(exc)
+            or classify_persistence_error(exc) == "corrupt"
+        )
 
     def _enter_fts_fail_open(self, exc: sqlite3.DatabaseError) -> bool:
         """Detach corrupt FTS indexes so canonical writes can continue. Breadcrumb +

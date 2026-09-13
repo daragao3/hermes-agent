@@ -884,11 +884,23 @@ class SessionSearchMixin:
                 logger.debug(operational_debug, exc_info=True)
             return None
         except sqlite3.DatabaseError as exc:
-            if fail_open is None or not self._enter_fts_fail_open(exc):
+            if fail_open is None:
+                raise
+            if self._enter_fts_fail_open(exc):
+                logger.warning(
+                    "%s FTS search hit a corruption error (%s); detached FTS and falling back to canonical LIKE.",
+                    fail_open, exc)
+                return None
+            # Bare SQLITE_CORRUPT: not scoped to the vtable, so NOT eligible for the
+            # detach above (that would write a breadcrumb and drop triggers inside a
+            # file that may be damaged beyond the index). Degrade this query only and
+            # leave the indexes attached; the caller's canonical fallback decides
+            # whether the damage was really FTS-only by succeeding or raising.
+            if not self._is_fts_corruption_class_error(exc):
                 raise
             logger.warning(
-                "%s FTS search hit a corruption error (%s); detached FTS and falling back to canonical LIKE.",
-                fail_open, exc)
+                "%s FTS search hit a corruption error (%s); leaving FTS attached and "
+                "falling back to canonical LIKE for this query.", fail_open, exc)
             return None
 
     def _like_rows(self, where: List[str], params: list, *, order_by: str, limit_sql: str) -> List[Dict[str, Any]]:
@@ -1062,9 +1074,29 @@ class SessionSearchMixin:
                 # MATCH read, the same class the write path handles (#66296). OperationalError (query
                 # syntax) is a subclass caught above; this arm is the corruption parent. The existing
                 # stale-open/repair paths retain rebuild ownership.
-                if not self._enter_fts_fail_open(exc):
+                if self._enter_fts_fail_open(exc):
+                    matches = self._search_messages_like_fallback(
+                        query, limit=limit, offset=offset, sort=sort, **filters)
+                elif not self._is_fts_corruption_class_error(exc):
                     raise
-                matches = self._search_messages_like_fallback(query, limit=limit, offset=offset, sort=sort, **filters)
+                else:
+                    # Bare SQLITE_CORRUPT (the shape a damaged index block raises): not
+                    # scoped to the vtable, so NOT eligible for the detach above, which
+                    # would write a breadcrumb and drop triggers inside a file that may
+                    # be damaged beyond the index. Degrade this query only, leaving the
+                    # indexes attached. The canonical scan below is the discriminator:
+                    # it answers when the damage really was FTS-only, and raises when it
+                    # was not -- so we never have to infer which from an error code
+                    # SQLite declined to scope. Cost of staying attached: no rebuild is
+                    # scheduled, and every later search pays this failed MATCH first.
+                    logger.warning(
+                        "FTS search hit a corruption error (%s); leaving FTS attached and "
+                        "falling back to canonical LIKE for this query.", exc)
+                    try:
+                        matches = self._search_messages_like_fallback(
+                            query, limit=limit, offset=offset, sort=sort, **filters)
+                    except sqlite3.DatabaseError:
+                        raise exc  # canonical rows unreadable too: damage is not FTS-only
 
         # Deferred-rebuild supplement: while the backfill is pending the FTS indexes miss
         # the (progress, high_water] gap; top up with a bounded LIKE scan so old messages
