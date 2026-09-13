@@ -39,6 +39,30 @@ def _hold_write_lock(db_path, hold_s, started_evt):
         conn.close()
 
 
+def _hold_write_lock_until(db_path, started_evt, release_evt, max_hold_s=60.0):
+    """Hold the write lock until *release_evt* is set (or *max_hold_s* elapses).
+
+    A test that asserts patience RUNS OUT must outlast the write attempt, and
+    the attempt has no usable upper bound: ``PRAGMA busy_timeout`` is a floor,
+    not a ceiling. Measured on this host, ``BEGIN IMMEDIATE`` against a held
+    lock on the 1s-timeout connection gave up anywhere between 1.47s and 3.98s
+    (six consecutive samples: 1.875, 3.984, 1.469, 2.500, 3.813, 3.250) — the
+    busy handler backs off in coarse increments and Windows sleep granularity
+    under load stretches every one of them. A fixed ``time.sleep`` hold is
+    therefore a race the test loses whenever the wait overshoots it.
+
+    ``max_hold_s`` is only a backstop against a hung test, never the budget.
+    """
+    conn = sqlite3.connect(str(db_path), timeout=1.0, isolation_level=None)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        started_evt.set()
+        release_evt.wait(max_hold_s)
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
+
+
 @pytest.fixture
 def db(tmp_path):
     d = SessionDB(db_path=tmp_path / "state.db")
@@ -86,9 +110,12 @@ class TestTranscriptWritePatience:
         held by another process — not read like disk/permission damage."""
         monkeypatch.setattr(SessionDB, "_WRITE_PATIENCE_S", 0.2)
 
-        started = threading.Event()
+        # Held until the attempt has finished, NOT for a fixed span: see
+        # _hold_write_lock_until. With a 2.0s sleep this raced the busy
+        # handler's overshoot and passed the write through ~1 run in 6.
+        started, release = threading.Event(), threading.Event()
         holder = threading.Thread(
-            target=_hold_write_lock, args=(db.db_path, 2.0, started)
+            target=_hold_write_lock_until, args=(db.db_path, started, release)
         )
         holder.start()
         try:
@@ -96,6 +123,7 @@ class TestTranscriptWritePatience:
             with pytest.raises(sqlite3.OperationalError) as excinfo:
                 db.set_meta("k", "v")  # routine write, short patience
         finally:
+            release.set()
             holder.join(timeout=10.0)
         assert not holder.is_alive()
         text = str(excinfo.value)
