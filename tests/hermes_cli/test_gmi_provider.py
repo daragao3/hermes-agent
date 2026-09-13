@@ -146,6 +146,12 @@ class TestGmiDoctor:
 
         assert "GMI_API_KEY" in _PROVIDER_ENV_HINTS
 
+    # Same cap straddle as the Fireworks doctor test: a full ``run_doctor``,
+    # legitimately slow, measured 22.85s alone and 26.51s in the full file
+    # against a 30s cap. It has never been observed failing, which is exactly
+    # why it is marked -- 1.3x of headroom does not survive the load swing
+    # measured on its sibling (3.4x). Budgeted, not exempted.
+    @pytest.mark.timeout(180)
     def test_run_doctor_checks_gmi_models_endpoint(self, monkeypatch, tmp_path):
         from hermes_cli import doctor as doctor_mod
 
