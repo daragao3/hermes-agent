@@ -275,6 +275,31 @@ async def test_a_throttled_call_after_a_fault_is_not_a_recovery(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_counter", ["baseline_invalid", "scan_failed", "verify_failures"])
+async def test_reported_worker_failure_keeps_recovery_open(
+    caplog: pytest.LogCaptureFixture, failure_counter: str,
+) -> None:
+    clock = _FakeClock()
+    coordinator = _coordinator(clock)
+    worker = DesktopRegistrySyncWorker(
+        ValueError("registry failure"),
+        {**_COMPLETED, failure_counter: 1},
+        _COMPLETED,
+    )
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        await coordinator._run_post_scan_worker(worker, _CODE)
+        clock.advance(300)
+        await coordinator._run_post_scan_worker(worker, _CODE)
+        assert _recoveries(caplog) == []
+        assert _CODE in coordinator._post_scan_worker_failures
+        clock.advance(300)
+        await coordinator._run_post_scan_worker(worker, _CODE)
+    assert len(_recoveries(caplog)) == 1
+    assert "over=600s" in _recoveries(caplog)[0]
+    assert _CODE not in coordinator._post_scan_worker_failures
+
+
+@pytest.mark.asyncio
 async def test_a_throttled_call_does_not_lose_the_next_raise_either(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

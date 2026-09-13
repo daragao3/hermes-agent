@@ -4160,7 +4160,7 @@ class SessionBridgeCoordinator:
         other than a mapping (the sidebar executors) are unaffected.
         """
         try:
-            if _post_scan_worker_result_was_throttled(result):
+            if _post_scan_worker_result_did_not_complete(result):
                 return
             state = self._post_scan_worker_failures.pop(error_code, None)
             if state is None:
@@ -6555,19 +6555,22 @@ def _safe_native_token(value: object) -> str:
     return cleaned[:64] or "unknown"
 
 
-def _post_scan_worker_result_was_throttled(result: object) -> bool:
-    """True when a post-scan worker declined to run this call at all.
+def _post_scan_worker_result_did_not_complete(result: object) -> bool:
+    """True when a post-scan worker skipped or reported a failed cycle.
 
     The throttling workers return their counters dict with ``throttled=1``
-    from the ``run_min_interval_seconds`` branch, before any work.  Anything
-    else -- a completed counters dict, a sidebar ``*ExecutionResult``, ``None``
-    -- is a call that ran, and the caller treats it as one.  Defensive on
-    shape because this sits on the scan loop's success path.
+    from the ``run_min_interval_seconds`` branch, before any work.
+    A worker can also catch its own baseline, scan or verification failure
+    and return counters instead of raising. Those outcomes must leave an
+    existing outage open just as throttling does. Other result shapes retain
+    their existing contract.
     """
     if not isinstance(result, Mapping):
         return False
     try:
-        return bool(result.get("throttled"))
+        return any(result.get(key) for key in (
+            "throttled", "baseline_invalid", "scan_failed", "verify_failures",
+        ))
     except Exception:
         return False
 
