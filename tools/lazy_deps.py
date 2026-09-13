@@ -31,15 +31,15 @@ logger = logging.getLogger(__name__)
 
 # Allowlist: "namespace.backend" -> pip specs matching the pyproject extra. Pins are exact
 # (security posture); bump here AND in pyproject. Shared patched floors (aiohttp==3.14.3,
-# starlette==1.3.1) are literals in every feature: tests/test_packaging_metadata.py checks by AST.
+# starlette==1.6.0) are literals in every feature: tests/test_packaging_metadata.py checks by AST.
 LAZY_DEPS: dict[str, tuple[str, ...]] = {
     # ─── Inference providers ───────────────────────────────────────────────
     # Native Anthropic SDK (provider=anthropic; aggregators use the openai SDK).
     "provider.anthropic": ("anthropic==0.87.0",),  # CVE-2026-34450, CVE-2026-34452
-    "provider.bedrock": ("boto3==1.42.89",),
+    "provider.bedrock": ("boto3==1.43.93",),
     # Vertex OAuth2 token minting; google-auth is NOT in [all] on purpose.
     "provider.vertex": (
-        "google-auth==2.55.1",
+        "google-auth==2.58.0",
         "pyasn1==0.6.4",
     ),
     # Foundry Entra ID auth; only when model.auth_mode=entra_id.
@@ -47,28 +47,28 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
 
     # ─── Web search backends ───────────────────────────────────────────────
     "search.exa": ("exa-py==2.10.2",),
-    "search.firecrawl": ("firecrawl-py==4.17.0",),
+    "search.firecrawl": ("firecrawl-py==4.42.0",),
     "search.parallel": ("parallel-web==0.4.2",),
 
     # ─── Monitoring ─────────────────────────────────────────────────────────
     # OTLP export; tracks the `otlp` extra.
     "export.otlp": (
-        "opentelemetry-sdk==1.39.1",
-        "opentelemetry-exporter-otlp-proto-http==1.39.1",
+        "opentelemetry-sdk==1.44.0",
+        "opentelemetry-exporter-otlp-proto-http==1.44.0",
     ),
 
     # ─── TTS providers ─────────────────────────────────────────────────────
     # mistralai: 2.4.6 was a malicious quarantined release — never pin below 2.4.7.
     # Voxtral STT + TTS share the SDK.
-    "tts.mistral": ("mistralai==2.4.8",),
-    "tts.edge": ("edge-tts==7.2.7",),
+    "tts.mistral": ("mistralai==2.10.0",),
+    "tts.edge": ("edge-tts==7.2.8",),
     "tts.elevenlabs": ("elevenlabs==1.59.0",),
 
     # ─── Speech-to-text providers ──────────────────────────────────────────
-    "stt.mistral": ("mistralai==2.4.8",),
+    "stt.mistral": ("mistralai==2.10.0",),
     "stt.faster_whisper": (
         "faster-whisper==1.2.1",
-        "sounddevice==0.5.5",
+        "sounddevice==0.5.6",
         "numpy==2.4.3",
     ),
     # SILK voice-note decoding (WeChat/QQ); silk-v3 codec binding.
@@ -84,7 +84,7 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "wake.openwakeword": (
         "openwakeword==0.6.0",
         "onnxruntime==1.27.0",
-        "sounddevice==0.5.5",
+        "sounddevice==0.5.6",
         "numpy==2.4.3",
     ),
     # Open-vocabulary keyword spotting. sentencepiece is needed by
@@ -92,12 +92,12 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "wake.sherpa": (
         "sherpa-onnx==1.13.4",
         "sentencepiece==0.2.2",
-        "sounddevice==0.5.5",
+        "sounddevice==0.5.6",
         "numpy==2.4.3",
     ),
     "wake.porcupine": (
         "pvporcupine==4.0.3",
-        "sounddevice==0.5.5",
+        "sounddevice==0.5.6",
         "numpy==2.4.3",
     ),
 
@@ -105,7 +105,7 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "image.fal": ("fal-client==0.13.1",),
 
     # ─── Memory providers ──────────────────────────────────────────────────
-    "memory.honcho": ("honcho-ai==2.2.0",),
+    "memory.honcho": ("honcho-ai==2.4.0",),
     "memory.hindsight": ("hindsight-client==0.6.1",),
     # Cloud memory SDKs MUST be allowlisted + ensure()'d at the import site, or they never
     # install on the sealed Docker image (durable-target only).
@@ -127,7 +127,7 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     ),
     "platform.slack": (
         "slack-bolt==1.30.0",
-        "slack-sdk==3.43.0",
+        "slack-sdk==3.44.1",
         "aiohttp==3.14.3",
     ),
     "platform.matrix": (
@@ -139,12 +139,12 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     ),
     "platform.dingtalk": (
         "dingtalk-stream==0.24.3",
-        "alibabacloud-dingtalk==2.2.42",
-        "qrcode==7.4.2",
+        "alibabacloud-dingtalk==2.2.59",
+        "qrcode==8.2",
     ),
     "platform.feishu": (
-        "lark-oapi==1.6.8",
-        "qrcode==7.4.2",
+        "lark-oapi==1.7.3",
+        "qrcode==8.2",
     ),
     # WeCom callback adapter parses untrusted XML POST bodies -> defusedxml.
     "platform.wecom_callback": ("defusedxml==0.7.1",),
@@ -152,16 +152,16 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "platform.teams": ("microsoft-teams-apps==2.0.13.4", "aiohttp==3.14.3"),
 
     # ─── Terminal backends ─────────────────────────────────────────────────
-    "terminal.modal": ("modal==1.3.4",),
+    "terminal.modal": ("modal==1.5.5",),
     "terminal.daytona": ("daytona==0.155.0",),
     "terminal.vercel": ("vercel==0.7.2",),
 
     # ─── Skills ────────────────────────────────────────────────────────────
     "skill.google_workspace": (
-        "google-api-python-client==2.194.0",
-        "google-auth==2.55.1",
-        "google-auth-oauthlib==1.3.1",
-        "google-auth-httplib2==0.3.1",
+        "google-api-python-client==2.200.0",
+        "google-auth==2.58.0",
+        "google-auth-oauthlib==1.4.1",
+        "google-auth-httplib2==0.4.2",
         # Explicit transitive pins: httplib2 <0.32 has a decompression-bomb DoS.
         "httplib2==0.32.0",
         "pyasn1==0.6.4",
@@ -172,9 +172,9 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     # ACP adapter (VS Code / Zed / JetBrains)
     "tool.acp": ("agent-client-protocol==0.9.0",),
     "tool.dashboard": (
-        "fastapi==0.133.1",
-        "uvicorn[standard]==0.41.0",
-        "starlette==1.3.1",
+        "fastapi==0.141.1",
+        "uvicorn[standard]==0.52.4",
+        "starlette==1.6.0",
         "python-multipart==0.0.32",  # FastAPI UploadFile/Form streaming uploads
     ),
     # Pillow and firecrawl-anydoc are CORE deps; these entries self-heal lean/partial installs.
@@ -186,9 +186,9 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "tool.doc_extract": ("firecrawl-anydoc==0.2.4",),  # imports as `anydoc`; lockstep with pyproject
     # MCP client SDK for the cua-driver, so computer_use never dead-ends on `No module named 'mcp'`.
     "tool.computer_use": (
-        "mcp==2.0.0",
+        "mcp==2.2.0",
         "httpx2==2.12.0",  # mcp 2.x HTTP stack — sync with pyproject [computer-use]
-        "starlette==1.3.1",
+        "starlette==1.6.0",
     ),
     # huggingface-hub is SHARED with transformers (>=1.5.0,<2 via Hindsight) and marked active
     # on mere presence, so `hermes update` re-asserts this pin everywhere hub exists. MUST stay
@@ -202,7 +202,7 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     # posture), but it MUST stay inside transformers' accepted window and MUST match uv.lock so the whole
     # tree converges on ONE hub version (tests/test_project_metadata.py enforces both). When bumping: update
     # here AND `uv lock --upgrade-package huggingface-hub` in lockstep.
-    "tool.trace_upload": ("huggingface-hub==1.24.0",),
+    "tool.trace_upload": ("huggingface-hub==1.31.0",),
 }
 
 
