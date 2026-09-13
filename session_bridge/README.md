@@ -50,13 +50,33 @@ modules, desktop surface discovery, incomplete-registration recovery, the codex
 discovery budget, and sidebar convergence. main's remaining unique lines are older
 shapes of code wave2 has since rewritten.
 
-## What was deliberately NOT done
+## What was deliberately NOT done, and the decision that closed it
 
-main was **not** resynced from wave2. wave2 is 16,202 commits ahead of `origin/main`
-and has no safe remote target, so a resync is its own plan and its own approval. The
-divergence is permanent and intentional, not pending. Nothing here was pushed.
+main was **not** resynced from wave2, and as of 2026-09-13 that is a CLOSED DECISION
+rather than a pending one. The resync was planned in full and then declined. The plan
+is `docs/superpowers/plans/2026-09-13-main-resync-from-wave2.md`, on
+`codex/wave2-hermes-accepted` -- it was deliberately not landed on main, per the rule
+below. Read it before re-proposing a resync, in particular:
 
-Do not run `hermes update` to "fix" this -- it hard-resets local commits.
+- section 3, which measures that `git cherry` reports 92 of 93 main-only commits as
+  absent from wave2 **including all 14 that were proven present by content** -- so the
+  first tool anyone reaches for here gives the wrong answer; and
+- section 4, which records that the natural spelling `git branch -f main <sha>` is
+  **not** covered by the destructive-git guard, while `reset --hard` is. The absence
+  of a block is not authorization.
+
+**main is FROZEN. Do not commit to it.** That is the whole of the adopted policy
+(option S3 in the plan): the two branches stop diverging because nothing new lands on
+main -- not because any ref is moved or any history is discarded. Freezing costs
+nothing, needs no grant, and keeps main as the last state of the pre-renumbering
+schema lineage, which is worth having while the 30-vs-34 split is live.
+
+The commit that added this paragraph is intended to be **the last commit on main**. If
+you find later ones, the freeze was broken -- say so on the loops record rather than
+quietly extending it. The frozen tip is tagged `main-frozen-20260913`.
+
+Do not run `hermes update` to "fix" this -- it hard-resets local commits. Nothing here
+was pushed; `origin/main` is thousands of commits behind and is not a factor.
 
 ## Verify before trusting this file
 
@@ -83,3 +103,4 @@ record rather than only here, or the next reader gets the old answer.
 - loops: `wave2-main-session-bridge-divergence-20260912`
   (`python ~/.hermes/bin/loops.py check "wave2 divergence"`)
 - MemPalace: `session-bridge/wave2-main-session-bridge-divergence-audit-2026-09-13`
+- Resync plan (declined): `docs/superpowers/plans/2026-09-13-main-resync-from-wave2.md`
