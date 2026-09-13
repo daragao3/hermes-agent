@@ -2488,8 +2488,20 @@ def test_resolve_continuation_retries_transient_lock(db, monkeypatch) -> None:
         def __getattr__(self, name):
             return getattr(self._real, name)
 
-    flaky = _FlakyConn(db._conn)
-    monkeypatch.setattr(db, "_conn", flaky)
+    # Reads now use a separate pooled connection, not the writer in _conn.
+    # Wrap the actual read context so this still exercises the retry boundary.
+    from contextlib import contextmanager
+
+    read_ctx = db._read_ctx
+    flaky = _FlakyConn(None)
+
+    @contextmanager
+    def flaky_read_ctx():
+        with read_ctx() as conn:
+            flaky._real = conn
+            yield flaky
+
+    monkeypatch.setattr(db, "_read_ctx", flaky_read_ctx)
 
     resolved = UnifiedCatalog(db, store).resolve_continuation(
         session_id=candidate.source_session_id,
@@ -2557,6 +2569,36 @@ def test_claude_visibility_commit_finalizes_preindexed_target_lineage_atomically
         )["target_session_id"]
         == f"claude:{identity.claude_uuid}"
     )
+
+
+@pytest.mark.parametrize("already_enqueued", [False, True])
+def test_visibility_enqueue_materializes_verified_profile_source(db, tmp_path, already_enqueued):
+    candidate, identity = _claude_visibility_hermes_identity("profile-materialization")
+    profile_path = tmp_path / "profiles" / "main" / "state.db"
+    store = _profile_aware_claude_visibility_store(db, (("main", profile_path),))
+    if already_enqueued:
+        _enqueue_claude_visibility_job(store, candidate, identity)
+    _seed_profile_native_hermes_source(profile_path, candidate)
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    assert _rows(db, "SELECT source, model_config FROM sessions WHERE id = ?",
+                 (candidate.source_session_id,)) == [{
+        "source": "session_bridge_profile",
+        "model_config": '{"_session_bridge_profile":"main"}',
+    }]
+    assert _rows(db, "SELECT id FROM messages WHERE session_id = ?",
+                 (candidate.source_session_id,)) == []
+
+
+def test_visibility_enqueue_does_not_materialize_ambiguous_profile_source(db, tmp_path):
+    candidate, identity = _claude_visibility_hermes_identity("ambiguous-profile")
+    paths = tuple((name, tmp_path / "profiles" / name / "state.db")
+                  for name in ("main", "other"))
+    for _, path in paths:
+        _seed_profile_native_hermes_source(path, candidate)
+    store = _profile_aware_claude_visibility_store(db, paths)
+    _enqueue_claude_visibility_job(store, candidate, identity)
+    assert _rows(db, "SELECT id FROM sessions WHERE id = ?",
+                 (candidate.source_session_id,)) == []
 
 
 @pytest.mark.parametrize("source_provider", [Provider.CODEX, Provider.HERMES])

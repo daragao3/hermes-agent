@@ -1352,6 +1352,7 @@ class SessionBridgeStore:
             marker_secret,
             retired_marker_secrets=retired_marker_secrets,
         )
+        self._ensure_claude_visibility_profile_source(conn, candidate, now)
         collisions = conn.execute(
             """SELECT * FROM session_claude_visibility_jobs
                    WHERE source_session_id = ? OR bridge_id = ?
@@ -4302,6 +4303,52 @@ class SessionBridgeStore:
             cls._database_columns(database, "external_sessions")
         ) and {"to_session_id"}.issubset(
             cls._database_columns(database, "session_links")
+        )
+
+    def _ensure_claude_visibility_profile_source(
+        self, conn: Any, candidate: Any, now: float
+    ) -> None:
+        """Keep profile-native visibility lineage anchored without copying messages.
+
+        Discovery reads profile databases, while links live in the root catalog.
+        Sidebar delivery already creates this reference; Claude delivery needs it
+        too, including when an existing job predates catalog materialization.
+        """
+        if candidate.source_provider is not Provider.HERMES:
+            return
+        if conn.execute(
+            "SELECT 1 FROM sessions WHERE id = ?", (candidate.source_session_id,)
+        ).fetchone() is not None:
+            return
+        matches = []
+        # The caller owns the root write lock. Inspect foreign databases only;
+        # the general metadata reader would reacquire that non-reentrant lock.
+        with self._native_hermes_databases() as databases:
+            for profile, database, owned in databases:
+                if not owned or not self._profile_catalog_compatible(database):
+                    continue
+                with database._lock:
+                    row = database._conn.execute(
+                        "SELECT title FROM sessions WHERE id = ?",
+                        (candidate.source_session_id,),
+                    ).fetchone()
+                if row is not None:
+                    matches.append((profile, dict(row)))
+        if len(matches) != 1:
+            return
+        profile, metadata = matches[0]
+        model_config = json.dumps(
+            {"_session_bridge_profile": profile}, sort_keys=True, separators=(",", ":")
+        )
+        if self._profile_shadow_source_identity_issue(
+            source_session_id=candidate.source_session_id, model_config=model_config
+        ) is not None:
+            return
+        conn.execute(
+            """INSERT INTO sessions (id, source, model_config, started_at, title, cwd)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (candidate.source_session_id, _PROFILE_SHADOW_SOURCE, model_config,
+             now, metadata.get("title"), candidate.source_cwd),
         )
 
     def _profile_shadow_source_identity_issue(
