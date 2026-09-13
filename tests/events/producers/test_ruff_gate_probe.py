@@ -134,15 +134,16 @@ def test_sustained_episode_re_pings_after_cooldown(
     assert len(_failures(bus)) == 2
 
 
-def test_falling_edge_clears_state_without_emitting(
+def test_falling_edge_emits_recovery_and_clears_state(
     bus, repo, state_path, monkeypatch
 ):
-    """No all-clear event, but the NEXT break must re-alert."""
+    """Measured recovery closes the episode; the next break re-alerts."""
     probe = _make(bus, repo, state_path, monkeypatch, _red())
     probe.check(now=1000.0)
 
     monkeypatch.setattr(probe_module, "run_ruff", lambda *a, **k: _GREEN)
-    assert probe.check(now=1900.0) is None
+    assert probe.check(now=1900.0) is not None
+    assert len(bus.query(event_type=EventType.DEVFLOW_BUILD_SUCCEEDED)) == 1
     assert len(_failures(bus)) == 1
     assert json.loads(state_path.read_text(encoding="utf-8"))["alerting"] is False
 

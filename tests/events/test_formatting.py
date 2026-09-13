@@ -819,8 +819,8 @@ class TestCodeDriftBody:
         body = code_drift_body(self._payload())
         assert "LAGS main by 3 commit(s)" in body
         assert "c1 fix one" in body
-        assert "merge --ff-only main" in body
-        assert "restart the gateway" in body
+        assert "main integration backlog" in body
+        assert "deployment evidence" in body
         # No raw dict/list splat.
         assert "{" not in body and "[" not in body
 
@@ -855,7 +855,7 @@ class TestCodeDriftBody:
             trunk="bbbbbbbbb", trunk_name="master",
         ))
         assert "LAGS master by 3 commit(s)" in body
-        assert "merge --ff-only master" in body
+        assert "master integration backlog" in body
         assert "ff-only main" not in body
 
     def test_trunk_missing_body_names_ref_and_is_unmeasurable(self):
@@ -885,7 +885,7 @@ class TestCodeDriftBody:
         assert "master" in body
         assert "62" in body
         assert "scripts/gateway_watchdog.py" in body
-        assert "re-point" in body
+        assert "before changing the checkout" in body
 
     def test_executed_files_are_capped_at_five(self):
         from events.formatting import code_drift_body
