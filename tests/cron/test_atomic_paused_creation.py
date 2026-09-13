@@ -32,7 +32,11 @@ def test_paused_creation_is_inert_until_operator_action(tmp_path, monkeypatch, m
         assert registered == [active["job_id"]]
         assert job_id not in {row["id"] for row in jobs.get_due_jobs()}
         assert jobs.claim_job_for_fire(job_id) is False
-        resumed = jobs.resume_job(job_id)
+        # This job carries a paused_reason, which is exactly the condition that
+        # makes `caller` mandatory (the 2026-08-26 unattributable-resume guard,
+        # pinned by tests/cron/test_cron_lifecycle_events.py). Bare resume_job()
+        # is the defect shape that guard exists to refuse, not a valid call.
+        resumed = jobs.resume_job(job_id, caller="test:resume")
         assert resumed["enabled"] and resumed["next_run_at"] and resumed["paused_reason"] is None
         forced = create(paused=True, paused_reason="canary review")
         assert jobs.claim_job_for_fire(forced["job_id"], force=True) is True

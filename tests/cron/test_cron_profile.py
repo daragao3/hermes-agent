@@ -162,6 +162,7 @@ class TestRunJobProfileContext:
     def _install_agent_stubs(monkeypatch, observed: dict):
         import sys
         import cron.scheduler as sched
+        import cron.scheduler_delivery as sched_delivery
 
         class FakeAgent:
             def __init__(self, **kwargs):
@@ -215,8 +216,11 @@ class TestRunJobProfileContext:
             },
         )
 
-        monkeypatch.setattr(sched, "_build_job_prompt", lambda job, prerun_script=None: "hi")
-        monkeypatch.setattr(sched, "_resolve_origin", lambda job: None)
+        monkeypatch.setattr(sched, "_build_job_prompt", lambda job, prerun_script=None, **kw: "hi")
+        # _resolve_origin moved to cron.scheduler_delivery in the Sep 2026
+        # decomposition, and its only callers live there too -- patching it on
+        # cron.scheduler would not be seen even if the attribute still existed.
+        monkeypatch.setattr(sched_delivery, "_resolve_origin", lambda job: None)
         monkeypatch.setattr(sched, "_resolve_delivery_target", lambda job: None)
         monkeypatch.setattr(sched, "_resolve_cron_enabled_toolsets", lambda job, cfg: None)
         monkeypatch.setattr(sched, "_hermes_home", None)
@@ -447,12 +451,43 @@ class TestTickProfilePartition:
             sched, "get_due_and_skipped_jobs",
             lambda: ([profile_a, profile_b, parallel_job], []),
         )
-        monkeypatch.setattr(sched, "advance_next_run", lambda *_a, **_kw: None)
+        # tick() calls advance_next_runs (PLURAL), which cron.scheduler binds
+        # via a from-import; the singular lives only in cron.jobs and tick
+        # never reaches it, so patching that stubbed nothing.
+        monkeypatch.setattr(sched, "advance_next_runs", lambda *_a, **_kw: None)
+        # tick() gates every dispatch on claim_dispatch (scheduler.py:3168); these
+        # fixture jobs are not in any store, so the real one refuses and run_job is
+        # never reached -- tick still RETURNS 3, which is why the ordering assertion
+        # failed on an empty list rather than on a wrong order. Ten sibling suites
+        # already stub this.
+        monkeypatch.setattr(sched, "claim_dispatch", lambda *_a, **_kw: True)
+        # ...and on the execution-ledger + fire-claim layer this suite predates.
+        # _submit_with_guard swallows a create_execution failure and returns None,
+        # so an unstubbed ledger skips the job SILENTLY -- tick still counts it.
+        # Mirrors the fully-migrated tick test in tests/cron/test_parallel_pool.py.
+        _by_id = {j["id"]: j for j in (profile_a, profile_b, parallel_job)}
+        monkeypatch.setattr(
+            sched, "create_execution",
+            lambda job_id, source, **_kw: {"id": f"{job_id}-execution"},
+        )
+        monkeypatch.setattr(sched, "finish_execution", lambda *_a, **_kw: None)
+        monkeypatch.setattr(sched, "mark_execution_running", lambda *_a, **_kw: {})
+        monkeypatch.setattr(sched, "heartbeat_fire_claim", lambda *_a, **_kw: True)
+        monkeypatch.setattr(
+            sched, "claim_job_for_fire",
+            lambda job_id, **_kw: dict(
+                _by_id[job_id], fire_claim={"by": "test-owner", "at": "now"}
+            ),
+        )
 
         calls: list[tuple[str, str]] = []
         order_lock = threading.Lock()
 
-        def fake_run_job(job):
+        # tick() calls run_job(job, **_run_kwargs) (scheduler.py:3254); a stub
+        # that refuses those kwargs raises at bind time, so nothing is ever
+        # recorded and the ordering assertion below fails on an EMPTY list
+        # rather than on a wrong order. Every sibling stub already does this.
+        def fake_run_job(job, **_kw):
             with order_lock:
                 calls.append((job["id"], threading.current_thread().name))
             return True, "output", "response", None
