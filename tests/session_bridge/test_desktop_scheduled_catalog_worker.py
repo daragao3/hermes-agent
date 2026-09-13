@@ -25,6 +25,7 @@ def store(tmp_path):
 def _task(task_id: str, enabled: bool) -> dict:
     return {
         "id": task_id,
+        "createdAt": 1788972033605,
         "displayName": task_id,
         "cronExpression": "7 * * * *",
         "fireAt": None,
@@ -73,6 +74,33 @@ def test_worker_replication_patches_dormant_catalog_only(tmp_path: Path, store) 
     assert json.loads(dormant.read_text(encoding="utf-8"))["scheduledTasks"][0]["enabled"] is False
     assert json.loads(active.read_text(encoding="utf-8"))["scheduledTasks"] == []
     assert store.get_state(SCHEDULED_CATALOG_HEARTBEAT_STATE_KEY)["pending_active"] == 1
+
+
+def test_worker_fails_closed_when_source_task_lacks_native_creation_timestamp(
+    tmp_path: Path, store
+) -> None:
+    prompts = tmp_path / "prompts"
+    (prompts / "watch").mkdir(parents=True)
+    (prompts / "watch" / "SKILL.md").write_text("prompt", encoding="utf-8")
+    stale = _task("watch", True)
+    del stale["createdAt"]
+    source = _store(tmp_path / "source", [stale])
+    dormant = _store(tmp_path / "dormant", [])
+    worker = DesktopScheduledCatalogSyncWorker(
+        store,
+        catalogs={"source": source, "dormant": dormant},
+        source_root=lambda: "source",
+        active_root=lambda: None,
+        prompt_root=prompts,
+        run_min_interval_seconds=0,
+    )
+
+    counters = worker.run_once()
+
+    assert counters["scan_failed"] == 1
+    assert counters["patched"] == 0
+    assert json.loads(dormant.read_text(encoding="utf-8"))["scheduledTasks"] == []
+    assert store.get_state(SCHEDULED_CATALOG_HEARTBEAT_STATE_KEY) is None
 
 
 def test_worker_missing_prompt_records_conflict_without_mutation(tmp_path: Path, store) -> None:
