@@ -37,6 +37,9 @@ _FTS_HOLDER_ESCALATE_SECONDS = 60.0
 # retries are non-blocking probes whose spacing doubles up to the cap.
 _FTS_STALE_RETRY_SECONDS = 60.0
 _FTS_STALE_RETRY_MAX_SECONDS = 3600.0
+# Same large-store boundary advertised by sessions optimize-storage. Foreground
+# open/retry must not monopolize a large store's writer for an unbounded rebuild.
+_FTS_FOREGROUND_REBUILD_MAX_BYTES = 500 * 1024 * 1024
 
 # schema_read_probe_statements() cache (parses SCHEMA_SQL in an in-memory DB; once per process).
 _READ_PROBE_STATEMENTS: Optional[tuple] = None
@@ -494,10 +497,74 @@ class SessionSchemaMixin:
         )
         return True
 
-    def _recover_stale_fts(self, cursor: sqlite3.Cursor, *, legacy: bool, timeout_seconds=None) -> bool:
+    def _persist_fts_deferral(self, cursor, *, reason: str, database_bytes=None) -> None:
+        """Atomically persist breadcrumbs and detach triggers, including in autocommit mode."""
+        cursor.execute("SAVEPOINT fts_deferral")
+        try:
+            cursor.execute(_STALE_KEY_UPSERT_SQL, (FTS_STALE_KEY,))
+            if self._sqlite_table_exists(cursor, "messages_fts_cjk"):
+                cursor.execute(_STALE_KEY_UPSERT_SQL, (FTS_CJK_STALE_KEY,))
+            diagnostic = {"reason": reason, "maintenance_command": "hermes sessions optimize-storage"}
+            if database_bytes is not None:
+                diagnostic.update(database_bytes=database_bytes, foreground_limit_bytes=_FTS_FOREGROUND_REBUILD_MAX_BYTES)
+            cursor.execute(
+                "INSERT INTO state_meta(key,value) VALUES (?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (FTS_REBUILD_DEFERRAL_KEY, json.dumps(diagnostic, sort_keys=True)),
+            )
+            self._drop_all_fts_triggers(cursor)
+        except BaseException:
+            cursor.execute("ROLLBACK TO SAVEPOINT fts_deferral")
+            cursor.execute("RELEASE SAVEPOINT fts_deferral")
+            raise
+        else:
+            cursor.execute("RELEASE SAVEPOINT fts_deferral")
+
+    def _defer_large_foreground_fts_rebuild(self, cursor) -> bool:
+        # Logical pages include committed/uncommitted WAL growth; stat(db_path)
+        # can materially understate a busy WAL-mode database.
+        database_bytes = int(cursor.execute("PRAGMA page_count").fetchone()[0]) * int(
+            cursor.execute("PRAGMA page_size").fetchone()[0])
+        if database_bytes <= _FTS_FOREGROUND_REBUILD_MAX_BYTES:
+            return False
+        self._persist_fts_deferral(cursor, reason="large_foreground_rebuild", database_bytes=database_bytes)
+        self._fts_stale = True
+        self._fts_enabled = self._trigram_available = self._fts_cjk_available = False
+        logger.warning(
+            "Deferred full FTS rebuild for large state.db (%d bytes); canonical writes and LIKE search "
+            "remain available. Run `hermes sessions optimize-storage` in an explicit maintenance window.",
+            database_bytes,
+        )
+        return True
+
+    def defer_fts_rebuild(self, *, reason: str) -> bool:
+        """Explicitly defer an interrupted/abandoned full rebuild without trusting its index.
+
+        Does not stop another process or override its rebuild authority. A recovery
+        owner calls this after interruption/rollback, before resuming service. The
+        canonical rows are untouched; marker and sync-trigger detachment commit together.
+        """
+        if self.read_only:
+            return False
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("FTS deferral requires an explicit reason")
+        with fts_rebuild_admission(self.db_path, timeout_seconds=0.0) as admitted:
+            if not admitted:
+                return False
+            self._execute_write(lambda conn: self._persist_fts_deferral(conn, reason=reason))
+        self._fts_stale = True
+        self._fts_enabled = self._trigram_available = self._fts_cjk_available = False
+        return True
+
+    def _recover_stale_fts(self, cursor: sqlite3.Cursor, *, legacy: bool, timeout_seconds=None,
+                           _maintenance: bool = False) -> bool:
         """Atomically rebuild stale base/trigram indexes and resume syncing. *timeout_seconds*
         bounds the admission wait (None = full startup budget, ``0`` = non-blocking retry).
         Fails closed: holders or a lost admission race leave the breadcrumb set."""
+        # Private call-scoped context comes only from the explicit maintenance
+        # method. Never retain it on the instance or in process/environment state.
+        if not _maintenance and self._defer_large_foreground_fts_rebuild(cursor):
+            return False
         foreign_holders = self._foreign_state_db_holders()
         if foreign_holders and self._defer_stale_fts_for_holders(cursor, foreign_holders):
             return False
@@ -895,6 +962,7 @@ class SessionSchemaMixin:
             cursor.execute("UPDATE messages SET active = 1 WHERE active IS NULL")
 
         fts5_available = self._sqlite_supports_fts5(cursor)
+        self._fts5_available = fts5_available
         stale_row = cursor.execute("SELECT 1 FROM state_meta WHERE key = ? LIMIT 1", (FTS_STALE_KEY,)).fetchone()
         self._fts_stale = stale_row is not None
         if self._fts_stale:
@@ -1138,6 +1206,8 @@ class SessionSchemaMixin:
 
         See #93200.
         """
+        if self._defer_large_foreground_fts_rebuild(cursor):
+            return
         with fts_rebuild_admission(self.db_path) as admitted:
             if admitted:
                 rebuild_fn()
@@ -1146,8 +1216,7 @@ class SessionSchemaMixin:
             "Deferred startup FTS rebuild: another process holds the "
             "rebuild authority for this state.db; detaching FTS sync until the stale-index recovery path rebuilds it."
         )
-        cursor.execute(_STALE_KEY_UPSERT_SQL, (FTS_STALE_KEY,))
-        self._drop_all_fts_triggers(cursor)
+        self._persist_fts_deferral(cursor, reason="rebuild_admission_busy")
         self._fts_stale = True
         self._fts_enabled = self._trigram_available = self._fts_cjk_available = False
 
