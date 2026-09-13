@@ -36,8 +36,16 @@ def _py_files():
         parts = p.relative_to(ROOT).parts
         if parts[0] in SKIP_DIRS or p.name == "check_compat_pointers.py":
             continue
-        # The compat layer's own contract test uses the pointers on purpose; it is deleted with them.
-        if p.name == "test_compat_manifest_targets.py":
+        # The compat layer's own tests use the pointers on purpose -- as fixtures and as the
+        # subject under test -- and they are deleted or rewritten along with the layer. Flagging
+        # them is noise that would keep this checker permanently red, so it could never be used
+        # as a gate. test_check_compat_pointers.py is THIS script's own regression test: its
+        # sample sources deliberately contain pointer-shaped strings.
+        if p.name in {
+            "test_compat_manifest_targets.py",
+            "test_plugin_compat_notice.py",
+            "test_check_compat_pointers.py",
+        }:
             continue
         yield p
 
@@ -52,7 +60,12 @@ def main() -> int:
         compat.setdefault(e["facade"], set()).add(e["name"])
     facades = set(compat)
     hits: list[str] = []
-    str_pat = re.compile(r"""["']((?:[A-Za-z_][\w]*\.)+[A-Za-z_]\w*)["']""")
+    # NO QUOTE CHARACTERS HERE. This is fullmatch'ed against ``ast.Constant.value``,
+    # which is the string's VALUE -- the quotes are syntax and are long gone by then.
+    # The original pattern required them, so this branch could never match and the
+    # ``patch("facade.name")`` shape -- the most common one in this test suite -- went
+    # uncaught from the day it was written.
+    str_pat = re.compile(r"(?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*")
     for path in _py_files():
         rel = path.relative_to(ROOT)
         try:
@@ -93,7 +106,7 @@ def main() -> int:
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
                 m = str_pat.fullmatch(node.value.strip())
                 if m:
-                    dotted = m.group(1); fac, _, name = dotted.rpartition(".")
+                    dotted = m.group(0); fac, _, name = dotted.rpartition(".")
                     if fac in facades and name in compat[fac]:
                         hits.append(f"{rel}:{node.lineno}: \"{dotted}\" (string patch target)")
     if hits:
