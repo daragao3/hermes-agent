@@ -426,3 +426,60 @@ def test_waiting_run_with_info_withholds_the_verdict_banner():
     )
     assert "all good" not in body
     assert "waiting for more jobs to start" in body
+
+
+# ─── render_comment (live-status line is a footer) ────────────────────
+#
+# The pre-existing pending/waiting tests assert substring presence only, so
+# they stayed green while the line rendered ABOVE every section. These pin
+# the position with the index-comparison idiom used above.
+
+
+def test_pending_footer_renders_below_the_sections():
+    """b9f82ed39f's example layout puts 'Still running' below all content."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="info", title="lockfile", summary="No changes.")],
+        pending_jobs=["docker"],
+    )
+    assert body.index("## ℹ️ Info") < body.index("Still running 1 job")
+    assert body.index("### lockfile") < body.index("Still running 1 job")
+
+
+def test_pending_footer_renders_below_a_blocking_section():
+    """Job failures must not be pushed under the live-status line."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="error", title="tests", summary="boom")],
+        pending_jobs=["docker"],
+    )
+    assert body.index("## ❌ Job failures") < body.index("Still running 1 job")
+
+
+def test_waiting_footer_renders_below_the_sections():
+    """The waiting variant is the same footer and sits in the same place."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="info", title="lockfile", summary="No changes.")],
+        waiting=True,
+    )
+    assert body.index("### lockfile") < body.index("waiting for more jobs to start")
+
+
+def test_pending_footer_is_separated_from_the_content_above_it():
+    """No glued heading, no doubled blank line -- the defect this fixes."""
+    body = _mod.render_comment(
+        [ReviewItem(severity="info", title="lockfile", summary="No changes.")],
+        pending_jobs=["docker"],
+    )
+    # The footer gets the same rule every other block gets...
+    assert "\n\n---\n\n<sub>Still running 1 job: `docker`</sub>" in body
+    # ...and nothing is glued directly to an ATX heading.
+    assert "</sub>\n#" not in body
+    # A three-newline run is the doubled-blank-line signature.
+    assert "\n\n\n" not in body
+
+
+def test_pending_footer_alone_gets_no_rule_above_it():
+    """With no sections there is nothing to separate it from."""
+    body = _mod.render_comment([], pending_jobs=["ci-timings"])
+    assert "---" not in body
+    assert "\n\n\n" not in body
+    assert body.endswith("<sub>Still running 1 job: `ci-timings`</sub>")
