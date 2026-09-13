@@ -25,20 +25,23 @@ from pathlib import Path
 
 import pytest
 
-import hermes_state
+import hermes_state_local_fts
 from hermes_state import (
     SessionDB,
     StateDbProbeTimeout,
-    _db_opens_cleanly,
     _fts_integrity_reason,
     _is_interrupted_error,
     check_state_db_fts_integrity,
 )
+from hermes_state_repair import _db_opens_cleanly
 
 
-@pytest.fixture(autouse=True)
-def _no_trigram(monkeypatch):
-    monkeypatch.setenv("HERMES_DISABLE_MESSAGE_TRIGRAM", "1")
+# NOTE: this module used to set HERMES_DISABLE_MESSAGE_TRIGRAM=1 in an autouse
+# fixture. Nothing on this branch reads that variable any more -- the trigram
+# index is built unconditionally -- so the fixture was a no-op that made the
+# check_fts_integrity expectations below look broken by hiding a second index.
+# Removed rather than repaired, matching the same call made in
+# tests/test_state_db_fts_external_content.py: the tests state the real index set.
 
 
 def _seed(db_path: Path, count: int = 10) -> str:
@@ -65,7 +68,7 @@ def _orphan(db: SessionDB, message_id: int = 3) -> None:
     db._conn.commit()
 
 
-# ── the probe detects what the cheap checks cannot ──────────────────────────
+# ── the cheap probe must not report what only the deep one can find ─────────
 
 
 def test_cheap_probe_misses_the_orphan(tmp_path):
@@ -86,26 +89,6 @@ def test_cheap_probe_misses_the_orphan(tmp_path):
         "the default probe must not start reporting orphans — the repair "
         "paths gate destructive strategies on this result"
     )
-
-
-def test_deep_probe_reports_the_orphan(tmp_path):
-    db_path = tmp_path / "state.db"
-    _seed(db_path)
-    db = SessionDB(db_path=db_path)
-    try:
-        _orphan(db)
-    finally:
-        db.close()
-
-    reason = _db_opens_cleanly(db_path, include_fts_integrity=True)
-    assert reason is not None
-    assert "messages_fts" in reason
-
-
-def test_deep_probe_passes_a_healthy_db(tmp_path):
-    db_path = tmp_path / "state.db"
-    _seed(db_path)
-    assert _db_opens_cleanly(db_path, include_fts_integrity=True) is None
 
 
 def test_deep_probe_is_clean_after_rebuild(tmp_path):
@@ -248,8 +231,14 @@ def test_check_fts_integrity_converts_an_abort_to_a_timeout(tmp_path, monkeypatc
     try:
         fired = threading.Event()
         fired.set()
+        # Patched on the module that RESOLVES the name, not on the
+        # `hermes_state` facade that re-exports it by value:
+        # check_fts_integrity lives in hermes_state_local_fts and looks
+        # _arm_probe_deadline up in its own globals, so a facade patch is
+        # inert and this test then fails with the raw OperationalError it
+        # exists to prove is converted.
         monkeypatch.setattr(
-            hermes_state,
+            hermes_state_local_fts,
             "_arm_probe_deadline",
             lambda conn, timeout: (lambda: None, fired),
         )
@@ -268,7 +257,10 @@ def test_check_fts_integrity_unbounded_still_reports_corruption(tmp_path):
     _seed(db_path)
     db = SessionDB(db_path=db_path)
     try:
-        assert db.check_fts_integrity() == {"messages_fts": None}
+        assert db.check_fts_integrity() == {
+            "messages_fts": None,
+            "messages_fts_trigram": None,
+        }
         _orphan(db)
         report = db.check_fts_integrity()
         assert report["messages_fts"] is not None
@@ -312,7 +304,10 @@ def test_a_real_deadline_aborts_the_check(tmp_path):
         db.rebuild_fts()
 
         unbounded_start = time.perf_counter()
-        assert db.check_fts_integrity() == {"messages_fts": None}
+        assert db.check_fts_integrity() == {
+            "messages_fts": None,
+            "messages_fts_trigram": None,
+        }
         unbounded = time.perf_counter() - unbounded_start
         if unbounded < 0.05:
             pytest.skip(f"machine too fast to time-box reliably ({unbounded:.3f}s)")
@@ -326,6 +321,9 @@ def test_a_real_deadline_aborts_the_check(tmp_path):
 
         # And the connection survives it: the aborted statement left no
         # transaction or error state behind, so the next check runs clean.
-        assert db.check_fts_integrity() == {"messages_fts": None}
+        assert db.check_fts_integrity() == {
+            "messages_fts": None,
+            "messages_fts_trigram": None,
+        }
     finally:
         db.close()
