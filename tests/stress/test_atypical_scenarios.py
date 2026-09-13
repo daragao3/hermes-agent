@@ -457,7 +457,7 @@ def _(home, kb):
         # Verify resolve_workspace (which the dispatcher calls) doesn't
         # allow escape.
         try:
-            from hermes_cli.kanban_db import resolve_workspace
+            from hermes_cli.kanban_db_workspace import resolve_workspace
             resolved = resolve_workspace(task)
             # If resolve succeeded, check it's actually escape-safe.
             resolved_abs = str(Path(resolved).resolve())

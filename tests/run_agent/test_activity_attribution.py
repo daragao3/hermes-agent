@@ -20,8 +20,8 @@ def _tool_defs(*names):
 
 def _agent(recorder=None):
     with (
-        patch("run_agent.get_tool_definitions", return_value=_tool_defs("web_search")),
-        patch("run_agent.check_toolset_requirements", return_value={}),
+        patch("model_tools.get_tool_definitions", return_value=_tool_defs("web_search")),
+        patch("model_tools.check_toolset_requirements", return_value={}),
         patch("run_agent.OpenAI"),
     ):
         agent = AIAgent(
@@ -120,7 +120,7 @@ def test_response_model_switches_are_attributed_separately():
         _response("second/model"),
     ]
     with (
-        patch("run_agent.handle_function_call", return_value="search result"),
+        patch("model_tools.handle_function_call", return_value="search result"),
         patch("hermes_cli.plugins.has_hook", return_value=False),
         patch.object(agent, "_persist_session"),
         patch.object(agent, "_save_trajectory"),

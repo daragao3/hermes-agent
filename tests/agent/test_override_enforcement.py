@@ -161,8 +161,8 @@ def _make_real_agent(provider="deepseek", model="deepseek-v4-pro",
     from run_agent import AIAgent
 
     with (
-        _patch("run_agent.get_tool_definitions", return_value=[]),
-        _patch("run_agent.check_toolset_requirements", return_value={}),
+        _patch("model_tools.get_tool_definitions", return_value=[]),
+        _patch("model_tools.check_toolset_requirements", return_value={}),
         _patch("run_agent.OpenAI"),
     ):
         agent = AIAgent(
@@ -459,8 +459,8 @@ def _anthropic_primary_agent():
     from run_agent import AIAgent
 
     with (
-        _patch("run_agent.get_tool_definitions", return_value=[]),
-        _patch("run_agent.check_toolset_requirements", return_value={}),
+        _patch("model_tools.get_tool_definitions", return_value=[]),
+        _patch("model_tools.check_toolset_requirements", return_value={}),
         _patch("run_agent.OpenAI"),
     ):
         agent = AIAgent(
