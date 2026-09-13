@@ -43,7 +43,8 @@ from pathlib import Path
 
 import pytest
 
-from hermes_state import SCHEMA_VERSION, SessionDB
+from hermes_state import SessionDB
+from hermes_state_common import SCHEMA_VERSION
 
 
 # NOTE: this module used to set HERMES_DISABLE_MESSAGE_TRIGRAM=1 here "to keep

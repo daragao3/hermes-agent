@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import hermes_state
+import hermes_state_common
 
 
 EXPECTED_BRIDGE_TABLES = {
@@ -123,7 +124,7 @@ def _prepare_v20_database(db_path: Path) -> int:
     conn = sqlite3.connect(db_path)
     try:
         conn.execute("PRAGMA foreign_keys=ON")
-        conn.executescript(hermes_state.SCHEMA_SQL)
+        conn.executescript(hermes_state_common.SCHEMA_SQL)
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS session_mirror_jobs (
@@ -264,7 +265,7 @@ def test_fresh_database_creates_bridge_tables_indexes_and_current_schema(tmp_pat
         version = db._conn.execute("SELECT version FROM schema_version").fetchone()[0]
 
         assert EXPECTED_BRIDGE_TABLES <= tables
-        assert version == hermes_state.SCHEMA_VERSION
+        assert version == hermes_state_common.SCHEMA_VERSION
 
         for index_name, expected_columns in EXPECTED_BRIDGE_INDEXES.items():
             rows = db._conn.execute(f'PRAGMA index_info("{index_name}")').fetchall()
@@ -335,7 +336,7 @@ def test_sidebar_reconciliation_proof_schema_is_append_only(tmp_path):
         # and trigger assertions above, not by the version number.
         assert (
             db._conn.execute("SELECT version FROM schema_version").fetchone()[0]
-            == hermes_state.SCHEMA_VERSION
+            == hermes_state_common.SCHEMA_VERSION
         )
     finally:
         db.close()
@@ -450,7 +451,7 @@ def test_v20_database_upgrades_without_changing_existing_rows(tmp_path):
             (message_id,),
         ).fetchone()
 
-        assert version == hermes_state.SCHEMA_VERSION
+        assert version == hermes_state_common.SCHEMA_VERSION
         assert tuple(session) == ("existing-session", "cli", 1000.0)
         assert tuple(message) == (
             message_id,
@@ -483,7 +484,7 @@ def test_reopening_upgraded_database_is_idempotent(tmp_path):
     conn = sqlite3.connect(db_path)
     try:
         versions = conn.execute("SELECT version FROM schema_version").fetchall()
-        assert versions == [(hermes_state.SCHEMA_VERSION,)]
+        assert versions == [(hermes_state_common.SCHEMA_VERSION,)]
         assert _bridge_objects(db_path) == first_objects
         assert len(first_objects) == len(EXPECTED_BRIDGE_TABLES) + len(
             EXPECTED_BRIDGE_INDEXES
@@ -516,7 +517,7 @@ def test_open_repairs_a_same_named_malformed_v33_trigger(
         conn = upgraded._conn
         assert (
             conn.execute("SELECT version FROM schema_version").fetchone()[0]
-            == hermes_state.SCHEMA_VERSION
+            == hermes_state_common.SCHEMA_VERSION
         )
         repaired_sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
@@ -574,7 +575,7 @@ def test_v33_trigger_repair_rolls_back_when_revalidation_fails(
     try:
         assert (
             raw.execute("SELECT version FROM schema_version").fetchone()[0]
-            == hermes_state.SCHEMA_VERSION
+            == hermes_state_common.SCHEMA_VERSION
         )
         surviving_sql = raw.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
@@ -615,7 +616,7 @@ def test_open_repairs_a_malformed_same_named_v33_ledger(
     try:
         assert upgraded._conn.execute(
             "SELECT version FROM schema_version"
-        ).fetchone()[0] == hermes_state.SCHEMA_VERSION
+        ).fetchone()[0] == hermes_state_common.SCHEMA_VERSION
         from session_bridge.store import SessionBridgeStore
 
         assert SessionBridgeStore._sidebar_terminal_resolution_ledger_is_valid(
@@ -663,7 +664,7 @@ def test_open_refuses_to_replace_a_malformed_v33_ledger_holding_evidence(
     try:
         assert (
             raw.execute("SELECT version FROM schema_version").fetchone()[0]
-            == hermes_state.SCHEMA_VERSION
+            == hermes_state_common.SCHEMA_VERSION
         )
         assert raw.execute(
             "SELECT job_id FROM session_sidebar_v2_attempt_zero_resolutions"
@@ -718,7 +719,7 @@ def test_open_adds_the_v2_attempt_zero_ledger_and_preserves_rows(
         conn = upgraded._conn
         assert (
             conn.execute("SELECT version FROM schema_version").fetchone()[0]
-            == hermes_state.SCHEMA_VERSION
+            == hermes_state_common.SCHEMA_VERSION
         )
         assert tuple(
             conn.execute(
@@ -764,7 +765,7 @@ def test_open_adds_the_v2_attempt_zero_ledger_and_preserves_rows(
             for row in reopened._conn.execute(
                 "SELECT version FROM schema_version"
             ).fetchall()
-        ] == [(hermes_state.SCHEMA_VERSION,)]
+        ] == [(hermes_state_common.SCHEMA_VERSION,)]
         assert reopened._conn.execute(
             "SELECT content FROM messages WHERE id = ?",
             (message_id,),
@@ -1017,7 +1018,7 @@ def test_legacy_database_rebuilds_characterization_events_for_launch_abort(
         assert "'launch_aborted'" in _normalized_sql(table_sql)
         assert (
             upgraded._conn.execute("SELECT version FROM schema_version").fetchone()[0]
-            == hermes_state.SCHEMA_VERSION
+            == hermes_state_common.SCHEMA_VERSION
         )
         assert migrations == {
             "claude_characterization_abort_max_attempts_v27",
@@ -1636,7 +1637,7 @@ def test_reopening_current_database_repairs_missing_sidebar_indexes_without_data
                FROM session_sidebar_jobs ORDER BY id"""
         ).fetchall()
         assert conn.execute("SELECT version FROM schema_version").fetchall() == [
-            (hermes_state.SCHEMA_VERSION,)
+            (hermes_state_common.SCHEMA_VERSION,)
         ]
         placeholders = ",".join("?" for _ in EXPECTED_SIDEBAR_PARTIAL_INDEX_SQL)
         missing = conn.execute(
@@ -1660,7 +1661,7 @@ def test_reopening_current_database_repairs_missing_sidebar_indexes_without_data
         versions = reopened._conn.execute(
             "SELECT version FROM schema_version"
         ).fetchall()
-        assert [tuple(row) for row in versions] == [(hermes_state.SCHEMA_VERSION,)]
+        assert [tuple(row) for row in versions] == [(hermes_state_common.SCHEMA_VERSION,)]
         for index_name, expected_sql in EXPECTED_SIDEBAR_PARTIAL_INDEX_SQL.items():
             row = reopened._conn.execute(
                 "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
@@ -1696,7 +1697,7 @@ def test_sidebar_placement_columns_are_additive_and_legacy_visibility_stays_unve
         conn.execute("ALTER TABLE session_sidebar_jobs DROP COLUMN placement_verified_at")
         conn.execute(
             "UPDATE schema_version SET version = ?",
-            (hermes_state.SCHEMA_VERSION - 1,),
+            (hermes_state_common.SCHEMA_VERSION - 1,),
         )
         conn.commit()
     finally:
@@ -1711,7 +1712,7 @@ def test_sidebar_placement_columns_are_additive_and_legacy_visibility_stays_unve
         assert tuple(row) == (None, None)
         assert reopened._conn.execute(
             "SELECT version FROM schema_version"
-        ).fetchone()[0] == hermes_state.SCHEMA_VERSION
+        ).fetchone()[0] == hermes_state_common.SCHEMA_VERSION
     finally:
         reopened.close()
 
