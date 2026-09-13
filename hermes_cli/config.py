@@ -159,6 +159,14 @@ def _reconcile_into_roundtrip(target: Any, source: Mapping[str, Any]) -> None:
     Only mappings recurse. Lists are replaced wholesale — there is no
     positional identity to merge on, and guessing would silently reorder or
     duplicate entries.
+
+    A leaf whose value did not change is left untouched rather than
+    re-assigned: ruamel keeps quote style and flow/block style on the scalar
+    and sequence objects it loaded, and assigning an equal plain ``str`` or
+    ``list`` over them re-emits the leaf in ruamel's default style
+    (``"0.60"`` came back as ``'0.60'``, a flow-style ``args: [...]`` as a
+    block list). Equality is only trusted between compatible types so that
+    ``True == 1`` and ``1 == 1.0`` never suppress a real type change.
     """
     for key in [k for k in target if k not in source]:
         del target[key]
@@ -166,8 +174,22 @@ def _reconcile_into_roundtrip(target: Any, source: Mapping[str, Any]) -> None:
         existing = target.get(key)
         if isinstance(value, Mapping) and _is_roundtrip_map(existing):
             _reconcile_into_roundtrip(existing, value)
+        elif key in target and _roundtrip_leaf_unchanged(existing, value):
+            continue
         else:
             target[key] = value
+
+def _roundtrip_leaf_unchanged(existing: Any, value: Any) -> bool:
+    """True when ``existing`` (a ruamel-loaded leaf) already equals ``value`` with a
+    compatible type, so re-assigning it would only discard its formatting."""
+    if isinstance(value, bool) or isinstance(existing, bool):
+        return type(existing) is type(value) and existing == value
+    if isinstance(value, Mapping) or isinstance(existing, Mapping):
+        return False
+    try:
+        return isinstance(existing, type(value)) and bool(existing == value)
+    except Exception:
+        return False
 
 def _is_roundtrip_map(value: Any) -> bool:
     try:
@@ -2667,7 +2689,16 @@ def save_config(
             effective_preserve_keys = _explicit_config_paths(_raw_for_paths) | set(preserve_keys or ())
             normalized = _strip_default_values(normalized, effective_default_config(), preserve_keys=effective_preserve_keys)
 
-        atomic_yaml_write(config_path, normalized, extra_content=_commented_sections_for_save(normalized))
+        # Full-document write. Prefer the comment-preserving round trip, the same
+        # writer ``atomic_config_write`` uses: every caller hands us a plain dict that
+        # came from ``yaml.safe_load``, so the plain dump below deletes every comment
+        # in config.yaml (measured 2026-09-12: 271 comment lines gone from the root
+        # config, 52 from profiles/main, on ordinary save_config/mutate_config calls).
+        # The commented example sections are appended only on the plain-dump fallback:
+        # an existing document either already carries them or the user removed them,
+        # and ``_roundtrip_config_write`` refuses ``extra_content`` by design.
+        if not _roundtrip_config_write(config_path, normalized):
+            atomic_yaml_write(config_path, normalized, extra_content=_commented_sections_for_save(normalized))
         _secure_file(config_path)
         _RAW_CONFIG_CACHE.pop(str(config_path), None)
         _LAST_EXPANDED_CONFIG_BY_PATH[str(config_path)] = copy.deepcopy(current_normalized)
