@@ -148,6 +148,19 @@ class RegistryScanError(ValueError):
     """The enrolled roots could not produce complete, stable evidence."""
 
 
+class RegistryBaselineError(ValueError):
+    """A durable baseline no longer describes the roots being scanned.
+
+    Distinct from :class:`RegistryScanError`, which means the roots could not
+    be READ.  This means they were read fine and disagree with what was
+    previously accepted -- the shape a root-set change produces, such as the
+    2026-09-12 account-dir junction consolidation that collapsed three CCD
+    convergence roots into one while the standing baselines still covered
+    three.  Subclasses ValueError so existing callers that catch ValueError
+    keep working.
+    """
+
+
 class RegistryMutationConflict(RuntimeError):
     """A staged mutation no longer matches current filesystem evidence."""
 
@@ -727,12 +740,14 @@ def _validate_baselines(
         for group_name, rows in groups.items():
             covered = set(rows)
             if covered != expected_roots:
-                raise ValueError(
+                raise RegistryBaselineError(
                     f"incomplete baseline for {filename} {group_name}: "
                     f"expected {len(expected_roots)} roots, found {len(covered)}"
                 )
     if baselines_by_record and not scan.records:
-        raise ValueError("baseline references missing records: all stores are empty")
+        raise RegistryBaselineError(
+            "baseline references missing records: all stores are empty"
+        )
 
 
 _NULL_PROTECTED_JSON = _canonical_json({"state": "present", "value": None})
@@ -946,7 +961,7 @@ def build_registry_sync_plan(
             baseline.group_name, {}
         )
         if baseline.root_id in rows:
-            raise ValueError(
+            raise RegistryBaselineError(
                 "duplicate baseline: "
                 f"{(baseline.filename, baseline.root_id, baseline.group_name)}"
             )

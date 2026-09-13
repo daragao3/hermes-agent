@@ -8,9 +8,16 @@ import pytest
 
 from hermes_state import SessionDB
 from hermes_state_bridge_schema import desktop_registry_value_hash
-from session_bridge.desktop_registry import RegistryScanError
+from session_bridge.desktop_registry import (
+    RegistryBaseline,
+    RegistryBaselineError,
+    RegistryScanError,
+    build_registry_sync_plan,
+    scan_desktop_registry_roots,
+)
 from session_bridge.desktop_registry_worker import (
     WORKER_HEARTBEAT_STATE_KEY,
+    WORKER_LAST_ERROR_STATE_KEY,
     DesktopRegistrySyncWorker,
 )
 from session_bridge.store import SessionBridgeStore
@@ -604,4 +611,113 @@ def test_delete_desktop_registry_baselines_is_keyed_batched_and_prunes_values(
     with pytest.raises(ValueError):
         store.delete_desktop_registry_baselines(
             [{"filename": "", "root_id": "r", "group_name": "g"}]
+        )
+
+
+def _raise_baseline_error(*args, **kwargs):
+    raise RegistryBaselineError(
+        "incomplete baseline for local_one.json background-tasks: "
+        "expected 3 roots, found 2"
+    )
+
+
+def _worker_with_planner_raising(store, roots, monkeypatch, *, now: float):
+    monkeypatch.setattr(
+        "session_bridge.desktop_registry_worker.build_registry_sync_plan",
+        _raise_baseline_error,
+    )
+    return DesktopRegistrySyncWorker(
+        store,
+        registry_roots=roots,
+        run_min_interval_seconds=0.0,
+        wall_clock=lambda: now,
+    )
+
+
+def test_baseline_error_from_the_planner_degrades_without_raising(
+    tmp_path, store, monkeypatch
+) -> None:
+    """A baseline the planner rejects must fail closed, not escape run_once.
+
+    run_once wrapped only the scan calls, so this raise escaped into
+    _run_post_scan_worker, which caught it and left the leg to re-raise every
+    300s while converging nothing (measured 2026-09-12, 90 minutes).
+    _prune_unenrolled_root_baselines now removes the vanished-root rows that
+    caused that particular incident, but _validate_baselines still fails
+    closed on a torn write AMONG ENROLLED roots -- deliberately -- so the
+    unguarded call could still re-arm forever.
+    """
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, title="One")
+    worker = _worker_with_planner_raising(store, (a, b, c), monkeypatch, now=9_000.0)
+
+    counters = worker.run_once()
+
+    assert counters["baseline_invalid"] == 1
+    assert counters["patched"] == 0
+    assert counters["created"] == 0
+    # A cycle that reconciled nothing must not forge liveness.
+    assert _heartbeat(store) is None
+
+
+def test_baseline_error_records_the_reason_durably(
+    tmp_path, store, monkeypatch
+) -> None:
+    """The guard must not re-silence what the diagnostic made visible.
+
+    Swallowing the raise removes the coordinator's post_scan_worker_diagnostic
+    line, which on 2026-09-12 was the only artifact on the box naming the
+    fault.  Persist the reason so a stale beat stays explainable.
+    """
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, title="One")
+    worker = _worker_with_planner_raising(store, (a, b, c), monkeypatch, now=9_000.0)
+
+    worker.run_once()
+
+    recorded = store.get_state(WORKER_LAST_ERROR_STATE_KEY)
+    assert recorded is not None
+    assert recorded["at"] == 9_000.0
+    assert "RegistryBaselineError" in recorded["error"]
+    assert "expected 3 roots, found 2" in recorded["error"]
+
+
+def test_baseline_error_stays_a_valueerror_for_existing_callers() -> None:
+    """The narrower type must not break anyone already catching ValueError.
+
+    _validate_baselines raised a bare ValueError before this change.
+    """
+    assert issubclass(RegistryBaselineError, ValueError)
+
+
+def test_duplicate_baseline_rows_also_degrade(tmp_path, store) -> None:
+    """Every baseline-integrity raise out of the planner must fail closed.
+
+    build_registry_sync_plan rejects a duplicate (filename, root, group) row
+    before it validates coverage.  That raise sits in the same unguarded call
+    as the coverage check, so leaving it a bare ValueError would let this one
+    class keep re-arming the leg every 300s -- the defect the guard exists to
+    close.
+    """
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, title="One")
+    first = DesktopRegistrySyncWorker(
+        store,
+        registry_roots=(a, b, c),
+        run_min_interval_seconds=0.0,
+        wall_clock=lambda: 1_000.0,
+    )
+    first.run_once()
+    rows = store.load_desktop_registry_baselines()
+    assert rows
+
+    duplicated = [RegistryBaseline(**row) for row in rows]
+    duplicated.append(duplicated[0])
+
+    with pytest.raises(RegistryBaselineError):
+        build_registry_sync_plan(
+            scan_desktop_registry_roots((a, b, c)), baselines=duplicated
         )

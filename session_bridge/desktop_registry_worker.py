@@ -30,6 +30,7 @@ from .desktop_registry import (
     RegistryBaseline,
     RegistryMutationConflict,
     RegistryScanCache,
+    RegistryBaselineError,
     RegistryScanError,
     apply_registry_mutation,
     build_registry_sync_plan,
@@ -47,6 +48,9 @@ from .desktop_registry import (
 #: on either of those cannot tell "converged" from "stopped"; it can tell that
 #: from this.
 WORKER_HEARTBEAT_STATE_KEY = "session-bridge:desktop-registry:worker-heartbeat"
+WORKER_LAST_ERROR_STATE_KEY = (
+    "session-bridge:desktop-registry:worker-last-error"
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -104,6 +108,7 @@ class DesktopRegistrySyncWorker:
             "stale_baseline_rows_pruned": 0,
             "recovered_runs": 0,
             "scan_failed": 0,
+            "baseline_invalid": 0,
             "throttled": 0,
         }
         now = self._monotonic()
@@ -136,7 +141,22 @@ class DesktopRegistrySyncWorker:
 
         stored_rows = self._store.load_desktop_registry_baselines()
         baselines = [RegistryBaseline(**row) for row in stored_rows]
-        plan = build_registry_sync_plan(scan, baselines=baselines)
+        try:
+            plan = build_registry_sync_plan(scan, baselines=baselines)
+        except RegistryBaselineError as exc:
+            # Fail CLOSED, the same way an unreadable scan does.  Before this
+            # guard the raise escaped run_once entirely -- run_once wraps only
+            # the scan calls -- and _run_post_scan_worker swallowed it, so a
+            # root-set change re-raised every cycle while converging nothing.
+            #
+            # Deliberately does NOT beat: a leg that reconciled nothing must
+            # go stale so the mismatch stays visible.  _beat's own contract.
+            # The reason is persisted because swallowing the raise also
+            # removes the coordinator's post_scan_worker_diagnostic line,
+            # which on 2026-09-12 was the ONLY artifact that named the fault.
+            counters["baseline_invalid"] = 1
+            self._record_last_error(exc)
+            return counters
         counters["examined"] = len(plan.records)
         counters["conflicts"] = len(plan.conflicts)
 
@@ -268,6 +288,24 @@ class DesktopRegistrySyncWorker:
             )
         self._beat(counters)
         return counters
+
+    def _record_last_error(self, exc: Exception) -> None:
+        """Persist why a cycle converged nothing, for a stale-beat triage.
+
+        Telemetry must never cost a reconciliation, so a failed write is
+        swallowed exactly as in :meth:`_beat`.  The cost of swallowing is an
+        unexplained stale beat, which is still an alert.
+        """
+        try:
+            self._store.set_state(
+                WORKER_LAST_ERROR_STATE_KEY,
+                {
+                    "at": float(self._wall_clock()),
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+        except Exception:
+            pass
 
     def _beat(self, counters: dict[str, int]) -> None:
         """Record that a cycle reached the end of reconciliation.
