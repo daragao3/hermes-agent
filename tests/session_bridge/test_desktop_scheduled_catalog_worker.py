@@ -7,6 +7,7 @@ import pytest
 
 from hermes_state import SessionDB
 from session_bridge.desktop_scheduled_catalog_worker import (
+    LANE,
     SCHEDULED_CATALOG_HEARTBEAT_STATE_KEY,
     DesktopScheduledCatalogSyncWorker,
 )
@@ -43,6 +44,17 @@ def _task(task_id: str, enabled: bool) -> dict:
     }
 
 
+def _conflict_rows(store) -> list[tuple[str, str]]:
+    db = store.db
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT item_id, reason FROM desktop_surface_conflicts WHERE lane = ? "
+            "ORDER BY item_id",
+            (LANE,),
+        ).fetchall()
+    return [(row["item_id"], row["reason"]) for row in rows]
+
+
 def _store(path: Path, tasks: list[dict]) -> Path:
     path.mkdir()
     target = path / "scheduled-tasks.json"
@@ -76,7 +88,7 @@ def test_worker_replication_patches_dormant_catalog_only(tmp_path: Path, store) 
     assert store.get_state(SCHEDULED_CATALOG_HEARTBEAT_STATE_KEY)["pending_active"] == 1
 
 
-def test_worker_fails_closed_when_source_task_lacks_native_creation_timestamp(
+def test_worker_records_conflict_for_task_without_native_creation_timestamp(
     tmp_path: Path, store
 ) -> None:
     prompts = tmp_path / "prompts"
@@ -97,10 +109,51 @@ def test_worker_fails_closed_when_source_task_lacks_native_creation_timestamp(
 
     counters = worker.run_once()
 
-    assert counters["scan_failed"] == 1
+    # The run completes and NAMES the offending task rather than failing the
+    # whole scan closed with no pointer to it.
+    assert counters["scan_failed"] == 0
+    assert counters["conflicts"] == 1
     assert counters["patched"] == 0
     assert json.loads(dormant.read_text(encoding="utf-8"))["scheduledTasks"] == []
-    assert store.get_state(SCHEDULED_CATALOG_HEARTBEAT_STATE_KEY) is None
+    assert store.get_state(SCHEDULED_CATALOG_HEARTBEAT_STATE_KEY)["conflicts"] == 1
+    assert _conflict_rows(store) == [("watch", "created_at_missing")]
+
+
+def test_worker_replicates_healthy_tasks_alongside_an_unportable_one(
+    tmp_path: Path, store
+) -> None:
+    prompts = tmp_path / "prompts"
+    for task_id in ("watch", "stale", "orphan"):
+        (prompts / task_id).mkdir(parents=True)
+        (prompts / task_id / "SKILL.md").write_text("prompt", encoding="utf-8")
+    stale = _task("stale", True)
+    del stale["createdAt"]
+    orphan = _task("orphan", True)
+    orphan["createdAt"] = "not-a-timestamp"
+    source = _store(tmp_path / "source", [_task("watch", True), stale, orphan])
+    dormant = _store(tmp_path / "dormant", [])
+    worker = DesktopScheduledCatalogSyncWorker(
+        store,
+        catalogs={"source": source, "dormant": dormant},
+        source_root=lambda: "source",
+        active_root=lambda: None,
+        prompt_root=prompts,
+        run_min_interval_seconds=0,
+    )
+
+    counters = worker.run_once()
+
+    # One unportable task must not block replication of every other task.
+    assert counters["scan_failed"] == 0
+    assert counters["patched"] == 1
+    assert counters["conflicts"] == 2
+    replicated = json.loads(dormant.read_text(encoding="utf-8"))["scheduledTasks"]
+    assert [row["id"] for row in replicated] == ["watch"]
+    assert replicated[0]["enabled"] is False
+    assert _conflict_rows(store) == [
+        ("orphan", "created_at_missing"),
+        ("stale", "created_at_missing"),
+    ]
 
 
 def test_worker_missing_prompt_records_conflict_without_mutation(tmp_path: Path, store) -> None:

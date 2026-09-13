@@ -8,6 +8,17 @@ Catalog handoff and replication preserve creation timestamps and omit absent
 optional values. Handoff preserves the source definition and execution history,
 except the old account's `notifySessionId`.
 
+The two operations treat an unportable source task differently, by design.
+Replication is a passive sweep over whatever the source happens to hold, so a
+task that cannot be replicated is quarantined per task -- recorded as a
+`scheduled_catalog` surface conflict with reason `created_at_missing` (or
+`prompt_missing`, which takes precedence when both apply) -- and every other
+task in the catalog still replicates. Handoff names its tasks explicitly, so it
+fails closed on the whole request instead: silently skipping a named task would
+report success for a transfer that never happened. Read the conflict rows to
+find which task is unportable; a replication run that patches nothing while
+reporting conflicts is naming its own blocker, not stalling.
+
 For an explicitly investigated catalog loss after a completed handoff, use
 `python -m session_bridge.desktop_scheduled_handoff_cli` with the original
 `--source-root-id`, `--target-root-id`, complete repeated `--task-id` set, and
