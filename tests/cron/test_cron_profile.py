@@ -203,6 +203,11 @@ class TestRunJobProfileContext:
         fake_mod.AIAgent = FakeAgent
         monkeypatch.setitem(sys.modules, "run_agent", fake_mod)
 
+        # These cases exercise home/environment restoration. Real plugin
+        # discovery and its profile isolation have dedicated runtime fixtures.
+        from hermes_cli.plugins import PluginManager
+        monkeypatch.setattr(PluginManager, "discover_and_load", lambda self, **kwargs: None)
+
         from hermes_cli import runtime_provider as runtime_provider
 
         monkeypatch.setattr(
@@ -435,7 +440,10 @@ class TestTickProfilePartition:
         assert sched._get_hermes_home() == root
 
     def test_profile_jobs_run_sequentially(self, isolated_cron_profile_home, monkeypatch):
+        import concurrent.futures
         import threading
+        import time
+        from types import SimpleNamespace
         import cron.scheduler as sched
 
         # Two profile jobs (both sequential) + one parallel job.
@@ -482,36 +490,53 @@ class TestTickProfilePartition:
 
         calls: list[tuple[str, str]] = []
         order_lock = threading.Lock()
+        active = 0
+        peak_active = 0
+        # All workers reach the real isolation lock together. FIFO ordering is
+        # not promised by the common dispatch pool; mutual exclusion is.
+        arriving = threading.Barrier(3)
+        isolation = sched._terminal_cwd_lock
 
-        # tick() calls run_job(job, **_run_kwargs) (scheduler.py:3254); a stub
-        # that refuses those kwargs raises at bind time, so nothing is ever
-        # recorded and the ordering assertion below fails on an EMPTY list
-        # rather than on a wrong order. Every sibling stub already does this.
-        def fake_run_job(job, **_kw):
+        def acquire(method):
+            arriving.wait(timeout=5)
+            method()
+
+        monkeypatch.setattr(sched, "_terminal_cwd_lock", SimpleNamespace(
+            acquire_write=lambda: acquire(isolation.acquire_write),
+            acquire_read=lambda: acquire(isolation.acquire_read),
+            release_write=isolation.release_write,
+            release_read=isolation.release_read,
+        ))
+        monkeypatch.setattr(sched, "_resolve_cron_activity_policy", lambda _job: None)
+        monkeypatch.setattr(sched, "_get_event_emitter", lambda: None)
+
+        # Replace only the body, preserving run_job's real profile isolation.
+        def fake_run_job_impl(job, **_kw):
+            nonlocal active, peak_active
             with order_lock:
                 calls.append((job["id"], threading.current_thread().name))
+                active += 1
+                peak_active = max(peak_active, active)
+            time.sleep(0.02)
+            with order_lock:
+                active -= 1
             return True, "output", "response", None
 
-        monkeypatch.setattr(sched, "run_job", fake_run_job)
+        monkeypatch.setattr(sched, "_run_job_impl", fake_run_job_impl)
         monkeypatch.setattr(sched, "save_job_output", lambda _jid, _o: None)
         monkeypatch.setattr(sched, "mark_job_run", lambda *_a, **_kw: None)
         monkeypatch.setattr(sched, "_deliver_result", lambda *_a, **_kw: None)
 
-        n = sched.tick(verbose=False)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            monkeypatch.setattr(sched, "_get_parallel_pool", lambda _workers: pool)
+            n = sched.tick(verbose=False)
 
         assert n == 3
         ids = [job_id for job_id, _thread_name in calls]
-        # Sequential profile jobs preserve submission order relative to each
-        # other (single-thread pool).
-        assert ids.index("a") < ids.index("b")
-        # Merge (0.16.0 catch-up): sequential jobs dispatch to the persistent
-        # single-thread cron-seq pool and parallel jobs to cron-parallel (so
-        # the ticker never blocks), but each job BODY executes under the fork's
-        # per-job soft-deadline wrapper (_run_callable_with_deadline) on a
-        # dedicated "cron-job-<id>" worker thread. The thread run_job observes
-        # is therefore "cron-job-<id>", never the main/ticker thread.
-        # Serialization of a,b is guaranteed by the single-thread seq pool plus
-        # the wrapper's join (the ordering assertion above is the real invariant).
+        assert set(ids) == {"a", "b", "c"}
+        assert peak_active == 1
+        # Keep the real run_job wrapper: it holds the profile writer lock for
+        # the entire body, excluding both other writers and ordinary readers.
         main_name = threading.current_thread().name
         for jid in ("a", "b", "c"):
             job_thread = next(t for job_id, t in calls if job_id == jid)

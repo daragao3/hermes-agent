@@ -2315,8 +2315,10 @@ def _resolve_cron_agent_setup(job: dict, job_id: str, job_name: str, jc) -> _Cro
         job, job_id, _cfg, setup.runtime, primary_provider_for_drift, primary_model_for_drift)
     setup.fallback_model = get_fallback_chain(_cfg) or None
     setup.credential_pool = _load_credential_pool(setup.runtime, job_id)
-    # MCP servers must be registered before AIAgent is constructed.
-    _init_cron_mcp_tools(job_id)
+    # Honor the explicit opt-out before discovery can connect to any server.
+    # Other jobs retain the existing idempotent initialization before AIAgent.
+    if "no_mcp" not in (job.get("enabled_toolsets") or []):
+        _init_cron_mcp_tools(job_id)
     return setup
 
 
@@ -2413,7 +2415,9 @@ def run_job(
     try:
         if _current_deadline_elapsed():
             return False, "", "", "Soft deadline exceeded before acquiring job isolation."
-        with _job_profile_context(job["id"], job.get("profile")):
+        with _job_profile_context(job["id"], job.get("profile")) as active_profile:
+            if active_profile is not None:
+                worker_state["profile_home"] = _get_hermes_home()
             recorder = None
             try:
                 policy = _resolve_cron_activity_policy(job)
@@ -2529,6 +2533,23 @@ def _run_job_impl(
         if setup.blocked is not None:
             return setup.blocked
         model = setup.model
+
+        profile_home = _worker_state.get("profile_home")
+        if profile_home is not None:
+            from hermes_cli.plugins import get_plugin_manager
+
+            # Validate tool-only contributions before an agent snapshots its
+            # profile's registry. A broken enabled plugin must fail the run.
+            manager = get_plugin_manager()
+            from cron.scheduler_diagnostics import set_stage
+
+            set_stage("profile_plugins")
+            manager.load_profile_tools(profile_home)
+            manager.discover_and_load()
+            manager.load_profile_tools(profile_home)
+            if _current_deadline_elapsed():
+                return False, "", "", "Soft deadline exceeded while loading profile plugins."
+            set_stage("job_execution")
 
         # Open state.db only after every early-return gate has passed.
         _session_db = _open_cron_session_db(job)

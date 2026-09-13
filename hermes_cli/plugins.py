@@ -1227,16 +1227,20 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
         self._profile_tool_lock = threading.RLock()
 
     def load_profile_tools(self, profile_home: Path | str) -> list[str]:
-        """Add enabled tool-only plugins from one profile without rediscovery.
+        """Load enabled tool-only plugins into this manager's profile registry.
 
         Long-lived schedulers discover their own profile once at startup. A
-        cron job may later enter another profile, whose user plugins were not in
-        that initial scan. This narrow path imports only that profile's enabled
+        cron job may later enter another profile and resolve its own manager.
+        This narrow path imports only that profile's enabled
         standalone plugins and permits only ``register_tool`` calls; hooks,
-        middleware, commands, providers, and overrides remain process-global and
-        are therefore refused.
+        middleware, commands, providers, and overrides are refused at this
+        tool-only boundary.
         """
+        if _env_enabled("HERMES_SAFE_MODE"):
+            return []
         home = Path(profile_home).resolve()
+        if hermes_home_key(home) != self.scope_key:
+            raise ValueError("Profile tool loading requires the profile's own plugin manager")
         config_path = home / "config.yaml"
         try:
             config = fast_safe_load(config_path.read_text(encoding="utf-8")) or {}
@@ -1276,9 +1280,20 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
         globally_known = {
             candidate
             for key, loaded in self._plugins.items()
-            if loaded.enabled
+            if loaded.enabled and not loaded.error
             for candidate in (key, loaded.manifest.name)
         }
+        unresolved = enabled - disabled - selected_names - globally_known
+        if unresolved and not self._discovered:
+            # Only metadata is consulted before normal discovery. The second
+            # check after discovery requires a real enabled/deferred result.
+            with _plugin_home_scope(self.home_path):
+                catalog = self._collect_directory_manifests() + self._scan_entry_points()
+            catalog_winners = {manifest_key(item): item for item in catalog}
+            globally_known.update(
+                name for item in catalog_winners.values() if item.source != "user"
+                for name in (manifest_key(item), item.name)
+            )
         missing = sorted(
             name for name in enabled
             if name not in disabled
@@ -1291,7 +1306,8 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
                 + ", ".join(repr(name) for name in missing)
             )
 
-        with self._profile_tool_lock:
+        with self._discovery_lock, replacement_coordinator.transaction(), \
+                self._profile_tool_lock, _plugin_home_scope(self.home_path):
             requested_paths = {str(Path(manifest.path or "").resolve()) for manifest in selected}
             for manifest in selected:
                 key = manifest.key or manifest.name
@@ -1310,9 +1326,22 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
             from tools.registry import registry
 
             for manifest in selected:
+                key = manifest_key(manifest)
+                if manifest.kind != "standalone" or manifest.provides_hooks:
+                    raise ValueError(f"Profile additive plugin loading is tool-only; {key!r} declares other surfaces")
+                if any(item.active and item.kind not in {"tool", "tool_override_policy"}
+                       for item in self._ownership_ledger.get(key, ())):
+                    raise ValueError(f"Profile additive plugin loading is tool-only; {key!r} registered other surfaces")
+
+            for manifest in selected:
                 key = manifest.key or manifest.name
                 canonical_path = str(Path(manifest.path or "").resolve())
                 loaded = self._plugins.get(key)
+                cached_names = self._profile_tool_plugins.get(canonical_path, ())
+                if cached_names and any(
+                    registry.snapshot_registration(name, scope=self.scope_key) is None for name in cached_names
+                ):
+                    self._profile_tool_plugins.pop(canonical_path, None)
                 if (
                     canonical_path not in self._profile_tool_plugins
                     and loaded is not None
@@ -1321,8 +1350,13 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
                     == canonical_path
                 ):
                     names = tuple(sorted(loaded.tools_registered))
+                    if set(names) != set(manifest.provides_tools):
+                        raise ValueError(
+                            f"Profile tool-only plugin {key!r} registered {list(names)!r}, "
+                            f"manifest declares {sorted(manifest.provides_tools)!r}"
+                        )
                     if not names or any(
-                        registry.get_entry(name) is None for name in names
+                        registry.snapshot_registration(name, scope=self.scope_key) is None for name in names
                     ):
                         raise ValueError(
                             f"Profile tool-only plugin {key!r} is loaded but its "
@@ -1351,10 +1385,25 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
 
             batches: list[tuple[PluginManifest, str, types.ModuleType, list[dict]]] = []
             imported_modules: list[tuple[str, types.ModuleType]] = []
+            registration_start = len(self._registration_order)
             try:
                 with registry.transaction():
-                    for manifest in newly_selected:
+                    def exact_tools():
+                        return {
+                            name: entry for name in registry.get_tool_to_toolset_map()
+                            if (entry := registry.snapshot_registration(name, scope=self.scope_key)) is not None
+                        }
+
+                    before_tools = exact_tools()
+                    ordered = {manifest_key(item): item for item in newly_selected}
+                    for key in resolve_plugin_load_order(ordered):
+                        manifest = ordered[key]
+                        if gate_manifest(manifest, disabled, enabled).action != "load":
+                            raise ValueError(f"Profile tool-only plugin {key!r} is not eligible for loading")
+                        self._warn_python_dependencies(manifest)
+                        self._validate_plugin_config_schema(manifest)
                         canonical_path = str(Path(manifest.path or "").resolve())
+                        self._track_tool_override_policy(manifest, self._policy_module_name(manifest))
                         module = self._load_directory_module(manifest)
                         imported_modules.append((module.__name__, module))
                         register_fn = getattr(module, "register", None)
@@ -1373,12 +1422,31 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
                             )
                         batches.append((manifest, canonical_path, module, ctx.tools))
 
+                    after_tools = exact_tools()
+                    if before_tools.keys() != after_tools.keys() or any(
+                        after_tools[name] is not entry for name, entry in before_tools.items()
+                    ):
+                        raise ValueError("Profile tool-only plugins must register tools through ctx.register_tool")
+
                     all_entries = [
-                        entry for _, _, _, entries in batches for entry in entries
+                        dict(entry, scope=self.scope_key)
+                        for _, _, _, entries in batches for entry in entries
                     ]
                     if all_entries:
                         registry.register_batch_if_absent(all_entries)
+                    for manifest, _, _, entries in batches:
+                        for entry in entries:
+                            name = entry["name"]
+                            registered = registry.snapshot_registration(name, scope=self.scope_key)
+                            self._plugin_tool_names.add(name)
+                            self._track_scoped_registration(
+                                manifest, "tool", name, registry, registered, None,
+                                finalize=lambda name=name: self._remove_tool_name_if_unowned(name),
+                            )
             except BaseException:
+                owned = self._registration_order[registration_start:]
+                self._dispose_registrations(owned)
+                self._forget_registrations(owned)
                 for module_name, module in reversed(imported_modules):
                     if sys.modules.get(module_name) is module:
                         sys.modules.pop(module_name, None)
@@ -1537,9 +1605,40 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
         # Later sources win on key collision (project > user > bundled); gate the winners, then
         # load survivors in requires_plugins order (see resolve_plugin_load_order).
         winners = {manifest_key(m): m for m in manifests}
-        to_load = {k: m for k, m in winners.items() if self._gate_manifest(m, disabled, enabled)}
+        # A strict user registration must not be replaced through a broader
+        # context, even when normal catalog precedence chooses another source.
+        for key, winner in winners.items():
+            loaded = self._plugins.get(key)
+            if loaded is None or not loaded.enabled or loaded.error:
+                continue
+            path = str(Path(loaded.manifest.path or "").resolve())
+            if path in self._profile_tool_plugins and (
+                winner.source != loaded.manifest.source
+                or str(Path(winner.path or "").resolve()) != path
+            ):
+                raise ValueError(f"Plugin catalog cannot replace strict profile tool plugin {key!r}")
+
+        def strictly_loaded(manifest):
+            if manifest.source != "user" or gate_manifest(manifest, disabled, enabled).action != "load":
+                return False
+            path = str(Path(manifest.path or "").resolve())
+            loaded = self._plugins.get(manifest_key(manifest))
+            names = self._profile_tool_plugins.get(path, ())
+            if not names or loaded is None or not loaded.enabled or loaded.error:
+                return False
+            from tools.registry import registry
+            return (
+                str(Path(loaded.manifest.path or "").resolve()) == path
+                and all(registry.snapshot_registration(name, scope=self.scope_key) is not None for name in names)
+            )
+
+        # Check strict ownership before the effectful gate (which can load now).
+        to_load = {k: m for k, m in winners.items()
+                   if strictly_loaded(m) or self._gate_manifest(m, disabled, enabled)}
         for lookup_key in resolve_plugin_load_order(to_load):
             manifest = to_load[lookup_key]
+            if strictly_loaded(manifest):
+                continue
             self._warn_python_dependencies(manifest)
             self._validate_plugin_config_schema(manifest)
             self._load_plugin(manifest)
