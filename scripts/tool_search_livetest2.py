@@ -11,7 +11,7 @@ Runs each scenario N_REPS times in each mode (on/off). Output:
 """
 from __future__ import annotations
 
-import json, os, shutil, sys, tempfile, time, traceback
+import json, os, shutil, sys, time, traceback
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -62,7 +62,7 @@ def run_one(scenario: Dict[str, Any], mode: str, rep: int, out_dir: Path) -> Dic
     hermes_home = base.setup_isolated_home(enabled, listing=("auto" if mode == "listing" else "off"))
     os.environ["HERMES_HOME"] = str(hermes_home)
     base.reset_module_state()
-    n_registered = base.register_fake_tools()
+    base.register_fake_tools()
 
     Path("/tmp/livetest").mkdir(exist_ok=True)
     (Path("/tmp/livetest/notes.txt")).write_text("Hello from the test fixture.\n", encoding="utf-8")

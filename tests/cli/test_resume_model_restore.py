@@ -8,7 +8,6 @@ used instead of the ambient config default (#57588-class, #79536).
 
 import json
 
-import pytest
 
 import cli as cli_mod
 from hermes_state import SessionDB

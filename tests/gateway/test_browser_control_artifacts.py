@@ -636,7 +636,6 @@ def test_http_uploaded_artifact_composes_with_broker_dispatch(tmp_path):
 
 def test_multiplex_profiles_get_distinct_stores_regardless_of_touch_order(tmp_path, monkeypatch):
     """Profile A touching the artifact route first must not pin profile B."""
-    import gateway.platforms.api_server as api_server_mod
 
     adapter = _adapter()
     monkeypatch.setattr(

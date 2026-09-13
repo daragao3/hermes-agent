@@ -26,9 +26,7 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
-from agent.auxiliary_client import AuxiliaryExplicitCancellation
 from agent.conversation_compression import (
     CompressionCommitFence,
     _claim_compressor_attempt,

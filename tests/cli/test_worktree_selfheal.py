@@ -13,7 +13,6 @@ Two behaviors:
 """
 
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -101,7 +100,7 @@ class TestMaintainPackHealth:
             (repo / f"p{i}.txt").write_text(f"{i}\n")
             _git(repo, "add", "-A")
             _git(repo, "commit", "-qm", f"c{i}")
-            sha = _git(repo, "rev-parse", f"HEAD^{{commit}}").stdout.strip()
+            sha = _git(repo, "rev-parse", "HEAD^{commit}").stdout.strip()
             # One pack per commit object: pipe the sha into pack-objects.
             subprocess.run(
                 ["git", "pack-objects", "-q", str(pack_dir / f"tpack{i}")],
@@ -138,7 +137,7 @@ class TestMaintainPackHealth:
 
         cli._maintain_pack_health(str(repo))
 
-        assert self._pack_count(repo) == made, "below threshold must be a no-op"  # noqa: same-count contract
+        assert self._pack_count(repo) == made, "below threshold must be a no-op"  # same-count contract
 
     def test_fail_soft_on_missing_pack_dir(self, tmp_path):
         from cli import _maintain_pack_health

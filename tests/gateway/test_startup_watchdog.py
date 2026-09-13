@@ -125,7 +125,6 @@ class TestContracts:
         structural contract: the arm sites are the whole point of the
         pre-loop coverage, and they're spread across four files."""
         import ast
-        import inspect
         from pathlib import Path
 
         repo_root = Path(__file__).resolve().parents[2]
@@ -453,7 +452,6 @@ class TestProgressLease:
         """repair_state_db_schema (I/O-bound, ~zero CPU) must hold a lease."""
         import inspect
 
-        import hermes_state
 
         src = inspect.getsource(hermes_state_repair.repair_state_db_schema)
         assert "report_startup_progress" in src

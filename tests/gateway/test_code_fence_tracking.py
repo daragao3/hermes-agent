@@ -28,8 +28,7 @@ Test categories:
   I. Integration: what a fix would look like
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, ANY
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from gateway.platforms.base import BasePlatformAdapter
 from gateway.stream_consumer import GatewayStreamConsumer, StreamConsumerConfig, ensure_closed_code_fences
@@ -344,7 +343,7 @@ class TestEditPathBypass:
 
         with patch.object(BasePlatformAdapter, 'truncate_message', _spy):
             import asyncio
-            result = asyncio.run(
+            asyncio.run(
                 consumer._send_or_edit("Hello world\n```\nunclosed",
                                        finalize=True)
             )
@@ -398,7 +397,7 @@ class TestOverflowSplitFenceGap:
 
         split_at = consumer._accumulated.rfind("\n", 0, _cp_budget)
         chunk = consumer._accumulated[:split_at]
-        remaining = consumer._accumulated[split_at:].lstrip("\n")
+        consumer._accumulated[split_at:].lstrip("\n")
 
         # First chunk should have odd ``` (no close from edit path)
         first_odd = _odd_fences(chunk)
@@ -425,7 +424,7 @@ class TestFallbackFinalFenceGap:
         chunks = GatewayStreamConsumer._split_text_chunks(text, 80)
         assert len(chunks) >= 2
         # At least some chunks may have odd ``` (no fence tracking)
-        odd_ones = [c for c in chunks if _odd_fences(c)]
+        [c for c in chunks if _odd_fences(c)]
         # Just document: _split_text_chunks doesn't guarantee balanced fences
 
 

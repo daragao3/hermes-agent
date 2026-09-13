@@ -31,12 +31,9 @@ from hermes_cli.observability.shared_metrics_contract import (
     DURATION_BUCKETS,
     EXECUTION_SURFACES,
     LEGACY_MODEL_CALL_METRIC,
-    MODEL_CALL_PROFILE_MODEL,
     MODEL_IDENTIFIER_MAX_LENGTH,
     MODEL_ROUTE_METRIC,
     PROVIDER_IDENTIFIER_MAX_LENGTH,
-    SCHEMA_KEY,
-    SCHEMA_VERSION,
     SKILL_LIFECYCLE_ACTIONS,
     SKILL_POST_PATCH_STATES,
     SKILL_PROVENANCES,
@@ -56,18 +53,12 @@ from hermes_cli.observability.shared_metrics_contract import (
     client_install_method,
     client_os_family,
     client_resource,
-    count_bucket,
-    duration_bucket,
-    execution_surface,
     model_call_dimensions,
     model_call_fields,
     skill_counter,
     skill_lifecycle_fields,
     skill_load_fields,
-    task_counter,
-    task_start_fields,
     task_terminal_fields,
-    task_terminal_state,
     tool_approval_counter,
     tool_approval_outcome,
     tool_call_dimensions,
@@ -75,7 +66,6 @@ from hermes_cli.observability.shared_metrics_contract import (
     tool_latency_bucket,
     tool_outcome,
     tool_retry_bucket,
-    tool_terminal_fields,
 )
 
 
@@ -1194,7 +1184,7 @@ def test_pending_package_retry_reuses_the_same_package_and_file(tmp_path):
     store = SharedMetricsStore(database_path, outbox_directory)
     store.record_model_call(_dimensions(), _resource())
     [package_path] = store.create_and_export_package()
-    original_payload = package_path.read_bytes()
+    package_path.read_bytes()
 
 
 

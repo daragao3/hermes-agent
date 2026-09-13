@@ -17,7 +17,6 @@ The fix is owned at chokepoints, not leaf sites:
   request-body leaf are json-encodable before any provider sees them.
 """
 
-from types import SimpleNamespace
 
 import json
 

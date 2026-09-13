@@ -9,7 +9,6 @@ handler return to the process exit code; these tests pin the returns.
 
 from argparse import Namespace
 
-import pytest
 
 import hermes_cli.sessions_cmd as sc
 

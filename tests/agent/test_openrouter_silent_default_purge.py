@@ -11,9 +11,7 @@ and env var when a credential is newly ingested.
 """
 
 import logging
-import uuid
 
-import pytest
 
 
 class TestAuxiliaryOpenrouterDefaultIsFree:

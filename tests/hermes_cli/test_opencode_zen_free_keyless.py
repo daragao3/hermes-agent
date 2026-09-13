@@ -18,7 +18,6 @@ free Ox Alpha model failed under an OpenCode subscription:
    carry ``Authorization: ""`` overriding the SDK bearer.
 """
 
-import os
 from unittest import mock
 
 import pytest

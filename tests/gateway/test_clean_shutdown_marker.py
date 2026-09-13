@@ -7,7 +7,6 @@ suspend_recently_active() is skipped so users don't lose their sessions.
 After a crash (no marker), suspension still fires as a safety net for stuck sessions.
 """
 
-from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 

@@ -5,7 +5,6 @@ from hermes_cli.moa_config import (
     DEFAULT_MOA_AGGREGATOR,
     DEFAULT_MOA_PRESET_NAME,
     DEFAULT_MOA_REFERENCE_MODELS,
-    decode_moa_turn,
     exact_moa_preset_name,
     normalize_moa_config,
     resolve_moa_preset,

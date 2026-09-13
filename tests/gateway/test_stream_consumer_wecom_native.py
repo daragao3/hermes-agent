@@ -38,7 +38,7 @@ def _make_native_streaming_adapter(
 
     Records every ``send_stream_frame`` call on ``adapter.frames`` for assertions.
     """
-    from gateway.platforms.base import BasePlatformAdapter, SendResult
+    from gateway.platforms.base import BasePlatformAdapter
 
     NativeStreamingAdapter = type(
         "NativeStreamingAdapter",
@@ -729,7 +729,7 @@ class TestClarifyEagerReseed:
         per-tick fragments on a non-editable platform."""
         # Make the SECOND seed (the eager re-seed) fail while the initial seed
         # succeeds, so we actually reach the reopen-pending state first.
-        from gateway.platforms.base import BasePlatformAdapter, SendResult
+        from gateway.platforms.base import BasePlatformAdapter
 
         NativeStreamingAdapter = type(
             "NativeStreamingAdapter2",
@@ -889,7 +889,7 @@ class TestClarifyEagerReseed:
         直接验证 review (b).4 的结论。
         """
         # 复用 Point 5 的降级 adapter：第一次空 seed 成功、第二次（eager 再 seed）失败。
-        from gateway.platforms.base import BasePlatformAdapter, SendResult
+        from gateway.platforms.base import BasePlatformAdapter
 
         NativeStreamingAdapter = type(
             "NativeStreamingAdapter2b",

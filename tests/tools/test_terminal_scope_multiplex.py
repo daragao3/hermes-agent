@@ -95,7 +95,7 @@ def test_routed_turn_reads_every_terminal_consumer_from_profile(
     import tools.terminal_tool as tt
     from agent import runtime_cwd
     from gateway.platforms import base as gbase
-    from tools import browser_tool, env_probe, file_tools_paths
+    from tools import env_probe, file_tools_paths
 
     b_cwd = tmp_path / "b-work"
     b_cwd.mkdir()

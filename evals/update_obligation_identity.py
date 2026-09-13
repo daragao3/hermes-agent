@@ -5,7 +5,7 @@ through production code; only their temporary version fields are altered for
 negative controls. Exit 1 on base, exit 0 when current successors settle.
 """
 
-import json, os, pathlib, subprocess, sys, tempfile, time
+import json, os, pathlib, subprocess, sys, tempfile
 
 repo = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(repo))

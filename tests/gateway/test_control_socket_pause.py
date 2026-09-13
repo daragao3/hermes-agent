@@ -11,15 +11,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from gateway.control_socket import (
     GatewayControlServer,
     pause_gateway_for_update,
-    query_gateway_control,
 )
 
 

@@ -23,7 +23,6 @@ from unittest.mock import patch
 import pytest
 
 from tools.tts_command_provider import (
-    COMMAND_TTS_OUTPUT_FORMATS,
     DEFAULT_COMMAND_TTS_MAX_TEXT_LENGTH,
     DEFAULT_COMMAND_TTS_OUTPUT_FORMAT,
     DEFAULT_COMMAND_TTS_TIMEOUT_SECONDS,

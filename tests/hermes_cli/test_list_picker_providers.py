@@ -162,7 +162,6 @@ def _stub_kimi_discovery(monkeypatch, *, canonical):
     import agent.models_dev as md
     import hermes_cli.models as hm
     import hermes_cli.models_catalog_static as hermes_cli_models_catalog_static
-    from hermes_cli import models_catalog_static
 
     kimi_map = {
         "kimi": "kimi-for-coding",
@@ -192,7 +191,6 @@ def _stub_kimi_discovery(monkeypatch, *, canonical):
 
 def test_single_kimi_credential_yields_one_canonical_row(monkeypatch):
     """One Kimi key yields a single row under the canonical 'kimi-coding' slug."""
-    import hermes_cli.models as hm
     from hermes_cli import models_catalog_static
 
     _stub_kimi_discovery(
@@ -220,7 +218,6 @@ def test_distinct_kimi_china_credential_still_listed(monkeypatch):
     Negative-control guard: the de-dup must collapse only the alias/canonical
     pair that share a credential, not legitimately distinct providers.
     """
-    import hermes_cli.models as hm
     from hermes_cli import models_catalog_static
 
     _stub_kimi_discovery(

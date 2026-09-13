@@ -10,18 +10,13 @@ of refusing requests until re-auth.
 import base64
 import json
 import time
-from types import SimpleNamespace
 
 import pytest
 
 import hermes_cli.auth as auth_mod
 import hermes_cli.auth_codex as auth_codex
 from hermes_cli.auth import (
-    AuthError,
-    _codex_usage_probe_url,
-    _is_codex_rate_limit_shaped,
     _probe_codex_quota_restored,
-    clear_codex_pool_quota_cooldowns,
     resolve_codex_runtime_credentials,
 )
 

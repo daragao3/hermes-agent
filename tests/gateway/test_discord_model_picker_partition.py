@@ -9,7 +9,6 @@ picks (appended after the curated list) appear on Discord — they previously
 fell off the 25-option cliff.
 """
 
-from types import SimpleNamespace
 
 from gateway.platforms.base import utf16_len
 from plugins.platforms.discord.adapter import ModelPickerView

@@ -34,7 +34,6 @@ class _FakeProc:
 
 
 def test_apply_whatsapp_onboarding_saves_pairing_policy(monkeypatch):
-    from hermes_cli import web_server as ws
 
     saved = {}
     removed = []

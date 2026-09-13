@@ -8,7 +8,6 @@ b-tree/schema header bytes), not mocked cursor exceptions.
 
 from __future__ import annotations
 
-import shutil
 import sqlite3
 from pathlib import Path
 

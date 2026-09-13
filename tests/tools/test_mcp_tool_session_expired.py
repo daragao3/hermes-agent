@@ -50,7 +50,6 @@ def test_is_session_expired_detects_session_not_found():
 
 def test_is_session_expired_traversal_is_budget_bounded():
     """Pathologically long chains stop at the node budget without spinning."""
-    import tools.mcp_tool as mcp_mod
     from tools import mcp_tool_errors as _mcp_errors
     from tools.mcp_tool_errors import _is_session_expired_error
 
@@ -75,7 +74,6 @@ def _install_stub_server(name: str = "wpcom"):
     """Register a minimal server stub that _handle_session_expired_and_retry
     can signal via _reconnect_event, and that reports ready+session after
     the event fires."""
-    from tools import mcp_tool
 
     _mcp_loop._ensure_mcp_loop()
 

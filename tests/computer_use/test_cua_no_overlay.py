@@ -10,8 +10,7 @@ These assert the behavior contract (auto-detect, explicit override, version
 probe), not specific config snapshots.
 """
 
-import os
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

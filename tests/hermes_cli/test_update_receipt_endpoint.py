@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-import hermes_cli.web_server as web_server
 import hermes_cli.web_server_gateway as _web_server_gateway
 
 
@@ -129,7 +128,7 @@ class TestUpdateStatusReadsReceipt:
     def test_running_receipt_proves_nothing(self, client, tmp_path, monkeypatch):
         """An unfinished receipt (crashed run / mid-update) must not report
         an outcome — clients keep polling."""
-        receipt = _write_receipt(tmp_path, monkeypatch, outcome="running")
+        _write_receipt(tmp_path, monkeypatch, outcome="running")
         self._clear_registries(monkeypatch, tmp_path)
 
         resp = client.get("/api/actions/hermes-update/status")

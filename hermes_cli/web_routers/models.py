@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
-from hermes_cli.web_deps import LateState, late
+from hermes_cli.web_deps import late
 from hermes_cli.web_server_config import (
     _AUX_TASK_SLOTS, _apply_model_assignment_sync, _dashboard_code_skew_guard,
 )

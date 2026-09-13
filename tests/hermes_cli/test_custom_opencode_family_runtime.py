@@ -9,8 +9,6 @@ api_mode (chat_completions), so /v1/responses-only models like
 ``grok-4.5`` failed with HTTP 503 "Endpoint unavailable".
 """
 
-import os
-import tempfile
 
 import pytest
 

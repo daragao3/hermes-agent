@@ -102,7 +102,7 @@ class TestStaleInflightSelfHeal:
         # and the dispatch loop re-fires it.
         job = J.get_job(job_id)
         with mock.patch("cron.jobs.load_jobs", return_value=[job]):
-            n = S.tick(verbose=False, sync=True)
+            S.tick(verbose=False, sync=True)
 
         latest = E.latest_execution(job_id)
         assert job_id not in S.get_running_job_ids(), "stale claim must be released"
@@ -129,14 +129,14 @@ class TestStaleInflightSelfHeal:
 
         job = J.get_job(job_id)
         with mock.patch("cron.jobs.load_jobs", return_value=[job]):
-            n1 = S.tick(verbose=False, sync=True)
+            S.tick(verbose=False, sync=True)
         latest1 = E.latest_execution(job_id)
         assert latest1["status"] == "completed"
 
         # Re-arm due and tick again: fire #2.
         now = datetime.now(timezone.utc)
         J.update_job(job_id, {"next_run_at": (now - timedelta(minutes=1)).isoformat()})
-        n2 = S.tick(verbose=False, sync=True)
+        S.tick(verbose=False, sync=True)
         latest2 = E.latest_execution(job_id)
         assert latest2["status"] == "completed"
         assert latest2["id"] != latest1["id"], "two distinct executions"

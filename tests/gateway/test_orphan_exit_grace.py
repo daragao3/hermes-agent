@@ -15,9 +15,7 @@ down normally, and when it does fire it must say so.
 """
 from __future__ import annotations
 
-import pytest
 
-import hermes_state_wal
 
 from hermes_cli.gateway import (
     _ORPHAN_EXIT_GRACE_SECONDS,

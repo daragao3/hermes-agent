@@ -170,7 +170,6 @@ def setup_mcp_cb(name, action, reason):
     return json.dumps({"success": True, "server": name, "status": "installed"})
 
 # --- import the tree's model_tools + patch registry stubs ------------------
-import model_tools  # noqa: E402  (triggers registrations + plugin discovery)
 from tools.registry import registry  # noqa: E402
 
 def _stub_entry(name, handler):

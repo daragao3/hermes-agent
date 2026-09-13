@@ -29,7 +29,6 @@ And at the compressor boundary:
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -168,7 +167,6 @@ class TestTailCountArchivesAsRewindSemantics:
         ]
 
     def test_message_count_reflects_active_set(self, db: SessionDB) -> None:
-        import json as _json
 
         _seed(db)
         compacted = [*SUMMARY, {"role": "user", "content": "turn 4"},
@@ -249,7 +247,7 @@ class TestCompressTagsCarriedTail:
                         "persistence-layer tests above"
                     )
 
-            tagged = [
+            [
                 m for m in (captured.get("messages") or [])
                 if isinstance(m, dict) and m.pop(_COMPACTION_TAIL_MARKER, None)
             ]

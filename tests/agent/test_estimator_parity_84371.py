@@ -30,7 +30,6 @@ from agent.context_compressor import (
 from agent.message_sanitization import stale_thinking_reaches_wire
 from agent.model_metadata import (
     estimate_messages_tokens_rough,
-    estimate_request_tokens_rough,
 )
 
 

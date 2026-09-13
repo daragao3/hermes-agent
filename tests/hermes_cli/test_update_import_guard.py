@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import main as hermes_main
 from hermes_cli import update_cmd
 import hermes_cli.update_cmd_deps as update_cmd_deps
 from hermes_constants import partial_update_hint

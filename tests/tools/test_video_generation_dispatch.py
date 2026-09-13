@@ -102,7 +102,6 @@ class TestUnifiedDispatch:
         to providers when set, omitted (not None) when unset."""
         from tools.video_generation_tool import (
             VIDEO_GENERATE_SCHEMA,
-            _build_dynamic_video_schema,
         )
         # Static placeholder: capability args live in the dynamic override.
         props = VIDEO_GENERATE_SCHEMA["parameters"]["properties"]

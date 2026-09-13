@@ -147,7 +147,6 @@ def is_managed_tool_gateway_ready(
 # Internal code MUST NOT use these (scripts/check_compat_pointers.py fails CI if it does).
 # The whole block is removed by reverting the commit that added it.
 from urllib.parse import urlsplit  # noqa: F401,E402
-from urllib.parse import urlsplit  # noqa: F401,E402
 
 _MANAGED_GATEWAY_VENDOR = "tool"
 

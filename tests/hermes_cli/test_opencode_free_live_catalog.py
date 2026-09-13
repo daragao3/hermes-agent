@@ -105,7 +105,6 @@ class TestOpencodeFreeCacheFingerprint:
     def test_cached_picker_path_revalidates_live(self):
         """cached_provider_model_ids('opencode-free') serves the live catalog and
         persists it under a stable fingerprint (SWR cache path the picker uses)."""
-        import time
 
         import hermes_cli.models as mod
 

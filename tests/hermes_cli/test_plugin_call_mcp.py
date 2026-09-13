@@ -32,7 +32,6 @@ def _patch_config(monkeypatch, entries: dict) -> None:
 
 def _patch_handler(monkeypatch, response: str, captured: dict | None = None):
     """Replace tools.mcp_tool_handlers._make_tool_handler with a transport mock."""
-    import tools.mcp_tool as mcp_mod
     from tools import mcp_tool_handlers as _mcp_handlers
 
     def _fake_make_handler(server_name, tool_name, tool_timeout):

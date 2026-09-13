@@ -9,7 +9,6 @@ route through the module-level `_emit_approval_request` helper, which redacts
 before emitting.
 """
 
-import inspect
 
 import pytest
 

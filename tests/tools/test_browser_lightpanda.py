@@ -535,40 +535,40 @@ class TestLightpandaEngineStatus:
         return bt
 
     def test_not_lightpanda(self, monkeypatch):
-        bt = self._gates(monkeypatch, _using_lightpanda_engine=lambda: False)
+        self._gates(monkeypatch, _using_lightpanda_engine=lambda: False)
         assert bt_lightpanda_fallback.lightpanda_engine_status() == (False, "")
 
     def test_used_in_browser_use_mode(self, monkeypatch):
-        bt = self._gates(monkeypatch)
+        self._gates(monkeypatch)
         used, reason = bt_lightpanda_fallback.lightpanda_engine_status()
         assert used is True
         assert "lightpanda serve" in reason
 
     def test_used_with_builtin_tools(self, monkeypatch):
-        bt = self._gates(monkeypatch, _is_browser_use_cli_mode=lambda: False)
+        self._gates(monkeypatch, _is_browser_use_cli_mode=lambda: False)
         used, reason = bt_lightpanda_fallback.lightpanda_engine_status()
         assert used is True
         assert "--engine lightpanda" in reason
 
     def test_shadowed_by_cdp_override(self, monkeypatch):
-        bt = self._gates(monkeypatch, _get_cdp_override_raw=lambda: "ws://x")
+        self._gates(monkeypatch, _get_cdp_override_raw=lambda: "ws://x")
         used, reason = bt_lightpanda_fallback.lightpanda_engine_status()
         assert used is False and "CDP override" in reason
 
     def test_shadowed_by_camofox(self, monkeypatch):
-        bt = self._gates(monkeypatch, _is_camofox_mode=lambda: True)
+        self._gates(monkeypatch, _is_camofox_mode=lambda: True)
         used, reason = bt_lightpanda_fallback.lightpanda_engine_status()
         assert used is False and "Camofox" in reason
 
     def test_shadowed_by_cloud_provider(self, monkeypatch):
         provider = MagicMock()
         provider.display_name = "Browserbase"
-        bt = self._gates(monkeypatch, _get_cloud_provider=lambda: provider)
+        self._gates(monkeypatch, _get_cloud_provider=lambda: provider)
         used, reason = bt_lightpanda_fallback.lightpanda_engine_status()
         assert used is False and "Browserbase" in reason
 
     def test_shadowed_by_legacy_browser_use_cloud(self, monkeypatch):
-        bt = self._gates(monkeypatch)
+        self._gates(monkeypatch)
         monkeypatch.setattr(
             "tools.browser_use_cli.is_legacy_browser_use_cloud_config", lambda cfg: True
         )
@@ -576,7 +576,7 @@ class TestLightpandaEngineStatus:
         assert used is False and "Browser Use cloud" in reason
 
     def test_shadowed_by_real_profile(self, monkeypatch):
-        bt = self._gates(monkeypatch, _use_real_profile=lambda: True)
+        self._gates(monkeypatch, _use_real_profile=lambda: True)
         used, reason = bt_lightpanda_fallback.lightpanda_engine_status()
         assert used is False and "use_real_profile" in reason
 
@@ -585,7 +585,7 @@ class TestLightpandaEngineStatus:
         both set the real-profile toggle is the actual shadow."""
         provider = MagicMock()
         provider.display_name = "Browserbase"
-        bt = self._gates(
+        self._gates(
             monkeypatch,
             _use_real_profile=lambda: True,
             _get_cloud_provider=lambda: provider,

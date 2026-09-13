@@ -11,7 +11,6 @@ import sqlite3
 
 import pytest
 
-import hermes_state
 import hermes_state_repair
 from hermes_state_repair import repair_state_db_schema
 

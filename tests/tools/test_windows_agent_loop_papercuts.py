@@ -6,7 +6,6 @@ Windows unpleasant. Each test names the issue it pins.
 """
 
 import os
-import re
 import sys
 from pathlib import Path
 

@@ -26,8 +26,6 @@ from unittest import mock
 import pytest
 
 import hermes_cli.gateway_windows as gateway_windows
-import hermes_cli.main as cli_main
-from hermes_cli import update_cmd
 
 
 # ---------------------------------------------------------------------------

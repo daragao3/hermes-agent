@@ -21,7 +21,6 @@ The bugs, as reproduced before the fix:
 """
 
 import json
-import time
 import uuid
 from types import SimpleNamespace
 

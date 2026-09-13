@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from tools import approval as approval_mod
 from tools import approval_context
 
 

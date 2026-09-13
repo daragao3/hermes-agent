@@ -12,7 +12,6 @@ Covers the three seams added for remote Desktop backends:
     rejected, replay rejected, unknown session rejected).
 """
 
-import threading
 
 import pytest
 

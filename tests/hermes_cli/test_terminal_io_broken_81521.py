@@ -10,7 +10,6 @@ from __future__ import annotations
 import errno
 from unittest.mock import MagicMock
 
-import pytest
 
 
 def _make_cli_stub():

@@ -495,7 +495,6 @@ class TestContentBearingProgress:
         from agent.auxiliary_client import (
             _aux_provider_response,
             _aux_thread_local_hook,
-            _notify_aux_timing_response,
         )
 
         timings: dict = {}

@@ -18,7 +18,6 @@ adapter retries the idempotent seal frame on ambiguous results exactly as
 for exceptions, and disarms interception only on definite rejections.
 """
 
-import asyncio
 
 import pytest
 

@@ -17,10 +17,9 @@ handler used a different (likely messages-only) estimate.
 import pytest
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from run_agent import AIAgent
-import run_agent
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +119,7 @@ class TestHTTP413OverheadAwareTokens:
             patch(
                 "agent.model_metadata.estimate_request_tokens_rough",
                 return_value=_SENTINEL_TOKENS,
-            ) as mock_estimate,
+            ),
             patch.object(agent, "_compress_context") as mock_compress,
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
@@ -130,7 +129,7 @@ class TestHTTP413OverheadAwareTokens:
                 [{"role": "user", "content": "compressed"}],
                 "compressed prompt",
             )
-            result = agent.run_conversation("hello", conversation_history=_prefill())
+            agent.run_conversation("hello", conversation_history=_prefill())
 
         # _compress_context must have been called at least once for compression
         mock_compress.assert_called()
@@ -217,7 +216,7 @@ class TestContextOverflowOverheadAwareTokens:
             patch(
                 "agent.model_metadata.estimate_request_tokens_rough",
                 return_value=_SENTINEL_TOKENS,
-            ) as mock_estimate,
+            ),
             patch.object(agent, "_compress_context") as mock_compress,
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
@@ -227,7 +226,7 @@ class TestContextOverflowOverheadAwareTokens:
                 [{"role": "user", "content": "compressed"}],
                 "compressed prompt",
             )
-            result = agent.run_conversation("hello", conversation_history=_prefill())
+            agent.run_conversation("hello", conversation_history=_prefill())
 
         mock_compress.assert_called()
 
@@ -301,7 +300,7 @@ class TestContextOverflowOverheadAwareTokens:
                 [{"role": "user", "content": "compressed"}],
                 "compressed prompt",
             )
-            result = agent.run_conversation("hello", conversation_history=_prefill())
+            agent.run_conversation("hello", conversation_history=_prefill())
 
         mock_compress.assert_called()
         compress_kwargs_list = [c.kwargs for c in mock_compress.call_args_list]
@@ -356,7 +355,7 @@ class TestLongContextTierOverheadAwareTokens:
                 [{"role": "user", "content": "compressed"}],
                 "compressed prompt",
             )
-            result = agent.run_conversation("hello", conversation_history=_prefill())
+            agent.run_conversation("hello", conversation_history=_prefill())
 
         mock_compress.assert_called()
         compress_kwargs_list = [c.kwargs for c in mock_compress.call_args_list]

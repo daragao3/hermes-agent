@@ -7,7 +7,6 @@ summarizer while the middle sentinel does. Runs for both legacy and lean
 modes, and asserts the lean deterministic sections (anchors, verbatim users)
 also carry only middle-region content.
 """
-import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch

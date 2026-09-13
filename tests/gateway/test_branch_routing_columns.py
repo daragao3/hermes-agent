@@ -29,8 +29,8 @@ import pytest
 
 from gateway.config import GatewayConfig, Platform
 from gateway.platforms.event import MessageEvent
-from gateway.session import SessionSource, SessionStore, build_session_key
-from hermes_state import AsyncSessionDB, SessionDB
+from gateway.session import SessionSource, SessionStore
+from hermes_state import AsyncSessionDB
 
 
 @pytest.fixture()

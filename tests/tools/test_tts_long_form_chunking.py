@@ -5,8 +5,6 @@ content loss, that chunks are synthesized in order, and that the delivery
 packing respects platform upload limits.
 """
 
-import json
-import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,7 +13,6 @@ import pytest
 from tools.tts_tool import _build_audio_delivery_files, _split_text_for_tts
 from tools.tts_tool_delivery import (
     AudioDeliveryProfile,
-    _concat_audio_files,
     _pack_audio_files_for_delivery,
     _split_oversized_sentence,
 )

@@ -96,7 +96,6 @@ Path(os.environ["HERMES_HOME"]).mkdir(parents=True, exist_ok=True)
 from run_agent import AIAgent
 from providers import get_provider_profile
 from hermes_cli.config import get_compatible_custom_providers, load_config
-from hermes_cli.config_providers import get_custom_provider_context_length
 from agent.transports.chat_completions import ChatCompletionsTransport
 
 loaded = get_compatible_custom_providers(load_config())

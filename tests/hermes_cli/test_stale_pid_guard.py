@@ -12,7 +12,6 @@ Acceptance from #90471:
 2. a recycled or foreign PID control process remains untouched
 3. probe failure or timeout is never converted into permission to kill
 """
-import subprocess
 import sys
 from unittest import mock
 

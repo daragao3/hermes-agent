@@ -26,7 +26,6 @@ These tests pin the fix:
   backends instead of prefixing commands with an un-cd-able host path.
 """
 
-import os
 
 import pytest
 

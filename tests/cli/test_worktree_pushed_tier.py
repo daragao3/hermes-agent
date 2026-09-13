@@ -92,7 +92,6 @@ def _branch_exists(repo, branch):
 
 class TestFetchRemoteBranchHeads:
     def test_lists_pushed_branches(self, repo_with_bare_origin):
-        import cli
         repo = repo_with_bare_origin
         _mk_worktree(repo, "hermes-a", "hermes/hermes-a", push=True)
         heads = worktree_ops._fetch_remote_branch_heads(str(repo))
@@ -101,7 +100,6 @@ class TestFetchRemoteBranchHeads:
         assert "hermes/hermes-a" in heads
 
     def test_unreachable_remote_returns_none(self, tmp_path):
-        import cli
         repo = tmp_path / "r"
         repo.mkdir()
         _run(["git", "init"], repo)
@@ -111,14 +109,12 @@ class TestFetchRemoteBranchHeads:
 
 class TestBranchPushedExact:
     def test_exact_match_true(self, repo_with_bare_origin):
-        import cli
         repo = repo_with_bare_origin
         wt = _mk_worktree(repo, "hermes-x", "hermes/hermes-x", push=True)
         heads = worktree_ops._fetch_remote_branch_heads(str(repo))
         assert worktree_ops._worktree_branch_pushed_exact(str(wt), heads) is True
 
     def test_local_ahead_of_push_false(self, repo_with_bare_origin):
-        import cli
         repo = repo_with_bare_origin
         wt = _mk_worktree(
             repo, "hermes-y", "hermes/hermes-y",
@@ -128,14 +124,12 @@ class TestBranchPushedExact:
         assert worktree_ops._worktree_branch_pushed_exact(str(wt), heads) is False
 
     def test_never_pushed_false(self, repo_with_bare_origin):
-        import cli
         repo = repo_with_bare_origin
         wt = _mk_worktree(repo, "hermes-z", "hermes/hermes-z", push=False)
         heads = worktree_ops._fetch_remote_branch_heads(str(repo))
         assert worktree_ops._worktree_branch_pushed_exact(str(wt), heads) is False
 
     def test_none_heads_false(self, repo_with_bare_origin):
-        import cli
         repo = repo_with_bare_origin
         wt = _mk_worktree(repo, "hermes-n", "hermes/hermes-n", push=True)
         assert worktree_ops._worktree_branch_pushed_exact(str(wt), None) is False

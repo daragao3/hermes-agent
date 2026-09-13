@@ -6,7 +6,6 @@ cached agent, dispatching through the REAL delegate_task background rail
 tests/tools/test_async_delegation.py).
 """
 
-import json
 import time
 from unittest.mock import MagicMock
 

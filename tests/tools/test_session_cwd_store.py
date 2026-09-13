@@ -168,7 +168,6 @@ class TestReapedEnvFallbackIsFillOnly:
 
     def _reap(self, monkeypatch, tmp_path, task_id, stale_cwd):
         import tools.file_tools as ft
-        import tools.file_tools_paths as ftp
 
         class _StaleFileOps:
             cwd = stale_cwd

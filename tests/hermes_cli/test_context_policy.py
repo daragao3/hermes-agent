@@ -13,7 +13,6 @@ import pytest
 from hermes_cli.local_runtime.context_policy import (
     FLOOR,
     SPEED_FLOOR_TOK_S,
-    GrowthDecision,
     WindowDecision,
     growth_decision,
     initial_window,

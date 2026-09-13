@@ -29,7 +29,6 @@ class TestReadTrackerCaps:
 
     def test_read_history_capped(self, monkeypatch):
         """read_history set is bounded by _READ_HISTORY_CAP."""
-        from tools import file_tools as ft
         from tools import file_tools_read_tracking as rt
 
         monkeypatch.setattr(rt, "_READ_HISTORY_CAP", 10)

@@ -1,5 +1,4 @@
 import errno
-import selectors
 import socket
 
 import httpcore

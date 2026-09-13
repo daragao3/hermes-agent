@@ -4,7 +4,6 @@ synthetic budgets."""
 
 from __future__ import annotations
 
-import pytest
 
 from hermes_cli.local_runtime.catalog import (
     CATALOG,

@@ -94,7 +94,6 @@ class TestResourceFilename:
 
 class TestPreDecodeSizeCap:
     def test_oversized_b64_rejected_before_decode(self, monkeypatch):
-        import tools.mcp_tool as m
         from tools import mcp_tool_content as _mcp_content
 
         monkeypatch.setattr(_mcp_content, "_MCP_RESOURCE_MAX_B64_CHARS", 16)

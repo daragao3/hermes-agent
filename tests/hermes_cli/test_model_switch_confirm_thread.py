@@ -104,8 +104,6 @@ def test_confirm_runs_off_main_thread_when_tui_present(monkeypatch):
     """With ``_app`` set, the confirm modal must not block the caller's
     thread: the switch is dispatched on a worker thread and the command
     handler returns immediately."""
-    import cli as cli_mod
-
     stub = _StubCLI()
     stub.agent = _FakeAgent()
     stub._app = SimpleNamespace(loop=None)
@@ -142,8 +140,6 @@ def test_confirm_runs_off_main_thread_when_tui_present(monkeypatch):
 def test_confirm_stays_synchronous_without_app(monkeypatch):
     """Without a TUI app (unit tests / non-interactive) the old inline
     behaviour is preserved: confirm + apply run on the calling thread."""
-    import cli as cli_mod
-
     stub = _StubCLI()
     stub.agent = _FakeAgent()
     printed = []

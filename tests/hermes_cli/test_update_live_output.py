@@ -1,8 +1,5 @@
 """Live output must reach disk before exit, without concealing silence."""
 import io
-import os
-from pathlib import Path
-import subprocess
 import sys
 import threading
 import time

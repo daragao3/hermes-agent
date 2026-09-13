@@ -1,7 +1,6 @@
 """Tests for tools/self_repo_guard.py — the running-source-checkout git guard."""
 
 import subprocess
-from pathlib import Path
 
 import pytest
 

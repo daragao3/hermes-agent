@@ -17,7 +17,6 @@ stamp, so connectors keep rendering plain text.
 """
 
 import json
-from types import SimpleNamespace
 
 import pytest
 

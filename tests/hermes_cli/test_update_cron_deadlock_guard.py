@@ -89,7 +89,6 @@ class TestSelfRestartFireAndForget:
 
     def test_graceful_restart_does_wait(self):
         """Contrast: the non-ancestor path DOES drain-wait (unchanged)."""
-        import signal as _signal
 
         from hermes_cli import gateway as gw
 

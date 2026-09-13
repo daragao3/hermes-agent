@@ -22,7 +22,6 @@ Two independent layers are asserted here:
    logged without invalidating the already-durable write.
 """
 
-import sqlite3
 import threading
 import time
 

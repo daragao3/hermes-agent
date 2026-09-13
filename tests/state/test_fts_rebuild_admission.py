@@ -307,7 +307,6 @@ class TestOrphanedHolderStalenessBreak:
     ):
         """A record naming a live pid must defer even after timeout."""
         import json
-        import os
 
         lock = _lock_file(db.db_path)
         with _rebuild_lock_held_by_other_process(db.db_path) as proc:

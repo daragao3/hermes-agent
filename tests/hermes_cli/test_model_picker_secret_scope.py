@@ -7,7 +7,6 @@ directly — were not covered, so under ``multiplex_profiles`` one profile's
 picker resolved another profile's key from the process environment.
 """
 
-import os
 
 from agent import secret_scope
 from hermes_cli.model_switch import _scoped_key_env

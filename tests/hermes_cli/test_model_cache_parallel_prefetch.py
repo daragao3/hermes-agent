@@ -10,9 +10,8 @@ concurrently via ThreadPoolExecutor before the serial picker loop starts.
 from __future__ import annotations
 
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 from hermes_cli import model_switch_providers
 
 

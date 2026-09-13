@@ -22,8 +22,7 @@ ticked» unless the gateway process itself started less than STALE_AFTER ago
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, Mock, patch
-from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 

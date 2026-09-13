@@ -238,7 +238,6 @@ class TestEntryAndWsWiring:
         monkeypatch.setattr(entry.sys, "stdin", io.StringIO(""))
 
         # Prewarm is imported lazily inside main(); keep it inert.
-        import hermes_cli.model_switch as ms
 
         monkeypatch.setattr(model_switch_providers, "prewarm_picker_cache_async", lambda: None)
 
@@ -288,7 +287,6 @@ class TestEntryAndWsWiring:
         monkeypatch.setattr(entry, "handle_spurious_eof", lambda *a: False)
         monkeypatch.setattr(entry, "write_json", lambda _payload: True)
         monkeypatch.setattr(entry.sys, "stdin", io.StringIO(""))
-        import hermes_cli.model_switch as ms
 
         monkeypatch.setattr(model_switch_providers, "prewarm_picker_cache_async", lambda: None)
 

@@ -50,7 +50,7 @@ def test_config_show_no_managed_scope_silent(tmp_path, monkeypatch, capsys):
 
 def test_doctor_silent_with_no_managed_scope(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HERMES_MANAGED_DIR", str(tmp_path / "nope"))
-    from hermes_cli import managed_scope, doctor
+    from hermes_cli import managed_scope
 
     managed_scope.invalidate_managed_cache()
     doctor_config.managed_scope_check()

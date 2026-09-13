@@ -10,18 +10,14 @@ Covers:
   the doctor state.db section prints from.
 """
 
-import hermes_state_dbfile
 import json
-import os
 import sqlite3
 import sys
-from pathlib import Path
 
 import pytest
 
 from hermes_state import SessionDB
 from hermes_state_dbfile import collect_state_db_stats, count_db_holders
-import hermes_cli.doctor_state
 
 
 @pytest.fixture()

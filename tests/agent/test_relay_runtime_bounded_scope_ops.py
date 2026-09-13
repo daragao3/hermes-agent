@@ -23,8 +23,6 @@ helper's internal shape.
 from __future__ import annotations
 
 import threading
-import time
-import types
 from typing import Any
 
 import pytest

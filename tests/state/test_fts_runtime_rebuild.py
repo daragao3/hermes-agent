@@ -19,7 +19,6 @@ import sqlite3
 
 import pytest
 
-import hermes_state
 import hermes_state_holders
 import hermes_state_schema
 from hermes_state import SessionDB

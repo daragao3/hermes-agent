@@ -12,10 +12,9 @@ here (they're stdin-driven curses prompts).
 
 from __future__ import annotations
 
-import pytest
 
 from hermes_cli.config import DEFAULT_CONFIG, load_config
-from hermes_cli.main_provider_setup import _AUX_TASKS, _DELEGATION_TASK_KEY, _delegation_cfg_as_task, _format_aux_current, _reset_aux_to_auto, _save_aux_choice
+from hermes_cli.main_provider_setup import _DELEGATION_TASK_KEY, _delegation_cfg_as_task, _format_aux_current, _reset_aux_to_auto, _save_aux_choice
 
 
 # ── Default config ──────────────────────────────────────────────────────────

@@ -13,12 +13,9 @@ between ``HERMES_BACKEND_READY`` and the first prompt. Three fixes:
    import on the loop thread.
 """
 
-import asyncio
 import inspect
-import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 import hermes_cli.web_server_lifecycle as _web_server_lifecycle
 
 
@@ -176,7 +173,6 @@ def test_warm_gateway_module_imports_cold_start_chains():
     """
     import sys
 
-    import hermes_cli.web_server as web_server_mod
 
     required = {
         "hermes_cli.gateway",

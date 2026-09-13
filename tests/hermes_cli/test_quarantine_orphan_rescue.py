@@ -25,7 +25,6 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from hermes_cli import _early_recovery as er
 from hermes_cli import _install_repair as ir

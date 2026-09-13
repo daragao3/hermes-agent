@@ -18,7 +18,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import run_agent
 from run_agent import AIAgent
 
 

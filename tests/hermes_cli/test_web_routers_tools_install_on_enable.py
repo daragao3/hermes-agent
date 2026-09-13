@@ -32,7 +32,6 @@ class TestToggleToolsetInstallOnEnable:
         self.client.headers[_SESSION_HEADER_NAME] = _SESSION_TOKEN
 
     def _spawn_recorder(self, monkeypatch):
-        import hermes_cli.web_server as web_server
 
         calls = []
 
@@ -49,7 +48,6 @@ class TestToggleToolsetInstallOnEnable:
     def test_enable_computer_use_spawns_cua_install_when_binary_missing(
         self, monkeypatch
     ):
-        import hermes_cli.tools_config as tools_config
         import hermes_cli.tools_config_cua as tools_config_cua
         import hermes_cli.tools_config_post_setup as tools_config_post_setup
 
@@ -77,7 +75,6 @@ class TestToggleToolsetInstallOnEnable:
     def test_enable_computer_use_skips_install_when_binary_present(
         self, monkeypatch
     ):
-        import hermes_cli.tools_config as tools_config
         import hermes_cli.tools_config_cua as tools_config_cua
         import hermes_cli.tools_config_post_setup as tools_config_post_setup
 
@@ -97,7 +94,6 @@ class TestToggleToolsetInstallOnEnable:
         assert calls == []
 
     def test_disable_never_spawns_install(self, monkeypatch):
-        import hermes_cli.tools_config as tools_config
         import hermes_cli.tools_config_cua as tools_config_cua
         import hermes_cli.tools_config_post_setup as tools_config_post_setup
 
@@ -117,10 +113,8 @@ class TestToggleToolsetInstallOnEnable:
         assert calls == []
 
     def test_spawn_failure_does_not_fail_the_toggle(self, monkeypatch):
-        import hermes_cli.tools_config as tools_config
         import hermes_cli.tools_config_cua as tools_config_cua
         import hermes_cli.tools_config_post_setup as tools_config_post_setup
-        import hermes_cli.web_server as web_server
 
         monkeypatch.setattr(
             tools_config_cua, "_resolved_cua_driver_cmd", lambda: None

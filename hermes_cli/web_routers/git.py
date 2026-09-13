@@ -15,7 +15,6 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from hermes_cli import web_git as _web_git
-from hermes_cli.web_deps import late
 from hermes_cli.web_server_files import _fs_path
 from hermes_cli.web_models import (
     GitBranchSwitchBody,

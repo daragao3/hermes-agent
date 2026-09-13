@@ -13,7 +13,6 @@ never opened.
 """
 
 import os
-import tempfile
 
 import pytest
 

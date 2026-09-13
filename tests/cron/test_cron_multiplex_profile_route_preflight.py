@@ -11,7 +11,6 @@ blocked before any LLM call (#97476). The guard: when the primary home's
 delivery is the primary gateway's to make — pass it through.
 """
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

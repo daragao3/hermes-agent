@@ -19,7 +19,6 @@ import pytest
 
 from hermes_cli import update_cmd
 from hermes_constants import venv_bin_dir, venv_python_path
-from hermes_cli import main_install_repair
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,6 @@ Three live proofs (no mocks of the code under test):
 from __future__ import annotations
 
 import ctypes
-import os
 import subprocess
 import sys
 import time

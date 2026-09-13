@@ -415,7 +415,6 @@ class TestUpdaterOwnedBackendDeferral:
 
         import json as _json
 
-        import psutil
 
         backend = _spawn(["-m", "hermes_cli.main", "serve", "--host", "127.0.0.1"])
 

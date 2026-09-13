@@ -738,7 +738,6 @@ def test_requirements_client_capture_without_local_mic(monkeypatch):
             return ""
 
     monkeypatch.setattr(ww, "lazy_deps", _LD, raising=False)
-    import tools.lazy_deps as real_ld
     monkeypatch.setattr("tools.lazy_deps.is_available", lambda f: True)
     monkeypatch.setattr("tools.lazy_deps._allow_lazy_installs", lambda: False)
 

@@ -422,7 +422,6 @@ class TestBackendCdpResolution:
         assert env["BU_CDP_WS"] == "wss://connect.example/x"
 
     def test_cloud_provider_session_exported(self, monkeypatch):
-        import tools.browser_tool as bt
 
         monkeypatch.setattr("tools.browser_tool_cdp._get_cdp_override", lambda: "")
         monkeypatch.setattr(bt_cloud, "_get_cloud_provider", lambda: object())
@@ -504,7 +503,6 @@ class TestBackendCdpResolution:
         """The same session name maps to the same provider cache key no
         matter which task calls it — that is what lets a follow-up call
         reattach to the same cloud browser."""
-        import tools.browser_tool as bt
 
         seen = []
         monkeypatch.setattr("tools.browser_tool_cdp._get_cdp_override", lambda: "")
@@ -524,7 +522,6 @@ class TestBackendCdpResolution:
         """Direct-API Browser Use cloud configs keep the native named-daemon
         path: resolving through the provider would double-session and
         double-bill."""
-        import tools.browser_tool as bt
 
         class _BUProvider:
             name = "browser-use"
@@ -546,7 +543,6 @@ class TestOwnTabPreamble:
     prepended; private per-name browsers (packaged Chromium, provider) and unnamed sessions do not."""
 
     def _run(self, tmp_path, monkeypatch, *, session="", private=False, provider=False, shared_cdp=""):
-        import tools.browser_tool as bt
 
         monkeypatch.setattr("tools.browser_tool_cdp._get_cdp_override", lambda: shared_cdp)
         if provider:
@@ -587,7 +583,6 @@ class TestOwnTabPreamble:
         assert "_hermes_ensure_own_tab" not in result["output"]
 
     def test_sentinel_never_reaches_subprocess_env(self, tmp_path, monkeypatch):
-        import tools.browser_tool as bt
 
         monkeypatch.setattr("tools.browser_tool_cdp._get_cdp_override", lambda: "")
         monkeypatch.setattr(bt_cloud, "_get_cloud_provider", lambda: object())
@@ -1217,7 +1212,6 @@ class TestLightpandaPreamble:
         """A Lightpanda process is private to its session: no sibling daemon
         to collide with, and Target.createTarget would fail anyway
         (lightpanda-io/browser#1962)."""
-        import tools.browser_tool as bt
 
         monkeypatch.setattr("tools.browser_tool_cdp._get_cdp_override", lambda: "")
         monkeypatch.setattr(bt_cloud, "_get_cloud_provider", lambda: None)

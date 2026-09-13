@@ -11,8 +11,6 @@ from fastapi.testclient import TestClient
 
 from hermes_cli.local_runtime.estimator import HardwareBudget
 from hermes_cli.local_runtime.hf_browse import (
-    HFFileGroup,
-    HFModelHit,
     repo_files,
     rough_fit,
     search_models,

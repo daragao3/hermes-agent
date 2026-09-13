@@ -42,7 +42,7 @@ class H(BaseHTTPRequestHandler):
             self.send_response(200)
         else:
             if os.environ.get("TRACE401"):
-                import traceback; sys.stderr.write("401 path: "+self.path+"\n")
+                sys.stderr.write("401 path: "+self.path+"\n")
             body = json.dumps({"error": {"type": "authentication_error", "message": "Your API key is invalid, blocked or out of funds. Please go visit the portal to sort that out: https://portal.nousresearch.com "}}).encode()
             with lock: hits["401"] += 1
             self.send_response(401)

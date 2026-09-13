@@ -13,7 +13,6 @@ These tests exercise the real resolution chain (config on disk → check_fn →
 """
 
 import json
-from unittest.mock import patch
 
 import pytest
 import yaml

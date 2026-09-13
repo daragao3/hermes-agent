@@ -75,7 +75,7 @@ from agent.agent_runtime_helpers import sanitize_tool_call_arguments
 
 def simulate_compression(msgs):
     """Rewrite the middle of the history with fresh dict copies + a summary."""
-    head, mid, tail = msgs[:2], msgs[2:-6], msgs[-6:]
+    head, _mid, tail = msgs[:2], msgs[2:-6], msgs[-6:]
     summary = {"role": "user", "content": "SUMMARY OF DROPPED CONTEXT " + UNI}
     new = [dict(m) if isinstance(m, dict) else m for m in head]
     new.append(summary)
@@ -141,7 +141,6 @@ def test_parity_persist_bounded_scan():
     print("=== parity: _flush_messages_to_session_db bounded scan ===")
     import run_agent as ra
     from agent.context_compressor import _DB_PERSISTED_MARKER
-    from agent.session_persistence import _is_ephemeral_scaffolding
 
     class FakeDB:
         def __init__(self):
@@ -223,14 +222,13 @@ def bench():
         new_ms = timeit(lambda: sanitize_tool_call_arguments(msgs, cursor=cur))
 
         # tokens: old walk vs warm memo (on fresh shallow copies, like api_messages)
-        api = [m.copy() for m in msgs]
+        [m.copy() for m in msgs]
         told = timeit(lambda: estimate_messages_tokens_rough_OLD([m.copy() for m in msgs]))
         _MSG_TOKENS_CACHE.clear()
         estimate_messages_tokens_rough([m.copy() for m in msgs])  # warm
         tnew = timeit(lambda: estimate_messages_tokens_rough([m.copy() for m in msgs]))
 
         # persist scan: fully-flushed list, old full walk vs bounded skip
-        import run_agent as ra
         from agent.context_compressor import _DB_PERSISTED_MARKER
         from agent.session_persistence import _is_ephemeral_scaffolding
         flushed = copy.deepcopy(msgs)

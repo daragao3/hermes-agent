@@ -4,7 +4,6 @@ Regression test for #41035: OpenRouter free-tier credits exhausted when
 max_tokens was stripped, causing HTTP 402 and fallback to text-only model.
 """
 
-import pytest
 
 from agent.auxiliary_client import _build_call_kwargs
 

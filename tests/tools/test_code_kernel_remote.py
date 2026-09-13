@@ -18,7 +18,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from tools.code_kernel_remote import (
     _REMOTE_KERNELS,
-    RemoteKernel,
     execute_in_remote_kernel,
     shutdown_all_remote_kernels,
     shutdown_remote_kernels_for_owner,

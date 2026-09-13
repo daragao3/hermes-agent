@@ -21,7 +21,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from tools.wake_word_engines import _Engine, _OpenWakeWordEngine, _PorcupineEngine, _SherpaKwsEngine, _sub
+# _build_engine() resolves the engine class by NAME through globals() (see
+# _PROVIDERS above), so the three _*Engine names must stay bound in THIS
+# module's namespace even though nothing references them lexically.
+from tools.wake_word_engines import _Engine, _OpenWakeWordEngine, _PorcupineEngine, _SherpaKwsEngine, _sub  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

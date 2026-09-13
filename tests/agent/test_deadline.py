@@ -25,7 +25,6 @@ import pytest
 
 from agent.deadline import (
     MAX_SAFE_TIMEOUT_S,
-    BoundedResult,
     DeadlineExpired,
     clamp_timeout,
     kill_process_tree,

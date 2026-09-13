@@ -4,7 +4,6 @@ import json
 import sqlite3
 import pytest
 import time
-from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 from agent.context_compressor import (
@@ -2402,7 +2401,7 @@ class TestLazyContextResolution:
         with patch(
             "agent.context_compressor.get_model_context_length",
             side_effect=lambda model, **kwargs: kwargs.get("config_context_length"),
-        ) as mock_get:
+        ):
             c = ContextCompressor(
                 model="test/model",
                 quiet_mode=True,

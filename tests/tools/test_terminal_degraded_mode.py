@@ -14,7 +14,6 @@ docs-only evidence).
 
 import json
 import subprocess
-from unittest.mock import MagicMock
 
 import pytest
 

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from gateway.session import SessionEntry, SessionSource
+    from gateway.session import SessionEntry
 
 # Log-record parity with the origin module.
 logger = logging.getLogger("gateway.session")

@@ -134,7 +134,6 @@ class TestEntryAndWsWiring:
         monkeypatch.setattr(entry, "write_json", lambda _payload: True)
         monkeypatch.setattr(entry.sys, "stdin", io.StringIO(""))
 
-        import hermes_cli.model_switch as ms
         monkeypatch.setattr(model_switch_providers, "prewarm_picker_cache_async", lambda: None)
 
         entry.main()

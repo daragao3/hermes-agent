@@ -15,7 +15,6 @@ The fix adds:
    with the full recovery path (hermes doctor, sqlite3 .recover, backups)
 """
 
-from pytest import fixture
 
 
 def test_format_turn_completion_corrupt_includes_recovery_options():

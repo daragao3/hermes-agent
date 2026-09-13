@@ -18,7 +18,7 @@ import subprocess
 import sys
 import unittest
 import unittest.mock
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest

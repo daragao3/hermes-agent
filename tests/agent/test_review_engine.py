@@ -7,7 +7,6 @@ override), and the shared dispatch-note formatter.
 """
 
 import json
-import threading
 import time
 from unittest.mock import MagicMock
 

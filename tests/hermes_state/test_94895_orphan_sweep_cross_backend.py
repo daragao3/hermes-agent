@@ -20,7 +20,6 @@ predicates run unchanged so we never silently strand existing data.
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 

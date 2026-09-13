@@ -11,10 +11,8 @@ success, so a mid-copy failure leaves the original directory intact.
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
-import pytest
 
 from hermes_cli.update_cmd import _atomic_replace_dir
 

@@ -6,8 +6,6 @@ declares no env vars and every request goes out with an empty Authorization
 header (see hermes_cli.models.opencode_zen_free_runtime).
 """
 
-import os
-from unittest.mock import patch
 
 
 class TestOpenCodeFreeProviderRegistration:

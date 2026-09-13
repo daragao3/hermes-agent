@@ -11,9 +11,7 @@ Invariants under test:
 - pin unset              -> native last_used behavior, byte-for-byte
 """
 import json
-import os
 
-import pytest
 
 
 class TestRealProfilePin:

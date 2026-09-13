@@ -19,7 +19,6 @@ success=False, or a non-timeout exception) keeps today's fallback.
 import concurrent.futures
 from unittest.mock import MagicMock
 
-import pytest
 
 from gateway.run import _approval_send_outcome
 

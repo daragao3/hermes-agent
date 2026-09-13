@@ -11,7 +11,7 @@ reconciliation. No mocks on the components under test.
  3. Reconcile with it in killed_pids -> 'stopped', no escalation.
  4. Machine-id contract holds on Windows (no display strings leak in).
 """
-import io, contextlib, json, os, subprocess, sys, tempfile, time
+import io, contextlib, json, subprocess, sys, time
 from pathlib import Path
 
 WORKTREE = Path(__file__).resolve().parents[1]

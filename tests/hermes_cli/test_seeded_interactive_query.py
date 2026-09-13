@@ -11,7 +11,6 @@ Context: Omarchy prompted-agent launches (basecamp/omarchy#8705) needed a
 handling, like other coding agents.
 """
 
-import sys
 import types
 
 import pytest

@@ -11,7 +11,7 @@ rendering; the whole string must be consistent.
 import os
 import sys
 import unittest
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

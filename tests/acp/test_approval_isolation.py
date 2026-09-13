@@ -16,7 +16,6 @@ Both fixed together by:
 import threading
 
 import pytest
-from tools import approval_context
 
 
 @pytest.fixture(autouse=True)

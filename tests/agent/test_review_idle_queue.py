@@ -12,10 +12,8 @@ wrapper in run_agent.AIAgent._spawn_background_review:
 """
 
 import threading
-import time
 import types
 
-import pytest
 
 from agent.review_idle_queue import (
     ReviewIdleQueue,
@@ -262,7 +260,6 @@ def test_wrapper_cloud_fast_path_skips_runtime_resolution(monkeypatch):
 
 def test_dispatcher_rechecks_enabled_gate(monkeypatch):
     """A review disabled while queued must not be resurrected at dispatch."""
-    from agent import review_idle_queue as riq
 
     q, clock = _make_queue()
     agent = _FakeAgent()

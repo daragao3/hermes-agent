@@ -6,7 +6,6 @@ is that a git checkout must never see a dirty tracked catalog.json."""
 
 from __future__ import annotations
 
-import dataclasses
 import io
 import json
 import urllib.request

@@ -16,8 +16,6 @@ import yaml
 
 from hermes_cli.plugin_packs import (
     PackError,
-    PackPluginEntry,
-    PluginPack,
     ResolvedPackPlugin,
     _sanitized_entry_config as real_sanitized_entry_config,
     cmd_pack_install,

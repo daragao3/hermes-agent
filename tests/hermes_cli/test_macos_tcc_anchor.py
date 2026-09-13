@@ -22,7 +22,6 @@ from pathlib import Path
 
 import pytest
 
-import hermes_cli.doctor as doctor
 import hermes_cli.macos_tcc_anchor as tcc
 from hermes_constants import venv_python_path
 from hermes_cli import doctor_platform

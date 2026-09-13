@@ -1,4 +1,4 @@
-import os, sys, asyncio, json, tempfile, types
+import os, sys, asyncio, json, types
 from pathlib import Path
 
 ROOT = os.environ.get("HERMES_EVAL_REPO", str(Path(__file__).resolve().parents[2]))

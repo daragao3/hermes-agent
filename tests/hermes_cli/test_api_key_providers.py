@@ -10,13 +10,9 @@ from hermes_cli.auth import (
     resolve_provider,
     get_api_key_provider_status,
     resolve_api_key_provider_credentials,
-    get_external_process_provider_status,
-    resolve_external_process_provider_credentials,
-    get_auth_status,
     AuthError,
     KIMI_CODE_BASE_URL,
     STEPFUN_STEP_PLAN_INTL_BASE_URL,
-    STEPFUN_STEP_PLAN_CN_BASE_URL,
     _resolve_kimi_base_url,
 )
 from hermes_cli.copilot_auth import _try_gh_cli_token
@@ -1005,7 +1001,6 @@ def _deepinfra_cache_isolation(monkeypatch):
     a later test's fetch within the failure TTL.
     """
     import hermes_cli.models as _models_mod
-    from hermes_cli import models_pricing
     monkeypatch.setattr(_models_mod, "_deepinfra_catalog_cache", {})
     monkeypatch.setattr(_models_mod, "_deepinfra_catalog_neg_cache", {})
     yield
@@ -1032,7 +1027,6 @@ class TestFetchDeepInfraModels:
                 ]}).encode()
 
         import hermes_cli.models as models
-        from hermes_cli import models_pricing
         monkeypatch.setattr(
             models, "_urlopen_model_catalog_request", lambda *a, **kw: _Resp()
         )
@@ -1050,7 +1044,6 @@ class TestFetchDeepInfraModels:
 
     def test_catalog_uses_credential_safe_opener(self, monkeypatch):
         import hermes_cli.models as models
-        from hermes_cli import models_pricing
 
         seen = {}
 
@@ -1123,7 +1116,6 @@ class TestDeepInfraTagFiltering:
         ]}
         from hermes_cli.models import _fetch_deepinfra_models_by_tag
         import hermes_cli.models as _m
-        from hermes_cli import models_pricing
 
         for surface in ("chat", "image-gen", "tts", "stt", "embed"):
             monkeypatch.setattr(
@@ -1176,7 +1168,6 @@ class TestDeepInfraPricingFetcher:
             {"id": "vendor/model-image", "metadata": {"tags": ["image-gen"], "pricing": {"per_image_unit": 0.05}}},
         ]}
         import hermes_cli.models as models
-        from hermes_cli import models_pricing
         monkeypatch.setattr(
             models,
             "_urlopen_model_catalog_request",

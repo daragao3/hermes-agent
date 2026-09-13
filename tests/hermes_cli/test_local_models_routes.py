@@ -7,7 +7,6 @@ downloads are stubbed at the urllib boundary — never live."""
 from __future__ import annotations
 
 import io
-import json
 import time
 from pathlib import Path
 

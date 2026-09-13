@@ -17,7 +17,6 @@ All HTTP is mocked: nothing in this file talks to a real Portal.
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import time
 import urllib.parse
@@ -36,7 +35,6 @@ from hermes_cli.dashboard_auth import (
     InvalidCodeError,
     LoginStart,
     ProviderError,
-    RefreshExpiredError,
     Session,
     assert_protocol_compliance,
 )

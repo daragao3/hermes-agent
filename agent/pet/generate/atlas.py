@@ -626,7 +626,6 @@ def _check_atlas_cells(atlas) -> tuple[list[str], list[str], list[str]]:
 # Internal code MUST NOT use these (scripts/check_compat_pointers.py fails CI if it does).
 # The whole block is removed by reverting the commit that added it.
 import io  # noqa: F401,E402
-import io  # noqa: F401,E402
 
 COLUMNS = max(count for _, _, count in ROW_SPECS)
 

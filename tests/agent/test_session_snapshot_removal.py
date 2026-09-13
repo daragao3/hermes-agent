@@ -1,6 +1,5 @@
 """Automatic persistence stays in SQLite; explicit exports remain available."""
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest

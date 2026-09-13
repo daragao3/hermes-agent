@@ -9,7 +9,7 @@ Covers:
   that were auto-reset with real prior activity, and stays silent otherwise.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 

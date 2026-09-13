@@ -2,7 +2,7 @@
 ~460 s task (longer than the 420 s sequential deadline). On main the orchestrator's delegate_task call returns
 'timed out after 420.0s' and the leaf runs on as an orphan; on the branch the call blocks and returns the
 real result. Uses glm-5.3 via Nous for cost. Deadline shortened via config to keep the run short."""
-import os, sys, json, time, re, subprocess
+import os, sys, json, time
 # Usage: python nested_delegate_deadline.py <repo_root>   (run once per ref; LIVE: a couple of real child calls)
 root = sys.argv[1]; arm = os.path.basename(os.path.normpath(root))
 sys.path.insert(0, root)

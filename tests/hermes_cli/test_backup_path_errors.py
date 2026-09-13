@@ -6,7 +6,6 @@ print a one-line error and exit 1 instead.
 """
 
 from argparse import Namespace
-from pathlib import Path
 
 import pytest
 
