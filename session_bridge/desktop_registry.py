@@ -248,6 +248,11 @@ class RegistrySyncPlan:
     records: Mapping[str, RegistryRecordPlan]
     conflicts: tuple[RegistryConflict, ...]
     proposed_baselines: tuple[RegistryBaseline, ...]
+    #: Baseline rows for roots the scan did not enrol.  They carried no
+    #: evidence about any enrolled root, so the plan was built without them;
+    #: the worker deletes them durably.  Empty on a steady topology.
+    stale_baselines: tuple[RegistryBaseline, ...] = ()
+    stale_root_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -663,6 +668,50 @@ def _changed_fields_best_effort(
     return _changed_fields(group_name, value_json)
 
 
+def _prune_unenrolled_root_baselines(
+    scan: RegistryScan,
+    baselines_by_record: Mapping[str, Mapping[str, Mapping[str, RegistryBaseline]]],
+) -> tuple[
+    dict[str, dict[str, dict[str, RegistryBaseline]]],
+    tuple[RegistryBaseline, ...],
+    tuple[str, ...],
+]:
+    """Split stored baselines into rows for enrolled roots and rows for roots gone.
+
+    The root set is fixed for a worker's lifetime and a scan either covers all
+    of it or raises ``RegistryScanError``, so a baseline row whose root is not
+    in ``scan.roots`` can only come from an EARLIER topology: the enrolled set
+    shrank between processes.  Measured 2026-09-12: the three CCD account
+    directories became junctions onto one physical store, the scan enrolled one
+    root, and state.db still held three byte-identical baseline copies.  Every
+    cycle then raised "expected 1 roots, found 3" and the lane converged nothing
+    for hours (loops desktop-registry-baseline-root-mismatch-20260912).
+
+    Such rows say nothing about the roots that ARE enrolled -- the enrolled
+    roots' own rows are still judged by :func:`_validate_baselines`, and a
+    torn write among them still fails closed.  A group whose every row was for
+    a vanished root is treated as never accepted, exactly as if the rows had
+    already been deleted, so a record known only through vanished roots
+    bootstraps on the enrolled ones.
+    """
+    enrolled = set(scan.roots)
+    kept: dict[str, dict[str, dict[str, RegistryBaseline]]] = {}
+    stale: list[RegistryBaseline] = []
+    stale_roots: set[str] = set()
+    for filename, groups in baselines_by_record.items():
+        for group_name, rows in groups.items():
+            for root_id, baseline in rows.items():
+                if root_id in enrolled:
+                    kept.setdefault(filename, {}).setdefault(group_name, {})[
+                        root_id
+                    ] = baseline
+                else:
+                    stale.append(baseline)
+                    stale_roots.add(root_id)
+    stale.sort(key=lambda row: (row.filename, row.group_name, row.root_id))
+    return kept, tuple(stale), tuple(sorted(stale_roots))
+
+
 def _validate_baselines(
     scan: RegistryScan,
     baselines_by_record: Mapping[str, Mapping[str, Mapping[str, RegistryBaseline]]],
@@ -671,7 +720,10 @@ def _validate_baselines(
     for filename, groups in baselines_by_record.items():
         # A group entirely absent from the baselines was never accepted (for
         # example a standing quarantine); that is legitimate.  Only PARTIAL
-        # root coverage is evidence of a torn or foreign write.
+        # root coverage is evidence of a torn or foreign write.  Rows for roots
+        # outside the scan never reach here -- see
+        # _prune_unenrolled_root_baselines -- so ``covered`` is a subset of
+        # ``expected_roots`` and the only failing shape is a missing row.
         for group_name, rows in groups.items():
             covered = set(rows)
             if covered != expected_roots:
@@ -899,6 +951,9 @@ def build_registry_sync_plan(
                 f"{(baseline.filename, baseline.root_id, baseline.group_name)}"
             )
         rows[baseline.root_id] = baseline
+    baselines_by_record, stale_baselines, stale_root_ids = (
+        _prune_unenrolled_root_baselines(scan, baselines_by_record)
+    )
     _validate_baselines(scan, baselines_by_record)
 
     record_plans: dict[str, RegistryRecordPlan] = {}
@@ -1068,6 +1123,8 @@ def build_registry_sync_plan(
         records=MappingProxyType(record_plans),
         conflicts=tuple(conflicts),
         proposed_baselines=tuple(proposed),
+        stale_baselines=stale_baselines,
+        stale_root_ids=stale_root_ids,
     )
 
 

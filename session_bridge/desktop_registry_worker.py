@@ -18,6 +18,7 @@ cannot produce complete, stable evidence writes nothing.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 import uuid
@@ -46,6 +47,8 @@ from .desktop_registry import (
 #: on either of those cannot tell "converged" from "stopped"; it can tell that
 #: from this.
 WORKER_HEARTBEAT_STATE_KEY = "session-bridge:desktop-registry:worker-heartbeat"
+
+_LOG = logging.getLogger(__name__)
 
 
 class DesktopRegistrySyncWorker:
@@ -98,6 +101,7 @@ class DesktopRegistrySyncWorker:
             "conflicts": 0,
             "verify_failures": 0,
             "baseline_rows_advanced": 0,
+            "stale_baseline_rows_pruned": 0,
             "recovered_runs": 0,
             "scan_failed": 0,
             "throttled": 0,
@@ -213,6 +217,31 @@ class DesktopRegistrySyncWorker:
         if advance:
             counters["baseline_rows_advanced"] = (
                 self._store.upsert_desktop_registry_baselines(advance)
+            )
+        if plan.stale_baselines:
+            # Rows for roots this worker does not enrol (the topology shrank
+            # between processes).  The plan above was built without them;
+            # delete them so the next cycle -- and the next reader of the
+            # table -- sees only the enrolled roots.  Named in the log because
+            # it is durable state changing on its own, once per topology
+            # change, and the only trace otherwise is a row count.
+            pruned = self._store.delete_desktop_registry_baselines(
+                [
+                    {
+                        "filename": baseline.filename,
+                        "root_id": baseline.root_id,
+                        "group_name": baseline.group_name,
+                    }
+                    for baseline in plan.stale_baselines
+                ]
+            )
+            counters["stale_baseline_rows_pruned"] = int(pruned)
+            _LOG.warning(
+                "desktop_registry_stale_root_baselines_pruned roots=%s rows=%d "
+                "enrolled=%s",
+                ",".join(plan.stale_root_ids),
+                int(pruned),
+                ",".join(sorted(scan.roots)),
             )
         self._store.replace_desktop_registry_conflicts(
             [

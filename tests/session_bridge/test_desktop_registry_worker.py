@@ -516,3 +516,92 @@ def test_advancing_a_baseline_drops_the_superseded_blob(tmp_path, store, db) -> 
     for new in after.values():
         assert stored[desktop_registry_value_hash(new)] == new
     _assert_values_table_is_exactly_the_referenced_set(db)
+
+
+def _baseline_root_ids(db) -> set[str]:
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT DISTINCT root_id FROM desktop_registry_baselines"
+        ).fetchall()
+    return {row[0] for row in rows}
+
+
+def _orphan_value_count(db) -> int:
+    with db._lock:
+        return db._conn.execute(
+            """SELECT COUNT(*) FROM desktop_registry_values v
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM desktop_registry_baselines b
+                   WHERE b.value_hash = v.value_hash
+               )"""
+        ).fetchone()[0]
+
+
+def test_worker_prunes_baselines_of_roots_it_no_longer_enrols(
+    tmp_path, store, db, caplog
+) -> None:
+    """Topology shrink between processes (2026-09-12 junction consolidation):
+    the new worker enrols one root, the store remembers three.  The cycle
+    completes, the stale rows are deleted durably, the values table keeps
+    exactly the referenced set, and the heartbeat is written."""
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100)
+        _write_record(root, "local_two", mtime_ns=100)
+    _worker(store, (a, b, c)).run_once()
+    assert len(_baseline_root_ids(db)) == 3
+    rows_before = len(store.load_desktop_registry_baselines())
+
+    worker = _worker(store, (a,))
+    with caplog.at_level("WARNING", logger="session_bridge.desktop_registry_worker"):
+        counters = worker.run_once()
+
+    assert counters["scan_failed"] == 0
+    assert counters["stale_baseline_rows_pruned"] == rows_before * 2 // 3
+    assert len(_baseline_root_ids(db)) == 1
+    assert len(store.load_desktop_registry_baselines()) == rows_before // 3
+    assert _orphan_value_count(db) == 0
+    assert store.get_state(WORKER_HEARTBEAT_STATE_KEY) is not None
+    expected_rows = "rows=%d" % counters["stale_baseline_rows_pruned"]
+    assert any(
+        "desktop_registry_stale_root_baselines_pruned" in record.getMessage()
+        and expected_rows in record.getMessage()
+        for record in caplog.records
+    )
+
+    again = worker.run_once()
+    assert again["stale_baseline_rows_pruned"] == 0
+    assert again["scan_failed"] == 0
+    assert _read(a, "local_one")["title"] == "Original"
+
+
+def test_delete_desktop_registry_baselines_is_keyed_batched_and_prunes_values(
+    store, db
+) -> None:
+    rows = [
+        {
+            "filename": f"local_{index}.json",
+            "root_id": root_id,
+            "group_name": "field:title",
+            "value_json": '{"state":"present","value":"%s"}' % root_id,
+            "revision": 1,
+        }
+        for index in range(3)
+        for root_id in ("keep", "gone")
+    ]
+    assert store.upsert_desktop_registry_baselines(rows) == 6
+    store._DESKTOP_REGISTRY_BASELINE_BATCH = 2  # force several write batches
+
+    deleted = store.delete_desktop_registry_baselines(
+        [row for row in rows if row["root_id"] == "gone"]
+        + [{"filename": "local_9.json", "root_id": "gone", "group_name": "x"}]
+    )
+
+    assert deleted == 3
+    assert _baseline_root_ids(db) == {"keep"}
+    assert _orphan_value_count(db) == 0
+    assert store.delete_desktop_registry_baselines([]) == 0
+    with pytest.raises(ValueError):
+        store.delete_desktop_registry_baselines(
+            [{"filename": "", "root_id": "r", "group_name": "g"}]
+        )
