@@ -184,10 +184,6 @@ def _portable(task: Mapping[str, object]) -> dict[str, object]:
     return {field: task[field] for field in PORTABLE_FIELDS if task.get(field) is not None}
 
 
-def _portable_canonical(task: Mapping[str, object]) -> str:
-    return json.dumps(_portable(task), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
 def _prompt_exists(scan: CatalogScan, task_id: str) -> bool:
     return (scan.prompt_root / task_id / "SKILL.md").is_file()
 
