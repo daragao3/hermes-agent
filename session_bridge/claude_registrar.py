@@ -2271,7 +2271,9 @@ class ClaudeNativeRegistrar:
                     claim, "creation_ambiguous", "visibility cycle cancelled"
                 )
             if found is not None:
-                return self._validate_and_commit(claim, candidate, identity, found)
+                return self._validate_and_commit(
+                    claim, candidate, identity, found, launch_failure=pending
+                )
             if self._monotonic() >= deadline:
                 if provider_limit_observed:
                     return self._retry(
@@ -2360,6 +2362,8 @@ class ClaudeNativeRegistrar:
         candidate: ClaudeVisibilityCandidate,
         identity: ClaudeVisibilityIdentity,
         transcript: _ExactTranscript,
+        *,
+        launch_failure: tuple[str, str, str] | None = None,
     ) -> ClaudeRegistrarOutcome:
         try:
             _validate_projection(
@@ -2370,6 +2374,11 @@ class ClaudeNativeRegistrar:
                 retired_marker_secrets=self._retired_secrets,
             )
         except _TranscriptConflict as exc:
+            _log_exact_transcript_conflict(claim, exc.code, transcript, launch_failure)
+            # The detail string is matched byte-for-byte by
+            # store.auto_dismiss_exhausted_claude_visibility_jobs (95b54b83d7)
+            # and by the incomplete-registration recovery verb. Diagnose in
+            # the log line above; never in this string.
             return self._fail(claim, exc.code, "exact transcript conflict")
         projection = transcript.projection
         digest = projection.native_hash
@@ -2429,6 +2438,77 @@ class ClaudeNativeRegistrar:
             code, detail = "session_bridge_unavailable", "store transition unavailable"
         return ClaudeRegistrarOutcome(
             "failed", claim.job_id, claim.reserved_claude_uuid, code, detail
+        )
+
+
+def _is_claude_startup_stub(transcript: _ExactTranscript) -> bool:
+    """True for a transcript holding only the CLI's session-init preamble.
+
+    Claude Code writes custom-title / agent-name / mode / permission-mode /
+    atis-latch at session init, before turn 1 (measured 2.1.266). A launch
+    that dies between init and its first turn leaves exactly that on disk:
+    zero projected messages and no record carrying `entrypoint`, so
+    _validate_projection rejects it on its very first check. The CLI then
+    refuses `--session-id` for that uuid ("Session ID ... is already in use"),
+    so the stub cannot be retried past and the job is terminal.
+    """
+
+    try:
+        messages = list(transcript.projection.messages)
+    except Exception:
+        return False
+    return not messages and transcript.parsed.entrypoint is None
+
+
+def _log_exact_transcript_conflict(
+    claim: Any,
+    code: object,
+    transcript: _ExactTranscript,
+    launch_failure: tuple[str, str, str] | None,
+) -> None:
+    """Name the shape of a discovered transcript the validator rejected.
+
+    "exact transcript conflict" is one detail string for every shape
+    _validate_projection can refuse. Two of them are launch failures the
+    discovery poll converted into a fatal outcome, and that path deliberately
+    skips _log_claude_visibility_launch_failed because discovery may still
+    succeed -- so when it fails instead, nothing on the box names the job:
+    measured 2026-09-13 on job 53edc76e (a 689-byte startup stub, CLI alive
+    19.5s, no service log line anywhere) and 2026-09-11 on job aba0f323 (the
+    prompt landed, the API answered 429, no assistant record). This line is
+    the only place the pending launch failure survives once discovery finds a
+    transcript.
+
+    Logging only: the outcome, the codes and the detail string are untouched,
+    and a failure to log never changes an outcome.
+    """
+
+    try:
+        projection = transcript.projection
+        messages = list(projection.messages)
+        origin = getattr(projection.origin_kind, "value", projection.origin_kind)
+        failure = (
+            None
+            if launch_failure is None
+            else tuple(str(value)[:200] for value in launch_failure[1:])
+        )
+        _LOG.warning(
+            "claude_visibility_exact_transcript_conflict job=%s attempt=%s "
+            "code=%s messages=%d entrypoint=%r origin_kind=%s startup_stub=%s "
+            "launch_failure=%r",
+            getattr(claim, "job_id", None),
+            getattr(claim, "attempt_ordinal", None),
+            code,
+            len(messages),
+            transcript.parsed.entrypoint,
+            origin,
+            _is_claude_startup_stub(transcript),
+            failure,
+        )
+    except Exception:
+        _LOG.debug(
+            "claude_visibility_exact_transcript_conflict logging failed",
+            exc_info=True,
         )
 
 

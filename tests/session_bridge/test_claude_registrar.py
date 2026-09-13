@@ -4985,6 +4985,97 @@ def test_successful_launch_logs_no_failure(caplog) -> None:
 
     assert result.status == "visible"
     assert "claude_visibility_launch_failed" not in caplog.text
+    assert "claude_visibility_exact_transcript_conflict" not in caplog.text
+
+
+def test_startup_stub_conflict_names_its_shape_and_launch_failure_in_the_log(
+    caplog,
+) -> None:
+    """A launch that dies before turn 1 leaves the CLI's session-init preamble.
+
+    Measured 2026-09-13 01:53Z, job 53edc76e / uuid a13a177a: the CLI was
+    alive 19.5s, its --debug-file stopped at +1.4s, and the transcript on disk
+    was 689 bytes -- custom-title, agent-name, mode, permission-mode and
+    atis-latch, no message record. The launch failure was retryable
+    (creation_ambiguous), the process terminated cleanly, so
+    ambiguous_reconciliation sent the registrar to the discovery poll, which
+    found the stub and handed it to _validate_projection. That fails on its
+    FIRST check (no record carries entrypoint), which is FATAL, and the path
+    logs nothing: _log_claude_visibility_launch_failed is skipped whenever
+    discovery is attempted. No log on the box named the job.
+
+    The outcome must not change here (the detail string is matched by the
+    auto-dismiss and the incomplete-recovery verb); the log line must name the
+    shape and carry the launch failure that discovery swallowed.
+    """
+
+    item = claim()
+    stub = projection_for(
+        item,
+        messages=[],
+        cwd=None,
+        origin_kind=OriginKind.NATIVE,
+        origin_bridge_id=None,
+    )
+    source = FakeSource(
+        [None, stub],
+        entrypoint=None,
+        project_name=claude_project_directory_name(item.source_cwd or ""),
+    )
+    process = FakePty(ready_error=RuntimeError("PTY closed before readiness"))
+    store = FakeStore()
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(source, FakeFactory(process), store).process(item)
+
+    assert result.status == "failed"
+    assert result.error_code == "bridge_conflict"
+    assert result.detail == "exact transcript conflict"
+    assert [call[0] for call in store.calls] == ["fail"]
+    text = caplog.text
+    assert "claude_visibility_exact_transcript_conflict" in text
+    assert "startup_stub=True" in text
+    assert "messages=0" in text
+    assert "entrypoint=None" in text
+    assert "interactive PTY unavailable" in text, "launch failure reason lost"
+    assert "creation_ambiguous" in text
+    assert str(item.job_id) in text
+
+
+def test_prompt_only_conflict_after_a_provider_limit_is_logged_with_its_shape(
+    caplog,
+) -> None:
+    """The 2026-09-11 shape: the prompt landed, the API answered 429, no reply.
+
+    Job aba0f323 / uuid 057fe73b: turn 1 started, the API returned
+    rate_limit 429 ("You've hit your weekly limit"), the CLI persisted the
+    user record and no assistant record. provider_limit_observed sends the
+    registrar to discovery, discovery finds the one-message transcript, and
+    _validate_projection fails it on len(messages) < 2 -- fatal, and silent.
+    The log line must separate this from a startup stub.
+    """
+
+    item = claim()
+    full = projection_for(item)
+    prompt_only = replace(full, messages=list(full.messages)[:1])
+    source = FakeSource([None, prompt_only])
+    process = FakePty(
+        output="You've hit your weekly limit " + chr(183)
+        + " resets Sep 14, 4am (America/New_York)" + chr(13) + chr(10)
+    )
+
+    with caplog.at_level(logging.WARNING, logger="session_bridge.claude_registrar"):
+        result = registrar(source, FakeFactory(process)).process(item)
+
+    assert result.status == "failed"
+    assert result.error_code == "bridge_conflict"
+    assert result.detail == "exact transcript conflict"
+    text = caplog.text
+    assert "claude_visibility_exact_transcript_conflict" in text
+    assert "startup_stub=False" in text
+    assert "messages=1" in text
+    assert "origin_kind=bridge_placeholder" in text
+    assert "Claude provider limit interrupted registration" in text
 
 
 def test_launch_logs_a_failure_resolved_before_the_discovery_poll(caplog) -> None:
