@@ -160,3 +160,40 @@ async def test_foreground_connect_still_gates_startup_until_ready():
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_background_fatal_stays_alive_when_a_peer_is_already_connected(monkeypatch):
+    """A half-working gateway keeps running: a background fatal must not exit
+    78 while another platform is CONNECTED.
+
+    ``_finish_background_startup_connect`` gates the fatal-config exit on four
+    conditions -- no live adapters, no retry-queued peers, no other background
+    connect still pending. Three were pinned: ``pending`` by
+    ``test_background_fatal_does_not_kill_another_pending_connect``, and
+    ``_failed_platforms`` (plus the zero-connected exit itself) by
+    tests/gateway/test_runner_startup_failures.py::
+    test_token_lock_plus_retryable_peer_stays_alive and
+    ::test_live_foreign_token_lock_at_startup_exits_ex_config. ``self.adapters``
+    was not: no test drove a background fatal with a live peer, so dropping it
+    from the guard broke nothing.
+
+    That is the worst of the four to lose. The other three leave a gateway with
+    nothing serving; this one kills a gateway that is actively serving its other
+    platforms and running cron, because one bot token is held elsewhere.
+    """
+    runner, _ = _settlement_runner(monkeypatch)
+    runner.adapters[Platform.DISCORD] = SimpleNamespace()
+
+    adapter = SimpleNamespace(has_fatal_error=True, fatal_error_retryable=False,
+                              fatal_error_code="telegram-bot-token_lock",
+                              fatal_error_message="Telegram bot token already in use (PID 999)")
+    result = asyncio.get_running_loop().create_future()
+    result.set_result((Platform.TELEGRAM, adapter, None, "failed", None))
+
+    await runner._finish_background_startup_connect(result, Platform.TELEGRAM, adapter)
+
+    runner._startup_fail_fatal_config.assert_not_called()
+    assert set(runner.adapters) == {Platform.DISCORD}
+    # Non-retryable: parked fatal, not handed to the reconnect watcher.
+    assert not runner._failed_platforms
