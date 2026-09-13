@@ -65,7 +65,7 @@ os.environ.pop("SIGNAL_HOME_CHANNEL", None)
 os.environ.pop("MATRIX_HOME_ROOM", None)
 
 import cron.scheduler as _sched
-from cron.scheduler import _expand_routing_tokens
+from cron.scheduler_delivery import _expand_routing_tokens
 
 expanded = _expand_routing_tokens("all")
 

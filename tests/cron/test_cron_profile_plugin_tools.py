@@ -189,6 +189,7 @@ def isolated_matcher_runtime(tmp_path, monkeypatch):
 
 def _install_runtime_stubs(monkeypatch, observed: dict) -> None:
     import cron.scheduler as sched
+    import cron.scheduler_delivery as sched_delivery
 
     class FakeAgent:
         def __init__(self, **kwargs):
@@ -237,7 +238,8 @@ def _install_runtime_stubs(monkeypatch, observed: dict) -> None:
         },
     )
     monkeypatch.setattr(sched, "_build_job_prompt", lambda *_a, **_kw: "score")
-    monkeypatch.setattr(sched, "_resolve_origin", lambda _job: None)
+    # _resolve_origin moved to cron.scheduler_delivery (Sep 2026 decomposition).
+    monkeypatch.setattr(sched_delivery, "_resolve_origin", lambda _job: None)
     monkeypatch.setattr(sched, "_resolve_delivery_target", lambda _job: None)
     monkeypatch.setattr(
         sched,
