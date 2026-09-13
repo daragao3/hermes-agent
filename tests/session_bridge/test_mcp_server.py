@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from functools import lru_cache
 import hashlib
 import json
 import logging
@@ -109,11 +110,14 @@ def db(tmp_path: Path):
     database.close()
 
 
-def _restrict_secret_file(path: Path) -> None:
-    path.chmod(0o600)
-    if os.name != "nt":
-        return
-    current_sid = subprocess.run(
+# Spawning powershell.exe costs 1.7-5.7s on a loaded box, and the SID it
+# returns is identical for every call in the process.  Cache it so a test that
+# restricts N files pays one spawn instead of N: the four-file
+# test_retired_marker_keys_resolve_newest_first_and_dedupe was straddling the
+# repo-wide 30s pytest-timeout cap on process creation alone.
+@lru_cache(maxsize=1)
+def _current_user_sid() -> str:
+    return subprocess.run(
         [
             "powershell.exe",
             "-NoLogo",
@@ -126,23 +130,22 @@ def _restrict_secret_file(path: Path) -> None:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def _restrict_secret_file(path: Path) -> None:
+    path.chmod(0o600)
+    if os.name != "nt":
+        return
+    # icacls applies these options left to right in one pass, so a single spawn
+    # yields the same DACL the separate /grant:r and /remove:g calls produced.
     subprocess.run(
         [
             "icacls",
             str(path),
             "/inheritance:r",
             "/grant:r",
-            f"*{current_sid}:(F)",
+            f"*{_current_user_sid()}:(F)",
             "*S-1-5-18:(F)",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    subprocess.run(
-        [
-            "icacls",
-            str(path),
             "/remove:g",
             "*S-1-3-4",
             "*S-1-5-32-544",
@@ -3824,6 +3827,13 @@ def test_marker_key_rejects_oversized_file(tmp_path: Path) -> None:
         resolve_marker_key(marker_key_file=marker_key_file)
 
 
+# Four restricted key files means four Get-Acl probes through
+# _require_restricted_token_file, each a powershell.exe spawn the ACL check
+# bounds at _WINDOWS_ACL_TIMEOUT_SECONDS (15s) -- a 60s ceiling that the
+# repo-wide 30s cap cannot express.  This budget stays well above that
+# ceiling so slow process creation on a loaded box never reds the suite,
+# while an unbounded Python-level hang is still caught.
+@pytest.mark.timeout(180)
 def test_retired_marker_keys_resolve_newest_first_and_dedupe(
     tmp_path: Path,
 ) -> None:
