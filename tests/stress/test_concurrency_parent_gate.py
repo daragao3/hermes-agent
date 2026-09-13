@@ -54,6 +54,8 @@ def _run_parent_gate(home: str) -> int:
 
     from hermes_cli import kanban_db as kb
 
+    from hermes_cli import kanban_db_connect as kb_connect
+
     kb.init_db()
 
     # Seed N parents in 'ready' state. They must stay ready for the whole
@@ -72,7 +74,7 @@ def _run_parent_gate(home: str) -> int:
     # these ids explicitly, and the pass criteria below require the gate to
     # have actually rejected something.
     parent_ids: list[str] = []
-    conn = kb.connect()
+    conn = kb_connect.connect()
     try:
         for i in range(10):
             parent_ids.append(
@@ -91,7 +93,7 @@ def _run_parent_gate(home: str) -> int:
         This is the pre-fix _kanban_create behavior — the very race
         the gate in claim_task must catch.
         """
-        conn = kb.connect()
+        conn = kb_connect.connect()
         try:
             for _ in range(NUM_CREATE_ROUNDS):
                 if stop.is_set():
@@ -120,7 +122,7 @@ def _run_parent_gate(home: str) -> int:
     _parent_slots = ",".join("?" * len(parent_ids))
 
     def worker_loop() -> None:
-        conn = kb.connect()
+        conn = kb_connect.connect()
         try:
             end = time.monotonic() + WORKERS_RUN_DURATION_S
             while time.monotonic() < end and not stop.is_set():
@@ -185,7 +187,7 @@ def _run_parent_gate(home: str) -> int:
 
     # Post-run audit: the DB event log must show no 'claimed' event on any
     # task whose parents were not 'done' at the time of the claim.
-    conn = kb.connect()
+    conn = kb_connect.connect()
     try:
         # Ordered by task_events.id, NOT by the clock.
         #

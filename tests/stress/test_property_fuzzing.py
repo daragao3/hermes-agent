@@ -154,6 +154,7 @@ def assert_invariants(conn, kb, ops_log):
 
 
 def random_op(rng, conn, kb, task_pool):
+    from hermes_cli import kanban_db_dispatch as kb_dispatch
     op = rng.choice(OPS)
 
     if op == "create":
@@ -204,14 +205,14 @@ def random_op(rng, conn, kb, task_pool):
             task_pool.remove(tid)
         return {"op": "archive", "tid": tid, "ok": ok}
     if op == "heartbeat":
-        ok = kb.heartbeat_worker(conn, tid)
+        ok = kb_dispatch.heartbeat_worker(conn, tid)
         return {"op": "heartbeat", "tid": tid, "ok": ok}
     if op == "release_stale":
         n = kb.release_stale_claims(conn)
         return {"op": "release_stale", "n": n}
     if op == "detect_crashed":
         # Force-kill a fake PID first so there's something to detect
-        crashed = kb.detect_crashed_workers(conn)
+        crashed = kb_dispatch.detect_crashed_workers(conn)
         return {"op": "detect_crashed", "n": len(crashed)}
     if op == "recompute_ready":
         n = kb.recompute_ready(conn)
@@ -245,9 +246,10 @@ def main():
             if m.startswith("hermes_cli"):
                 del sys.modules[m]
         from hermes_cli import kanban_db as kb
+        from hermes_cli import kanban_db_connect as kb_connect
 
         kb.init_db()
-        conn = kb.connect()
+        conn = kb_connect.connect()
         task_pool = []
         ops_log = []
 

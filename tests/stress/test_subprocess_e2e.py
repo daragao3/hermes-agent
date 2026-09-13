@@ -136,6 +136,8 @@ def _run_e2e(home, procs):
     os.environ["HOME"] = home
     sys.path.insert(0, WT)
     from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kb_connect
+    from hermes_cli import kanban_db_dispatch as kb_dispatch
 
     # Child processes are pointed at this tree's hermes_cli.main through
     # HERMES_CLI_CMD (see make_spawn_fn). This used to be a `#!/bin/sh`
@@ -145,7 +147,7 @@ def _run_e2e(home, procs):
     # the host. An explicit argv is portable and provably hermetic.
 
     kb.init_db()
-    conn = kb.connect()
+    conn = kb_connect.connect()
 
     # ============ SCENARIO A: happy path, 3 tasks ============
     print("=" * 60)
@@ -160,7 +162,7 @@ def _run_e2e(home, procs):
         tids.append(tid)
 
     spawn_fn = make_spawn_fn(home, procs)
-    result = kb.dispatch_once(conn, spawn_fn=spawn_fn)
+    result = kb_dispatch.dispatch_once(conn, spawn_fn=spawn_fn)
     print(f"  dispatched: {len(result.spawned)} spawned")
     spawned_pids = []
     # The dispatcher sets worker_pid on each claimed task via _set_worker_pid.
@@ -264,6 +266,7 @@ def _run_e2e(home, procs):
 
 def _scenario_b(kb, conn):
     """Crashed-worker detection. POSIX-only; see the guard in main()."""
+    from hermes_cli import kanban_db_dispatch as kb_dispatch
     crash_tid = kb.create_task(
         conn, title="crash-e2e", assignee="default",
     )
@@ -299,7 +302,7 @@ def _scenario_b(kb, conn):
         os.close(r)
         return grandchild_pid
 
-    kb.dispatch_once(conn, spawn_fn=spawn_sleeper)
+    kb_dispatch.dispatch_once(conn, spawn_fn=spawn_sleeper)
     task = kb.get_task(conn, crash_tid)
     print(f"  spawned sleeper pid={task.worker_pid} for {crash_tid}")
     # Kill the sleeper forcibly
@@ -308,7 +311,7 @@ def _scenario_b(kb, conn):
     time.sleep(0.5)
 
     # Simulate next dispatcher tick — should detect the crashed PID
-    crashed = kb.detect_crashed_workers(conn)
+    crashed = kb_dispatch.detect_crashed_workers(conn)
     print(f"  detect_crashed_workers returned {len(crashed)} crashed (expected 1)")
 
     task = kb.get_task(conn, crash_tid)

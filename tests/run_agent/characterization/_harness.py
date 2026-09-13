@@ -347,6 +347,7 @@ def make_agent(
     ``task_id`` is fixed (not a uuid) so message/identity snapshots are stable.
     """
     import run_agent
+    import model_tools
     from run_agent import AIAgent
 
     names = tool_names if tool_names is not None else ["read_file"]
@@ -379,10 +380,10 @@ def make_agent(
         patch.object(run_agent, "OpenAI", lambda **kwargs: shared_client)
     )
     stack.enter_context(
-        patch.object(run_agent, "get_tool_definitions", lambda *a, **k: tool_defs)
+        patch.object(model_tools, "get_tool_definitions", lambda *a, **k: tool_defs)
     )
     stack.enter_context(
-        patch.object(run_agent, "handle_function_call", _fake_handle_function_call)
+        patch.object(model_tools, "handle_function_call", _fake_handle_function_call)
     )
     # v0.15.1 catch-up: upstream's extracted agent_init / ContextCompressor query
     # get_model_context_length during construction, which makes REAL network calls

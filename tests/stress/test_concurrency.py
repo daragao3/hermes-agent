@@ -47,12 +47,14 @@ def worker_loop(worker_id: int, hermes_home: str, result_file: str) -> None:
 
     from hermes_cli import kanban_db as kb
 
+    from hermes_cli import kanban_db_connect as kb_connect
+
     events = []
     empty_polls = 0
     start = time.monotonic()
 
     while time.monotonic() - start < WORKER_TIMEOUT_S:
-        conn = kb.connect()
+        conn = kb_connect.connect()
         try:
             # Find any ready task (non-deterministic order intentional — we
             # want workers to race on popular assignees).
@@ -130,9 +132,10 @@ def _run_concurrency(home):
     os.environ["HOME"] = home
     sys.path.insert(0, WT)
     from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kb_connect
 
     kb.init_db()
-    conn = kb.connect()
+    conn = kb_connect.connect()
     tids = []
     for i in range(NUM_TASKS):
         tid = kb.create_task(
@@ -213,7 +216,7 @@ def _run_concurrency(home):
                 )
 
     # Check 3: DB state — every task should be in 'done', no dangling claims
-    conn = kb.connect()
+    conn = kb_connect.connect()
     try:
         bad_status = conn.execute(
             "SELECT id, status, claim_lock, current_run_id FROM tasks "

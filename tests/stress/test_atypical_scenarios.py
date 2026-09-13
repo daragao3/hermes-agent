@@ -55,6 +55,34 @@ def skip(reason: str):
     raise _Skip(reason)
 
 
+def _scenario_kanban(facade):
+    """Scenario-facing ``kb``: names that MOVED resolve from their real homes.
+
+    ``hermes_cli.kanban_db`` still re-exports connect/dispatch_once/... but only
+    through its revert-scheduled PLUGIN-COMPAT block, which is deleted on
+    COMPAT_REMOVAL_DATE (2026-09-14). Resolving those here keeps the ~30
+    ``kb.<name>()`` call sites in the scenarios below working afterwards, without
+    threading three extra modules through every scenario signature. Anything the
+    siblings do not define falls through to the facade, where it really lives.
+
+    Imported inside the function on purpose: ``run()`` purges ``hermes_cli`` from
+    ``sys.modules`` before each scenario, so binding these at module scope would
+    hand back stale module objects.
+    """
+    from hermes_cli import kanban_db_connect, kanban_db_dispatch, kanban_db_workspace
+
+    siblings = (kanban_db_connect, kanban_db_dispatch, kanban_db_workspace)
+
+    class _KanbanNamespace:
+        def __getattr__(self, name):
+            for mod in siblings:
+                if name in vars(mod):       # vars(): do not trip the sibling's own __getattr__
+                    return getattr(mod, name)
+            return getattr(facade, name)
+
+    return _KanbanNamespace()
+
+
 def scenario(name):
     """Decorator: run `fn` in its own HERMES_HOME, collect failures.
 
@@ -70,7 +98,8 @@ def scenario(name):
                 if m.startswith(("hermes_cli", "plugins", "gateway")):
                     del sys.modules[m]
             sys.path.insert(0, str(WT))
-            from hermes_cli import kanban_db as kb  # noqa: F401
+            from hermes_cli import kanban_db as _kb_facade  # noqa: F401
+            kb = _scenario_kanban(_kb_facade)
             print(f"\n═══ {name} ═══")
             try:
                 fn(home, kb)
@@ -740,12 +769,13 @@ def _idempotency_race_worker(hermes_home: str, key: str, result_file: str,
     os.environ["HOME"] = hermes_home
     sys.path.insert(0, str(WT))
     from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kb_connect
 
     # Spin until the barrier file exists (crude sync across processes)
     while not os.path.exists(barrier_path):
         time.sleep(0.001)
 
-    conn = kb.connect()
+    conn = kb_connect.connect()
     try:
         tid = kb.create_task(
             conn, title=f"race pid={os.getpid()}",

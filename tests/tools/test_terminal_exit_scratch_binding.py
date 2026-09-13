@@ -44,7 +44,11 @@ def test_exit_without_captured_root_closes_owned_env_without_sweeping(monkeypatc
     monkeypatch.setattr(terminal_tool, "_active_environments", {"owned": SimpleNamespace(wait_for_cleanup=wait)})
     monkeypatch.setattr(terminal_tool, "_env_scratch_dir", None)
     monkeypatch.setattr(terminal_tool, "_stop_cleanup_thread", Mock())
-    monkeypatch.setattr(terminal_tool, "cleanup_vm", close)
+    # cleanup_all_environments() calls its OWN module-level cleanup_vm (defined at
+    # terminal_tool_lifecycle.py:316). It used to import that name back through the
+    # tools.terminal_tool facade, whose copy is a revert-scheduled PLUGIN-COMPAT
+    # pointer removed on COMPAT_REMOVAL_DATE -- patch the binding actually invoked.
+    monkeypatch.setattr(lifecycle, "cleanup_vm", close)
     resolve = Mock(side_effect=AssertionError("exit must not resolve a new root"))
     monkeypatch.setattr(lifecycle, "_get_scratch_dir", resolve)
     terminal_tool._atexit_cleanup()

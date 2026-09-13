@@ -31,6 +31,7 @@ from unittest.mock import patch
 
 
 import hermes_cli.web_server as web_server_mod
+import gateway.status as _gateway_status
 import hermes_cli.web_server_lifecycle as _web_server_lifecycle
 
 SLOW_SECONDS = 1  # represents the Defender worst-case (scaled down for CI speed)
@@ -224,7 +225,10 @@ def test_get_status_local_pid_probe_does_not_block_event_loop():
             # upstream caching layer) instead of calling get_running_pid directly,
             # still off the event loop via asyncio.to_thread — patch the symbol
             # actually invoked so this test keeps exercising the real dispatch path.
-            patch.object(web_server_mod, "get_running_pid_cached", _blocking_pid_probe),
+            # The routers late-bind this from gateway.status (web_routers/status.py:50),
+            # which is also the seam those modules document. hermes_cli.web_server holds
+            # the name only as a revert-scheduled PLUGIN-COMPAT pointer.
+            patch.object(_gateway_status, "get_running_pid_cached", _blocking_pid_probe),
             patch.object(web_server_mod, "_resolve_restart_drain_timeout", lambda: 180.0),
         ):
             asyncio.run(_run())
