@@ -136,7 +136,10 @@ class TestPreflightRelayFronted:
         monkeypatch.setenv("GATEWAY_RELAY_PLATFORMS", "slack")
         _slack_home(monkeypatch)
         monkeypatch.setattr(sched_delivery, "_iter_home_target_platforms",
-                            lambda: ["slack", "telegram"])
+                            lambda name_filter=None: [
+                                name for name in ["slack", "telegram"]
+                                if name_filter is None or name_filter(name)
+                            ])
         with patch("gateway.config.load_gateway_config",
                    return_value=_gateway_config({"relay"})):
             ids = {t["id"] for t in cron_delivery_targets()}

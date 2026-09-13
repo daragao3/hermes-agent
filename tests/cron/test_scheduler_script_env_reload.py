@@ -17,7 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 def test_run_job_script_reloads_dotenv_before_subprocess(tmp_path, monkeypatch):
-    from cron import scheduler
+    from cron import scheduler, scheduler_script
 
     scripts_dir = Path(scheduler._get_hermes_home()) / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
@@ -29,7 +29,7 @@ def test_run_job_script_reloads_dotenv_before_subprocess(tmp_path, monkeypatch):
                side_effect=lambda **kw: calls.append(kw) or []), \
          patch("hermes_cli.env_loader.reset_secret_source_cache",
                side_effect=lambda: calls.append("reset")):
-        ok, output = scheduler._run_job_script("envprobe.py")
+        ok, output = scheduler_script._run_job_script("envprobe.py")
 
     assert ok, output
     assert "reset" in calls, "secret-source cache must be reset before reload"
