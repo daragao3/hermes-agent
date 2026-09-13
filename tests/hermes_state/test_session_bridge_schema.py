@@ -492,10 +492,10 @@ def test_reopening_upgraded_database_is_idempotent(tmp_path):
         conn.close()
 
 
-def test_v32_database_repairs_same_named_malformed_v33_trigger_before_advancing(
+def test_open_repairs_a_same_named_malformed_v33_trigger(
     tmp_path,
 ):
-    db_path = tmp_path / "v32-malformed-v33-trigger.db"
+    db_path = tmp_path / "malformed-v33-trigger.db"
     initial = hermes_state.SessionDB(db_path)
     initial.close()
 
@@ -507,7 +507,6 @@ def test_v32_database_repairs_same_named_malformed_v33_trigger_before_advancing(
     try:
         raw.execute(f'DROP TRIGGER "{trigger_name}"')
         raw.execute(malformed_sql)
-        raw.execute("UPDATE schema_version SET version = 32")
         raw.commit()
     finally:
         raw.close()
@@ -531,18 +530,27 @@ def test_v32_database_repairs_same_named_malformed_v33_trigger_before_advancing(
         upgraded.close()
 
 
-def test_v32_v33_trigger_repair_rolls_back_before_schema_marker_on_failure(
+def test_v33_trigger_repair_rolls_back_when_revalidation_fails(
     tmp_path,
     monkeypatch,
 ):
-    db_path = tmp_path / "v32-v33-trigger-rollback.db"
+    db_path = tmp_path / "v33-trigger-repair-rollback.db"
     initial = hermes_state.SessionDB(db_path)
     initial.close()
 
     trigger_name = "trg_session_sidebar_v2_attempt_zero_resolutions_no_update"
+    # The repair runs only when validation FAILS, so the malformation is what puts
+    # this test on the path it is about. It used to be reached by stamping the scalar
+    # back to 32; on wave2 the repair ignores the scalar entirely, and a fresh
+    # database validates clean, so without a malformation the injected failure below
+    # would never fire and the pytest.raises would be asserting nothing.
+    malformed_sql = f"""CREATE TRIGGER {trigger_name}
+        BEFORE UPDATE ON session_sidebar_v2_attempt_zero_resolutions
+        BEGIN SELECT 1; END"""
     raw = sqlite3.connect(db_path)
     try:
-        raw.execute("UPDATE schema_version SET version = 32")
+        raw.execute(f'DROP TRIGGER "{trigger_name}"')
+        raw.execute(malformed_sql)
         raw.commit()
     finally:
         raw.close()
@@ -564,19 +572,25 @@ def test_v32_v33_trigger_repair_rolls_back_before_schema_marker_on_failure(
 
     raw = sqlite3.connect(db_path)
     try:
-        assert raw.execute("SELECT version FROM schema_version").fetchone()[0] == 32
-        assert raw.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+        assert (
+            raw.execute("SELECT version FROM schema_version").fetchone()[0]
+            == hermes_state.SCHEMA_VERSION
+        )
+        surviving_sql = raw.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
             (trigger_name,),
-        ).fetchone() is not None
+        ).fetchone()
+        assert surviving_sql is not None
+        # Rolled back to the PRE-repair object, not left half-repaired.
+        assert " ".join(surviving_sql[0].split()) == " ".join(malformed_sql.split())
     finally:
         raw.close()
 
 
-def test_v32_database_repairs_malformed_same_named_v33_ledger_before_advancing(
+def test_open_repairs_a_malformed_same_named_v33_ledger(
     tmp_path,
 ):
-    db_path = tmp_path / "v32-malformed-v33-ledger.db"
+    db_path = tmp_path / "malformed-v33-ledger.db"
     initial = hermes_state.SessionDB(db_path)
     initial.close()
 
@@ -593,7 +607,6 @@ def test_v32_database_repairs_malformed_same_named_v33_ledger_before_advancing(
             "CREATE TABLE session_sidebar_v2_attempt_zero_resolutions "
             "(job_id TEXT PRIMARY KEY)"
         )
-        raw.execute("UPDATE schema_version SET version = 32")
         raw.commit()
     finally:
         raw.close()
@@ -612,10 +625,10 @@ def test_v32_database_repairs_malformed_same_named_v33_ledger_before_advancing(
         upgraded.close()
 
 
-def test_v32_database_refuses_to_replace_malformed_v33_ledger_with_evidence(
+def test_open_refuses_to_replace_a_malformed_v33_ledger_holding_evidence(
     tmp_path,
 ):
-    db_path = tmp_path / "v32-malformed-v33-ledger-with-evidence.db"
+    db_path = tmp_path / "malformed-v33-ledger-with-evidence.db"
     initial = hermes_state.SessionDB(db_path)
     initial.close()
 
@@ -636,7 +649,6 @@ def test_v32_database_refuses_to_replace_malformed_v33_ledger_with_evidence(
             "INSERT INTO session_sidebar_v2_attempt_zero_resolutions (job_id) "
             "VALUES ('preserve-me')"
         )
-        raw.execute("UPDATE schema_version SET version = 32")
         raw.commit()
     finally:
         raw.close()
@@ -649,7 +661,10 @@ def test_v32_database_refuses_to_replace_malformed_v33_ledger_with_evidence(
 
     raw = sqlite3.connect(db_path)
     try:
-        assert raw.execute("SELECT version FROM schema_version").fetchone()[0] == 32
+        assert (
+            raw.execute("SELECT version FROM schema_version").fetchone()[0]
+            == hermes_state.SCHEMA_VERSION
+        )
         assert raw.execute(
             "SELECT job_id FROM session_sidebar_v2_attempt_zero_resolutions"
         ).fetchall() == [("preserve-me",)]
@@ -657,10 +672,10 @@ def test_v32_database_refuses_to_replace_malformed_v33_ledger_with_evidence(
         raw.close()
 
 
-def test_v32_database_adds_v2_attempt_zero_ledger_preserves_rows_and_reopens(
+def test_open_adds_the_v2_attempt_zero_ledger_and_preserves_rows(
     tmp_path,
 ):
-    db_path = tmp_path / "v32-to-v33.db"
+    db_path = tmp_path / "missing-v2-attempt-zero-ledger.db"
     initial = hermes_state.SessionDB(db_path)
     try:
         conn = initial._conn
@@ -694,7 +709,6 @@ def test_v32_database_adds_v2_attempt_zero_ledger_preserves_rows_and_reopens(
         for trigger_name in v33_trigger_names:
             raw.execute(f'DROP TRIGGER "{trigger_name}"')
         raw.execute("DROP TABLE session_sidebar_v2_attempt_zero_resolutions")
-        raw.execute("UPDATE schema_version SET version = 32")
         raw.commit()
     finally:
         raw.close()
@@ -2062,11 +2076,17 @@ def test_bridge_schema_failure_rolls_back_ddl_and_keeps_v20(tmp_path, monkeypatc
     CREATE TABLE session_bridge_state (key TEXT PRIMARY KEY);
     THIS IS DELIBERATELY INVALID SQL;
     """
+    # Patch the OWNING module, not the hermes_state facade. The facade re-exports
+    # BRIDGE_SCHEMA_SQL by value (``from hermes_state_bridge_schema import ... as ...``),
+    # while both readers resolve it from hermes_state_bridge_schema -- so patching the
+    # facade rebinds a name nobody reads, the invalid SQL never runs, and this test
+    # passes its pytest.raises only by never exercising the rollback at all.
+    import hermes_state_bridge_schema
+
     monkeypatch.setattr(
-        hermes_state,
+        hermes_state_bridge_schema,
         "BRIDGE_SCHEMA_SQL",
         injected_schema,
-        raising=False,
     )
 
     with pytest.raises(sqlite3.OperationalError):
