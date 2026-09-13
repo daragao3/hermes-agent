@@ -28,7 +28,7 @@ from .claude_visibility_codes import (
 )
 from .codex_adapter import SidebarVerificationError
 from .config import BridgeConfig, is_canonical_sidebar_string
-from .coordinator import ContinuationBlockedError, ContinueRequest, ContinueResult
+from .coordinator import ContinueRequest, ContinueResult
 from .health import build_session_health_evidence
 from .mirror import MirrorPolicy, enqueue_mirror_job
 from .models import (
@@ -271,7 +271,6 @@ def create_app(
 
     try:
         from mcp.server import MCPServer
-        from mcp.server.mcpserver.exceptions import ToolError
         from mcp.server.transport_security import TransportSecuritySettings
         from starlette.applications import Starlette
         from starlette.middleware import Middleware
@@ -353,19 +352,14 @@ def create_app(
         continue_method = getattr(coordinator, "continue_session", None)
         if not callable(continue_method):
             raise RuntimeError("session bridge coordinator cannot continue sessions")
-        try:
-            result = await continue_method(
-                ContinueRequest(
-                    session_id=resolved["source_session_id"],
-                    bridge_id=resolved["bridge_id"],
-                    target_provider=Provider(resolved["target_provider"]),
-                    context_budget_chars=budget,
-                )
+        result = await continue_method(
+            ContinueRequest(
+                session_id=resolved["source_session_id"],
+                bridge_id=resolved["bridge_id"],
+                target_provider=Provider(resolved["target_provider"]),
+                context_budget_chars=budget,
             )
-        except ContinuationBlockedError as exc:
-            # MCP 2.2 masks unexpected exceptions. This validated domain code
-            # is deliberately public; its cause and warning remain private.
-            raise ToolError(exc.code) from None
+        )
         if not isinstance(result, ContinueResult):
             raise RuntimeError("session continuation returned an invalid result")
         exact_cwd = result.exact_cwd
@@ -559,11 +553,11 @@ def create_app(
         """Lease exactly one native sidebar registration for the Codex broker."""
 
         if type(limit) is not int or limit != 1:
-            raise ToolError("sidebar_pending_invalid_request")
+            raise ValueError("sidebar_pending_invalid_request")
         bounded_limit = 1
         claim_method = getattr(coordinator, "claim_sidebar_jobs_for_delivery", None)
         if not callable(claim_method):
-            raise ToolError("sidebar_pending_unavailable")
+            raise RuntimeError("sidebar_pending_unavailable")
         claimed_tokens: list[str] = []
         try:
             secret = marker_key
@@ -613,21 +607,21 @@ def create_app(
             raise
         except Exception:
             await _rollback_sidebar_claims(store, claimed_tokens)
-            raise ToolError("sidebar_pending_failed") from None
+            raise ValueError("sidebar_pending_failed") from None
 
     @mcp.tool()
     async def session_sidebar_hydration_pending(limit: Any = 1) -> dict[str, Any]:
         """Lease exactly one in-place hydration job for the Codex broker."""
 
         if type(limit) is not int or limit != 1:
-            raise ToolError("sidebar_hydration_pending_invalid_request")
+            raise ValueError("sidebar_hydration_pending_invalid_request")
         claim_method = getattr(
             coordinator,
             "claim_sidebar_hydration_for_delivery",
             None,
         )
         if not callable(claim_method):
-            raise ToolError("sidebar_hydration_pending_unavailable")
+            raise RuntimeError("sidebar_hydration_pending_unavailable")
         claimed_tokens: list[tuple[str, str]] = []
         try:
             secret = marker_key
@@ -671,7 +665,7 @@ def create_app(
                     )
                 except Exception:
                     pass
-            raise ToolError("sidebar_hydration_pending_failed") from None
+            raise ValueError("sidebar_hydration_pending_failed") from None
 
     @mcp.tool()
     async def session_sidebar_hydration_reserve(
@@ -696,7 +690,7 @@ def create_app(
         except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
             raise
         except Exception:
-            raise ToolError("sidebar_hydration_reserve_failed") from None
+            raise ValueError("sidebar_hydration_reserve_failed") from None
 
     @mcp.tool()
     async def session_sidebar_hydration_commit(
@@ -733,7 +727,7 @@ def create_app(
         except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
             raise
         except Exception:
-            raise ToolError("sidebar_hydration_commit_failed") from None
+            raise ValueError("sidebar_hydration_commit_failed") from None
 
     @mcp.tool()
     async def session_sidebar_hydration_fail(
@@ -753,7 +747,7 @@ def create_app(
             or error_code
             not in HYDRATION_RETRYABLE_ERRORS | HYDRATION_FATAL_ERRORS
         ):
-            raise ToolError("sidebar_hydration_fail_invalid_request")
+            raise ValueError("sidebar_hydration_fail_invalid_request")
         try:
             result = await asyncio.to_thread(
                 store.fail_sidebar_hydration_job,
@@ -772,7 +766,7 @@ def create_app(
         except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
             raise
         except Exception:
-            raise ToolError("sidebar_hydration_fail_failed") from None
+            raise ValueError("sidebar_hydration_fail_failed") from None
 
     @mcp.tool()
     async def session_sidebar_reserve(
@@ -828,7 +822,7 @@ def create_app(
         except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
             raise
         except Exception:
-            raise ToolError("sidebar_reserve_failed") from None
+            raise ValueError("sidebar_reserve_failed") from None
 
     @mcp.tool()
     async def session_sidebar_bind(
@@ -841,7 +835,7 @@ def create_app(
         thread_id = _exact_sidebar_text(codex_thread_id, "Codex thread ID")
         bind_method = getattr(coordinator, "bind_sidebar_thread", None)
         if not callable(bind_method):
-            raise ToolError("sidebar_bind_unavailable")
+            raise RuntimeError("sidebar_bind_unavailable")
         try:
             result = await bind_method(
                 lease_token=token_text,
@@ -860,7 +854,7 @@ def create_app(
         except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
             raise
         except Exception:
-            raise ToolError("sidebar_bind_failed") from None
+            raise ValueError("sidebar_bind_failed") from None
 
     @mcp.tool()
     async def session_sidebar_commit(
@@ -873,7 +867,7 @@ def create_app(
         thread_id = _exact_sidebar_text(codex_thread_id, "Codex thread ID")
         commit_method = getattr(coordinator, "commit_sidebar_job", None)
         if not callable(commit_method):
-            raise ToolError("sidebar_commit_unavailable")
+            raise RuntimeError("sidebar_commit_unavailable")
         try:
             result = await commit_method(
                 lease_token=token_text,
@@ -893,9 +887,9 @@ def create_app(
         except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
             raise
         except SidebarVerificationError as exc:
-            raise ToolError(exc.code) from None
+            raise ValueError(exc.code) from None
         except Exception:
-            raise ToolError("sidebar_commit_failed") from None
+            raise ValueError("sidebar_commit_failed") from None
 
     @mcp.tool()
     async def session_sidebar_fail(
@@ -910,7 +904,7 @@ def create_app(
             type(error_code) is not str
             or error_code not in SIDEBAR_RETRYABLE_ERRORS | SIDEBAR_FATAL_ERRORS
         ):
-            raise ToolError("sidebar_fail_invalid_request")
+            raise ValueError("sidebar_fail_invalid_request")
         thread_id = (
             None
             if codex_thread_id is None
@@ -943,7 +937,7 @@ def create_app(
         except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
             raise
         except Exception:
-            raise ToolError("sidebar_fail_failed") from None
+            raise ValueError("sidebar_fail_failed") from None
 
     actual_tools = set(mcp._tool_manager._tools)
     if actual_tools != EXPECTED_TOOLS:

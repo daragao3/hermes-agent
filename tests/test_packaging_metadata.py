@@ -506,8 +506,6 @@ def test_security_pins_present_in_mirrored_lazy_features():
 #: ship in the wheel. Each needs a reason, because the default assumption for
 #: an importable package is that it ships.
 NOT_SHIPPED_TOP_LEVEL = {
-    "claude_fleet_control": "local fleet controller consumed by checkout operator scripts",
-    "evals": "evaluation harnesses and experiments, not runtime packages",
     "tests": "the test suite itself",
     "scripts": "operator scripts executed from the checkout, never imported",
     "ai_usage": (
