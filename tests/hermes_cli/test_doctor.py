@@ -45,8 +45,9 @@ from tools import browser_tool_install as bt_install
 # test called ``run_doctor`` first (that alone blew the 30s per-test cap).
 # ``_stub_doctor_externals`` now puts a stub in ``sys.modules`` instead, so the
 # real module is never imported at all and nothing pays for it. That matters
-# for the OTHER cap: ``scripts/run_tests_parallel.py`` enforces a 300s
-# wall-clock budget per FILE, and unlike pytest-timeout it does count
+# for the OTHER cap: ``scripts/run_tests_parallel.py`` enforces a per-FILE
+# wall-clock budget (``_DEFAULT_FILE_TIMEOUT_SECONDS``, 1800s since 2026-08-12;
+# it was 300s when this note was written), and unlike pytest-timeout it counts
 # collection -- so for that budget, moving cost into collection is not a fix,
 # only removing it is.
 
@@ -318,12 +319,51 @@ class TestDoctorToolAvailabilitySummary:
 
         assert [item["name"] for item in filtered] == ["web"]
 
-    # First test in the file to touch `agent.web_search_registry`, so it pays
-    # that registry's one-time cold import and nothing else does: measured
-    # 2026-09-13 at 31.9s against a 30s cap, while its warm sibling below does
-    # identical work in 5.8s. The cost is an import, not this test's logic, so
-    # budget for it here rather than hoisting a heavy import to module scope --
-    # see the note at the top of this file on why model_tools is kept lazy.
+    # First test in the file to call ``_doctor_web_capability_rows()``, so it
+    # pays that call's one-time warm-up and nothing else does. The warm-up is
+    # budgeted here rather than hoisted to module scope, and the reason is NOT
+    # the one an earlier version of this comment gave.
+    #
+    # It is NOT ``agent.web_search_registry``'s import. That module is cheap:
+    # ``python -X importtime -c "import agent.web_search_registry"`` is 0.073s
+    # cumulative in a COLD interpreter, and inside a pytest process that has
+    # already imported ``hermes_constants``/``agent.provider_registry`` -- which
+    # this module's own imports do -- the marginal cost is 0.003-0.25s, median
+    # 0.007s. Hoisting that import relocates single-digit milliseconds.
+    #
+    # The real one-time cost, measured inside a pytest process over four runs,
+    # 2026-09-13 (ranges, not points -- the spread IS the story here):
+    #
+    #   import tools.web_tools               0.5-3.5s  (httpx, yaml, plugins.web.*)
+    #   _ensure_web_plugins_loaded()         2.6-7.8s  -> _ensure_plugins_discovered
+    #   first _doctor_web_capability_rows()  0.5-2.1s
+    #   every later call                     0.1-1.3s
+    #   ---------------------------------------------
+    #   one-time warm-up, nothing pre-warmed 4.1-13.7s
+    #
+    # (In this file it lands at the low end: the module-scope imports above have
+    # already paid part of that graph. And ``_ensure_plugins_discovered`` does
+    # NOT drag in ``model_tools`` -- checked in all four runs -- so the hazard
+    # the top-of-file note guards against is not what rules module scope out
+    # here. What rules it out is the next paragraph.)
+    #
+    # The dominant slice is a RUNTIME CALL, not an import, so there is no import
+    # statement to hoist: "warm it at module scope" here means running plugin
+    # discovery as a side effect of COLLECTING this file -- unbounded by
+    # pytest-timeout, and paid by every run of the file even when these two
+    # tests are deselected. See the note at the top of this file. A module- or
+    # class-scoped autouse fixture is no better, because pytest-timeout covers
+    # setup as well as call (observed: 23.78s setup on this class).
+    #
+    # It would also not remove the need for this mark. What pushes this test at
+    # the cap is LOAD, not the warm-up. All on one unchanged tree,
+    # 2026-09-13, whole-file runs (88 passed / 8 skipped both times): this test
+    # 4.34s and 9.43s, against its warm sibling's 2.42s and 3.21s -- a
+    # first-caller premium of 1.9-6.2s, i.e. the warm-up above and nothing
+    # larger. Running this class ALONE three times gives 16.27/13.01/8.98s
+    # against 4.03/4.00/3.73s: identical work, a 4x spread on ambient load. The
+    # 31.9s that first motivated this mark is the top of that spread, and no
+    # amount of warming shortens the tail.
     @pytest.mark.timeout(180)
     def test_web_capability_rows_warn_when_selected_provider_not_ready(self, monkeypatch):
         """#78412: selected firecrawl with is_available=False must warn."""
