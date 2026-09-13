@@ -11,7 +11,7 @@ This notice lives on both branches, so reading it does not tell you which one yo
 on. Check:
 
 ```
-git -C ~/.hermes/agent-src rev-parse --abbrev-ref HEAD
+git -C $HOME/.hermes/agent-src rev-parse --abbrev-ref HEAD
 ```
 
 ## Why main is abandoned and not merely behind
@@ -71,20 +71,36 @@ main -- not because any ref is moved or any history is discarded. Freezing costs
 nothing, needs no grant, and keeps main as the last state of the pre-renumbering
 schema lineage, which is worth having while the 30-vs-34 split is live.
 
-The commit that added this paragraph is intended to be **the last commit on main**. If
-you find later ones, the freeze was broken -- say so on the loops record rather than
-quietly extending it. The frozen tip is tagged `main-frozen-20260913`.
+**The freeze is enforced by a detector, not by trust.** The tag
+`main-frozen-20260913` names main's frozen tip, so this reports on it:
+
+```
+git -C $HOME/.hermes/agent-src log --oneline main-frozen-20260913..main
+```
+
+Empty means the freeze held. Anything else names exactly what landed and when --
+report it on the loops record rather than quietly extending it.
+
+**One class of commit to main is permitted: a correction to THIS FILE.** The marker has
+to stay accurate to be worth anything, and a detector that fires on its own
+documentation fix is a broken detector. If you correct it, move the tag to the new tip
+in the same pass -- `git tag -f -a main-frozen-20260913 <new-tip> -m "..."` -- so the
+detector keeps reporting the truth rather than a false positive. Everything else --
+product code, tests, any other doc -- does not land on main.
 
 Do not run `hermes update` to "fix" this -- it hard-resets local commits. Nothing here
 was pushed; `origin/main` is thousands of commits behind and is not a factor.
 
 ## Verify before trusting this file
 
-A status note is a snapshot. Re-measure rather than believing it:
+A status note is a snapshot. Re-measure rather than believing it. Every command
+below is verified to run **as written in both PowerShell and bash** on this box --
+hence `$HOME` rather than `~` (git on Windows does not expand `~`) and git's own
+`grep` rather than the external one (PowerShell has no `grep`):
 
 ```
-git -C ~/.hermes/agent-src show main:hermes_state.py | grep '^SCHEMA_VERSION'
-git -C ~/.hermes/agent-src show codex/wave2-hermes-accepted:hermes_state_common.py | grep '^SCHEMA_VERSION'
+git -C $HOME/.hermes/agent-src grep -n "^SCHEMA_VERSION" main -- hermes_state.py
+git -C $HOME/.hermes/agent-src grep -n "^SCHEMA_VERSION" codex/wave2-hermes-accepted -- hermes_state_common.py
 python -c "import session_bridge; print(session_bridge.__file__)"
 python -c "import sqlite3,os; c=sqlite3.connect('file:'+os.path.expanduser('~/.hermes/state.db')+'?mode=ro',uri=True); print(c.execute('select version from schema_version').fetchone()); print([r[1] for r in c.execute('pragma table_info(desktop_registry_baselines)')])"
 ```
