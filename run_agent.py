@@ -1579,7 +1579,6 @@ _PLUGIN_COMPAT_LAZY = {
     'ContextCompressor': ('agent.context_compressor', 'ContextCompressor'),
     'DEFAULT_AGENT_IDENTITY': ('agent.prompt_builder', 'DEFAULT_AGENT_IDENTITY'),
     'FailoverReason': ('agent.error_classifier', 'FailoverReason'),
-    'OpenAI': ('agent.process_bootstrap', 'OpenAI'),
     'atomic_json_write': ('utils', 'atomic_json_write'),
     'build_context_files_prompt': ('agent.prompt_builder', 'build_context_files_prompt'),
     'build_environment_hints': ('agent.prompt_builder', 'build_environment_hints'),

@@ -8872,12 +8872,6 @@
   },
   {
    "facade": "run_agent",
-   "name": "OpenAI",
-   "kind": "moved-lazy",
-   "target": "agent.process_bootstrap"
-  },
-  {
-   "facade": "run_agent",
    "name": "SimpleNamespace",
    "kind": "import",
    "target": "types"
