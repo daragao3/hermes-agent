@@ -399,6 +399,11 @@ def watchdog_burst_body(payload: dict, *, max_listed: int = 5,
     transitions = [t for t in (payload.get("transitions") or [])
                    if isinstance(t, dict)]
     count = payload.get("count") or len(transitions)
+    component_note = (
+        "Session bridge checks grouped by component; cause not established.\n"
+        if payload.get("component") == "session-bridge"
+        and payload.get("correlation_basis") == "shared_component" else ""
+    )
     if not transitions:
         return (f"{count} monitored services changed state in one sweep "
                 f"(no probe detail attached).")
@@ -425,7 +430,7 @@ def watchdog_burst_body(payload: dict, *, max_listed: int = 5,
         more = f" +{len(recovered) - 3} more" if len(recovered) > 3 else ""
         text = (f"Good news — all {len(recovered)} changes were recoveries: "
                 f"{names}{more}.")
-        return f"{text}\n{skipped_note}" if skipped_note else text
+        return component_note + (f"{text}\n{skipped_note}" if skipped_note else text)
 
     if aggregate_optional:
         listed = [t for t in failing if t.get("tier") != "optional"]
@@ -435,7 +440,7 @@ def watchdog_burst_body(payload: dict, *, max_listed: int = 5,
         optional_failing = []
     listed.sort(key=lambda t: _TIER_RANK.get(t.get("tier"), 1))
 
-    lines = []
+    lines = [component_note.rstrip()] if component_note else []
     if recovered:
         lines.append(f"{len(failing)} checks failing, {len(recovered)} recovered:")
     else:

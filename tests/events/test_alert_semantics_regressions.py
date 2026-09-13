@@ -12,6 +12,64 @@ import pytest
 pytestmark = pytest.mark.timeout(300)
 
 
+def test_bridge_presentation_preserves_failures_and_does_not_claim_cause():
+    from events.formatting import watchdog_burst_body
+    payload = {"component": "session-bridge", "correlation_basis": "shared_component",
+               "transitions": [{"probe": "session-bridge-catalog", "after": "error"},
+                               {"probe": "session-bridge-service", "after": "healthy"},
+                               {"probe": "session-bridge-continuity", "after": "unknown"}]}
+    text = watchdog_burst_body(payload)
+    assert "cause not established" in text
+    assert "1 checks failing, 1 recovered" in text
+    assert "catalog" in text
+    assert "1 probes skipped" in text
+
+
+def test_gateway_maintenance_context_requires_exact_scope_and_active_window(tmp_path):
+    from events.maintenance_context import gateway_maintenance_context, gateway_stop_body
+    from events.routing_policy import Attention, classify
+    path = tmp_path / "maintenance.json"
+    now = datetime(2026, 9, 13, 12, tzinfo=timezone.utc)
+    marker = {"owner": "fixture-owner", "reason": "fixture deployment",
+              "opened_at": (now - timedelta(minutes=5)).isoformat(),
+              "expires_at": (now + timedelta(minutes=5)).isoformat(),
+              "suppressed_rows": ["Hermes gateway*"]}
+    path.write_text(json.dumps(marker))
+    context = gateway_maintenance_context(path=path, now=now)
+    assert context["owner"] == "fixture-owner" and context["readiness"] == "unconfirmed"
+    event = Event.create(event_type=EventType.GATEWAY_STOPPED, source="gateway",
+                  payload={"exit_reason": "graceful", "maintenance_context": context})
+    assert classify(event).attention == Attention.WARN  # marker is not a readiness receipt
+    assert "Declared gateway maintenance at stop" in gateway_stop_body(event.payload)
+    assert "Readiness remains unconfirmed" in gateway_stop_body(event.payload)
+    for rows in (["*"], ["JobFlow*"], ["Hermes gateway*", "*"]):
+        marker["suppressed_rows"] = rows
+        path.write_text(json.dumps(marker))
+        assert gateway_maintenance_context(path=path, now=now) is None
+    marker["suppressed_rows"] = ["Hermes gateway*"]
+    path.write_text(json.dumps(marker))
+    assert gateway_maintenance_context(path=path, now=now + timedelta(minutes=6)) is None
+    marker["opened_at"] = (now - timedelta(hours=9)).isoformat()
+    marker["expires_at"] = (now + timedelta(hours=1)).isoformat()
+    path.write_text(json.dumps(marker))
+    assert gateway_maintenance_context(path=path, now=now) is None
+
+
+def test_gateway_stop_snapshots_context_without_labeling_crash_planned(monkeypatch):
+    from types import SimpleNamespace
+    from events import gateway_integration as gi, maintenance_context as maintenance
+    emitted = []
+    monkeypatch.setattr(gi, "_bus", SimpleNamespace(emit=lambda **kw: emitted.append(kw) or "fixture-id"))
+    monkeypatch.setattr(gi, "_gateway_stopped_emitted", False)
+    context = {"basis": "declared_gateway_window", "owner": "fixture"}
+    monkeypatch.setattr(maintenance, "gateway_maintenance_context", lambda: context)
+    gi.emit_gateway_stopped({"exit_reason": "graceful"})
+    assert emitted[-1]["payload"]["maintenance_context"] == context
+    monkeypatch.setattr(gi, "_gateway_stopped_emitted", False)
+    gi.emit_gateway_stopped({"exit_reason": "fatal_exception", "maintenance_context": context})
+    assert "maintenance_context" not in emitted[-1]["payload"]
+
+
 def test_lint_improvement_and_recovery_survive_restart(tmp_path, monkeypatch):
     bus = EventBus(db_path=tmp_path / "bus.db")
     state = tmp_path / "ruff.json"
