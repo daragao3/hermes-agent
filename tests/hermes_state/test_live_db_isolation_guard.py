@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+import hermes_constants
 import hermes_state
 from gateway.config import GatewayConfig
 from gateway.session import SessionStore
@@ -96,6 +97,47 @@ class TestHermeticPathsAllowed:
             assert str(tmp_path) in str(db.db_path)
         finally:
             db.close()
+
+
+class TestRealDefaultRootRefused:
+    """Anchored on the REAL production root of whatever box runs the suite.
+
+    The Windows legacy-root fallback has a sibling file,
+    ``test_windows_legacy_state_guard.py``, which monkeypatches
+    ``os.path.expanduser``, ``Path.home`` and ``_real_platform_state_root``
+    onto a tmp tree. That pins the two resolvers' LOGIC, and it is the right
+    screen for that — but it is ``skipif(sys.platform != "win32")`` and it
+    never asks about this machine, so a box whose real production root drifts
+    back out of the deny-list keeps it green. That is exactly how the hole
+    survived: ``hermes_state_guard`` hardcoded ``%LOCALAPPDATA%\\hermes``
+    while ``hermes_constants._get_platform_default_hermes_home`` had a local
+    fallback to the legacy ``~/.hermes``, so the guard refused a path nothing
+    opened and allowed the database every process here actually writes (#82770).
+
+    These ask the unmonkeypatched question, on every platform: does the guard
+    refuse the root ``hermes_constants`` resolves *right now*? Neither
+    ``_real_platform_state_root()`` nor ``REAL_ROOT`` appears below on purpose —
+    asking the guard about the guard's own root cannot detect this class of
+    drift, which is also why ``test_isolation_marker_env`` could not.
+    """
+
+    @staticmethod
+    def _production_root():
+        return hermes_constants._get_platform_default_hermes_home().resolve()
+
+    def test_production_default_root_db_is_refused(self):
+        with pytest.raises(RuntimeError, match="live-system guard"):
+            hermes_state._ensure_test_isolation(self._production_root() / "state.db")
+
+    def test_production_default_profile_db_is_refused(self):
+        with pytest.raises(RuntimeError, match="live-system guard"):
+            hermes_state._ensure_test_isolation(
+                self._production_root() / "profiles" / "main" / "state.db"
+            )
+
+    def test_hermetic_tmp_path_is_still_allowed(self, tmp_path):
+        """The other direction: the deny-list must not swallow a tmp DB."""
+        hermes_state._ensure_test_isolation(tmp_path / "state.db")
 
 
 class TestBypassMarker:
