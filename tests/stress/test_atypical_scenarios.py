@@ -768,7 +768,9 @@ def _idempotency_race_worker(hermes_home: str, key: str, result_file: str,
     os.environ["HERMES_HOME"] = hermes_home
     os.environ["HOME"] = hermes_home
     sys.path.insert(0, str(WT))
-    from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db as kb_facade  # not 'kb': the scenarios' kb is the
+    # _scenario_kanban namespace, and check_compat_pointers' alias map is file-scoped,
+    # so a local 'kb' here makes it flag every scenario call site in this file.
     from hermes_cli import kanban_db_connect as kb_connect
 
     # Spin until the barrier file exists (crude sync across processes)
@@ -777,7 +779,7 @@ def _idempotency_race_worker(hermes_home: str, key: str, result_file: str,
 
     conn = kb_connect.connect()
     try:
-        tid = kb.create_task(
+        tid = kb_facade.create_task(
             conn, title=f"race pid={os.getpid()}",
             assignee="w", idempotency_key=key,
         )
