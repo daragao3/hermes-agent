@@ -318,6 +318,13 @@ class TestDoctorToolAvailabilitySummary:
 
         assert [item["name"] for item in filtered] == ["web"]
 
+    # First test in the file to touch `agent.web_search_registry`, so it pays
+    # that registry's one-time cold import and nothing else does: measured
+    # 2026-09-13 at 31.9s against a 30s cap, while its warm sibling below does
+    # identical work in 5.8s. The cost is an import, not this test's logic, so
+    # budget for it here rather than hoisting a heavy import to module scope --
+    # see the note at the top of this file on why model_tools is kept lazy.
+    @pytest.mark.timeout(180)
     def test_web_capability_rows_warn_when_selected_provider_not_ready(self, monkeypatch):
         """#78412: selected firecrawl with is_available=False must warn."""
         class _Unavailable:
@@ -370,6 +377,13 @@ class TestDoctorEnvFileEncoding:
     Chinese locale (GBK) because `.env` was read with Path.read_text() which
     defaults to the system locale encoding, not UTF-8."""
 
+    # Runs the whole of run_doctor (install-integrity, SSL bundle, ...), so it
+    # straddles the repo-wide `addopts --timeout=30`: measured 2026-09-13 at
+    # 16.6s / 26.0s / 41.2s on the same tree, purely on machine load. Without
+    # this mark it is killed by pytest-timeout on a busy box and reads as a
+    # regression in whatever change happens to be under test. 180s, not 120s:
+    # with three heavy tests contending the natural call reached ~70s.
+    @pytest.mark.timeout(180)
     def test_doctor_reads_env_as_utf8_even_when_locale_is_not_utf8(
         self, monkeypatch, tmp_path
     ):
@@ -416,6 +430,10 @@ class TestDoctorEnvFileEncoding:
             doctor_mod.run_doctor(Namespace(fix=False))
 
 
+    # Same whole-run_doctor cost as its neighbour above, and an even wider
+    # spread: measured 2026-09-13 at 3.8s warm but 29.8s / 30.3s under load,
+    # i.e. straight through the 30s cap.
+    @pytest.mark.timeout(180)
     def test_doctor_reads_invalid_utf8_env_via_latin1_fallback(
         self, monkeypatch, tmp_path
     ):
@@ -2042,9 +2060,21 @@ class TestNpmAuditBudget:
         """The measured hang: the child outlives its parent holding the pipe."""
         import psutil
 
+        # The scratch processes must outlive `bounded_ceiling` by a wide margin
+        # or a merely SLOW bounded call is indistinguishable from an unbounded
+        # one that waited for the child to exit. Measured 2026-09-13 on a loaded
+        # box: a correctly bounded call takes 16-31s for a 3s budget, because
+        # the implementation's best-effort process-tree teardown dominates, not
+        # the budget. The old pair (sleep 60 / ceiling 30) left only a 2x margin
+        # and went red under load on a healthy implementation.
+        scratch_sleep = 180
+        bounded_ceiling = 60
+
         wedged = tmp_path / "wedged_npm.py"
         descendant = tmp_path / "npm_descendant.py"
-        descendant.write_text("import time; time.sleep(60)\n", encoding="utf-8")
+        descendant.write_text(
+            f"import time; time.sleep({scratch_sleep})\n", encoding="utf-8"
+        )
         parent_pid = tmp_path / "parent.pid"
         child_pid = tmp_path / "child.pid"
         wedged.write_text(
@@ -2056,7 +2086,7 @@ class TestNpmAuditBudget:
             # pipes and lingers, so the write end never reaches EOF.
             "child = subprocess.Popen([sys.executable, str(root / 'npm_descendant.py')])\n"
             "(root / 'child.pid').write_text(str(child.pid))\n"
-            "time.sleep(60)\n",
+            f"time.sleep({scratch_sleep})\n",
             encoding="utf-8",
         )
 
@@ -2068,7 +2098,7 @@ class TestNpmAuditBudget:
                 )
             elapsed = time.monotonic() - start
             assert child_pid.exists(), "the descendant was never spawned"
-            assert elapsed < 30, (
+            assert elapsed < bounded_ceiling, (
                 f"raised TimeoutExpired but took {elapsed:.1f}s — "
                 "the npm timeout did not remain bounded"
             )
