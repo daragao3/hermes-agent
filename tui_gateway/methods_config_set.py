@@ -4,6 +4,50 @@ are rebound onto server.py's globals (method_ctx.bind_module) and reference them
 Keys match exactly except ``details_mode.<section>`` (prefix) and ``_DISPLAY_TOGGLE_KEYS``.
 """
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _APPROVAL_MODES,
+        _BOOL_WORDS,
+        _DETAIL_MODES,
+        _DETAIL_SECTION_NAMES,
+        _DISPLAY_TOGGLE_KEYS,
+        _MOUSE_TRACKING_ALIASES,
+        _STATUSBAR_MODES,
+        _apply_model_switch,
+        _apply_personality_to_session,
+        _broadcast_global_event,
+        _coerce_statusbar,
+        _display_cfg,
+        _display_mouse_tracking,
+        _emit,
+        _err,
+        _load_busy_input_mode,
+        _load_cfg,
+        _load_cfg_raw,
+        _load_service_tier,
+        _load_tool_progress_mode,
+        _note_skin_broadcast,
+        _ok,
+        _pending_switch_selection_warning,
+        _persist_live_session_runtime,
+        _resolve_model,
+        _restart_completed_failed_agent_build,
+        _save_cfg,
+        _session_info,
+        _session_profile_runtime_scope,
+        _sessions,
+        _start_agent_build,
+        _validate_personality,
+        _wait_agent,
+        _write_config_key,
+        contextlib,
+        git_probe,
+        is_truthy_value,
+        resolve_skin,
+    )
+
 import os
 
 from hermes_constants import INDICATOR_STYLES

@@ -3,6 +3,21 @@ turn tracking and turn-failure detail. Bodies are rebound onto server.py's globa
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        Any,
+        Optional,
+        Path,
+        _tool_ctx,
+        describe_skill_invocation,
+        json,
+        logger,
+        project_compaction_message_for_display,
+        time,
+    )
+
 from .method_ctx import bind_module
 
 

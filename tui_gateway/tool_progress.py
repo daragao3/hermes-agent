@@ -3,6 +3,23 @@ projection. Bodies are rebound onto server.py's globals (method_ctx.bind_module)
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _emit,
+        _mirror_subagent_to_child,
+        _session_verbose,
+        _sessions,
+        _tool_ctx,
+        _tool_lifecycle_required_for_ui,
+        _tool_progress_enabled,
+        contextlib,
+        json,
+        logger,
+        time,
+    )
+
 from .method_ctx import bind_module
 
 # Verbose tool text is capped to the Ink render budget (a hair more, so the "[omitted …]" label

@@ -6,6 +6,36 @@ knobs _SESSION_TTL_S, _REAPER_SCAN_S, _EXIT_FLUSH_BUDGET_S and _INCREMENTAL_FLUS
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        Any,
+        _EXIT_FLUSH_BUDGET_S,
+        _INCREMENTAL_FLUSH_INTERVAL_S,
+        _SESSION_TTL_S,
+        _WS_ORPHAN_REAP_GRACE_S,
+        _close_session_by_id,
+        _close_sessions_for_transport,
+        _current_profile_name,
+        _detached_ws_transport,
+        _get_db,
+        _load_cfg,
+        _own_live_lease_ids,
+        _pending_ws_reaps,
+        _schedule_ws_orphan_reap,
+        _session_has_active_delegations,
+        _session_pending_kind,
+        _sessions,
+        _sessions_lock,
+        _ws_session_is_detached,
+        atexit,
+        is_truthy_value,
+        logger,
+        os,
+        time,
+    )
+
 import contextlib
 import secrets
 import threading

@@ -6,6 +6,35 @@ method_ctx.bind_module), so they reference server.py globals bare.
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        CompressionLockHeld,
+        Optional,
+        _adopt_late_compute_host_compress_ack,
+        _apply_compute_host_metadata_mirror,
+        _apply_model_switch,
+        _apply_personality_to_session,
+        _compress_session_history,
+        _compute_host_compress_wait_seconds,
+        _emit,
+        _history_to_messages,
+        _load_cfg,
+        _metadata_mirror,
+        _methods,
+        _prompt_text,
+        _send_compute_host_control,
+        _session_db,
+        _session_info,
+        _session_usage_snapshot,
+        _session_uses_compute_host,
+        _sync_session_key_after_compress,
+        _validate_personality,
+        broadcast_session_info,
+        queue,
+    )
+
 import contextlib
 
 from .method_ctx import HandlerRegistry, bind_module

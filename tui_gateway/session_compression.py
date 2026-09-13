@@ -4,6 +4,22 @@ onto server.py's globals (method_ctx.bind_module) and reference them bare."""
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        Any,
+        _apply_model_switch,
+        _emit,
+        _emit_approval_request,
+        _get_usage,
+        _load_cfg,
+        _restart_slash_worker,
+        _transfer_active_session_slot,
+        is_truthy_value,
+        logger,
+    )
+
 import contextlib
 
 from .method_ctx import bind_module

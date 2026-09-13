@@ -4,6 +4,29 @@ per process). Bodies are rebound onto server.py's globals (method_ctx.bind_modul
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        Optional,
+        Transport,
+        _emit,
+        _err,
+        _load_cfg,
+        _ok,
+        _sessions,
+        _sessions_lock,
+        _stdio_transport,
+        _transport_is_dead,
+        bind_transport,
+        current_transport,
+        logger,
+        os,
+        queue,
+        reset_transport,
+        time,
+    )
+
 import contextlib
 import threading
 

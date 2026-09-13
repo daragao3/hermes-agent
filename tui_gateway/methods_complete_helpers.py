@@ -6,6 +6,19 @@ method_ctx.bind_module), so they reference server.py globals bare.
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _item,
+        _normalize_completion_path,
+        _resolve_model,
+        logger,
+        os,
+        subprocess,
+        time,
+    )
+
 import threading
 
 from .method_ctx import HandlerRegistry, bind_module

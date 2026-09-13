@@ -4,6 +4,23 @@ server.py's globals (method_ctx.bind_module) and use them bare; module-level nam
 onto server.py, so they must not collide with its globals.
 """
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        Path,
+        _denied_source,
+        _err,
+        _ok,
+        _profile_ui_meta_lock,
+        get_hermes_home,
+        is_truthy_value,
+        json,
+        os,
+        reset_hermes_home_override,
+        set_hermes_home_override,
+    )
+
 import contextlib
 
 from .method_ctx import HandlerRegistry, bind_module

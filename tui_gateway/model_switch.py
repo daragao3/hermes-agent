@@ -4,6 +4,36 @@ time (method_ctx.bind_module), so they reference server.py globals bare."""
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        Any,
+        Path,
+        _append_model_switch_marker,
+        _clear_session_context,
+        _config_model_target,
+        _emit,
+        _emit_session_info,
+        _persist_live_session_runtime,
+        _persist_live_session_system_prompt,
+        _rebuild_session_agent,
+        _resolve_model,
+        _restart_slash_worker,
+        _session_cwd,
+        _session_source,
+        _set_session_context,
+        _start_agent_build,
+        build_profile_secret_scope,
+        copy,
+        logger,
+        reset_hermes_home_override,
+        reset_secret_scope,
+        set_hermes_home_override,
+        set_secret_scope,
+        threading,
+    )
+
 import contextlib
 
 from .method_ctx import HandlerRegistry, bind_module

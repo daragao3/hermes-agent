@@ -4,6 +4,57 @@ globals at install time (method_ctx.bind_module), so they reference server.py gl
 
 from __future__ import annotations
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _bind_build_profile_scopes,
+        _block,
+        _clarify_block,
+        _clear_session_context,
+        _config_model_target,
+        _context_cwd_is_launch_artifact,
+        _emit,
+        _find_live_session_by_key,
+        _fmt_tool_duration,
+        _get_db,
+        _load_cfg,
+        _load_enabled_toolsets,
+        _load_interim_assistant_messages,
+        _load_reasoning_config,
+        _load_service_tier,
+        _load_show_reasoning,
+        _load_tool_progress_mode,
+        _make_agent,
+        _on_tool_complete,
+        _on_tool_progress,
+        _on_tool_start,
+        _open_profile_session_db,
+        _persist_session_cwd_and_schedule_git_meta,
+        _project_info_for_cwd,
+        _register_session_cwd,
+        _release_build_profile_scopes,
+        _resolve_model,
+        _restart_slash_worker,
+        _session_info,
+        _session_source,
+        _session_verbose,
+        _sessions,
+        _sessions_lock,
+        _set_session_context,
+        _status_update,
+        _tool_ctx,
+        _tool_progress_enabled,
+        _tool_summary,
+        _tour_request,
+        _transfer_db_to_agent,
+        git_probe,
+        json,
+        logger,
+        os,
+        time,
+    )
+
 import contextlib
 import threading
 

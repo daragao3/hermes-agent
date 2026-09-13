@@ -4,6 +4,14 @@ same-gateway Discussion driver; ``groups.capabilities`` keeps that boundary mach
 Handlers are rebound onto server.py's globals at install (method_ctx.py); module-private
 helpers reach them through keyword defaults. ``_room_method`` is the shared envelope."""
 
+
+# Static declarations for globals supplied by method_ctx.bind_module.
+if __import__("typing").TYPE_CHECKING:
+    from tui_gateway.server import (
+        _err,
+        _ok,
+    )
+
 from .method_ctx import HandlerRegistry
 
 import contextlib
