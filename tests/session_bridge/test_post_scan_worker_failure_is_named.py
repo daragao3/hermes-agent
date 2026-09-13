@@ -60,18 +60,28 @@ class _FakeClock:
 
 
 class DesktopRegistrySyncWorker:
-    """Named after the real worker so the log line's identity is checkable."""
+    """Named after the real worker so the log line's identity is checkable.
 
-    def __init__(self, *errors: BaseException | None) -> None:
-        self._errors = list(errors)
+    Each outcome is an exception to raise, a result to return, or ``None``
+    for an empty completed cycle; the last outcome repeats.
+    """
+
+    def __init__(self, *outcomes: BaseException | object | None) -> None:
+        self._outcomes = list(outcomes)
         self.calls = 0
 
-    def run_once(self) -> dict[str, int]:
-        error = self._errors[min(self.calls, len(self._errors) - 1)]
+    def run_once(self) -> object:
+        outcome = self._outcomes[min(self.calls, len(self._outcomes) - 1)]
         self.calls += 1
-        if error is not None:
-            raise error
-        return {}
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return {} if outcome is None else outcome
+
+
+# The shape the real worker returns from its run_min_interval_seconds branch:
+# the full counters dict with throttled=1 and nothing done.
+_THROTTLED = {"examined": 0, "scan_failed": 0, "throttled": 1}
+_COMPLETED = {"examined": 12, "scan_failed": 0, "throttled": 0}
 
 
 def _coordinator(clock: _FakeClock) -> SessionBridgeCoordinator:
@@ -219,6 +229,105 @@ async def test_recovery_closes_the_record(
     assert "over=42s" in recoveries[0]
 
 
+@pytest.mark.asyncio
+async def test_a_throttled_call_after_a_fault_is_not_a_recovery(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The production shape of 2026-09-12, three for three.
+
+    The real worker stamps ``_last_run_at`` before its body can raise, so the
+    call 0-2s after a raise lands inside ``run_min_interval_seconds`` and
+    returns ``throttled=1`` having done nothing.  Before this pin that call
+    closed the record as ``post_scan_worker_recovered ... over=0s`` after
+    every diagnostic (23:18:06, 23:23:07/09, 23:27:57) while the leg kept
+    re-raising every 300s and its heartbeat stayed pinned.  The record must
+    stay open across the throttled call and close only on the first call
+    that ran to completion, with ``over=`` spanning the whole outage.
+    """
+    clock = _FakeClock()
+    coordinator = _coordinator(clock)
+    worker = DesktopRegistrySyncWorker(
+        ValueError("incomplete baseline: expected 1 roots, found 3"),
+        _THROTTLED,
+        _THROTTLED,
+        _COMPLETED,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        await coordinator._run_post_scan_worker(worker, _CODE)
+        clock.advance(2.0)
+        await coordinator._run_post_scan_worker(worker, _CODE)
+        assert _recoveries(caplog) == []
+        assert _CODE in coordinator._post_scan_worker_failures
+        clock.advance(3.0)
+        await coordinator._run_post_scan_worker(worker, _CODE)
+        assert _recoveries(caplog) == []
+        clock.advance(295.0)
+        await coordinator._run_post_scan_worker(worker, _CODE)
+
+    assert worker.calls == 4
+    recoveries = _recoveries(caplog)
+    assert len(recoveries) == 1
+    assert "worker=DesktopRegistrySyncWorker" in recoveries[0]
+    assert "failures=1" in recoveries[0]
+    assert "over=300s" in recoveries[0]
+    assert _CODE not in coordinator._post_scan_worker_failures
+
+
+@pytest.mark.asyncio
+async def test_a_throttled_call_does_not_lose_the_next_raise_either(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Raise, throttle, raise again: one fault, counted twice, never closed.
+
+    Pins that leaving the record open across the throttled call also keeps
+    the failure count and onset intact, so the eventual restatement reads
+    as one continuing outage rather than a series of one-cycle blips.
+    """
+    clock = _FakeClock()
+    coordinator = _coordinator(clock)
+    fault = ValueError("incomplete baseline: expected 1 roots, found 3")
+    worker = DesktopRegistrySyncWorker(fault, _THROTTLED, fault)
+
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        await coordinator._run_post_scan_worker(worker, _CODE)
+        clock.advance(2.0)
+        await coordinator._run_post_scan_worker(worker, _CODE)
+        clock.advance(298.0)
+        await coordinator._run_post_scan_worker(worker, _CODE)
+
+    assert _recoveries(caplog) == []
+    state = coordinator._post_scan_worker_failures[_CODE]
+    assert state["failures"] == 2
+    assert state["first_at"] == 1_000.0
+
+
+@pytest.mark.asyncio
+async def test_a_completed_result_of_another_shape_still_closes_the_record(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only the worker's own throttled flag holds the record open.
+
+    The sidebar executors return a dataclass, not a counters dict, and a
+    completed counters dict says ``throttled=0``.  Both are calls that ran,
+    so both must close a standing record exactly as before this change.
+    """
+    for completed in (object(), None, _COMPLETED, {"throttled": 0}):
+        caplog.clear()
+        clock = _FakeClock()
+        coordinator = _coordinator(clock)
+        worker = DesktopRegistrySyncWorker(ValueError("transient"), completed)
+
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            await coordinator._run_post_scan_worker(worker, _CODE)
+            clock.advance(7.0)
+            await coordinator._run_post_scan_worker(worker, _CODE)
+
+        recoveries = _recoveries(caplog)
+        assert len(recoveries) == 1, completed
+        assert "over=7s" in recoveries[0]
+
+
 # ------------------------------------------------------------- it stays quiet
 
 @pytest.mark.asyncio
@@ -243,6 +352,30 @@ async def test_a_healthy_worker_says_nothing(
     assert worker.calls == 5
     assert _diagnostics(caplog) == []
     assert _recoveries(caplog) == []
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_worker_being_throttled_says_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Throttled calls are the steady state: ~99 of every 100 at 3s vs 300s.
+
+    With no standing fault the throttled branch must be as silent as the
+    completed one, and must not manufacture a record either.
+    """
+    clock = _FakeClock()
+    coordinator = _coordinator(clock)
+    worker = DesktopRegistrySyncWorker(_COMPLETED, _THROTTLED)
+
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        for _ in range(5):
+            await coordinator._run_post_scan_worker(worker, _CODE)
+            clock.advance(3.0)
+
+    assert worker.calls == 5
+    assert _diagnostics(caplog) == []
+    assert _recoveries(caplog) == []
+    assert coordinator._post_scan_worker_failures == {}
 
 
 @pytest.mark.asyncio
