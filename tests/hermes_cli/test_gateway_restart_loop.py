@@ -840,7 +840,7 @@ class TestTerminalToolGatewayLifecycleGuard:
 
         assert result["exit_code"] == 1
 
-    @pytest.mark.skipif(os.name != "nt", reason="reserved device names are Windows-only")
+    @pytest.mark.windows_only
     def test_non_regular_referenced_script_fails_closed_windows_device(
         self, monkeypatch, tmp_path
     ):
@@ -852,6 +852,12 @@ class TestTerminalToolGatewayLifecycleGuard:
         resolves the reserved name ``NUL`` from ANY directory, and ``os.fstat``
         on it reports ``S_IFCHR`` -- verified on this box before this test was
         written, not assumed.
+
+        Marked ``windows_only`` rather than ``skipif(os.name != "nt")``: the
+        marker skips identically off-Windows (conftest ``_OS_MARKS``) AND is what
+        ``scripts/ci/list_os_marked_tests.py`` scans for, so it is what makes the
+        tests-os Windows lane import this file and actually RUN this test. A
+        hand-rolled skipif would be invisible to that scan.
         """
         import tools.terminal_tool as tt
 
@@ -1317,7 +1323,7 @@ class TestLifecycleGuardModule:
             launcher.as_posix()
         ) is True
 
-    @pytest.mark.skipif(os.name != "nt", reason="directory junctions are Windows-only")
+    @pytest.mark.windows_only
     def test_cloud_backed_junction_fails_closed_without_opening_target(
         self, tmp_path, monkeypatch
     ):
@@ -1330,6 +1336,12 @@ class TestLifecycleGuardModule:
         ``_is_cloud_placeholder_path`` assertion below is what keeps that true: it
         fails if the fixture ever stops being lexically clean, which would silently
         demote this to a duplicate of the lexical tests.
+
+        Marked ``windows_only`` rather than ``skipif(os.name != "nt")``: the
+        marker skips identically off-Windows (conftest ``_OS_MARKS``) AND is what
+        ``scripts/ci/list_os_marked_tests.py`` scans for, so it is what makes the
+        tests-os Windows lane import this file and actually RUN this test. A
+        hand-rolled skipif would be invisible to that scan.
         """
         import subprocess
 
