@@ -37,6 +37,52 @@ def _no_trigram(monkeypatch):
     monkeypatch.setenv("HERMES_DISABLE_MESSAGE_TRIGRAM", "1")
 
 
+_BOUNDARY_SKIP_REASON = (
+    "This branch preserves legacy inline FTS instead of converting it. Every test "
+    "below asserts the v31 -> v32 conversion to external content, which belongs to "
+    "the LOCAL migration history; the deployed branch runs the UPSTREAM domain "
+    "(SCHEMA_VERSION 30) where _init_fts branches on _db_has_legacy_inline_fts -- "
+    "shape, not version -- and deliberately leaves such a database alone: "
+    "'OPT-IN v23 boundary: a legacy v22 inline install keeps its inline schema + "
+    "triggers (the v23 DDL would create the trigram source VIEW and leave a mixed "
+    "state)'. Measured 2026-09-13: with the local-history stamp cleared so the "
+    "migration-domain guard is not what is being measured, messages_fts stays "
+    "CREATE VIRTUAL TABLE messages_fts USING fts5(content) and the "
+    "messages_fts_content shadow table survives. No renumbering makes these pass. "
+    "See loops wave2-schema-history-fixture-tests-20260913."
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _requires_the_external_content_conversion(tmp_path_factory):
+    """Skip this module unless the runtime actually performs the v31 conversion.
+
+    Deliberately BEHAVIOURAL rather than a version comparison, so it un-skips
+    itself: the day this branch adopts the conversion, the probe below sees an
+    external-content table and every test here runs again as written. A
+    ``skipif`` on SCHEMA_VERSION would have gone on hiding them forever.
+    """
+    probe = tmp_path_factory.mktemp("fts-conversion-probe") / "state.db"
+    _make_inline_v31(probe)
+    try:
+        db = SessionDB(db_path=probe)
+    except RuntimeError as exc:
+        # The fixture stamps the LOCAL v31 marker. An upstream-domain runtime
+        # refuses to open it at all, which is itself proof the conversion this
+        # module describes is not reachable here.
+        if "migration-domain conversion" not in str(exc):
+            raise
+        pytest.skip(_BOUNDARY_SKIP_REASON)
+    try:
+        declaration = db._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'messages_fts'"
+        ).fetchone()[0]
+    finally:
+        db.close()
+    if "content='messages_fts_source'" not in "".join((declaration or "").split()):
+        pytest.skip(_BOUNDARY_SKIP_REASON)
+
+
 def _seed(db_path: Path, count: int = 10) -> str:
     db = SessionDB(db_path=db_path)
     sid = db.create_session(session_id=str(uuid.uuid4()), source="cli")
