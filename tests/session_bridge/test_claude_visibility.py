@@ -686,3 +686,54 @@ def test_worktree_sources_are_excluded_only_when_opted_in() -> None:
         build_claude_visibility_candidate(
             worktree, eligible_at=20.0, exclude_worktree_sources=True
         )
+
+
+from session_bridge.claude_visibility import (
+    codex_rollout_originator,
+    is_codex_import_rollout,
+)
+
+
+def _rollout(tmp_path, originator, *, name="rollout.jsonl", first_type="session_meta"):
+    import json as _json
+
+    path = tmp_path / name
+    head = {"timestamp": "2026-09-09T17:38:40.252Z", "type": first_type,
+            "payload": {"id": "01a08740", "cwd": "C:/x", "originator": originator}}
+    path.write_text(_json.dumps(head) + "\n" + '{"type":"turn_context"}\n', encoding="utf-8")
+    return str(path)
+
+
+def test_codex_import_rollouts_are_recognised_by_originator(tmp_path) -> None:
+    assert is_codex_import_rollout(_rollout(tmp_path, "hermes-codex-import")) is True
+    assert is_codex_import_rollout(_rollout(tmp_path, "Codex Desktop", name="b.jsonl")) is False
+    assert codex_rollout_originator(_rollout(tmp_path, "codex_cli_rs", name="c.jsonl")) == "codex_cli_rs"
+    # Absent, unreadable, or not a session_meta head: NOT an import.
+    assert is_codex_import_rollout(str(tmp_path / "missing.jsonl")) is False
+    assert is_codex_import_rollout(None) is False
+    assert is_codex_import_rollout(
+        _rollout(tmp_path, "hermes-codex-import", name="d.jsonl", first_type="turn_context")
+    ) is False
+    unterminated = tmp_path / "e.jsonl"
+    unterminated.write_text('{"type":"session_meta","payload":{"originator":"hermes-codex-import"}}', encoding="utf-8")
+    assert is_codex_import_rollout(str(unterminated)) is False
+
+
+def test_codex_import_probe_reads_a_meta_line_longer_than_8kib(tmp_path) -> None:
+    """Real session_meta lines embed base_instructions and exceed 8 KiB."""
+    import json as _json
+
+    path = tmp_path / "long-meta.jsonl"
+    head = {
+        "timestamp": "2026-09-09T20:38:42.000Z",
+        "type": "session_meta",
+        "payload": {
+            "id": "01a087e4",
+            "cwd": "C:/x",
+            "originator": "hermes-codex-import",
+            "base_instructions": {"text": "x" * 40_000},
+        },
+    }
+    path.write_text(_json.dumps(head) + "\n", encoding="utf-8")
+
+    assert is_codex_import_rollout(str(path)) is True

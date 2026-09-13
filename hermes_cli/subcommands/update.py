@@ -66,4 +66,34 @@ def build_update_parser(subparsers, *, cmd_update: Callable) -> None:
         "--force-venv", action="store_true", default=False,
         help="Windows: mutate the venv even while other processes are running from its interpreter (desktop backend, gateway, terminals). Those processes keep native .pyd files locked, so the dependency sync will likely fail partway and strand the install half-updated. Use only if you know the detected holders are false positives.",
     )
-    update_parser.set_defaults(func=cmd_update)
+    # AGENT UPDATE GATE. Wraps the handler rather than living inside
+    # cmd_update, so a direct cmd_update(args) call -- which is how the test
+    # suite drives the apply path, from inside an agent session -- is
+    # unaffected. See hermes_cli/_agent_session.enforce_update_gate for why,
+    # and for what this does NOT protect against: the reset --hard that
+    # `hermes update` falls back to is destructive for a human operator too.
+    # DIVERGENCE GATE. Refuses the apply path when the ff-only pull cannot
+    # succeed, because the documented "reset --hard origin/<branch>" fallback
+    # then discards every local commit -- for a human operator exactly as much
+    # as for an agent, which is the hazard the agent gate above explicitly says
+    # it does not cover. See hermes_cli/_update_divergence for the measurement
+    # and for why renaming the remotes would not have fixed it.
+    # SHARED-STASH GATE. Refuses the apply path when its autostash would land on
+    # a stash stack shared with linked worktrees, because the ref it captures
+    # afterwards (`rev-parse refs/stash`) is the stack TIP rather than the entry
+    # it just wrote -- so a concurrent push from another worktree makes the
+    # update apply and then DROP a sibling's stash while silently orphaning the
+    # operator's own, all at exit 0. Ordered last of the three: it is the least
+    # severe (uncommitted changes, not commits), and on a diverged checkout it
+    # is reachable only via the divergence gate's own documented override, which
+    # is exactly the operator path that walks into it. See
+    # hermes_cli/_update_worktrees for the measurement.
+    def _gated_cmd_update(args):
+        from hermes_cli import _agent_session, _update_divergence, _update_worktrees
+
+        _agent_session.enforce_update_gate(args)
+        _update_divergence.enforce_divergence_gate(args)
+        _update_worktrees.enforce_shared_stash_gate(args)
+        return cmd_update(args)
+
+    update_parser.set_defaults(func=_gated_cmd_update)

@@ -651,6 +651,27 @@ def test_multi_part_assistant_answer_survives_the_trim() -> None:
     assert result.status == "visible"
 
 
+def test_a_hidden_registration_prompt_cannot_pass_validation() -> None:
+    """Pins the ordering hide_registration_prefix depends on: commit FIRST.
+
+    Once mirror_conversation hides the prompt (isMeta + hermesRegistration) the
+    adapter no longer projects it, so the exact transcript reads as an answer
+    with no prompt and _validate_projection rejects it as marker_conflict. That
+    is correct -- the gate must keep demanding the pasted prompt at index 0 --
+    and it is why the float worker hides prompts only for jobs already in
+    claude_visible, where _read_exact is never consulted again. If this test
+    ever passes "visible", the gate has been loosened and the hide could run
+    before commit; if the hide ever runs on a pending job, this is the failure
+    it produces.
+    """
+
+    item = claim()
+    base = projection_for(item)
+    result = _teardown_result(item, replace(base, messages=[base.messages[1]]))
+
+    assert result.status == "failed" and result.error_code == "marker_conflict"
+
+
 def test_launch_uses_interactive_mode_and_writes_prompt_then_exit() -> None:
     item = claim()
     process = FakePty(output="\x1b[?2004hClaude>\x1b[0m REGISTERED\r\n")

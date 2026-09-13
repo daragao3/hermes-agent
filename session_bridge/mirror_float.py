@@ -10,7 +10,12 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, MutableMapping
 
-from .mirror_conversation import MirrorConversationSync
+from .claude_visibility import visibility_sidebar_title
+from .mirror_conversation import (
+    MIRROR_CONVERSATION_STATE_KEY,
+    MirrorConversationSync,
+    first_mirrored_title_text,
+)
 from .models import Provider, canonical_session_id
 
 _LOG = logging.getLogger(__name__)
@@ -35,6 +40,13 @@ _RECENT_UNARCHIVED_SECONDS = 3 * 86_400
 # idle mirror would simply lose it again on the next pass, and the worker would
 # be fighting the user rather than tidying up after itself.
 _MIRROR_AUTO_ARCHIVE_STATE_KEY = "session-bridge:claude-visibility:mirror-auto-archive"
+# Title a registry record gets when the mirror's catalog row carries none and
+# the mirror has not mirrored a source turn yet. Diego called sidebar rows
+# wearing it ("[Bridge] C:\Users\diego\.hermes") meaningless on 2026-09-09,
+# so a mirror with at least one mirrored turn is titled from that turn instead
+# and a record still wearing this prefix is retitled ONCE (see
+# ClaudeMirrorFloatWorker._derive_mirror_title for the two conditions).
+_FALLBACK_TITLE_PREFIX = "[Bridge] "
 
 
 def default_ccd_sessions_base() -> Path | None:
@@ -257,6 +269,10 @@ class _RecordWriteConflict(Exception):
     """The live record changed during every bounded update attempt."""
 
 
+def _is_fallback_title(value: object) -> bool:
+    return isinstance(value, str) and value.startswith(_FALLBACK_TITLE_PREFIX)
+
+
 def _optimistic_transform_record(
     path: Path,
     transform: Callable[[MutableMapping[str, Any]], bool],
@@ -382,10 +398,12 @@ class ClaudeMirrorFloatWorker:
                 "registered": 0,
                 "archived": 0,
                 "hydrated": 0,
+                "retitled": 0,
                 "throttled": 1,
             }
         self._last_run_at = now
         examined = floated = skipped = registered = archived = hydrated = 0
+        retitled = 0
         registry_index = self._load_registry_index()
         already_archived = self._load_auto_archived_ids()
         newly_archived: set[str] = set()
@@ -402,6 +420,7 @@ class ClaudeMirrorFloatWorker:
                     mirror_registered,
                     mirror_archived,
                     mirror_hydrated,
+                    mirror_retitled,
                 ) = self._float_one(
                     row, registry_index, already_archived, newly_archived
                 )
@@ -419,6 +438,7 @@ class ClaudeMirrorFloatWorker:
             registered += int(mirror_registered)
             archived += int(mirror_archived)
             hydrated += int(mirror_hydrated)
+            retitled += int(mirror_retitled)
         if newly_archived:
             # Prune to mirrors still visible: a record that has left the visible
             # set can no longer be archived by this worker, so remembering it
@@ -444,6 +464,7 @@ class ClaudeMirrorFloatWorker:
             "registered": registered,
             "archived": archived,
             "hydrated": hydrated,
+            "retitled": retitled,
             "throttled": 0,
         }
 
@@ -474,7 +495,7 @@ class ClaudeMirrorFloatWorker:
         registry_index: dict[str, Path],
         already_archived: frozenset[str] | set[str] = frozenset(),
         newly_archived: set[str] | None = None,
-    ) -> tuple[bool, bool, bool, int]:
+    ) -> tuple[bool, bool, bool, int, bool]:
         claude_uuid = str(row["claude_uuid"])
         # _resolve_source_activity RAISES _MirrorFloatSkip when the source's
         # activity is unavailable, so an unknown-liveness mirror is skipped
@@ -503,22 +524,35 @@ class ClaudeMirrorFloatWorker:
             os.utime(native_path, (activity, activity))
             floated = True
 
+        # Hydrate BEFORE registering. A new record without a catalog title is
+        # titled from the first mirrored user turn, and the desktop app honours
+        # a record's fields at CREATION only (mutation is ignored while it
+        # runs), so the turn has to be on disk before the record is written.
+        hydrated = 0
+        if self._conversation_sync is not None:
+            hydrated = self._hydrate_conversation(row, mirror, claude_uuid, native_path)
+
         registered = False
         archived = False
+        retitled = False
         if self._registry_roots:
-            registered, record_floated, archived = self._ensure_registry_record(
+            (
+                registered,
+                record_floated,
+                archived,
+                retitled,
+            ) = self._ensure_registry_record(
                 canonical_id,
                 claude_uuid,
                 activity,
                 registry_index,
                 already_archived,
                 newly_archived,
+                source_session_id=str(row["source_session_id"]),
+                native_path=native_path,
             )
             floated = floated or record_floated
-        hydrated = 0
-        if self._conversation_sync is not None:
-            hydrated = self._hydrate_conversation(row, mirror, claude_uuid, native_path)
-        return floated, registered, archived, hydrated
+        return floated, registered, archived, hydrated, retitled
 
     def _hydrate_conversation(
         self,
@@ -556,12 +590,26 @@ class ClaudeMirrorFloatWorker:
         registry_index: dict[Path, dict[str, Path]],
         already_archived: frozenset[str] | set[str] = frozenset(),
         newly_archived: set[str] | None = None,
-    ) -> tuple[bool, bool, bool]:
+        source_session_id: str | None = None,
+        native_path: str | None = None,
+    ) -> tuple[bool, bool, bool, bool]:
         activity_ms = int(activity * 1000)
         session_row: Mapping[str, Any] | None = None
         registered = False
         floated = False
         archived = False
+        retitled = False
+        # Derived at most once per call: the transcript read behind it is
+        # only paid when a fallback title is actually in play (creation with
+        # no catalog title, or an existing record still wearing the fallback).
+        derived_title_cache: list[str | None] = []
+
+        def derived_title() -> str | None:
+            if not derived_title_cache:
+                derived_title_cache.append(
+                    self._derive_mirror_title(claude_uuid, source_session_id, native_path)
+                )
+            return derived_title_cache[0]
         # Same rule the creation branch below applies via
         # _RECENT_UNARCHIVED_SECONDS, only evaluated on EVERY cycle instead of
         # once. A mirror registered while its source was active previously kept
@@ -582,10 +630,12 @@ class ClaudeMirrorFloatWorker:
             index = registry_index.setdefault(root, {})
             existing = index.get(claude_uuid)
             if existing is None:
-                title = (
-                    session_row.get("title")
-                    or f"[Bridge] {session_row.get('cwd') or 'untitled session'}"
-                )
+                title = session_row.get("title") or derived_title()
+                if not title:
+                    title = (
+                        f"{_FALLBACK_TITLE_PREFIX}"
+                        f"{session_row.get('cwd') or 'untitled session'}"
+                    )
                 cwd = session_row.get("cwd") or ""
                 started_at = session_row.get("started_at")
                 created_ms = (
@@ -625,10 +675,31 @@ class ClaudeMirrorFloatWorker:
                 and claude_uuid not in already_archived
                 and activity <= archive_floor
             )
-            outcome = {"floated": False, "archived": False}
+            outcome = {"floated": False, "archived": False, "retitled": False}
 
             def settle(record: MutableMapping[str, Any]) -> bool:
                 changed = False
+                # One-time retitle of a record still wearing the fallback. Both
+                # guards are about never overwriting a title a person or the
+                # app chose: the prefix test (a retitled, renamed or
+                # app-titled record no longer matches, so this runs at most
+                # once per record) and lastFocusedAt (the app stamps it when
+                # the row is opened; an opened row is one Diego has seen under
+                # its current name). NOTE the desktop app ignores record
+                # MUTATION while running and reloads the files at app restart
+                # (agent memory reference_ccd_app_owns_session_state_files_are_
+                # downstream), so this branch only shows in the sidebar after
+                # a restart; the creation branch above is what gets a NEW row
+                # right first time.
+                if (
+                    _is_fallback_title(record.get("title"))
+                    and record.get("lastFocusedAt") is None
+                ):
+                    new_title = derived_title()
+                    if new_title and new_title != record.get("title"):
+                        record["title"] = new_title
+                        outcome["retitled"] = True
+                        changed = True
                 recorded_ms = record.get("lastActivityAt")
                 if (
                     not isinstance(recorded_ms, (int, float))
@@ -668,11 +739,67 @@ class ClaudeMirrorFloatWorker:
                 # conflicted. In both cases the current target remains authoritative.
                 continue
             floated = floated or bool(outcome["floated"])
+            retitled = retitled or bool(outcome["retitled"])
             if outcome["archived"]:
                 archived = True
                 if newly_archived is not None:
                     newly_archived.add(claude_uuid)
-        return registered, floated, archived
+        return registered, floated, archived, retitled
+
+    def _derive_mirror_title(
+        self,
+        claude_uuid: str,
+        source_session_id: str | None,
+        native_path: str | None,
+    ) -> str | None:
+        """Title from the first mirrored user turn, or None when there is none yet.
+
+        Consulted only where the ``[Bridge] <cwd>`` fallback would otherwise
+        stand. Two conditions, both fail toward the fallback: the hydration
+        ledger (``MIRROR_CONVERSATION_STATE_KEY``) must show at least one
+        mirrored turn for this mirror -- a never-hydrated mirror (lane off,
+        source unreadable) keeps the fallback rather than paying a transcript
+        read every cycle -- and the transcript must hold a mirrored turn that
+        reads as real text: the first meaningful USER turn, or, when the whole
+        mirror has none (chip- and import-driven sources whose user turns were
+        all envelopes), the first meaningful ASSISTANT turn. The text goes through
+        ``visibility_sidebar_title``, i.e. the same sanitiser and 120-char cap
+        the registration title gets, prefixed ``[Codex] `` or ``[Hermes] `` by
+        the SOURCE provider. Any failure is "no title yet"; the next cycle
+        retries because the record still wears the fallback.
+
+        The UPDATE of an existing record that this feeds (see ``settle`` in
+        ``_ensure_registry_record``) only reaches the sidebar after a desktop
+        app restart: the app ignores record mutation while it runs and reloads
+        the files when it starts. The creation path is unaffected.
+        """
+        if not source_session_id or not native_path:
+            return None
+        try:
+            ledger = self._store.get_state(MIRROR_CONVERSATION_STATE_KEY)
+        except Exception:
+            return None
+        if not isinstance(ledger, Mapping):
+            return None
+        entry = ledger.get(claude_uuid)
+        mirrored = entry.get("mirrored") if isinstance(entry, Mapping) else None
+        if isinstance(mirrored, bool) or not isinstance(mirrored, int) or mirrored < 1:
+            return None
+        try:
+            text = first_mirrored_title_text(Path(native_path))
+        except OSError:
+            return None
+        if text is None:
+            return None
+        provider = (
+            Provider.CODEX
+            if source_session_id.startswith(f"{Provider.CODEX.value}:")
+            else Provider.HERMES
+        )
+        try:
+            return visibility_sidebar_title(provider, text)
+        except ValueError:
+            return None
 
     def _publish_record(self, path: Path, record: Mapping[str, Any]) -> bool:
         return _publish_record_create_only(path, record)

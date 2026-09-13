@@ -515,7 +515,10 @@ def test_v32_database_repairs_same_named_malformed_v33_trigger_before_advancing(
     upgraded = hermes_state.SessionDB(db_path)
     try:
         conn = upgraded._conn
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == hermes_state.SCHEMA_VERSION
+        assert (
+            conn.execute("SELECT version FROM schema_version").fetchone()[0]
+            == hermes_state.SCHEMA_VERSION
+        )
         repaired_sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
             (trigger_name,),
@@ -699,7 +702,10 @@ def test_v32_database_adds_v2_attempt_zero_ledger_preserves_rows_and_reopens(
     upgraded = hermes_state.SessionDB(db_path)
     try:
         conn = upgraded._conn
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == hermes_state.SCHEMA_VERSION
+        assert (
+            conn.execute("SELECT version FROM schema_version").fetchone()[0]
+            == hermes_state.SCHEMA_VERSION
+        )
         assert tuple(
             conn.execute(
                 "SELECT id, source, started_at FROM sessions WHERE id = ?",
@@ -2104,6 +2110,7 @@ def test_desktop_registry_tables_exist_with_constraints(tmp_path):
             )
         }
         assert {
+            "desktop_registry_values",
             "desktop_registry_baselines",
             "desktop_registry_runs",
             "desktop_registry_conflicts",
@@ -2133,6 +2140,7 @@ def test_desktop_registry_tables_exist_with_constraints(tmp_path):
             )
         }
         assert "idx_desktop_registry_runs_state" in indexes
+        assert "idx_desktop_registry_baselines_value_hash" in indexes
 
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute(
@@ -2140,12 +2148,24 @@ def test_desktop_registry_tables_exist_with_constraints(tmp_path):
                 "(id, state, grouping_version, payload_json, created_at, updated_at) "
                 "VALUES ('r1', 'bogus-state', 1, '{}', 1.0, 1.0)"
             )
+        db._conn.execute(
+            "INSERT INTO desktop_registry_values (value_hash, value_json) "
+            "VALUES ('h1', '{}')"
+        )
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute(
                 "INSERT INTO desktop_registry_baselines "
-                "(filename, root_id, group_name, value_json, revision, updated_at) "
-                "VALUES ('a.json', 'root', 'field:title', '{}', 0, 1.0)"
+                "(filename, root_id, group_name, value_hash, revision, updated_at) "
+                "VALUES ('a.json', 'root', 'field:title', 'h1', 0, 1.0)"
             )
+        # A baseline may only reference a stored blob.
+        with pytest.raises(sqlite3.IntegrityError):
+            db._conn.execute(
+                "INSERT INTO desktop_registry_baselines "
+                "(filename, root_id, group_name, value_hash, revision, updated_at) "
+                "VALUES ('a.json', 'root', 'field:title', 'missing', 1, 1.0)"
+            )
+        db._conn.rollback()
     finally:
         db.close()
 
@@ -2182,10 +2202,13 @@ def test_desktop_registry_rows_survive_reopen(tmp_path):
     try:
         with db._lock:
             db._conn.execute(
+                "INSERT INTO desktop_registry_values (value_hash, value_json) "
+                "VALUES ('h-title', '{\"state\":\"present\",\"value\":\"T\"}')"
+            )
+            db._conn.execute(
                 "INSERT INTO desktop_registry_baselines "
-                "(filename, root_id, group_name, value_json, revision, updated_at) "
-                "VALUES ('a.json', 'root-1', 'field:title', "
-                "'{\"state\":\"present\",\"value\":\"T\"}', 3, 10.0)"
+                "(filename, root_id, group_name, value_hash, revision, updated_at) "
+                "VALUES ('a.json', 'root-1', 'field:title', 'h-title', 3, 10.0)"
             )
             db._conn.execute(
                 "INSERT INTO desktop_registry_runs "
@@ -2206,7 +2229,9 @@ def test_desktop_registry_rows_survive_reopen(tmp_path):
     reopened = hermes_state.SessionDB(db_path)
     try:
         baseline = reopened._conn.execute(
-            "SELECT value_json, revision FROM desktop_registry_baselines"
+            """SELECT v.value_json, b.revision
+               FROM desktop_registry_baselines AS b
+               JOIN desktop_registry_values AS v ON v.value_hash = b.value_hash"""
         ).fetchone()
         run = reopened._conn.execute(
             "SELECT state FROM desktop_registry_runs WHERE id = 'run-1'"

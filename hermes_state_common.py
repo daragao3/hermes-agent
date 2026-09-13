@@ -1,6 +1,7 @@
 """Shared constants and helpers for the SessionDB family of modules.  Lives outside hermes_state so
 the mixin modules can import it without a cycle."""
 
+import hashlib
 import sqlite3
 import threading
 import contextlib
@@ -730,6 +731,13 @@ CREATE INDEX IF NOT EXISTS idx_async_delegations_delivery
 DEFERRED_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_messages_session_active
     ON messages(session_id, active, timestamp);
+-- Deferred for the same reason: on a pre-v34 database the column does not
+-- exist until _apply_desktop_registry_values_migration has rebuilt the table,
+-- and an index on it inside BRIDGE_SCHEMA_SQL would fail that whole script.
+-- Makes "is this blob still referenced?" a point lookup, which is what lets
+-- the baseline upsert prune a superseded value without a table scan.
+CREATE INDEX IF NOT EXISTS idx_desktop_registry_baselines_value_hash
+    ON desktop_registry_baselines(value_hash);
 CREATE INDEX IF NOT EXISTS idx_messages_display_page
     ON messages(session_id, display_order, active DESC, id DESC)
     WHERE active = 1 OR compacted = 1;
@@ -1413,3 +1421,15 @@ def fts_rebuild_admission(db_path, *, timeout_seconds=None):
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         finally:
             handle.close()
+
+def desktop_registry_value_hash(value_json: str) -> str:
+    """Content address of one desktop-registry baseline group value.
+
+    SHA-256 of the canonical JSON text's UTF-8 bytes, as lowercase hex. The
+    text is canonical by construction (``session_bridge.desktop_registry``
+    emits it with sorted keys and fixed separators), so equal group values
+    always hash equal and the side table stores each distinct blob once.
+    """
+    if not isinstance(value_json, str):
+        raise TypeError("desktop registry value must be JSON text")
+    return hashlib.sha256(value_json.encode("utf-8")).hexdigest()

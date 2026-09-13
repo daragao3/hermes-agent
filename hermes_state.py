@@ -34,7 +34,7 @@ from hermes_state_common import escape_like as _escape_like, stat_db_file_identi
 from hermes_state_common import (  # noqa: F401 — re-export
     StateDbProbeTimeout, check_state_db_fts_integrity, _FTS_INDEX_TABLES,
     _arm_probe_deadline, _fts_indexes_present, _fts_integrity_check_sql,
-    _fts_integrity_reason, _is_interrupted_error,
+    _fts_integrity_reason, _is_interrupted_error, desktop_registry_value_hash,
 )
 from hermes_state_errors import (
     _DELETED_WAL_GENERATION_MSG, _DISK_IO_ERROR_MARKER, _STATE_DB_CORRUPT_MSG, _STATE_DB_GENERATION_KEY,
@@ -179,6 +179,7 @@ _READ_OPEN_RETRY_SECONDS = 60.0
 # Deliberately NOT for writable opens: a writer owns the transition, so an IOERR there is a real
 # storage/fd problem. A persistent IOERR still exhausts the budget and propagates.
 _READ_ONLY_IOERR_RETRY_ATTEMPTS, _READ_ONLY_IOERR_RETRY_BACKOFF_S = 3, 0.05
+
 
 
 def _default_db_path() -> Path:

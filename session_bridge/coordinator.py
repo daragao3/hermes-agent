@@ -33,6 +33,7 @@ from .claude_adapter import (
     encode_claude_cursor,
 )
 from .claude_visibility import (
+    is_codex_import_rollout,
     CLAUDE_VISIBILITY_EXCLUSION_CODES,
     ClaudeVisibilityCandidate,
     ClaudeVisibilityClaim,
@@ -616,12 +617,18 @@ class ClaudeVisibilityCoordinator:
             exclusions: list[ClaudeVisibilityExclusion] = []
             seen: set[tuple[str, Provider]] = set()
             worktree_excluded = self._config.claude_visibility.exclude_worktree_sources
+            imports_excluded = self._config.claude_visibility.exclude_codex_imports
             for source in ordered:
                 projection = source.projection
                 activity = float(projection.last_active)
                 if not math.isfinite(activity):
                     raise ValueError("activity must be finite")
                 key = (source.source_session_id, projection.provider)
+                import_echo = (
+                    imports_excluded
+                    and projection.provider is Provider.CODEX
+                    and is_codex_import_rollout(projection.native_path)
+                )
                 if key in seen:
                     reason = "duplicate_source"
                 elif activity < after:
@@ -629,7 +636,7 @@ class ClaudeVisibilityCoordinator:
                 else:
                     reason = evaluate_claude_visibility(
                         projection,
-                        automation_only=source.automation_only,
+                        automation_only=source.automation_only or import_echo,
                         subagent_only=source.subagent_only,
                         exclude_worktree_sources=worktree_excluded,
                     )
@@ -659,7 +666,7 @@ class ClaudeVisibilityCoordinator:
                     git_root=source.git_root,
                     git_head=source.git_head,
                     worktree_id=source.worktree_id,
-                    automation_only=source.automation_only,
+                    automation_only=source.automation_only or import_echo,
                     subagent_only=source.subagent_only,
                     exclude_worktree_sources=worktree_excluded,
                 )

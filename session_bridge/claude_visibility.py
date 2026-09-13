@@ -192,6 +192,51 @@ def is_agent_worktree_cwd(cwd: object) -> bool:
     return isinstance(cwd, str) and _AGENT_WORKTREE_CWD_RE.search(cwd) is not None
 
 
+# The official Codex importer (Settings > Import > Claude Code, "Keep imports
+# in sync") copies every Claude Code session into a Codex thread whose rollout
+# session_meta carries this originator. Registering those as visibility
+# sources mirrors a Claude session back into the Claude sidebar as a [Codex]
+# row -- an echo, not a Codex session the user started. Measured 2026-09-09:
+# 165 of 172 visible mirrors were import echoes; 7 were genuine Codex Desktop
+# threads. thread/list does not expose the originator, so the rollout head is
+# read (one line, bounded); an unreadable or absent head reads as NOT an
+# import, so a missing file never hides a real session.
+CODEX_IMPORT_ORIGINATOR = "hermes-codex-import"
+# The session_meta line carries the thread's full base_instructions (the
+# system prompt), so it runs to tens of KiB. Measured 2026-09-09: an 8 KiB
+# bound returned an UNTERMINATED head for every real rollout, the probe read
+# "not an import", and two echoes passed discovery. 4 MiB is a hard ceiling
+# against a pathological file, not a size we expect to read.
+_ROLLOUT_HEAD_BYTES = 4 * 1024 * 1024
+
+
+def codex_rollout_originator(native_path: object) -> str | None:
+    if not isinstance(native_path, str) or not native_path:
+        return None
+    try:
+        with open(native_path, "rb") as stream:
+            head = stream.readline(_ROLLOUT_HEAD_BYTES)
+    except OSError:
+        return None
+    if not head.endswith(b"\n"):
+        return None
+    try:
+        record = json.loads(head.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(record, dict) or record.get("type") != "session_meta":
+        return None
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    originator = payload.get("originator")
+    return originator if isinstance(originator, str) and originator else None
+
+
+def is_codex_import_rollout(native_path: object) -> bool:
+    return codex_rollout_originator(native_path) == CODEX_IMPORT_ORIGINATOR
+
+
 def evaluate_claude_visibility(
     projection: SessionProjection,
     *,
@@ -279,12 +324,7 @@ def build_claude_visibility_candidate(
     )
     if not isinstance(first_request, str):
         raise ValueError("Claude visibility request text must be a string")
-    title_provider = (
-        Provider.CLAUDE if projection.provider is Provider.CODEX else Provider.HERMES
-    )
-    sanitized = sidebar_title(title_provider, None, first_request)
-    if projection.provider is Provider.CODEX:
-        sanitized = "[Codex] " + sanitized.removeprefix("[Claude] ")
+    sanitized = visibility_sidebar_title(projection.provider, first_request)
     return ClaudeVisibilityCandidate(
         source_session_id=canonical_session_id(
             projection.provider, projection.native_id
@@ -298,6 +338,28 @@ def build_claude_visibility_candidate(
         worktree_id=_optional_metadata(worktree_id, "worktree id"),
         eligible_at=timestamp,
     )
+
+
+def visibility_sidebar_title(source_provider: Provider, first_request: str) -> str:
+    """The sidebar title a visibility mirror gets from its source's first request.
+
+    Runs the text through the same ``sidebar_title`` sanitiser every sidebar
+    row uses (NFKC, secret redaction, whitespace compaction, the 120-char cap
+    including the prefix), then swaps in the mirror prefix by SOURCE provider:
+    ``[Codex] `` or ``[Hermes] ``. Shared by the candidate builder (title from
+    the source catalog at registration) and the mirror float worker (title from
+    the first MIRRORED user turn when the catalog row carried none), so the two
+    can never disagree about what a mirror is called.
+    """
+    if source_provider not in (Provider.CODEX, Provider.HERMES):
+        raise ValueError("Claude visibility source provider must be Codex or Hermes")
+    title_provider = (
+        Provider.CLAUDE if source_provider is Provider.CODEX else Provider.HERMES
+    )
+    sanitized = sidebar_title(title_provider, None, first_request)
+    if source_provider is Provider.CODEX:
+        sanitized = "[Codex] " + sanitized.removeprefix("[Claude] ")
+    return sanitized
 
 
 def _visibility_user_contents(projection: SessionProjection) -> tuple[str, ...]:

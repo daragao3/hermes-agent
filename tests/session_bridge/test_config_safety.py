@@ -742,6 +742,7 @@ _CLAUDE_VISIBILITY_DEFAULTS = {
     "hydrate_conversation": False,
     "hydrate_backfill_messages": 400,
     "exclude_worktree_sources": False,
+    "exclude_codex_imports": False,
 }
 
 
@@ -818,6 +819,7 @@ def test_claude_visibility_config_parses_every_valid_override(
         "hydrate_conversation": True,
         "hydrate_backfill_messages": 50,
         "exclude_worktree_sources": True,
+        "exclude_codex_imports": True,
     }
 
     config = _load_with_claude_visibility(monkeypatch, configured)

@@ -31,6 +31,13 @@ earlier executor-shadow tick, that has not already had a PR attempted) --
 any other state, a VALIDATED request without a ``shadow`` artifact, or a
 VALIDATED request that already carries ``pr``/``pr_attempt`` evidence,
 refuses before the tick and before any PR client is constructed.
+
+executor-canary additionally REFUSES (exit 30) when it is typed from what
+looks like an agent session, before anything is parsed or opened. It is the
+only command here that acts outside this machine, and the machine-wide git
+guard cannot see a subprocess publish. Override with
+``HERMES_ALLOW_AGENT_CANARY_PR=1``; ``executor-shadow`` is never gated and
+does all the same work up to VALIDATED. See AGENT CANARY GATE below.
 """
 from __future__ import annotations
 
@@ -307,6 +314,154 @@ def _cmd_adopt_history(args) -> int:
     return 0 if result["errors"] == 0 else 1
 
 
+# -- AGENT CANARY GATE ------------------------------------------------------
+#
+# ``executor-canary`` is the ONE command in this package that performs a real
+# git publish (executor.py ``_stage_commit_push``) and opens a real GitHub PR.
+# Both calls are ``subprocess``/``gh`` invocations made INSIDE this package, so
+# they carry no git verb in the ARGV of anything an agent runs. The
+# machine-wide guard at ``~/.claude/hooks/block-destructive-git.py`` reads that
+# ARGV and therefore never sees them: no block, no pending id, no grant. A
+# content scan of launched scripts was measured over 436 of them on 2026-09-09
+# and rejected -- it fired on prose while missing the real callers, this one
+# included. Record: loops ``gitguard-script-file-argument-gap-20260909``.
+#
+# WHY THE GATE IS HERE AND NOT AT THE PUBLISH. Placement was decided by
+# measurement, not taste. ``tests/devflow_delegation/test_executor.py`` calls
+# ``run_executor_tick(mode="canary")`` ~20 times and
+# ``tests/devflow_delegation/test_cli.py`` drives ``cli.main(["executor-canary",
+# ...])`` end-to-end twice, both against a real temp git repo with a real local
+# bare remote -- so they DO reach ``_stage_commit_push`` and DO publish there.
+# The suite itself runs inside an agent session. A gate reading ambient
+# environment in ``_stage_commit_push``, ``run_executor_tick`` or ``main()``
+# would fail every one of those. That is not hypothetical: the same mistake in
+# the sibling ``hermes update`` gate turned 7 failures into 41 before it was
+# moved to the dispatch seam.
+#
+# So the seam is the TYPED-COMMAND boundary -- the ``__main__`` block below,
+# which ``python -m devflow_delegation.cli ...`` reaches and an in-process
+# ``cli.main([...])`` does not. The accident worth preventing is an agent
+# TYPING the command; a programmatic caller injecting a fake PR client is
+# already doing something deliberate. Nothing has been parsed, opened or
+# mutated when this runs, so a refusal is inert by construction -- and a gate
+# that is somehow missed still dies at the allowlist's own three disabled
+# flags rather than publishing quietly.
+#
+# NOT AN AUTHORIZATION BOUNDARY, and it cannot be one: anything that can run
+# the command can set the override. Like the hook it complements, it stops an
+# ACCIDENT. Codex sessions are NOT detected -- their environment has never been
+# measured on this box, and a guessed marker that never fires is worse than a
+# documented gap.
+#
+# The detector is IMPORTED from ``hermes_cli._agent_session`` rather than
+# copied. ``scripts/release.py`` carries the one deliberate duplicate (it runs
+# standalone and cannot import the package); this module is already inside the
+# tree, so a third copy would only be a third thing to drift. The exit code is
+# shared for the same reason: one number means one thing across the family
+# (``hermes update``, ``scripts/release.py``, jobflow-platform's
+# ``scripts/ops/refresh-ci-snapshot.ps1``, and this).
+
+#: Set to any non-empty value to run the canary anyway. Deliberately DISTINCT
+#: from the ``hermes update`` override: authorizing a self-update must never
+#: also authorize publishing a branch and opening a PR on someone's repo.
+CANARY_OVERRIDE_ENV = "HERMES_ALLOW_AGENT_CANARY_PR"
+
+#: The subcommand this gate guards. Every other subcommand in this CLI is
+#: local-only (``executor-shadow`` in particular is documented as unable to
+#: publish or open a PR), so gating them would be pure friction.
+_GATED_SUBCOMMAND = "executor-canary"
+
+
+def _subcommand_of(argv) -> str:
+    """The subcommand in ``argv``, or "" when there is none.
+
+    The first token that is not an option IS the subcommand for this parser:
+    it defines no top-level flags of its own beyond ``-h``, so argparse
+    requires the subcommand first in every argv it accepts. A token that only
+    LOOKS like a subcommand because it is some other flag's value therefore
+    cannot be reached before a real one, and an argv where it could be is one
+    argparse would reject anyway.
+    """
+    for token in argv or ():
+        if not str(token).startswith("-"):
+            return str(token)
+    return ""
+
+
+def canary_refusal_lines(evidence) -> list:
+    """The refusal, as lines. Separated from printing so tests can read it."""
+    lines = [
+        "",
+        "=" * 72,
+        "  REFUSED: 'executor-canary' from what looks like an agent session",
+        "=" * 72,
+        "",
+    ]
+    lines += ["  * %s" % item for item in evidence]
+    lines += [
+        "",
+        "Nothing has been read, leased, built, committed, published or opened.",
+        "",
+        "WHY. This is the only command here that acts outside this machine: it",
+        "publishes a branch to the allowlist target's own remote from a fresh",
+        "worktree, then opens a real GitHub PR. Both run as subprocesses inside this",
+        "package, so the machine-wide git guard never sees them -- there is no block,",
+        "no pending id and no grant to mint.",
+        "",
+        "DO THIS INSTEAD:",
+        "",
+        "  1. Everything except the publish and the PR, which is NOT gated:",
+        "         python -m devflow_delegation.cli executor-shadow --request-id <RID>",
+        "     It builds the worktree, runs the implementation command and fully",
+        "     validates -- it just stops at VALIDATED and records a shadow artifact.",
+        "     A canary can then RESUME that same request, so this is not wasted work.",
+        "",
+        "  2. Leave the canary to Diego, who can see which repo is about to receive a",
+        "     branch and a PR.",
+        "",
+        "OVERRIDE. If Diego has authorized THIS canary:  %s=1 ..." % CANARY_OVERRIDE_ENV,
+        "  It is not a way around the grant -- it is the operator standing in for one.",
+        "",
+        "READ THIS EVEN IF YOU ARE A HUMAN WHO HIT THIS BY ACCIDENT.",
+        "The target is the allowlist entry's own 'remote', which is whatever that",
+        "checkout's git config says -- NOT necessarily a repo you own. Check before",
+        "overriding:",
+        "",
+        "    git -C <target.checkout_path> remote -v",
+        "",
+    ]
+    return lines
+
+
+def enforce_canary_agent_gate(argv, *, environ=None, cwd=None, printer=print) -> None:
+    """Refuse ``executor-canary`` from an agent session.
+
+    Returns normally when the command may proceed; raises ``SystemExit`` with
+    the family's shared exit code otherwise. Both ``environ`` and ``cwd`` are
+    parameters rather than reads of the ambient process so the tests can drive
+    every branch -- including the NEGATIVE case, which cannot otherwise be
+    expressed from inside an agent session.
+    """
+    import os
+
+    from hermes_cli._agent_session import (
+        EXIT_REFUSED_AGENT_ACTION,
+        agent_session_evidence,
+    )
+
+    if _subcommand_of(argv) != _GATED_SUBCOMMAND:
+        return
+    env = os.environ if environ is None else environ
+    if str(env.get(CANARY_OVERRIDE_ENV, "") or "").strip():
+        return
+    evidence = agent_session_evidence(environ=env, cwd=cwd)
+    if not evidence:
+        return
+    for line in canary_refusal_lines(evidence):
+        printer(line)
+    raise SystemExit(EXIT_REFUSED_AGENT_ACTION)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="devflow_delegation")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -386,4 +541,7 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # Gate FIRST -- before argparse, before any import of the executor,
+    # before the ledger is opened. See AGENT CANARY GATE above.
+    enforce_canary_agent_gate(sys.argv[1:])
     raise SystemExit(main())
