@@ -28,9 +28,30 @@ from __future__ import annotations
 
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 _VALID_MARKERS = ("linux_only", "macos_only", "windows_only")
+
+#: Threads used for the content scan.
+#:
+#: The scan is ~4,400 file opens over ~49 MB and its cost is per-open latency,
+#: not CPU and not disk bandwidth -- on Windows the antivirus filter driver
+#: runs on every open. Measured on this tree: ``rglob`` takes 0.2-0.6 s while
+#: the serial read loop takes 30-37 s in a warm checkout and over 120 s in a
+#: freshly created worktree, whose files no process has opened yet. Python
+#: releases the GIL for the duration of a read, so a small pool overlaps those
+#: waits and recovers almost all of it: 31.6 s -> 2-4 s here.
+#:
+#: Deliberately a small constant rather than scaled to the CPU count, and 8 is
+#: measured rather than picked. Sweeping cold subtrees of this repo -- content
+#: never read, which is the freshly-created-worktree case that actually hurts --
+#: the scan rate peaks at 8 and falls off after it: 1 worker 48 files/s, 8
+#: workers 928, 16 workers 516, 32 workers 576. What is overlapped is
+#: *waiting*, not computing, so once the device's queue is saturated more
+#: threads only add contention. On a warm tree every count from 4 to 32 lands
+#: inside run-to-run noise, so it is the cold numbers that chose this value.
+_SCAN_THREADS = 8
 
 
 def find_marked_files(marker: str, root: Path) -> list[Path]:
@@ -42,15 +63,22 @@ def find_marked_files(marker: str, root: Path) -> list[Path]:
     module-level ``pytestmark`` form.
     """
     pattern = re.compile(rf"\b{re.escape(marker)}\b")
-    hits: list[Path] = []
-    for path in sorted(root.rglob("test_*.py")):
+    paths = sorted(root.rglob("test_*.py"))
+
+    def matches(path: Path) -> bool:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
-            continue
-        if pattern.search(text):
-            hits.append(path)
-    return hits
+            return False
+        return pattern.search(text) is not None
+
+    # ``Executor.map`` yields results in SUBMISSION order, not completion order,
+    # so pairing it back against ``paths`` preserves the sort without a second
+    # sort, and the output stays byte-identical to the old serial loop. Do not
+    # swap this for ``as_completed``, which would silently scramble the order
+    # this module's docstring promises; ``test_output_is_sorted`` pins it.
+    with ThreadPoolExecutor(max_workers=_SCAN_THREADS) as pool:
+        return [path for path, hit in zip(paths, pool.map(matches, paths)) if hit]
 
 
 def main(argv: list[str]) -> int:
