@@ -41,9 +41,26 @@ def pytest_collection_modifyitems(config, items):  # noqa: D401 - pytest hook
     skip_docker = pytest.mark.skip(
         reason="Docker not available or daemon not running",
     )
+    # The "timeout bump" this docstring promises was added by a18f69eb55 and
+    # silently dropped by c918d07b50's refactor, which took the marker and the
+    # module-docstring paragraph but left the promise here. Without it the
+    # pyproject-wide ``--timeout=30`` cap applies, and since pytest-timeout
+    # charges session-scoped fixture setup to the FIRST test that requests it,
+    # ``built_image``'s ``docker build`` is killed at 30s -- so the whole
+    # directory was unrunnable on any host that actually HAS docker (it only
+    # looked green where the skip above fired).
+    #
+    # Sized ABOVE built_image's own 1200s subprocess budget on purpose: an
+    # outer cap below the inner one preempts the build's own clean
+    # "docker build failed" assertion, and ``--timeout-method=thread`` cannot
+    # interrupt a blocked ``subprocess.wait`` anyway -- it dumps a stack
+    # ending in ``threading._wait_for_tstate_lock``, which is exactly the
+    # misleading traceback this red presented as.
+    extend_timeout = pytest.mark.timeout(1800)
     for item in items:
         if "tests/docker/" not in str(item.fspath).replace(os.sep, "/"):
             continue
+        item.add_marker(extend_timeout)
         if not docker_ok:
             item.add_marker(skip_docker)
 

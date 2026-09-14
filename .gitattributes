@@ -9,6 +9,19 @@ Dockerfile  text eol=lf
 *.dockerfile text eol=lf
 docker/entrypoint.sh text eol=lf
 
+# s6-overlay service definitions and cont-init hooks are EXTENSIONLESS
+# (type, run, finish, dependencies.d/*, contents.d/*, 0NN-*), so not one of
+# the patterns above matches them and core.autocrlf=true rewrites every one
+# on a Windows checkout. The Dockerfile COPYs them into the image (lines
+# ~350/364/365), where a trailing CR makes s6-rc-compile die with
+#   fatal: invalid /etc/s6-overlay/s6-rc.d/dashboard/type:
+#          must be oneshot, longrun, or bundle
+# and the container then HANGS instead of exiting -- and a CR equally breaks
+# the shebang in the run/finish/cont-init scripts. The committed bytes were
+# always LF; only the checkout was wrong, so this rule is the entire fix.
+docker/s6-rc.d/** text eol=lf
+docker/cont-init.d/** text eol=lf
+
 # Enforce LF for all source/text files. Windows editors and tools default to
 # CRLF; without normalization a Windows contributor's edit turns into a
 # whole-file phantom diff (every line "changed" by its ending), breaks

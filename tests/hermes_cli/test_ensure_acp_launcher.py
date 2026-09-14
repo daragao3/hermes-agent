@@ -7,6 +7,7 @@ launcher from ``scripts/install.sh``; existing installs get it from
 """
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,15 @@ def fake_home(tmp_path, monkeypatch):
 
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="_ensure_acp_launcher returns immediately on win32 "
+           "(update_cmd_maint.py), so both assertions below would hold "
+           "VACUOUSLY -- the console script is untouched and the link is "
+           "still a link precisely because production never ran. Gated on the "
+           "platform, NOT on symlink-creation capability: enabling Developer "
+           "Mode would make the symlink creatable and bank a vacuous green.",
+)
 def test_does_not_follow_symlink_into_venv(fake_home, tmp_path):
     """#21454 failure mode: never write through a symlinked hermes-acp."""
     (fake_home / "hermes").write_text("#!/bin/sh\n", encoding="utf-8")
