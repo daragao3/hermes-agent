@@ -1145,11 +1145,24 @@ class GatewaySlashCommandsMixin(
             return EphemeralReply(
                 f"Unknown mode `{arg}`. Use `/busy queue`, `/busy steer`, or `/busy interrupt`.")
 
-        # Persist before mutate
+        # Persist before mutate.
+        #
+        # Target the ROUTED profile's home when this /busy came in on a secondary
+        # profile. cli._resolve_hermes_home deliberately does not follow
+        # _profile_runtime_scope's override (see its docstring), so without an
+        # explicit home this write lands in the DEFAULT profile's config.yaml:
+        # a routed /busy silently changed the default profile's mode and left the
+        # profile the user was actually talking to unchanged. That is the bug
+        # test_multiplex_busy_input_mode::test_busy_change_updates_only_routed_profile
+        # has asserted since 8d1d193f11 ("apply busy mode per profile"), which
+        # added the per-profile snapshot refresh below but never moved the write.
+        # Passing the home explicitly keeps the global resolution rule intact --
+        # the redirection is visible here, at the one call site that means it.
         from cli import save_config_value
-        if not save_config_value("display.busy_input_mode", arg):
-            return EphemeralReply("Busy input mode could not be saved to config. Mode unchanged.")
         profile_name = self._busy_profile_name_for_source(event.source)
+        _target_home = self._profile_home_or_none(profile_name) if profile_name else None
+        if not save_config_value("display.busy_input_mode", arg, home=_target_home):
+            return EphemeralReply("Busy input mode could not be saved to config. Mode unchanged.")
         if profile_name:
             from gateway.run import _load_gateway_runtime_config
             self._snapshot_profile_busy_modes(profile_name, _load_gateway_runtime_config())

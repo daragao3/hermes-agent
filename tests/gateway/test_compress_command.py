@@ -484,7 +484,18 @@ async def test_compress_command_cleanup_does_not_block_event_loop():
     def _observer():
         # threading.Event wait does not need the event loop. Sample ticks
         # while close() is still held so an on-loop teardown is visible.
-        if not close_started.wait(timeout=5):
+        #
+        # This budget spans everything _handle_compress_command does BEFORE it
+        # reaches the cleanup in its finally -- config load, building the
+        # throwaway agent, the compression itself -- none of which this test is
+        # measuring. At 5s it raced that unrelated setup on a loaded box and
+        # reported "close() never started" even though close() did start (probed:
+        # close_started was set by the end of the test, and the compression had
+        # produced its reply). Generous on purpose: nothing can hang on it, since
+        # slow_close is bounded and every observer path sets release_close, and a
+        # close() that genuinely never happens still fails here with the same
+        # message.
+        if not close_started.wait(timeout=60):
             observed["error"] = "close() never started"
             release_close.set()
             return
