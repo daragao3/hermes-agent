@@ -398,3 +398,109 @@ class K(Base, metaclass=M):
     scoped = _ccp._scope_map(dense, set())
     unscoped = [type(n).__name__ for n in ast.walk(dense) if n not in scoped]
     assert unscoped == [], f"_scope_map did not reach: {sorted(set(unscoped))}"
+
+
+# --------------------------------------------------------------------------
+# The walk itself.
+#
+# SKIP_DIRS used to filter ``rglob``'s OUTPUT, which decides what is scanned but
+# not what is entered. The walk still descended every one of .claude's ~20
+# sibling worktrees and their node_modules/.venv. Measured 2026-09-13 from the
+# deployed checkout: a sibling deleting a tree mid-walk crashed the whole gate
+# with FileNotFoundError -- traceback, exit 1, indistinguishable from a real hit.
+# A bare pathlib rglob over that tree reproduces it with none of our code
+# involved, so the descent is the defect, not the filtering.
+# --------------------------------------------------------------------------
+
+
+def test_skipped_top_level_dirs_are_not_descended(tree: Path, monkeypatch) -> None:
+    _write(tree, ".claude/worktrees/sibling/node_modules/deep/x.py", "y = 1\n")
+    _write(tree, "tests/test_real.py", "z = 1\n")
+
+    seen: list[str] = []
+    real_walk = os.walk
+
+    def spy(top, **kw):
+        for dirpath, dirnames, filenames in real_walk(top, **kw):
+            seen.append(dirpath)
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(ccp.os, "walk", spy)
+    scanned = [p.name for p in ccp._py_files()]
+
+    assert "test_real.py" in scanned
+    # POSITIVE CONTROL, and it is load-bearing. An implementation that does not
+    # use os.walk at all (the rglob version this replaced) never calls the spy,
+    # so ``seen`` is empty and the real assertion below passes vacuously --
+    # "walked into nothing" and "walked nowhere" print the same empty list.
+    assert str(tree) in seen, "the spy never ran: _py_files is not walking via os.walk"
+    assert len(seen) > 1, f"the walk never descended anywhere: {seen}"
+    entered = [d for d in seen if ".claude" in Path(d).parts]
+    assert entered == [], f"walked into a skipped tree: {entered}"
+
+
+def test_a_vanishing_directory_warns_and_does_not_crash(tree: Path, monkeypatch, capsys) -> None:
+    """os.walk swallows these by default, which would shrink coverage in silence."""
+    _write(tree, "tests/test_real.py", "z = 1\n")
+
+    real_walk = os.walk
+
+    def spy(top, **kw):
+        kw["onerror"](FileNotFoundError(3, "The system cannot find the path specified",
+                                        str(Path(top) / "gone")))
+        yield from real_walk(top, **{k: v for k, v in kw.items() if k != "onerror"})
+
+    monkeypatch.setattr(ccp.os, "walk", spy)
+    scanned = [p.name for p in ccp._py_files()]
+
+    assert "test_real.py" in scanned, "the walk stopped at the unreadable directory"
+    assert "warning: skipping unreadable directory" in capsys.readouterr().err
+
+
+def test_the_walk_yields_the_same_files_the_old_rglob_filter_did(tree: Path) -> None:
+    """Pruning is TOP-LEVEL ONLY, matching the parts[0] test it replaced.
+
+    This one PASSES against the old implementation too, by construction -- it is an
+    equivalence pin, not a regression test. Its job is to fail if someone later
+    "optimises" the prune to every level.
+
+    Pruning at every level would also drop e.g. plugins/x/node_modules, which this
+    checker has always scanned -- that would be a silent coverage change wearing a
+    speedup's clothes.
+    """
+    _write(tree, "node_modules/skipped.py", "a = 1\n")
+    _write(tree, ".venv.stale.runtime-1789271054-10452-d8c3c174/L/x.py", "g = 1\n")
+    _write(tree, ".claude/worktrees/s/skipped.py", "b = 1\n")
+    _write(tree, "plugins/x/node_modules/kept.py", "c = 1\n")
+    _write(tree, "tests/kept.py", "d = 1\n")
+    _write(tree, "scripts/check_compat_pointers.py", "e = 1\n")
+    _write(tree, "tests/test_plugin_compat_notice.py", "f = 1\n")
+
+    def old_rglob_filter():
+        for p in tree.rglob("*.py"):
+            parts = p.relative_to(tree).parts
+            if ccp._is_skipped_top_level(parts[0]) or p.name == "check_compat_pointers.py":
+                continue
+            if p.name in ccp._COMPAT_OWN_TESTS:
+                continue
+            yield p
+
+    assert {p.resolve() for p in ccp._py_files()} == {p.resolve() for p in old_rglob_filter()}
+def test_abandoned_virtualenvs_are_skipped_by_prefix(tree: Path, capsys) -> None:
+    """``.venv.stale.runtime-<epoch>-<pid>-<hex>`` cannot be matched literally.
+
+    Two of them held 45,345 of the 51,733 .py files in the deployed checkout on
+    2026-09-13 -- 88% of the walk, all site-packages, against 6,388 first-party
+    files. The repo's own .gitignore already carries ``/.venv.stale.runtime-*/``,
+    so this is the existing ``.venv`` intent reaching a name it could not match
+    literally, not a new exclusion policy.
+    """
+    _write(tree, ".venv.stale.runtime-1789271054-10452-d8c3c174/Lib/site-packages/p.py", """
+from unittest.mock import patch
+patch("run_agent.OpenAI")
+""")
+    rc, out = _run(capsys)
+    assert rc == 0, f"scanned an abandoned virtualenv:{chr(10)}{out}"
+    assert ccp._is_skipped_top_level(".venv.stale.runtime-1789271054-10452-d8c3c174")
+    assert not ccp._is_skipped_top_level("venv_helpers"), "prefix match is too greedy"
+    assert not ccp._is_skipped_top_level("tests")
