@@ -31,6 +31,14 @@ def test_refused_input_commits_failed_mailbox_receipt(tmp_path):
         "_TurnRun": prompt_turn._TurnRun,
         "_record_turn_marker": lambda *args, **kwargs: "marker",
         "_prepare_turn_input": lambda *args: None,
+        # The turn thread captures the notification db path at the TOP of run(), before
+        # the try/except that commits the receipt -- a deliberate fork ordering, pinned by
+        # tests/tui_gateway/test_post_turn_drain_db_binding.py::
+        # test_the_capture_precedes_the_per_turn_home_override. rebind() hands the body an
+        # explicit namespace, so a global missing from this dict is a NameError raised
+        # OUTSIDE that try: the receipt is never committed and the delivery stays "claimed"
+        # while the only trace is a "[gateway-crash] thread ... raised NameError" on stderr.
+        "_capture_notification_db_path": lambda: None,
         "_finish_turn": noop, "_clear_inflight_turn": noop,
         "_retire_turn_marker": lambda *args: retired.append(args),
         "_emit_settled_session_info": noop,

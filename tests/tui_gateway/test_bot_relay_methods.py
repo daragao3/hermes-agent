@@ -127,6 +127,17 @@ def test_deliver_lands_in_live_bot_chat_instead_of_subprocess(home, monkeypatch)
             spawned.append(argv)
         return _Proc()
 
+    # Warm platform.uname()'s one-shot stdlib cache BEFORE the fake is installed.
+    # _session_live_title -> _session_db -> hermes_state_registry.acquire ->
+    # hermes_state_dbfile.quarantine_cross_process_lock calls platform.system(), and on
+    # Windows the first uname() in a process shells out to `ver` (platform._syscmd_ver).
+    # That probe is a subprocess.run the handler never asked for: it lands in _fake_run and
+    # reads as a CLI spawn. It is a RACE, not a fixed order -- the server module's import-time
+    # update prefetch also touches platform on its daemon thread, so whether the cache is
+    # already warm when this test runs decides pass/fail (measured 2/4 either way).
+    import platform
+    platform.uname()
+
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setitem(
         srv._methods, "prompt.submit", lambda rid, p: submitted.append(p) or srv._ok(rid, {"status": "streaming"})
@@ -165,6 +176,7 @@ def test_reply_roundtrip_and_id_validation(home):
 def test_deliver_write_failure_still_removes_tempfile(home, monkeypatch, tmp_path):
     """A failed payload write must not leak the relay DM tempfile."""
     import glob
+    import os
     import tempfile as _tempfile
 
     made = []
@@ -177,17 +189,31 @@ def test_deliver_write_failure_still_removes_tempfile(home, monkeypatch, tmp_pat
         return fd, path
 
     class _BrokenWriter:
+        """Stands in for the real file object os.fdopen returns -- including fd ownership.
+
+        The real object closes the descriptor on ``__exit__`` even when ``write``
+        raises, and on Windows that close is load-bearing: ``os.unlink`` on a file
+        whose handle is still open fails with PermissionError (WinError 32), which
+        the handler's ``contextlib.suppress(OSError)`` swallows. A mock that keeps
+        the fd open therefore manufactures the very leak this test asserts against
+        -- on Windows only; on POSIX the unlink succeeds regardless.
+        """
+
+        def __init__(self, fd):
+            self._fd = fd
+
         def __enter__(self):
             return self
 
         def __exit__(self, *exc_info):
+            os.close(self._fd)
             return False
 
         def write(self, content):
             raise OSError("disk full")
 
     monkeypatch.setattr("tempfile.mkstemp", _tracking_mkstemp)
-    monkeypatch.setattr("os.fdopen", lambda *a, **k: _BrokenWriter())
+    monkeypatch.setattr("os.fdopen", lambda fd, *a, **k: _BrokenWriter(fd))
     err = srv._methods["bot_relay.deliver"](1, {"profile": "ops", "message": "x"})
     assert "error" in err
     assert made, "mkstemp was never reached"
