@@ -849,6 +849,27 @@ class TestNotificationDeliveredReverseSignal:
         assert escalator._throttle_buffer == []
         assert bus.query(event_type=EventType.NOTIFICATION_FAILED) == []
 
+    def test_does_not_consume_notification_suppressed_events(
+        self, bus, quiet_config, queue_path,
+    ):
+        """The Telegram notifier's guard-drop audit record (2026-09-13) is
+        routed wa="none" already; the _NEVER_CONSUME entry is the
+        defense-in-depth that survives a future tier-mapping change."""
+        sent = []
+        escalator = WhatsAppEscalator(
+            bus, quiet_config_path=quiet_config, queue_path=queue_path,
+            send_fn=lambda msg: sent.append(msg),
+        )
+        escalator.handle(Event.create(
+            EventType.NOTIFICATION_SUPPRESSED, "telegram-notifier",
+            {"original_event_id": "abc-123", "guard": "repeat_guard",
+             "platform": "telegram",
+             "target": {"chat_id": "-1", "thread_id": "100"}},
+            priority=Priority.CRITICAL,  # even a mis-prioritized record
+        ))
+        assert sent == []
+        assert escalator._throttle_buffer == []
+
     def test_throttled_delivery_does_not_emit_per_event(
         self, bus, tmp_path, queue_path,
     ):

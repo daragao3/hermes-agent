@@ -100,6 +100,10 @@ AGENT_ERROR_CLUSTER_THRESHOLD = 3
 _NEVER_CONSUME = frozenset({
     EventType.NOTIFICATION_DELIVERED,
     EventType.NOTIFICATION_FAILED,
+    # The Telegram notifier's guard-drop audit record (2026-09-13). Routed
+    # wa="none" already; listed here for the same defense-in-depth reason
+    # as its two siblings.
+    EventType.NOTIFICATION_SUPPRESSED,
 })
 
 

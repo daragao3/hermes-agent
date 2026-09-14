@@ -78,6 +78,10 @@ DIGEST_EVENT_TYPES = frozenset({
 _NEVER_CONSUME = frozenset({
     EventType.NOTIFICATION_DELIVERED,
     EventType.NOTIFICATION_FAILED,
+    # Emitted from handle() itself when a guard drops a deliverable event
+    # (2026-09-13). Consuming it would route the suppression record back
+    # through the same guards -- the same cycle the two above guard against.
+    EventType.NOTIFICATION_SUPPRESSED,
 })
 
 CRON_SUMMARY_MAX_LINES = 24
@@ -200,6 +204,9 @@ class TelegramNotifier(BaseSubscriber):
         # v3 noise guards (P4/P6). In-memory: a restart re-arms them, which
         # at worst re-delivers one repeat/flap announcement per key.
         self._repeat_guard = RepeatGuard()
+        # Deliverable events a guard dropped this process lifetime; every
+        # drop also lands on the bus as NOTIFICATION_SUPPRESSED (2026-09-13).
+        self.suppressed_count = 0
         # 2h flap window + 2h base mute (escalating to 24h): the WhatsApp
         # bridge flapped for DAYS at ~hourly cadence — a 15-min window
         # never saw 4 transitions, so every flip delivered. 4 flips in 2h
@@ -434,6 +441,15 @@ class TelegramNotifier(BaseSubscriber):
                 and not keyed_stale  # already guarded by exact execution identity
                 and self._repeat_guard.is_repeat(
                     thread_id, message, sliding=not sustained_critical)):
+            # Until 2026-09-13 this drop was invisible: no bus row, no log
+            # line. The audit record is what lets "5 of 57 reached Telegram"
+            # be measured from the bus instead of reconstructed by hand.
+            self._safe_emit_suppressed(
+                event, route, thread_id, topic_key,
+                guard="repeat_guard",
+                window_seconds=self._repeat_guard.window_seconds,
+                sliding=not sustained_critical,
+            )
             return
 
         if route.batch:
@@ -984,6 +1000,57 @@ class TelegramNotifier(BaseSubscriber):
                     chat_id, thread_id, topic_key, latency_ms, batch_count, exc, batch_context,
                 )
             return False
+
+    def _safe_emit_suppressed(
+        self,
+        event: Event,
+        route: Route,
+        thread_id: str,
+        topic_key: Optional[str],
+        *,
+        guard: str,
+        **detail,
+    ) -> None:
+        """Emit NOTIFICATION_SUPPRESSED: a guard dropped an event that had
+        ROUTED deliverable (2026-09-13). LOW, bus-only (see _NEVER_CONSUME),
+        carries what an audit needs to answer "why did this not arrive":
+        the original id/type, the thread it was bound for, the guard, and
+        the guard's own parameters. Swallows all exceptions -- a bus failure
+        here MUST NOT turn a suppression into a crash of the handle loop.
+        """
+        self.suppressed_count += 1
+        try:
+            self.bus.emit(
+                event_type=EventType.NOTIFICATION_SUPPRESSED,
+                source="telegram-notifier",
+                payload={
+                    "original_event_id": event.event_id,
+                    "original_event_type": event.event_type.type_string,
+                    "original_source": event.source,
+                    "platform": "telegram",
+                    "target": {
+                        "chat_id": self.group_chat_id,
+                        "thread_id": thread_id,
+                        "topic_key": topic_key or "",
+                    },
+                    "attention": route.attention.value,
+                    "guard": guard,
+                    "suppressed_total": self.suppressed_count,
+                    **detail,
+                },
+                priority=Priority.LOW,
+                correlation_id=event.event_id,
+                tags=["delivery", "telegram", "suppressed"],
+            )
+        except Exception:
+            logger.exception(
+                "TelegramNotifier: failed to emit NOTIFICATION_SUPPRESSED "
+                "for event %s", event.event_id,
+            )
+        logger.info(
+            "TelegramNotifier: %s suppressed %s %s for thread %s",
+            guard, event.event_type.type_string, event.event_id, thread_id,
+        )
 
     def _safe_emit_delivered(
         self,

@@ -199,8 +199,16 @@ def test_notification_delivery_event_types_default_priorities():
 
 
 def test_notification_delivery_event_types_round_trip_via_from_string():
-    for et in (EventType.NOTIFICATION_DELIVERED, EventType.NOTIFICATION_FAILED):
+    for et in (EventType.NOTIFICATION_DELIVERED, EventType.NOTIFICATION_FAILED,
+               EventType.NOTIFICATION_SUPPRESSED):
         assert EventType.from_string(et.type_string) is et
+
+
+def test_notification_suppressed_is_low_bus_only_audit():
+    # 2026-09-13: a guard's decision not to send. LOW like DELIVERED -- it is
+    # a record of the notifier's own behaviour, never an operator message.
+    assert EventType.NOTIFICATION_SUPPRESSED.type_string == "notification_suppressed"
+    assert EventType.NOTIFICATION_SUPPRESSED.default_priority == Priority.LOW
 
 
 # Cron same-job concurrency guard -- added 2026-04-30. Closes the

@@ -495,6 +495,18 @@ class EventType(Enum):
     # render if that guard ever regresses.
     NOTIFICATION_DELIVERED = ("notification_delivered", Priority.LOW, "📬")
     NOTIFICATION_FAILED = ("notification_failed", Priority.NORMAL, "📭")
+    # NOTIFICATION_SUPPRESSED (2026-09-13): a chat-side noise guard (the
+    # notifier's RepeatGuard, the known-debt guard) decided an event that
+    # ROUTED deliverable would not be sent. Until this existed those drops
+    # left no trace at all -- the bus held 0 rows for a guard that dropped
+    # 52 of 68 resource_pressure emissions in one 4h window, so "did it
+    # reach Telegram?" could only be answered by grepping the gateway log.
+    # LOW + bus-only exactly like NOTIFICATION_DELIVERED: it carries the
+    # original event id/type, the guard name and the thread it was bound
+    # for. Same cycle rule as its two siblings -- a subscriber that emits it
+    # must never consume it. Icon: 🤫 is globally unused and reads as
+    # "kept quiet", which is precisely the record.
+    NOTIFICATION_SUPPRESSED = ("notification_suppressed", Priority.LOW, "🤫")
 
     # Gateway lifecycle — added 2026-04-30 (gateway-restart-cluster
     # mitigation M1, profiles/sentinel/workspace/
