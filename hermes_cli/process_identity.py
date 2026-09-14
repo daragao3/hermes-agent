@@ -13,7 +13,6 @@ import hashlib
 import json
 import logging
 import os
-import platform
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -30,7 +29,7 @@ LEDGER_FILENAME = "spawn-ledger.json"
 #: Interactive processes (chat, REPLs) are deliberately NOT in this set.
 REAPABLE_PURPOSES = frozenset({"serve", "dashboard", "gateway", "mcp-helper"})
 
-_IS_WINDOWS = platform.system() == "Windows"
+_IS_WINDOWS = os.name == "nt"
 
 # Module-global job handle: must live exactly as long as this process so the
 # kernel closes it (and kills the job) when we die. Never close it manually.

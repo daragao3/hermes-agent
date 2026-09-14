@@ -4,13 +4,13 @@ and to build the targeted remediation when none can."""
 
 import logging
 import ntpath
-import platform
+import os
 import shutil
 import subprocess
 
 from hermes_cli._subprocess_compat import windows_hide_flags
 
-_IS_WINDOWS = platform.system() == "Windows"
+_IS_WINDOWS = os.name == "nt"
 
 # Same logger as the origin module so log routing is unchanged.
 logger = logging.getLogger("tools.environments.local")
