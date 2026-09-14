@@ -749,7 +749,11 @@ def test_dm_dir_is_private_and_uid_scoped_on_posix(tmp_path, monkeypatch):
         assert dm_dir.name == f"{bot_mode_dm._DM_DIR_NAME}-{os.getuid()}"
     else:
         assert dm_dir.name == bot_mode_dm._DM_DIR_NAME
-    assert dm_dir.stat().st_mode & 0o777 == 0o700
+    if os.name != "nt":
+        # NTFS carries no POSIX mode bits: _dm_dir() chmods to 0o700 and the
+        # stat still reads 0o777. The uid-scoping and repair behaviour above
+        # IS portable and stays asserted on every platform.
+        assert dm_dir.stat().st_mode & 0o777 == 0o700
 
 
 def test_dm_dir_repairs_restrictive_owner_mode(tmp_path, monkeypatch):
@@ -761,7 +765,11 @@ def test_dm_dir_repairs_restrictive_owner_mode(tmp_path, monkeypatch):
     dm_dir.chmod(0o500)
 
     assert bot_mode_dm._dm_dir() == dm_dir
-    assert dm_dir.stat().st_mode & 0o777 == 0o700
+    if os.name != "nt":
+        # NTFS carries no POSIX mode bits: _dm_dir() chmods to 0o700 and the
+        # stat still reads 0o777. The uid-scoping and repair behaviour above
+        # IS portable and stays asserted on every platform.
+        assert dm_dir.stat().st_mode & 0o777 == 0o700
 
 
 @pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX ownership contract")
