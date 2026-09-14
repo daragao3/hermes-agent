@@ -14,9 +14,11 @@ the crash class cannot silently regress.
 
 from __future__ import annotations
 
+import sys
+
 from unittest.mock import MagicMock, patch
 
-
+import hermes_cli._subprocess_compat as _subprocess_compat
 import tui_gateway.server as server
 
 
@@ -64,67 +66,87 @@ def test_slash_worker_popen_uses_utf8_replace():
             )
 
 
-# ── cli.exec handler ─────────────────────────────────────────────────────
+# ── captured-exec handlers (cli.exec / shell.exec / quick-command) ───────
+#
+# These three no longer call ``subprocess.run`` themselves. This fork routes
+# every captured exec through ``hermes_cli._subprocess_compat.run_text_capture``
+# (a fork-owned helper: present at 8586e305a2^1, absent at ^2), which spawns
+# with *binary* pipes and does the decode itself in ``_read_text`` --
+# ``content.decode("utf-8", errors="replace")``. The #53137 invariant is
+# therefore still enforced, one layer down; ``encoding=``/``errors=`` kwargs on
+# ``subprocess.run`` are simply the wrong shape to assert against now.
+#
+# So these tests pin the ROUTING (the handler reaches the helper that owns the
+# decode), and ``test_run_text_capture_replaces_invalid_utf8`` below pins the
+# GUARANTEE itself against a real child process.
+#
+# Patching ``subprocess.run`` here would not merely miss -- it would pass
+# vacuously. ``hermes_cli.banner.check_for_updates`` runs ``_git_run`` on a
+# background thread at import, and those calls land in the mock: a
+# ``patch("subprocess.run")`` assertion in this file reads *banner's* kwargs,
+# and ``call_args`` (the last call) is whichever one that daemon thread
+# happened to make last. Measured 2026-09-14: 4 calls, one of them with no
+# encoding kwarg at all.
 
-def test_cli_exec_uses_utf8_replace():
-    """The cli.exec RPC handler runs `python -m hermes_cli.main` via
-    subprocess.run; it must pass encoding="utf-8" and errors="replace"
-    (#53137)."""
+
+def _patch_capture():
+    """Patch the fork's captured-exec seam; returns the mock."""
+    return patch.object(
+        _subprocess_compat, "run_text_capture", return_value=_make_completed_process()
+    )
+
+
+def test_cli_exec_routes_through_run_text_capture():
+    """cli.exec must reach the utf-8/replace-decoding capture helper (#53137)."""
     handler = server._methods["cli.exec"]
-    with patch("subprocess.run", return_value=_make_completed_process()) as mock_run:
+    with _patch_capture() as mock_capture:
         # Non-interactive argv that passes _cli_exec_blocked.
         handler(1, {"argv": ["--version"]})
-        assert mock_run.called, "subprocess.run was not invoked"
-        kwargs = mock_run.call_args[1]
-        assert kwargs.get("encoding") == "utf-8", (
-            f"cli.exec subprocess.run must set encoding='utf-8' (got {kwargs.get('encoding')!r})"
-        )
-        assert kwargs.get("errors") == "replace", (
-            f"cli.exec subprocess.run must set errors='replace' (got {kwargs.get('errors')!r})"
-        )
+        assert mock_capture.called, "cli.exec did not reach run_text_capture"
 
 
-# ── shell.exec handler ───────────────────────────────────────────────────
-
-def test_shell_exec_uses_utf8_replace():
-    """The shell.exec RPC handler runs an arbitrary shell command via
-    subprocess.run; it must pass encoding="utf-8" and errors="replace"
-    (#53137)."""
+def test_shell_exec_routes_through_run_text_capture():
+    """shell.exec must reach the utf-8/replace-decoding capture helper (#53137)."""
     handler = server._methods["shell.exec"]
-    with patch("subprocess.run", return_value=_make_completed_process()) as mock_run:
+    with _patch_capture() as mock_capture:
         # A harmless, non-dangerous command that passes the approval gate.
-        with patch("tools.approval_detection.detect_hardline_command", return_value=(False, "")), \
-             patch("tools.approval_detection.detect_dangerous_command", return_value=(False, None, "")):
+        with patch("tools.approval_detection.detect_hardline_command", return_value=(False, "")),              patch("tools.approval_detection.detect_dangerous_command", return_value=(False, None, "")):
             handler(1, {"command": "echo hello"})
-        assert mock_run.called, "subprocess.run was not invoked"
-        kwargs = mock_run.call_args[1]
-        assert kwargs.get("encoding") == "utf-8", (
-            f"shell.exec subprocess.run must set encoding='utf-8' (got {kwargs.get('encoding')!r})"
-        )
-        assert kwargs.get("errors") == "replace", (
-            f"shell.exec subprocess.run must set errors='replace' (got {kwargs.get('errors')!r})"
-        )
+        assert mock_capture.called, "shell.exec did not reach run_text_capture"
 
 
-# ── quick-command exec path (via command.dispatch) ───────────────────────
-
-def test_quick_command_exec_uses_utf8_replace():
-    """A quick_command of type 'exec' is dispatched via command.dispatch;
-    the underlying subprocess.run must pass encoding="utf-8" and
-    errors="replace" (#53137)."""
+def test_quick_command_exec_routes_through_run_text_capture():
+    """A quick_command of type 'exec' dispatched via command.dispatch must
+    reach the utf-8/replace-decoding capture helper (#53137)."""
     handler = server._methods["command.dispatch"]
-    fake_cp = _make_completed_process()
-    with patch("subprocess.run", return_value=fake_cp) as mock_run, \
-         patch("tui_gateway.server._load_cfg", return_value={
+    with _patch_capture() as mock_capture,          patch("tui_gateway.server._load_cfg", return_value={
              "quick_commands": {"runcmd": {"type": "exec", "command": "echo hi"}}
-         }), \
-         patch("tools.environments.local._sanitize_subprocess_env", return_value={"PATH": "/usr/bin"}):
+         }),          patch("tools.environments.local._sanitize_subprocess_env", return_value={"PATH": "/usr/bin"}):
         handler(1, {"name": "runcmd", "arg": "", "session_id": ""})
-        assert mock_run.called, "subprocess.run was not invoked for quick-command exec"
-        kwargs = mock_run.call_args[1]
-        assert kwargs.get("encoding") == "utf-8", (
-            f"quick-command exec subprocess.run must set encoding='utf-8' (got {kwargs.get('encoding')!r})"
-        )
-        assert kwargs.get("errors") == "replace", (
-            f"quick-command exec subprocess.run must set errors='replace' (got {kwargs.get('errors')!r})"
-        )
+        assert mock_capture.called, "quick-command exec did not reach run_text_capture"
+
+
+# ── the #53137 guarantee itself, against a real child ────────────────────
+
+def test_run_text_capture_replaces_invalid_utf8():
+    """Invalid bytes in child stdout must decode to U+FFFD, never raise.
+
+    This is the actual regression #53137 guarded: on a non-UTF-8 system locale
+    a child emitting undecodable bytes crashed the reader thread. Asserted
+    behaviourally rather than by kwarg shape, so it survives the next refactor
+    of how the spawn is spelled.
+    """
+    child = (
+        "import sys; "
+        "sys.stdout.buffer.write(b'ok' + bytes([255, 254, 128]) + b'end')"
+    )
+    result = _subprocess_compat.run_text_capture(
+        [sys.executable, "-c", child],
+        timeout=60,
+    )
+    assert result.returncode == 0
+    assert isinstance(result.stdout, str)
+    assert "ok" in result.stdout and "end" in result.stdout
+    assert "�" in result.stdout, (
+        f"invalid bytes must decode to U+FFFD (got {result.stdout!r})"
+    )

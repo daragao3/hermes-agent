@@ -15,7 +15,6 @@ covers the kill path itself:
 
 from __future__ import annotations
 
-import os
 import signal
 import time
 
@@ -98,7 +97,11 @@ def test_sigterm_flushes_populated_session_into_state_db(
     prev = {signal.SIGTERM: signal.signal(signal.SIGTERM, _prev_handler)}
     try:
         assert server.install_exit_flush_signal_handlers() is True
-        os.kill(os.getpid(), signal.SIGTERM)
+        # NOT os.kill(os.getpid(), SIGTERM): on Windows os.kill maps to
+        # TerminateProcess(handle, sig), which hard-kills the pytest process
+        # with exit code 15 and reports zero tests. raise_signal() calls C
+        # raise(), so the registered handler actually runs on both platforms.
+        signal.raise_signal(signal.SIGTERM)
         # The handler runs synchronously on the main thread at the next
         # bytecode boundary; poll briefly for robustness.
         deadline = time.monotonic() + 5.0
