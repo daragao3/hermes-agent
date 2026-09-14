@@ -10,6 +10,13 @@ import pytest
 from gateway.message_timestamps import render_user_content_with_timestamp
 from gateway.run import _build_gateway_agent_history, _select_cached_agent_history
 
+from tests.gateway._agent_stack_warm import warm_agent_stack
+
+# Warm the agent stack HERE, at collection. The tests below import ``run_agent``
+# from inside a helper/test body, where the per-test ``--timeout`` applies and a
+# ~7s (idle) to ~25s (loaded) import can blow it. See the module docstring.
+warm_agent_stack()
+
 
 STAMP = datetime(2026, 8, 20, 12, 0, tzinfo=ZoneInfo("UTC")).timestamp()
 POLICY = "## Recall policy\nUse the retrieval tool when earlier details are needed."

@@ -21,6 +21,13 @@ from gateway.agent_cache_pressure import (
     transcript_persistence_caught_up,
 )
 
+from tests.gateway._agent_stack_warm import warm_agent_stack
+
+# Warm the agent stack HERE, at collection. The tests below import ``run_agent``
+# from inside a helper/test body, where the per-test ``--timeout`` applies and a
+# ~7s (idle) to ~25s (loaded) import can blow it. See the module docstring.
+warm_agent_stack()
+
 
 class TestBoundsResolution:
     """Absent config must stay absent so gateway/run.py keeps its defaults."""
