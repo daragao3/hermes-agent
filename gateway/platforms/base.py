@@ -17,7 +17,7 @@ import time
 import uuid
 import weakref
 from abc import ABC, abstractmethod
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from utils import normalize_proxy_url
 
@@ -1430,6 +1430,23 @@ async def cache_document_from_bytes_async(data: bytes, filename: str) -> str:
     return await asyncio.to_thread(cache_document_from_bytes, data, filename)
 
 
+def file_url_to_path(url: str) -> str:
+    """Local path for a ``file://`` URL, in both forms this codebase produces.
+
+    ``_deliver_media_attachments`` (upstream's form) emits ``"file://" + quote(path)``, which on
+    Windows is ``file://C%3A%5CUsers%5C...`` -- the drive letter directly after the scheme.
+    ``Path.as_uri()`` / RFC 8089 emit ``file:///C:/Users/...`` -- the drive letter behind a
+    slash. Stripping the scheme and unquoting serves the first form everywhere and the second
+    on POSIX (``file:///tmp/x.png`` -> ``/tmp/x.png``); on Windows it leaves ``/C:/Users/...``,
+    a path nothing opens, so a native file send silently fell back to a text URL there. Drop
+    that slash on Windows only: on POSIX ``/C:/...`` is a legitimate path and is kept.
+    """
+    path = unquote(url[len("file://"):]) if url.startswith("file://") else url
+    if os.name == "nt" and len(path) > 2 and path[0] == "/" and path[1].isalpha() and path[2] == ":":
+        path = path[1:]
+    return path
+
+
 # Unified media caching: classify attachment bytes by ext/MIME, route to cache_*_from_bytes.
 @dataclass
 class CachedMedia:
@@ -2626,7 +2643,6 @@ class BasePlatformAdapter(ABC):
         (Signal). Returns success when at least one image was delivered — the outcome
         the turn-level delivery tracker records; every override must return the same
         aggregate, or a media-only turn on that platform reports FAILURE (#106153)."""
-        from urllib.parse import unquote as _unquote
         delivered = False
         for image_url, alt_text in images:
             if human_delay > 0:
@@ -2635,7 +2651,7 @@ class BasePlatformAdapter(ABC):
                 logger.info("[%s] Sending image: %s (alt=%s)", self.name,
                             safe_url_for_log(image_url), alt_text[:30] if alt_text else "")
                 if image_url.startswith("file://"):
-                    sender, url_kw = self.send_image_file, {"image_path": _unquote(image_url[7:])}
+                    sender, url_kw = self.send_image_file, {"image_path": file_url_to_path(image_url)}
                 elif self._is_animation_url(image_url):
                     sender, url_kw = self.send_animation, {"animation_url": image_url}
                 else:
@@ -3780,11 +3796,10 @@ class BasePlatformAdapter(ABC):
         _image_paths += [p for p in local_files if _as_image(p)]
         if _image_paths:
             await self._send_image_batch(
-                # NOT as_uri(). This is one half of a pair: _send_image_batch decodes
-                # with ``_unquote(image_url[7:])``, stripping exactly "file://". So
-                #   quote(p)  -> "file://C%3A%5C..." -> [7:] -> unquote -> C:\\Users\\...  correct
-                #   as_uri()  -> "file:///C:/Users/.." -> [7:] ->            /C:/Users/..   broken
-                # Change one side and you must change the other.
+                # ``"file://" + quote(p)`` is upstream's form (``file://C%3A%5C...`` on
+                # Windows). The consumer, ``file_url_to_path`` via send_multiple_images, also
+                # accepts RFC 8089 ``Path.as_uri()`` URLs (``file:///C:/...``), so either form
+                # round-trips on POSIX and Windows. Change one side, re-run both halves' tests.
                 event, [(f"file://{_quote(p)}", "") for p in _image_paths], metadata, human_delay,
                 record_delivery)
         chat_id = event.source.chat_id

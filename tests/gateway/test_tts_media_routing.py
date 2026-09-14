@@ -10,13 +10,14 @@ only renders as a voice bubble when explicitly flagged) and via
 import importlib
 import sys
 import types
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import BasePlatformAdapter, SendResult
+from gateway.platforms.base import BasePlatformAdapter, SendResult, file_url_to_path
 from gateway.platforms.event import MessageEvent, MessageType
 from gateway.run import GatewayRunner
 from gateway.session import SessionSource, build_session_key
@@ -241,7 +242,7 @@ async def test_queued_followup_delivery_strips_media_tag_from_text_and_sends_ima
     )
     adapter.send_multiple_images.assert_awaited_once_with(
         chat_id="chat-1",
-        images=[(f"file://{media_file.as_posix()}", "")],
+        images=[(media_file.absolute().as_uri(), "")],
         metadata={"thread_id": "topic-1"},
     )
 
@@ -291,7 +292,7 @@ async def test_queued_followup_delivery_reuses_routing_metadata_for_media(
     )
     adapter.send_multiple_images.assert_awaited_once_with(
         chat_id="chat-1",
-        images=[(f"file://{media_file.as_posix()}", "")],
+        images=[(media_file.absolute().as_uri(), "")],
         metadata=routing_metadata,
     )
 
@@ -478,9 +479,10 @@ class _QueuedMediaCaptureAdapter(BasePlatformAdapter):
 
     async def send_multiple_images(self, chat_id, images, metadata=None, human_delay=0.0):
         for image_url, _alt in images:
-            path = image_url
-            if path.startswith("file://"):
-                path = path[len("file://"):]
+            # Decode with the real base consumer (the producer is Path.as_uri(), so on Windows
+            # a hand-rolled ``[len("file://"):]`` would leave "/C:/..."); normalise via Path so
+            # the assertion below can compare against ``str(media_file)`` on either OS.
+            path = str(Path(file_url_to_path(image_url))) if image_url.startswith("file://") else image_url
             self.images.append({"chat_id": chat_id, "image_path": path, "metadata": metadata})
 
     async def get_chat_info(self, chat_id):
