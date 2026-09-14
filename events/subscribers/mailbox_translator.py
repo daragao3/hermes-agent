@@ -17,6 +17,7 @@ which only saw failures that surfaced as cron exit codes.
 
 import json
 import logging
+import hashlib
 import re
 import time
 from collections import OrderedDict
@@ -25,7 +26,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from agent.redact import redact_sensitive_text
 from events.bus import EventBus
 from events.cluster_detector import FailureClusterDetector
-from events.paths import failure_cluster_state_path
+from events.paths import blocked_question_state_path, failure_cluster_state_path
+from events.state import load_state, save_state
 from events.producers.agent_source_mapping import canonical_agent_source
 from events.schema import Event, EventType, Priority
 from events.subscribers.base import BaseSubscriber
@@ -196,6 +198,22 @@ class MailboxTranslator(BaseSubscriber):
         # First emission within the window wins; in-memory only (duplicates
         # arrive seconds-to-minutes apart, so restart loss is harmless).
         self._recent_score_emissions: "OrderedDict[Tuple[str, str, str], float]" = OrderedDict()
+        # APPLICATION_BLOCKED coalescing. The applier fans one blocked attempt
+        # out into one BLOCKED_QUESTION envelope PER unanswered question
+        # (tmp_ready_sweep_cron.py `blocked_question_payloads`), every one
+        # carrying the full `questions` list, and it re-runs a blocked job
+        # daily asking the identical set again. Measured 2026-09-11..13: 214
+        # CRITICAL Telegram pages for 11 distinct jobs. Two keys:
+        #   job|attempt:<attempt_id>  in-memory  -- the fan-out arrives within
+        #                             seconds, so restart loss is harmless;
+        #   job|set:<fingerprint>     persisted  -- the same question set is
+        #                             paged once per 7 days; an answered
+        #                             question changes the set, which is what
+        #                             "unless answered" means here.
+        self._blocked_attempts_seen: "OrderedDict[str, float]" = OrderedDict()
+        self._blocked_state_path = blocked_question_state_path()
+        self._blocked_state: Optional[Dict[str, Any]] = None
+        self._wall_clock = time.time
 
     def _pipeline_metadata(self, job_ref: Optional[str]) -> Dict[str, str]:
         """Best-effort {title, company} lookup by job id/key from pipeline
@@ -330,7 +348,107 @@ class MailboxTranslator(BaseSubscriber):
         if options is not None:
             payload["options"] = options
 
+        # The whole set, so ONE page can list every question with its own
+        # choices. The applier's fan-out envelope names ONE question in
+        # `question` (and scopes `options` to it, 3f33831ba2) while carrying
+        # the full attempt in `questions`; since the fan-out is coalesced to
+        # one page per attempt, that page is about the set, so its summary
+        # names the set. A producer whose `question` already speaks for the
+        # whole envelope (the notifier-bridge, or an applier stop-gap summary)
+        # is passed through untouched -- the producer wins, as above.
+        # `options` is never dropped: a multi-question page renders each
+        # entry's own choices and ignores the top-level key.
+        entries = _blocked_question_entries(inner)
+        if entries:
+            payload["questions"] = entries
+            payload["question_count"] = len(entries)
+            if len(entries) > 1 and _focused_entry(inner, entries) is not None:
+                payload["question"] = _blocked_question_text(inner)
+        attempt_id = inner.get("attempt_id")
+        if isinstance(attempt_id, str) and attempt_id.strip():
+            payload["attempt_id"] = attempt_id.strip()
+
         return payload
+
+    def _blocked_ledger(self) -> Dict[str, Any]:
+        if self._blocked_state is None:
+            state = load_state(self._blocked_state_path, {"emitted": {}})
+            emitted = state.get("emitted")
+            if not isinstance(emitted, dict):
+                emitted = {}
+            self._blocked_state = {"emitted": emitted}
+        return self._blocked_state
+
+    def _is_duplicate_blocked_emission(
+        self, payload: Dict[str, Any], now: Optional[float] = None
+    ) -> bool:
+        """Record-and-decide: True -> this APPLICATION_BLOCKED is not paged.
+
+        Two independent reasons, checked in order:
+        1. the attempt was already paged (the per-question fan-out);
+        2. this job's exact question set was paged inside the last
+           ``_BLOCKED_SET_TTL_SECONDS`` (the daily re-ask).
+        A set that differs in any label is a new fact and is paged.
+        """
+        now = self._wall_clock() if now is None else now
+        job = payload.get("job_key") or payload.get("job_id")
+        if not job:
+            job = f"{payload.get('company')}|{payload.get('title')}"
+        job = str(job)
+
+        attempt_key: Optional[str] = None
+        attempt_id = payload.get("attempt_id")
+        if attempt_id:
+            attempt_key = f"{job}|attempt:{attempt_id}"
+            if attempt_key in self._blocked_attempts_seen:
+                return True
+
+        labels = [
+            str(entry.get("label") or "")
+            for entry in payload.get("questions") or []
+            if isinstance(entry, dict)
+        ]
+        labels = [label for label in labels if label]
+        if not labels:
+            labels = [str(payload.get("question") or "")]
+        fingerprint = hashlib.sha1(
+            "\n".join(sorted(label.strip().lower() for label in labels)).encode("utf-8")
+        ).hexdigest()[:16]
+        set_key = f"{job}|set:{fingerprint}"
+
+        ledger = self._blocked_ledger()
+        emitted: Dict[str, Any] = ledger["emitted"]
+        last = emitted.get(set_key)
+        if isinstance(last, (int, float)) and 0 <= now - last < _BLOCKED_SET_TTL_SECONDS:
+            if attempt_key:
+                self._remember_blocked_attempt(attempt_key, now)
+            return True
+
+        if attempt_key:
+            self._remember_blocked_attempt(attempt_key, now)
+        emitted[set_key] = now
+        # Prune expired entries, then bound the ledger oldest-first.
+        for key in [k for k, ts in emitted.items()
+                    if not isinstance(ts, (int, float))
+                    or now - ts >= _BLOCKED_SET_TTL_SECONDS]:
+            emitted.pop(key, None)
+        while len(emitted) > _BLOCKED_STATE_MAX_ENTRIES:
+            oldest = min(emitted, key=lambda k: emitted[k])
+            emitted.pop(oldest, None)
+        try:
+            save_state(self._blocked_state_path, ledger)
+        except Exception:
+            logger.exception(
+                "MailboxTranslator: could not persist blocked-question ledger"
+            )
+        return False
+
+    def _remember_blocked_attempt(self, key: str, now: float) -> None:
+        seen = self._blocked_attempts_seen
+        seen[key] = now
+        seen.move_to_end(key)
+        while len(seen) > _BLOCKED_ATTEMPTS_MAX_ENTRIES:
+            seen.popitem(last=False)
 
     def _submit_result_emissions(
         self, inner: Dict[str, Any]
@@ -415,6 +533,20 @@ class MailboxTranslator(BaseSubscriber):
                     out_payload.get("job_id") or out_payload.get("job_key"),
                     out_payload.get("title"),
                     out_payload.get("company"),
+                )
+                continue
+            if (
+                et == EventType.APPLICATION_BLOCKED
+                and self._is_duplicate_blocked_emission(out_payload)
+            ):
+                logger.info(
+                    "MailboxTranslator: coalesced application_blocked for %s "
+                    "(%s @ %s, attempt=%s, %s question(s))",
+                    out_payload.get("job_key") or out_payload.get("job_id"),
+                    out_payload.get("title"),
+                    out_payload.get("company"),
+                    out_payload.get("attempt_id"),
+                    out_payload.get("question_count", 1),
                 )
                 continue
             try:
@@ -730,6 +862,67 @@ _BLOCKED_QUESTION_PROMPT = (
 # MailboxWatcher._summarize truncates at 200 chars; cut it here so the ellipsis
 # lands on a boundary we chose.
 _BLOCKED_QUESTION_MAX_CHARS = 200
+# One page per (job, exact question set) per week. The applier re-runs a
+# blocked job daily; answering any question changes the set and re-pages.
+_BLOCKED_SET_TTL_SECONDS = 7 * 24 * 3600
+_BLOCKED_STATE_MAX_ENTRIES = 512
+_BLOCKED_ATTEMPTS_MAX_ENTRIES = 256
+
+
+def _blocked_question_entries(inner: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every unanswered question of the attempt as {label[, options]}.
+
+    Prefers `questions` (the applier's full list, carried on every focused
+    envelope) over `unansweredQuestions` (the focused one). Options ride on
+    each entry so a multi-question page can print each question's own
+    verbatim choices; an entry without an observed popup carries no key.
+    """
+    source = inner.get("questions")
+    if not isinstance(source, list) or not _question_labels(source):
+        source = inner.get("unansweredQuestions")
+    if not isinstance(source, list):
+        return []
+    entries: List[Dict[str, Any]] = []
+    for raw in source:
+        label = _question_labels([raw])
+        if not label:
+            continue
+        entry: Dict[str, Any] = {"label": label[0]}
+        if isinstance(raw, dict) and isinstance(raw.get("options"), (list, tuple)):
+            options: List[str] = []
+            for option in raw["options"]:
+                text = str(option).strip()
+                if text and text not in options:
+                    options.append(text)
+            entry["options"] = options
+        entries.append(entry)
+    return entries
+
+
+# The applier's per-question framing (tmp_ready_sweep_cron.py
+# `blocked_question_text`): "Answer needed for <label>. Options: a, b".
+_FOCUSED_PREFIX = "Answer needed for "
+
+
+def _focused_entry(inner: Dict[str, Any], entries: List[Dict[str, Any]]) -> Optional[int]:
+    """Index of the ONE entry the producer's `question` names, else None.
+
+    A fan-out member says "Answer needed for <label>[. Options: ...]" or the
+    bare label (the notifier-bridge). A `question` that names no entry, or
+    more than one, is a whole-envelope summary and is not a fan-out member.
+    """
+    question = inner.get("question")
+    if not isinstance(question, str) or not question.strip():
+        return None
+    text = question.strip()
+    if text.startswith(_FOCUSED_PREFIX):
+        text = text[len(_FOCUSED_PREFIX):]
+        text, marker, _ = text.partition(". Options: ")
+        if not marker:
+            text = text[:-1] if text.endswith(".") else text
+    text = text.strip()
+    matches = [i for i, entry in enumerate(entries) if entry["label"] == text]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _question_labels(value: Any) -> List[str]:

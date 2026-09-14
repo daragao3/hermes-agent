@@ -1403,3 +1403,35 @@ class TestBlockedQuestionLine:
 
     def test_missing_question_falls_back_to_the_placeholder(self):
         assert self._line({}) == "needs your input"
+
+
+class TestBlockedQuestionsBlock:
+    """The multi-question page: every question, each with its own choices."""
+
+    def _block(self, payload):
+        from events.formatting import blocked_questions_block
+        return blocked_questions_block(payload)
+
+    def test_numbers_every_question_with_its_own_choices(self):
+        block = self._block({"questions": [
+            {"label": "Why us?"},
+            {"label": "AI Policy", "options": ["Yes", "No"]},
+        ]})
+        lines = block.split("\n")
+        assert lines[0] == "Questions (2):"
+        assert lines[1] == "1. Why us?"
+        assert lines[2] == "2. AI Policy"
+        assert lines[3] == "   Reply with EXACTLY one of: Yes | No"
+
+    def test_a_single_question_is_not_a_set(self):
+        assert self._block({"questions": [{"label": "Why us?"}]}) == ""
+        assert self._block({"questions": []}) == ""
+        assert self._block({}) == ""
+        assert self._block({"questions": "Why us?"}) == ""
+
+    def test_unlabelled_and_non_mapping_entries_are_dropped(self):
+        block = self._block({"questions": [
+            {"label": "A"}, "junk", {"options": ["x"]}, {"label": "B"},
+        ]})
+        assert "Questions (2):" in block
+        assert "junk" not in block

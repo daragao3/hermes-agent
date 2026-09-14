@@ -1331,11 +1331,14 @@ class TestBlockedQuestionOptions:
         assert self._blocked(bus)["options"] == self.OPTIONS
 
     def test_focused_fanout_events_do_not_borrow_other_question_options(self, bus):
-        """MassMutual-shaped fan-out stays two distinct events, each scoped.
+        """MassMutual-shaped fan-out: ONE page, each question scoped.
 
-        Both envelopes carry the complete shared questions array. Only the
-        source prompt owns the observed list; the prior-employment prompt must
-        not inherit it merely because that entry appears first.
+        Both envelopes carry the complete shared questions array. Since
+        2026-09-13 the fan-out coalesces to one page per attempt
+        (TestBlockedQuestionCoalescing); the scoping rule survives on the
+        page's `questions` entries: only the source prompt owns the observed
+        list, the prior-employment prompt must not inherit it merely because
+        that entry appears first.
         """
         questions = [
             {"label": "How Did You Hear About Us?*", "type": "listbox",
@@ -1357,11 +1360,16 @@ class TestBlockedQuestionOptions:
         _translate(bus)
         blocked = [p for et, p in _recent_domain_events(bus)
                    if et == EventType.APPLICATION_BLOCKED]
-        assert len(blocked) == 2
-        by_question = {entry["question"]: entry for entry in blocked}
-        assert by_question["How Did You Hear About Us?*"]["options"] == self.OPTIONS
-        assert "options" not in by_question[
+        assert len(blocked) == 1
+        page = blocked[0]
+        assert page["question_count"] == 2
+        by_label = {entry["label"]: entry for entry in page["questions"]}
+        assert by_label["How Did You Hear About Us?*"]["options"] == self.OPTIONS
+        assert "options" not in by_label[
             "Have you previously worked for MassMutual?*"]
+        # The page speaks for the set, not for whichever question arrived first.
+        assert "How Did You Hear About Us?*" in page["question"]
+        assert "Have you previously worked for MassMutual?*" in page["question"]
 
     def test_ambiguous_multi_question_fallback_omits_options(self, bus):
         _mailbox_event(bus, "BLOCKED_QUESTION", {
@@ -1463,3 +1471,156 @@ class TestBlockedQuestionOptions:
         })
         _translate(bus)
         assert self._blocked(bus)["options"] == ["Internet"]
+
+
+class TestBlockedQuestionCoalescing:
+    """One CRITICAL page per blocked attempt, and one per question set per week.
+
+    The applier expands a blocked attempt into one BLOCKED_QUESTION envelope
+    PER unanswered question (tmp_ready_sweep_cron.py `blocked_question_payloads`,
+    every envelope carrying the full `questions` list), and re-runs a blocked
+    job daily asking the identical set again. Measured 2026-09-11..13 on the
+    live bus: 214 application_blocked pages for 11 distinct jobs; one SoFi job
+    was paged 44 questions at 09-12T04Z and the same 44 again at 09-13T08Z.
+    """
+
+    QUESTIONS = [
+        {"label": "Are you open to working in-person 25% of the time?",
+         "type": "text", "selector": "#q1", "isListbox": True},
+        {"label": "AI Policy for Application", "type": "text",
+         "selector": "#q2", "isListbox": True, "options": ["Yes", "No"]},
+        {"label": "Why Anthropic?", "type": "field", "selector": "#q3"},
+        {"label": "Are you open to relocation for this role?", "type": "text",
+         "selector": "#q4", "options": ["Yes", "No"]},
+    ]
+
+    @staticmethod
+    def _focused(job_key, attempt_id, questions, index):
+        """The applier's per-question envelope shape, copied from
+        mailbox/main/processed/20260913T231127_BLOCKED_QUESTION_applier_5c8b1491.json."""
+        q = questions[index]
+        text = f"Answer needed for {q['label']}."
+        payload = {
+            "job_id": job_key, "api_job_id": "aba9384f-0000-0000-0000-000000000000",
+            "job_key": job_key, "company": "Anthropic",
+            "title": "Treasury Director, Investments & Liquidity",
+            "question": text + (" Options: " + ", ".join(q["options"])
+                                if q.get("options") else ""),
+            "attempt_id": attempt_id, "questions": questions,
+            "failureMessage": "Greenhouse still has unanswered required fields.",
+            "screenshots": [], "artifacts": [],
+        }
+        if "options" in q:
+            payload["options"] = list(q["options"])
+        return payload
+
+    @staticmethod
+    def _run(tmp_path, envelopes, now, tag):
+        """Emit ``envelopes`` on a fresh bus and translate them at wall time
+        ``now`` with a fresh translator (= a gateway restart between days),
+        sharing one on-disk ledger. Returns the application_blocked payloads."""
+        from events.subscribers import mailbox_translator as mod
+        b = EventBus(db_path=tmp_path / f"{tag}.db")
+        try:
+            for inner in envelopes:
+                _mailbox_event(b, "BLOCKED_QUESTION", inner)
+            t = mod.MailboxTranslator(b)
+            t._wall_clock = lambda: now
+            t._blocked_state_path = tmp_path / "blocked_question_state.json"
+            b._execute(
+                "INSERT OR REPLACE INTO subscriber_cursors "
+                "(subscriber_id, last_rowid, updated_at) VALUES (?, 0, datetime('now'))",
+                (t.subscriber_id,),
+            )
+            t.poll()
+            return [p for et, p in _recent_domain_events(b)
+                    if et == EventType.APPLICATION_BLOCKED]
+        finally:
+            b.close()
+
+    DAY = 24 * 3600
+    T0 = 1_789_000_000.0
+
+    def test_fan_out_coalesces_to_one_page_per_attempt(self, tmp_path):
+        env = [self._focused("job-a", "attempt-1", self.QUESTIONS, i)
+               for i in range(len(self.QUESTIONS))]
+        blocked = self._run(tmp_path, env, self.T0, "d0")
+        assert len(blocked) == 1
+        page = blocked[0]
+        assert page["question_count"] == 4
+        assert [q["label"] for q in page["questions"]] == [
+            q["label"] for q in self.QUESTIONS]
+        # Each question keeps ITS OWN verbatim choices; the page renderers read
+        # these, never the top-level key (which stays whatever the first
+        # envelope of the attempt carried -- here the first question has no
+        # observed popup, so there is none).
+        assert page["questions"][1]["options"] == ["Yes", "No"]
+        assert "options" not in page["questions"][0]
+        assert "options" not in page
+        # The summary names the set, not the first focused question.
+        assert "AI Policy for Application" in page["question"]
+        assert "Why Anthropic?" in page["question"]
+        assert page["attempt_id"] == "attempt-1"
+
+    def test_single_question_attempt_keeps_the_classic_shape(self, tmp_path):
+        only = [self.QUESTIONS[1]]
+        blocked = self._run(tmp_path, [self._focused("job-a", "attempt-1", only, 0)],
+                            self.T0, "d0")
+        assert len(blocked) == 1
+        page = blocked[0]
+        assert page["options"] == ["Yes", "No"]
+        assert page["question"].startswith("Answer needed for AI Policy")
+        assert page["question_count"] == 1
+
+    def test_same_set_is_not_repaged_within_seven_days(self, tmp_path):
+        first = self._run(tmp_path, [self._focused("job-a", "attempt-1", self.QUESTIONS, 0)],
+                          self.T0, "d0")
+        assert len(first) == 1
+        # Next day's attempt asks the identical set: silence.
+        again = self._run(tmp_path, [self._focused("job-a", "attempt-2", self.QUESTIONS, i)
+                                     for i in range(len(self.QUESTIONS))],
+                          self.T0 + self.DAY, "d1")
+        assert again == []
+        # Eight days on it is a fresh fact.
+        later = self._run(tmp_path, [self._focused("job-a", "attempt-9", self.QUESTIONS, 0)],
+                          self.T0 + 8 * self.DAY, "d8")
+        assert len(later) == 1
+
+    def test_answered_question_changes_the_set_and_repages(self, tmp_path):
+        self._run(tmp_path, [self._focused("job-a", "attempt-1", self.QUESTIONS, 0)],
+                  self.T0, "d0")
+        remaining = self.QUESTIONS[:2]
+        page = self._run(tmp_path, [self._focused("job-a", "attempt-2", remaining, i)
+                                    for i in range(len(remaining))],
+                         self.T0 + self.DAY, "d1")
+        assert len(page) == 1
+        assert page[0]["question_count"] == 2
+
+    def test_different_jobs_with_the_same_questions_are_independent(self, tmp_path):
+        env = [self._focused("job-a", "attempt-1", self.QUESTIONS, 0),
+               self._focused("job-b", "attempt-7", self.QUESTIONS, 0)]
+        blocked = self._run(tmp_path, env, self.T0, "d0")
+        assert sorted(p["job_key"] for p in blocked) == ["job-a", "job-b"]
+
+    def test_ledger_is_persisted_across_translator_instances(self, tmp_path):
+        self._run(tmp_path, [self._focused("job-a", "attempt-1", self.QUESTIONS, 0)],
+                  self.T0, "d0")
+        ledger = json.loads(
+            (tmp_path / "blocked_question_state.json").read_text(encoding="utf-8"))
+        assert len(ledger["emitted"]) == 1
+        key = next(iter(ledger["emitted"]))
+        assert key.startswith("job-a|set:")
+        assert ledger["emitted"][key] == self.T0
+
+    def test_bare_question_envelope_is_deduped_by_its_text(self, tmp_path):
+        """The notifier-bridge producer sends company/title/job_key/question
+        and no attempt or list; the same question twice in a day is one page."""
+        bare = {"company": "Acme", "title": "Director", "job_key": "job-z",
+                "question": "Eligible to work in the US?"}
+        first = self._run(tmp_path, [bare], self.T0, "d0")
+        second = self._run(tmp_path, [bare], self.T0 + 3600, "h1")
+        assert len(first) == 1
+        assert second == []
+        other = self._run(tmp_path, [dict(bare, question="Visa sponsorship needed?")],
+                          self.T0 + 7200, "h2")
+        assert len(other) == 1

@@ -1438,3 +1438,21 @@ class TestRenderedMessageObservability:
         assert "WhatsAppEscalator sending:" in "\n".join(
             r.getMessage() for r in caplog.records
         )
+
+
+def test_blocked_question_set_pages_once_with_every_question(
+    bus, quiet_config, queue_path,
+):
+    from events.subscribers.whatsapp_escalator import WhatsAppEscalator
+    escalator = WhatsAppEscalator(bus, quiet_config_path=quiet_config, queue_path=queue_path)
+    event = Event.create(
+        EventType.APPLICATION_BLOCKED, "applier",
+        {"company": "Anthropic", "question": "needs answers",
+         "question_count": 2,
+         "questions": [{"label": "Why Anthropic?"},
+                       {"label": "AI Policy", "options": ["Yes", "No"]}]},
+    )
+    msg = escalator.format_message(event)
+    assert "2 questions need answers" in msg
+    assert "1. Why Anthropic?" in msg
+    assert "Reply with EXACTLY one of: Yes | No" in msg
