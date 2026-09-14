@@ -217,6 +217,15 @@ def test_get_status_local_pid_probe_does_not_block_event_loop():
             fallback_released_probe.set()
             release_probe.set()
 
+    # Lower bound on the repointed seam below: a patch target that has moved once can move
+    # again, and the failure mode is silence — the request still returns 200 and the timing
+    # assertion still holds while nothing under test was ever patched.
+    drain_hits: list[float] = []
+
+    def _record_drain() -> float:
+        drain_hits.append(180.0)
+        return 180.0
+
     release_timer = threading.Timer(2.0, _fallback_release)
     release_timer.start()
     try:
@@ -229,13 +238,23 @@ def test_get_status_local_pid_probe_does_not_block_event_loop():
             # which is also the seam those modules document. hermes_cli.web_server holds
             # the name only as a revert-scheduled PLUGIN-COMPAT pointer.
             patch.object(_gateway_status, "get_running_pid_cached", _blocking_pid_probe),
-            patch.object(web_server_mod, "_resolve_restart_drain_timeout", lambda: 180.0),
+            # Same story for the drain timeout: the Sep 2026 decomposition moved
+            # the helper to hermes_cli.web_server_lifecycle, and the status route
+            # late-binds it from there (web_routers/status.py:43). It is not an
+            # attribute of hermes_cli.web_server at all any more — patching that
+            # module raised AttributeError. The other two tests in this file
+            # already patch the owning module; match them.
+            patch.object(_web_server_lifecycle, "_resolve_restart_drain_timeout", _record_drain),
         ):
             asyncio.run(_run())
     finally:
         release_probe.set()
         release_timer.cancel()
 
+    assert drain_hits, (
+        "/api/status never called the patched _resolve_restart_drain_timeout — the helper "
+        "moved again and this test is patching a seam the route no longer reads"
+    )
     assert not fallback_released_probe.is_set(), (
         "A blocking local gateway PID probe starved the asyncio event loop: "
         f"/api/version took {timings['version_ms']:.0f} ms"
