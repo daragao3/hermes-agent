@@ -1457,21 +1457,43 @@ class SessionBridgeSchemaMixin:
             )
         cursor.execute(f'DROP TABLE "{legacy}"')
 
+    #: Inner lock-retry budget for the bridge-table create, in SECONDS. Deliberately
+    #: short: whatever is spent here comes straight out of the CALLER's patience.
+    _BRIDGE_INIT_PATIENCE_S = 2.0
+
     def _initialize_bridge_tables(self, cursor: sqlite3.Cursor) -> None:
-        """Create additive bridge objects atomically with the local bounded lock retry."""
-        for attempt in range(15):
+        """Create additive bridge objects atomically, retrying briefly on a lock.
+
+        TIME-bounded, not attempt-counted, because every attempt pays a full
+        busy-handler window inside ``BEGIN IMMEDIATE`` before it can fail (~1.4s
+        against a held lock, and more on a loaded box). The old budget was
+        attempt-counted -- 15 attempts x a <=150ms sleep, i.e. ~2.25s as written --
+        so it really cost ~20s, which is the whole of ``_WRITE_PATIENCE_S``.
+        That left ``_connect_and_init_with_lock_patience``, the loop that exists to
+        wait out a sibling's VACUUM or checkpoint (#74478), unable to retry at all:
+        one attempt, and its deadline had already passed. Whether it retried even
+        once came down to which side of 20.0s a single attempt landed on (19.750s
+        -> retry, 21.5s -> give up, both observed minutes apart).
+
+        So absorb only a brief blip here and let the CALLER's loop own the long
+        wait -- it closes and reopens the connection between attempts, which this
+        loop cannot do.
+        """
+        deadline = time.monotonic() + self._BRIDGE_INIT_PATIENCE_S
+        while True:
             try:
                 cursor.executescript('BEGIN IMMEDIATE;\n' + BRIDGE_SCHEMA_SQL + '\nCOMMIT;')
                 return
             except BaseException as exc:
                 if self._conn.in_transaction:
                     self._conn.rollback()
-                if (isinstance(exc, sqlite3.OperationalError)
-                        and any(word in str(exc).lower() for word in ('locked', 'busy'))
-                        and attempt < 14):
-                    time.sleep(random.uniform(0.020, 0.150))
-                    continue
-                raise
+                if not (isinstance(exc, sqlite3.OperationalError)
+                        and any(word in str(exc).lower() for word in ('locked', 'busy'))):
+                    raise
+                now = time.monotonic()
+                if now >= deadline:
+                    raise
+                time.sleep(min(random.uniform(0.020, 0.150), max(deadline - now, 0.001)))
 
     def _initialize_bridge_migrations(self, cursor: sqlite3.Cursor) -> None:
         """Preserve local ledger order; no FTS/core scalar-version inference."""
