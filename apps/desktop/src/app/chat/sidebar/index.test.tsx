@@ -12,7 +12,8 @@ import {
   $sidebarPinsOpen,
   $sidebarRecentsOpen,
   $sidebarSessionOrderIds,
-  $sidebarSessionOrderManual
+  $sidebarSessionOrderManual,
+  $sidebarStatusFilter
 } from '@/store/layout'
 import { $activeGatewayProfile, $profiles, $showAllProfiles } from '@/store/profile'
 import {
@@ -130,6 +131,7 @@ beforeEach(() => {
   $sidebarRecentsOpen.set(true)
   $sidebarSessionOrderIds.set([])
   $sidebarSessionOrderManual.set(false)
+  $sidebarStatusFilter.set([])
 
   $profiles.set([])
   $showAllProfiles.set(false)
@@ -272,6 +274,36 @@ describe('scoped-but-empty profile empty state', () => {
     expect(screen.queryByText(/No chats in/)).toBeNull()
     // 'No sessions yet' is also the pins/project empty copy, so it is not unique.
     expect(screen.getAllByText('No sessions yet').length).toBeGreaterThan(0)
+  })
+
+  // A filter the user applied themselves outranks this state. Otherwise the
+  // sidebar answers a question nobody asked -- "your chats are in another
+  // profile", plus a profile switch -- when the truth is "no matches for your
+  // filter" and the fix is to clear the filter, not to leave the profile.
+  it('defers to the filter empty state when a filter is what emptied the list', () => {
+    $sessionProfileTotals.set({ main: 0 })
+    $sessionAllProfileTotals.set({ default: 8309, main: 0 })
+    $sidebarStatusFilter.set(['working'])
+
+    renderSidebar()
+
+    expect(screen.queryByText(/No chats in/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Show all profiles' })).toBeNull()
+    expect(screen.getByText('No sessions match these filters')).toBeTruthy()
+  })
+
+  // Same reasoning one level in: inside a project the list is scoped by the
+  // project, so an empty one is a statement about the project, not about which
+  // profile holds the chats.
+  it('defers to the project empty state while a project is entered', () => {
+    $sessionProfileTotals.set({ main: 0 })
+    $sessionAllProfileTotals.set({ default: 8309, main: 0 })
+    $projectScope.set('unrelated-project')
+
+    renderSidebar()
+
+    expect(screen.queryByText(/No chats in/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Show all profiles' })).toBeNull()
   })
 
   it('stays inert against an older backend that omits all_profile_totals', () => {

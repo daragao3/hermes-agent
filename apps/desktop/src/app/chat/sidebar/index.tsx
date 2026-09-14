@@ -1298,8 +1298,15 @@ export function ChatSidebar({
         0
       )
 
+  // Deliberately narrow, and the two guards below are the narrowing that
+  // matters. A filter the user applied themselves, or a project they entered,
+  // is a reason for an empty list that has nothing to do with which profile
+  // holds the chats -- answering "they are in another profile", plus a profile
+  // switch, is then both wrong and unhelpful. Those states own the message.
   const scopedEmptyWithRowsElsewhere =
     !showAllProfiles &&
+    !filtersActive &&
+    !inProject &&
     displayAgentSessions.length === 0 &&
     (sessionAllProfileTotals[profileScope] ?? scopedProfileTotal) === 0 &&
     elsewhereTotal > 0
@@ -1862,7 +1869,9 @@ export function ChatSidebar({
                     <SidebarSessionSkeletons />
                   ) : (
                     <div className="grid min-h-16 place-items-center gap-1.5 rounded-lg px-2 text-center text-xs text-(--ui-text-tertiary)">
-                      {scopedEmptyWithRowsElsewhere ? (
+                      {filtersActive ? (
+                        s.noFilterMatches
+                      ) : scopedEmptyWithRowsElsewhere ? (
                         <>
                           <span className="break-words">
                             {s.noSessionsInProfile(profileScope, elsewhereTotal)}
@@ -1875,8 +1884,6 @@ export function ChatSidebar({
                             {s.showAllProfilesAction}
                           </button>
                         </>
-                      ) : filtersActive ? (
-                        s.noFilterMatches
                       ) : pinnedSessions.length > 0 ? (
                         s.allPinned
                       ) : (
