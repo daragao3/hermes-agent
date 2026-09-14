@@ -487,15 +487,31 @@ def test_terminal_session_persists_its_launch_cwd():
         ) == "/somewhere/a-repo"
 
 
-def test_desktop_launch_cwd_is_not_persisted_as_a_workspace():
-    # The desktop launches from wherever the bundle was opened, so an unpicked
-    # cwd is an artifact — those chats belong under "No workspace".
-    assert server._persisted_session_cwd({"source": "desktop", "cwd": "/opt/whatever"}) is None
+def test_desktop_launch_cwd_is_persisted_for_cross_harness_resume():
+    """FORK CONTRACT, the opposite of upstream's: an unpicked desktop cwd IS persisted.
+
+    Upstream (3172b8739e) stamps None for a desktop session's launch directory so
+    those chats group under "No workspace". This fork retired that default ten days
+    earlier (6a1e8cc57e, "persist resolved session cwd"): the row's cwd is the
+    session's actual execution directory, whatever its source, because another
+    harness resuming the session needs it. The 0.21.1 integration (8586e305a2) kept
+    the fork body of ``_persisted_session_cwd`` and pinned it at the row-writer
+    level (``test_ensure_session_db_row_persists_desktop_execution_cwd``) but left
+    upstream's assertion here, which could never pass against it. The launch
+    directory is still flagged as a CONTEXT artifact for the system prompt --
+    ``test_desktop_launch_cwd_is_marked_as_context_artifact`` below -- only the DB
+    row policy differs.
+    """
+    assert server._persisted_session_cwd({"source": "desktop", "cwd": "/opt/whatever"}) == "/opt/whatever"
 
     # An explicit pick is always honored, desktop included.
     assert server._persisted_session_cwd(
         {"source": "desktop", "cwd": "/picked/repo", "explicit_cwd": True}
     ) == "/picked/repo"
+
+    # A missing cwd stays unset rather than falling back to the gateway's own directory.
+    assert server._persisted_session_cwd({"source": "desktop"}) is None
+    assert server._persisted_session_cwd({"source": "desktop", "cwd": "   "}) is None
 
 
 def test_desktop_launch_cwd_is_marked_as_context_artifact():
