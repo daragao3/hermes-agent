@@ -8,6 +8,7 @@ before the terminal query, which is the path most users hit.
 
 from __future__ import annotations
 
+import sys
 
 import pytest
 
@@ -195,6 +196,7 @@ class TestSkinConfigHook:
         assert skin.get_color("banner_text") == "#FFF8DC"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX PTY test")
 class TestOsc11DrainGuard:
     """Regression: a late-arriving OSC 11 reply must not leak into
     prompt_toolkit's input buffer (#40250).

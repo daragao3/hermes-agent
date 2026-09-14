@@ -15,12 +15,29 @@ npx PID — on timeout.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from tools.browser_tool import AGENT_BROWSER_NPX_SPEC
 from tools.browser_tool_install import warm_agent_browser_npx_cache
 from tools.browser_tool_lifecycle import _legacy_kill_process_tree
+
+# These tests reach the POSIX branch by faking ``os.name = 'posix'`` on the real
+# host. On Windows that fake cannot hold: os.getpgid/os.killpg do not exist (so
+# monkeypatch.setattr raises), signal.SIGKILL does not exist, and pathlib starts
+# handing back PosixPath. Production is unaffected -- _legacy_kill_process_tree
+# returns after ``taskkill /T /F`` on nt and never reaches this branch -- so the
+# behaviour under test genuinely does not exist here. Same idiom and rationale as
+# tests/tools/test_local_interrupt_cleanup.py.
+posix_semantics_only = pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX process-group semantics: the process-group and hard-kill "
+           "primitives are absent on Windows, where production takes the "
+           "taskkill early return",
+)
 
 
 def _mock_proc(returncode=0, communicate_side_effect=None, pid=4242):
@@ -121,6 +138,7 @@ def test_merges_extended_path_so_managed_only_npx_can_find_sibling_node():
     assert kwargs["env"]["PATH"] == "/opt/hermes/node/bin:/usr/bin"
 
 
+@posix_semantics_only
 def test_runs_in_its_own_process_group_on_posix(monkeypatch):
     monkeypatch.setattr("os.name", "posix")
     with patch("tools.browser_tool_install._resolve_npx_bin", return_value="/usr/bin/npx"), \
@@ -219,6 +237,7 @@ class TestLegacyKillProcessTree:
     delegation fails); the delegating wrapper is covered in
     tests/agent/test_treekill_consolidation.py."""
 
+    @posix_semantics_only
     def test_posix_kills_process_group_term_then_kill(self, monkeypatch):
         import signal
 
@@ -235,6 +254,7 @@ class TestLegacyKillProcessTree:
 
         assert killpg_calls == [(999, signal.SIGTERM), (999, signal.SIGKILL)]
 
+    @posix_semantics_only
     def test_posix_missing_process_returns_silently(self, monkeypatch):
         proc = MagicMock()
         proc.pid = 999
@@ -277,6 +297,7 @@ class TestLegacyKillProcessTree:
 
         _legacy_kill_process_tree(proc)  # must not raise
 
+    @posix_semantics_only
     def test_posix_sigterm_permission_denied_does_not_attempt_sigkill(self, monkeypatch):
         """If SIGTERM itself is rejected (e.g. a stale pgid reused by an
         unrelated, unkillable process), the loop must bail out rather than

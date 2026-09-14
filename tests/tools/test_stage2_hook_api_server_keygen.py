@@ -209,6 +209,8 @@ def test_keygen_readonly_env_degrades_to_warning_not_boot_abort(
     """
     import os
 
+    if os.name == "nt":
+        pytest.skip("POSIX permission semantics: chmod does not enforce write bits on Windows")
     if os.geteuid() == 0:
         pytest.skip("running as root — file write perms are not enforced")
     home = tmp_path / "home"

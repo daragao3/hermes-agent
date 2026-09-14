@@ -94,6 +94,8 @@ def test_dir_writable_probe(tmp_path) -> None:
     ro.mkdir()
     ro.chmod(0o555)
     try:
+        if os.name == "nt":
+            pytest.skip("POSIX permission semantics: chmod does not enforce write bits on Windows")
         if os.geteuid() == 0:  # pragma: no cover - root ignores perms
             pytest.skip("root bypasses directory permissions")
         assert sidecar_paths.dir_writable(ro) is False
