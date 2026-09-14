@@ -4,18 +4,26 @@ from ai_usage.contract import (
 )
 
 
+def modes_of_grid(grid):
+    return {p[0]: p[2] for p in grid}
+
+
 def test_providers_grid_order_and_modes():
     keys = [p[0] for p in PROVIDERS]
     assert keys == [
-        "anthropic", "anthropic2", "openai-codex", "kimi", "deepseek", "gemini",
+        "anthropic", "anthropic2", "openai-codex", "kimi", "gemini",
         "xai", "opencode-go",
     ]
-    modes = {p[0]: p[2] for p in PROVIDERS}
+    # DeepSeek retired 2026-09-13: served via OpenCode Go, the direct prepaid
+    # account is not a path -- watching it paged "balance chain_exhausted"
+    # every poll. Balance mode itself stays available for a future provider.
+    assert "deepseek" not in keys
+    assert "balance" not in modes_of_grid(PROVIDERS).values()
+    modes = modes_of_grid(PROVIDERS)
     assert modes["anthropic"] == "budget" and modes["kimi"] == "budget"
     # Second, separate Anthropic subscription via its own
     # ANTHROPIC2_OAUTH_TOKEN; same oauth usage endpoint, same window labels.
     assert modes["anthropic2"] == "budget"
-    assert modes["deepseek"] == "balance"  # pay-as-you-go outstanding-$
     # Gemini: AI Studio apikey-page RPC scrape over CDP
     # (agent/gemini_session.py); no official usage API exists.
     assert modes["gemini"] == "budget"

@@ -6,6 +6,13 @@ from ai_usage.balance import balance_provider
 
 FETCHED = datetime(2026, 8, 5, 15, 0, tzinfo=timezone.utc)
 
+# balance_provider() is a pure per-row mapper: it takes the key/label it is
+# handed and never consults ai_usage.contract.PROVIDERS. The sample key is
+# deliberately NOT "deepseek" -- that row was retired from the grid on
+# 2026-09-13 (served via OpenCode Go) and no live provider is balance-mode
+# today; the mapper is kept for the next prepaid key.
+KEY, LABEL = "prepaid-sample", "Prepaid Sample"
+
 
 @dataclass
 class FakeSnap:
@@ -16,7 +23,7 @@ class FakeSnap:
 
 
 def test_healthy_balance_renders_dollars():
-    out = balance_provider("deepseek", "DeepSeek", FakeSnap(True, balance_usd=9.744))
+    out = balance_provider(KEY, LABEL, FakeSnap(True, balance_usd=9.744))
     assert out["mode"] == "balance"
     assert out["state"] == "ok"
     assert out["balance_usd"] == 9.74  # rounded to cents
@@ -27,20 +34,20 @@ def test_healthy_balance_renders_dollars():
 
 def test_zero_balance_is_ok_state_not_error():
     # A drained key still fetched successfully — it's $0.00, not "no data".
-    out = balance_provider("deepseek", "DeepSeek", FakeSnap(True, balance_usd=0.0))
+    out = balance_provider(KEY, LABEL, FakeSnap(True, balance_usd=0.0))
     assert out["state"] == "ok"
     assert out["balance_usd"] == 0.0
     assert out["detail"] == "$0.00 left"
 
 
 def test_unavailable_snapshot_is_unconfigured():
-    snap = FakeSnap(False, unavailable_reason="no deepseek key")
-    out = balance_provider("deepseek", "DeepSeek", snap)
+    snap = FakeSnap(False, unavailable_reason="no prepaid key")
+    out = balance_provider(KEY, LABEL, snap)
     assert out["state"] == "unconfigured"
     assert out["windows"] == []
 
 
 def test_none_snapshot_is_error():
-    out = balance_provider("deepseek", "DeepSeek", None)
+    out = balance_provider(KEY, LABEL, None)
     assert out["state"] == "error"
     assert out["detail"] == "no data"
