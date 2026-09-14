@@ -17,6 +17,13 @@ from gateway.platforms.event import MessageEvent, MessageType
 from gateway.profile_routing import ProfileRoute
 from gateway.run import GatewayRunner
 
+from tests.gateway._agent_stack_warm import warm_agent_stack
+
+# Warm the agent stack HERE, at collection. The tests below import ``run_agent``
+# from inside a helper/test body, where the per-test ``--timeout`` applies and a
+# ~7s (idle) to ~25s (loaded) import can blow it. See the module docstring.
+warm_agent_stack()
+
 
 class _ProfileAdapter(BasePlatformAdapter):
     async def connect(self, *, is_reconnect: bool = False) -> bool:

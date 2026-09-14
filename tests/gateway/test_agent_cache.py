@@ -16,6 +16,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from tools import browser_tool_lifecycle as bt_lifecycle
 
+from tests.gateway._agent_stack_warm import warm_agent_stack
+
+# Warm the agent stack HERE, at collection. The tests below import ``run_agent``
+# from inside a helper/test body, where the per-test ``--timeout`` applies and a
+# ~7s (idle) to ~25s (loaded) import can blow it. See the module docstring.
+warm_agent_stack()
+
 
 def _make_runner():
     """Create a minimal GatewayRunner with just the cache infrastructure."""
