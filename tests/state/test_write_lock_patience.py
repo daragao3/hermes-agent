@@ -302,6 +302,63 @@ class TestOpenLockPatience:
         finally:
             db.close()
 
+    def test_open_patience_loop_gets_several_attempts_out_of_its_budget(
+        self, tmp_path, monkeypatch
+    ):
+        """The open patience loop must get MULTIPLE attempts out of its budget.
+
+        It can only retry if ONE attempt is cheap relative to
+        ``_WRITE_PATIENCE_S``. Measured 2026-09-13 it was not:
+        ``_initialize_bridge_tables`` carried an ATTEMPT-counted inner retry (15
+        attempts x a <=150ms sleep, budgeted as ~2.25s by its author), but every
+        attempt first pays a full busy-handler window inside ``BEGIN IMMEDIATE``
+        — ~1.3s against a held lock — so it really cost ~20s, the whole of
+        ``_WRITE_PATIENCE_S`` = 20.0. The outer loop then retried once or not at
+        all depending on which side of 20.0 a single attempt happened to land on
+        (19.750s -> retry, 21.5s -> give up, both observed minutes apart), which
+        made the #74478 fix a coin flip exactly when a sibling really is holding
+        the lock.
+
+        Unlike ``test_open_retries_a_locked_open_inside_its_own_patience_loop``
+        this must use the REAL busy window: shrinking ``busy_timeout`` is
+        precisely what hides this defect.
+        """
+        monkeypatch.setattr(SessionDB, "_WRITE_PATIENCE_S", 12.0)
+        db_path = tmp_path / "state.db"
+        SessionDB(db_path=db_path).close()
+
+        attempts = []
+        real_connect = SessionDB._connect_and_init
+
+        def _count_attempt(self):
+            attempts.append(time.monotonic())
+            return real_connect(self)
+
+        monkeypatch.setattr(SessionDB, "_connect_and_init", _count_attempt)
+
+        started, release = threading.Event(), threading.Event()
+        holder = threading.Thread(
+            target=_hold_write_lock_until,
+            args=(db_path, started, release),
+            kwargs={"max_hold_s": 90.0},  # never released: the open must exhaust
+        )
+        holder.start()
+        try:
+            assert started.wait(5.0)
+            t0 = time.monotonic()
+            with pytest.raises(sqlite3.OperationalError):
+                SessionDB(db_path=db_path)
+            elapsed = time.monotonic() - t0
+        finally:
+            release.set()
+            holder.join(timeout=20.0)
+        assert not holder.is_alive()
+        assert len(attempts) >= 3, (
+            f"open made only {len(attempts)} attempt(s) in {elapsed:.1f}s against a "
+            f"12.0s budget — a single attempt is consuming the whole budget, so the "
+            f"patience loop cannot retry"
+        )
+
     def test_open_propagates_non_lock_errors_immediately(self, tmp_path):
         """A non-lock open failure must not sit in the patience loop."""
         # A directory is not openable as a database file — raises an

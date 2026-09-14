@@ -105,7 +105,7 @@ class TestStartupPlatformIsolation:
     """Verify one blocked platform cannot prevent later platforms from starting."""
 
     @pytest.mark.asyncio
-    async def test_start_continues_after_platform_connect_timeout(self, tmp_path):
+    async def test_start_continues_after_platform_connect_timeout(self, tmp_path, monkeypatch):
         """A timeout on Discord should queue it and still connect Feishu.
 
         Uses Discord specifically because it is NOT in
@@ -117,6 +117,16 @@ class TestStartupPlatformIsolation:
         startup loop at all. Telegram's own backgrounded behavior is covered by
         test_telegram_background_connect.py.
         """
+        # Bound the boot-path gate. ``start()`` ends in _finish_startup_restore /
+        # boot-send waits, both bounded by ``_startup_restore_drain_timeout_secs()``,
+        # whose production default is 30s. Nothing under test here ever completes
+        # those boot sends, so the full 30s is paid and the repo's own
+        # ``--timeout=30`` addopts fires -- the test reports as a pytest-timeout with
+        # no traceback into our code rather than as an assertion. Bound it: this test
+        # asserts wiring/isolation, not how long the gate is held.
+        monkeypatch.setattr(
+            "gateway.run._startup_restore_drain_timeout_secs", lambda: 0.01
+        )
         runner = _make_runner()
         runner.config = GatewayConfig(
             platforms={
@@ -954,8 +964,18 @@ class TestVoiceInputCallbackWiring:
         return runner
 
     @pytest.mark.asyncio
-    async def test_startup_wires_voice_input_callback(self, tmp_path):
+    async def test_startup_wires_voice_input_callback(self, tmp_path, monkeypatch):
         """Cold-start connect must wire _voice_input_callback on Discord adapter."""
+        # Bound the boot-path gate. ``start()`` ends in _finish_startup_restore /
+        # boot-send waits, both bounded by ``_startup_restore_drain_timeout_secs()``,
+        # whose production default is 30s. Nothing under test here ever completes
+        # those boot sends, so the full 30s is paid and the repo's own
+        # ``--timeout=30`` addopts fires -- the test reports as a pytest-timeout with
+        # no traceback into our code rather than as an assertion. Bound it: this test
+        # asserts wiring/isolation, not how long the gate is held.
+        monkeypatch.setattr(
+            "gateway.run._startup_restore_drain_timeout_secs", lambda: 0.01
+        )
         runner = self._make_runner_with_discord()
         adapter = self._make_discord_voice_adapter()
         runner.config.sessions_dir = tmp_path

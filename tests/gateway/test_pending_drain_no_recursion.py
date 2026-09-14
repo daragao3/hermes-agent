@@ -20,6 +20,7 @@ task spawning keeps it constant (1 every time).
 """
 
 import asyncio
+import time
 import sys
 from unittest.mock import AsyncMock
 
@@ -279,11 +280,28 @@ async def test_late_arrival_drain_still_fires_when_no_in_band_drain():
     await adapter.handle_message(_make_event(text="first"))
 
     # Wait for the late-arrival drain task to finish the second event.
-    # 2000 * 0.01s = 20s budget: the old 4s budget flaked on loaded CI
-    # runners (11/12 turns completed; main run 33455779041).
-    for _ in range(2000):
-        if "late" in results and sk not in adapter._active_sessions:
-            break
+    #
+    # Wait on exactly what is asserted below, and bound it by WALL CLOCK.
+    # The previous form waited on ``"late" in results and sk not in
+    # adapter._active_sessions`` for ``range(2000)`` iterations, and both
+    # halves of that were wrong:
+    #
+    #   * ``sk not in _active_sessions`` is unsatisfiable HERE by
+    #     construction -- the session is released by
+    #     ``cancel_background_tasks()``, which runs on the next line, after
+    #     this loop. So the loop never broke; it burned the whole budget on
+    #     every single run. Measured: "late" lands at iteration 26 (0.44s),
+    #     the session clause never fires, and the loop still ran all 2000.
+    #   * a budget counted in ITERATIONS is not a budget in seconds. The old
+    #     comment reads "2000 * 0.01s = 20s", but ``asyncio.sleep(0.01)``
+    #     costs ~35ms on a loaded Windows box, so the real cost was ~28-70s
+    #     -- over the repo's own ``--timeout=30``, which is why this test
+    #     failed as a bare pytest-timeout with no traceback into our code.
+    #
+    # 20s of real time, the budget the old comment intended (the 4s it
+    # replaced flaked on loaded CI runners; main run 33455779041).
+    deadline = time.monotonic() + 20.0
+    while "late" not in results and time.monotonic() < deadline:
         await asyncio.sleep(0.01)
 
     await adapter.cancel_background_tasks()
