@@ -213,6 +213,20 @@ def _kill_orphaned_mcp_children(include_active: bool = False, server_name: Optio
     final shutdown after the MCP loop has stopped. ``server_name`` limits the sweep to one
     server (stdio reconnects cleaning up their old transport)."""
     import signal as _signal
+    # Nothing was ever spawned -> nothing to reap. Return BEFORE _take_reapable_pids,
+    # which touches ``_core._lock`` and so drags in the whole ``tools.mcp_tool`` graph
+    # (18 modules, measured) purely to take a lock and find both ledgers empty. cron's
+    # post-tick sweep calls this on EVERY tick, in gateway / cron / test processes that
+    # never speak MCP at all -- see _sweep_mcp_orphans in cron/scheduler.py.
+    #
+    # Reading the ledgers without the lock is safe HERE specifically: both are only ever
+    # populated by this process after it has spawned a stdio child, and spawning imports
+    # ``tools.mcp_tool`` anyway -- so in every case where this fast path is wrong, the
+    # import it avoids has already happened and nothing is saved or lost. A PID added
+    # between this test and the return is not dropped; it is reaped by the next sweep,
+    # which is exactly the best-effort contract described above.
+    if not _orphan_stdio_pids and not (include_active and _stdio_pids):
+        return
     pids, pgids = _take_reapable_pids(include_active, server_name)
     if not pids:  # skip the 2s sleep every MCP-free shutdown would otherwise pay
         return
