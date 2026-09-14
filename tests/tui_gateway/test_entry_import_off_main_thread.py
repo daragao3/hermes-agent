@@ -49,8 +49,11 @@ def _spawn_worker_import_entry():
         "if errs:\n"
         "    sys.stdout.write('IMPORT_FAILED: ' + errs[0] + '\\n')\n"
         "    sys.exit(2)\n"
-        "# main thread of this process still installs SIGPIPE handler\n"
-        "h = signal.getsignal(signal.SIGPIPE)\n"
+        "# SIGPIPE is POSIX-only; entry installs SIGTERM unconditionally on every\n"
+        "# platform, so fall back to it rather than raising AttributeError on\n"
+        "# Windows and losing the worker-thread-import coverage this test exists for.\n"
+        "_probe = getattr(signal, 'SIGPIPE', signal.SIGTERM)\n"
+        "h = signal.getsignal(_probe)\n"
         "sys.stdout.write('OK handler_installed=' + str(h is signal.SIG_IGN or callable(h)) + '\\n')\n"
         "sys.exit(0)\n"
     )

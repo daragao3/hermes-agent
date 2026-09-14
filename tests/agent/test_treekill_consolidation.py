@@ -141,7 +141,20 @@ class TestCodeExecutionDelegation:
         proc.pid = 6666
         proc.wait.side_effect = subprocess.TimeoutExpired(cmd="x", timeout=5)
         code_execution_tool._kill_process_group(proc, escalate=True)
-        assert calls == [(6666, _signal.SIGTERM), (6666, _signal.SIGKILL)]
+        # Mirror the production resolution exactly: _kill_process_group passes
+        # ``getattr(_signal, "SIGKILL", None)``, so on Windows — where SIGKILL
+        # does not exist — the escalation really does fire with ``sig=None``
+        # (agent.deadline.kill_process_tree ignores sig there and shells out to
+        # ``taskkill /T /F``). Spelling the literal ``_signal.SIGKILL`` here
+        # raised AttributeError inside the test BODY on Windows, which costs
+        # this one test rather than interrupting collection — see
+        # gbrain concepts/posix-only-symbol-breaks-windows-pytest-collection.
+        # NOT skipped: _kill_process_group has no platform branch, so the
+        # two-phase escalation under test is genuinely reachable on Windows.
+        assert calls == [
+            (6666, getattr(_signal, "SIGTERM", None)),
+            (6666, getattr(_signal, "SIGKILL", None)),
+        ]
         proc.wait.assert_called_once_with(timeout=5)
 
     def test_swallows_delegation_raise_falls_back_to_plain_kill(self, monkeypatch):
