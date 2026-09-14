@@ -2307,22 +2307,77 @@ def _finish_current_cron_activity(process: str, evidence_refs: tuple = ()) -> No
 _prerun_script_failure = contextvars.ContextVar("cron_prerun_script_failure", default=None)
 
 
+def _note_isolation_wait(deadline_box: Optional[dict]) -> None:
+    """Tell the deadline watchdog this worker is queued behind job isolation.
+
+    While this flag is up the watchdog measures the ISOLATION budget from
+    dispatch instead of the job's soft deadline: time spent in ``acquire()``
+    is pool convoy, not the job running (2026-09-13: a 53-min reader held the
+    read lock, a writer queued behind it, every later reader queued behind
+    the writer, and all of them were reported as 1800 s soft-deadline
+    failures without one of them having started).
+    """
+    if deadline_box is None:
+        return
+    deadline_box["isolation_waiting"] = True
+    progress = deadline_box.get("deadline_progress")
+    if progress is not None:
+        progress.set()
+
+
+def _note_isolation_acquired(deadline_box: Optional[dict]) -> None:
+    """Re-base the soft deadline on the instant job isolation was acquired.
+
+    Write order matters: the execution start and the re-based
+    ``deadline_monotonic`` (the worker-side boundary used by
+    :func:`_deadline_has_elapsed`) land before the waiting flag drops, so a
+    watchdog that observes ``isolation_waiting == False`` always reads the
+    re-based clock.
+    """
+    if deadline_box is None:
+        return
+    now = time.monotonic()
+    deadline_box["execution_started_monotonic"] = now
+    timeout_s = deadline_box.get("timeout_s")
+    if deadline_box.get("abandon_on_timeout") and timeout_s:
+        deadline_box["deadline_monotonic"] = now + timeout_s
+    deadline_box["isolation_waiting"] = False
+    progress = deadline_box.get("deadline_progress")
+    if progress is not None:
+        progress.set()
+
+
 def run_job(
     job: dict, *, defer_agent_teardown: Optional[list] = None, extra_prompt: Optional[str] = None,
     cancel_event: Optional[_CancelEventLike] = None, execution_id: Optional[str] = None,
+    on_isolation_acquired: Optional[Callable[[], None]] = None,
 ) -> tuple[bool, str, str, Optional[str]]:
-    """Bind the per-job profile across all early gates and the upstream run lifecycle."""
+    """Bind the per-job profile across all early gates and the upstream run lifecycle.
+
+    ``on_isolation_acquired`` runs once, right after the readers-writer lock is
+    held and before any job work: ``run_one_job`` emits ``cron_started`` from
+    it so the event's timestamp (the cron-stale monitor's age origin and the
+    run's duration origin) measures execution rather than lock wait.
+    """
     from cron.scheduler_diagnostics import set_stage
 
     writes_globals = _job_mutates_process_globals(job)
     acquire = _terminal_cwd_lock.acquire_write if writes_globals else _terminal_cwd_lock.acquire_read
     release = _terminal_cwd_lock.release_write if writes_globals else _terminal_cwd_lock.release_read
+    deadline_box = _deadline_current.get()[1]
     set_stage("isolation_wait")
+    _note_isolation_wait(deadline_box)
     acquire()
-    set_stage("profile_setup")
     prerun_token = _prerun_script_failure.set(None)
     worker_state = {}
     try:
+        _note_isolation_acquired(deadline_box)
+        if on_isolation_acquired is not None:
+            try:
+                on_isolation_acquired()
+            except Exception:
+                logger.warning("Job '%s': isolation-acquired hook failed", job["id"], exc_info=True)
+        set_stage("profile_setup")
         if _current_deadline_elapsed():
             return False, "", "", "Soft deadline exceeded before acquiring job isolation."
         with _job_profile_context(job["id"], job.get("profile")) as active_profile:
@@ -3135,7 +3190,23 @@ def _run_one_job_body(
         _release_current_dispatch_admission()
         started = time.monotonic()
         emit_iteration = True
-        if emitter is not None:
+        started_emitted = False
+
+        def _emit_started() -> None:
+            # Fired by run_job the moment job isolation is ACQUIRED, so the
+            # cron_started timestamp -- the cron-stale monitor's age origin and
+            # this run's duration origin -- measures execution, not the pool
+            # convoy behind the readers-writer lock. Idempotent: the fallback
+            # calls after run_job returns/raises keep the event for callers and
+            # test stubs that never invoke the hook, in the same position the
+            # emit used to hold (always before the terminal event).
+            nonlocal started, started_emitted
+            if started_emitted:
+                return
+            started_emitted = True
+            started = time.monotonic()
+            if emitter is None:
+                return
             try:
                 event_id = emitter.on_job_started(job_id=job["id"],
                     job_name=job.get("name") or job["id"], schedule=job.get("schedule_display", ""),
@@ -3143,6 +3214,7 @@ def _run_one_job_body(
                 _attach_started_event_id(job["id"], event_id, expected_record=registered_run)
             except Exception:
                 logger.warning("Cron started event failed for %s", job["id"], exc_info=True)
+
         if _current_deadline_elapsed():
             emit_iteration = False
             return False
@@ -3195,7 +3267,8 @@ def _run_one_job_body(
         _run_kwargs = {
             "defer_agent_teardown": _deferred_agents,
             "extra_prompt": extra_prompt,
-            "execution_id": execution_id}
+            "execution_id": execution_id,
+            "on_isolation_acquired": _emit_started}
         if fire_claim_lost is not None:
             _run_kwargs["cancel_event"] = fire_claim_lost
         try:
@@ -3205,7 +3278,10 @@ def _run_one_job_body(
                 deadline_box["firecrawl_state"] = firecrawl_state
             with _start_cron_span("cron.run") as span:
                 _stamp_cron_langfuse(span, job, job.get("name") or job["id"])
-                success, output, final_response, error = run_job(job, **_run_kwargs)
+                try:
+                    success, output, final_response, error = run_job(job, **_run_kwargs)
+                finally:
+                    _emit_started()  # no-op when the hook already fired inside run_job
             agent_iteration, workload_error = _resolve_agent_iteration_workload(final_response or "")
             if success and workload_error:
                 success = False
@@ -4386,32 +4462,76 @@ def _get_event_emitter():
     return _event_emitter if _event_emitter else None
 
 
+_DEFAULT_WRITER_PREFERENCE_AFTER_S = 600.0
+
+
+def _writer_preference_after_seconds() -> float:
+    """How long a writer waits before new readers queue behind it.
+
+    ``HERMES_CRON_WRITER_PREFERENCE_AFTER_SECONDS`` overrides the 600 s default;
+    ``0`` restores strict writer preference (readers queue as soon as a writer
+    waits).
+    """
+    raw = os.getenv("HERMES_CRON_WRITER_PREFERENCE_AFTER_SECONDS", "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            pass
+    return _DEFAULT_WRITER_PREFERENCE_AFTER_S
+
+
 class _ReadWriteLock:
-    """Writer-preferring readers-writer lock.
+    """Readers-writer lock with BOUNDED writer preference.
 
-    Guards the process-global ``os.environ["TERMINAL_CWD"]`` override that a
-    workdir cron job applies for the whole of its agent run.  Workdir jobs are
-    writers: they mutate the shared env and need exclusive access.  Workdir-less
-    jobs are readers: they only observe ``TERMINAL_CWD`` (indirectly, via the
-    terminal / file / code-exec tools), so any number of them may run
-    concurrently with each other, but none may run alongside a writer — that is
-    exactly what stops a workdir-less job from picking up another job's workdir
-    override and running its commands in the wrong directory.
+    Guards the process-global state a ``workdir``/``profile`` cron job mutates
+    for the whole of its run (``os.environ`` snapshot/restore, the Hermes-home
+    override; see :func:`_job_mutates_process_globals`).  Those jobs are
+    writers and need exclusive access.  Every other job is a reader: it only
+    observes that state (a ``no_agent`` script child inherits ``os.environ``
+    and ``load_hermes_dotenv`` never overrides values a profile writer already
+    loaded, so even script-only jobs are readers -- they cannot bypass the
+    lock).  Any number of readers may run concurrently, none alongside a
+    writer.
 
-    Writer preference bounds the wait for a workdir job (dispatched on the
-    single-thread sequential pool) so a stream of workdir-less readers cannot
-    starve it.
+    Preference is bounded, not strict.  A strictly writer-preferring lock
+    turned one long reader into a pool-wide convoy on 2026-09-13: a 53-minute
+    agent reader held the read lock, a 3-25 s writer queued behind it, and
+    from then on EVERY reader queued behind the writer until all four pool
+    slots were full of jobs that had not started.  So while a writer has
+    waited less than :func:`_writer_preference_after_seconds` (default 600 s),
+    readers keep entering; once it has waited longer, new readers queue behind
+    it exactly as before, so a stream of short readers cannot starve it
+    forever.  Trade-off: a writer's wait is now bounded by that grace period
+    plus the runtime of the readers admitted before it elapsed, instead of by
+    the runtime of the readers already inside when it arrived.  Nothing here
+    shortens the wait behind a reader that is ALREADY holding the lock; that
+    is the pool size's problem, not the lock's.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, prefer_writer_after_s: Optional[float] = None) -> None:
         self._cond = threading.Condition(threading.Lock())
         self._readers = 0
         self._writer_active = False
         self._writers_waiting = 0
+        self._writer_wait_started: list[float] = []
+        self._prefer_writer_after_s = prefer_writer_after_s
+
+    def _writer_preferred_locked(self) -> bool:
+        """True once the OLDEST waiting writer has outlived the grace period."""
+        if not self._writer_wait_started:
+            return False
+        bound = self._prefer_writer_after_s
+        if bound is None:
+            bound = _writer_preference_after_seconds()
+        return time.monotonic() - min(self._writer_wait_started) >= bound
 
     def acquire_read(self) -> None:
         with self._cond:
-            while self._writer_active or self._writers_waiting > 0:
+            # Preference is time-based, but readers never wait for it to
+            # BEGIN -- only for it to end, and that ends with release_write's
+            # notify_all, so an untimed wait cannot strand a reader.
+            while self._writer_active or self._writer_preferred_locked():
                 self._cond.wait()
             self._readers += 1
 
@@ -4423,12 +4543,15 @@ class _ReadWriteLock:
 
     def acquire_write(self) -> None:
         with self._cond:
+            waited_since = time.monotonic()
             self._writers_waiting += 1
+            self._writer_wait_started.append(waited_since)
             try:
                 while self._writer_active or self._readers > 0:
                     self._cond.wait()
             finally:
                 self._writers_waiting -= 1
+                self._writer_wait_started.remove(waited_since)
             self._writer_active = True
 
     def release_write(self) -> None:
@@ -4762,6 +4885,34 @@ def _job_timeout_seconds(job: dict) -> float:
     return _DEFAULT_JOB_TIMEOUT_S
 
 
+def _isolation_wait_budget_seconds(job: dict, timeout_s: float) -> float:
+    """How long a dispatched job may queue behind job isolation before it is
+    reported as ``overdue_running``/``isolation_wait`` (an observation, never a
+    failure).
+
+    Priority: per-job ``isolation_wait_seconds`` >
+    ``HERMES_CRON_ISOLATION_WAIT_SECONDS`` env var > 2x the job's soft
+    deadline. Non-positive values fall through to the next source.
+    """
+    per_job = job.get("isolation_wait_seconds")
+    if per_job is not None:
+        try:
+            value = float(per_job)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+    raw = os.getenv("HERMES_CRON_ISOLATION_WAIT_SECONDS", "").strip()
+    if raw:
+        try:
+            value = float(raw)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+    return 2.0 * timeout_s
+
+
 def _run_callable_with_deadline(job, process_fn, abandon_on_timeout, ctx, *, wait_for_abandoned=False):
     """Run one due job under a soft wall-clock deadline.
 
@@ -4779,8 +4930,21 @@ def _run_callable_with_deadline(job, process_fn, abandon_on_timeout, ctx, *, wai
       restore could corrupt the successor's environment. The deadline
       emits an overdue/running observation (never a terminal failure) and then
       keeps waiting, preserving the sequential invariant.
+
+    The deadline clock starts when the job STARTS EXECUTING, not at pool
+    pickup.  ``run_job`` re-bases it through :func:`_note_isolation_acquired`
+    the moment the readers-writer lock is held; a ``process_fn`` that never
+    reports (external workers, tests) keeps the dispatch-time clock.  Time
+    queued in ``acquire()`` has its own budget
+    (:func:`_isolation_wait_budget_seconds`, default 2x the job timeout):
+    when it elapses with the worker still queued, a distinct
+    ``overdue_running``/``isolation_wait`` CRON_STALE observation is emitted
+    at NORMAL priority and the watchdog keeps waiting for the lock -- never a
+    ``cron_failed`` carrying the timeout as a fake duration, which is what
+    the 2026-09-13 convoy produced for every queued reader and writer.
     """
-    from cron.scheduler_diagnostics import emit_overdue, run_with_evidence, snapshot
+    from cron.scheduler_diagnostics import (
+        emit_isolation_wait, emit_overdue, run_with_evidence, snapshot)
 
     timeout_s = _job_timeout_seconds(job)
     if timeout_s <= 0:
@@ -4789,16 +4953,25 @@ def _run_callable_with_deadline(job, process_fn, abandon_on_timeout, ctx, *, wai
     job_id = job["id"]
     job_name = job.get("name", job_id)
     abandoned = threading.Event()
+    progress = threading.Event()
+    dispatched_at = time.monotonic()
     evidence = {"job_id": job_id, "execution_id": job.get("execution_id"),
-                "stage": ("dispatch", time.monotonic())}
+                "stage": ("dispatch", dispatched_at)}
     box: dict = {
         "terminal_lock": threading.Lock(),
         "deadline_decided": threading.Event(),
         "deadline_finalized": threading.Event(),
         "deadline_monotonic": (
-            time.monotonic() + timeout_s if abandon_on_timeout else None
+            dispatched_at + timeout_s if abandon_on_timeout else None
         ),
+        # Re-based by run_job once job isolation is acquired.
+        "execution_started_monotonic": dispatched_at,
+        "isolation_waiting": False,
+        "deadline_progress": progress,
+        "timeout_s": timeout_s,
+        "abandon_on_timeout": abandon_on_timeout,
     }
+    isolation_budget_s = _isolation_wait_budget_seconds(job, timeout_s)
 
     def _worker():
         try:
@@ -4814,13 +4987,42 @@ def _run_callable_with_deadline(job, process_fn, abandon_on_timeout, ctx, *, wai
         except Exception:
             logger.exception("Deadline worker for cron job %s crashed", job_id)
             box["result"] = False
+        finally:
+            box["worker_finished"] = True
+            progress.set()
 
     t = threading.Thread(
         target=_worker, daemon=True, name=f"cron-job-{str(job_id)[:12]}"
     )
     t.start()
-    t.join(timeout_s)
-    if not t.is_alive():
+    isolation_reported = False
+    while True:
+        # Clear BEFORE reading state: a worker signal that lands between the
+        # read and the wait leaves the event set, so the wait returns at once.
+        progress.clear()
+        if box.get("worker_finished"):
+            break
+        now = time.monotonic()
+        if box.get("isolation_waiting"):
+            remaining = None if isolation_reported else dispatched_at + isolation_budget_s - now
+        else:
+            remaining = box["execution_started_monotonic"] + timeout_s - now
+        if remaining is not None and remaining <= 0:
+            if not box.get("isolation_waiting"):
+                break
+            waited_s = now - dispatched_at
+            diagnostic = snapshot(evidence, t)
+            logger.warning(
+                "Cron job '%s' (%s): still queued behind job isolation after %ds "
+                "(budget %ds); not started, not failed. execution=%s diagnostic=%s",
+                job_name, job_id, int(waited_s), int(isolation_budget_s),
+                job.get("execution_id"), diagnostic)
+            emit_isolation_wait(_get_event_emitter(), job, waited_s, isolation_budget_s, diagnostic)
+            isolation_reported = True
+            continue
+        progress.wait(remaining)
+    if box.get("worker_finished"):
+        t.join()
         box["deadline_decided"].set()
         return bool(box.get("result", False))
 

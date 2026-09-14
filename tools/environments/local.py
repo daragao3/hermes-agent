@@ -4,7 +4,6 @@ import contextlib
 import logging
 import ntpath
 import os
-import platform
 import re
 import shutil
 import signal
@@ -31,7 +30,7 @@ from tools.environments.local_pythonpath import (
     _build_hermes_repo_root_aliases, _strip_hermes_owned_pythonpath_and_runtime_markers)
 
 
-_IS_WINDOWS = platform.system() == "Windows"
+_IS_WINDOWS = os.name == "nt"
 
 logger = logging.getLogger(__name__)
 

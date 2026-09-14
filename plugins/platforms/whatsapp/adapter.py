@@ -5,7 +5,6 @@ import asyncio
 import logging
 import json
 import os
-import platform
 import re
 import signal
 import subprocess
@@ -18,7 +17,7 @@ from gateway.platforms._shared import get_scoped_secret
 from hermes_cli._subprocess_compat import windows_detach_popen_kwargs
 from hermes_constants import (find_node_executable, get_hermes_dir, node_executable_present, with_hermes_node_path)
 
-_IS_WINDOWS = platform.system() == "Windows"
+_IS_WINDOWS = os.name == "nt"
 
 
 def _wenv(name: str, default: str = "") -> str:

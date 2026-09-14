@@ -2459,12 +2459,24 @@ def _parse_skills_argument(skills: str | list[str] | tuple[str, ...] | None) -> 
     return list(dict.fromkeys(p for p in parts if p))
 
 
-def save_config_value(key_path: str, value: any) -> bool:
+def save_config_value(key_path: str, value: any, *, home=None) -> bool:
     """Persist dot-separated ``key_path`` = value into HERMES_HOME/config.yaml; True on success.
 
     Never the repo's cli-config.yaml: no config reader loads it, so the value would vanish.
+
+    ``home`` overrides the target Hermes home for THIS call only. It is opt-in and
+    defaults to the existing behaviour, so no caller changes by adding it.
+
+    It exists because :func:`_resolve_hermes_home` deliberately does NOT follow
+    ``_profile_runtime_scope``'s ``set_hermes_home_override`` -- see its docstring:
+    following that override globally would silently redirect every config write on
+    the multiplexed inbound path into a secondary profile's home. That reasoning
+    still stands and is untouched. But a caller that has a routed profile in hand
+    and *means* to write to it needs a way to say so explicitly, rather than
+    either mutating global resolution or writing to the wrong home. Passing the
+    home here is that way: the redirection is visible at the call site.
     """
-    config_path = _resolve_hermes_home() / 'config.yaml'
+    config_path = (Path(home) if home is not None else _resolve_hermes_home()) / 'config.yaml'
 
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)
