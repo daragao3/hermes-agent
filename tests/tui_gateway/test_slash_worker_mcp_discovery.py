@@ -88,20 +88,42 @@ def test_profile_local_mcp_tool_is_visible_in_slash_worker(tmp_path):
         cwd=tmp_path,
     )
     output: queue.Queue[str] = queue.Queue()
+    errors: list[str] = []
+    # A COLD slash worker pays a fresh interpreter plus the whole toolset and
+    # MCP-discovery import chain before it can answer anything. Measured on a
+    # Windows dev box 2026-09-14: 13.1s / 15.1s / 19.8s for this exact spawn on
+    # an otherwise idle machine, so the original 10s budget could not be met
+    # here at all and this test was unconditionally red. 120s is this repo's
+    # own precedent for a slash-worker child (test_slash_worker_sys_path.py).
+    # Nothing here measures latency -- the assertion is that a profile-local
+    # MCP tool is DISCOVERED -- so the budget only needs to be safely large.
+    RESPONSE_BUDGET_S = 120
     try:
         assert proc.stdin is not None
         assert proc.stdout is not None
-        stdout = proc.stdout
+        assert proc.stderr is not None
+        stdout, stderr = proc.stdout, proc.stderr
         threading.Thread(
             target=lambda: output.put(stdout.readline()),
+            daemon=True,
+        ).start()
+        # Drain stderr concurrently: without this the child's own traceback is
+        # never seen and a failure here says only "no response", which is what
+        # made this red undiagnosable from its own output.
+        threading.Thread(
+            target=lambda: errors.extend(stderr),
             daemon=True,
         ).start()
         proc.stdin.write(json.dumps({"id": 1, "command": "/tools"}) + "\n")
         proc.stdin.flush()
         try:
-            line = output.get(timeout=10)
+            line = output.get(timeout=RESPONSE_BUDGET_S)
         except queue.Empty:
-            pytest.fail("slash worker produced no /tools response within 10 seconds")
+            pytest.fail(
+                f"slash worker produced no /tools response within "
+                f"{RESPONSE_BUDGET_S}s (rc={proc.poll()}); child stderr:"
+                + chr(10) + ("".join(errors[-40:]) or "(empty)")
+            )
         response = json.loads(line)
         assert response["ok"] is True
         assert "mcp__profileprobe__hermes_61922_profile_probe" in response["output"]
