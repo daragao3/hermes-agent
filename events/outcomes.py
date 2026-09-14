@@ -356,6 +356,8 @@ def _is_recovery_transition(event: Event, payload: dict[str, Any]) -> OutcomeEvi
         return _evidence("drift_resolved", "payload.status", payload.get("status"))
     if event.event_type is EventType.WATCHDOG_PROBE_TRANSITION and after == "healthy":
         return _evidence("probe_recovered", "payload.after", payload.get("after"))
+    if event.event_type is EventType.RESOURCE_PRESSURE and payload.get("change") == "all_clear":
+        return _evidence("pressure_all_clear", "payload.change", "all_clear")
     return None
 
 
@@ -381,7 +383,16 @@ def evaluate_outcome(event: Event) -> OutcomeVerdict:
                        and payload.get("reason") == "soft_deadline")
     if overdue_running:
         pending.append(_evidence("soft_deadline_running", "payload.state", "overdue_running"))
-    if event.event_type in _DEGRADED_EVENT_TYPES and not overdue_running:
+    # RESOURCE_PRESSURE's one falling edge (2026-09-13): the producer stamps
+    # ``change="all_clear"`` when the LAST latched axis goes comfortably
+    # clear. Same escape as ``overdue_running`` above -- the type-level
+    # DEGRADED verdict would otherwise promote the closure back to WARN on
+    # Alerts, so the operator who was paged into the episode would read its
+    # end as one more incident. _is_recovery_transition turns it RECOVERED.
+    pressure_all_clear = (event.event_type is EventType.RESOURCE_PRESSURE
+                          and payload.get("change") == "all_clear")
+    if (event.event_type in _DEGRADED_EVENT_TYPES
+            and not overdue_running and not pressure_all_clear):
         degraded.append(
             _evidence("degraded_event_type", "event.event_type", event.event_type.type_string)
         )

@@ -61,11 +61,16 @@ def make_sample(
     )
 
 
+_CLEAR_CHANGES = {"axes_cleared", "all_clear"}
+
+
 def _pressure_events(bus):
     # These existing tests count pressure alerts; clear-only state updates
-    # have their own producer/authority contract in test_pressure_clear_authority.
+    # (a partial ``axes_cleared`` or the episode-ending ``all_clear``) have
+    # their own contracts in test_pressure_clear_authority and
+    # TestLatchedChangeDetection below.
     return [e for e in bus.query(event_type=EventType.RESOURCE_PRESSURE)
-            if e.payload.get("change") != "axes_cleared"]
+            if e.payload.get("change") not in _CLEAR_CHANGES]
 
 
 class TestNoFalsePositive:
@@ -1191,3 +1196,96 @@ class TestSpawnCheckIntegration:
         )
         monitor.check()
         assert calls == []
+
+
+class TestLatchedChangeDetection:
+    """``reasons_change`` reads the LATCHED set, not the instantaneous
+    breach list (2026-09-13).
+
+    Live shape that motivated this: phys hovered 91-93% around its 92
+    trigger and commit 84-86% around its 85 trigger for four hours while
+    BOTH stayed latched. The raw ``reasons`` list flipped on nearly every
+    sample, so 54 of 68 emissions carried ``change="reasons_change"`` for an
+    episode whose latched set never moved; RepeatGuard dropped 52 of them
+    silently and 5 still reached Telegram. The hysteresis band exists so
+    that hover is NOT a change, and change detection has to agree with it.
+    """
+
+    def _changes(self, bus):
+        return [e.payload["change"]
+                for e in bus.query(event_type=EventType.RESOURCE_PRESSURE)]
+
+    def test_hover_inside_the_band_emits_nothing(self, bus):
+        monitor = ResourcePressureMonitor(bus, re_alert_cooldown_seconds=900.0)
+        # Both axes breach together: one rising edge.
+        assert monitor.evaluate(make_sample(commit_pct=86.0, phys_pct=93.0), now=0.0)
+        # Then the 2026-09-13 hover: each axis oscillates between just above
+        # its trigger and inside its band (commit disarm 80, phys disarm 87),
+        # so the instantaneous ``reasons`` list changes on EVERY sample while
+        # the latched set never moves.
+        trace = [
+            (60, 84.5, 91.5), (120, 86.0, 91.5), (180, 84.5, 93.0),
+            (240, 86.0, 93.0), (300, 84.5, 91.5), (360, 86.0, 91.5),
+        ]
+        for second, commit, phys in trace:
+            assert monitor.evaluate(
+                make_sample(commit_pct=commit, phys_pct=phys), now=float(second),
+            ) is None
+        assert self._changes(bus) == ["rising_edge"]
+        assert monitor._latched == {"commit_high", "phys_high"}
+
+    def test_a_latch_change_emits_exactly_once(self, bus):
+        monitor = ResourcePressureMonitor(bus, re_alert_cooldown_seconds=900.0)
+        assert monitor.evaluate(make_sample(commit_pct=88.0), now=0.0)
+        # A second axis latching is the per-axis rising edge, inside the
+        # cooldown, once.
+        assert monitor.evaluate(make_sample(commit_pct=88.0, phys_pct=95.0), now=60.0)
+        assert monitor.evaluate(make_sample(commit_pct=84.5, phys_pct=91.5), now=120.0) is None
+        # phys clears comfortably (< 87 disarm) while commit still holds the
+        # episode: a partial clear, bus-only.
+        assert monitor.evaluate(make_sample(commit_pct=88.0, phys_pct=85.0), now=180.0) is None
+        assert self._changes(bus) == ["rising_edge", "rising_edge", "axes_cleared"]
+        assert bus.query(event_type=EventType.RESOURCE_PRESSURE)[-1].payload[
+            "axes_latched"] == ["commit_high"]
+
+    def test_all_clear_is_emitted_exactly_once_per_episode(self, bus):
+        from events.noise_guards import is_sustained_resource_repeat
+        from events.routing_policy import Attention, classify
+
+        monitor = ResourcePressureMonitor(bus, re_alert_cooldown_seconds=900.0)
+        assert monitor.evaluate(make_sample(commit_pct=88.0), now=0.0)
+        # 79% is below the 80% disarm: the last latched axis releases.
+        assert monitor.evaluate(make_sample(commit_pct=79.0), now=60.0) is None
+        # Still clear, twice more: nothing to say.
+        assert monitor.evaluate(make_sample(commit_pct=79.0), now=120.0) is None
+        assert monitor.evaluate(make_sample(commit_pct=50.0), now=180.0) is None
+        assert self._changes(bus) == ["rising_edge", "all_clear"]
+
+        all_clear = bus.query(event_type=EventType.RESOURCE_PRESSURE)[-1]
+        assert all_clear.payload["axes_latched"] == []
+        assert all_clear.payload["reasons"] == []
+        # Deliverable: the chat-side guard lets it through...
+        assert not is_sustained_resource_repeat(all_clear)
+        # ...as closure telemetry that never pages.
+        route = classify(all_clear)
+        assert route.attention is Attention.INFO
+        assert route.wa_tier is None
+
+    def test_partial_clear_stays_bus_only(self, bus):
+        from events.noise_guards import is_sustained_resource_repeat
+
+        monitor = ResourcePressureMonitor(bus, re_alert_cooldown_seconds=900.0)
+        assert monitor.evaluate(make_sample(commit_pct=88.0, phys_pct=95.0), now=0.0)
+        assert monitor.evaluate(make_sample(commit_pct=88.0, phys_pct=85.0), now=60.0) is None
+        partial = bus.query(event_type=EventType.RESOURCE_PRESSURE)[-1]
+        assert partial.payload["change"] == "axes_cleared"
+        assert is_sustained_resource_repeat(partial)
+
+    def test_a_new_episode_after_all_clear_gets_its_own_all_clear(self, bus):
+        monitor = ResourcePressureMonitor(bus, re_alert_cooldown_seconds=900.0)
+        assert monitor.evaluate(make_sample(commit_pct=88.0), now=0.0)
+        assert monitor.evaluate(make_sample(commit_pct=79.0), now=60.0) is None
+        assert monitor.evaluate(make_sample(commit_pct=88.0), now=120.0)
+        assert monitor.evaluate(make_sample(commit_pct=79.0), now=180.0) is None
+        assert self._changes(bus) == [
+            "rising_edge", "all_clear", "rising_edge", "all_clear"]

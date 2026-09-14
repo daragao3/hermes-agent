@@ -12,22 +12,32 @@ from events.schema import EventType
 from tests.events.producers.test_resource_monitor import make_sample
 
 
-@pytest.mark.parametrize("disk_free_gb", [300.0, 35.0])
-def test_clear_retires_authority_even_with_another_axis_open(tmp_path, disk_free_gb):
+# 300 GB free: commit was the only latched axis, so its release ENDS the
+# episode -- the one falling edge that reaches chat (``all_clear``, 2026-09-13).
+# 35 GB free: disk_low still holds the episode, so this is a partial
+# ``axes_cleared`` that both delivery lanes keep off chat. Authority retires
+# identically in both cases: the planner reads ``axes_latched``, not ``change``.
+@pytest.mark.parametrize("disk_free_gb, expected_change, delivered", [
+    (300.0, "all_clear", True),
+    (35.0, "axes_cleared", False),
+])
+def test_clear_retires_authority_even_with_another_axis_open(
+    tmp_path, disk_free_gb, expected_change, delivered,
+):
     bus = EventBus(db_path=tmp_path / "events.db")
     monitor = ResourcePressureMonitor(bus)
     monitor.evaluate(make_sample(commit_pct=95, disk_free_gb=disk_free_gb), now=0)
     monitor.evaluate(make_sample(commit_pct=50, disk_free_gb=disk_free_gb), now=60)
     events = bus.query(event_type=EventType.RESOURCE_PRESSURE)
     latest = events[-1]
-    assert latest.payload["change"] == "axes_cleared"
+    assert latest.payload["change"] == expected_change
     assert "commit_high" not in latest.payload["axes_latched"]
     pressure = evaluate_pressure([
         {"event_id": e.event_id, "timestamp": e.timestamp, "payload": e.payload}
         for e in events
     ], datetime.now(timezone.utc).timestamp(), FleetPolicy(commit_pct_arm=90))
     assert not pressure.valid
-    assert is_sustained_resource_repeat(latest)  # Both delivery lanes suppress it.
+    assert is_sustained_resource_repeat(latest) is (not delivered)
     monitor.evaluate(make_sample(commit_pct=50, disk_free_gb=disk_free_gb), now=61)
     assert len(bus.query(event_type=EventType.RESOURCE_PRESSURE)) == len(events)
 

@@ -78,6 +78,7 @@ _RECOVERY_WHEN = {
     EventType.GATEWAY_HEALTH: ("status", "up"),
     EventType.CODE_DRIFT: ("status", "resolved"),
     EventType.WATCHDOG_PROBE_TRANSITION: ("after", "healthy"),
+    EventType.RESOURCE_PRESSURE: ("change", "all_clear"),
 }
 
 
@@ -574,8 +575,17 @@ def resource_pressure_body(payload: dict) -> str:
         if phys_edge is not None:
             phys += f" (over {phys_edge:g}%)"
 
+    if p.get("change") == "all_clear":
+        # The episode's single falling edge (2026-09-13): no axis is
+        # latched, so "Resource pressure: ?" would be a lie. Lead with the
+        # closure, keep the readings so the operator can see the margin.
+        head = ("✅ Resource pressure cleared: every axis is comfortably "
+                "below its disarm level")
+    else:
+        head = f"⚠ Resource pressure: {reasons}"
+
     return (
-        f"⚠ Resource pressure: {reasons}\n"
+        f"{head}\n"
         f"{disk}\n"
         f"{commit}\n"
         f"{phys}\n"

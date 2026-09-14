@@ -101,8 +101,15 @@ def is_sustained_resource_repeat(event) -> bool:
     reconstructable on the bus after the fact — that sampling is what made the
     2026-08-14 delivery audit possible and is deliberately kept. But an
     unchanged sample is not a message: only ``rising_edge`` / ``band_change`` /
-    ``reasons_change`` reach chat. Bus-only, exactly like the cron lifecycle
-    types in ``_CRON_BUS_ONLY``.
+    ``reasons_change`` / ``all_clear`` reach chat. Bus-only, exactly like the
+    cron lifecycle types in ``_CRON_BUS_ONLY``.
+
+    ``all_clear`` (2026-09-13) is the falling edge that ENDS an episode -- the
+    last latched axis went comfortably clear -- and the producer emits it
+    exactly once per episode, so it is deliberately let through: an operator
+    who was paged into an episode gets told, once, that it is over. A partial
+    clear (``axes_cleared``: one axis released while another still holds the
+    episode) remains a bus-only state update for the P6 fleet controller.
 
     Deliberately duck-typed (no ``events.schema`` import) so this module stays
     dependency-free, and defaulting to FALSE for events with no ``change`` key
