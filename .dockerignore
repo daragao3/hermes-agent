@@ -45,9 +45,15 @@ ui-tui/packages/hermes-ink/dist/
 # first-boot .env seeding and the API_SERVER_KEY generation that depends on it).
 !.env.example
 
-# IDE
+# IDE / agent tooling state
 .vscode/
 .idea/
+# .claude/ holds Claude Code session state AND .claude/worktrees/, which are
+# FULL CHECKOUTS of this repo -- measured at 1.5 GB in the deployed checkout.
+# Nothing in the Dockerfile or docker/ references it. Without this rule a build
+# from the shared checkout uploads all of it as context and blows past
+# built_image's 1200s budget, while the same build from a worktree takes ~345s.
+.claude/
 *.swp
 *.swo
 

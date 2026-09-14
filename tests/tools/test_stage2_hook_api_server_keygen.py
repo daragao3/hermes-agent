@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.symlink_support import make_dir_link, requires_dir_links
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STAGE2_HOOK = REPO_ROOT / "docker" / "stage2-hook.sh"
 DOCKERIGNORE = REPO_ROOT / ".dockerignore"
@@ -42,31 +44,6 @@ def _path_guard_functions(text: str) -> str:
     start = text.index("path_has_symlink_component() {")
     end = text.index("\n\nchown_hermes_tree() {", start)
     return text[start:end]
-
-
-def _link_dir(link: Path, target: Path) -> None:
-    """Point ``link`` at directory ``target`` using whatever this host allows
-    WITHOUT elevation, or skip.
-
-    A real symlink needs SeCreateSymbolicLinkPrivilege on Windows (WinError
-    1314) and this box does not grant it -- but a directory JUNCTION needs no
-    privilege, and ``[ -L ]``, which is what ``path_has_symlink_component``
-    actually tests, reports a junction as a link. Assert through the SHELL:
-    ``Path.is_symlink()`` returns False for a junction, so a pathlib-based
-    assertion here would be wrong in the opposite direction.
-    """
-    try:
-        link.symlink_to(target, target_is_directory=True)
-        return
-    except OSError:
-        if os.name != "nt":
-            raise
-    proc = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True, text=True, timeout=30,
-    )
-    if proc.returncode != 0 or not link.is_dir():
-        pytest.skip("no unprivileged directory link available on this platform")
 
 
 def _run_keygen(
@@ -172,6 +149,7 @@ def test_keygen_refuses_symlinked_env(stage2_text: str, tmp_path: Path) -> None:
     assert outside.read_text() == "HIJACK=1\n", "must not write through symlink"
 
 
+@requires_dir_links
 def test_keygen_refuses_append_under_symlinked_home_component(
     stage2_text: str, tmp_path: Path
 ) -> None:
@@ -188,7 +166,7 @@ def test_keygen_refuses_append_under_symlinked_home_component(
     real_home = tmp_path / "real_home"
     real_home.mkdir()
     linked_home = tmp_path / "linked_home"
-    _link_dir(linked_home, real_home)
+    make_dir_link(linked_home, real_home)
 
     result = _run_keygen(stage2_text, linked_home)
 

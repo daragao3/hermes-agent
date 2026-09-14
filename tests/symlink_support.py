@@ -26,6 +26,8 @@ Usage::
 from __future__ import annotations
 
 import functools
+import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -75,4 +77,79 @@ requires_symlinks = pytest.mark.skipif(
         "cannot create symlinks in this process — on Windows this needs "
         "SeCreateSymbolicLinkPrivilege (enable Developer Mode or run elevated)"
     ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Directory links: reachable on Windows WITHOUT the privilege above
+# ---------------------------------------------------------------------------
+#
+# A Windows directory JUNCTION needs no privilege at all, so a test that only
+# needs "a directory that another path reaches through a link" does NOT have to
+# skip here the way `requires_symlinks` does.
+#
+# READ THIS BEFORE REACHING FOR IT -- a junction is not a symlink to every
+# observer, and the split is what makes it useful AND what makes it wrong in
+# the other half of cases:
+#
+#   * `sh` says a junction IS a link          -- `[ -L "$p" ]` is TRUE
+#   * Python says it is NOT                   -- os.path.islink() /
+#                                                Path.is_symlink() are False
+#
+# So use this ONLY when the code under test decides "is this a link?" through
+# the SHELL (or another API that honours reparse points). If the assertion is
+# Path.is_symlink(), a junction fails it and you want `requires_symlinks`.
+#
+# Measured 2026-09-14: shutil.rmtree does NOT delete through a junction, so a
+# link built inside tmp_path is safe for pytest's own cleanup. That is not
+# obvious given islink() is False -- rmtree keys off the reparse-point
+# attribute (FILE_ATTRIBUTE_REPARSE_POINT) via scandir, not off islink().
+
+
+def make_dir_link(link: Path, target: Path) -> str:
+    """Point ``link`` at directory ``target`` without elevation.
+
+    Returns ``"symlink"`` or ``"junction"`` so a caller can assert on which
+    mechanism it got. Raises ``OSError`` if neither is available; pair it with
+    :data:`requires_dir_links` to skip at collection time instead.
+    """
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return "symlink"
+    except (OSError, NotImplementedError):
+        if os.name != "nt":
+            raise
+    proc = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True, text=True, timeout=30,
+    )
+    if proc.returncode != 0 or not link.is_dir():
+        raise OSError(
+            f"neither a directory symlink nor a junction could be created at {link}: "
+            f"{proc.stderr.strip() or proc.stdout.strip()}"
+        )
+    return "junction"
+
+
+@functools.lru_cache(maxsize=1)
+def dir_links_supported() -> bool:
+    """True if :func:`make_dir_link` can build a directory link here.
+
+    Practically always True (junctions need no privilege), but probed rather
+    than assumed -- the same fail-closed reasoning as :func:`symlinks_supported`.
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="hermes-dirlink-probe-") as td:
+            probe = Path(td)
+            target = probe / "target-dir"
+            target.mkdir()
+            make_dir_link(probe / "dir-link", target)
+            return (probe / "dir-link").is_dir()
+    except (OSError, NotImplementedError, AttributeError, subprocess.SubprocessError):
+        return False
+
+
+requires_dir_links = pytest.mark.skipif(
+    not dir_links_supported(),
+    reason="cannot create a directory symlink or junction in this process",
 )

@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.symlink_support import make_dir_link, requires_dir_links
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STAGE2_HOOK = REPO_ROOT / "docker" / "stage2-hook.sh"
 
@@ -58,14 +60,12 @@ def test_chown_helper_repairs_real_directories(stage2_text: str, tmp_path: Path)
     ]
 
 
+@requires_dir_links
 def test_chown_helper_refuses_symlinked_directories(stage2_text: str, tmp_path: Path) -> None:
     real_home = tmp_path / "real-home"
     real_home.mkdir()
     symlinked_home = tmp_path / "hermes-home"
-    try:
-        symlinked_home.symlink_to(real_home, target_is_directory=True)
-    except (NotImplementedError, OSError):
-        pytest.skip("directory symlinks are not available on this platform")
+    make_dir_link(symlinked_home, real_home)
     log_path = tmp_path / "chown.log"
 
     proc = _run_helper(stage2_text, symlinked_home, log_path)
@@ -75,6 +75,7 @@ def test_chown_helper_refuses_symlinked_directories(stage2_text: str, tmp_path: 
     assert "refusing recursive chown through symlinked path" in proc.stdout
 
 
+@requires_dir_links
 def test_chown_helper_refuses_target_under_symlinked_home(
     stage2_text: str,
     tmp_path: Path,
@@ -82,10 +83,7 @@ def test_chown_helper_refuses_target_under_symlinked_home(
     real_home = tmp_path / "real-home"
     (real_home / "cron").mkdir(parents=True)
     linked_home = tmp_path / "linked-home"
-    try:
-        linked_home.symlink_to(real_home, target_is_directory=True)
-    except (NotImplementedError, OSError):
-        pytest.skip("directory symlinks are not available on this platform")
+    make_dir_link(linked_home, real_home)
     log_path = tmp_path / "chown.log"
 
     proc = _run_helper(
