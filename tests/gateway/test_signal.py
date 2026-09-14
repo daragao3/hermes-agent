@@ -1177,6 +1177,23 @@ class TestSignalSendMultipleImages:
         assert captured == []
 
     @pytest.mark.asyncio
+    async def test_as_uri_file_url_resolves_on_every_os(self, monkeypatch, tmp_path):
+        """RFC 8089 ``Path.as_uri()`` (``file:///C:/...`` on Windows) must resolve to the file,
+        like the gateway's own ``file://`` + quote(path) form -- not be skipped as missing."""
+        adapter = _make_signal_adapter(monkeypatch)
+        mock_rpc, captured = _stub_rpc_responses([{"timestamp": 1}])
+        adapter._rpc = mock_rpc
+        adapter._stop_typing_indicator = AsyncMock()
+        img = tmp_path / "shot with spaces.png"
+        img.write_bytes(b"\x89PNG" + b"\x00" * 32)
+
+        await adapter.send_multiple_images(chat_id="+155****4567", images=[(img.as_uri(), "")])
+
+        assert len(captured) == 1
+        attachments = captured[0]["params"]["attachments"]
+        assert [Path(a) for a in attachments] == [img]
+
+    @pytest.mark.asyncio
     async def test_single_batch_under_limit(self, monkeypatch, tmp_path):
         adapter = _make_signal_adapter(monkeypatch)
         mock_rpc, captured = _stub_rpc_responses([{"timestamp": 1}])
