@@ -25,10 +25,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from events.bus import EventBus
 from events.noise_guards import (
     FlapGuard,
+    KnownDebtGuard,
     RepeatGuard,
     is_off_ladder_consecutive_failure,
     is_sustained_resource_repeat,
     is_noop_cron_output,
+    known_debt_signature,
     normalize_for_fingerprint,
     strip_agent_iteration_json,
 )
@@ -78,6 +80,10 @@ DIGEST_EVENT_TYPES = frozenset({
 _NEVER_CONSUME = frozenset({
     EventType.NOTIFICATION_DELIVERED,
     EventType.NOTIFICATION_FAILED,
+    # Emitted from handle() itself when a guard drops a deliverable event
+    # (2026-09-13). Consuming it would route the suppression record back
+    # through the same guards -- the same cycle the two above guard against.
+    EventType.NOTIFICATION_SUPPRESSED,
 })
 
 CRON_SUMMARY_MAX_LINES = 24
@@ -200,6 +206,9 @@ class TelegramNotifier(BaseSubscriber):
         # v3 noise guards (P4/P6). In-memory: a restart re-arms them, which
         # at worst re-delivers one repeat/flap announcement per key.
         self._repeat_guard = RepeatGuard()
+        # Deliverable events a guard dropped this process lifetime; every
+        # drop also lands on the bus as NOTIFICATION_SUPPRESSED (2026-09-13).
+        self.suppressed_count = 0
         # 2h flap window + 2h base mute (escalating to 24h): the WhatsApp
         # bridge flapped for DAYS at ~hourly cadence — a 15-min window
         # never saw 4 transitions, so every flip delivered. 4 flips in 2h
@@ -213,6 +222,11 @@ class TelegramNotifier(BaseSubscriber):
         # steady identical output stays suppressed until it CHANGES;
         # breakage is covered by cron_failed / cron_stale, not repeats.
         self._cron_novelty_guard = RepeatGuard(window_seconds=6 * 3600.0)
+        # Known-debt partials (2026-09-13): an AGENT_ITERATION
+        # reason="partial" whose debt counters have not moved is one fact per
+        # 6h, not one per cycle; a moved counter delivers at once. Keyed on
+        # (agent, reason), see events.noise_guards.KnownDebtGuard.
+        self._known_debt_guard = KnownDebtGuard(window_seconds=6 * 3600.0)
 
         self._load_config()
 
@@ -399,6 +413,30 @@ class TelegramNotifier(BaseSubscriber):
         if not self._passes_verbosity(topic_key, route, event):
             return
 
+        # Known-debt partials (2026-09-13). The tracker's hourly
+        # reason="partial" carried the same "known API identity-shadow debt
+        # persists (17-row delta, 4 shadows)" every cycle, and RepeatGuard's
+        # 30-min window could not hold it. When the payload names a debt
+        # counter this guard owns the decision: unchanged -> one delivery per
+        # 6h; a moved counter -> deliver now, bypassing RepeatGuard, whose
+        # digit normalization would read 17 -> 18 as the same message.
+        known_debt_decided = False
+        if event.event_type == EventType.AGENT_ITERATION:
+            debt_signature = known_debt_signature(payload)
+            if debt_signature is not None:
+                debt_key = (f"{str(payload.get('agent') or '?').strip().lower()}"
+                            f":{str(payload.get('reason') or '').strip().lower()}")
+                decision = self._known_debt_guard.observe(debt_key, debt_signature)
+                if not decision.deliver:
+                    self._safe_emit_suppressed(
+                        event, route, thread_id, topic_key,
+                        guard="known_debt",
+                        window_seconds=self._known_debt_guard.window_seconds,
+                        key=debt_key, signature=debt_signature,
+                    )
+                    return
+                known_debt_decided = True
+
         message = self.format_message(event, route=route)
         keyed_stale = event.event_type == EventType.CRON_STALE and bool(event.payload.get("execution_id"))
         if keyed_stale:
@@ -432,8 +470,18 @@ class TelegramNotifier(BaseSubscriber):
         if (route.wa_tier != WA_IMMEDIATE
                 and not ladder_rung
                 and not keyed_stale  # already guarded by exact execution identity
+                and not known_debt_decided  # the debt guard owned this decision
                 and self._repeat_guard.is_repeat(
                     thread_id, message, sliding=not sustained_critical)):
+            # Until 2026-09-13 this drop was invisible: no bus row, no log
+            # line. The audit record is what lets "5 of 57 reached Telegram"
+            # be measured from the bus instead of reconstructed by hand.
+            self._safe_emit_suppressed(
+                event, route, thread_id, topic_key,
+                guard="repeat_guard",
+                window_seconds=self._repeat_guard.window_seconds,
+                sliding=not sustained_critical,
+            )
             return
 
         if route.batch:
@@ -844,6 +892,13 @@ class TelegramNotifier(BaseSubscriber):
                 f"{p.get('detail', '')}"
             ).strip()
 
+        if et == EventType.MODEL_RATE_LIMITED and isinstance(p.get("providers"), list):
+            # The consolidated usage-poller shape (2026-09-13): one page
+            # listing every capped provider. The single-provider shape keeps
+            # the generic fallback it always had.
+            from events.formatting import rate_limit_batch_body
+            return rate_limit_batch_body(p)
+
         # Generic fallback
         lines = [f"{k}: {v}" for k, v in p.items() if v]
         return "\n".join(lines[:10])
@@ -984,6 +1039,57 @@ class TelegramNotifier(BaseSubscriber):
                     chat_id, thread_id, topic_key, latency_ms, batch_count, exc, batch_context,
                 )
             return False
+
+    def _safe_emit_suppressed(
+        self,
+        event: Event,
+        route: Route,
+        thread_id: str,
+        topic_key: Optional[str],
+        *,
+        guard: str,
+        **detail,
+    ) -> None:
+        """Emit NOTIFICATION_SUPPRESSED: a guard dropped an event that had
+        ROUTED deliverable (2026-09-13). LOW, bus-only (see _NEVER_CONSUME),
+        carries what an audit needs to answer "why did this not arrive":
+        the original id/type, the thread it was bound for, the guard, and
+        the guard's own parameters. Swallows all exceptions -- a bus failure
+        here MUST NOT turn a suppression into a crash of the handle loop.
+        """
+        self.suppressed_count += 1
+        try:
+            self.bus.emit(
+                event_type=EventType.NOTIFICATION_SUPPRESSED,
+                source="telegram-notifier",
+                payload={
+                    "original_event_id": event.event_id,
+                    "original_event_type": event.event_type.type_string,
+                    "original_source": event.source,
+                    "platform": "telegram",
+                    "target": {
+                        "chat_id": self.group_chat_id,
+                        "thread_id": thread_id,
+                        "topic_key": topic_key or "",
+                    },
+                    "attention": route.attention.value,
+                    "guard": guard,
+                    "suppressed_total": self.suppressed_count,
+                    **detail,
+                },
+                priority=Priority.LOW,
+                correlation_id=event.event_id,
+                tags=["delivery", "telegram", "suppressed"],
+            )
+        except Exception:
+            logger.exception(
+                "TelegramNotifier: failed to emit NOTIFICATION_SUPPRESSED "
+                "for event %s", event.event_id,
+            )
+        logger.info(
+            "TelegramNotifier: %s suppressed %s %s for thread %s",
+            guard, event.event_type.type_string, event.event_id, thread_id,
+        )
 
     def _safe_emit_delivered(
         self,

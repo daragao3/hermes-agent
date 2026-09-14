@@ -1435,3 +1435,67 @@ class TestBlockedQuestionsBlock:
         ]})
         assert "Questions (2):" in block
         assert "junk" not in block
+
+
+class TestRateLimitBatchBody:
+    """The consolidated usage-poller page (2026-09-13): one line per capped
+    provider, worst first, newcomers marked when the page also carries
+    members already alerted."""
+
+    def _payload(self, **overrides):
+        base = {
+            "provider": "usage-poller", "model": "quota",
+            "reason": "quota_window", "detector": "usage_poller",
+            "outcome": "chain_exhausted", "episode_key": "usage-poller/quota",
+            "providers": [
+                {"provider": "anthropic", "model": "wk-window",
+                 "outcome": "diverted", "label": "Claude",
+                 "detail": "weekly window 95% used", "changed": True},
+                {"provider": "anthropic2", "model": "5h-window",
+                 "outcome": "chain_exhausted",
+                 "label": "Claude 2 (second Claude Code login)",
+                 "detail": "5h window 100% used",
+                 "resets_at": "2099-01-01T02:00:00Z", "changed": True},
+                {"provider": "deepseek", "model": "balance",
+                 "outcome": "chain_exhausted", "label": "DeepSeek",
+                 "detail": "prepaid balance $0.00 — top up", "changed": True},
+            ],
+        }
+        base.update(overrides)
+        return base
+
+    def test_lists_every_member_worst_first(self):
+        from events.formatting import rate_limit_batch_body
+        body = rate_limit_batch_body(self._payload())
+        lines = body.splitlines()
+        assert lines[0] == ("2 provider quota(s) exhausted, 1 near the cap "
+                            "— runs on them are failing.")
+        assert lines[1] == ("• Claude 2 (second Claude Code login): 5h window "
+                            "100% used, resets 01-01 02:00Z")
+        assert lines[2] == "• DeepSeek: prepaid balance $0.00 — top up"
+        assert lines[3] == "• Claude: weekly window 95% used"
+        assert "(new)" not in body, "every member is new: nothing to single out"
+
+    def test_marks_newcomers_only_when_old_members_are_also_listed(self):
+        from events.formatting import rate_limit_batch_body
+        payload = self._payload()
+        payload["providers"][1]["changed"] = False
+        payload["providers"][2]["changed"] = False
+        body = rate_limit_batch_body(payload)
+        assert "• Claude: weekly window 95% used (new)" in body
+        assert body.count("(new)") == 1
+
+    def test_telegram_and_whatsapp_render_the_batch_shape(self, tmp_path):
+        from events.bus import EventBus
+        from events.subscribers.telegram_notifier import TelegramNotifier
+        bus = EventBus(db_path=tmp_path / "events.db")
+        notifier = TelegramNotifier(
+            bus, topics_path=tmp_path / "topics.json",
+            verbosity_path=tmp_path / "verbosity.json",
+        )
+        event = Event.create(EventType.MODEL_RATE_LIMITED, "usage-poller",
+                             self._payload(), priority=Priority.HIGH)
+        body = notifier._format_payload(event)
+        assert body.startswith("2 provider quota(s) exhausted")
+        assert "DeepSeek" in body
+        assert "provider: usage-poller" not in body, "not the generic key:value dump"

@@ -101,8 +101,15 @@ def is_sustained_resource_repeat(event) -> bool:
     reconstructable on the bus after the fact — that sampling is what made the
     2026-08-14 delivery audit possible and is deliberately kept. But an
     unchanged sample is not a message: only ``rising_edge`` / ``band_change`` /
-    ``reasons_change`` reach chat. Bus-only, exactly like the cron lifecycle
-    types in ``_CRON_BUS_ONLY``.
+    ``reasons_change`` / ``all_clear`` reach chat. Bus-only, exactly like the
+    cron lifecycle types in ``_CRON_BUS_ONLY``.
+
+    ``all_clear`` (2026-09-13) is the falling edge that ENDS an episode -- the
+    last latched axis went comfortably clear -- and the producer emits it
+    exactly once per episode, so it is deliberately let through: an operator
+    who was paged into an episode gets told, once, that it is over. A partial
+    clear (``axes_cleared``: one axis released while another still holds the
+    episode) remains a bus-only state update for the P6 fleet controller.
 
     Deliberately duck-typed (no ``events.schema`` import) so this module stays
     dependency-free, and defaulting to FALSE for events with no ``change`` key
@@ -237,6 +244,95 @@ class RepeatGuard:
         while len(self._seen) > self.max_entries:
             self._seen.popitem(last=False)
         return False
+
+
+# Known-debt counters on an AGENT_ITERATION payload (2026-09-13). The
+# tracker's partial cycles carry the SAME debt every hour -- "known API
+# identity-shadow debt persists (17-row delta, 4 shadows)" -- and the LLM
+# names the counters differently from one cycle to the next (2026-09-13
+# 20:25 wrote stage_count_delta / shadow_rows; 2026-09-14 00:25 wrote
+# stage_mismatch_count / shadow_inserts_refused for the identical debt).
+# Each canonical name lists the spellings that mean it, so a renamed
+# counter with the same value is the same debt, not a change.
+KNOWN_DEBT_COUNTERS: Dict[str, Tuple[str, ...]] = {
+    "stage_delta": ("stage_count_delta", "stage_mismatch_count"),
+    "shadows": ("shadow_rows", "shadow_inserts_refused"),
+    "remaining": ("remaining",),
+}
+
+
+def known_debt_signature(payload) -> Optional[str]:
+    """The debt an AGENT_ITERATION ``reason="partial"`` payload names, as a
+    stable string, or None when this guard does not apply.
+
+    None for any reason other than ``partial`` and for a partial that names
+    NO debt counter -- such an event keeps the ordinary RepeatGuard path, so
+    a partial whose content genuinely varies is never collapsed by this
+    guard. Values are rendered with ``repr`` so ``17`` and ``"17"`` differ:
+    a producer that changes type has changed something worth seeing once.
+    """
+    payload = payload or {}
+    if str(payload.get("reason") or "").strip().lower() != "partial":
+        return None
+    counters = payload.get("counters")
+    if not isinstance(counters, dict):
+        return None
+    parts = []
+    for canonical, aliases in KNOWN_DEBT_COUNTERS.items():
+        for alias in aliases:
+            if alias in counters:
+                parts.append(f"{canonical}={counters[alias]!r}")
+                break
+    return ";".join(parts) if parts else None
+
+
+@dataclass
+class DebtDecision:
+    deliver: bool
+    changed: bool = False  # the debt signature moved since the last delivery
+
+
+class KnownDebtGuard:
+    """Deliver an UNCHANGED known-debt partial at most once per window; a
+    change in the numbers that name the debt delivers immediately.
+
+    Why RepeatGuard could not do this (2026-09-13): the tracker's partial is
+    DEGRADED -> WARN on Alerts, so it dedups on RepeatGuard's 30-min window,
+    and the cycle runs hourly -- every cycle re-delivered the same sentence.
+    Widening RepeatGuard's window would not help either, because it
+    normalizes digits to "N": ``17-row delta`` and ``18-row delta`` are one
+    fingerprint there, and the number moving is exactly the thing an
+    operator wants to see at once. This guard keys on the debt counters
+    VERBATIM and owns the whole decision for the events it applies to.
+
+    NON-SLIDING: the window is measured from the last DELIVERY, so a debt
+    that persists costs one message per window rather than one message ever.
+    """
+
+    def __init__(self, window_seconds: float = 6 * 3600.0, max_entries: int = 256):
+        self.window_seconds = window_seconds
+        self.max_entries = max_entries
+        # key -> (signature, delivered_at)
+        self._last: "OrderedDict[str, Tuple[str, float]]" = OrderedDict()
+        self.suppressed_count = 0
+
+    def observe(self, key: str, signature: str, now: Optional[float] = None) -> DebtDecision:
+        now = time.monotonic() if now is None else now
+        prev = self._last.get(key)
+        if prev is not None:
+            prev_signature, delivered_at = prev
+            if prev_signature == signature and (now - delivered_at) < self.window_seconds:
+                self._last.move_to_end(key)  # actively guarded: not first evicted
+                self.suppressed_count += 1
+                return DebtDecision(deliver=False)
+            changed = prev_signature != signature
+        else:
+            changed = False
+        self._last[key] = (signature, now)
+        self._last.move_to_end(key)
+        while len(self._last) > self.max_entries:
+            self._last.popitem(last=False)
+        return DebtDecision(deliver=True, changed=changed)
 
 
 @dataclass

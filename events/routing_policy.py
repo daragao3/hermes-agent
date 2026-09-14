@@ -282,6 +282,11 @@ _POLICY: Dict[EventType, _Spec] = {
     # routed for coverage so a guard regression surfaces on alerts.
     _E.NOTIFICATION_DELIVERED: _Spec(Attention.TRACE, ALERTS),
     _E.NOTIFICATION_FAILED: _Spec(Attention.TRACE, ALERTS),
+    # Audit tier (2026-09-13): a guard's decision not to send. Never a
+    # message itself -- both delivery subscribers list it in _NEVER_CONSUME
+    # -- and wa="none" so a guard regression can never page the phone with
+    # its own suppression records.
+    _E.NOTIFICATION_SUPPRESSED: _Spec(Attention.TRACE, ALERTS, wa="none"),
 }
 
 # AGENT_ITERATION per-agent topics (migrated from telegram_notifier).
@@ -576,6 +581,12 @@ def classify(
         if isinstance(reasons, (list, tuple)) and "disk_critical" in reasons:
             attention = Attention.ACT
             topic_key = ACTION_REQUIRED
+        elif payload.get("change") == "all_clear":
+            # The episode's single falling edge (2026-09-13): every latched
+            # axis is comfortably clear. Closure telemetry, exactly like
+            # gateway_health up / code_drift resolved -- INFO, never paged.
+            attention = Attention.INFO
+            wa = "none"
 
     elif et == EventType.WATCHDOG_SELF_DEGRADED:
         if payload.get("reason", "") in STATUS_BLACKOUT_SELF_DEGRADED_REASONS:

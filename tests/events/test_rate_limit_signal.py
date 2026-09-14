@@ -756,3 +756,130 @@ def test_persistently_unreadable_state_degrades_to_one_alert_not_one_per_hit(
         f"{len(bus.emitted)} alerts -- a read failure must degrade to one "
         "alert per process, the same as a write failure"
     )
+
+
+# ---------------------------------------------------------------------------
+# record_batch: one consolidated alert per detector pass (2026-09-13)
+# ---------------------------------------------------------------------------
+
+def _hit(provider, model="wk-window", outcome="chain_exhausted", **extra):
+    return {"provider": provider, "model": model, "outcome": outcome, **extra}
+
+
+class TestRecordBatch:
+    """On 2026-09-13 the usage poller paged five times for one condition,
+    once per capped provider. A batch is one episode (``usage-poller/quota``)
+    that alerts only when its member set ESCALATES."""
+
+    def _batch(self, hits, bus, **kw):
+        from events.rate_limit_signal import record_batch
+        return record_batch(hits, reason="quota_window", detector="usage_poller",
+                            source_hint="usage-poller", bus=bus, **kw)
+
+    def test_five_hits_are_one_event(self, state_file):
+        bus = _FakeBus()
+        hits = [_hit("anthropic2", "5h-window", resets_at="2099-01-01T02:00:00Z",
+                     label="Claude 2 (second Claude Code login)",
+                     detail="5h window 100% used"),
+                _hit("deepseek", "balance", label="DeepSeek",
+                     detail="prepaid balance $0.00 — top up"),
+                _hit("openai-codex"), _hit("kimi"), _hit("anthropic")]
+        assert self._batch(hits, bus) is True
+        assert len(bus.emitted) == 1
+        et, source, payload, priority = bus.emitted[0]
+        assert et is EventType.MODEL_RATE_LIMITED
+        assert payload["provider"] == "usage-poller"
+        assert payload["model"] == "quota"
+        assert payload["episode_key"] == "usage-poller/quota"
+        assert payload["outcome"] == "chain_exhausted"
+        assert payload["detector"] == "usage_poller"
+        assert payload["fallback_provider"] == ""
+        assert [m["provider"] for m in payload["providers"]] == [
+            "anthropic2", "deepseek", "openai-codex", "kimi", "anthropic"]
+        assert all(m["changed"] for m in payload["providers"])
+        assert payload["providers"][0]["label"] == "Claude 2 (second Claude Code login)"
+        assert payload["providers"][0]["detail"] == "5h window 100% used"
+        assert payload["resets_at"] == "2099-01-01T02:00:00Z"
+
+    def test_unchanged_set_is_silent_on_every_later_poll(self, state_file):
+        bus = _FakeBus()
+        hits = [_hit("anthropic2", "5h-window"), _hit("deepseek", "balance")]
+        assert self._batch(hits, bus) is True
+        for _ in range(50):
+            assert self._batch(hits, bus) is False
+        assert len(bus.emitted) == 1
+
+    def test_a_new_member_re_pages_once_and_marks_only_the_newcomer(self, state_file):
+        bus = _FakeBus()
+        self._batch([_hit("anthropic2", "5h-window")], bus)
+        assert self._batch([_hit("anthropic2", "5h-window"), _hit("kimi")], bus) is True
+        assert len(bus.emitted) == 2
+        payload = bus.emitted[1][2]
+        assert payload["changed"] == ["kimi/wk-window"]
+        changed = {m["provider"]: m["changed"] for m in payload["providers"]}
+        assert changed == {"anthropic2": False, "kimi": True}
+
+    def test_an_escalating_member_re_pages(self, state_file):
+        bus = _FakeBus()
+        self._batch([_hit("anthropic", outcome="diverted")], bus)
+        assert bus.emitted[0][2]["outcome"] == "diverted"
+        assert self._batch([_hit("anthropic", outcome="chain_exhausted")], bus) is True
+        assert len(bus.emitted) == 2
+        assert bus.emitted[1][2]["outcome"] == "chain_exhausted"
+
+    def test_a_member_dropping_out_or_downgrading_is_silent(self, state_file):
+        bus = _FakeBus()
+        self._batch([_hit("anthropic2", "5h-window"), _hit("kimi")], bus)
+        assert self._batch([_hit("kimi")], bus) is False
+        assert self._batch([_hit("kimi", outcome="diverted")], bus) is False
+        assert len(bus.emitted) == 1
+
+    def test_empty_batch_is_a_no_op_that_keeps_the_episode(self, state_file):
+        bus = _FakeBus()
+        hits = [_hit("anthropic2", "5h-window")]
+        self._batch(hits, bus)
+        assert self._batch([], bus) is False
+        # The set reappearing unchanged must NOT re-page: the poller never
+        # clears, so a quiet snapshot is not a recovery.
+        assert self._batch(hits, bus) is False
+        assert len(bus.emitted) == 1
+
+    def test_per_provider_episodes_are_still_persisted(self, state_file):
+        from events.rate_limit_signal import _load_state
+        bus = _FakeBus()
+        self._batch([_hit("anthropic2", "5h-window"), _hit("deepseek", "balance")], bus)
+        state = _load_state()
+        assert state["anthropic2/5h-window"]["alerted_level"] == "chain_exhausted"
+        assert state["deepseek/balance"]["worst_outcome"] == "chain_exhausted"
+        assert state["usage-poller/quota"]["members"] == {
+            "anthropic2/5h-window": "chain_exhausted",
+            "deepseek/balance": "chain_exhausted",
+        }
+        on_disk = json.loads(state_file.read_text(encoding="utf-8"))
+        assert set(on_disk) >= {"anthropic2/5h-window", "deepseek/balance",
+                                "usage-poller/quota"}
+
+    def test_a_bad_hit_is_skipped_not_fatal(self, state_file):
+        bus = _FakeBus()
+        assert self._batch([None, _hit("kimi")], bus) is True
+        assert [m["provider"] for m in bus.emitted[0][2]["providers"]] == ["kimi"]
+
+    def test_consolidated_event_routes_like_its_worst_member(self, state_file):
+        from events.routing_policy import ACTION_REQUIRED, Attention, classify
+        bus = _FakeBus()
+        self._batch([_hit("anthropic", outcome="diverted"), _hit("kimi")], bus)
+        et, source, payload, priority = bus.emitted[0]
+        route = classify(Event.create(et, source, payload, priority=priority))
+        assert route.attention is Attention.ACT
+        assert route.topic_key == ACTION_REQUIRED
+
+    def test_record_emit_false_decides_without_emitting(self, state_file):
+        from events.rate_limit_signal import record
+        bus = _FakeBus()
+        assert record(provider="kimi", model="wk-window", reason="quota_window",
+                      detector="usage_poller", outcome="chain_exhausted",
+                      bus=bus, emit=False) is True
+        assert record(provider="kimi", model="wk-window", reason="quota_window",
+                      detector="usage_poller", outcome="chain_exhausted",
+                      bus=bus, emit=False) is False
+        assert bus.emitted == []

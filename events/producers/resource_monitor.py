@@ -636,8 +636,16 @@ class ResourcePressureMonitor:
         # comfortably back past it, and the whole set clears when the episode
         # ends. Was disk-only until 2026-08-20.
         self._announced_band_edges: Set[Tuple[str, float]] = set()
-        # ``reasons`` of the last EMITTED event, for reasons_change detection.
-        self._last_reasons: Optional[Set[str]] = None
+        # The LATCHED set as of the last emission, for reasons_change
+        # detection. Until 2026-09-13 this held the raw instantaneous
+        # ``reasons`` list, which flips on every sample while an axis hovers
+        # inside its hysteresis band (phys 91-93% around the 92 trigger,
+        # commit 84-86% around 85): 54 of 68 emissions in 4h were
+        # ``reasons_change`` for an episode whose latched set never moved,
+        # RepeatGuard silently dropped 52 and 5 still reached Telegram. The
+        # hysteresis band exists precisely so that hover is NOT a change, so
+        # change detection has to read the same set the band feeds.
+        self._last_latched: Optional[Set[str]] = None
 
     def check(self) -> Optional[str]:
         """Sample, evaluate, emit if a pressure edge fired. Returns event_id or None.
@@ -748,13 +756,22 @@ class ResourcePressureMonitor:
         # re-reads this stream before acting; silence leaves old authority valid.
         # A simultaneous rising edge follows the normal alert path below.
         if was_latched - self._latched and not (set(reasons) - was_latched):
+            # ``all_clear`` is the ONE falling edge that reaches chat: the
+            # last latched axis went comfortably clear, the episode is over.
+            # It fires exactly once per episode by construction -- this
+            # branch needs an axis to LEAVE the latched set, and once empty
+            # nothing can leave. A partial clear (another axis still holds
+            # the episode) stays the bus-only ``axes_cleared`` state update.
             if not self._latched:
                 self._announced_band_edges.clear()
+                change = "all_clear"
+            else:
+                change = "axes_cleared"
             self._emit(
-                sample, reasons, growth_bytes, change="axes_cleared",
+                sample, reasons, growth_bytes, change=change,
                 spawn_floor_ms=spawn_floor, latched=self._latched,
             )
-            self._last_reasons = set(reasons)
+            self._last_latched = set(self._latched)
             return None  # State update only; no new pressure alert.
 
         if not reasons:
@@ -843,8 +860,18 @@ class ResourcePressureMonitor:
                 (axis, band_edge_gb) for band_edge_gb, _label in axis_bands
                 if is_past(band_edge_gb)
             )
+        # Compared against the LATCHED set, never the instantaneous
+        # ``reasons``: an axis dipping into its hysteresis band drops out of
+        # ``reasons`` while staying latched, and that dip is by definition
+        # not a change. An axis NEWLY latched is already ``rising_edge``
+        # below (``_latched`` only grows by ``reasons - was_latched``), and
+        # an axis unlatched took the ``axes_cleared`` / ``all_clear`` branch
+        # above unless a rising edge arrived in the same sample -- so this
+        # stamp is reachable only if the latch bookkeeping and the edge
+        # detection ever disagree. It is kept as that disagreement's witness,
+        # not as a third delivery path.
         reasons_changed = (
-            self._last_reasons is not None and set(reasons) != self._last_reasons
+            self._last_latched is not None and self._latched != self._last_latched
         )
 
         # Pressure is active. Decide whether to emit: rising edge always; a
@@ -888,7 +915,7 @@ class ResourcePressureMonitor:
             change = "sustained_repeat"
 
         self._last_emit = now
-        self._last_reasons = set(reasons)
+        self._last_latched = set(self._latched)
         return self._emit(
             sample, reasons, growth_bytes, band, band_edge, change,
             commit_band, commit_band_edge, phys_band, phys_band_edge,

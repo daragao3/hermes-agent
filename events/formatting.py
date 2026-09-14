@@ -78,6 +78,7 @@ _RECOVERY_WHEN = {
     EventType.GATEWAY_HEALTH: ("status", "up"),
     EventType.CODE_DRIFT: ("status", "resolved"),
     EventType.WATCHDOG_PROBE_TRANSITION: ("after", "healthy"),
+    EventType.RESOURCE_PRESSURE: ("change", "all_clear"),
 }
 
 
@@ -574,14 +575,90 @@ def resource_pressure_body(payload: dict) -> str:
         if phys_edge is not None:
             phys += f" (over {phys_edge:g}%)"
 
+    if p.get("change") == "all_clear":
+        # The episode's single falling edge (2026-09-13): no axis is
+        # latched, so "Resource pressure: ?" would be a lie. Lead with the
+        # closure, keep the readings so the operator can see the margin.
+        head = ("✅ Resource pressure cleared: every axis is comfortably "
+                "below its disarm level")
+    else:
+        head = f"⚠ Resource pressure: {reasons}"
+
     return (
-        f"⚠ Resource pressure: {reasons}\n"
+        f"{head}\n"
         f"{disk}\n"
         f"{commit}\n"
         f"{phys}\n"
         f"Pagefile: {p.get('pagefile_allocated_gb', '?')} GB "
         f"(+{p.get('pagefile_growth_gb_10min', '?')} GB/10m)"
     )
+
+
+def _short_reset(raw: object) -> str:
+    """``2026-09-14T02:00:00Z`` -> ``02:00Z`` today, ``09-14 02:00Z`` otherwise."""
+    if not raw:
+        return ""
+    try:
+        text = str(raw).strip()
+        if text.endswith(("Z", "z")):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.astimezone(timezone.utc)
+        if parsed.date() == datetime.now(timezone.utc).date():
+            return parsed.strftime("%H:%MZ")
+        return parsed.strftime("%m-%d %H:%MZ")
+    except Exception:
+        return str(raw)
+
+
+def rate_limit_batch_body(payload: dict) -> str:
+    """One page for a whole provider-quota snapshot (2026-09-13).
+
+    Rendered for a MODEL_RATE_LIMITED event carrying ``providers`` -- the
+    consolidated shape ``events.rate_limit_signal.record_batch`` emits for the
+    report-only usage poller. One line per capped provider, worst first:
+    ``Claude 2 (second Claude Code login): 5h window 100% used, resets 02:00Z``.
+    ``label``/``detail`` are authored by the producer (ai_usage.collector);
+    this function only orders and joins them. Members that escalated on THIS
+    emission are marked when the page also carries unchanged ones, so a
+    re-page reads as "what is new" rather than a repeat.
+    """
+    p = payload or {}
+    members = [m for m in (p.get("providers") or []) if isinstance(m, dict)]
+    severity = {"recovered": 0, "diverted": 1, "chain_exhausted": 2, "no_fallback": 2}
+
+    def _sev(m: dict) -> int:
+        return severity.get(str(m.get("outcome") or "").strip().lower(), 0)
+
+    members.sort(key=lambda m: (-_sev(m), str(m.get("label") or m.get("provider") or "")))
+    exhausted = [m for m in members if _sev(m) >= 2]
+    warned = [m for m in members if _sev(m) == 1]
+    if exhausted:
+        head = f"{len(exhausted)} provider quota(s) exhausted"
+        if warned:
+            head += f", {len(warned)} near the cap"
+        head += " — runs on them are failing."
+    elif warned:
+        head = f"{len(warned)} provider quota(s) near the cap."
+    else:
+        head = "Provider quota snapshot."
+
+    mark_new = any(m.get("changed") for m in members) and not all(
+        m.get("changed") for m in members)
+    lines = [head]
+    for m in members:
+        label = str(m.get("label") or m.get("provider") or "?")
+        detail = str(m.get("detail") or m.get("outcome") or "")
+        line = f"• {label}: {detail}" if detail else f"• {label}"
+        reset = _short_reset(m.get("resets_at"))
+        if reset:
+            line += f", resets {reset}"
+        if mark_new and m.get("changed"):
+            line += " (new)"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def container_crash_loop_body(payload: dict) -> str:

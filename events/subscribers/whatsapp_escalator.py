@@ -100,6 +100,10 @@ AGENT_ERROR_CLUSTER_THRESHOLD = 3
 _NEVER_CONSUME = frozenset({
     EventType.NOTIFICATION_DELIVERED,
     EventType.NOTIFICATION_FAILED,
+    # The Telegram notifier's guard-drop audit record (2026-09-13). Routed
+    # wa="none" already; listed here for the same defense-in-depth reason
+    # as its two siblings.
+    EventType.NOTIFICATION_SUPPRESSED,
 })
 
 
@@ -455,6 +459,11 @@ class WhatsAppEscalator(BaseSubscriber):
             probe = p.get("probe", "?")
             after = str(p.get("after", "down")).upper()
             text = f"🔑 Credential loss: {probe} is {after}. {p.get('detail', '')}".strip()
+        elif et == EventType.MODEL_RATE_LIMITED and isinstance(p.get("providers"), list):
+            # Consolidated usage-poller shape (2026-09-13): the single-model
+            # sentences below would name "quota (usage-poller)" and mislead.
+            from events.formatting import rate_limit_batch_body
+            text = rate_limit_batch_body(p)
         elif et == EventType.MODEL_RATE_LIMITED:
             # Added 2026-08-14 with the event type. Without an arm here the
             # message fell through to the generic key:value dump
