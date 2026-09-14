@@ -50,7 +50,22 @@ class _FakeChild:
 
 
 def _fake_psutil(monkeypatch, *, wait_gone=None, wait_alive=None):
-    """Install a stub psutil module for gateway.status's local imports."""
+    """Install a stub psutil module for gateway.status's local imports.
+
+    Also clears ``gateway.status._IS_WINDOWS``. Both functions under test
+    short-circuit on Windows before touching psutil at all
+    (``reap_gateway_children`` returns 0, ``_snapshot_gateway_children``
+    returns []), because the real Windows path tree-kills via ``taskkill /T``.
+    Without this the three tests below assert POSIX behaviour against those
+    early returns and fail on every Windows host -- which is what they did.
+
+    Patching the flag rather than skipping on ``sys.platform`` is deliberate:
+    the reaping logic itself is platform-independent (it is pure bookkeeping
+    over the injected psutil stub), so there is no reason for Windows to lose
+    the coverage. The Windows early-return is covered separately by
+    ``TestReplaceGatingOnWindows``.
+    """
+    monkeypatch.setattr(status, "_IS_WINDOWS", False)
     fake = MagicMock()
     fake.STATUS_ZOMBIE = "zombie"
     fake.NoSuchProcess = type("NoSuchProcess", (Exception,), {})
@@ -172,6 +187,18 @@ async def test_start_gateway_replace_reaps_old_gateway_children_posix(
     reaps them after the main PID is confirmed dead (POSIX path)."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
+    # Take the POSIX branch, as the test name says. ``_request_incumbent_shutdown``
+    # short-circuits to ``_drain_incumbent_via_marker`` when
+    # ``gateway.run._IS_WINDOWS``, so on a Windows host the graceful
+    # ``terminate_pid(force=False)`` this test asserts never happens: the marker
+    # drain simply times out against the 130s ``_replace_drain_timeout()``, then
+    # the code force-kills. That cost ~140s per run against the repo's own
+    # ``--timeout=30`` and still ended in a wrong-looking ``force=True``.
+    # Clearing the flag exercises the POSIX sequence the docstring describes and
+    # makes the drain resolve immediately, because the mocked terminate_pid
+    # clears the PID. The Windows marker path has its own coverage.
+    monkeypatch.setattr("gateway.run._IS_WINDOWS", False)
+
     events = []
     kids = [_FakeChild(401, ppid=1)]
 
@@ -229,7 +256,12 @@ async def test_start_gateway_replace_reaps_old_gateway_children_posix(
         or len(children),
     )
 
-    def _mock_terminate_pid(pid, force=False):
+    # Signature must track gateway.status.terminate_pid, which grew
+    # ``expected_start_time`` (the recycled-PID identity guard) and ``reason``.
+    # The production call site passes expected_start_time by keyword, so a
+    # narrower mock raises TypeError from inside the code under test and the
+    # failure reads as a production bug rather than as mock drift.
+    def _mock_terminate_pid(pid, force=False, expected_start_time=None, reason=None):
         events.append(("terminate", pid, force))
         _pid_state["alive"] = False
 
