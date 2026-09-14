@@ -8,7 +8,9 @@ Invariant checked here: for every ``moved-lazy`` entry whose target module also 
 some other facade under the same name, or whose facade stem has a sibling ``<stem>_*`` module defining the
 name, the facade attribute IS the sibling's object.
 """
+import functools
 import importlib
+import importlib.util
 import json
 import pkgutil
 import sqlite3
@@ -23,6 +25,12 @@ MANIFEST = ROOT / "compat_manifest.json"
 pytestmark = [
     pytest.mark.skipif(not MANIFEST.exists(), reason="compat layer removed (scheduled revert)"),
     pytest.mark.filterwarnings("ignore::FutureWarning"),
+    # Resolving every pointer imports 138 facades and the hundreds of modules they lazily pull in,
+    # so this is an import-cost test and the 30 s default does not fit it. Cold, it ran 33-64 s and
+    # died on the timeout *before reaching its own assertion* -- which read as an ordinary assertion
+    # failure only when a sibling file happened to warm the imports first. Same budget the other
+    # import-cost tests here use (tests/cron/test_home_target_import_cost.py).
+    pytest.mark.timeout(300),
 ]
 
 
@@ -30,17 +38,51 @@ def _entries():
     return [e for e in json.loads(MANIFEST.read_text())["entries"] if e["kind"] == "moved-lazy"]
 
 
-def _sibling_modules(facade: str) -> list[str]:
+# A pointer whose target module imports an OS-gated stdlib module cannot resolve on the other OS and
+# never could. ``hermes_cli.pty_bridge`` (PtyBridge, PtyUnavailableError) is POSIX-only by design --
+# its own docstring says so -- so on Windows those two entries made the whole assertion fail on a
+# platform fact, hiding the same-named-stranger check for every pointer that CAN be resolved here.
+# Skip only this cause, and only when the module is genuinely absent from this interpreter.
+_PLATFORM_ONLY_STDLIB = frozenset({
+    "fcntl", "termios", "tty", "pty", "pwd", "grp", "crypt", "posix", "resource", "syslog",
+    "msvcrt", "winreg", "winsound", "_winapi",
+})
+
+
+def _unavailable_platform_module(exc: BaseException) -> str | None:
+    """Name of the OS-gated stdlib module that made ``exc`` unresolvable, or None for any other cause."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, ModuleNotFoundError) and cur.name in _PLATFORM_ONLY_STDLIB:
+            try:
+                absent = importlib.util.find_spec(cur.name) is None
+            except Exception:
+                absent = True
+            if absent:
+                return cur.name
+        cur = cur.__cause__ or cur.__context__
+    return None
+
+
+# 1,147 moved-lazy entries share only 138 distinct facades, and each uncached call re-runs
+# pkgutil.iter_modules (an os.listdir of the package directory). Uncached, the call phase runs past
+# the 30 s pytest-timeout whenever this file is run on its own, so the test never reached its own
+# assertion -- it only looked like an assertion failure when a sibling file had already warmed the
+# imports. Memoised it finishes well inside the budget. Returns a tuple: the value is shared.
+@functools.lru_cache(maxsize=None)
+def _sibling_modules(facade: str) -> tuple[str, ...]:
     pkg, _, stem = facade.rpartition(".")
     try:
         parent = importlib.import_module(pkg) if pkg else None
     except Exception:
-        return []
+        return ()
     paths = getattr(parent, "__path__", None) if parent else [str(ROOT)]
     if not paths:
-        return []
+        return ()
     prefix = f"{pkg}." if pkg else ""
-    return [prefix + m.name for m in pkgutil.iter_modules(paths) if m.name.startswith(stem + "_")]
+    return tuple(prefix + m.name for m in pkgutil.iter_modules(paths) if m.name.startswith(stem + "_"))
 
 
 def test_moved_lazy_pointers_resolve_to_the_split_off_siblings_object():
@@ -50,6 +92,8 @@ def test_moved_lazy_pointers_resolve_to_the_split_off_siblings_object():
     the objects are identical); what must never happen is the pointer resolving to a same-named stranger.
     """
     bad = []
+    skipped = []
+    compared = 0
     for e in _entries():
         facade, name = e["facade"], e["name"]
         sibs = _sibling_modules(facade)
@@ -58,6 +102,10 @@ def test_moved_lazy_pointers_resolve_to_the_split_off_siblings_object():
         try:
             got = getattr(importlib.import_module(facade), name)
         except Exception as exc:  # unresolvable pointer is its own failure
+            missing = _unavailable_platform_module(exc)
+            if missing is not None:
+                skipped.append((facade, name, f"needs {missing}, absent on this platform"))
+                continue
             bad.append((facade, name, f"unresolvable: {exc!r}"))
             continue
         for s in sibs:
@@ -66,10 +114,19 @@ def test_moved_lazy_pointers_resolve_to_the_split_off_siblings_object():
             except Exception:
                 continue
             if name in vars(mod):
+                compared += 1
                 sib_obj = vars(mod)[name]
                 same = (sib_obj == got) if isinstance(got, (int, float, str, bytes, bool, type(None))) else (sib_obj is got)
                 if not same:
                     bad.append((facade, name, e["target"], s))
+    # Lower bound first: without it the platform skip above could grow until the stranger check runs
+    # over nothing and this test passes vacuously. Measured 2026-09-13 on Windows: 610 compared,
+    # 2 skipped (the pty_bridge pair), 0 bad. The floor is deliberately far below 610 so shrinking
+    # the manifest is not a false red, but far above 0 so a swallow-everything regression is.
+    assert compared > 100, (
+        f"only {compared} pointer(s) were actually compared against a sibling binding "
+        f"({len(skipped)} skipped as platform-gated: {skipped}) -- the stranger check is not running"
+    )
     assert not bad, f"compat pointers resolve to a different object than the facade's own sibling binds: {bad}"
 
 
