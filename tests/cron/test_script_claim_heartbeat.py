@@ -407,6 +407,10 @@ def test_lost_fire_claim_stops_stale_delivery(monkeypatch):
         extra_prompt=None,
         cancel_event=None,
         execution_id=None,
+        # Added by 9fe75310a7 (soft deadline measured from job isolation). The stub
+        # must accept it or run_one_job's call raises TypeError and the guard under
+        # test never runs -- the failure surfaces as run_one_job returning False.
+        on_isolation_acquired=None,
     ):
         assert execution_id == job["execution_id"]
         assert lost_seen.wait(timeout=2)
