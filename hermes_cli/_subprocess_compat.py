@@ -801,7 +801,7 @@ def _tree_kill(proc: subprocess.Popen) -> None:
         return
 
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # windows-footgun: ok — POSIX-only; the Windows branch above returns first
     except (OSError, ProcessLookupError):
         try:
             proc.kill()

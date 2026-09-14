@@ -33,7 +33,20 @@ def test_full_repo_scan_has_no_unsuppressed_windows_footguns():
         [sys.executable, str(SCRIPT), "--all"],
         capture_output=True,
         text=True,
-        timeout=60,
+        # Must stay UNDER pyproject's `--timeout=30` per-test cap, not above
+        # it: pytest-timeout fires first and, with --timeout-method=thread,
+        # cannot interrupt a blocked subprocess.run cleanly -- it dumps a
+        # stack ending in threading._wait_for_tstate_lock, which reads like a
+        # deadlock in this test and says nothing about the scan. A bound here
+        # instead raises subprocess.TimeoutExpired, which names the scan.
+        #
+        # The old value was 60 -- above the cap, so unreachable, and in any
+        # case a performance budget rather than a hang detector: the scan took
+        # ~113s then and the gate could not report the five real footguns it
+        # had found. It measures ~5.6s since the prefilter landed, so 20s is
+        # ~3.5x headroom. Scan cost is pinned in test_footgun_prefilter.py;
+        # what this test asserts is the exit status.
+        timeout=20,
         stdin=subprocess.DEVNULL,
     )
     assert result.returncode == 0, (

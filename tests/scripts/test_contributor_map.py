@@ -147,7 +147,7 @@ def test_no_case_insensitive_mapping_collisions():
     )
 
 
-def test_add_contributor_refuses_a_case_collision(tmp_path, monkeypatch):
+def test_add_contributor_refuses_a_case_collision(tmp_path, monkeypatch, capsys):
     d = tmp_path / "emails"
     d.mkdir()
     (d / "agent@Example-Host.local").write_text("someone\n")
@@ -157,7 +157,18 @@ def test_add_contributor_refuses_a_case_collision(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "EMAILS_DIR", d)
 
     assert mod.add_contributor("agent@example-host.local", "otherperson") == 1
-    assert not (d / "agent@example-host.local").exists()
+    # Assert WHICH refusal fired. On a case-insensitive filesystem the
+    # already-maps-to check further down refuses this same call, with the same
+    # exit code and the same empty write -- so without this line the test stays
+    # green even with the case-collision guard deleted outright.
+    assert "collides with existing mapping" in capsys.readouterr().err
+    # Assert on the directory listing, not on `.exists()` of the rejected
+    # spelling: this filesystem is case-INSENSITIVE, so that path resolves to
+    # the agent@Example-Host.local written above and `.exists()` is True no
+    # matter how correctly add_contributor behaved. Same idiom as
+    # test_add_contributor_refuses_case_collision_even_for_same_login below,
+    # and stronger -- it proves nothing at all was written.
+    assert sorted(p.name for p in d.iterdir()) == ["agent@Example-Host.local"]
 
 
 def test_add_contributor_refuses_case_collision_even_for_same_login(emails_dir, capsys):
