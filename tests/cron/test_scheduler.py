@@ -2027,9 +2027,13 @@ class TestRunJobWakeGate:
         (script would execute twice otherwise, wasting work and risking
         double-side-effects)."""
         import cron.scheduler as scheduler
+        from cron import scheduler_script as sched_script
 
         call_count = 0
-        def _script_stub(path, timeout_s=None):
+        # 0.21.1 moved the runner to cron.scheduler_script and widened its
+        # signature (workdir/cancel_event); patch the module the callers
+        # resolve it from and accept whatever they pass.
+        def _script_stub(path, *args, **kwargs):
             nonlocal call_count
             call_count += 1
             return (True, "regular output")
@@ -2038,7 +2042,7 @@ class TestRunJobWakeGate:
         agent.run_conversation = MagicMock(return_value={
             "final_response": "ok", "messages": []
         })
-        with patch.object(scheduler, "_run_job_script", side_effect=_script_stub), \
+        with patch.object(sched_script, "_run_job_script", side_effect=_script_stub), \
              patch("run_agent.AIAgent", return_value=agent):
             scheduler.run_job(self._make_job())
 
@@ -2048,6 +2052,7 @@ class TestRunJobWakeGate:
         """If _run_job_script returns success=False, the gate is NOT evaluated
         and the agent still runs (the failure is reported as context)."""
         import cron.scheduler as scheduler
+        from cron import scheduler_script as sched_script
 
         # Malicious or broken script whose stderr happens to contain the
         # gate JSON — we must NOT honor it because ran_ok is False.
@@ -2055,7 +2060,7 @@ class TestRunJobWakeGate:
         agent.run_conversation = MagicMock(return_value={
             "final_response": "ok", "messages": []
         })
-        with patch.object(scheduler, "_run_job_script",
+        with patch.object(sched_script, "_run_job_script",
                           return_value=(False, '{"wakeAgent": false}')), \
              patch("run_agent.AIAgent", return_value=agent) as agent_cls:
             success, doc, final, err = scheduler.run_job(self._make_job())
@@ -2065,6 +2070,7 @@ class TestRunJobWakeGate:
     def test_no_script_path_runs_agent_normally(self):
         """Regression: jobs without a script still work."""
         import cron.scheduler as scheduler
+        from cron import scheduler_script as sched_script
 
         agent = MagicMock()
         agent.run_conversation = MagicMock(return_value={
@@ -2072,7 +2078,7 @@ class TestRunJobWakeGate:
         })
         job = self._make_job(script=None)
         job.pop("script", None)
-        with patch.object(scheduler, "_run_job_script") as script_fn, \
+        with patch.object(sched_script, "_run_job_script") as script_fn, \
              patch("run_agent.AIAgent", return_value=agent) as agent_cls:
             scheduler.run_job(job)
 
@@ -3655,7 +3661,7 @@ class TestDuplicateFireGuard:
 
         run_job_calls = []
 
-        def blocking_run_job(job):
+        def blocking_run_job(job, **_kw):
             run_job_calls.append(job)
             return (True, "# output", "response", None)
 
@@ -3714,9 +3720,10 @@ class TestDuplicateFireGuard:
 
         with patch("cron.scheduler.get_due_and_skipped_jobs", return_value=([self._job()], [])), \
              patch("cron.scheduler.advance_next_runs"), \
+             patch("cron.scheduler.claim_job_for_fire", return_value=True), \
              patch("cron.scheduler._get_event_emitter", return_value=emitter), \
              patch("cron.scheduler.run_job",
-                   return_value=(True, "# output", "response", None)), \
+                   return_value=(True, "# output", "response", None)) as mock_run, \
              patch("cron.scheduler.save_job_output", return_value="/tmp/out.md"), \
              patch("cron.scheduler._deliver_result", return_value=None), \
              patch("cron.scheduler.mark_job_run"), \
@@ -3726,6 +3733,9 @@ class TestDuplicateFireGuard:
             from cron.scheduler import tick
             tick(verbose=False)
 
+        # Positive control: an absence assertion cannot tell "slot released"
+        # from "the run never happened" (e.g. a lost fire claim).
+        mock_run.assert_called_once()
         assert "092f4ed7657c" not in sch._in_flight, (
             "_in_flight must be cleared after a successful run; "
             f"still holds {sch._in_flight!r}"
@@ -3738,11 +3748,15 @@ class TestDuplicateFireGuard:
         emitter = MagicMock()
         emitter.on_job_started.return_value = "evt-1"
 
-        def boom(job):
+        boom_calls = []
+
+        def boom(job, **_kw):
+            boom_calls.append(job["id"])
             raise RuntimeError("simulated agent crash")
 
         with patch("cron.scheduler.get_due_and_skipped_jobs", return_value=([self._job()], [])), \
              patch("cron.scheduler.advance_next_runs"), \
+             patch("cron.scheduler.claim_job_for_fire", return_value=True), \
              patch("cron.scheduler._get_event_emitter", return_value=emitter), \
              patch("cron.scheduler.run_job", side_effect=boom), \
              patch("cron.scheduler.save_job_output", return_value="/tmp/out.md"), \
@@ -3754,6 +3768,7 @@ class TestDuplicateFireGuard:
             from cron.scheduler import tick
             tick(verbose=False)
 
+        assert boom_calls == ["092f4ed7657c"], "positive control: run_job must have raised"
         assert "092f4ed7657c" not in sch._in_flight, (
             "_in_flight must be cleared even when run_job raises"
         )
@@ -3773,7 +3788,7 @@ class TestDuplicateFireGuard:
         run_count = 0
         run_lock = threading.Lock()
 
-        def mock_run(job):
+        def mock_run(job, **_kw):
             nonlocal run_count
             with run_lock:
                 run_count += 1
@@ -3786,6 +3801,7 @@ class TestDuplicateFireGuard:
 
         with patch("cron.scheduler.get_due_and_skipped_jobs", return_value=(jobs, [])), \
              patch("cron.scheduler.advance_next_runs"), \
+             patch("cron.scheduler.claim_job_for_fire", return_value=True), \
              patch("cron.scheduler._get_event_emitter", return_value=emitter), \
              patch("cron.scheduler.run_job", side_effect=mock_run), \
              patch("cron.scheduler.save_job_output", return_value="/tmp/out.md"), \
@@ -3830,8 +3846,12 @@ class TestDuplicateFireGuard:
             lambda **kw: skip_calls.append(kw)
         )
 
+        # 0.21.1 claims the fire (claim_job_for_fire) in the worker BEFORE Guard #3 runs;
+        # on the per-test empty store an unpatched claim loses silently and the tick
+        # never reaches the guard, which would make every assertion below vacuous.
         with patch("cron.scheduler.get_due_and_skipped_jobs", return_value=([self._job()], [])), \
              patch("cron.scheduler.advance_next_runs"), \
+             patch("cron.scheduler.claim_job_for_fire", return_value=True), \
              patch("cron.scheduler._get_event_emitter", return_value=emitter), \
              patch("cron.scheduler.run_job") as mock_run, \
              patch("cron.scheduler.save_job_output"), \
@@ -4276,15 +4296,42 @@ class TestPerJobSoftDeadline:
             sched._in_flight.clear()
 
     def _stub_emitter(self, monkeypatch):
+        """Terminal callbacks land in the returned list; CRON_STALE overdue
+        observations (``emitter.bus.emit``, the sequential path's only signal
+        since 8d40095948) land in ``self._stale``."""
         from cron import scheduler as sched
         calls = []
+        stale = []
+
+        class _Bus:
+            def emit(self, **kw):
+                stale.append(kw)
 
         class _Emitter:
+            bus = _Bus()
+
             def on_job_completed(self, **kw):
                 calls.append(kw)
 
         monkeypatch.setattr(sched, "_get_event_emitter", lambda: _Emitter())
+        self._stale = stale
         return calls
+
+    @staticmethod
+    def _block_until_deadline(limit_s=5.0):
+        """Return once the deadline watchdog has decided this run is late.
+
+        Read through the worker's own contextvar, so the stubbed step crosses
+        the deadline INSIDE itself regardless of host load. A fixed sleep
+        against a 50ms deadline fired before the worker had even claimed the
+        fire on a loaded box; the run then exited at the pre-claim gate with
+        nothing to amend (measured 2026-09-14).
+        """
+        import time as _t
+        from cron import scheduler as sched
+        end = _t.monotonic() + limit_s
+        while not sched._current_deadline_elapsed() and _t.monotonic() < end:
+            _t.sleep(0.01)
 
     def test_fast_job_returns_result_unchanged(self, monkeypatch):
         import contextvars
@@ -4327,18 +4374,25 @@ class TestPerJobSoftDeadline:
         marked = []
         monkeypatch.setattr(
             sched, "mark_job_run",
-            lambda job_id, success, error, **kw: marked.append((job_id, success, error)),
+            lambda job_id, success, error, **kw: marked.append(
+                (job_id, success, error, kw.get("expected_fire_owner"))),
         )
+        # Since 0.21.1 the provisional deadline write is a narrow CAS: it needs the
+        # execution row it finalizes and the fire-claim owner the worker holds
+        # (test_scheduler_deadline_ownership.py). Model both, as production does.
+        monkeypatch.setattr(sched, "finish_execution", lambda *a, **k: {"id": "exec-hung"})
         runaway_done = threading.Event()
         saw_abandoned = []
 
-        def fn(job, _abandoned=None):
+        def fn(job, _abandoned=None, _deadline_box=None):
+            _deadline_box["claimed_job"] = dict(job, fire_claim={"by": "hung-owner"})
             _t.sleep(1.2)  # well past the 0.2s deadline
             saw_abandoned.append(_abandoned.is_set())
             runaway_done.set()
             return True
 
-        job = {"id": "hung-job", "name": "hung", "timeout_seconds": 0.2}
+        job = {"id": "hung-job", "name": "hung", "timeout_seconds": 0.2,
+               "execution_id": "exec-hung"}
         # Simulate the worker's Guard #3 registration.
         assert sched._try_register_in_flight("hung-job", "hung") is None
 
@@ -4350,7 +4404,7 @@ class TestPerJobSoftDeadline:
 
         assert result is False
         assert elapsed < 1.0, "must return at the deadline, not at completion"
-        assert marked == [("hung-job", False, marked[0][2])]
+        assert marked == [("hung-job", False, marked[0][2], "hung-owner")]
         assert "soft deadline exceeded" in marked[0][2]
         assert len(calls) == 1 and calls[0]["success"] is False
         # Slot released at the deadline so the next fire can register…
@@ -4392,6 +4446,9 @@ class TestPerJobSoftDeadline:
         amended = threading.Event()
 
         def fn(job, _abandoned=None, _deadline_box=None):
+            # The provisional write (and so the stamp this amendment keys on)
+            # requires the fire-claim owner the worker holds.
+            _deadline_box["claimed_job"] = dict(job, fire_claim={"by": "late-owner"})
             _t.sleep(0.15)
             assert sched._deadline_has_elapsed(_abandoned, _deadline_box)
             assert sched._amend_late_deadline_outcome(
@@ -4524,6 +4581,9 @@ class TestPerJobSoftDeadline:
 
         monkeypatch.setattr(sched, "_get_event_emitter", lambda: SlowEmitter())
         monkeypatch.setattr(sched, "mark_job_run", lambda *a, **k: "stamp")
+        # The deadline's cron_failed is emitted only after its execution row is
+        # finalized (0.21.1); without a row the slow subscriber is never entered.
+        monkeypatch.setattr(sched, "finish_execution", lambda *a, **k: {"id": "exec-race"})
 
         def worker(job, _abandoned=None, _deadline_box=None):
             assert event_entered.wait(2)
@@ -4531,7 +4591,8 @@ class TestPerJobSoftDeadline:
             release_event.set()
             return True
 
-        job = {"id": "event-race", "name": "race", "timeout_seconds": 0.05}
+        job = {"id": "event-race", "name": "race", "timeout_seconds": 0.05,
+               "execution_id": "exec-race"}
         assert sched._try_register_in_flight(job["id"], job["name"]) is None
         assert sched._run_callable_with_deadline(
             job, worker, True, contextvars.copy_context()
@@ -4548,22 +4609,21 @@ class TestPerJobSoftDeadline:
         production branch itself must invoke the amendment.
         """
         import threading
-        import time as _t
         from unittest.mock import patch
         from cron import scheduler as sched
 
         job = {
             "id": "late-process-branch",
             "name": "late-process",
-            "timeout_seconds": 0.05,
+            "timeout_seconds": 0.5,
             "deliver": "local",
             "schedule": {"kind": "cron", "expr": "0 * * * *"},
         }
         amended = threading.Event()
         seen = []
 
-        def slow_success(_job):
-            _t.sleep(0.15)
+        def slow_success(_job, **_kw):
+            self._block_until_deadline()
             return True, "saved output", "real response", None
 
         def amend(*args, **kwargs):
@@ -4571,7 +4631,21 @@ class TestPerJobSoftDeadline:
             amended.set()
             return True
 
-        with patch("cron.scheduler.get_due_and_skipped_jobs", return_value=([job], [])),              patch("cron.scheduler.advance_next_runs"),              patch("cron.scheduler.create_execution", return_value={"id": "exec-real"}),              patch("cron.scheduler.mark_execution_running"),              patch("cron.scheduler.finish_execution"),              patch("cron.scheduler.run_job", side_effect=slow_success),              patch("cron.scheduler.save_job_output", return_value="/tmp/late.md"),              patch("cron.scheduler.mark_job_run", return_value="deadline-stamp"),              patch("cron.scheduler.amend_late_outcome_after_abandon", side_effect=amend),              patch("cron.scheduler.amend_execution_after_abandon"):
+        with patch("cron.scheduler.get_due_and_skipped_jobs", return_value=([job], [])), \
+             patch("cron.scheduler.advance_next_runs"), \
+             patch("cron.scheduler.claim_job_for_fire",
+                   side_effect=lambda job_id, **kw: dict(job, fire_claim={"by": "tick-owner"})), \
+             patch("cron.scheduler.live_execution_for_job", return_value=None), \
+             patch("cron.scheduler.heartbeat_fire_claim", return_value=True), \
+             patch("cron.scheduler.claim_dispatch", return_value=True), \
+             patch("cron.scheduler.create_execution", return_value={"id": "exec-real"}), \
+             patch("cron.scheduler.mark_execution_running"), \
+             patch("cron.scheduler.finish_execution"), \
+             patch("cron.scheduler.run_job", side_effect=slow_success), \
+             patch("cron.scheduler.save_job_output", return_value="/tmp/late.md"), \
+             patch("cron.scheduler.mark_job_run", return_value="deadline-stamp"), \
+             patch("cron.scheduler.amend_late_outcome_after_abandon", side_effect=amend), \
+             patch("cron.scheduler.amend_execution_after_abandon"):
             assert sched.tick(verbose=False, sync=True) == 0
             assert amended.wait(2), "_process_job suppressed the late verdict"
 
@@ -4582,16 +4656,20 @@ class TestPerJobSoftDeadline:
     def test_output_save_crossing_deadline_uses_late_path(
         self, monkeypatch, _tick_lock_isolated
     ):
-        """Output persistence cannot race abandonment into normal side effects."""
+        """Output persistence cannot race abandonment into normal side effects.
+
+        The save runs under the fire-claim side-effect fence (0.21.1), which
+        validates the owned claim against the store; on the per-test empty
+        store it would refuse the save silently, so the fence is opened here.
+        """
         import threading
-        import time as _t
         from unittest.mock import patch
         from cron import scheduler as sched
 
         job = {
             "id": "save-crosses-deadline",
             "name": "save-crosses-deadline",
-            "timeout_seconds": 0.08,
+            "timeout_seconds": 0.5,
             "deliver": "local",
             "schedule": {"kind": "cron", "expr": "0 * * * *"},
         }
@@ -4600,7 +4678,7 @@ class TestPerJobSoftDeadline:
         normal_success_marks = []
 
         def save_output(*args, **kwargs):
-            _t.sleep(0.12)
+            self._block_until_deadline()
             return "/tmp/save-crosses-deadline.md"
 
         def mark(job_id, success, error=None, **kwargs):
@@ -4610,6 +4688,13 @@ class TestPerJobSoftDeadline:
 
         with patch("cron.scheduler.get_due_and_skipped_jobs", return_value=([job], [])), \
              patch("cron.scheduler.advance_next_runs"), \
+             patch("cron.scheduler.claim_job_for_fire",
+                   side_effect=lambda job_id, **kw: dict(job, fire_claim={"by": "tick-owner"})), \
+             patch("cron.scheduler.live_execution_for_job", return_value=None), \
+             patch("cron.scheduler.heartbeat_fire_claim", return_value=True), \
+             patch("cron.scheduler.claim_dispatch", return_value=True), \
+             patch("cron.scheduler.fire_claim_fence",
+                   side_effect=lambda *a, **k: contextlib.nullcontext(True)), \
              patch("cron.scheduler.create_execution", return_value={"id": "exec-save"}), \
              patch("cron.scheduler.mark_execution_running"), \
              patch("cron.scheduler.finish_execution"), \
@@ -4639,14 +4724,13 @@ class TestPerJobSoftDeadline:
         branch must replace that proxy in both durable stores.
         """
         import threading
-        import time as _t
         from unittest.mock import patch
         from cron import scheduler as sched
 
         job = {
             "id": "nested-timeout",
             "name": "nested-timeout",
-            "timeout_seconds": 0.05,
+            "timeout_seconds": 0.5,
             "deliver": "local",
             "schedule": {"kind": "cron", "expr": "0 * * * *"},
         }
@@ -4658,8 +4742,8 @@ class TestPerJobSoftDeadline:
         ledger_amends = []
         amended = threading.Event()
 
-        def late_inner_timeout(_job):
-            _t.sleep(0.15)
+        def late_inner_timeout(_job, **_kw):
+            self._block_until_deadline()
             return False, "durable partial output", "", hard_error
 
         def amend_job(*args, **kwargs):
@@ -4674,6 +4758,13 @@ class TestPerJobSoftDeadline:
         with patch(
             "cron.scheduler.get_due_and_skipped_jobs", return_value=([job], [])
         ), patch("cron.scheduler.advance_next_runs"), patch(
+            "cron.scheduler.claim_job_for_fire",
+            side_effect=lambda job_id, **kw: dict(job, fire_claim={"by": "tick-owner"}),
+        ), patch(
+            "cron.scheduler.live_execution_for_job", return_value=None
+        ), patch("cron.scheduler.heartbeat_fire_claim", return_value=True), patch(
+            "cron.scheduler.claim_dispatch", return_value=True
+        ), patch(
             "cron.scheduler.create_execution", return_value={"id": "exec-nested"}
         ), patch("cron.scheduler.mark_execution_running"), patch(
             "cron.scheduler.finish_execution"
@@ -4791,12 +4882,22 @@ class TestPerJobSoftDeadline:
         )
         elapsed = _t.monotonic() - t0
 
+        from events.schema import EventType
+
         assert result is True, "sequential path must wait for the real result"
         assert elapsed >= 0.65
-        # Alert fired at the deadline…
-        assert len(calls) == 1 and calls[0]["success"] is False
-        assert "sequential job" in calls[0]["error"]
-        # …but the run was NOT marked failed (it's still owned by _process_job).
+        # Alert fired at the deadline as an overdue OBSERVATION: a serialized job is
+        # not terminal at its deadline (8d40095948), so there is no cron_failed /
+        # on_job_completed for it, only a CRON_STALE overdue_running observation…
+        assert calls == [], "a sequential deadline must not emit a terminal event"
+        assert len(self._stale) == 1, self._stale
+        stale = self._stale[0]
+        assert stale["event_type"] == EventType.CRON_STALE
+        assert stale["payload"]["job_id"] == "seq-job"
+        assert stale["payload"]["state"] == "overdue_running"
+        assert stale["payload"]["reason"] == "soft_deadline"
+        assert stale["payload"]["worker_stack"], "observation must carry the worker stack"
+        # …and the run was NOT marked failed (it's still owned by _process_job).
         assert marked == []
 
     def test_release_started_before_protects_successor_record(self):
@@ -4827,6 +4928,7 @@ class TestPerJobSoftDeadline:
     def test_per_job_script_timeout_overrides_global(self):
         import time as _t
         from cron import scheduler as sched
+        from cron import scheduler_script as sched_script
 
         sdir = sched._get_hermes_home() / "scripts"
         sdir.mkdir(parents=True, exist_ok=True)
@@ -4838,7 +4940,7 @@ class TestPerJobSoftDeadline:
             "import time\ntime.sleep(600)\nprint('done')\n", encoding="utf-8"
         )
         t0 = _t.monotonic()
-        ok, out = sched._run_job_script("slow_gate_probe.py", timeout_s=1)
+        ok, out = sched_script._run_job_script("slow_gate_probe.py", timeout_s=1)
         elapsed = _t.monotonic() - t0
         assert ok is False
         assert "timed out after 1s" in out
@@ -4851,7 +4953,7 @@ class TestPerJobSoftDeadline:
         # (probe a fast script so the global never actually elapses).
         fast = sdir / "fast_gate_probe.py"
         fast.write_text("print('ok')\n", encoding="utf-8")
-        ok2, out2 = sched._run_job_script("fast_gate_probe.py", timeout_s="bogus")
+        ok2, out2 = sched_script._run_job_script("fast_gate_probe.py", timeout_s="bogus")
         assert ok2 is True and out2 == "ok"
 
     def test_timeout_resolution_priority(self, monkeypatch):
@@ -5613,35 +5715,58 @@ class TestSuspendAwareTimeouts:
 @pytest.mark.timeout(180)
 @pytest.mark.usefixtures("_tick_lock_isolated")
 class TestSuspendAwareTimeoutWiring:
-    """Covers the poll-loop WIRING, which the pure-helper tests above cannot.
+    """Covers the WIRING of the suspend discount, which the pure-helper tests above cannot.
 
     ``TestSuspendAwareTimeouts`` proves ``suspended_seconds`` /
     ``wallclock_exceeded`` / ``inactivity_exceeded`` behave correctly in
-    isolation. It says nothing about whether ``run_job``'s poll loop actually
-    FEEDS them the accumulated suspend — reverting either call site to a
-    literal ``0.0`` (i.e. restoring the pre-fix "bill raw elapsed" behaviour)
-    fails none of those tests.
+    isolation. It says nothing about whether the loops that own the two
+    limits actually FEED them the accumulated suspend -- reverting either
+    call site to a literal ``0.0`` (restoring the pre-fix "bill raw elapsed"
+    behaviour) fails none of those tests.
 
-    The seam is ``concurrent.futures.wait``: the loop's only blocking call, so
-    it is where a host suspend surfaces as an oversized poll gap. Faking it
-    lets a test jump a fake ``time.monotonic`` across one poll exactly as a
-    suspend does, with no real waiting and nothing left running afterwards.
+    Since 0.21.1 two loops own the two limits, and each needs its own seam:
 
-    A previous attempt at this test drove the loop with a patched clock ALONE
-    and passed with the fix reverted: the mock agent's future was already done,
-    so the loop broke at ``if done:`` on its first poll and never reached
-    either watchdog check. Every test here therefore asserts the "poll loop
-    stalled" warning (or its absence) as a positive control that the loop
-    really ran and really classified the gap.
+    * WALL-CLOCK: ``_run_agent_with_watchdog``'s poll loop on the calling
+      thread. Its only blocking call is ``concurrent.futures.wait``, so a
+      thread-scoped fake of it (plus a thread-scoped fake clock) jumps the
+      clock across one poll exactly as a host suspend does, with no real
+      waiting and nothing left running afterwards. The ``poll loop stalled``
+      warning that used to be the positive control no longer exists; the
+      control is now the POLL COUNT, which each scenario's arithmetic pins
+      exactly -- a loop that broke out early (the mock agent's future is
+      already done, so ``if done:`` on the first poll is the trap) cannot
+      match it.
+    * INACTIVITY: ``_inactivity_watchdog_loop`` on a daemon thread
+      (``cron-inactivity-<job>``), blocking on its OWN real ``Event.wait``,
+      which the thread-scoped fakes deliberately cannot reach. The credit
+      accumulation, the discounted check and the retirement on fresh
+      activity all live INSIDE that helper now (the mutation sites are in
+      the callee, not the caller), so the helper is driven directly on the
+      test thread with a scripted ``stop.wait``. One test then proves
+      ``run_job`` is still WIRED to the helper's verdict by substituting the
+      loop function and asserting the kill lands through the real poll loop.
     """
 
-    SUSPEND = 6.67 * 3600  # the 2026-08-25 fleet-wide gap
+    SUSPEND = 24012.0  # 6.67h, the 2026-08-25 fleet-wide gap (exact in binary)
     HARD_LIMIT = 3600.0
     IDLE_LIMIT = 600.0
+    POLL = 5.0  # _CRON_RUN_POLL_INTERVAL_S
+
+    @staticmethod
+    def _seed_clock(real_monotonic):
+        """An INTEGER-valued seed just ahead of the real clock.
+
+        The fake clock must stay in the real monotonic domain and ahead of it
+        (see the thread-scoping note in ``_run``), but seeding it with the raw
+        real value (~1e5 s, fractional) made the scripted gaps accumulate with
+        float rounding: 72 additions of 50.0 read 3599.99…s once in three runs
+        and the kill slipped to the 73rd poll. Integer base + integer gaps
+        stay exact below 2**53.
+        """
+        return float(int(real_monotonic()) + 1)
 
     def _run(self, tmp_path, monkeypatch, caplog, *, gaps,
-             hard_timeout, inactivity_timeout, idle_tracks_clock=False,
-             activity_resumes_after_poll=None):
+             hard_timeout, inactivity_timeout, watchdog_loop=None):
         """Drive ``run_job``'s poll loop over a scripted sequence of poll gaps.
 
         ``gaps`` is one float per poll iteration: the seconds the fake clock
@@ -5649,11 +5774,10 @@ class TestSuspendAwareTimeoutWiring:
         the script is exhausted the real ``wait`` runs and the (already
         finished) agent future completes the loop normally.
 
-        ``idle_tracks_clock`` makes the agent report idle time measured against
-        the same fake clock, which is what a real agent does: its last-activity
-        stamp predates a suspend, so raw idle is inflated by the full suspend.
-        ``activity_resumes_after_poll`` restamps that last-activity marker to
-        NOW once, after the given poll — the agent waking up and doing work.
+        ``watchdog_loop`` replaces ``_inactivity_watchdog_loop`` (which runs
+        on its own daemon thread); the first scripted poll then waits for the
+        substitute to have returned AND its thread to have exited, so the
+        verdict is visible to the poll loop before it is read.
         """
         monkeypatch.setenv("HERMES_CRON_HARD_TIMEOUT", str(hard_timeout))
         monkeypatch.setenv("HERMES_CRON_TIMEOUT", str(inactivity_timeout))
@@ -5667,23 +5791,33 @@ class TestSuspendAwareTimeoutWiring:
         real_monotonic = time.monotonic
         real_wait = concurrent.futures.wait
 
-        # Seeded from the real clock so a value that does escape to another
-        # thread is still in the real monotonic domain — and only ever AHEAD
-        # of it, which makes a foreign deadline look pending, never expired.
-        clock = {"t": real_monotonic()}
-        started = clock["t"]
+        # Seeded just ahead of the real clock so a value that does escape to
+        # another thread is still in the real monotonic domain — and only ever
+        # AHEAD of it, which makes a foreign deadline look pending, never
+        # expired. Integer-valued so the scripted gaps accumulate exactly.
+        clock = {"t": self._seed_clock(real_monotonic)}
         polls = {"n": 0}
         scripted = list(gaps)
+        verdict_given = threading.Event()
 
         def fake_monotonic():
             if threading.current_thread() is this_thread:
                 return clock["t"]
             return real_monotonic()
 
+        def _watchdog_thread_alive():
+            return any(t.name.startswith("cron-inactivity-") and t.is_alive()
+                       for t in threading.enumerate())
+
         def fake_wait(fs, timeout=None, **kwargs):
             if threading.current_thread() is not this_thread:
                 return real_wait(fs, timeout=timeout, **kwargs)
             if polls["n"] < len(scripted):
+                if watchdog_loop is not None and polls["n"] == 0:
+                    assert verdict_given.wait(5), "substitute watchdog never ran"
+                    deadline = real_monotonic() + 5
+                    while _watchdog_thread_alive() and real_monotonic() < deadline:
+                        time.sleep(0.001)
                 clock["t"] += scripted[polls["n"]]
                 polls["n"] += 1
                 # Report NOT done so the loop reaches the watchdog checks.
@@ -5697,45 +5831,41 @@ class TestSuspendAwareTimeoutWiring:
         job = {"id": "suspend-wiring", "name": "suspend-wiring", "prompt": "hello"}
         agent = MagicMock()
         agent.run_conversation.return_value = {"final_response": "ok"}
+        agent.get_activity_summary.return_value = {
+            "seconds_since_activity": 0.0,
+            "last_activity_desc": "waiting for non-streaming API response",
+            "current_tool": None,
+            "api_call_count": 1,
+            "max_iterations": 10,
+        }
 
-        resumed = {"at": None}
+        def _substitute_loop(**kw):
+            try:
+                return watchdog_loop(**kw)
+            finally:
+                verdict_given.set()
 
-        def _activity():
-            if (
-                activity_resumes_after_poll is not None
-                and resumed["at"] is None
-                and polls["n"] > activity_resumes_after_poll
-            ):
-                resumed["at"] = clock["t"]
-            since = started if resumed["at"] is None else resumed["at"]
-            return {
-                "seconds_since_activity": (
-                    clock["t"] - since if idle_tracks_clock else 0.0
-                ),
-                "last_activity_desc": "waiting for non-streaming API response",
-                "current_tool": None,
-                "api_call_count": 1,
-                "max_iterations": 10,
-            }
-
-        agent.get_activity_summary.side_effect = _activity
-
-        with patch("cron.scheduler._hermes_home", tmp_path), \
-             patch("cron.scheduler._resolve_origin", return_value=None), \
-             patch("hermes_cli.env_loader.load_hermes_dotenv"), \
-             patch("hermes_cli.env_loader.reset_secret_source_cache"), \
-             patch("hermes_state.SessionDB", return_value=MagicMock()), \
-             patch(
-                 "hermes_cli.runtime_provider.resolve_runtime_provider",
-                 return_value={
-                     "api_key": "test-key",
-                     "base_url": "https://example.invalid/v1",
-                     "provider": "openrouter",
-                     "api_mode": "chat_completions",
-                 },
-             ), \
-             patch("run_agent.AIAgent") as mock_agent_cls:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch("cron.scheduler._hermes_home", tmp_path))
+            stack.enter_context(
+                patch("cron.scheduler_delivery._resolve_origin", return_value=None))
+            stack.enter_context(patch("hermes_cli.env_loader.load_hermes_dotenv"))
+            stack.enter_context(patch("hermes_cli.env_loader.reset_secret_source_cache"))
+            stack.enter_context(patch("hermes_state.SessionDB", return_value=MagicMock()))
+            stack.enter_context(patch(
+                "hermes_cli.runtime_provider.resolve_runtime_provider",
+                return_value={
+                    "api_key": "test-key",
+                    "base_url": "https://example.invalid/v1",
+                    "provider": "openrouter",
+                    "api_mode": "chat_completions",
+                },
+            ))
+            mock_agent_cls = stack.enter_context(patch("run_agent.AIAgent"))
             mock_agent_cls.return_value = agent
+            if watchdog_loop is not None:
+                stack.enter_context(patch(
+                    "cron.scheduler._inactivity_watchdog_loop", side_effect=_substitute_loop))
             with caplog.at_level(logging.WARNING, logger="cron.scheduler"):
                 success, output, final_response, error = run_job(job)
 
@@ -5750,9 +5880,66 @@ class TestSuspendAwareTimeoutWiring:
             "agent": agent,
         }
 
-    @staticmethod
-    def _stalled(run):
-        return [m for m in run["logs"] if "poll loop stalled" in m]
+    def _drive_watchdog(self, monkeypatch, *, gaps, idle_tracks_clock=False,
+                        activity_resumes_after_poll=None, limit=IDLE_LIMIT):
+        """Drive the REAL ``_inactivity_watchdog_loop`` on this thread.
+
+        ``gaps`` is one float per poll: the seconds the fake clock jumps while
+        that poll is blocked in ``stop.wait``. Once the script is exhausted
+        ``stop.wait`` reports the stop (the agent finished) and the loop
+        returns False. ``idle_tracks_clock`` makes the agent report idle time
+        measured against the same fake clock, which is what a real agent
+        does: its last-activity stamp predates a suspend, so raw idle is
+        inflated by the full suspend. ``activity_resumes_after_poll``
+        restamps that marker to NOW once, after the given poll — the agent
+        waking up and doing work.
+        """
+        from cron.scheduler import _inactivity_watchdog_loop
+
+        this_thread = threading.current_thread()
+        real_monotonic = time.monotonic
+        clock = {"t": self._seed_clock(real_monotonic)}
+        started = clock["t"]
+        polls = {"n": 0}
+        scripted = list(gaps)
+        resumed = {"at": None}
+        readings = []
+
+        def fake_monotonic():
+            if threading.current_thread() is this_thread:
+                return clock["t"]
+            return real_monotonic()
+
+        class _Stop:
+            def wait(self, timeout):
+                if polls["n"] < len(scripted):
+                    clock["t"] += scripted[polls["n"]]
+                    polls["n"] += 1
+                    return False  # not stopped: the loop takes a reading
+                return True  # script exhausted: the agent finished
+
+        def idle_seconds():
+            if (
+                activity_resumes_after_poll is not None
+                and resumed["at"] is None
+                and polls["n"] > activity_resumes_after_poll
+            ):
+                resumed["at"] = clock["t"]
+            since = started if resumed["at"] is None else resumed["at"]
+            idle = clock["t"] - since if idle_tracks_clock else 0.0
+            readings.append(idle)
+            return idle
+
+        monkeypatch.setattr(time, "monotonic", fake_monotonic)
+        fired = _inactivity_watchdog_loop(
+            get_idle_seconds=idle_seconds, limit_s=limit, poll_s=self.POLL,
+            stop=_Stop(), future_done=lambda: False,
+        )
+        # Positive control: the loop actually took readings (the analogue of
+        # the old "poll loop stalled" assertion). Without it "did not fire"
+        # cannot be told from "never evaluated".
+        assert readings, "the watchdog never took a reading"
+        return {"fired": fired, "polls": polls["n"], "readings": readings}
 
     # --- wall-clock wiring -------------------------------------------------
 
@@ -5761,8 +5948,8 @@ class TestSuspendAwareTimeoutWiring:
     ):
         """The loop must charge ACTIVE elapsed, not raw, against the hard limit.
 
-        MUTATION GUARD: replacing ``_suspended_total`` with ``0.0`` in the
-        ``wallclock_exceeded(...)`` call fails this test.
+        MUTATION GUARD: replacing ``suspended_total`` with ``0.0`` in the
+        ``wallclock_exceeded(...)`` call fails this test (raw 24012s > 3600s).
         """
         run = self._run(
             tmp_path, monkeypatch, caplog,
@@ -5770,9 +5957,10 @@ class TestSuspendAwareTimeoutWiring:
             hard_timeout=self.HARD_LIMIT,
             inactivity_timeout=self.IDLE_LIMIT,
         )
-        # Positive control: the loop ran and saw the stall. Without it a green
-        # result proves nothing (see the class docstring).
-        assert self._stalled(run), run["logs"]
+        # Positive control: one scripted poll (the suspend) was classified and
+        # survived, then the real wait completed the loop. A loop that broke at
+        # ``if done:`` on its first poll reads 1 here.
+        assert run["polls"] == 2, run["logs"]
         assert run["success"] is True, run["error"]
         assert run["error"] is None
         run["agent"].interrupt.assert_not_called()
@@ -5792,7 +5980,8 @@ class TestSuspendAwareTimeoutWiring:
             hard_timeout=self.HARD_LIMIT,
             inactivity_timeout=self.IDLE_LIMIT,
         )
-        assert not self._stalled(run), "sub-threshold gaps are not a suspend"
+        # 72 charged 50s gaps reach the limit; the kill lands on that poll.
+        assert run["polls"] == 72, run["logs"]
         assert run["success"] is False
         assert "exceeded wall-clock limit" in (run["error"] or "")
         run["agent"].interrupt.assert_called_once()
@@ -5807,83 +5996,71 @@ class TestSuspendAwareTimeoutWiring:
             hard_timeout=self.HARD_LIMIT,
             inactivity_timeout=self.IDLE_LIMIT,
         )
-        assert self._stalled(run), run["logs"]
+        # 5s of active time survived the suspend, then 72 charged 50s gaps.
+        assert run["polls"] == 73, run["logs"]
         assert run["success"] is False
         assert "exceeded wall-clock limit" in (run["error"] or "")
 
-    def test_timeout_log_reports_active_raw_and_discounted(
+    def test_timeout_error_reports_active_and_suspended(
         self, tmp_path, monkeypatch, caplog,
     ):
-        """The kill line must be self-explaining about a suspend.
+        """The kill must be self-explaining about a suspend.
 
         MUTATION GUARD for the SECOND wiring site: the diagnostic
-        ``_wc_elapsed = _wc_raw - _suspended_total`` in the timeout branch,
+        ``elapsed = now - start_time - suspended_total`` in the timeout branch,
         which is what made the 2026-08-25 kill read as a hung API call.
         """
-        with caplog.at_level(logging.ERROR, logger="cron.scheduler"):
-            run = self._run(
-                tmp_path, monkeypatch, caplog,
-                gaps=[self.SUSPEND] + [50.0] * 80,
-                hard_timeout=self.HARD_LIMIT,
-                inactivity_timeout=self.IDLE_LIMIT,
-            )
-        kill = [m for m in run["logs"] if "exceeded wall-clock limit" in m]
-        assert kill, run["logs"]
-        # Three distinct numbers — active, raw, discounted — so a suspend can
-        # never again be read off this line as an overrun. Parsed rather than
-        # string-matched so the assertion is on the ARITHMETIC: billing raw
-        # here would make active == raw while discounted stayed non-zero.
-        m = re.search(
-            r"active (\S+?)s of (\S+?)s raw; (\S+?)s discounted", kill[0]
+        run = self._run(
+            tmp_path, monkeypatch, caplog,
+            gaps=[self.SUSPEND] + [50.0] * 80,
+            hard_timeout=self.HARD_LIMIT,
+            inactivity_timeout=self.IDLE_LIMIT,
         )
-        assert m, kill[0]
-        active, raw, discounted = (float(x) for x in m.groups())
-        assert discounted == pytest.approx(self.SUSPEND - 5.0)
-        assert raw - active == pytest.approx(discounted)
+        error = run["error"] or ""
+        assert "exceeded wall-clock limit 3600s" in error, error
+        # Two distinct numbers — active and suspended — so a suspend can never
+        # again be read off this line as an overrun. Parsed rather than
+        # string-matched so the assertion is on the ARITHMETIC: billing raw
+        # here would make active == raw while suspended stayed non-zero.
+        m = re.search(r"active elapsed (\S+?)s, suspended (\S+?)s\)", error)
+        assert m, error
+        active, suspended = (float(x) for x in m.groups())
+        assert suspended == pytest.approx(self.SUSPEND - self.POLL)
         # The kill lands on the first poll past the limit: 5s of active time
         # survived the suspend, then 72 charged 50s gaps.
         assert active == pytest.approx(3605.0)
+        raw = active + suspended
         assert active < self.SUSPEND < raw
 
     # --- inactivity wiring -------------------------------------------------
 
-    def test_suspend_is_discounted_from_the_inactivity_check(
-        self, tmp_path, monkeypatch, caplog,
-    ):
-        """The idle watchdog fires FIRST in the loop and inflates the same way.
+    def test_suspend_is_discounted_from_the_inactivity_check(self, monkeypatch):
+        """The idle watchdog inflates the same way and must discount the suspend.
 
-        MUTATION GUARD: replacing ``_suspend_since_activity`` with ``0.0`` in
-        the ``inactivity_exceeded(...)`` call fails this test.
+        MUTATION GUARD: replacing ``suspend_credit`` with ``0.0`` in the
+        ``inactivity_exceeded(...)`` call, or turning the accumulation
+        ``suspend_credit += suspended_seconds(...)`` into ``+= 0.0``, fails
+        this test (raw idle 24012s > 600s).
         """
-        run = self._run(
-            tmp_path, monkeypatch, caplog,
-            gaps=[self.SUSPEND],
-            hard_timeout=0,  # unlimited: isolate the inactivity path
-            inactivity_timeout=self.IDLE_LIMIT,
-            idle_tracks_clock=True,
+        run = self._drive_watchdog(
+            monkeypatch, gaps=[self.SUSPEND], idle_tracks_clock=True,
         )
-        assert self._stalled(run), run["logs"]
-        assert run["success"] is True, run["error"]
-        run["agent"].interrupt.assert_not_called()
+        assert run["polls"] == 1
+        assert run["readings"] == [pytest.approx(self.SUSPEND)]
+        assert run["fired"] is False, "a suspend must not read as idleness"
 
-    def test_a_genuine_stall_still_kills_through_the_loop(
-        self, tmp_path, monkeypatch, caplog,
-    ):
+    def test_a_genuine_stall_still_fires_the_watchdog(self, monkeypatch):
         """Control: real idleness with no suspend must still trip the limit."""
-        run = self._run(
-            tmp_path, monkeypatch, caplog,
-            gaps=[50.0] * 20,  # 1000s idle vs a 600s limit
-            hard_timeout=0,
-            inactivity_timeout=self.IDLE_LIMIT,
-            idle_tracks_clock=True,
+        run = self._drive_watchdog(
+            monkeypatch, gaps=[50.0] * 20, idle_tracks_clock=True,  # 1000s idle vs 600s
         )
-        assert not self._stalled(run), "sub-threshold gaps are not a suspend"
-        assert run["success"] is False
-        assert "idle for" in (run["error"] or ""), run["error"]
+        assert run["fired"] is True
+        # Sub-threshold gaps are not a suspend: idle 50s..600s reaches the
+        # limit on the 12th reading and the loop stops there.
+        assert run["polls"] == 12
+        assert run["readings"][-1] == pytest.approx(600.0)
 
-    def test_fresh_activity_retires_the_suspend_credit(
-        self, tmp_path, monkeypatch, caplog,
-    ):
+    def test_fresh_activity_retires_the_suspend_credit(self, monkeypatch):
         """A suspend must not immunise the job against LATER idleness.
 
         The credit is only valid while the idle reading it inflated is still
@@ -5892,20 +6069,59 @@ class TestSuspendAwareTimeoutWiring:
         up and then genuinely wedges is never killed again for the rest of its
         run.
 
-        MUTATION GUARD: turning ``_suspend_since_activity = 0.0`` into a no-op
-        (``+= 0.0``) fails this test and nothing else in the suite.
+        MUTATION GUARD: turning the retirement ``suspend_credit = 0.0`` into a
+        no-op (``+= 0.0``) fails this test and nothing else in the suite.
         """
-        run = self._run(
-            tmp_path, monkeypatch, caplog,
+        run = self._drive_watchdog(
+            monkeypatch,
             gaps=[self.SUSPEND] + [50.0] * 20,
-            hard_timeout=0,  # unlimited: isolate the inactivity path
-            inactivity_timeout=self.IDLE_LIMIT,
             idle_tracks_clock=True,
             activity_resumes_after_poll=1,  # the agent wakes after the suspend
         )
-        assert self._stalled(run), run["logs"]
-        assert run["success"] is False, "post-suspend stall must still be killed"
+        assert run["fired"] is True, "post-suspend stall must still be killed"
+        # Reading 1 is the suspend-inflated idle; reading 2 is the fresh stamp
+        # (0s, which retires the credit); readings then grow 50s per poll and
+        # reach the 600s limit on the 14th.
+        assert run["readings"][0] == pytest.approx(self.SUSPEND)
+        assert run["readings"][1] == pytest.approx(0.0)
+        assert run["polls"] == 14
+
+    def test_a_genuine_stall_still_kills_through_the_loop(
+        self, tmp_path, monkeypatch, caplog,
+    ):
+        """The watchdog's verdict must still reach ``run_job``'s poll loop and kill.
+
+        Positive control for the helper-driven tests above: they prove the
+        helper DECIDES correctly; this proves ``run_job`` is WIRED to that
+        decision. The loop function is substituted (its own real ``Event.wait``
+        is unreachable from this thread) with one that records how it was
+        wired and returns the "limit exceeded" verdict at once; the real poll
+        loop must then interrupt the agent and fail the run as an inactivity
+        timeout.
+        """
+        from cron.scheduler import _CRON_RUN_POLL_INTERVAL_S
+
+        seen = {}
+
+        def verdict_loop(*, get_idle_seconds, limit_s, poll_s, stop, future_done):
+            seen.update(limit_s=limit_s, poll_s=poll_s, idle=float(get_idle_seconds()),
+                        future_done=future_done())
+            return True
+
+        run = self._run(
+            tmp_path, monkeypatch, caplog,
+            gaps=[1.0] * 50,  # keep polling so the verdict is read mid-run
+            hard_timeout=0,  # unlimited: isolate the inactivity path
+            inactivity_timeout=self.IDLE_LIMIT,
+            watchdog_loop=verdict_loop,
+        )
+        assert seen["limit_s"] == self.IDLE_LIMIT
+        assert seen["poll_s"] == _CRON_RUN_POLL_INTERVAL_S
+        assert seen["idle"] == 0.0
+        assert run["polls"] < 50, "the kill must land through the poll loop, not after the script"
+        assert run["success"] is False
         assert "idle for" in (run["error"] or ""), run["error"]
+        run["agent"].interrupt.assert_called_once()
 
 
 

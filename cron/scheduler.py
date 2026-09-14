@@ -2261,7 +2261,7 @@ def _construct_cron_agent(AIAgent, job: dict, _cfg: dict, setup: _CronAgentSetup
         # Project context files only with a configured workdir; SOUL.md always.
         skip_context_files=not bool(workdir),
         load_soul_identity=True,
-        skip_memory=True,  # Cron prompts must not update user memory representations.
+        skip_memory=False,  # Cron agents get memory like every other agent (upstream ef04d846e9).
         skip_background_review=True,  # Cron has no human-in-the-loop need for skill/memory review forks (~30K tok/event)
         platform="cron",
         session_id=session_id,
@@ -3287,9 +3287,10 @@ def _run_one_job_body(
                 success = False
                 error = workload_error
                 workload_failed = True
-            if success and not final_response.strip():
-                success = False
-                error = "Agent completed but produced empty response (model error, timeout, or misconfiguration)"
+            # An empty/whitespace-only final_response is NOT converted here: delivery must see
+            # success=True so the blank message is skipped (never delivered as a failure notice);
+            # the soft-failure guard after delivery marks the run failed. The fork's pre-0.21.1
+            # tick/run_one_job paths and upstream 0.21.1 both order it that way.
         except BaseException:
             # run_job hands back the agent even when raising; tear down so a failed run never leaks.
             # BaseException so KeyboardInterrupt/SystemExit mid-run still trigger teardown.
@@ -3422,6 +3423,13 @@ def _run_one_job_body(
                     firecrawl_state=firecrawl_state, extracted=agent_iteration,
                     workload_failed=workload_failed,
                 )
+            elif firecrawl_state and firecrawl_state.first_failure and _current_deadline_elapsed():
+                # The deadline owner finalizes any credits already recorded at abandonment. If
+                # the 402 arrives later, the abandoned worker performs the same failure-only
+                # attempt; the run-state claim lock makes the two paths one-shot. (Fork seam:
+                # the 0.21.1 integration kept the deadline-owner half and dropped this half.)
+                _finalize_agent_iteration_event(
+                    emitter, job, "", success=False, firecrawl_state=firecrawl_state)
         except Exception:
             logger.warning("Cron iteration event failed for %s", job["id"], exc_info=True)
         finally:
@@ -4157,6 +4165,15 @@ def _submit_with_guard(job: dict, pool: concurrent.futures.ThreadPoolExecutor, p
         return None
     if not try_register_running_job(job_id):
         logger.info("Job '%s' already running — skipping", job_label)
+        # Restore Guard #3 observability at the point the duplicate is ACTUALLY blocked. The
+        # running-set guard lands before _process_job, so the trigger_job()-vs-tick cross-tick
+        # duplicate is rejected here and never reaches Guard #3 -- surface the skip event here
+        # when a live in-flight record exists to correlate against (the brief pre-registration
+        # window falls back to a silent skip). See _emit_cron_skipped_duplicate.
+        with _in_flight_lock:
+            _dup_prior = _in_flight.get(job_id)
+        if _dup_prior is not None:
+            _emit_cron_skipped_duplicate(_get_event_emitter(), job_id, job_label, _dup_prior)
         return None
     # Record the attempt before dispatch; recovery marks abandoned rows unknown (no retry).
     try:

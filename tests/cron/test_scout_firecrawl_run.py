@@ -8,6 +8,21 @@ import cron.scheduler as scheduler
 from agent import firecrawl_run_state as state
 from events.schema import EventType
 
+# Captured at import so a test can put the REAL registration back after
+# _patch_execution_pipeline stubs it out.
+_REAL_TRY_REGISTER = scheduler._try_register_in_flight
+
+
+def _block_until_deadline(limit_s=5.0):
+    """Return once the deadline watchdog has decided this run is late (read through
+    the worker's own contextvar), so the stubbed run crosses the deadline INSIDE
+    run_job regardless of host load. A 10ms deadline against a fixed sleep fired
+    before the worker had even claimed the fire on a loaded box; the run then
+    exited at the pre-claim gate and the finalizer under test never ran."""
+    end = time.monotonic() + limit_s
+    while not scheduler._current_deadline_elapsed() and time.monotonic() < end:
+        time.sleep(0.01)
+
 
 class RecordingBus:
     def __init__(self, error=None):
@@ -263,9 +278,21 @@ def _patch_execution_pipeline(monkeypatch, emitter):
         scheduler, "create_execution",
         lambda *a, **k: {"id": "execution-1"},
     )
-    monkeypatch.setattr(scheduler, "finish_execution", lambda *a, **k: None)
-    monkeypatch.setattr(scheduler, "mark_execution_running", lambda *a, **k: None)
+    # 0.21.1 ownership gates: run_one_job skips a run whose claimed->running CAS
+    # returns None, and the deadline watchdog records/finalizes only when
+    # finish_execution returns the finalized row. Answer like the real ledger.
+    monkeypatch.setattr(
+        scheduler, "finish_execution", lambda *a, **k: {"id": "execution-1"},
+    )
+    monkeypatch.setattr(
+        scheduler, "mark_execution_running",
+        lambda *a, **k: {"id": "execution-1", "status": "running"},
+    )
     monkeypatch.setattr(scheduler, "claim_dispatch", lambda *a, **k: True)
+    # The tick worker claims the fire before run_one_job; on the per-test empty
+    # store an unpatched claim loses silently and tick() never reaches run_job.
+    monkeypatch.setattr(scheduler, "claim_job_for_fire", lambda *a, **k: True)
+    monkeypatch.setattr(scheduler, "live_execution_for_job", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "save_job_output", lambda *a, **k: "output")
     monkeypatch.setattr(scheduler, "_deliver_result", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "mark_job_run", lambda *a, **k: None)
@@ -323,13 +350,22 @@ def test_run_one_job_releases_slot_when_finalizer_raises_base_exception(
 ):
     emitter = _emitter()
     _patch_execution_pipeline(monkeypatch, emitter)
-    released = []
-    monkeypatch.setattr(scheduler, "_release_in_flight", released.append)
-    monkeypatch.setattr(
-        scheduler,
-        "run_job",
-        lambda job, **kwargs: (True, "output", "plain response", None),
-    )
+    # 0.21.1 releases the slot inline, identity-checked against the record THIS
+    # run registered (a successor's fresh record must survive), not through
+    # _release_in_flight. Observe the registry itself: register for real, prove
+    # the slot was held during the run, then prove it is gone once the
+    # finalizer's BaseException escapes.
+    monkeypatch.setattr(scheduler, "_try_register_in_flight", _REAL_TRY_REGISTER)
+    with scheduler._in_flight_lock:
+        scheduler._in_flight.pop("scout-1", None)
+    held_during_run = []
+
+    def fake_run_job(job, **kwargs):
+        with scheduler._in_flight_lock:
+            held_during_run.append("scout-1" in scheduler._in_flight)
+        return True, "output", "plain response", None
+
+    monkeypatch.setattr(scheduler, "run_job", fake_run_job)
     monkeypatch.setattr(
         scheduler,
         "_finalize_agent_iteration_event",
@@ -339,7 +375,9 @@ def test_run_one_job_releases_slot_when_finalizer_raises_base_exception(
     with pytest.raises(KeyboardInterrupt, match="finalizer interrupted"):
         scheduler.run_one_job(_scout_job())
 
-    assert released == ["scout-1"]
+    assert held_during_run == [True], "positive control: the slot was never registered"
+    with scheduler._in_flight_lock:
+        assert "scout-1" not in scheduler._in_flight
     assert state.current_firecrawl_run() is None
 
 
@@ -349,7 +387,7 @@ def test_tick_installs_and_finalizes_same_scout_lifecycle(monkeypatch):
     monkeypatch.setattr(
         scheduler, "get_due_and_skipped_jobs", lambda: ([_scout_job()], [])
     )
-    monkeypatch.setattr(scheduler, "advance_next_run", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "advance_next_runs", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "load_config", lambda: {})
     monkeypatch.setattr(scheduler, "_sweep_mcp_orphans", lambda: None, raising=False)
 
@@ -375,10 +413,10 @@ def test_tick_abandoned_scout_emits_credits_once_without_late_iteration(monkeypa
     monkeypatch.setattr(
         scheduler, "get_due_and_skipped_jobs", lambda: ([_scout_job()], [])
     )
-    monkeypatch.setattr(scheduler, "advance_next_run", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "advance_next_runs", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "load_config", lambda: {})
     monkeypatch.setattr(scheduler, "_sweep_mcp_orphans", lambda: None, raising=False)
-    monkeypatch.setattr(scheduler, "_job_timeout_seconds", lambda job: 0.01)
+    monkeypatch.setattr(scheduler, "_job_timeout_seconds", lambda job: 0.5)
     worker_finished = threading.Event()
     worker_context_after_reset = []
     original_reset = scheduler._reset_scout_firecrawl_run
@@ -393,7 +431,7 @@ def test_tick_abandoned_scout_emits_credits_once_without_late_iteration(monkeypa
     def fake_run_job(job, **kwargs):
         assert state.current_firecrawl_run() is not None
         state.record_firecrawl_credits_exhausted()
-        time.sleep(0.05)
+        _block_until_deadline()
         return True, "output", "plain response", None
 
     monkeypatch.setattr(scheduler, "run_job", fake_run_job)
@@ -424,14 +462,14 @@ def test_tick_abandoned_scout_finalizes_credits_recorded_after_deadline(monkeypa
     monkeypatch.setattr(
         scheduler, "get_due_and_skipped_jobs", lambda: ([_scout_job()], [])
     )
-    monkeypatch.setattr(scheduler, "advance_next_run", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "advance_next_runs", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "load_config", lambda: {})
     monkeypatch.setattr(scheduler, "_sweep_mcp_orphans", lambda: None, raising=False)
-    monkeypatch.setattr(scheduler, "_job_timeout_seconds", lambda job: 0.01)
+    monkeypatch.setattr(scheduler, "_job_timeout_seconds", lambda job: 0.5)
     worker_finished = threading.Event()
 
     def fake_run_job(job, **kwargs):
-        time.sleep(0.03)
+        _block_until_deadline()
         state.record_firecrawl_credits_exhausted()
         return False, "output", "", "credits"
 
