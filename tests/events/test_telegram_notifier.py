@@ -3144,3 +3144,93 @@ class TestNotificationSuppressedAudit:
         assert route.topic_key == ALERTS
         assert route.wa_tier is None
         assert route.batch is True
+
+
+class TestKnownDebtPartialRepeats:
+    """The tracker's hourly reason="partial" repeated "known API identity-
+    shadow debt persists (17-row delta, 4 shadows)" to watchdog_alerts every
+    cycle (2026-09-13): DEGRADED -> WARN, and RepeatGuard's 30-min window
+    could not hold an hourly cadence. An unchanged debt is now one delivery
+    per 6h; a moved counter delivers at once -- past RepeatGuard, whose
+    digit normalization would have read 17 -> 18 as a verbatim repeat.
+    """
+
+    def _tracker_partial(self, delta=17, shadows=4, **counter_names):
+        counters = {"processed_messages": 2, "tracker_jobs": 5596,
+                    "stage_count_delta": delta, "shadow_rows": shadows}
+        if counter_names:
+            counters = {"processed_messages": 2, "tracker_jobs": 5596, **counter_names}
+        return Event.create(
+            EventType.AGENT_ITERATION, "tracker",
+            {"agent": "tracker", "reason": "partial",
+             "summary": (f"Processed 2 empty Scout batches; known API "
+                         f"identity-shadow debt persists ({delta}-row delta, "
+                         f"{shadows} shadows)."),
+             "counters": counters, "job_name": "jobflow-tracker-cycle"},
+            priority=Priority.LOW,
+        )
+
+    def _notifier(self, bus, topics_config, verbosity_config, sent):
+        return TelegramNotifier(
+            bus, topics_path=topics_config, verbosity_path=verbosity_config,
+            send_fn=lambda chat_id, thread_id, msg: sent.append(msg),
+        )
+
+    def test_partial_routes_to_alerts_unbatched(self, bus, topics_config, verbosity_config):
+        # The premise: this is the WARN/watchdog_alerts delivery the guard governs.
+        from events.routing_policy import ALERTS, Attention
+        route = classify(self._tracker_partial())
+        assert route.attention is Attention.WARN
+        assert route.topic_key == ALERTS
+        assert route.batch is False
+
+    def test_unchanged_debt_is_delivered_once(self, bus, topics_config, verbosity_config):
+        sent = []
+        notifier = self._notifier(bus, topics_config, verbosity_config, sent)
+        notifier.handle(self._tracker_partial())
+        repeat = self._tracker_partial()
+        notifier.handle(repeat)
+        notifier.handle(self._tracker_partial())
+        assert len(sent) == 1
+        assert "17-row delta" in sent[0]
+        suppressed = bus.query(event_type=EventType.NOTIFICATION_SUPPRESSED)
+        assert [s.payload["guard"] for s in suppressed] == ["known_debt", "known_debt"]
+        assert suppressed[0].payload["original_event_id"] == repeat.event_id
+        assert suppressed[0].payload["key"] == "tracker:partial"
+        assert suppressed[0].payload["signature"] == "stage_delta=17;shadows=4"
+
+    def test_renamed_counters_for_the_same_debt_are_the_same_debt(
+        self, bus, topics_config, verbosity_config,
+    ):
+        sent = []
+        notifier = self._notifier(bus, topics_config, verbosity_config, sent)
+        notifier.handle(self._tracker_partial())
+        notifier.handle(self._tracker_partial(
+            stage_mismatch_count=17, shadow_inserts_refused=4))
+        assert len(sent) == 1
+
+    def test_a_moved_counter_delivers_immediately(self, bus, topics_config, verbosity_config):
+        sent = []
+        notifier = self._notifier(bus, topics_config, verbosity_config, sent)
+        notifier.handle(self._tracker_partial(delta=17, shadows=4))
+        notifier.handle(self._tracker_partial(delta=17, shadows=4))
+        # Same second, same sentence shape: RepeatGuard alone would collapse
+        # "18-row delta" onto "17-row delta" (digits -> N). The debt moved.
+        notifier.handle(self._tracker_partial(delta=18, shadows=4))
+        assert len(sent) == 2
+        assert "18-row delta" in sent[1]
+
+    def test_a_partial_without_debt_counters_keeps_the_ordinary_path(
+        self, bus, topics_config, verbosity_config,
+    ):
+        sent = []
+        notifier = self._notifier(bus, topics_config, verbosity_config, sent)
+        plain = Event.create(
+            EventType.AGENT_ITERATION, "scout",
+            {"agent": "scout", "reason": "partial", "summary": "one board timed out",
+             "counters": {"boards": 5, "errors": 1}},
+            priority=Priority.LOW,
+        )
+        notifier.handle(plain)
+        assert len(sent) == 1
+        assert notifier._known_debt_guard.suppressed_count == 0

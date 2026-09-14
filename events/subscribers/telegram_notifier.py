@@ -25,10 +25,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from events.bus import EventBus
 from events.noise_guards import (
     FlapGuard,
+    KnownDebtGuard,
     RepeatGuard,
     is_off_ladder_consecutive_failure,
     is_sustained_resource_repeat,
     is_noop_cron_output,
+    known_debt_signature,
     normalize_for_fingerprint,
     strip_agent_iteration_json,
 )
@@ -220,6 +222,11 @@ class TelegramNotifier(BaseSubscriber):
         # steady identical output stays suppressed until it CHANGES;
         # breakage is covered by cron_failed / cron_stale, not repeats.
         self._cron_novelty_guard = RepeatGuard(window_seconds=6 * 3600.0)
+        # Known-debt partials (2026-09-13): an AGENT_ITERATION
+        # reason="partial" whose debt counters have not moved is one fact per
+        # 6h, not one per cycle; a moved counter delivers at once. Keyed on
+        # (agent, reason), see events.noise_guards.KnownDebtGuard.
+        self._known_debt_guard = KnownDebtGuard(window_seconds=6 * 3600.0)
 
         self._load_config()
 
@@ -406,6 +413,30 @@ class TelegramNotifier(BaseSubscriber):
         if not self._passes_verbosity(topic_key, route, event):
             return
 
+        # Known-debt partials (2026-09-13). The tracker's hourly
+        # reason="partial" carried the same "known API identity-shadow debt
+        # persists (17-row delta, 4 shadows)" every cycle, and RepeatGuard's
+        # 30-min window could not hold it. When the payload names a debt
+        # counter this guard owns the decision: unchanged -> one delivery per
+        # 6h; a moved counter -> deliver now, bypassing RepeatGuard, whose
+        # digit normalization would read 17 -> 18 as the same message.
+        known_debt_decided = False
+        if event.event_type == EventType.AGENT_ITERATION:
+            debt_signature = known_debt_signature(payload)
+            if debt_signature is not None:
+                debt_key = (f"{str(payload.get('agent') or '?').strip().lower()}"
+                            f":{str(payload.get('reason') or '').strip().lower()}")
+                decision = self._known_debt_guard.observe(debt_key, debt_signature)
+                if not decision.deliver:
+                    self._safe_emit_suppressed(
+                        event, route, thread_id, topic_key,
+                        guard="known_debt",
+                        window_seconds=self._known_debt_guard.window_seconds,
+                        key=debt_key, signature=debt_signature,
+                    )
+                    return
+                known_debt_decided = True
+
         message = self.format_message(event, route=route)
         keyed_stale = event.event_type == EventType.CRON_STALE and bool(event.payload.get("execution_id"))
         if keyed_stale:
@@ -439,6 +470,7 @@ class TelegramNotifier(BaseSubscriber):
         if (route.wa_tier != WA_IMMEDIATE
                 and not ladder_rung
                 and not keyed_stale  # already guarded by exact execution identity
+                and not known_debt_decided  # the debt guard owned this decision
                 and self._repeat_guard.is_repeat(
                     thread_id, message, sliding=not sustained_critical)):
             # Until 2026-09-13 this drop was invisible: no bus row, no log
