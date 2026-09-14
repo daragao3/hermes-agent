@@ -47,6 +47,7 @@ fast-forwards — remediation is a deliberate operator action.
 from __future__ import annotations
 
 import logging
+import json
 import os
 import subprocess
 import time
@@ -69,6 +70,69 @@ MISSED_SUBJECTS_CAP = 5
 _AGENT_SRC_DEFAULT = Path.home() / ".hermes" / "agent-src"
 
 DEFAULT_TRUNK_REF = "refs/heads/main"
+
+# agent-src's trunk is whichever branch the deployment ceremony accepts, not a
+# constant: since the 2026-09-11 02:47 checkout the deployed branch has been
+# `codex/wave2-hermes-accepted`, whose accepted commit is NOT an ancestor of
+# `main`, so measuring against `main` reported "diverged, behind 173 / ahead
+# 16,000+" for a checkout that was exactly where it should be. Resolution
+# order: this env var, then the `trunk_ref` key of the acceptance receipt
+# (ops/agent-src-deployment-baseline.json, written by the ceremony that knows
+# which branch it accepted), then DEFAULT_TRUNK_REF. A bare branch name is
+# accepted from either source and qualified to refs/heads/<name>.
+AGENT_SRC_TRUNK_ENV = "HERMES_AGENT_SRC_TRUNK_REF"
+BASELINE_TRUNK_KEY = "trunk_ref"
+
+
+def agent_src_baseline_path() -> Path:
+    """The acceptance receipt sample_code_drift() reads deployment state from."""
+    return _hermes_root() / "ops" / "agent-src-deployment-baseline.json"
+
+
+def qualify_ref(name: str) -> str:
+    """'main' -> 'refs/heads/main'; an already-qualified ref passes through."""
+    name = name.strip()
+    if name.startswith("refs/"):
+        return name
+    return f"refs/heads/{name}"
+
+
+def ref_display_name(ref: str) -> str:
+    """Bare branch name for operator-facing text.
+
+    Strips the refs/heads/ prefix whole, so a nested branch such as
+    refs/heads/codex/wave2-hermes-accepted reads 'codex/wave2-hermes-accepted'
+    and not the last path segment alone.
+    """
+    if ref.startswith("refs/heads/"):
+        return ref[len("refs/heads/"):]
+    return ref.rsplit("/", 1)[-1]
+
+
+def accepted_trunk_ref(baseline_path: Path) -> Optional[str]:
+    """The trunk the acceptance receipt names, or None.
+
+    Tolerant on purpose: a missing receipt, unreadable JSON, or a receipt
+    without the key all mean "not declared" and fall through to the default.
+    Only a non-empty string is a declaration.
+    """
+    try:
+        data = json.loads(Path(baseline_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get(BASELINE_TRUNK_KEY)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return qualify_ref(value)
+
+
+def agent_src_trunk_ref() -> str:
+    declared = os.getenv(AGENT_SRC_TRUNK_ENV, "").strip()
+    if declared:
+        return qualify_ref(declared)
+    return accepted_trunk_ref(agent_src_baseline_path()) or DEFAULT_TRUNK_REF
 
 # A present repo with a resolvable HEAD but no configured trunk ref is a
 # configuration failure, not a transient probe failure. Keep the detail as a
@@ -107,9 +171,28 @@ def _hermes_root() -> Path:
 # The first form fails SILENTLY — a gate that matches nothing reports "no
 # executed change" forever, i.e. the same class of fail-silent bug this
 # monitor exists to catch.
+#
+# ops/ is narrowed to what actually executes. Measured on the live repo
+# 2026-09-13: ':(glob)ops/**' matched 372 tracked files, of which 126 are
+# Scheduled-Task XML exports, 73 JSON receipts, 20 markdown reports and
+# assorted lockfiles, wheels and diffs -- none of them run by path. On
+# 2026-09-13 the hermes-repo alert was kept alive for an entire afternoon by
+# ops/reports/*.md and ops/requirements-*.txt landing on master. The narrowed
+# set below matches 103 files (.py .ps1 .psm1 .cmd .sh .mjs) and excludes the
+# task-backup, backups and retired trees, whose scripts nothing schedules.
+# `git diff --name-only ... -- <specs>` honours the `:(glob,exclude)` entries
+# (verified live: HEAD~3..HEAD returned the .ps1/.py landings and no report).
 HERMES_EXECUTED_DIRS: Tuple[str, ...] = (
     ":(glob)scripts/**",
-    ":(glob)ops/**",
+    ":(glob)ops/**/*.py",
+    ":(glob)ops/**/*.ps1",
+    ":(glob)ops/**/*.psm1",
+    ":(glob)ops/**/*.cmd",
+    ":(glob)ops/**/*.sh",
+    ":(glob)ops/**/*.mjs",
+    ":(glob,exclude)ops/task-backups-*/**",
+    ":(glob,exclude)ops/backups/**",
+    ":(glob,exclude)ops/retired/**",
     ":(glob)profiles/*/scripts/**",
 )
 
@@ -136,7 +219,7 @@ class WatchedRepo:
     @property
     def trunk_name(self) -> str:
         """Bare branch name for operator-facing text ('main' / 'master')."""
-        return self.trunk_ref.rsplit("/", 1)[-1]
+        return ref_display_name(self.trunk_ref)
 
 
 def watched_repos() -> List[WatchedRepo]:
@@ -147,7 +230,7 @@ def watched_repos() -> List[WatchedRepo]:
     a silent clean bill of health — see the module docstring.
     """
     return [
-        WatchedRepo("agent-src", _agent_src_root(), "refs/heads/main"),
+        WatchedRepo("agent-src", _agent_src_root(), agent_src_trunk_ref()),
         WatchedRepo("hermes", _hermes_root(), "refs/heads/master",
                     executed_dirs=HERMES_EXECUTED_DIRS),
     ]
@@ -288,7 +371,7 @@ def sample_code_drift(
     if repo_name == "agent-src":
         from events.producers.deployment_acceptance import changed_paths, deployment_evidence
         common.update(deployment_evidence(
-            repo, head, changed_paths(status), _hermes_root() / "ops" / "agent-src-deployment-baseline.json",
+            repo, head, changed_paths(status), agent_src_baseline_path(),
         ))
     if head == trunk:
         return DriftSample(state="in_sync", head=head, trunk=trunk,
@@ -511,7 +594,7 @@ class CodeDriftMonitor:
             "repo": self._repo_str(),
             "repo_name": key,  # back-compat alias
             "trunk_ref": measured_trunk_ref,
-            "trunk_name": measured_trunk_ref.rsplit("/", 1)[-1],
+            "trunk_name": ref_display_name(measured_trunk_ref),
             "trunk": sample.trunk[:9],
             "main": sample.trunk[:9],  # back-compat alias
             "branch": sample.branch,
@@ -526,7 +609,7 @@ class CodeDriftMonitor:
             "Code drift [%s]: checkout on %s is %s %s "
             "(behind %d / ahead %d, dirty=%s) — HEAD %s vs trunk %s%s",
             self._repo_name, sample.branch or "?", sample.state,
-            (sample.trunk_ref or self._trunk_ref).rsplit("/", 1)[-1],
+            ref_display_name(sample.trunk_ref or self._trunk_ref),
             sample.behind_count, sample.ahead_count,
             sample.dirty, sample.head[:9] or "?", sample.trunk[:9] or "?",
             f" — {sample.detail}" if sample.detail else "",
