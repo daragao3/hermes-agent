@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.symlink_support import make_dir_link, requires_dir_links
 from run_agent import AIAgent
 from agent.tool_dispatch_helpers import (
     _plan_tool_batch_segments,
@@ -667,10 +668,17 @@ class TestPathCanonicalization:
             "Absolute and relative paths pointing to the same file must overlap"
         )
 
-    @pytest.mark.require_symlinks
+    @requires_dir_links
     def test_symlink_aliases_are_not_parallelized(self, tmp_path):
         """A symlink alias and the real path must be detected as overlapping
-        so they are never placed in the same parallel segment."""
+        so they are never placed in the same parallel segment.
+
+        ``make_dir_link`` falls back to a Windows junction when the symlink
+        privilege is absent. That keeps the assertion intact rather than
+        weakening it: the aliasing is undone by ``_canonical_path``'s
+        ``os.path.realpath``, which resolves a junction exactly as it resolves
+        a directory symlink — so a junction alias is the same hazard.
+        """
         from agent.tool_dispatch_helpers import (
             _canonical_path,
             _paths_overlap,
@@ -682,7 +690,7 @@ class TestPathCanonicalization:
         target.touch()
 
         alias_dir = tmp_path / "alias"
-        alias_dir.symlink_to(real_dir, target_is_directory=True)
+        make_dir_link(alias_dir, real_dir)
 
         real_path = _canonical_path(str(target))
         alias_path = _canonical_path(str(alias_dir / "config.json"))

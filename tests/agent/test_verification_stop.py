@@ -1,10 +1,10 @@
 import json
-import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
+from tests.symlink_support import make_dir_link, requires_dir_links
 from agent.verification_evidence import (
     mark_workspace_edited,
     record_terminal_result,
@@ -162,10 +162,7 @@ def test_nudge_checks_all_edited_workspaces(tmp_path, monkeypatch):
 
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="Symlinks require elevated privileges on Windows",
-)
+@requires_dir_links
 def test_no_suite_nudge_uses_canonical_temp_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     project = tmp_path / "project"
@@ -174,14 +171,12 @@ def test_no_suite_nudge_uses_canonical_temp_dir(tmp_path, monkeypatch):
     real_temp = tmp_path / "real-temp"
     real_temp.mkdir()
     linked_temp = tmp_path / "linked-temp"
-    try:
-        linked_temp.symlink_to(real_temp, target_is_directory=True)
-    except OSError as exc:  # pragma: no cover - platform dependent
-        # Windows needs SeCreateSymbolicLinkPrivilege (admin, or Developer
-        # Mode) to create a symlink; without it this raises WinError 1314.
-        # The behaviour under test is canonicalization of a symlinked temp
-        # dir, which cannot be exercised at all without a symlink.
-        pytest.skip(f"cannot create a symlink on this host: {exc}")
+    # Windows needs SeCreateSymbolicLinkPrivilege (admin, or Developer Mode)
+    # for a symlink, so ``make_dir_link`` falls back to a junction there. The
+    # behaviour under test is ``os.path.realpath`` canonicalization, which
+    # follows a junction exactly as it follows a symlink, so the Windows arm
+    # is the same assertion and not a weaker one.
+    make_dir_link(linked_temp, real_temp)
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(linked_temp))
 
     nudge = build_verify_on_stop_nudge(
