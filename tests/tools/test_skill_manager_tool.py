@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.symlink_support import make_dir_link, requires_dir_links
 from tools.skill_manager_tool import (
     _validate_name,
     _validate_category,
@@ -340,6 +341,7 @@ class TestWriteFile:
         assert result["success"] is True
         assert (tmp_path / "my-skill" / "references" / "api.md").exists()
 
+    @requires_dir_links
     def test_write_symlink_escape_blocked(self, tmp_path):
         outside_dir = tmp_path / "outside"
         outside_dir.mkdir()
@@ -348,10 +350,10 @@ class TestWriteFile:
             _create_skill("my-skill", VALID_SKILL_CONTENT)
             link = tmp_path / "my-skill" / "references" / "escape"
             link.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                link.symlink_to(outside_dir, target_is_directory=True)
-            except OSError:
-                pytest.skip("Symlinks not supported")
+            # A Windows junction stands in for the directory symlink: the guard
+            # is validate_within_dir(), whose Path.resolve() follows a junction
+            # exactly as it follows a symlink, so the escape is real either way.
+            make_dir_link(link, outside_dir)
 
             result = _write_file("my-skill", "references/escape/owned.md", "malicious")
 
@@ -369,6 +371,7 @@ class TestRemoveFile:
         assert result["success"] is True
         assert not (tmp_path / "my-skill" / "references" / "api.md").exists()
 
+    @requires_dir_links
     def test_remove_symlink_escape_blocked(self, tmp_path):
         outside_dir = tmp_path / "outside"
         outside_dir.mkdir()
@@ -379,10 +382,7 @@ class TestRemoveFile:
             _create_skill("my-skill", VALID_SKILL_CONTENT)
             link = tmp_path / "my-skill" / "references" / "escape"
             link.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                link.symlink_to(outside_dir, target_is_directory=True)
-            except OSError:
-                pytest.skip("Symlinks not supported")
+            make_dir_link(link, outside_dir)
 
             result = _remove_file("my-skill", "references/escape/keep.txt")
 
@@ -981,9 +981,17 @@ class TestDeleteSkillRmtreeGuard:
         assert result["success"] is True, result
         assert not (tmp_path / "good-skill").exists()
 
+    @requires_dir_links
     def test_symlinked_skill_dir_refused(self, tmp_path):
         """A skill dir that is a symlink must not be rmtree'd — rmtree would
-        otherwise follow it and delete the link target's contents."""
+        otherwise follow it and delete the link target's contents.
+
+        On Windows without Developer Mode ``symlink_to`` raises WinError 1314,
+        so ``make_dir_link`` falls back to a junction. That is not a weaker
+        fixture here: ``_is_path_redirect`` refuses a symlink *or* a junction,
+        precisely because rmtree follows both, and the junction arm is the one
+        that had no coverage on this host.
+        """
         victim = tmp_path.parent / "precious_victim"
         victim.mkdir()
         (victim / "important.txt").write_text("DO NOT DELETE")
@@ -991,23 +999,20 @@ class TestDeleteSkillRmtreeGuard:
         skills.mkdir()
         evil = skills / "evil-skill"
         try:
-            evil.symlink_to(victim, target_is_directory=True)
-        except OSError:
-            # Windows without Developer Mode raises WinError 1314 ("a required
-            # privilege is not held"). Without a symlink there is nothing for
-            # the guard to refuse, so skip rather than fail — same guard as
-            # tests/agent/test_skill_utils.py's symlink test.
-            import shutil as _sh
-            _sh.rmtree(victim, ignore_errors=True)
-            pytest.skip("Symlinks not supported")
-        try:
+            make_dir_link(evil, victim)
             with patch("tools.skill_manager_tool.SKILLS_DIR", skills), \
                  patch("agent.skill_utils.get_all_skills_dirs", return_value=[skills]), \
                  patch("tools.skill_manager_tool._find_skill",
                        return_value={"path": evil}):
                 result = _delete_skill("evil-skill", absorbed_into="")
             assert result["success"] is False
-            assert "symlink" in result["error"].lower()
+            # Assert the REDIRECT guard fired, not merely that some guard did.
+            # A bare `"symlink" in error` is vacuous here: pytest names tmp_path
+            # after the test function, so the path echoed in *every* refusal
+            # already contains "symlink". Pin the phrase instead — with the
+            # junction clause of _is_path_redirect removed, the out-of-tree
+            # check refuses too, and only this assertion can tell them apart.
+            assert "is a symlink/junction" in result["error"], result["error"]
             assert (victim / "important.txt").exists()
         finally:
             import shutil as _sh
