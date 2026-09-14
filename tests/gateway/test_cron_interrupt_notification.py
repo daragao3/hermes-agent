@@ -205,6 +205,14 @@ class TestShutdownDeliversNoticeBeforeDisconnect:
 
         runner, adapter = make_restart_runner()
         runner._restart_drain_timeout = 0.01  # force the interrupt path
+        # ...and the cron floor with it. stop() widens the drain to
+        # ``resolve_cron_drain_budget(restart_drain, cron_drain, ...)``, which is a
+        # max() over the cron floor -- so leaving ``_cron_drain_timeout`` at its 30s
+        # production default makes this test wait the full 30s and blow the repo's
+        # own ``--timeout=30``, even though the job id below never clears and the
+        # drain is doomed from the start. Nothing here depends on the wait length;
+        # the assertion is about ORDERING.
+        runner._cron_drain_timeout = 0.01
         sched._running_job_ids.add("be62d36a9914")
 
         monkeypatch.setattr(_pr.process_registry, "kill_all", lambda task_id=None: 1)
