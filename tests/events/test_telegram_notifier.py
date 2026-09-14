@@ -3022,3 +3022,35 @@ class TestAgentNoteDelivery:
         route = classify(event, known_topic_keys=notifier.topics.keys())
         assert route.priority.level >= Priority.NORMAL.level
         assert notifier._passes_verbosity("watchdog_alerts", route, event)
+
+
+def test_blocked_question_set_renders_one_page_with_every_question(
+    bus, topics_config, verbosity_config,
+):
+    """2026-09-13: the translator coalesces the applier's per-question fan-out
+    (7 CRITICAL pages in 22s for one Anthropic job) into one event carrying
+    the set under `questions`; the page lists them all, each with its own
+    verbatim choices, instead of the first question with the wrong options."""
+    from events.subscribers.telegram_notifier import TelegramNotifier
+    notifier = TelegramNotifier(
+        bus, topics_path=topics_config, verbosity_path=verbosity_config,
+    )
+    event = Event.create(
+        EventType.APPLICATION_BLOCKED, "applier",
+        {"company": "Anthropic", "title": "Treasury Director",
+         "question": "The ATS dry run needs answers for required application "
+                     "questions: Why Anthropic?; AI Policy; Relocation?",
+         "question_count": 3,
+         "questions": [
+             {"label": "Why Anthropic?"},
+             {"label": "AI Policy", "options": ["Yes", "No"]},
+             {"label": "Relocation?", "options": ["Yes", "No"]},
+         ]},
+    )
+    body = notifier._format_payload(event)
+    assert body.startswith("Action needed: answer these 3 questions")
+    assert "Questions (3):" in body
+    assert "1. Why Anthropic?" in body
+    assert "3. Relocation?" in body
+    assert body.count("Reply with EXACTLY one of: Yes | No") == 2
+    assert "Question:" not in body

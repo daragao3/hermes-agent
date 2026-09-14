@@ -642,7 +642,24 @@ class TelegramNotifier(BaseSubscriber):
             from events.formatting import (
                 blocked_question_line,
                 blocked_question_options_block,
+                blocked_questions_block,
             )
+            # 2026-09-13: one page per blocked attempt. The translator now
+            # coalesces the applier's per-question fan-out and carries the
+            # whole set under `questions`; a set of two or more renders as
+            # a numbered list with each question's own verbatim choices.
+            set_block = blocked_questions_block(p)
+            if set_block:
+                count = p.get("question_count") or set_block.count("\n")
+                return "\n".join([
+                    f"Action needed: answer these {count} questions to unblock "
+                    "the application.",
+                    "",
+                    f"Company: {p.get('company', '?')}",
+                    f"Title: {p.get('title', '?')}",
+                    "",
+                    set_block,
+                ])
             lines = [
                 "Action needed: answer this question to unblock the application.",
                 "",

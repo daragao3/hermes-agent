@@ -1094,6 +1094,52 @@ def blocked_question_options_block(
     return "\n".join(lines)
 
 
+def blocked_questions(payload: Mapping) -> list:
+    """The attempt's full question set as [{label[, options]}], or [].
+
+    Carried under `questions` by MailboxTranslator (`_blocked_question_entries`)
+    since the per-question fan-out was coalesced into one page per attempt.
+    Only a list of two or more is a "set"; a single entry keeps the classic
+    one-question rendering, so older producers are untouched.
+    """
+    raw = payload.get("questions") if isinstance(payload, Mapping) else None
+    if not isinstance(raw, (list, tuple)):
+        return []
+    entries = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        label = str(item.get("label") or "").strip()
+        if not label:
+            continue
+        entry = {"label": label}
+        options = item.get("options")
+        if isinstance(options, (list, tuple)):
+            entry["options"] = [str(o).strip() for o in options if str(o).strip()]
+        entries.append(entry)
+    return entries
+
+
+def blocked_questions_block(payload: Mapping) -> str:
+    """Numbered list of every unanswered question, each with its own choices.
+
+    Empty string unless the payload carries a set of two or more questions;
+    callers fall back to the single-question rendering then. Every label is
+    printed in full: a Workday listbox answer must be VERBATIM one of the
+    tenant's labels, so a hidden tail choice is an unanswerable question.
+    """
+    entries = blocked_questions(payload)
+    if len(entries) < 2:
+        return ""
+    lines = [f"Questions ({len(entries)}):"]
+    for i, entry in enumerate(entries, 1):
+        lines.append(f"{i}. {entry['label']}")
+        options = entry.get("options") or []
+        if options:
+            lines.append("   Reply with EXACTLY one of: " + " | ".join(options))
+    return "\n".join(lines)
+
+
 # Non-fatal: a missing icon is cosmetic, and raising here would take the
 # gateway down over it.
 #

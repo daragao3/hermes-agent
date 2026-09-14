@@ -159,6 +159,19 @@ def failure_cluster_state_path() -> Path:
     return events_dir() / "failure_cluster_state.json"
 
 
+def blocked_question_state_path() -> Path:
+    """MailboxTranslator's APPLICATION_BLOCKED suppression ledger.
+
+    Holds {"emitted": {"<job>|set:<fingerprint>": wall_ts}} -- the last time
+    a given job's exact set of unanswered questions was paged. Wall-clock,
+    because the window it enforces (7 days) has to survive gateway restarts:
+    the applier re-runs a blocked job once a day and re-asks the identical
+    set each time (measured 2026-09-12/13: one SoFi job paged 44 questions
+    twice, 28 hours apart). Cross-profile, so canonical root.
+    """
+    return notifications_home() / "blocked_question_state.json"
+
+
 def code_drift_state_path(repo_name: Optional[str] = None) -> Path:
     """CodeDriftMonitor episode persistence, one file per watched repo.
 

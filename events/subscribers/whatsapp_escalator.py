@@ -415,9 +415,17 @@ class WhatsAppEscalator(BaseSubscriber):
             # it is never clicked, and a comma run inside `question` is both
             # ambiguous about where a label ends and subject to the 200-char
             # summary budget that already truncated the real Capital One list.
-            text = (f"Application blocked at {p.get('company', '?')}: "
-                    f"{blocked_question_line(p)}")
-            options = blocked_question_options_block(p)
+            from events.formatting import blocked_questions_block
+            set_block = blocked_questions_block(p)
+            if set_block:
+                text = (f"Application blocked at {p.get('company', '?')}: "
+                        f"{p.get('question_count') or 'several'} questions need "
+                        f"answers.\n\n{set_block}")
+                options = ""
+            else:
+                text = (f"Application blocked at {p.get('company', '?')}: "
+                        f"{blocked_question_line(p)}")
+                options = blocked_question_options_block(p)
             if options:
                 text = text + "\n\n" + options
         elif et == EventType.APPLICATION_FAILED:
