@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Collection
 
+from tui_gateway._stdin_recovery import handle_spurious_eof
 from tui_gateway.host_supervisor import MUTATOR_ROUTE_TABLE, _build_sha
 
 
@@ -513,10 +514,32 @@ def run_host(stdin: Any = None, stdout: Any = None) -> None:
         "build_sha": _build_sha(), "cwd": os.getcwd(),
         "hermes_home": os.environ.get("HERMES_HOME", "")})
 
+    # Explicit readline() loop, NOT ``for raw in stdin`` — the same shape the gateway entry point and
+    # the slash worker already use for their stdin control channels, and for the same reason. File
+    # ITERATION ends permanently the first time a read yields nothing, which on this channel is not
+    # EOF at all: the pipe still holds queued frames. Measured in the real child — after the for-loop
+    # had "finished", readline(), buffer.read1() and os.read(0) each returned the next frame
+    # immediately. The result was a control channel that served turn.start and then silently ignored
+    # every later frame, so an interrupt or shutdown sent mid-turn was never delivered and run_host
+    # tore the host down with a bogus stdin_closed. readline() does not stick EOF, so this keeps serving.
+    _recovery_times: list[float] = []
+
+    def _log(message: str) -> None:
+        logging.getLogger(__name__).warning("compute host %s", message)
+
     def _reader() -> None:
-        for raw in stdin:
-            if host._closed.is_set():
-                break
+        while not host._closed.is_set():
+            raw = stdin.readline()
+            if not raw:
+                # Spurious (a child inheriting fd 0 flipped O_NONBLOCK on the shared description) or a
+                # genuine peer close? This is the most exposed reader of the three: every session the
+                # host builds forks an MCP fleet off this descriptor. POSIX-only recovery; on Windows
+                # the helper reports a genuine close and we break, which is the historic behaviour.
+                if not handle_spurious_eof(_recovery_times, _log):
+                    break
+                continue
+            if not raw.strip():
+                continue
             try:
                 frame = json.loads(raw)
             except json.JSONDecodeError as exc:
@@ -528,8 +551,6 @@ def run_host(stdin: Any = None, stdout: Any = None) -> None:
             host.handle_frame(frame)
             if frame.get("type") == "shutdown":
                 os._exit(0)
-            if host._closed.is_set():
-                break
     reader = threading.Thread(target=_reader, name="compute-host-control-reader", daemon=True)
     reader.start()
     try:
