@@ -10,6 +10,7 @@ fleet with no api_server and every scheduled cron fire silently lost.
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -41,6 +42,31 @@ def _path_guard_functions(text: str) -> str:
     start = text.index("path_has_symlink_component() {")
     end = text.index("\n\nchown_hermes_tree() {", start)
     return text[start:end]
+
+
+def _link_dir(link: Path, target: Path) -> None:
+    """Point ``link`` at directory ``target`` using whatever this host allows
+    WITHOUT elevation, or skip.
+
+    A real symlink needs SeCreateSymbolicLinkPrivilege on Windows (WinError
+    1314) and this box does not grant it -- but a directory JUNCTION needs no
+    privilege, and ``[ -L ]``, which is what ``path_has_symlink_component``
+    actually tests, reports a junction as a link. Assert through the SHELL:
+    ``Path.is_symlink()`` returns False for a junction, so a pathlib-based
+    assertion here would be wrong in the opposite direction.
+    """
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return
+    except OSError:
+        if os.name != "nt":
+            raise
+    proc = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True, text=True, timeout=30,
+    )
+    if proc.returncode != 0 or not link.is_dir():
+        pytest.skip("no unprivileged directory link available on this platform")
 
 
 def _run_keygen(
@@ -83,8 +109,16 @@ def test_keygen_creates_env_when_missing(stage2_text: str, tmp_path: Path) -> No
     env_path = home / ".env"
     assert env_path.is_file(), "keygen must create .env when it is missing"
     assert KEY_LINE_RE.search(env_path.read_text()), "generated key missing/malformed"
-    mode = env_path.stat().st_mode & 0o777
-    assert mode == 0o600, f".env must be owner-only, got {oct(mode)}"
+    # The 0600 comes from `(umask 077 && touch)` in the hook, and the
+    # production target is a Linux container. NTFS carries no POSIX mode
+    # bits, so Git Bash reports 0o666 here no matter what the hook did --
+    # gate the mode assertion ALONE rather than skipping the test, because
+    # everything above it (the hook creates .env and writes a well-formed
+    # key when none existed, the whole point of OOF-285) is portable and is
+    # genuinely verified on this host.
+    if os.name != "nt":
+        mode = env_path.stat().st_mode & 0o777
+        assert mode == 0o600, f".env must be owner-only, got {oct(mode)}"
 
 
 def test_keygen_appends_to_existing_env_without_key(
@@ -121,11 +155,46 @@ def test_keygen_refuses_symlinked_env(stage2_text: str, tmp_path: Path) -> None:
     home.mkdir()
     outside = tmp_path / "outside.env"
     outside.write_text("HIJACK=1\n")
-    (home / ".env").symlink_to(outside)
+    try:
+        (home / ".env").symlink_to(outside)
+    except OSError:
+        # Same idiom as tests/tools/test_stage2_hook_seed_one_symlinks.py
+        # and test_stage2_hook_symlink_chown.py. Detect by ATTEMPT, never
+        # by an admin check -- Developer Mode also grants the privilege. A
+        # FILE symlink has no unprivileged Windows substitute (a junction is
+        # directory-only; a hardlink is not a link to `[ -L ]`), so the
+        # parent-component arm of the same guard is covered by the junction
+        # companion below instead.
+        pytest.skip("symlinks are not available on this platform")
     result = _run_keygen(stage2_text, home)
     assert result.returncode == 0, result.stderr
     assert "refusing append" in (result.stdout + result.stderr)
     assert outside.read_text() == "HIJACK=1\n", "must not write through symlink"
+
+
+def test_keygen_refuses_append_under_symlinked_home_component(
+    stage2_text: str, tmp_path: Path
+) -> None:
+    """The refusal walks PARENT components, not just the .env leaf.
+
+    Companion to test_keygen_refuses_symlinked_env, which can only run where a
+    FILE symlink is creatable. path_has_symlink_component() walks up from the
+    target to $HERMES_HOME testing `[ -L ]` at each step, so linking
+    HERMES_HOME itself drives the same guard through a DIRECTORY link -- and a
+    directory link is creatable unprivileged on Windows. Without this the
+    refuse-append rule had no coverage at all on this host: every sibling
+    symlink test in tests/tools/ skips here too.
+    """
+    real_home = tmp_path / "real_home"
+    real_home.mkdir()
+    linked_home = tmp_path / "linked_home"
+    _link_dir(linked_home, real_home)
+
+    result = _run_keygen(stage2_text, linked_home)
+
+    assert result.returncode == 0, result.stderr
+    assert "refusing append" in (result.stdout + result.stderr)
+    assert not (real_home / ".env").exists(), "must not write through a linked home"
 
 
 def test_keygen_skips_when_container_env_provides_key(
