@@ -13,6 +13,29 @@ from ai_usage.collector import collect, write_atomic
 
 NOW = datetime(2026, 8, 4, 15, 0, tzinfo=timezone.utc)
 
+# No provider in the real grid is balance-mode since DeepSeek's row was retired
+# on 2026-09-13 (DeepSeek is served via OpenCode Go; the direct prepaid account
+# is not a path, and watching its $0 balance paged "chain_exhausted" every
+# poll). The balance machinery is kept for a future prepaid key, so the tests
+# that pin it inject THIS row rather than relying on any real provider.
+BALANCE_KEY, BALANCE_LABEL = "prepaid-sample", "Prepaid Sample"
+BALANCE_ROW = (BALANCE_KEY, BALANCE_LABEL, "balance")
+
+
+@pytest.fixture
+def balance_grid(monkeypatch):
+    """PROVIDERS + one balance-mode row, seen by contract AND the collector.
+
+    ai_usage.collector binds ``PROVIDERS`` by name at import, so patching only
+    ``ai_usage.contract.PROVIDERS`` would leave collect() walking the old list.
+    """
+    import ai_usage.contract as contract_module
+
+    grid = list(contract_module.PROVIDERS) + [BALANCE_ROW]
+    monkeypatch.setattr(contract_module, "PROVIDERS", grid)
+    monkeypatch.setattr(collector_module, "PROVIDERS", grid)
+    return grid
+
 
 @dataclass
 class FakeWin:
@@ -54,8 +77,6 @@ def test_collect_builds_all_providers(tmp_path):
     def fetch(provider):
         if provider == "anthropic":
             return FakeSnap(True, (FakeWin("Current session", 62.0, None),))
-        if provider == "deepseek":
-            return FakeSnap(True, (), balance_usd=9.74)
         # codex + kimi are both budget-mode; unavailable fetch → unconfigured
         return FakeSnap(False, (), unavailable_reason="no token")
 
@@ -63,9 +84,13 @@ def test_collect_builds_all_providers(tmp_path):
     assert data["generated_at"] == "2026-08-04T15:00:00Z"
     by = {p["key"]: p for p in data["providers"]}
     assert list(by.keys()) == [
-        "anthropic", "anthropic2", "openai-codex", "kimi", "deepseek", "gemini",
+        "anthropic", "anthropic2", "openai-codex", "kimi", "gemini",
         "xai", "opencode-go",
     ]
+    # Retired 2026-09-13: the direct DeepSeek balance row must not be emitted
+    # or fetched -- the tray builds its label map from the rows it receives, so
+    # a missing key is simply a missing row, not a broken panel.
+    assert "deepseek" not in by
     # anthropic2 mirrors anthropic's budget mode (2nd subscription, own token)
     assert by["anthropic2"]["mode"] == "budget"
     assert by["anthropic2"]["state"] == "unconfigured"
@@ -80,23 +105,39 @@ def test_collect_builds_all_providers(tmp_path):
     # kimi is budget-mode now: routed through fetch, not the state.db token-sum
     assert by["kimi"]["mode"] == "budget"
     assert by["kimi"]["state"] == "unconfigured"
-    # deepseek is balance-mode: outstanding-$ from the fetch snapshot
-    assert by["deepseek"]["mode"] == "balance"
-    assert by["deepseek"]["state"] == "ok"
-    assert by["deepseek"]["balance_usd"] == 9.74
-    assert by["deepseek"]["detail"] == "$9.74 left"
     # gemini is budget-mode now (AI Studio CDP scrape via agent/gemini_session.py)
     assert by["gemini"]["mode"] == "budget"
     assert by["gemini"]["state"] == "unconfigured"
 
 
-def test_collect_carries_forward_balance_on_fetch_failure(tmp_path):
+def test_collect_builds_a_balance_mode_provider(tmp_path, balance_grid):
+    # Balance mode: outstanding-$ from the fetch snapshot, routed through the
+    # official fetch path like budget mode. Pinned via the injected row.
+    db = tmp_path / "state.db"
+    _seed_db(str(db))
+
+    def fetch(provider):
+        if provider == BALANCE_KEY:
+            return FakeSnap(True, (), balance_usd=9.74)
+        return FakeSnap(False, (), unavailable_reason="no token")
+
+    data = collect(db_path=str(db), prev=None, fetch_usage=fetch, now=NOW)
+    by = {p["key"]: p for p in data["providers"]}
+    assert list(by.keys())[-1] == BALANCE_KEY
+    assert by[BALANCE_KEY]["mode"] == "balance"
+    assert by[BALANCE_KEY]["state"] == "ok"
+    assert by[BALANCE_KEY]["balance_usd"] == 9.74
+    assert by[BALANCE_KEY]["detail"] == "$9.74 left"
+    assert by[BALANCE_KEY]["source"] == "official"
+
+
+def test_collect_carries_forward_balance_on_fetch_failure(tmp_path, balance_grid):
     db = tmp_path / "state.db"
     _seed_db(str(db))
     prev = {
         "generated_at": "2026-08-04T14:00:00Z",
         "providers": [
-            {"key": "deepseek", "label": "DeepSeek", "mode": "balance",
+            {"key": BALANCE_KEY, "label": BALANCE_LABEL, "mode": "balance",
              "state": "ok", "fetched_at": "2026-08-04T14:00:00Z",
              "balance_usd": 8.10, "windows": [], "detail": "$8.10 left"},
         ],
@@ -107,8 +148,8 @@ def test_collect_carries_forward_balance_on_fetch_failure(tmp_path):
 
     data = collect(db_path=str(db), prev=prev, fetch_usage=fetch, now=NOW)
     by = {p["key"]: p for p in data["providers"]}
-    assert by["deepseek"]["state"] == "stale"
-    assert by["deepseek"]["balance_usd"] == 8.10  # last-known preserved
+    assert by[BALANCE_KEY]["state"] == "stale"
+    assert by[BALANCE_KEY]["balance_usd"] == 8.10  # last-known preserved
 
 
 def test_collect_carries_forward_last_known_on_fetch_failure(tmp_path):
@@ -172,8 +213,6 @@ def test_all_rows_receive_a_source_field(tmp_path):
     def fetch(provider):
         if provider == "anthropic":
             return FakeSnap(True, (FakeWin("Current session", 62.0, None),))
-        if provider == "deepseek":
-            return FakeSnap(True, (), balance_usd=5.00)
         return FakeSnap(False, (), unavailable_reason="no token")
 
     data = collect(db_path=str(db), prev=None, fetch_usage=fetch, now=NOW)
@@ -181,7 +220,6 @@ def test_all_rows_receive_a_source_field(tmp_path):
 
     assert all("source" in row for row in data["providers"])
     assert by["anthropic"]["source"] == "official"
-    assert by["deepseek"]["source"] == "official"
     assert by["gemini"]["source"] == "official"
     # xai + opencode-go flipped from hermes-derived to budget-mode fetches
     assert by["xai"]["source"] == "official"
@@ -239,22 +277,23 @@ def test_collect_propagates_remaining_budget_and_reports_sanitized_attempts(tmp_
     )
 
     assert [provider for provider, _ in calls] == [
-        "anthropic", "anthropic2", "openai-codex", "kimi", "deepseek",
+        "anthropic", "anthropic2", "openai-codex", "kimi",
         "gemini", "xai", "opencode-go",
     ]
     # Provider #1 gets an equal SHARE of the pot, not the whole pot. Before the
     # 2026-08-25 fair-share change this asserted `== 5.0` -- the drain-in-order
-    # contract that let anthropic spend 87s of a 90s budget and starve the other
-    # seven into deadline_exhausted. Eight budgeted providers => 5.0/8.
-    assert calls[0][1] == pytest.approx(5.0 / 8)
+    # contract that let anthropic spend 87s of a 90s budget and starve the
+    # others into deadline_exhausted. Seven budgeted providers (deepseek
+    # retired 2026-09-13) => 5.0/7.
+    assert calls[0][1] == pytest.approx(5.0 / 7)
     assert calls[0][1] < 5.0
     diagnostics = data["diagnostics"]
     assert diagnostics["deadline_seconds"] == 5.0
     assert diagnostics["elapsed_ms"] >= 0
     outcomes_by_key = {item["key"]: item["outcome"] for item in diagnostics["providers"]}
     assert [outcomes_by_key[k] for k in (
-        "anthropic", "openai-codex", "kimi", "deepseek",
-    )] == ["ok", "unavailable", "exception", "ok"]
+        "anthropic", "openai-codex", "kimi",
+    )] == ["ok", "unavailable", "exception"]
     # new budget rows fall through to FakeSnap(True, (), balance_usd=9.74) -> ok
     assert outcomes_by_key["anthropic2"] == "ok"
     assert outcomes_by_key["xai"] == "ok"
@@ -294,22 +333,21 @@ def test_collect_stops_starting_providers_after_deadline_and_carries_stale(tmp_p
     outcomes = {item["key"]: item["outcome"] for item in data["diagnostics"]["providers"]}
     assert outcomes["anthropic"] == "deadline_exhausted"
     assert outcomes["openai-codex"] == "deadline_exhausted"
-    assert outcomes["deepseek"] == "deadline_exhausted"
     assert outcomes["gemini"] == "deadline_exhausted"
     assert outcomes["xai"] == "deadline_exhausted"
     assert outcomes["opencode-go"] == "deadline_exhausted"
 
 
 
-def test_state_db_diagnostics_report_error_and_stale_outcomes(tmp_path):
+def test_state_db_diagnostics_report_error_and_stale_outcomes(tmp_path, balance_grid):
     # Every provider is budget/balance now (gemini flipped 2026-08-23), so no
     # row reaches the _state_db_row branch and a diagnostic "stale" outcome
     # can no longer occur. What remains pinned: fetch-None diagnostics read
     # "unavailable", while the ROW carried from prev still reports its own
-    # state as "stale".
+    # state as "stale". The balance row is the fixture-injected one.
     prev = {
         "providers": [{
-            "key": "deepseek", "label": "DeepSeek", "mode": "balance",
+            "key": BALANCE_KEY, "label": BALANCE_LABEL, "mode": "balance",
             "state": "ok", "windows": [], "detail": "last known",
         }],
     }
@@ -320,13 +358,13 @@ def test_state_db_diagnostics_report_error_and_stale_outcomes(tmp_path):
     )
 
     outcomes = {item["key"]: item["outcome"] for item in data["diagnostics"]["providers"]}
-    assert outcomes["deepseek"] == "unavailable"
+    assert outcomes[BALANCE_KEY] == "unavailable"
     assert outcomes["gemini"] == "unavailable"
     assert outcomes["xai"] == "unavailable"
     assert outcomes["opencode-go"] == "unavailable"
 
     by = {p["key"]: p for p in data["providers"]}
-    assert by["deepseek"]["state"] == "stale"  # carried forward
+    assert by[BALANCE_KEY]["state"] == "stale"  # carried forward
     assert by["gemini"]["mode"] == "budget"
     assert "missing-state.db" not in json.dumps(data["diagnostics"])
 
@@ -362,8 +400,8 @@ def test_collect_keeps_one_argument_fetcher_compatibility(tmp_path):
 
     data = collect(db_path=str(db), prev=None, fetch_usage=legacy_fetch, now=NOW)
 
-    assert calls == ["anthropic", "anthropic2", "openai-codex", "kimi", "deepseek", "gemini", "xai", "opencode-go"]
-    assert len(data["providers"]) == 8
+    assert calls == ["anthropic", "anthropic2", "openai-codex", "kimi", "gemini", "xai", "opencode-go"]
+    assert len(data["providers"]) == 7
 
 
 def test_carried_forward_pre_provenance_row_gets_hermes_source(tmp_path):
@@ -563,7 +601,7 @@ def test_a_hog_in_first_position_no_longer_starves_the_rest(tmp_path):
 
     reached = [p for p, _b in calls]
     assert reached == [
-        "anthropic", "anthropic2", "openai-codex", "kimi", "deepseek",
+        "anthropic", "anthropic2", "openai-codex", "kimi",
         "gemini", "xai", "opencode-go",
     ]
     outcomes = {i["key"]: i["outcome"] for i in data["diagnostics"]["providers"]}

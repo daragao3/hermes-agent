@@ -11,7 +11,15 @@ PROVIDERS: list[tuple[str, str, str]] = [
     ("anthropic2", "Claude 2", "budget"),
     ("openai-codex", "Codex", "budget"),
     ("kimi", "Kimi K3", "budget"),
-    ("deepseek", "DeepSeek", "balance"),
+    # DeepSeek is deliberately ABSENT (retired 2026-09-13). DeepSeek models are
+    # served through the OpenCode Go subscription (the "opencode-go" row below),
+    # not through a direct api.deepseek.com account. The direct account's
+    # prepaid balance is $0 and is not a path anything routes through, so
+    # watching it only produced a permanent "DeepSeek balance chain_exhausted"
+    # page every poll. The balance-mode machinery (ai_usage/balance.py, the
+    # "balance" branch in collector.py / quota_signal.py) and
+    # agent.account_usage._fetch_deepseek_account_usage are kept generic and
+    # intact for any future prepaid provider; only this grid row is gone.
     # Gemini: quantitative % scraped from AI Studio's own apikey-page RPCs
     # (BatchGetProjectUsageLimits carries month-to-date spend vs budget) via
     # agent/gemini_session.py over CDP -- see that module's docstring.

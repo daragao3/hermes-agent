@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
+import pytest
+
 from ai_usage.collector import collect
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=timezone.utc)
@@ -128,7 +130,7 @@ def test_record_raising_does_not_break_collect(tmp_path, monkeypatch):
     by = {p["key"]: p for p in data["providers"]}
     assert by["anthropic"]["state"] == "ok"
     assert by["anthropic"]["windows"][0]["used_pct"] == 100.0
-    assert len(data["providers"]) == 8
+    assert len(data["providers"]) == 7  # deepseek row retired 2026-09-13
     assert "diagnostics" in data
 
 
@@ -260,12 +262,35 @@ class TestStaleResetsAtIsNotForwarded:
         )
 
 
+# A balance-mode row for the consolidated-page tests. The real grid has no
+# balance provider since the direct DeepSeek row was retired on 2026-09-13
+# (DeepSeek is served via OpenCode Go), so the label lookup in
+# collector._provider_display_label is fed this injected row instead.
+BALANCE_KEY, BALANCE_LABEL = "prepaid-sample", "Prepaid Sample"
+
+
+@pytest.fixture
+def balance_grid(monkeypatch):
+    import ai_usage.collector as collector_module
+    import ai_usage.contract as contract_module
+
+    grid = list(contract_module.PROVIDERS) + [(BALANCE_KEY, BALANCE_LABEL, "balance")]
+    monkeypatch.setattr(contract_module, "PROVIDERS", grid)
+    monkeypatch.setattr(collector_module, "PROVIDERS", grid)
+    return grid
+
+
 class TestOneConsolidatedCallPerSnapshot:
     """2026-09-13: five providers capped in one poll produced FIVE separate
     MODEL_RATE_LIMITED pages (anthropic2, deepseek, openai-codex, kimi,
     anthropic). The collector now hands the whole snapshot to record_batch()
     ONCE; the consolidation itself is pinned in tests/events/
-    test_rate_limit_signal.py::TestRecordBatch."""
+    test_rate_limit_signal.py::TestRecordBatch.
+
+    The balance-mode member of that page was the direct DeepSeek key, retired
+    from PROVIDERS later the same day; the fixture-injected BALANCE_KEY stands
+    in so the balance detail/label formatting stays pinned without expecting
+    a deepseek member."""
 
     def _five_capped(self):
         return {
@@ -273,7 +298,7 @@ class TestOneConsolidatedCallPerSnapshot:
                 {"key": "anthropic2", "mode": "budget",
                  "windows": [{"id": "5h", "label": "5h", "used_pct": 100.0,
                               "resets_at": "2099-01-01T02:00:00Z"}]},
-                {"key": "deepseek", "mode": "balance", "balance_usd": 0.0},
+                {"key": BALANCE_KEY, "mode": "balance", "balance_usd": 0.0},
                 {"key": "openai-codex", "mode": "budget",
                  "windows": [{"id": "wk", "label": "Weekly", "used_pct": 100.0}]},
                 {"key": "kimi", "mode": "budget",
@@ -283,7 +308,7 @@ class TestOneConsolidatedCallPerSnapshot:
             ]
         }
 
-    def test_five_findings_are_one_record_batch_call(self, monkeypatch):
+    def test_five_findings_are_one_record_batch_call(self, monkeypatch, balance_grid):
         import events.rate_limit_signal as rls
         from ai_usage.collector import _emit_quota_findings
 
@@ -298,10 +323,10 @@ class TestOneConsolidatedCallPerSnapshot:
         assert batch["detector"] == "usage_poller"
         assert batch["source_hint"] == "usage-poller"
         assert [h["provider"] for h in batch["hits"]] == [
-            "anthropic2", "deepseek", "openai-codex", "kimi", "anthropic"]
+            "anthropic2", BALANCE_KEY, "openai-codex", "kimi", "anthropic"]
         assert {h["outcome"] for h in batch["hits"]} == {"chain_exhausted"}
 
-    def test_hits_carry_operator_facing_label_and_detail(self, monkeypatch):
+    def test_hits_carry_operator_facing_label_and_detail(self, monkeypatch, balance_grid):
         import events.rate_limit_signal as rls
         from ai_usage.collector import _emit_quota_findings
 
@@ -312,9 +337,9 @@ class TestOneConsolidatedCallPerSnapshot:
         assert by["anthropic2"]["label"] == "Claude 2 (second Claude Code login)"
         assert by["anthropic2"]["detail"] == "5h window 100% used"
         assert by["anthropic2"]["resets_at"] == "2099-01-01T02:00:00Z"
-        assert by["deepseek"]["label"] == "DeepSeek"
-        assert by["deepseek"]["detail"] == "prepaid balance $0.00 — top up"
-        assert by["deepseek"]["model"] == "balance"
+        assert by[BALANCE_KEY]["label"] == BALANCE_LABEL
+        assert by[BALANCE_KEY]["detail"] == "prepaid balance $0.00 — top up"
+        assert by[BALANCE_KEY]["model"] == "balance"
         assert by["kimi"]["detail"] == "weekly window 100% used"
 
     def test_no_findings_means_no_call_at_all(self, monkeypatch):
