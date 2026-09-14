@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -31,6 +32,12 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "compat_manifest.json"
 SKIP_DIRS = {".git", "node_modules", "website", "skills", "optional-skills", "apps", "evals", "build", "MagicMock", ".worktrees", "__pycache__",
              ".claude", ".venv", "venv"}
+# A virtualenv is never first-party, and this checkout accumulates ABANDONED ones
+# whose names SKIP_DIRS cannot match literally: ".venv.stale.runtime-<epoch>-<pid>-<hex>".
+# Two of them held 45,345 of the 51,733 .py files in the deployed tree on 2026-09-13 --
+# 88% of the walk, all site-packages, against 6,388 first-party files. Matched by PREFIX
+# below, which is the same intent as the ".venv" entry rather than a new policy.
+SKIP_DIR_PREFIXES = (".venv",)
 # ``.claude`` holds this repo's per-session git worktrees (".claude/worktrees/<name>"),
 # each a full ~13k-file checkout. Without it this walk covers ~20 sibling trees, takes
 # over ten minutes, and reports other sessions' files as if they were ours. ".worktrees"
@@ -53,14 +60,48 @@ _COMPAT_OWN_TESTS = {
 }
 
 
+def _is_skipped_top_level(name: str) -> bool:
+    return name in SKIP_DIRS or name.startswith(SKIP_DIR_PREFIXES)
+
+
+def _walk_error(err: OSError) -> None:
+    """A directory that vanished or would not open, reported rather than swallowed.
+
+    ``os.walk`` ignores these silently by default, which would let a concurrent
+    sibling deleting a tree quietly shrink this gate's coverage to nothing while
+    it still printed the all-clear.
+    """
+    print(f"warning: skipping unreadable directory {getattr(err, 'filename', '?')}: {err}",
+          file=sys.stderr)
+
+
 def _py_files():
-    for p in ROOT.rglob("*.py"):
-        parts = p.relative_to(ROOT).parts
-        if parts[0] in SKIP_DIRS or p.name == "check_compat_pointers.py":
-            continue
-        if p.name in _COMPAT_OWN_TESTS:
-            continue
-        yield p
+    # PRUNE the skipped directories instead of filtering rglob's output.
+    # ``ROOT.rglob("*.py")`` DESCENDS into every directory and the SKIP_DIRS test
+    # it fed only decided what to YIELD, so the walk still entered .claude's ~20
+    # sibling worktrees, each with its own node_modules and .venv. Two consequences,
+    # both measured 2026-09-13 from the deployed checkout: minutes of the runtime
+    # went into directories whose files are then discarded, and a sibling session
+    # deleting anything mid-walk crashed the whole gate with a FileNotFoundError --
+    # a traceback and exit 1, which CI reads as a failed gate and which is not
+    # distinguishable from a real hit. A bare pathlib rglob over that tree
+    # reproduces it with no code of ours involved.
+    #
+    # Pruning is TOP-LEVEL ONLY, exactly matching the parts[0] test it replaces.
+    # Pruning at every level would also skip, say, plugins/x/node_modules, which
+    # this checker has always scanned -- a silent coverage change, not a speedup.
+    for dirpath, dirnames, filenames in os.walk(ROOT, onerror=_walk_error):
+        rel = Path(dirpath).relative_to(ROOT).parts
+        if not rel:
+            dirnames[:] = sorted(d for d in dirnames if not _is_skipped_top_level(d))
+        else:
+            dirnames.sort()
+        for fn in sorted(filenames):
+            if not fn.endswith(".py"):
+                continue
+            if fn == "check_compat_pointers.py" or fn in _COMPAT_OWN_TESTS:
+                continue
+            yield Path(dirpath) / fn
 
 
 class _Scope:
