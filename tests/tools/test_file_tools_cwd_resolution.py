@@ -42,6 +42,18 @@ def _isolated_cwd(tmp_path, monkeypatch):
     return workspace, decoy
 
 
+def _as_message_path(path) -> str:
+    """Path as tools/file_tools_paths.py renders it into the warning.
+
+    That producer formats with !r, so on Windows every backslash is DOUBLED
+    and a bare str(path) substring test can never match. The surrounding
+    quotes are stripped because the message embeds a longer path (the
+    resolved FILE) of which the directory is only a prefix. Identical to
+    str(path) on POSIX, where repr() escapes nothing in an ordinary path.
+    """
+    return repr(str(path))[1:-1]
+
+
 def test_relative_terminal_cwd_anchors_to_absolute_not_process_cwd(_isolated_cwd, monkeypatch):
     """TERMINAL_CWD='.' must NOT silently mean 'the agent process cwd'.
 
@@ -90,6 +102,14 @@ def test_absolute_terminal_cwd_used_verbatim(_isolated_cwd, monkeypatch):
     assert resolved == (workspace / "target.py")
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="container path semantics are POSIX-only: the code under test builds a "
+           "PurePosixPath from the container root, and joining that with a Windows "
+           "absolute test path yields '<root>/C:\\Users\\...', which is "
+           "meaningless. Not a symlink-privilege skip -- it still fails with a "
+           "directory junction, i.e. the link is not what blocks it.",
+)
 def test_container_absolute_input_path_does_not_follow_host_symlink(tmp_path, monkeypatch):
     """Docker paths are sandbox-local and must not be host-dereferenced.
 
@@ -119,6 +139,14 @@ def test_container_path_normalization_uses_posix_path_syntax():
     assert str(resolved) == "/workspace/projects/bar"
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="container path semantics are POSIX-only: the code under test builds a "
+           "PurePosixPath from the container root, and joining that with a Windows "
+           "absolute test path yields '<root>/C:\\Users\\...', which is "
+           "meaningless. Not a symlink-privilege skip -- it still fails with a "
+           "directory junction, i.e. the link is not what blocks it.",
+)
 def test_container_relative_path_keeps_container_cwd_symlink(tmp_path, monkeypatch):
     """Relative Docker paths should stay under the container cwd textually."""
     host_project = tmp_path / "host-project"
@@ -167,8 +195,8 @@ def test_warning_fires_when_relative_path_escapes_workspace(_isolated_cwd, monke
 
     assert warn is not None
     assert "OUTSIDE the active workspace" in warn
-    assert str(decoy) in warn
-    assert str(workspace) in warn
+    assert _as_message_path(decoy) in warn
+    assert _as_message_path(workspace) in warn
 
 
 # ── Fix C: sentinel TERMINAL_CWD + empty-registry worktree anchoring ─────────
@@ -200,7 +228,7 @@ def test_warning_fires_from_terminal_cwd_when_registry_empty(_isolated_cwd, monk
 
     assert warn is not None
     assert "OUTSIDE the active workspace" in warn
-    assert str(workspace) in warn
+    assert _as_message_path(workspace) in warn
 
 
 # ── Fix A: write_file / patch report the resolved ABSOLUTE path ──────────────

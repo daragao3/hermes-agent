@@ -92,6 +92,14 @@ class TestDetectDangerousRm:
             assert "delete" in desc.lower()
 
 
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="POSIX-rooted paths only: the danger rule is r'\brm\s+(-[^\s]*\s+)*/' "
+               "(approval_detection.py), so it never fires for a Windows path, and "
+               "_is_verification_artifact_cleanup's os.path.join can never match a "
+               "/-rooted operand. Neither the danger nor its exemption is "
+               "constructible here; failing closed on Windows is correct.",
+    )
     def test_nonrecursive_verification_artifact_cleanup_is_not_dangerous(self):
         with mock_patch("tempfile.gettempdir", return_value="/tmp"):
             for prefix in ("hermes-verify-", "hermes-ad-hoc-"):
@@ -101,6 +109,14 @@ class TestDetectDangerousRm:
                     None,
                 )
 
+    @pytest.mark.skipif(
+        os.name == "nt",
+        reason="POSIX-rooted paths only: the danger rule is r'\brm\s+(-[^\s]*\s+)*/' "
+               "(approval_detection.py), so it never fires for a Windows path, and "
+               "_is_verification_artifact_cleanup's os.path.join can never match a "
+               "/-rooted operand. Neither the danger nor its exemption is "
+               "constructible here; failing closed on Windows is correct.",
+    )
     def test_symlinked_temp_dir_only_exempts_canonical_target(self, tmp_path):
         real_temp = tmp_path / "real-temp"
         real_temp.mkdir()
