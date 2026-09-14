@@ -56,7 +56,7 @@ CLI 命令运行与下文所述相同的迁移脚本。当需要交互式、引�
 - 将 `SOUL.md` 导入 Hermes 主目录，保存为 `SOUL.md`
 - 将 OpenClaw 的 `MEMORY.md` 和 `USER.md` 转换为 Hermes 记忆条目
 - 将 OpenClaw 命令审批模式合并到 Hermes `command_allowlist`
-- 迁移 Hermes 兼容的消息设置，例如 `TELEGRAM_ALLOWED_USERS` 和 `MESSAGING_CWD`
+- 迁移 Hermes 兼容的消息设置，例如 `TELEGRAM_ALLOWED_USERS`，并把 OpenClaw 的工作区设置映射为 Hermes 的工作目录配置
 - 将 OpenClaw skill 复制到 `~/.hermes/skills/openclaw-imports/`
 - 可选地将 OpenClaw 工作区指令文件复制到所选 Hermes 工作区
 - 将兼容的工作区资产（如 `workspace/tts/`）镜像到 `~/.hermes/tts/`

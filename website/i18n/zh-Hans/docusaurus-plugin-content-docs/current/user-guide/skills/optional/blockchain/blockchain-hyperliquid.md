@@ -53,7 +53,7 @@ Hyperliquid 市场数据、账户历史、交易复盘。
 
 仅使用标准库 — 无需外部包，无需 API key。
 
-脚本从 `~/.hermes/.env` 读取两个可选默认值：
+脚本从 `${HERMES_HOME:-~/.hermes}/.env` 读取两个可选默认值：
 
 - `HYPERLIQUID_API_URL` — 默认为 `https://api.hyperliquid.xyz`。设置为
   `https://api.hyperliquid-testnet.xyz` 可切换至测试网。
@@ -94,7 +94,7 @@ hyperliquid_client.py review [address] [--coin COIN] [--hours N] [--fills N]
 hyperliquid_client.py export <coin> [--interval 1h] [--hours N] [--output PATH]
 ```
 
-对于 `state`、`spot-balances`、`fills`、`orders` 和 `review`，当 `~/.hermes/.env` 中设置了 `HYPERLIQUID_USER_ADDRESS` 时，地址参数为可选。
+对于 `state`、`spot-balances`、`fills`、`orders` 和 `review`，当 `${HERMES_HOME:-~/.hermes}/.env` 中设置了 `HYPERLIQUID_USER_ADDRESS` 时，地址参数为可选。
 
 ---
 

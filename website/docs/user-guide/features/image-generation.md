@@ -1,8 +1,8 @@
 ---
-title: Image Generation
-description: Generate images via FAL.ai — 11 models including FLUX 2, GPT Image (1.5 & 2), Nano Banana Pro, Ideogram, Recraft V4 Pro, Krea 2, and more, selectable via `hermes tools`.
-sidebar_label: Image Generation
 sidebar_position: 6
+title: Image Generation
+sidebar_label: Image Generation
+description: Generate images via FAL.ai — 11 models including FLUX 2, GPT Image (1.5 & 2), Nano Banana Pro, Ideogram, Recraft V4 Pro, Krea 2, and more, selectable via `hermes tools`.
 ---
 
 # Image Generation

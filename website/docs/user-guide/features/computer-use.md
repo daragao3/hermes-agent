@@ -1,6 +1,6 @@
 ---
-title: Computer Use
 sidebar_position: 16
+title: Computer Use
 ---
 
 # Computer Use

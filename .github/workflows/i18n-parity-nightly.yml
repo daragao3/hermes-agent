@@ -1,0 +1,108 @@
+name: zh-Hans Docs Parity (nightly)
+
+# Backstop for the per-PR gate in docs-site-checks.yml.
+#
+# The PR gate only runs when the ``site`` lane fires, and only on pull requests.
+# This job re-derives the same verdict against main on a schedule, so drift that
+# arrives by any other route — a direct push, a lane the classifier failed open
+# on, a change to the gate scripts themselves — still surfaces within a day
+# instead of accumulating silently for months, which is exactly how the locale
+# reached 42 untranslated / 97 structurally-drifted / 92 broken-anchor pages
+# before the 2026-09-08 sweep.
+#
+# It reports rather than blocks: a red run here is a signal in the Actions tab,
+# not a merge blocker.
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # 06:17 UTC daily, off the top of the hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: i18n-parity-nightly
+  cancel-in-progress: false
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      # --report-only so the static findings land in the summary even when the
+      # build below also fails; the job's own verdict comes from the two
+      # explicit checks at the end.
+      - name: Static parity gates
+        id: static
+        run: |
+          set -o pipefail
+          python3 website/scripts/check-i18n-parity.py --report-only \
+            | tee "$RUNNER_TEMP/parity.txt"
+          python3 website/scripts/check-i18n-parity.py > /dev/null 2>&1 \
+            && echo "ok=true" >> "$GITHUB_OUTPUT" \
+            || echo "ok=false" >> "$GITHUB_OUTPUT"
+
+      - name: Install website dependencies
+        uses: ./.github/actions/retry
+        with:
+          command: npm ci
+          working-directory: website
+
+      - name: Install ascii-guard
+        uses: ./.github/actions/retry
+        with:
+          command: python -m pip install ascii-guard==2.3.0 pyyaml==6.0.3
+
+      - name: Extract skill metadata for dashboard
+        run: python3 website/scripts/extract-skills.py
+
+      - name: Regenerate per-skill docs pages + catalogs
+        run: python3 website/scripts/generate-skill-docs.py
+
+      - name: Build Docusaurus
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee "$RUNNER_TEMP/docusaurus-build.log"
+        working-directory: website
+
+      # The build exits 0 with broken references (onBrokenLinks is 'warn'), so
+      # the log is the only evidence. This catches the class the static gates
+      # cannot see — a wrongly-present /docs/ prefix.
+      - name: Check the build log for broken links and anchors
+        id: buildlinks
+        continue-on-error: true
+        run: python3 website/scripts/check-build-links.py "$RUNNER_TEMP/docusaurus-build.log"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "# zh-Hans docs parity"
+            echo ""
+            echo '```'
+            cat "$RUNNER_TEMP/parity.txt" || echo "(static gates did not run)"
+            echo '```'
+            echo ""
+            echo "Build-log link check: ${{ steps.buildlinks.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verdict
+        if: always()
+        run: |
+          fail=0
+          [ "${{ steps.static.outputs.ok }}" = "true" ] || { echo "::error::static parity gates found drift"; fail=1; }
+          [ "${{ steps.buildlinks.outcome }}" = "success" ] || { echo "::error::the Docusaurus build log reports broken references"; fail=1; }
+          exit "$fail"

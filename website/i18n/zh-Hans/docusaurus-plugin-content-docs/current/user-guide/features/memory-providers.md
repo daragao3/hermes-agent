@@ -61,14 +61,16 @@ AI 原生的跨会话用户建模，具备辩证推理、会话范围上下文�
 - `dialecticCadence` — 辩证 LLM 触发频率（LLM 调用频率）
 - `dialecticDepth` — 每次辩证调用的 `.chat()` 轮数（1–3，推理深度）
 
+自动注入的辩证还会根据查询长度调整推理级别（查询越长，推理越深，上限为 `reasoningLevelCap`）；参见[查询自适应推理级别](./honcho.md#query-adaptive-reasoning-level)。
+
 **安装向导：**
 ```bash
 hermes memory setup        # 选择 "honcho" — 运行 Honcho 专属的安装后配置
 ```
 
-旧版 `hermes honcho setup` 命令仍然有效（现在会重定向到 `hermes memory setup`），但只有在 Honcho 被选为激活记忆提供者后才会注册。
+在全新安装上，可直接用 `hermes memory setup honcho` 配置 Honcho。旧版 `hermes honcho setup` 命令仍然有效（现在会重定向到 `hermes memory setup`），但只有在 Honcho 被选为激活记忆提供者后才会注册。
 
-**配置：** `$HERMES_HOME/honcho.json`（profile 本地）或 `~/.honcho/config.json`（全局）。解析顺序：`$HERMES_HOME/honcho.json` > `~/.hermes/honcho.json` > `~/.honcho/config.json`。参见[配置参考](https://github.com/hermes-ai/hermes-agent/blob/main/plugins/memory/honcho/README.md)和 [Honcho 集成指南](https://docs.honcho.dev/v3/guides/integrations/hermes)。
+**配置：** `$HERMES_HOME/honcho.json`（profile 本地）或 `~/.honcho/config.json`（全局）。解析顺序：`$HERMES_HOME/honcho.json` > `~/.hermes/honcho.json` > `~/.honcho/config.json`。参见[配置参考](https://github.com/NousResearch/hermes-agent/blob/main/plugins/memory/honcho/README.md)和 [Honcho 集成指南](https://docs.honcho.dev/v3/guides/integrations/hermes)。
 
 <details>
 <summary>完整配置参考</summary>
@@ -95,6 +97,9 @@ hermes memory setup        # 选择 "honcho" — 运行 Honcho 专属的安装�
 | `messageMaxChars` | `25000` | 每条消息的最大字符数（超出时分块） |
 | `dialecticMaxInputChars` | `10000` | 传入 `peer.chat()` 的辩证查询输入最大字符数 |
 | `sessionStrategy` | `'per-directory'` | `per-directory`、`per-repo`、`per-session`、`global` |
+| `pinUserPeer` | `false` | 仅网关。为 `true` 时，所有非 agent 的网关用户都归并到 `peerName`；该固定设置会覆盖所有别名 |
+| `userPeerAliases` | `{}` | 仅网关。将运行时 ID 映射到 peer（`{"7654321": "alice"}`）。多对一 |
+| `runtimePeerPrefix` | `""` | 仅网关。当没有别名匹配时，为未知的运行时 ID 添加命名空间（`telegram_7654321`） |
 
 </details>
 
@@ -199,6 +204,18 @@ hermes honcho sync
 
 参见 [Honcho 页面](./honcho.md#observation-directional-vs-unified) 获取完整的 observation 参考。
 
+### 网关身份映射
+
+上述 peer 模型覆盖了 CLI、TUI 和桌面会话，在这些场景中每次对话都解析为 `peerName`。[网关](../../developer-guide/gateway-internals.md)引入了第二个维度：用户带着平台原生的运行时 ID 抵达（Telegram UID、Discord snowflake、Slack user），由三个键决定每个 ID 解析为哪个 peer。
+
+| 键 | 效果 |
+|-----|--------|
+| `pinUserPeer: true` | 所有非 agent 的网关用户都归并到 `peerName`。该固定设置最先被检查，因此会覆盖所有别名——只有在没有任何用户侧身份需要独立 peer 时才选它 |
+| `userPeerAliases` | 将特定运行时 ID 映射到 peer（`{"7654321": "alice"}`）。这是路由不同身份的归宿——包括各自携带独立 peer 的 agent |
+| `runtimePeerPrefix` | 为任何未映射的运行时 ID 添加命名空间（`telegram_7654321`），使 ID 形态相同的平台不会互相冲突 |
+
+在网关之外，这些键不起任何作用。只有在检测到已连接的网关平台时，`hermes memory setup` 才会就它们发问。解析阶梯与安装流程参见 [Honcho 页面](./honcho.md#gateway-identity-mapping)。
+
 <details>
 <summary>完整 honcho.json 示例（多 profile）</summary>
 
@@ -255,7 +272,7 @@ hermes honcho sync
 
 </details>
 
-参见[配置参考](https://github.com/hermes-ai/hermes-agent/blob/main/plugins/memory/honcho/README.md)和 [Honcho 集成指南](https://docs.honcho.dev/v3/guides/integrations/hermes)。
+参见[配置参考](https://github.com/NousResearch/hermes-agent/blob/main/plugins/memory/honcho/README.md)和 [Honcho 集成指南](https://docs.honcho.dev/v3/guides/integrations/hermes)。
 
 
 ---
@@ -284,6 +301,8 @@ hermes memory setup    # 选择 "openviking"
 # 或手动配置：
 hermes config set memory.provider openviking
 echo "OPENVIKING_ENDPOINT=http://localhost:1933" >> ~/.hermes/.env
+# 启用了认证的服务器应使用 user/admin API key：
+echo "OPENVIKING_API_KEY=..." >> ~/.hermes/.env
 ```
 
 **主要特性：**
@@ -291,35 +310,86 @@ echo "OPENVIKING_ENDPOINT=http://localhost:1933" >> ~/.hermes/.env
 - 会话提交时自动提取记忆（profile、偏好、实体、事件、案例、模式）
 - `viking://` URI 方案用于层级知识浏览
 
+`OPENVIKING_ACCOUNT` 和 `OPENVIKING_USER` 用于本地/受信任模式。
+`OPENVIKING_AGENT` 是 Hermes 在 OpenViking 中的 peer ID，用于 peer 范围的记忆。
+
 ---
 
 ### Mem0
 
-服务端 LLM 事实提取，具备语义搜索、重排序和自动去重功能。
+服务端 LLM 事实提取，具备语义搜索、重排序和自动去重功能。支持三种连接模式：**Platform**（Mem0 Cloud）、**自托管控制台**（你通过 Docker 自行运行的 Mem0 服务器），以及 **OSS**（Mem0 进程内运行，使用你自己的 LLM + 向量库）。
 
 | | |
 |---|---|
 | **适合场景** | 免维护的记忆管理——Mem0 自动处理提取 |
-| **依赖** | `pip install mem0ai` + API key |
-| **数据存储** | Mem0 Cloud |
-| **费用** | Mem0 定价 |
+| **依赖** | `pip install mem0ai` + API key（platform）、一个正在运行的 Mem0 服务器（自托管控制台），或 LLM + 向量库（OSS） |
+| **数据存储** | Mem0 Cloud（platform）、你自己的 Mem0 服务器（自托管控制台），或进程内（OSS） |
+| **费用** | Mem0 定价（platform）/ 免费（自托管或 OSS） |
 
-**工具：** `mem0_profile`（所有已存储记忆）、`mem0_search`（语义搜索 + 重排序）、`mem0_conclude`（逐字存储事实）
+**工具（4 个）：** `mem0_search`（语义搜索；platform 模式下可选重排序，默认关闭）、`mem0_add`（逐字存储事实）、`mem0_update`（按 ID 更新）、`mem0_delete`（按 ID 删除）
 
-**安装：**
+**安装（Platform）：**
 ```bash
-hermes memory setup    # 选择 "mem0"
+hermes memory setup    # 选择 "mem0" → "Platform"
 # 或手动配置：
 hermes config set memory.provider mem0
 echo "MEM0_API_KEY=your-key" >> ~/.hermes/.env
 ```
 
-**配置：** `$HERMES_HOME/mem0.json`
+**安装（OSS）：**
+```bash
+hermes memory setup    # 选择 "mem0" → "Open Source (self-hosted)"
+# 或通过参数：
+hermes memory setup mem0 --mode oss --oss-llm openai --oss-llm-key sk-... --oss-vector qdrant
+```
+
+预览而不写入文件：
+```bash
+hermes memory setup mem0 --mode oss --oss-llm-key sk-... --dry-run
+```
+
+**安装（自托管控制台）：** 连接到你通过 Docker 自行运行的 Mem0 服务器（即控制台的 REST API）：
+
+```bash
+hermes memory setup    # 选择 "mem0" → "Self-hosted server"
+# 或通过参数：
+hermes memory setup mem0 --mode selfhosted --host http://localhost:8888 --api-key your-admin-api-key
+```
+
+也可以手动配置——通过环境变量：
+
+```bash
+echo "MEM0_HOST=http://localhost:8888" >> ~/.hermes/.env
+echo "MEM0_API_KEY=your-admin-api-key" >> ~/.hermes/.env
+```
+
+或写在 `mem0.json` 中：
+
+```json
+{ "host": "http://localhost:8888", "api_key": "your-admin-api-key" }
+```
+
+该插件使用 `X-API-Key` 认证，并调用服务器的 `/search` / `/memories` 路由。`api_key` 是可选的（仅在 `AUTH_DISABLED` 的服务器上可省略）。不要设置 `mode: oss`——它的优先级高于 `host`。
+
+**配置：** `$HERMES_HOME/mem0.json`（行为设置）。只有密钥 `MEM0_API_KEY` 应放在 `~/.hermes/.env` 中。
 
 | 键 | 默认值 | 描述 |
 |-----|---------|-------------|
+| `mode` | `platform` | `platform`（Mem0 Cloud）或 `oss`（自行管理，进程内） |
+| `host` | — | 自托管 Mem0 服务器 URL（Docker 控制台）。通过 HTTP 并使用 `X-API-Key` 路由；不要与 `mode: oss` 同时使用 |
 | `user_id` | `hermes-user` | 用户标识符 |
 | `agent_id` | `hermes` | Agent 标识符 |
+| `rerank` | `false` | 对搜索结果重排序以提升相关性（仅 platform 模式） |
+
+**OSS 支持的提供者：**
+
+| 组件 | 提供者 |
+|-----------|-----------|
+| LLM | openai、ollama |
+| Embedder | openai、ollama |
+| 向量库 | qdrant（本地/服务器）、pgvector |
+
+**切换模式：** 重新运行 `hermes memory setup mem0 --mode <platform|selfhosted|oss>`，或直接编辑 `mem0.json`。
 
 ---
 
@@ -541,6 +611,27 @@ Base URL 优先级为 `supermemory.json` → `SUPERMEMORY_BASE_URL` → `https:/
 
 **支持：** [Discord](https://supermemory.link/discord) · [support@supermemory.com](mailto:support@supermemory.com)
 
+### Memori
+
+基于 Memori Cloud 的结构化长期记忆，具备后台的完成轮次捕获、工具感知的轮次上下文，以及面向事实、摘要、配额、注册和反馈的显式召回工具。
+
+| | |
+|---|---|
+| **适合场景** | 由 agent 主导的召回，带有结构化的项目与会话归属 |
+| **依赖** | `pip install hermes-memori` + `hermes-memori install` + [Memori API key](https://app.memorilabs.ai/signup) |
+| **数据存储** | Memori Cloud |
+| **费用** | Memori 定价 |
+
+**工具：** `memori_recall`（搜索长期记忆）、`memori_recall_summary`（摘要化上下文）、`memori_quota`（用量/配额）、`memori_signup`（请求注册邮件）、`memori_feedback`（发送集成反馈）
+
+**安装：**
+```bash
+pip install hermes-memori
+hermes-memori install
+hermes config set memory.provider memori
+hermes memory setup
+```
+
 ---
 
 ## 提供者对比
@@ -549,12 +640,13 @@ Base URL 优先级为 `supermemory.json` → `SUPERMEMORY_BASE_URL` → `https:/
 |----------|---------|------|-------|-------------|----------------|
 | **Honcho** | 云端 | 付费 | 5 | `honcho-ai` | 辩证用户建模 + 会话范围上下文 |
 | **OpenViking** | 自托管 | 免费 | 5 | `openviking` + 服务器 | 文件系统层级 + 分层加载 |
-| **Mem0** | 云端 | 付费 | 3 | `mem0ai` | 服务端 LLM 提取 |
+| **Mem0** | 云端/自托管 | 免费/付费 | 4 | `mem0ai` | 服务端 LLM 提取 + 自托管/OSS 模式 |
 | **Hindsight** | 云端/本地 | 免费/付费 | 3 | `hindsight-client` | 知识图谱 + reflect 合成 |
 | **Holographic** | 本地 | 免费 | 2 | 无 | HRR 代数 + 信任评分 |
 | **RetainDB** | 云端 | $20/月 | 5 | `requests` | 增量压缩 |
 | **ByteRover** | 本地/云端 | 免费/付费 | 3 | `brv` CLI | 预压缩提取 |
 | **Supermemory** | 云端/自托管 | 免费/付费 | 4 | `supermemory` | 上下文隔离 + 会话图谱导入 + 多容器 |
+| **Memori** | 云端 | 免费/付费 | 5 | `hermes-memori` | 工具感知记忆 + 结构化召回 |
 
 ## Profile 隔离
 

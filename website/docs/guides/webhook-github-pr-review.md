@@ -1,7 +1,7 @@
 ---
 sidebar_position: 11
-sidebar_label: "GitHub PR Reviews via Webhook"
 title: "Automated GitHub PR Comments with Webhooks"
+sidebar_label: "GitHub PR Reviews via Webhook"
 description: "Connect Hermes to GitHub so it automatically fetches PR diffs, reviews code changes, and posts comments — triggered by webhooks with no manual prompting"
 ---
 

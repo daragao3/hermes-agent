@@ -1,7 +1,7 @@
 ---
 sidebar_position: 8
-sidebar_label: "SMS (Twilio)"
 title: "SMS (Twilio)"
+sidebar_label: "SMS (Twilio)"
 description: "通过 Twilio 将 Hermes Agent 设置为 SMS 聊天机器人"
 ---
 

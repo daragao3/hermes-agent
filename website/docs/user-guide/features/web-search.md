@@ -1,8 +1,8 @@
 ---
-title: Web Search & Extract
-description: Search the web and extract page content with multiple backend providers — including free self-hosted SearXNG.
-sidebar_label: Web Search
 sidebar_position: 6
+title: Web Search & Extract
+sidebar_label: Web Search
+description: Search the web and extract page content with multiple backend providers — including free self-hosted SearXNG.
 ---
 
 # Web Search & Extract

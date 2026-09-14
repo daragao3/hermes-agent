@@ -16,7 +16,7 @@ Hermes Agent 通过基于浏览器的 OAuth 登录流程支持 **MiniMax**，使
 |------|-------|
 | Provider ID | `minimax-oauth` |
 | 显示名称 | MiniMax (OAuth) |
-| 认证类型 | 浏览器 OAuth（PKCE 设备码流程） |
+| 认证类型 | 浏览器 OAuth（PKCE 重定向流程） |
 | 传输层 | 兼容 Anthropic Messages（`anthropic_messages`） |
 | 模型 | `MiniMax-M2.7`、`MiniMax-M2.7-highspeed` |
 | 全球端点 | `https://api.minimax.io/anthropic` |
@@ -56,11 +56,9 @@ hermes auth add minimax-oauth
 
 ### 中国区域
 
-如果您的账户在中国平台（`minimaxi.com`），请改用中国区域 OAuth provider id `minimax-cn`，或跳过 OAuth 直接配置 `MINIMAX_CN_API_KEY` / `MINIMAX_CN_BASE_URL`。旧版文档中描述的 `--region cn` 标志**未**接入 CLI 的参数解析器；请改用 `minimax-cn` provider：
+如果您的账户在中国平台（`minimaxi.com`），请改用基于 API 密钥的 `minimax-cn` provider——`minimax-cn` 仅以 `auth_type="api_key"` 注册（没有 OAuth 流程）。请直接配置 `MINIMAX_CN_API_KEY`（以及可选的 `MINIMAX_CN_BASE_URL`）：
 
 ```bash
-hermes auth add minimax-cn --type oauth   # 如果您的中国账户支持 OAuth
-# 或更简单的方式：
 echo 'MINIMAX_CN_API_KEY=your-key' >> ~/.hermes/.env
 ```
 
@@ -76,7 +74,7 @@ Hermes 将打印验证 URL 和用户码——在任意设备上打开该 URL，�
 
 ## OAuth 流程
 
-Hermes 针对 MiniMax OAuth 端点实现了 PKCE 设备码流程：
+Hermes 针对 MiniMax OAuth 端点实现了 PKCE 浏览器 OAuth 流程：
 
 1. Hermes 生成 PKCE verifier/challenge 对和一个随机 state 值。
 2. 携带 challenge 向 `{base_url}/oauth/code` 发送 POST 请求，获取 `user_code` 和 `verification_uri`。
@@ -115,8 +113,8 @@ hermes model
 或直接设置模型：
 
 ```bash
-hermes config set model MiniMax-M2.7
-hermes config set provider minimax-oauth
+hermes config set model.default MiniMax-M2.7
+hermes config set model.provider minimax-oauth
 ```
 
 ## 配置参考

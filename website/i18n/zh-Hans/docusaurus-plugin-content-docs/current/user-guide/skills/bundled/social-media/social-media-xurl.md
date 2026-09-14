@@ -52,7 +52,7 @@ description: "通过 xurl CLI 使用 X/Twitter：发帖、搜索、私信、媒�
 
 - **绝不**读取、打印、解析、汇总、上传或将 `~/.xurl` 发送到 LLM 上下文。
 - **绝不**要求用户将凭据/token 粘贴到对话中。
-- 用户必须在其本机上手动填写 `~/.xurl` 中的密钥。
+- 用户必须在其本机上手动填写 `~/.xurl` 中的密钥。在 Docker 中，这里的 `~` 必须是 Hermes 工具子进程所看到的那个 `~`；参见下方的 Docker 注意事项。
 - **绝不**在 agent 会话中推荐或执行包含内联密钥的认证命令。
 - **绝不**在 agent 会话中使用 `--verbose` / `-v`——它可能暴露认证头/token。
 - 如需验证凭据是否存在，只使用：`xurl auth status`。
@@ -129,6 +129,15 @@ xurl auth status
 
 > **常见陷阱：** 如果在 `xurl auth oauth2` 时省略了 `--app my-app`，OAuth token 将保存到内置的 `default` 应用配置中——该配置没有 client-id 或 client-secret。即使 OAuth 流程看似成功，命令也会因认证错误而失败。如遇此情况，请重新运行 `xurl auth oauth2 --app my-app` 和 `xurl auth default my-app`。
 
+> **Docker HOME 陷阱：** 在官方 Hermes Docker 布局中，`/opt/data` 是 `HERMES_HOME`，但 Hermes 工具子进程使用 `/opt/data/home` 作为 `HOME`。这意味着对于 Hermes 运行的 `xurl` 命令，`~/.xurl` 解析为 `/opt/data/home/.xurl`，而不是 `/opt/data/.xurl`。请使用相同的 HOME 执行用户配置：
+> ```bash
+> HOME=/opt/data/home xurl auth apps add my-app --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
+> HOME=/opt/data/home xurl auth oauth2 --app my-app YOUR_USERNAME
+> HOME=/opt/data/home xurl auth default my-app YOUR_USERNAME
+> HOME=/opt/data/home xurl auth status
+> ```
+> 如果 `HOME=/opt/data xurl auth status` 成功，但 `HOME=/opt/data/home xurl auth status` 显示没有应用或 token，则 Hermes 的工具调用将看不到这些凭据。
+
 ---
 
 ## 快速参考
@@ -195,6 +204,14 @@ xurl read https://x.com/user/status/1234567890
 xurl search "golang"
 xurl search "from:elonmusk" -n 20
 xurl search "#buildinpublic lang:en" -n 15
+```
+
+对于 X Article，请使用原始 API 模式，而不是 `read` 快捷命令。`xurl read`
+期望的是帖子 ID 或帖子 URL；不要把 `read` 放在 `/2/tweets/...` 端点前面。
+请求 `article` 这个 tweet field，并从 JSON 响应中提取 `data.article.plain_text`：
+
+```bash
+xurl --app APP_NAME '/2/tweets/2057909493250539891?expansions=author_id,attachments.media_keys,referenced_tweets.id&tweet.fields=created_at,lang,public_metrics,context_annotations,entities,possibly_sensitive,conversation_id,in_reply_to_user_id,referenced_tweets,article'
 ```
 
 ### 用户、时间线、提及
@@ -416,7 +433,7 @@ xurl --app staging /2/users/me             # 单次请求使用 staging
 - **Token 刷新：** OAuth 2.0 token 自动刷新，无需任何操作。
 - **多应用：** 每个应用拥有独立的凭据/token。使用 `xurl auth default` 或 `--app` 切换。
 - **每个应用的多账号：** 使用 `-u / --username` 选择，或通过 `xurl auth default APP USER` 设置默认值。
-- **Token 存储：** `~/.xurl` 为 YAML 格式。绝不读取或将此文件发送到 LLM 上下文。
+- **Token 存储：** `~/.xurl` 为 YAML 格式。在 Docker 中，请使用 Hermes 子进程的 HOME（官方镜像中为 `/opt/data/home`），使 token 落在 `/opt/data/home/.xurl` 下。绝不读取或将此文件发送到 LLM 上下文。
 - **费用：** X API 访问在有实际使用量时通常需要付费。许多失败是套餐/权限问题，而非代码问题。
 
 ---

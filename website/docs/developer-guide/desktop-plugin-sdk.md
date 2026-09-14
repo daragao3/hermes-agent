@@ -1,6 +1,6 @@
 ---
-sidebar_label: "Desktop Plugin SDK"
 title: "Desktop Plugin SDK (@hermes/plugin-sdk)"
+sidebar_label: "Desktop Plugin SDK"
 description: "Extend the native Hermes Desktop app — panes, pages, sidebar nav, status bar, palette commands, keybinds, themes, and a scoped backend namespace, with one import and no build step."
 ---
 

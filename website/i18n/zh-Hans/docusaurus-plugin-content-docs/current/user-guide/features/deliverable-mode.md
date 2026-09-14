@@ -41,7 +41,7 @@ Agent 默认不会主动生成 artifacts——需要明确告知。有两种方�
 
 **单次会话：** 明确提出请求（"以图表形式发给我对比结果"、"将数据以 CSV 格式返回"），或编写自定义指令/个性化条目，使其在消息平台上倾向于以 artifact 形式回复。
 
-**项目级别：** 将偏好设置添加到项目中的 `AGENTS.md` / `CLAUDE.md` / `.cursorrules`（agent 从该项目工作），或添加到 `~/.hermes/config.yaml` 中 `agent.custom_instructions` 下的全局自定义指令。
+**项目级别：** 将偏好设置添加到 agent 工作所在项目中的 `AGENTS.md` / `CLAUDE.md` / `.cursorrules`，或添加到 `~/.hermes/SOUL.md` 中的全局 persona，或作为 `~/.hermes/config.yaml` 中 `agent.personalities` 下的具名预设（可通过 `/personality` 按会话切换）。
 
 Agent 需要使用的机制很简单：将文件渲染到绝对路径（例如 `/tmp/q3-revenue.png`），并在回复中以纯文本形式提及该路径。Gateway 负责其余工作。围栏代码块或反引号中的路径会被忽略，以避免代码示例被破坏。
 

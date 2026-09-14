@@ -362,7 +362,7 @@ Look up customer ACME Corp and summarize recent invoice activity.
 
 This is the sort of place where a strict whitelist is far better than an exclude list.
 
-### Pattern 4: documentation / knowledge servers
+### Pattern 5: documentation / knowledge servers
 
 Some MCP servers expose prompts or resources that are more like shared knowledge assets than direct actions.
 

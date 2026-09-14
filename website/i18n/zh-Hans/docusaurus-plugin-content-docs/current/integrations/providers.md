@@ -1,7 +1,7 @@
 ---
+sidebar_position: 1
 title: "AI 提供商"
 sidebar_label: "AI 提供商"
-sidebar_position: 1
 ---
 
 # AI 提供商

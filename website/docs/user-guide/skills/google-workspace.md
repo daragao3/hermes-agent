@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
-sidebar_label: "Google Workspace"
 title: "Google Workspace — Gmail, Calendar, Drive, Sheets & Docs"
+sidebar_label: "Google Workspace"
 description: "Send email, manage calendar events, search Drive, read/write Sheets, and access Docs — all through OAuth2-authenticated Google APIs"
 ---
 

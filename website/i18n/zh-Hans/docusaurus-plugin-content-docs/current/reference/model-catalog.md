@@ -29,6 +29,7 @@ https://hermes-agent.nousresearch.com/docs/api/model-catalog.json
     "openrouter": {
       "metadata": {},
       "models": [
+        {"id": "z-ai/glm-5.2",         "description": "default", "default": true},
         {"id": "moonshotai/kimi-k3",   "description": "recommended", "metadata": {}},
         {"id": "openai/gpt-5.4",       "description": ""}
       ]
@@ -36,6 +37,7 @@ https://hermes-agent.nousresearch.com/docs/api/model-catalog.json
     "nous": {
       "metadata": {},
       "models": [
+        {"id": "z-ai/glm-5.2", "default": true},
         {"id": "anthropic/claude-opus-4.7"},
         {"id": "moonshotai/kimi-k3"}
       ]
@@ -48,7 +50,8 @@ https://hermes-agent.nousresearch.com/docs/api/model-catalog.json
 
 - **`version`** — 整数类型的 schema 版本号。未来的 schema 会递增此值；Hermes 拒绝处理版本号未知的清单，并回退到硬编码快照。
 - **`metadata`** — 清单、provider 及模型级别的自由格式字典，支持任意键。Hermes 会忽略未知字段，因此你可以为条目添加注解（如 `"tier": "paid"`、`"tags": [...]` 等），无需协调 schema 变更。
-- **`description`** — 仅限 OpenRouter。驱动选择器徽章文本（`"recommended"`、`"free"` 或空字符串）。Nous Portal 不使用此字段——免费层级的限制由 Portal 的定价端点实时决定。
+- **`description`** — 仅限 OpenRouter。驱动选择器徽章文本（`"recommended"`、`"free"`、`"default"` 或空字符串）。Nous Portal 不使用此字段——免费层级的限制由 Portal 的定价端点实时决定。
+- **`default`** — 每个 provider 至多只能有一个条目带 `"default": true`。该模型即**静默默认模型**：当用户从未选择过模型时（GUI 上手确认卡片、只配置了 `provider` 而未配置 `model`、`model.default` 为空），Hermes 会落到它上面。运行时仅从缓存读取（`get_default_model_from_cache`），因此热路径的解析永远不会发起网络请求；当没有缓存清单时，Hermes 会回退到仓库内的 `PREFERRED_SILENT_DEFAULT_MODEL` 常量，该常量必须与被标记的条目一致。这使得维护者无需发布新版本即可轮换静默默认模型。它被有意设定为一个能力足够且成本较低的模型，绝不会是最昂贵的旗舰模型。
 - **定价和上下文长度**不在清单中。这些数据在获取时来自各 provider 的实时 API（`/v1/models` 端点、models.dev）。
 
 ## 获取行为
@@ -87,6 +90,20 @@ model_catalog:
 ```
 
 覆盖清单只需填充其关心的 provider 块，其他 provider 继续从主 URL 解析。
+
+### 从选择器中隐藏 provider
+
+`excluded_providers` 允许你即便在存在有效凭据的情况下，也把特定 provider 从 `/model` 选择器中隐藏。当遗留或测试用的 provider 存在凭据、但不应出现在日常使用中时（例如仍缓存在 `auth.json` 中或通过 `gh` CLI 发现的旧 Copilot 或 OpenRouter token），这很有用。
+
+```yaml
+model_catalog:
+  excluded_providers:
+    - copilot
+    - openrouter
+    - openai
+```
+
+该排除项会以不区分大小写的方式匹配 provider 可能暴露的每一种键——Hermes id 与 models.dev id（内置映射 provider）、overlay pid 与解析出的 Hermes slug（overlay provider），以及规范 slug（canonical provider）——因此像 `copilot` 这样一条配置就能隐藏该 provider，无论它由哪个部分产生。所有 `/model` 选择器界面都会遵循它：gateway 的交互式/文本选择器、TUI 选择器，以及交互式的 `hermes model` CLI 选择器。空列表（或省略该键）不产生任何影响。
 
 ## 更新清单
 

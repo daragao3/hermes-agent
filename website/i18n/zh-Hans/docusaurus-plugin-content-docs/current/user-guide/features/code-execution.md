@@ -219,6 +219,56 @@ terminal:
 
 详情参见[安全指南](/user-guide/security#environment-variable-passthrough)。
 
+### 子进程中的 `HERMES_*` 变量
+
+子进程只会按精确名称收到一小组固定的操作类 `HERMES_*` 变量：
+
+- `HERMES_HOME`
+- `HERMES_PROFILE`
+- `HERMES_CONFIG`
+- `HERMES_ENV`
+
+（另外还有 `HERMES_RPC_DIR` / `HERMES_RPC_SOCKET` / `TZ` / `HOME`，这些是 Hermes
+为使 RPC 通道正常工作而显式注入的。）
+
+:::note 行为变更
+早期版本会将**任何**以 `HERMES_` 开头的变量透传给子进程。出于安全加固考虑，
+该宽泛的前缀匹配已被移除：它可能把名称中不含密钥子串的 `HERMES_*` 配置
+（例如 `HERMES_BASE_URL`、`HERMES_KANBAN_DB` 或某个 `HERMES_*_WEBHOOK`
+端点）泄露给任意沙箱代码。
+
+如果某个 `execute_code` 脚本——或它在导入时引入的仓库/插件模块——依赖上述四个
+操作类名称之外的 `HERMES_*` 变量，那么它现在会发现该变量在子进程中**未设置**。
+这一丢弃是有意为之，并非 bug。
+:::
+
+**变通方案——显式将该变量重新加入白名单。** 两种方式都会将变量透传给
+`execute_code` *和* `terminal` 子进程，且都不会削弱密钥剥离保证（Hermes 托管的
+provider 凭据永远无法通过这种方式被重新放行）：
+
+1. **按机器配置，在 `config.yaml` 中** — 将确切的变量名加入透传白名单：
+
+   ```yaml
+   terminal:
+     env_passthrough:
+       - HERMES_KANBAN_DB
+       - HERMES_BASE_URL
+   ```
+
+2. **按 skill 配置，在 skill 的 frontmatter 中** — 声明后，每当加载该 skill 时
+   都会自动注册：
+
+   ```yaml
+   required_environment_variables:
+     - HERMES_KANBAN_DB
+   ```
+
+**如何诊断。** 当子进程丢弃了一个或多个不在白名单中的 `HERMES_*` 变量时，
+Hermes 会输出一行 `debug` 日志，列出这些变量名并指向 `env_passthrough` 逃生口。
+以 debug 日志级别运行（`hermes logs --level DEBUG`，或查看
+`~/.hermes/logs/agent.log`），如果某个脚本表现得像是缺少某个 `HERMES_*` 变量，
+请查找 `execute_code: dropped N non-allowlisted HERMES_* var(s)`。
+
 Hermes 始终将脚本和自动生成的 `hermes_tools.py` RPC 存根写入临时暂存目录，执行完成后清理。在 `strict` 模式下，脚本也在该目录中*运行*；在 `project` 模式下，脚本在会话的工作目录中运行（暂存目录保留在 `PYTHONPATH` 中以确保导入正常解析）。子进程在独立的进程组中运行，以便在超时或中断时干净地终止。
 
 ## execute_code 与 terminal 对比

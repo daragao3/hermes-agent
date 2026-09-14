@@ -15,13 +15,13 @@ Pre-commit review: security scan, quality gates, auto-fix.
 | | |
 |---|---|
 | Source | Bundled (installed by default) |
-| Path | `skills/software-development\requesting-code-review` |
+| Path | `skills/software-development/requesting-code-review` |
 | Version | `2.0.0` |
 | Author | Hermes Agent (adapted from obra/superpowers + MorAlekss) |
 | License | MIT |
 | Platforms | linux, macos, windows |
 | Tags | `code-review`, `security`, `verification`, `quality`, `pre-commit`, `auto-fix` |
-| Related skills | [`subagent-driven-development`](/docs/user-guide/skills/optional/software-development/software-development-subagent-driven-development), [`test-driven-development`](/docs/user-guide/skills/bundled/software-development/software-development-test-driven-development), [`github`](/docs/user-guide/skills/bundled/software-development/software-development-github) |
+| Related skills | [`subagent-driven-development`](/user-guide/skills/optional/software-development/software-development-subagent-driven-development), [`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development), [`github`](/user-guide/skills/bundled/software-development/software-development-github) |
 
 ## Reference: full SKILL.md
 

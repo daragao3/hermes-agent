@@ -1,7 +1,7 @@
 ---
+sidebar_position: 0
 title: "Integrations"
 sidebar_label: "Overview"
-sidebar_position: 0
 ---
 
 # Integrations

@@ -31,6 +31,23 @@ SKILL_SOURCES = [
 
 # Pages the user had previously hand-written in user-guide/skills/.
 # We leave these alone (they get first-class sidebar treatment separately).
+# The zh-Hans twin of SKILLS_PAGES. Generated pages are translated in place
+# under the same relative path, so pruning an English page has to prune its
+# translation too -- leaving the twin behind makes check-i18n-parity.py report
+# an `orphaned zh` finding, which is BLOCKING even under --allow-untranslated.
+ZH_SKILLS_PAGES = (
+    REPO
+    / "website"
+    / "i18n"
+    / "zh-Hans"
+    / "docusaurus-plugin-content-docs"
+    / "current"
+    / "user-guide"
+    / "skills"
+)
+# Only these subtrees of SKILLS_PAGES are generator-owned. Hand-written pages
+# live at the top level (see HAND_WRITTEN) and must never be pruned.
+GENERATED_PAGE_ROOTS = ("bundled", "optional")
 HAND_WRITTEN = {"google-workspace.md"}
 
 
@@ -300,7 +317,10 @@ def derive_skill_meta(skill_path: Path, source_dir: Path, source_kind: str) -> d
         "category": category,
         "sub": sub,
         "slug": slug,
-        "rel_path": str(rel),
+        # as_posix(), not str(): rel_path is rendered into the "Path" row and into GitHub
+        # blob URLs, both of which need forward slashes. str() yields backslashes on Windows,
+        # so every source link on the site depends on who regenerated it.
+        "rel_path": rel.as_posix(),
     }
 
 
@@ -320,6 +340,98 @@ def page_output_path(meta: dict[str, Any]) -> Path:
     )
 
 
+def _truncate_on_word_boundary(text: str, limit: int) -> str:
+    """Clip `text` to at most `limit` chars, ending on a whole word.
+
+    The ellipsis counts toward the limit. Cutting at a fixed offset used to
+    slice words in half ("...reconciliation, tes..."), which reads as a bug
+    in the rendered <meta name="description"> and in search results. Back
+    off to the last space instead, then drop any dangling punctuation so the
+    ellipsis follows a word rather than a comma.
+
+    A single token longer than the budget has no boundary to back off to, so
+    it is still cut mid-word -- that is the only case where the old behaviour
+    is the best available.
+    """
+    if len(text) <= limit:
+        return text
+    clipped = text[: limit - 3]
+    # Back off only when the cut landed INSIDE a word, i.e. there is a word
+    # character on both sides of it. When either side is already whitespace
+    # we have whole words, and dropping one more shortens the text for
+    # nothing.
+    mid_word = bool(clipped) and not clipped[-1].isspace() and not text[limit - 3].isspace()
+    boundary = clipped.rfind(" ") if mid_word else -1
+    if boundary > 0:
+        clipped = clipped[:boundary]
+    # Strip whitespace, then punctuation, then whitespace AGAIN. The second
+    # pass is load-bearing: stripping a dangling dash can expose the space in
+    # front of it ("...unreal-engine) —" -> "...unreal-engine) "), and a single
+    # ordered pass leaves that space stranded before the ellipsis.
+    return clipped.rstrip().rstrip(",;:-—–").rstrip() + "..."
+
+
+def prune_orphaned_pages(
+    entries: list[tuple[dict[str, Any], dict[str, Any]]],
+    skills_pages: Path | None = None,
+    zh_skills_pages: Path | None = None,
+) -> list[Path]:
+    """Delete generated pages whose source skill no longer exists.
+
+    The generator used to only ever write. A deleted or moved skill left its
+    page behind forever -- still building, still counted by the i18n parity
+    gate, still reachable by direct URL after it dropped out of sidebars.ts
+    and the catalogs. CI regenerates before it builds, so a stale page never
+    showed up as a build failure either.
+
+    Anything under ``<skills_pages>/{bundled,optional}/`` that this run did not
+    just write is such a leftover, so it and its zh-Hans twin are removed. Only
+    those two subtrees are touched: the hand-written top-level pages are not
+    generator-owned.
+
+    Returns the deleted paths (English and zh-Hans), for the caller to report.
+    """
+    if skills_pages is None:
+        skills_pages = SKILLS_PAGES
+    if zh_skills_pages is None:
+        zh_skills_pages = ZH_SKILLS_PAGES
+
+    # Relative, so a caller can point this at a scratch tree.
+    expected = {
+        page_output_path(meta).relative_to(SKILLS_PAGES) for meta, _ in entries
+    }
+
+    removed: list[Path] = []
+    for root_name in GENERATED_PAGE_ROOTS:
+        root = skills_pages / root_name
+        if not root.is_dir():
+            continue
+        for page in sorted(root.rglob("*.md")):
+            rel = page.relative_to(skills_pages)
+            if rel in expected or page.name in HAND_WRITTEN:
+                continue
+            page.unlink()
+            removed.append(page)
+            zh_twin = zh_skills_pages / rel
+            if zh_twin.is_file():
+                zh_twin.unlink()
+                removed.append(zh_twin)
+
+    # A category that lost its last skill leaves an empty directory behind,
+    # which Docusaurus does not mind but git will not track either -- drop it
+    # so the tree matches what a fresh generation would produce.
+    for base in (skills_pages, zh_skills_pages):
+        for root_name in GENERATED_PAGE_ROOTS:
+            root = base / root_name
+            if not root.is_dir():
+                continue
+            for category in sorted(root.iterdir()):
+                if category.is_dir() and not any(category.iterdir()):
+                    category.rmdir()
+
+    return removed
+
+
 def sidebar_doc_id(meta: dict[str, Any]) -> str:
     """Docusaurus sidebar id, relative to docs/."""
     return f"user-guide/skills/{meta['source_kind']}/{meta['category']}/{page_id(meta)}"
@@ -334,8 +446,7 @@ def render_skill_page(
     name = fm.get("name", meta["slug"])
     description = fm.get("description", "").strip()
     short_desc = re.split(r"\.(?:\s|$)", description, maxsplit=1)[0].strip() if description else name
-    if len(short_desc) > 160:
-        short_desc = short_desc[:157] + "..."
+    short_desc = _truncate_on_word_boundary(short_desc, 160)
 
     # Heuristic nicer title from name
     display_name = name.replace("-", " ").replace("_", " ").title()
@@ -395,7 +506,14 @@ def render_skill_page(
                 target_meta = skill_index.get(r)
             if target_meta is not None:
                 href = (
-                    f"/docs/user-guide/skills/{target_meta['source_kind']}"
+                # Root-relative WITHOUT the `/docs` baseUrl segment. Docusaurus renders
+                # markdown links through <Link>, which calls addBaseUrl(); that prepends
+                # siteConfig.baseUrl unless the href ALREADY starts with it (useBaseUrl.js:
+                # `shouldAddBaseUrl = !url.startsWith(baseUrl)`). Writing `/docs/...` only
+                # survives because it happens to equal the `en` baseUrl — in `zh-Hans` the
+                # baseUrl is `/docs/zh-Hans/`, the prefix no longer matches, and the link is
+                # doubled into `/docs/zh-Hans/docs/...`. The bare path is right in every locale.
+                    f"/user-guide/skills/{target_meta['source_kind']}"
                     f"/{target_meta['category']}/{page_id(target_meta)}"
                 )
                 link_parts.append(f"[`{r}`]({href})")
@@ -492,9 +610,8 @@ def build_catalog_md_bundled(entries: list[tuple[dict[str, Any], dict[str, Any]]
             fm = parsed["frontmatter"]
             name = fm.get("name", meta["slug"])
             desc = (fm.get("description") or "").strip()
-            if len(desc) > 240:
-                desc = desc[:237].rstrip() + "..."
-            link_target = f"/docs/user-guide/skills/bundled/{meta['category']}/{page_id(meta)}"
+            desc = _truncate_on_word_boundary(desc, 240)
+            link_target = f"/user-guide/skills/bundled/{meta['category']}/{page_id(meta)}"
             path = f"`{meta['rel_path']}`"
             desc_esc = mdx_escape_body(desc).replace("|", "\\|").replace("\n", " ")
             lines.append(
@@ -553,9 +670,8 @@ def build_catalog_md_optional(entries: list[tuple[dict[str, Any], dict[str, Any]
             fm = parsed["frontmatter"]
             name = fm.get("name", meta["slug"])
             desc = (fm.get("description") or "").strip()
-            if len(desc) > 240:
-                desc = desc[:237].rstrip() + "..."
-            link_target = f"/docs/user-guide/skills/optional/{meta['category']}/{page_id(meta)}"
+            desc = _truncate_on_word_boundary(desc, 240)
+            link_target = f"/user-guide/skills/optional/{meta['category']}/{page_id(meta)}"
             desc_esc = mdx_escape_body(desc).replace("|", "\\|").replace("\n", " ")
             lines.append(f"| [**{name}**]({link_target}) | {desc_esc} |")
         lines.append("")
@@ -745,6 +861,15 @@ def main():
         out_path.write_text(content, encoding="utf-8")
         written += 1
     print(f"Wrote {written} per-skill pages under {SKILLS_PAGES}")
+
+    # Anything left under the generated subtrees that we did not just write is a page whose
+    # skill was deleted or moved. CI regenerates before it builds, so nothing else in the
+    # pipeline can see one.
+    removed = prune_orphaned_pages(entries)
+    if removed:
+        for path in removed:
+            print(f"Pruned orphaned page {path.relative_to(REPO).as_posix()}")
+        print(f"Pruned {len(removed)} orphaned page(s)")
 
     # Regenerate catalogs
     bundled_catalog = build_catalog_md_bundled(entries)
