@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+
+from tests.symlink_support import make_dir_link, requires_dir_links
 import shutil
 import subprocess
 import sys
@@ -1232,6 +1234,7 @@ def test_filesystem_lock_closes_descriptor_when_unlock_fails(
     assert tracked.closed is True
 
 
+@requires_dir_links
 def test_install_sidebar_skill_refuses_redirected_destination(
     tmp_path: Path,
 ) -> None:
@@ -1243,10 +1246,7 @@ def test_install_sidebar_skill_refuses_redirected_destination(
     outside.mkdir()
     skills.mkdir(parents=True)
     destination = skills / "session-sidebar-sync"
-    try:
-        destination.symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("directory symlinks are unavailable")
+    make_dir_link(destination, outside)
 
     with pytest.raises(PermissionError, match="redirect"):
         install_sidebar_skill(codex_home)

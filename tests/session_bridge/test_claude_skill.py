@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.symlink_support import make_dir_link, requires_dir_links
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSET = ROOT / "session_bridge" / "assets" / "claude-session-bridge"
@@ -135,6 +137,7 @@ def test_shared_asset_join_requires_a_strict_descendant(
         asset_installer._strict_descendant(tmp_path / "staging", "D:/escape.txt")
 
 
+@requires_dir_links
 def test_install_claude_skill_rejects_redirected_destination(tmp_path: Path) -> None:
     from session_bridge.claude_skill import install_claude_skill
 
@@ -143,10 +146,7 @@ def test_install_claude_skill_rejects_redirected_destination(tmp_path: Path) -> 
     outside = tmp_path / "outside"
     skills.mkdir(parents=True)
     outside.mkdir()
-    try:
-        (skills / "session-bridge").symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("directory symlinks are unavailable")
+    make_dir_link(skills / "session-bridge", outside)
 
     with pytest.raises(PermissionError, match="redirect"):
         install_claude_skill(claude_home)

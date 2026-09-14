@@ -54,6 +54,13 @@ ui-tui/packages/hermes-ink/dist/
 # from the shared checkout uploads all of it as context and blows past
 # built_image's 1200s budget, while the same build from a worktree takes ~345s.
 .claude/
+# Measured on the deployed checkout 2026-09-14 (du -sh): the .claude/ rule above
+# removed 2.1 GB but the build still timed out, because these two were never
+# excluded either -- .codegraph 1.7 GB, .worktrees 216 MB. Neither is referenced
+# by the Dockerfile or docker/. Excluding .claude/ ALONE was not enough; that is
+# why the first attempt at this fix did not move the build time.
+.codegraph/
+.worktrees/
 *.swp
 *.swo
 

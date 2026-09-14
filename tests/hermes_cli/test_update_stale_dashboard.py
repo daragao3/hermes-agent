@@ -22,6 +22,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from tests.symlink_support import make_dir_link, requires_dir_links
 from hermes_cli.main_dashboard import _find_stale_dashboard_pids
 from hermes_cli.dashboard_procs import _kill_stale_dashboard_processes
 from hermes_cli import dashboard_procs
@@ -849,16 +850,14 @@ class TestFilterDashboardRespawnCandidates:
         )
         assert out == [argv]
 
+    @requires_dir_links
     def test_symlinked_hermes_home_compares_equal(self, tmp_path):
         from hermes_cli.dashboard_procs import _filter_dashboard_respawn_candidates
 
         real = tmp_path / "real-home"
         real.mkdir()
         link = tmp_path / "linked-home"
-        try:
-            link.symlink_to(real, target_is_directory=True)
-        except (OSError, NotImplementedError):
-            pytest.skip("symlinks unavailable on this platform")
+        make_dir_link(link, real)
 
         argv = ["hermes", "serve", "--port", "9118"]
         out = _filter_dashboard_respawn_candidates(
