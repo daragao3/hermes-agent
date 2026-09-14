@@ -1134,6 +1134,7 @@ def _start_agent_build(sid: str, session: dict) -> None:
             return
         notify_registered, scopes, session_db = False, None, None
         essential_ready = False
+        init_error = None
         profile_home = current.get("profile_home")
         try:
             if not _await_resume_history(sid, current):
@@ -1165,16 +1166,27 @@ def _start_agent_build(sid: str, session: dict) -> None:
             if essential_ready:
                 logger.warning("agent post-ready setup failed for %s: %s", sid, e, exc_info=True)
             else:
-                current["agent_error"] = str(e)
+                # Recorded, not announced: the error emit is deferred to the finally so it lands AFTER
+                # the handoff settles and after ready.set(). Both orderings are load-bearing — see below.
+                current["agent_error"] = init_error = str(e)
+        finally:
+            # A failed build still owns the dedicated profile db handle until _finish_agent_build
+            # transfers or closes it, and config.set's model recovery waits on agent_ready to know the
+            # previous generation is DONE before building its replacement — so waiters must not be
+            # released before this returns. ready.set() is unconditional so a raising _finish_agent_build
+            # cannot strand them for the full wait cap.
+            try:
+                _finish_agent_build(
+                    sid, key, current, notify_registered=notify_registered, scopes=scopes, session_db=session_db)
+            finally:
                 ready.set()
+            # Strictly after ready.set(): _emit blocks on transport backpressure, and a blocked error
+            # notification must never hide an init failure from waiters.
+            if init_error is not None:
                 try:
-                    _emit("error", sid, {"message": f"agent init failed: {e}"})
+                    _emit("error", sid, {"message": f"agent init failed: {init_error}"})
                 except Exception:
                     logger.debug("failed to emit agent init error for %s", sid, exc_info=True)
-        finally:
-            _finish_agent_build(
-                sid, key, current, notify_registered=notify_registered, scopes=scopes, session_db=session_db)
-            ready.set()
 
     build_thread = threading.Thread(target=_build, daemon=True)
     # _wait_agent_for_prompt handle: dead thread + unset agent_ready = died hard; waiters must not sit out the cap.

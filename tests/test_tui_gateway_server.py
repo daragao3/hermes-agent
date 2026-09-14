@@ -5098,6 +5098,15 @@ def test_ws_orphan_reap_releases_resume_lock_before_slow_teardown(monkeypatch):
         running=False,
     )
 
+    # Warm the cached state.db handle BEFORE the reap thread starts. _reap consults
+    # _session_has_active_delegations -> _get_db() while holding _session_resume_lock and
+    # _sessions_lock, and the first acquire() in a process builds the schema in the hermetic tmp
+    # profile — measured at 0.815s of an 0.845s handshake. Paid inside the window below, that alone
+    # straddles the 1.0s budget, so this test failed or passed on whether some earlier test in the
+    # file happened to warm the module-global handle first. The budget guards reap promptness, not
+    # one-time schema creation.
+    server._get_db()
+
     server._schedule_ws_orphan_reap("slow-orphan")
     thread = threading.Thread(target=scheduled["callback"])
     thread.start()
@@ -16462,6 +16471,15 @@ def test_model_options_preserves_canonical_custom_row_after_agent_init(monkeypat
     monkeypatch.setattr(
         "hermes_cli.auth.is_provider_explicitly_configured",
         lambda _slug: False,
+    )
+    # explicit_only also keeps an Anthropic row when OAuth credentials exist (Hermes device flow or a
+    # Claude Code login) — and that reader looks at the REAL ~/.claude, which the hermetic fixtures do
+    # not redirect. Unstubbed, this test asserts the developer's login state: it passes on CI and fails
+    # on any machine signed in to Claude Code. The OAuth clause has its own coverage in
+    # tests/hermes_cli/test_inventory.py; here it must simply be absent.
+    monkeypatch.setattr(
+        "hermes_cli.inventory._anthropic_oauth_credentials_present",
+        lambda: False,
     )
     monkeypatch.setattr("hermes_cli.inventory._apply_pricing", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("hermes_cli.inventory._apply_capabilities", lambda *_args, **_kwargs: None)
