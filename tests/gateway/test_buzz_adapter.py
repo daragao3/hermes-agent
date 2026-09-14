@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import quote
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -617,6 +618,11 @@ class TestCliErrorContract:
             "x" * 100_000,
             json.dumps({"error": "relay_error", "message": "x" * 100_000}),
         ],
+        # Explicit ids: without them the 100_000-char VALUE becomes the node id, which pytest
+        # exports as PYTEST_CURRENT_TEST at teardown; Windows caps an env var at 32767 chars,
+        # so both cases ERROR there and the next collected test ERRORs on "previous item was
+        # not torn down properly".
+        ids=["raw", "json"],
     )
     def test_bounds_untrusted_cli_error_output(self, stderr):
         msg = _cli_error_message(stderr, 2)
@@ -2505,7 +2511,17 @@ class TestBuzzAdapterSend:
         assert stdin_text == "files"
 
     @pytest.mark.asyncio
-    async def test_send_multiple_images_file_url_uses_native_file_send(self, tmp_path):
+    @pytest.mark.parametrize(
+        "to_url",
+        [
+            # RFC 8089 / Path.as_uri(): ``file:///C:/Users/...`` on Windows, ``file:///tmp/...`` on POSIX.
+            pytest.param(lambda p: p.as_uri(), id="as_uri"),
+            # The gateway's own producer (_deliver_media_attachments, upstream's form):
+            # ``file://C%3A%5CUsers%5C...`` on Windows -- drive letter directly after the scheme.
+            pytest.param(lambda p: f"file://{quote(str(p))}", id="quote"),
+        ],
+    )
+    async def test_send_multiple_images_file_url_uses_native_file_send(self, tmp_path, to_url):
         img = tmp_path / "shot with spaces.png"
         img.write_bytes(b"\x89PNG fake")
         adapter = _make_adapter()
@@ -2513,7 +2529,7 @@ class TestBuzzAdapterSend:
         cli.script("messages", "send", {"accepted": True, "event_id": "evt127", "message": ""})
         adapter._run_cli = cli
 
-        await adapter.send_multiple_images(CHANNEL, [(img.as_uri(), "screenshot")])
+        await adapter.send_multiple_images(CHANNEL, [(to_url(img), "screenshot")])
 
         assert len(cli.calls) == 1
         args, stdin_text = cli.calls[0]
@@ -2523,6 +2539,39 @@ class TestBuzzAdapterSend:
         assert args[args.index("--content") + 1] == "-"
         assert stdin_text == "screenshot"
         assert "Couldn't deliver the image attachment." not in stdin_text
+
+
+class TestFileUrlToPath:
+    """The base consumer behind send_multiple_images must invert BOTH producers on both OSes.
+
+    ``os.name`` is patched so the Windows branch runs on any host; the round-trip test above
+    covers the real filesystem on whichever OS is running.
+    """
+
+    @pytest.mark.parametrize(
+        "os_name, url, expected",
+        [
+            # Windows: Path.as_uri() form -- the slash in front of the drive letter must go.
+            ("nt", "file:///C:/Users/d/shot%20with%20spaces.png", "C:/Users/d/shot with spaces.png"),
+            # Windows: the gateway's own quote(path) form -- unquote alone is the whole job.
+            ("nt", "file://C%3A%5CUsers%5Cd%5Cshot%20with%20spaces.png", "C:\\Users\\d\\shot with spaces.png"),
+            # Windows: a raw unquoted path (what several gateway tests hand in).
+            ("nt", "file://C:\\Users\\d\\x.png", "C:\\Users\\d\\x.png"),
+            # POSIX: standard triple-slash form keeps its leading slash.
+            ("posix", "file:///tmp/foo%20bar.png", "/tmp/foo bar.png"),
+            # POSIX: a directory literally named ``C:`` is a legitimate path -- untouched.
+            ("posix", "file:///C:/odd/x.png", "/C:/odd/x.png"),
+            # Not a file URL: returned as-is.
+            ("nt", "https://example.test/x.png", "https://example.test/x.png"),
+        ],
+    )
+    def test_inverts_both_producers(self, monkeypatch, os_name, url, expected):
+        import os
+
+        from gateway.platforms.base import file_url_to_path
+
+        monkeypatch.setattr(os, "name", os_name)
+        assert file_url_to_path(url) == expected
 
 
 
@@ -2769,7 +2818,7 @@ class TestInboundMediaLocalisation:
         assert event.message_type == MessageType.DOCUMENT
         assert event.media_types == ["application/pdf"]
         assert len(event.media_urls) == 1
-        assert "/cache/documents/" in event.media_urls[0]
+        assert Path(event.media_urls[0]).parts[-3:-1] == ("cache", "documents")
 
     @pytest.mark.asyncio
     async def test_download_failure_preserves_caption_and_alt_text(
