@@ -108,9 +108,14 @@ class ComputeHost:
         """
         self._closed.set()
         budget = max(0.0, wait)
-        deadline = time.monotonic() + budget - min(_FLUSH_RESERVE_SECS, budget / 2.0)
+        # perf_counter, not monotonic: time.monotonic() ticks at 15.625ms on Windows while
+        # time.sleep() is millisecond-accurate, so after a few 50ms ticks the clock reports LESS
+        # elapsed than was actually slept, "remaining" is over-computed, and the clamp below
+        # overshoots the reserve it exists to protect — measured 0.179s spent against a 0.170s
+        # drain budget. perf_counter is monotonic too and resolves to 1e-7 here.
+        deadline = time.perf_counter() + budget - min(_FLUSH_RESERVE_SECS, budget / 2.0)
         while True:
-            remaining = deadline - time.monotonic()
+            remaining = deadline - time.perf_counter()
             if remaining <= 0 or not self._live_turns():
                 break
             # Bounded by ``remaining``: a flat sleep would eat the reserve it protects.
@@ -263,12 +268,18 @@ class ComputeHost:
     def _emit_turn_activity(self, sid: str, session: dict, turn_id: str, started_at: float) -> None:
         # Observe the agent clock, never the host heartbeat. A reused agent's last
         # turn must not lend its activity to a new turn that has not made progress.
+        # STRICTLY greater, not >=: both clocks are time.time(), whose resolution is 15.6ms on
+        # Windows, so a reused agent's previous-turn stamp and this turn's start routinely land on
+        # the IDENTICAL value (measured delta 0.0) and >= then lends exactly the activity this
+        # guard exists to withhold — deferring the orphan reap on a turn that has made no progress.
+        # Rejecting a stamp from the turn's own first tick is the conservative direction this whole
+        # path documents, and the next sampler tick picks up real progress anyway.
         activity_ns = None
         try:
             summary = session["agent"].get_activity_summary()
             stamped_at = summary.get("last_activity_at")
             elapsed = summary.get("seconds_since_activity")
-            if stamped_at is not None and stamped_at >= started_at and elapsed is not None and elapsed >= 0:
+            if stamped_at is not None and stamped_at > started_at and elapsed is not None and elapsed >= 0:
                 activity_ns = now_ns() - int(elapsed * 1_000_000_000)
         except Exception:
             logging.getLogger(__name__).debug("compute host activity unavailable sid=%s", sid, exc_info=True)

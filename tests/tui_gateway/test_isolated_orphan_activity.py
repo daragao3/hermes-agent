@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import threading
 import time
+import types
 
 import pytest
 
@@ -144,6 +145,37 @@ def test_activity_relay_is_fenced_and_ages(monkeypatch, change):
         monkeypatch.setattr(server.time, "perf_counter_ns", lambda: params["activity_ns"] + 31_000_000_000)
         server._relay_compute_host_rpc({"method": "compute_host.activity", "params": params})
         assert not server._ws_orphan_turn_activity_is_fresh(session)
+
+
+@pytest.mark.parametrize(
+    ("offset", "expected"),
+    [(0.0, False), (-0.001, False), (0.001, True)],
+    ids=["same-clock-tick", "before-turn", "after-turn"],
+)
+def test_emit_turn_activity_requires_a_stamp_strictly_after_the_turn_started(offset, expected):
+    """A reused agent's earlier activity must not lend liveness to a turn with no progress.
+
+    The guard compares two ``time.time()`` reads, and that clock's resolution is 15.6ms on
+    Windows -- so a reused agent stamped just before dispatch lands on the IDENTICAL value as
+    ``turn_started_at`` (measured delta 0.0 in the real child below). Under ``>=`` that turn
+    reports fresh activity it never produced, and the WS-orphan reaper defers interrupting a
+    wedged detached turn indefinitely. ``same-clock-tick`` is the case that regressed.
+    """
+    from tui_gateway.compute_host import ComputeHost
+
+    started_at = time.time()
+    stamped_at = started_at + offset
+    sent: list = []
+
+    host = ComputeHost.__new__(ComputeHost)
+    host._transport = types.SimpleNamespace(write=sent.append)
+    session = {"agent": types.SimpleNamespace(get_activity_summary=lambda: {
+        "last_activity_at": stamped_at, "seconds_since_activity": 0.5})}
+
+    host._emit_turn_activity("sid", session, "turn-1", started_at)
+
+    assert len(sent) == 1
+    assert (sent[0]["params"]["activity_ns"] is not None) is expected
 
 
 def _run_child(mode, directory):

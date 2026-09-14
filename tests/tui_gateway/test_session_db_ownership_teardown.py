@@ -299,7 +299,16 @@ def build_env(monkeypatch, tmp_path):
 def _run_build(sid, session):
     """Drive _start_agent_build to completion (it builds on a daemon thread)."""
     server._start_agent_build(sid, session)
-    assert session["agent_ready"].wait(timeout=10), "build thread did not finish"
+    assert session["agent_ready"].wait(timeout=10), "build thread never signalled readiness"
+    # agent_ready is NOT the end of the build. On the SUCCESS path _build sets it before
+    # _announce_built_agent and before the finally, and it is the finally -- _finish_agent_build --
+    # that settles the dedicated profile handle: transfer it to the agent, or close it when the
+    # session was replaced mid-build. Every assertion in this file is about that settled state, so
+    # waiting on the event races the thread that produces it. Join the thread instead.
+    thread = session.get("_agent_build_thread")
+    assert thread is not None, "_start_agent_build did not publish its build thread"
+    thread.join(timeout=10)
+    assert not thread.is_alive(), "build thread did not finish"
 
 
 def _session(profile_home):

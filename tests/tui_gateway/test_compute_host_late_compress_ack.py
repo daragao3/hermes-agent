@@ -102,7 +102,13 @@ def test_late_ack_handlers_are_bounded_by_ttl_and_cap(monkeypatch):
 
     # TTL: an old registration is dropped on the next registration.
     monkeypatch.setattr(hs, "_LATE_CONTROL_TTL_SECS", 0.0)
-    time.sleep(0.01)
+    # The prune is `now - at > TTL` on time.monotonic(), whose resolution is 15.625ms on Windows —
+    # a bare sleep(0.01) leaves the delta at EXACTLY 0.0 about a quarter of the time (measured
+    # 12/50), nothing is pruned, and the cap alone then leaves {"fresh", "r3", "r4"}. Spin until the
+    # clock actually ticks so the assertion tests the TTL rather than the platform's timer period.
+    _tick = time.monotonic()
+    while time.monotonic() - _tick == 0.0:
+        time.sleep(0.001)
     sup._register_late_control_handler("fresh", lambda _f: None)
     assert set(sup._late_control_handlers) == {"fresh"}
 
