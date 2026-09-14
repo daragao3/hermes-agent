@@ -662,17 +662,20 @@ def _run_setup_wizard_impl(args):
         managed_error("run setup wizard")
         return
     ensure_hermes_home()
+    # Back up BEFORE --reset: save_config below overwrites the very file we copy (#3522, #77299).
+    config_path = get_config_path()
+    from hermes_cli.config_backups import backup_config
+    _backup_path = backup_config(config_path, "pre-setup")
     if getattr(args, "reset", False):
         from hermes_cli.config import effective_default_config
         save_config(effective_default_config())
         print_success("Configuration reset to defaults.")
+        if _backup_path:  # --reset may exit before the end-of-wizard notice
+            _info(f"Previous config backed up to: {_backup_path}")
     reconfigure_requested = bool(getattr(args, "reconfigure", False))
     quick_requested = bool(getattr(args, "quick", False))
     config = load_config()
     hermes_home = get_hermes_home()
-    # Back up existing config before setup modifies it (#3522)
-    config_path = get_config_path()
-    _backup_path = _backup_config_file(config_path)
 
     # Non-interactive environments (headless SSH, Docker, CI/CD)
     if getattr(args, 'non_interactive', False) or not is_interactive_stdin():

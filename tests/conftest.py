@@ -2250,6 +2250,7 @@ def _live_state_db_guard(request):
         _allow_live_state_db[0] = previous
 
 
+_GATEWAY_LOOKALIKE_MARK = "spawns_gateway_lookalike"
 _REQUIRES_WAL_MARK = "requires_wal"
 
 
@@ -2401,6 +2402,12 @@ def pytest_configure(config):  # noqa: D401 — pytest hook
         f"{_LIVE_SYSTEM_GUARD_BYPASS_MARK}: bypass the live-system guard "
         "(only for tests that genuinely need real os.kill / subprocess "
         "behaviour — e.g. PTY tests that signal their own child).",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{_GATEWAY_LOOKALIKE_MARK}: the test spawns and reaps its own stub "
+        "child whose argv matches the gateway runtime matcher; only the "
+        "real-gateway spawn check is lifted, os.kill stays guarded.",
     )
     config.addinivalue_line(
         "markers",
@@ -2624,6 +2631,7 @@ def _live_system_guard(request, monkeypatch):
     import subprocess as _subprocess
 
     test_pid = _os.getpid()
+    lookalike_ok = request.node.get_closest_marker(_GATEWAY_LOOKALIKE_MARK) is not None
     try:
         import psutil as _psutil
     except Exception:
@@ -3402,6 +3410,28 @@ def _live_system_guard(request, monkeypatch):
                 "@pytest.mark.live_system_guard_bypass if genuinely "
                 "needed (e.g. an integration test testing the update "
                 "flow against a dedicated throwaway repo)."
+            )
+        # Block spawning a REAL gateway runtime (``python -m hermes_cli.main
+        # gateway run|start|restart``). ``_spawn_hermes_action`` launches it
+        # with start_new_session=True, so it outlives the pytest worker; the
+        # child inherits the pytest-tmp HERMES_HOME, resolves the DEVELOPER's
+        # ``hermes-gateway`` systemd unit (a tmp home hashes to no profile
+        # suffix), restarts the live gateway, and the survivors squat the
+        # webhook port. 2026-09-03: 39 such orphans lived 6 days after a
+        # sibling refactor moved the spawn seam and left tests patching the
+        # facade. The canonical matcher, never an argv substring.
+        from gateway.status import _gateway_command_subcommand
+        if not lookalike_ok and _gateway_command_subcommand(cmd_str) in ("run", "start", "restart"):
+            raise RuntimeError(
+                f"tests/conftest.py live-system guard: blocked "
+                f"subprocess.{name}({cmd!r}) — this would spawn a REAL "
+                "hermes gateway runtime that outlives the test (it is "
+                "detached), restarts the developer's live gateway, and "
+                "holds the webhook port. Patch the spawn seam where "
+                "production reads it (hermes_cli.web_server_gateway."
+                "_spawn_hermes_action), or mark with "
+                "@pytest.mark.spawns_gateway_lookalike a test that spawns "
+                "and reaps its own stub child."
             )
 
     def _wrap_subprocess(name, real):

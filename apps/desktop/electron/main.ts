@@ -9337,6 +9337,7 @@ function sanitizeConnectionProfiles(raw: Record<string, any>) {
       token?: object
       headers?: object
       org?: string
+      name?: string
       savedSsh?: object
     } = {
       mode: modeIsRemoteLike(entry.mode) ? entry.mode : 'local'
@@ -9371,6 +9372,12 @@ function sanitizeConnectionProfiles(raw: Record<string, any>) {
     // Preserve the Hermes Cloud org tag on cloud-mode entries so Settings can
     // reopen into the same org for a per-profile cloud connection.
     if (cleaned.mode === 'cloud') {
+      const cloudName = String(entry.name || '').trim()
+
+      if (cloudName) {
+        cleaned.name = cloudName
+      }
+
       const org = String(entry.org || '').trim()
 
       if (org) {
@@ -9898,12 +9905,12 @@ async function sanitizeDesktopConnectionConfig(config = readDesktopConnectionCon
 // `org` (optional) is the Hermes Cloud org slug/id the instance was discovered
 // under — persisted so Settings can reopen into the same org; omitted from the
 // block when empty so plain remote connections stay unchanged.
-function buildRemoteBlock(remoteUrl, authMode, token, org?: string, headers?: object) {
+function buildRemoteBlock(remoteUrl, authMode, token, org?: string, headers?: object, name?: string) {
   if (authMode !== 'oauth' && !decryptDesktopSecret(token)) {
     throw new Error('Remote gateway session token is required.')
   }
 
-  const block: { url: string; authMode: string; token: object; headers?: object; org?: string } = {
+  const block: { url: string; authMode: string; token: object; headers?: object; org?: string; name?: string } = {
     url: normalizeRemoteBaseUrl(remoteUrl),
     authMode,
     token
@@ -9913,6 +9920,12 @@ function buildRemoteBlock(remoteUrl, authMode, token, org?: string, headers?: ob
 
   if (Object.keys(remoteHeaders).length > 0) {
     block.headers = remoteHeaders
+  }
+
+  const nameValue = typeof name === 'string' ? name.trim() : ''
+
+  if (nameValue) {
+    block.name = nameValue
   }
 
   const orgValue = typeof org === 'string' ? org.trim() : ''
@@ -9952,6 +9965,19 @@ function coerceDesktopConnectionConfig(input: any = {}, existing = readDesktopCo
   // inherit the saved org. A plain 'remote' connection never carries an org
   // (switching cloud→remote drops it), so it stays unset unless mode is cloud.
   const cloudOrg = mode === 'cloud' ? String(input.cloudOrg ?? existingBlock.org ?? '').trim() : ''
+
+  // A saved name belongs to this exact gateway, not another instance in the same org.
+  const cloudName =
+    mode === 'cloud'
+      ? String(
+          input.cloudName ??
+            (existingBlock.url && normalizeRemoteBaseUrl(remoteUrl) === normalizeRemoteBaseUrl(existingBlock.url)
+              ? existingBlock.name
+              : '') ??
+            ''
+        ).trim()
+      : ''
+
   const incomingToken = typeof input.remoteToken === 'string' ? input.remoteToken.trim() : ''
 
   const remoteHeaders =
@@ -9995,7 +10021,7 @@ function coerceDesktopConnectionConfig(input: any = {}, existing = readDesktopCo
     if (remoteLike) {
       profiles[key] = {
         mode,
-        ...buildRemoteBlock(remoteUrl, authMode, nextToken, cloudOrg, remoteHeaders)
+        ...buildRemoteBlock(remoteUrl, authMode, nextToken, cloudOrg, remoteHeaders, cloudName)
       }
     } else {
       const localEntry = localProfileEntry(rawExistingBlock)
@@ -10015,7 +10041,7 @@ function coerceDesktopConnectionConfig(input: any = {}, existing = readDesktopCo
   }
 
   const nextRemote = remoteLike
-    ? buildRemoteBlock(remoteUrl, authMode, nextToken, cloudOrg, remoteHeaders)
+    ? buildRemoteBlock(remoteUrl, authMode, nextToken, cloudOrg, remoteHeaders, cloudName)
     : existingMode === 'ssh'
       ? rawExistingBlock
       : { url: remoteUrl ? normalizeRemoteBaseUrl(remoteUrl) : remoteUrl, authMode, token: nextToken }
@@ -14217,13 +14243,12 @@ function spawnHudWindow(sessionId, profile) {
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    // Same rationale as the pet overlay: on Windows/Linux keep the helper out
-    // of the taskbar/alt-tab list; on macOS use an NSPanel so the frameless
-    // window never becomes the app's cmd-tab anchor.
+    // Keep the interactive macOS HUD as an ordinary NSWindow. NSPanel defaults
+    // hidesOnDeactivate to true, which removes the HUD while the user works in
+    // another app; the floating/all-spaces setup below supplies overlay behavior.
     skipTaskbar: !IS_MAC,
     hasShadow: false,
     alwaysOnTop: true,
-    type: IS_MAC ? 'panel' : undefined,
     // Clips the vibrancy layer to the HUD's silhouette rather than a hard
     // rectangle — the frost stops where the window's corners do.
     roundedCorners: true,

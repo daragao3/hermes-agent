@@ -663,8 +663,8 @@ the id plus a ready-to-paste `hermes --resume <id>` command.
 `--resume @claude` / `--resume @codex` show the same picker and drop you
 straight into the imported conversation.
 
-**Hermes Desktop** has the same importer under **Import session** in the
-sidebar (also in the command palette). It lists the logs on the machine the
+**Hermes Desktop** has the same importer in the command palette (**Import
+session**). It lists the logs on the machine the
 connected backend runs on — not the computer running the app — shows a
 read-only preview, and **Continue in Hermes** copies the conversation into the
 selected profile. Browsing never writes to your session store, importing never
@@ -968,8 +968,5 @@ hermes sessions prune --older-than 30 --yes
 ```
 
 :::tip
-Auto-pruning defaults to enabled for unset configuration keys. Existing
-explicit settings are preserved. Set `sessions.auto_prune: false` to keep all
-ended history, or use `hermes sessions prune` for a deliberate one-off cleanup.
-Pruning deletes history; it does not itself shrink the database file.
+Auto-prune is **on by default**: ended sessions that have been inactive for `sessions.retention_days` (default 90) are removed at startup, and active sessions are never touched (see [Automatic Cleanup](#automatic-cleanup) above). Session history powers `session_search` recall across past conversations, so if you want to keep every ended session forever, set `sessions.auto_prune: false` in `config.yaml`, or raise `retention_days`. With auto-prune off, `hermes sessions prune` remains available for one-off cleanup (observed failure mode without any pruning: a 384 MB `state.db` with ~1000 sessions slowing down FTS5 inserts and `/resume` listing).
 :::
