@@ -212,9 +212,18 @@ class CronEventEmitter:
                 },
             )
         else:
+            failed_priority = None  # schema default: HIGH
+            if consecutive_errors == 0 and str(safe_error or "").lower().startswith(
+                    "soft deadline exceeded"):
+                # The scheduler's abandoned-reader watchdog: the worker is
+                # still running and its real outcome amends the records later
+                # (_amend_late_deadline_outcome). It is an observation, not a
+                # failure streak, so it must not page as one.
+                failed_priority = Priority.NORMAL
             event_id = self.bus.emit(
                 event_type=EventType.CRON_FAILED,
                 source=job_name,
+                priority=failed_priority,
                 payload={
                     "job_id": job_id,
                     "job_name": job_name,

@@ -159,3 +159,100 @@ def test_writer_excludes_readers_for_the_profile_case():
     lock.release_write()
     assert entered.wait(timeout=5), "reader never ran after the writer released"
     t.join(timeout=5)
+
+
+def _hold_read_then_queue_writer(lock):
+    """Reader holds the lock; a writer queues behind it. Returns (writer_in, thread, order)."""
+    import time
+
+    order = []
+    lock.acquire_read()
+    writer_in = threading.Event()
+
+    def writer():
+        lock.acquire_write()
+        try:
+            order.append("writer")
+            writer_in.set()
+        finally:
+            lock.release_write()
+
+    t = threading.Thread(target=writer, daemon=True)
+    t.start()
+    time.sleep(0.2)
+    assert not writer_in.is_set(), "writer entered while a reader held the lock"
+    return writer_in, t, order
+
+
+def _queue_reader(lock, order):
+    entered = threading.Event()
+
+    def reader():
+        lock.acquire_read()
+        try:
+            order.append("reader")
+            entered.set()
+        finally:
+            lock.release_read()
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    return entered, t
+
+
+def test_readers_keep_entering_while_a_writer_waits_inside_the_grace_period():
+    """THE CONVOY (2026-09-13). Strict writer preference turned one 53-minute
+    reader into a pool-wide queue: a 3-25 s writer waited behind it, and from
+    then on every reader waited behind the writer until all four pool slots
+    held jobs that had not started. Inside the grace period readers must
+    still enter."""
+    import cron.scheduler as sched
+
+    lock = sched._ReadWriteLock(prefer_writer_after_s=30)
+    writer_in, tw, order = _hold_read_then_queue_writer(lock)
+    entered, tr = _queue_reader(lock, order)
+    assert entered.wait(timeout=2), (
+        "a reader queued behind a WAITING writer inside the grace period -- the convoy")
+    tr.join(timeout=5)
+    assert not writer_in.is_set()
+    lock.release_read()
+    assert writer_in.wait(timeout=5), "writer never ran after the readers drained"
+    tw.join(timeout=5)
+    assert order == ["reader", "writer"]
+
+
+def test_writer_preference_returns_once_the_grace_period_elapses():
+    """The bound: a writer that has waited longer than the grace period is
+    preferred again, so a stream of short readers cannot starve it forever."""
+    import time
+    import cron.scheduler as sched
+
+    lock = sched._ReadWriteLock(prefer_writer_after_s=0.3)
+    writer_in, tw, order = _hold_read_then_queue_writer(lock)
+    time.sleep(0.4)  # grace period elapsed while the writer waits
+    entered, tr = _queue_reader(lock, order)
+    assert not entered.wait(timeout=0.5), "a late reader jumped a writer past its grace period"
+    lock.release_read()
+    assert writer_in.wait(timeout=5)
+    tw.join(timeout=5)
+    assert entered.wait(timeout=5), "reader never ran after the writer released"
+    tr.join(timeout=5)
+    assert order == ["writer", "reader"]
+
+
+def test_zero_grace_period_is_strict_writer_preference(monkeypatch):
+    """``HERMES_CRON_WRITER_PREFERENCE_AFTER_SECONDS=0`` restores the old lock."""
+    import cron.scheduler as sched
+
+    monkeypatch.setenv("HERMES_CRON_WRITER_PREFERENCE_AFTER_SECONDS", "0")
+    assert sched._writer_preference_after_seconds() == 0.0
+    lock = sched._ReadWriteLock()  # reads the env at acquire time
+    writer_in, tw, order = _hold_read_then_queue_writer(lock)
+    entered, tr = _queue_reader(lock, order)
+    assert not entered.wait(timeout=0.5)
+    lock.release_read()
+    assert writer_in.wait(timeout=5)
+    tw.join(timeout=5)
+    assert entered.wait(timeout=5)
+    tr.join(timeout=5)
+    assert order == ["writer", "reader"]

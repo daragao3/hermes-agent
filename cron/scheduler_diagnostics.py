@@ -78,3 +78,29 @@ def emit_overdue(emitter, job, duration, evidence) -> None:
                      "threshold_seconds": round(duration, 1), **evidence})
     except Exception:
         logger.warning("Could not emit cron overdue observation for %s", job["id"], exc_info=True)
+
+
+def emit_isolation_wait(emitter, job, waited_seconds, budget_seconds, evidence) -> None:
+    """Still queued behind job isolation: not started, not failed, not a streak.
+
+    Distinct from :func:`emit_overdue` (``reason=soft_deadline``, HIGH): the
+    job has not begun executing, so nothing about it is overdue except the
+    pool convoy in front of it. NORMAL priority keeps it out of the paging
+    path while the ``execution_id`` still lets the notifier coalesce it with
+    a later observation for the same run.
+    """
+    from events.schema import EventType, Priority
+
+    if emitter is None:
+        return
+    try:
+        emitter.bus.emit(
+            event_type=EventType.CRON_STALE, source=job.get("name") or job["id"],
+            priority=Priority.NORMAL,
+            payload={"job_id": job["id"], "job_name": job.get("name") or job["id"],
+                     "execution_id": job.get("execution_id"), "state": "overdue_running",
+                     "reason": "isolation_wait", "age_seconds": round(waited_seconds, 1),
+                     "threshold_seconds": round(budget_seconds, 1), **evidence})
+    except Exception:
+        logger.warning("Could not emit cron isolation-wait observation for %s", job["id"],
+                       exc_info=True)

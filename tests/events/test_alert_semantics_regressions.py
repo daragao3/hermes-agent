@@ -190,3 +190,19 @@ def test_soft_deadline_is_pending_and_same_execution_alerts_coalesce(tmp_path):
     assert "still running" in sent[0].lower()
     notifier.handle(Event.create(EventType.CRON_STALE, "worker", {**payload, "execution_id": "next-run"}))
     assert len(sent) == 2  # A new execution is a new incident, even with identical prose.
+
+
+def test_isolation_wait_is_pending_and_not_degraded():
+    """A job queued behind job isolation has not started: pending, never a
+    failure or a degradation, whatever its age (2026-09-13 convoy)."""
+    from events.outcomes import OutcomeState, evaluate_outcome
+    from events.schema import Priority
+    payload = {"job_id": "job", "job_name": "reader", "execution_id": "run", "state": "overdue_running",
+               "reason": "isolation_wait", "age_seconds": 3600, "threshold_seconds": 3600,
+               "stage": "isolation_wait"}
+    queued = Event.create(EventType.CRON_STALE, "reader", payload, priority=Priority.NORMAL)
+    verdict = evaluate_outcome(queued)
+    assert verdict.state is OutcomeState.PENDING
+    assert verdict.failure_kind is None
+    assert all(item.code != "degraded_event_type" for item in verdict.evidence)
+    assert any(item.code == "isolation_wait_running" for item in verdict.evidence)
