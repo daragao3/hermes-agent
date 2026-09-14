@@ -9,7 +9,7 @@ from contextlib import suppress
 import json
 import logging
 import os
-import platform
+import sys
 import shlex
 import signal
 import stat
@@ -19,11 +19,11 @@ import time
 import uuid
 from pathlib import Path
 
-_IS_WINDOWS = platform.system() == "Windows"
+_IS_WINDOWS = os.name == "nt"
 # systemd transient scopes exist only on Linux; gate every scope-path branch on this
 # (not merely "not Windows") so macOS and other POSIX platforms never touch systemd.
 # See #70716.
-_IS_LINUX = platform.system() == "Linux"
+_IS_LINUX = sys.platform == "linux"
 from tools.environments.local import _find_shell, _resolve_safe_cwd, _sanitize_subprocess_env
 from hermes_cli._subprocess_compat import windows_hide_flags
 from dataclasses import dataclass, field

@@ -2,7 +2,7 @@
 instant, Python-controlled UX); install.sh / install.ps1 remain the *installation* backend."""
 from __future__ import annotations
 
-import platform
+import os
 import shutil
 import subprocess
 import sys
@@ -11,7 +11,7 @@ from pathlib import Path
 from hermes_constants import agent_browser_runnable, find_node_executable
 from tools.environments.local import hermes_subprocess_env
 
-_IS_WINDOWS = platform.system() == "Windows"
+_IS_WINDOWS = os.name == "nt"
 
 _DEP_CHECKS = {
     # find_node_executable() rather than a bare which(): $HERMES_HOME/node is not on PATH, so

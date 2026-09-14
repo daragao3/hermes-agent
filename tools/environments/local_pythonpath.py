@@ -8,13 +8,12 @@ so tests monkeypatching it there keep working."""
 
 import logging
 import os
-import platform
 import sys
 from pathlib import Path
 
 from tools.environments.local_env_policy import _ACTIVE_VENV_MARKER_VARS
 
-_IS_WINDOWS = platform.system() == "Windows"
+_IS_WINDOWS = os.name == "nt"
 
 logger = logging.getLogger("tools.environments.local")
 

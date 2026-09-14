@@ -7,7 +7,6 @@ PYTHONPATH hygiene, UTF-8 forcing, TZ) cannot drift between them.
 
 import logging
 import os
-import platform
 import subprocess
 import sys
 from typing import Dict
@@ -15,7 +14,7 @@ from typing import Dict
 # Logger name kept as the origin module's so existing log expectations hold.
 logger = logging.getLogger("tools.code_execution_tool")
 
-_IS_WINDOWS = platform.system() == "Windows"
+_IS_WINDOWS = os.name == "nt"
 
 # Scrub order: secret-substring block first; whatever is left must match a safe
 # prefix, the exact-name HERMES_ allowlist, or (Windows) an OS-essential name.
