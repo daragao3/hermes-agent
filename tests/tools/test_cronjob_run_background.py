@@ -72,18 +72,22 @@ class TestBackgroundDispatch:
                  patch("tools.cronjob_tools.get_job",
                        return_value={"last_status": "ok", "last_error": None}):
                 res = _try_dispatch_background_run(_job('job-bg-01'))
+                try:
+                    # The runner executes on a daemon thread and resolves
+                    # cron.scheduler.run_one_job when it RUNS, so the patch must
+                    # still be active while we wait for it (mirrors the sibling
+                    # completion-queue test); outside the block the real
+                    # run_one_job ran, lost the fire claim, and never signalled.
+                    assert run_started.wait(timeout=5.0), "job never started in background"
+                finally:
+                    run_release.set()
 
-        try:
-            # Returned BEFORE the job finished — that's the whole point.
-            assert res is not None
-            assert res["claimed"] is True
-            assert res["dispatched"] is True
-            assert res["delegation_id"]
-            m_claim.assert_called_once_with("job-bg-01", manual=True, return_job=True)
-            # The job actually starts on the daemon executor.
-            assert run_started.wait(timeout=5.0), "job never started in background"
-        finally:
-            run_release.set()
+        # Returned BEFORE the job finished — that's the whole point.
+        assert res is not None
+        assert res["claimed"] is True
+        assert res["dispatched"] is True
+        assert res["delegation_id"]
+        m_claim.assert_called_once_with("job-bg-01", manual=True, return_job=True)
 
     def test_completion_event_reaches_shared_queue(self):
         """The finished run pushes a type='async_delegation' event carrying

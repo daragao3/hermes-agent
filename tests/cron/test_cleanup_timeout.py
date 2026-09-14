@@ -145,7 +145,8 @@ def test_dispatch_guard_releases_after_sessiondb_finalization_hang(tmp_path):
              patch("hermes_cli.runtime_provider.resolve_runtime_provider", return_value=_RUNTIME), \
              patch("run_agent.AIAgent") as mock_agent_cls, \
              patch("cron.scheduler._cron_cleanup_timeout_seconds", return_value=0.02), \
-             patch.object(sched, "get_due_jobs", return_value=[job]), \
+             patch.object(sched, "get_due_and_skipped_jobs", return_value=([job], [])), \
+             patch.object(sched, "claim_job_for_fire", return_value=True), \
              patch.object(sched, "advance_next_runs"), \
              patch.object(sched, "save_job_output", return_value="/tmp/out"), \
              patch.object(sched, "mark_job_run"), \

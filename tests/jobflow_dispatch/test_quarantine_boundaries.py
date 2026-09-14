@@ -7,6 +7,28 @@ import contextlib
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_running_set():
+    """The tick tests here submit through a FAKE pool, so the running-set
+    registration made by ``_submit_with_guard`` is never released by a worker
+    finally; without this the id leaks into later tests as "already running"."""
+    import cron.scheduler as scheduler
+
+    def _snapshot():
+        return {name: set(getattr(scheduler, name))
+                for name in ("_running_job_ids",) if hasattr(scheduler, name)}
+
+    before = _snapshot()
+    yield
+    for name, ids in before.items():
+        live = getattr(scheduler, name)
+        for leaked in set(live) - ids:
+            live.discard(leaked)
+            for table in ("_running_since", "_running_futures"):
+                if hasattr(scheduler, table):
+                    getattr(scheduler, table).pop(leaked, None)
+
+
 class _FenceStore:
     def __init__(self, calls, *, refuse=False):
         self.calls = calls
@@ -35,7 +57,7 @@ def test_tick_holds_section_from_before_due_capture_through_submit(monkeypatch):
         lambda: calls.append("capture") or ([{"id": "job-1", "name": "one"}], []),
     )
     monkeypatch.setattr(scheduler, "_collect_woken_jobs", lambda **_: [])
-    monkeypatch.setattr(scheduler, "advance_next_run", lambda _job_id: calls.append("advance"))
+    monkeypatch.setattr(scheduler, "advance_next_runs", lambda _job_ids: calls.append("advance"))
     monkeypatch.setattr(scheduler, "create_execution", lambda *_a, **_k: {"id": "exec-1"})
 
     class _Future:
@@ -73,7 +95,7 @@ def test_sync_tick_releases_section_after_submit_before_waiting_for_result(monke
         lambda: calls.append("capture") or ([{"id": "job-sync", "name": "one"}], []),
     )
     monkeypatch.setattr(scheduler, "_collect_woken_jobs", lambda **_: [])
-    monkeypatch.setattr(scheduler, "advance_next_run", lambda _job_id: None)
+    monkeypatch.setattr(scheduler, "advance_next_runs", lambda _job_ids: None)
     monkeypatch.setattr(scheduler, "create_execution", lambda *_a, **_k: {"id": "exec-1"})
 
     class _Future:
@@ -123,9 +145,17 @@ def test_provider_fire_holds_section_before_claim_through_running_handoff(monkey
 
     calls = []
     monkeypatch.setattr(provider, "default_control_store", lambda: _FenceStore(calls), raising=False)
-    monkeypatch.setattr(jobs, "claim_job_for_fire", lambda _jid: calls.append("claim") or True)
+    # 0.21.1: the claim runs in its own "external-provider-claim" section
+    # (synchronous, before the transport acks) and must return the claimed
+    # RECORD -- a bare True reads as "claim not acquired"; the run then opens
+    # "external-provider-fire".
+    monkeypatch.setattr(
+        jobs, "claim_job_for_fire",
+        lambda jid, **_kw: calls.append("claim") or {"id": jid, "name": "one"},
+    )
     monkeypatch.setattr(jobs, "get_job", lambda jid: {"id": jid, "name": "one"})
     monkeypatch.setattr(executions, "create_execution", lambda *_a, **_k: {"id": "exec-1"})
+    monkeypatch.setattr(executions, "set_execution_occurrence", lambda *_a, **_k: None)
 
     def handoff(*_args, **kwargs):
         calls.append("handoff")
@@ -135,7 +165,9 @@ def test_provider_fire_holds_section_before_claim_through_running_handoff(monkey
     monkeypatch.setattr(scheduler, "run_one_job", handoff)
 
     assert provider.InProcessCronScheduler().fire_due("job-1") is True
-    assert calls.index(("enter", "external-provider-fire")) < calls.index("claim")
+    assert calls.index(("enter", "external-provider-claim")) < calls.index("claim")
+    assert calls.index("claim") < calls.index(("exit", "external-provider-claim"))
+    assert calls.index(("exit", "external-provider-claim")) < calls.index(("enter", "external-provider-fire"))
     assert calls.index("handoff") < calls.index(("exit", "external-provider-fire"))
 
 
@@ -155,7 +187,9 @@ def test_direct_run_releases_admission_after_running_before_work(monkeypatch):
     monkeypatch.setattr(
         scheduler,
         "mark_execution_running",
-        lambda *_a: calls.append("running"),
+        # 0.21.1: a None result means the claimed->running CAS was lost and the
+        # run is skipped; answer with the running row like the real ledger.
+        lambda *_a: calls.append("running") or {"id": "exec-1", "status": "running"},
     )
     monkeypatch.setattr(
         scheduler,
@@ -365,8 +399,11 @@ class _RetainingFenceStore(_FenceStore):
         return section
 
 
-def _binding_mismatch_run_one_job(job, *, adapters=None, loop=None, verbose=False):
-    """``run_one_job``'s signature as it stood before 410c57ddc9 added the kwarg.
+def _binding_mismatch_run_one_job(job, *, adapters=None, loop=None, verbose=False,
+                                  extra_prompt=None, cancel_event=None):
+    """``run_one_job``'s signature as it stood before 410c57ddc9 added the kwarg
+    (plus the ``extra_prompt``/``cancel_event`` kwargs callers pass today, so
+    the ONLY unbindable argument is ``_dispatch_admission``).
 
     Passing ``_dispatch_admission=`` to it raises TypeError at BINDING -- no
     frame of this function ever executes -- which is exactly the path that used
@@ -384,7 +421,9 @@ def test_manual_fire_releases_admission_when_run_one_job_cannot_bind(monkeypatch
     monkeypatch.setattr(
         quarantine_control, "default_control_store", lambda: _RetainingFenceStore(calls)
     )
-    monkeypatch.setattr(cronjob_tools, "claim_job_for_fire", lambda _jid: True)
+    # claim_job_for_fire(manual=True, return_job=True) must hand back the
+    # claimed record; a bare True is "not claimed" and never reaches run_one_job.
+    monkeypatch.setattr(cronjob_tools, "claim_job_for_fire", lambda jid, **_kw: {"id": jid, "name": "one"})
     monkeypatch.setattr(cronjob_tools, "get_job", lambda jid: {"id": jid, "name": "one"})
     monkeypatch.setattr(cronjob_tools, "emit_cron_triggered_safe", lambda **_k: None)
     monkeypatch.setattr(cronjob_tools, "mark_job_run", lambda *_a, **_k: None)
@@ -408,9 +447,10 @@ def test_provider_fire_releases_admission_when_run_one_job_cannot_bind(monkeypat
     monkeypatch.setattr(
         provider, "default_control_store", lambda: _RetainingFenceStore(calls)
     )
-    monkeypatch.setattr(jobs, "claim_job_for_fire", lambda _jid: True)
+    monkeypatch.setattr(jobs, "claim_job_for_fire", lambda jid, **_kw: {"id": jid, "name": "one"})
     monkeypatch.setattr(jobs, "get_job", lambda jid: {"id": jid, "name": "one"})
     monkeypatch.setattr(executions, "create_execution", lambda *_a, **_k: {"id": "exec-1"})
+    monkeypatch.setattr(executions, "set_execution_occurrence", lambda *_a, **_k: None)
     monkeypatch.setattr(scheduler, "run_one_job", _binding_mismatch_run_one_job)
 
     # fire_due has no except-handler, so the binding failure propagates -- the
@@ -436,7 +476,7 @@ def test_manual_fire_does_not_double_release_the_handed_off_admission(monkeypatc
     monkeypatch.setattr(
         quarantine_control, "default_control_store", lambda: _RetainingFenceStore(calls)
     )
-    monkeypatch.setattr(cronjob_tools, "claim_job_for_fire", lambda _jid: True)
+    monkeypatch.setattr(cronjob_tools, "claim_job_for_fire", lambda jid, **_kw: {"id": jid, "name": "one"})
     monkeypatch.setattr(
         cronjob_tools,
         "get_job",

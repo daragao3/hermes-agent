@@ -144,15 +144,17 @@ class TestNoLiveHostProbes:
 
         monkeypatch.setattr(mm.requests, "get", _record)
         # An hour-long module cache would also suppress the request; clear it
-        # so this asserts the stub, not a warm cache.
+        # so this asserts the stub, not a warm cache. (0.21.1 keys the cache
+        # per token fingerprint with the timestamp INSIDE each entry, so there
+        # is no separate module-level cache time any more.)
         monkeypatch.setattr(mm, "_codex_oauth_context_cache", {})
-        monkeypatch.setattr(mm, "_codex_oauth_context_cache_time", 0.0)
 
         # Falls back to _CODEX_OAUTH_CONTEXT_FALLBACK, exactly as the live
         # probe does when it fails.
-        assert mm._resolve_codex_oauth_context_length(
+        ctx, source = mm._resolve_codex_oauth_context_length_with_source(
             "gpt-5.3-codex", "codex-token"
-        ) == 272_000
+        )
+        assert (ctx, source) == (272_000, "fallback")
         assert calls == [], f"live outbound request(s) during a unit test: {calls}"
 
     def test_env_probe_never_spawns_a_host_probe_thread(self):

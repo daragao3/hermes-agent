@@ -336,9 +336,13 @@ class TestWedgedJobRefiresWithoutRestart:
         sched._running_job_ids.add(job["id"])
         sched._running_since[job["id"]] = time.time() - 6 * 60 * 60
 
+        # tick() consumes get_due_and_skipped_jobs() (upstream) and the worker
+        # claims the fire before run_one_job; stub the claim rather than let the
+        # real CAS write the patched single-row list back to the store.
         with patch.object(sched, "_get_hermes_home", return_value=tmp_path), \
-             patch.object(sched, "get_due_jobs", return_value=[job]), \
+             patch.object(sched, "get_due_and_skipped_jobs", return_value=([job], [])), \
              patch("cron.jobs.load_jobs", return_value=[job]), \
+             patch.object(sched, "claim_job_for_fire", side_effect=lambda jid, **kw: dict(job)), \
              patch.object(sched, "advance_next_runs"), \
              patch.object(sched, "mark_job_run"), \
              patch.object(sched, "create_execution", return_value={"id": "exec-1"}), \
