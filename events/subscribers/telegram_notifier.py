@@ -860,6 +860,13 @@ class TelegramNotifier(BaseSubscriber):
                 f"{p.get('detail', '')}"
             ).strip()
 
+        if et == EventType.MODEL_RATE_LIMITED and isinstance(p.get("providers"), list):
+            # The consolidated usage-poller shape (2026-09-13): one page
+            # listing every capped provider. The single-provider shape keeps
+            # the generic fallback it always had.
+            from events.formatting import rate_limit_batch_body
+            return rate_limit_batch_body(p)
+
         # Generic fallback
         lines = [f"{k}: {v}" for k, v in p.items() if v]
         return "\n".join(lines[:10])

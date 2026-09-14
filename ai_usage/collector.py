@@ -304,30 +304,89 @@ def _emit_quota_findings(snapshot: dict) -> None:
     treats an absent/None window as "no finding"; the absence of a finding
     here is therefore silently dropped, not translated into a clear().
 
-    Each finding is emitted independently so one detector/record failure
-    (e.g. a raising record()) cannot suppress the rest of this snapshot's
-    findings.
+    ONE event per snapshot (2026-09-13). Calling record() per finding
+    produced one MODEL_RATE_LIMITED page PER PROVIDER for a single
+    condition -- anthropic2, deepseek, openai-codex, kimi and anthropic
+    each paged separately on 2026-09-13. record_batch() still records
+    every finding as its own (provider, model) episode in the state file,
+    but emits one consolidated event, under the stable episode key
+    ``usage-poller/quota``, only when the SET of capped providers grows or
+    a member's outcome worsens. A finding that cannot be turned into a hit
+    is skipped, never fatal; a raising record_batch() is swallowed the same
+    way a raising record() was.
     """
     from ai_usage.quota_signal import evaluate
-    from events.rate_limit_signal import record
+    from events.rate_limit_signal import record_batch
 
+    hits: list[dict] = []
     for finding in evaluate(snapshot):
         try:
-            record(
-                provider=finding["provider"],
-                model=_episode_model_for(finding),
-                reason="quota_window",
-                detector="usage_poller",
-                outcome=finding["outcome"],
-                resets_at=_future_resets_at(finding.get("resets_at")),
-                # Without this the alert's `source` falls back through
-                # HERMES_CRON_JOB_NAME / HERMES_AGENT_SOURCE to the generic
-                # "agent-loop", which reads as if the agent runtime raised it.
-                # These come from the 5-minute usage poller, not a model call.
-                source_hint="usage-poller",
-            )
+            hits.append({
+                "provider": finding["provider"],
+                "model": _episode_model_for(finding),
+                "outcome": finding["outcome"],
+                "resets_at": _future_resets_at(finding.get("resets_at")),
+                # Display-only, rendered by events.formatting.rate_limit_batch_body.
+                "label": _provider_display_label(finding["provider"]),
+                "detail": _finding_detail(finding),
+            })
         except Exception:
             continue
+    if not hits:
+        return
+    try:
+        record_batch(
+            hits,
+            reason="quota_window",
+            detector="usage_poller",
+            # Without this the alert's `source` falls back through
+            # HERMES_CRON_JOB_NAME / HERMES_AGENT_SOURCE to the generic
+            # "agent-loop", which reads as if the agent runtime raised it.
+            # These come from the 5-minute usage poller, not a model call.
+            source_hint="usage-poller",
+        )
+    except Exception:
+        return
+
+
+# Operator-facing names for the consolidated quota page. The tray label
+# alone ("Claude 2") does not say WHAT the second slot is; the note does.
+_PROVIDER_NOTES: dict[str, str] = {
+    "anthropic2": "second Claude Code login",
+}
+
+_WINDOW_NAMES: dict[str, str] = {
+    "5h": "5h window",
+    "wk": "weekly window",
+    "wk_opus": "weekly Opus window",
+    "wk_sonnet": "weekly Sonnet window",
+    "mo": "monthly window",
+}
+
+
+def _provider_display_label(key: str) -> str:
+    label = next((lbl for k, lbl, _mode in PROVIDERS if k == key), key)
+    note = _PROVIDER_NOTES.get(key)
+    return f"{label} ({note})" if note else label
+
+
+def _finding_detail(finding: dict) -> str:
+    """One short clause per finding: what is capped and what to do."""
+    if finding.get("kind") == "balance":
+        try:
+            balance = float(finding.get("balance") or 0.0)
+        except (TypeError, ValueError):
+            balance = 0.0
+        remedy = " — top up" if balance <= 0.0 else " — running low"
+        return f"prepaid balance ${balance:.2f}{remedy}"
+    window = _WINDOW_NAMES.get(
+        str(finding.get("window_id") or ""), f"{finding.get('window_id') or '?'} window"
+    )
+    try:
+        pct = float(finding.get("used_pct"))
+        return f"{window} {pct:g}% used"
+    except (TypeError, ValueError):
+        return window
 
 
 def _diagnostic(key: str, outcome: str, elapsed: float, budget: float) -> dict:

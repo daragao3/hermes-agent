@@ -49,19 +49,30 @@ def _fetch_with(overrides):
     return fetch
 
 
-def _fake_record(calls):
-    def record(**kwargs):
-        calls.append(kwargs)
+def _fake_record_batch(calls, batches=None):
+    """Stand in for events.rate_limit_signal.record_batch (2026-09-13).
+
+    Expands each hit into one dict merged with the batch kwargs, so the
+    per-hit assertions written against the old per-provider record() keep
+    their exact shape; ``batches`` (when given) records one entry per CALL,
+    which is what the consolidation tests count.
+    """
+
+    def record_batch(hits, **kwargs):
+        if batches is not None:
+            batches.append({"hits": list(hits), **kwargs})
+        for hit in hits:
+            calls.append({**kwargs, **hit})
         return True
 
-    return record
+    return record_batch
 
 
 def test_full_window_emits_once_with_chain_exhausted(tmp_path, monkeypatch):
     import events.rate_limit_signal as rate_limit_signal
 
     calls: list[dict] = []
-    monkeypatch.setattr(rate_limit_signal, "record", _fake_record(calls))
+    monkeypatch.setattr(rate_limit_signal, "record_batch", _fake_record_batch(calls))
 
     fetch = _fetch_with(
         {"anthropic": FakeSnap(True, (FakeWin("Current session", 100.0, None),))}
@@ -85,7 +96,7 @@ def test_healthy_snapshot_emits_nothing(tmp_path, monkeypatch):
     import events.rate_limit_signal as rate_limit_signal
 
     calls: list[dict] = []
-    monkeypatch.setattr(rate_limit_signal, "record", _fake_record(calls))
+    monkeypatch.setattr(rate_limit_signal, "record_batch", _fake_record_batch(calls))
 
     fetch = _fetch_with(
         {"anthropic": FakeSnap(True, (FakeWin("Current session", 12.0, None),))}
@@ -99,10 +110,10 @@ def test_healthy_snapshot_emits_nothing(tmp_path, monkeypatch):
 def test_record_raising_does_not_break_collect(tmp_path, monkeypatch):
     import events.rate_limit_signal as rate_limit_signal
 
-    def raising_record(**kwargs):
-        raise RuntimeError("boom: simulated record() failure")
+    def raising_record_batch(hits, **kwargs):
+        raise RuntimeError("boom: simulated record_batch() failure")
 
-    monkeypatch.setattr(rate_limit_signal, "record", raising_record)
+    monkeypatch.setattr(rate_limit_signal, "record_batch", raising_record_batch)
 
     fetch = _fetch_with(
         {"anthropic": FakeSnap(True, (FakeWin("Current session", 100.0, None),))}
@@ -168,7 +179,8 @@ def test_absent_window_never_recovers_an_open_episode(tmp_path, monkeypatch):
     record_calls: list[dict] = []
     clear_calls: list[dict] = []
 
-    monkeypatch.setattr(rate_limit_signal, "record", _fake_record(record_calls))
+    monkeypatch.setattr(
+        rate_limit_signal, "record_batch", _fake_record_batch(record_calls))
 
     def fake_clear(**kwargs):
         clear_calls.append(kwargs)
@@ -231,7 +243,7 @@ class TestStaleResetsAtIsNotForwarded:
         """The end-to-end shape of the production defect."""
         calls = []
         import events.rate_limit_signal as rls
-        monkeypatch.setattr(rls, "record", lambda **kw: calls.append(kw) or True)
+        monkeypatch.setattr(rls, "record_batch", _fake_record_batch(calls))
         from ai_usage.collector import _emit_quota_findings
         _emit_quota_findings({
             "providers": [{
@@ -246,3 +258,72 @@ class TestStaleResetsAtIsNotForwarded:
             "a stale reset time must not reach record() -- Phase 1's reaper "
             "branches on it and would forget the episode every poll"
         )
+
+
+class TestOneConsolidatedCallPerSnapshot:
+    """2026-09-13: five providers capped in one poll produced FIVE separate
+    MODEL_RATE_LIMITED pages (anthropic2, deepseek, openai-codex, kimi,
+    anthropic). The collector now hands the whole snapshot to record_batch()
+    ONCE; the consolidation itself is pinned in tests/events/
+    test_rate_limit_signal.py::TestRecordBatch."""
+
+    def _five_capped(self):
+        return {
+            "providers": [
+                {"key": "anthropic2", "mode": "budget",
+                 "windows": [{"id": "5h", "label": "5h", "used_pct": 100.0,
+                              "resets_at": "2099-01-01T02:00:00Z"}]},
+                {"key": "deepseek", "mode": "balance", "balance_usd": 0.0},
+                {"key": "openai-codex", "mode": "budget",
+                 "windows": [{"id": "wk", "label": "Weekly", "used_pct": 100.0}]},
+                {"key": "kimi", "mode": "budget",
+                 "windows": [{"id": "wk", "label": "Weekly", "used_pct": 100.0}]},
+                {"key": "anthropic", "mode": "budget",
+                 "windows": [{"id": "wk", "label": "Weekly", "used_pct": 100.0}]},
+            ]
+        }
+
+    def test_five_findings_are_one_record_batch_call(self, monkeypatch):
+        import events.rate_limit_signal as rls
+        from ai_usage.collector import _emit_quota_findings
+
+        calls: list[dict] = []
+        batches: list[dict] = []
+        monkeypatch.setattr(rls, "record_batch", _fake_record_batch(calls, batches))
+        _emit_quota_findings(self._five_capped())
+
+        assert len(batches) == 1, "one poll snapshot must be one batch call"
+        batch = batches[0]
+        assert batch["reason"] == "quota_window"
+        assert batch["detector"] == "usage_poller"
+        assert batch["source_hint"] == "usage-poller"
+        assert [h["provider"] for h in batch["hits"]] == [
+            "anthropic2", "deepseek", "openai-codex", "kimi", "anthropic"]
+        assert {h["outcome"] for h in batch["hits"]} == {"chain_exhausted"}
+
+    def test_hits_carry_operator_facing_label_and_detail(self, monkeypatch):
+        import events.rate_limit_signal as rls
+        from ai_usage.collector import _emit_quota_findings
+
+        calls: list[dict] = []
+        monkeypatch.setattr(rls, "record_batch", _fake_record_batch(calls))
+        _emit_quota_findings(self._five_capped())
+        by = {c["provider"]: c for c in calls}
+        assert by["anthropic2"]["label"] == "Claude 2 (second Claude Code login)"
+        assert by["anthropic2"]["detail"] == "5h window 100% used"
+        assert by["anthropic2"]["resets_at"] == "2099-01-01T02:00:00Z"
+        assert by["deepseek"]["label"] == "DeepSeek"
+        assert by["deepseek"]["detail"] == "prepaid balance $0.00 — top up"
+        assert by["deepseek"]["model"] == "balance"
+        assert by["kimi"]["detail"] == "weekly window 100% used"
+
+    def test_no_findings_means_no_call_at_all(self, monkeypatch):
+        import events.rate_limit_signal as rls
+        from ai_usage.collector import _emit_quota_findings
+
+        batches: list[dict] = []
+        monkeypatch.setattr(rls, "record_batch", _fake_record_batch([], batches))
+        _emit_quota_findings({"providers": [
+            {"key": "anthropic", "mode": "budget",
+             "windows": [{"id": "5h", "label": "5h", "used_pct": 12.0}]}]})
+        assert batches == []

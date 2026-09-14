@@ -430,11 +430,18 @@ def record(
     resets_at: str = "",
     source_hint: Optional[str] = None,
     bus: Any = None,
+    emit: bool = True,
 ) -> bool:
     """Record a rate-limit hit. Returns True if an alert was emitted.
 
     Never raises: this is called from the agent's hot failover path, and a
     telemetry defect must never take down a model call.
+
+    ``emit=False`` (2026-09-13) runs the whole episode machinery -- state
+    file, ``_should_alert`` decision, ``alerted_level`` -- but emits nothing
+    and returns the DECISION instead: True means this hit would have alerted.
+    :func:`record_batch` uses it to keep one per-(provider, model) record
+    per hit while sending ONE consolidated event for the batch.
     """
     try:
         if not _alerts_enabled():
@@ -512,7 +519,14 @@ def record(
             "diverted_calls": episode["diverted_calls"],
             "episode_opened_at": episode["opened_at"],
         }
-        emitted = _emit(payload, _resolve_source(source_hint), bus)
+        if emit:
+            emitted = _emit(payload, _resolve_source(source_hint), bus)
+        else:
+            # Decision only: the caller (record_batch) sends one consolidated
+            # event for the whole batch. The per-episode bookkeeping above
+            # is kept verbatim so every other reader of the state file
+            # (fallback selection, model_override) sees the same record.
+            emitted = True
         if not saved:
             # The alert went out but the disk refused it. Adopt the mutation
             # anyway so the NEXT hit is coalesced against it: without this, a
@@ -525,6 +539,145 @@ def record(
         return emitted
     except Exception:
         logger.debug("rate_limit_signal.record failed (swallowed)", exc_info=True)
+        return False
+
+
+def _earliest_future_reset(members: list) -> str:
+    """The soonest parseable ``resets_at`` among ``members``, or ""."""
+    now = datetime.now(timezone.utc)
+    best: Optional[datetime] = None
+    best_raw = ""
+    for member in members:
+        parsed = _parse_iso(member.get("resets_at"))
+        if parsed is None or parsed <= now:
+            continue
+        if best is None or parsed < best:
+            best, best_raw = parsed, str(member.get("resets_at"))
+    return best_raw
+
+
+def record_batch(
+    hits: list,
+    *,
+    reason: str,
+    detector: str,
+    source_hint: Optional[str] = None,
+    bus: Any = None,
+    episode_provider: str = "usage-poller",
+    episode_model: str = "quota",
+) -> bool:
+    """Record every hit of ONE detector pass; emit at most ONE alert for it.
+
+    Added 2026-09-13 for the report-only usage poller. It evaluates a whole
+    snapshot at once, and calling :func:`record` per provider produced one
+    MODEL_RATE_LIMITED page PER PROVIDER for a single condition: on
+    2026-09-13 anthropic2, deepseek, openai-codex, kimi and anthropic each
+    paged separately within one poll cycle.
+
+    Each hit is still recorded through :func:`record` (``emit=False``), so
+    the per-(provider, model) episodes in the state file are unchanged for
+    their other readers. The batch itself is a further episode keyed
+    ``(episode_provider, episode_model)`` -- stable across polls, so one
+    condition is one episode -- whose ``members`` map records the outcome
+    last alerted per member. The consolidated event fires only when the SET
+    ESCALATES: a member appears that was not in the episode, or a member's
+    outcome worsens (diverted -> chain_exhausted). A member dropping out
+    updates the map silently, and an empty batch is a no-op -- the poller
+    never calls clear(), and forgetting the episode on a quiet snapshot
+    would re-page the same set the moment it reappeared. The episode's 6h
+    TTL (``_EPISODE_MAX_AGE_SECONDS``) bounds how long an unchanged set stays
+    silent, exactly as it does for a single provider.
+
+    ``hits`` are dicts with ``provider``, ``model``, ``outcome`` and
+    optionally ``resets_at``, ``label`` and ``detail``; the last two are
+    display-only and pass straight through into ``payload["providers"]``.
+    Never raises.
+    """
+    try:
+        if not _alerts_enabled():
+            return False
+        members: list = []
+        for hit in hits or []:
+            try:
+                provider = str(hit.get("provider") or "")
+                model = str(hit.get("model") or "")
+                outcome = str(hit.get("outcome") or "diverted")
+                resets_at = str(hit.get("resets_at") or "")
+                record(
+                    provider=provider, model=model, reason=reason,
+                    detector=detector, outcome=outcome, resets_at=resets_at,
+                    source_hint=source_hint, bus=bus, emit=False,
+                )
+            except Exception:
+                logger.debug("rate_limit_signal.record_batch: hit skipped", exc_info=True)
+                continue
+            members.append({
+                "key": _episode_key(provider, model),
+                "provider": provider,
+                "model": model,
+                "outcome": outcome,
+                "resets_at": resets_at,
+                "label": str(hit.get("label") or provider),
+                "detail": str(hit.get("detail") or ""),
+            })
+        if not members:
+            return False
+
+        key = _episode_key(episode_provider, episode_model)
+        state = copy.deepcopy(_load_state())
+        episode = state.get(key)
+        previous = (episode or {}).get("members")
+        if not isinstance(previous, dict):
+            previous = {}
+        current = {m["key"]: m["outcome"] for m in members}
+        escalated = [
+            m["key"] for m in members
+            if _SEVERITY.get(m["outcome"], 0) > _SEVERITY.get(previous.get(m["key"], ""), 0)
+        ]
+        worst = max(members, key=lambda m: _SEVERITY.get(m["outcome"], 0))["outcome"]
+
+        if episode is None:
+            episode = {
+                "provider": episode_provider, "model": episode_model,
+                "opened_at": _now_iso(), "resets_at": "",
+                "worst_outcome": worst, "alerted_level": "",
+                "diverted_calls": 0, "fallbacks_seen": [],
+                "members": {},
+            }
+        episode["diverted_calls"] = int(episode.get("diverted_calls", 0)) + 1
+        episode["members"] = current
+        if _SEVERITY.get(worst, 0) > _SEVERITY.get(episode.get("worst_outcome", ""), 0):
+            episode["worst_outcome"] = worst
+        if escalated:
+            episode["alerted_level"] = episode["worst_outcome"]
+        state[key] = episode
+        saved = _save_state(state) if _state_reliable() else False
+
+        if not escalated:
+            if not saved:
+                _publish_unsaved(state)
+            return False
+
+        for m in members:
+            m["changed"] = m["key"] in escalated
+        payload = {
+            "provider": episode_provider, "model": episode_model,
+            "reason": reason, "detector": detector,
+            "outcome": worst,
+            "fallback_provider": "", "fallback_model": "",
+            "resets_at": _earliest_future_reset(members),
+            "diverted_calls": episode["diverted_calls"],
+            "episode_opened_at": episode["opened_at"],
+            "episode_key": key,
+            "providers": members,
+            "changed": escalated,
+        }
+        emitted = _emit(payload, _resolve_source(source_hint), bus)
+        if not saved:
+            _publish_unsaved(state)  # same anti-flood reasoning as record()
+        return emitted
+    except Exception:
+        logger.debug("rate_limit_signal.record_batch failed (swallowed)", exc_info=True)
         return False
 
 
