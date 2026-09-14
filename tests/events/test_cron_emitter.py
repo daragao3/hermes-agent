@@ -56,6 +56,31 @@ class TestCronLifecycle:
         assert events[0].priority == Priority.HIGH
         assert events[0].payload["error"] == "Connection timeout"
 
+    @pytest.mark.parametrize(
+        ("error", "consecutive_errors", "expected"),
+        [
+            # The scheduler's abandoned-reader watchdog: the worker is still
+            # running and its real outcome amends the records later. Not a
+            # failure streak, so it must not page as one.
+            ("soft deadline exceeded: still running after 1800s; worker abandoned (daemon thread)",
+             0, Priority.NORMAL),
+            ("Soft deadline exceeded before acquiring job isolation.", 0, Priority.NORMAL),
+            # Inside a streak, or any other error, the failure keeps paging.
+            ("soft deadline exceeded: still running after 1800s; worker abandoned (daemon thread)",
+             1, Priority.HIGH),
+            ("Connection timeout", 0, Priority.HIGH),
+        ],
+    )
+    def test_soft_deadline_without_streak_does_not_page(self, emitter, bus, error, consecutive_errors, expected):
+        emitter.on_job_completed(
+            job_id="job-1", job_name="reader", success=False, duration=1800.0,
+            error=error, consecutive_errors=consecutive_errors)
+
+        events = bus.query(event_type=EventType.CRON_FAILED)
+        assert len(events) == 1
+        assert events[0].priority == expected
+        assert events[0].payload["error"] == error
+
     def test_emit_consecutive_failure(self, emitter, bus):
         emitter.on_job_completed(
             job_id="job-1",
