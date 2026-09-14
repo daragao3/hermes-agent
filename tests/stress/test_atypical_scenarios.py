@@ -769,8 +769,10 @@ def _idempotency_race_worker(hermes_home: str, key: str, result_file: str,
     os.environ["HOME"] = hermes_home
     sys.path.insert(0, str(WT))
     from hermes_cli import kanban_db as kb_facade  # not 'kb': the scenarios' kb is the
-    # _scenario_kanban namespace, and check_compat_pointers' alias map is file-scoped,
-    # so a local 'kb' here makes it flag every scenario call site in this file.
+    # _scenario_kanban namespace, and two different 'kb's in one file read badly.
+    # This started as a workaround for check_compat_pointers' file-scoped alias map
+    # (a local 'kb' here made it flag all 31 scenario call sites); that map is
+    # scope-aware now, so the rename is kept for clarity only, not for the gate.
     from hermes_cli import kanban_db_connect as kb_connect
 
     # Spin until the barrier file exists (crude sync across processes)
