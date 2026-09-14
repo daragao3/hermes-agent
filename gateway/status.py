@@ -476,17 +476,33 @@ def _build_runtime_status_record() -> dict[str, Any]:
     }
 
 
-def _read_json_file(path: Path, *, bare_pid_ok: bool = False, unreadable_locked: bool = False) -> Optional[dict[str, Any]]:
-    """JSON object at ``path``, or None when absent/empty/unreadable/invalid. ``bare_pid_ok`` also
-    accepts legacy bare-integer PID files as ``{"pid": N}``."""
+def _read_json_file_ex(
+    path: Path, *, bare_pid_ok: bool = False, unreadable_locked: bool = False
+) -> tuple[Optional[dict[str, Any]], str]:
+    """``(payload, status)`` for a JSON record file. Status is one of:
+
+    ``"ok"``          a JSON object (or, with ``bare_pid_ok``, a legacy bare-integer PID file);
+    ``"absent"``      the file does not exist, or exists and is empty;
+    ``"unreadable"``  the file EXISTS but could not be opened/read/decoded;
+    ``"invalid"``     it was read in full and is not a JSON object.
+
+    Callers that only need the record use :func:`_read_json_file`. The distinction matters to
+    anyone deciding whether to DELETE the file: "unreadable" is evidence of a live holder,
+    "invalid" is evidence of a corpse, and collapsing the two deletes live locks.
+    """
     try:
         raw = path.read_text(encoding="utf-8").strip() if path.exists() else ""
     except PermissionError:
-        return {"locked": True} if unreadable_locked else None
-    except (OSError, UnicodeDecodeError):  # vanished, non-UTF-8 garbage
-        return None
+        # The file exists but cannot be READ because a live process holds it open with an
+        # exclusive/non-shareable lock: on Windows the running gateway keeps gateway.lock
+        # locked via msvcrt.locking, so read_text() over the locked byte range raises
+        # PermissionError. PermissionError is an OSError SUBCLASS, so this branch must
+        # precede the catch below.
+        return ({"locked": True} if unreadable_locked else None), "unreadable"
+    except (OSError, UnicodeDecodeError):  # vanished, EACCES, non-UTF-8 garbage
+        return None, ("unreadable" if path.exists() else "absent")
     if not raw:
-        return None
+        return None, "absent"
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -495,8 +511,18 @@ def _read_json_file(path: Path, *, bare_pid_ok: bool = False, unreadable_locked:
             with contextlib.suppress(ValueError):
                 payload = int(raw)
     if bare_pid_ok and isinstance(payload, int):
-        return {"pid": payload}
-    return payload if isinstance(payload, dict) else None
+        return {"pid": payload}, "ok"
+    if isinstance(payload, dict):
+        return payload, "ok"
+    return None, "invalid"
+
+
+def _read_json_file(path: Path, *, bare_pid_ok: bool = False, unreadable_locked: bool = False) -> Optional[dict[str, Any]]:
+    """JSON object at ``path``, or None when absent/empty/unreadable/invalid. ``bare_pid_ok`` also
+    accepts legacy bare-integer PID files as ``{"pid": N}``. See :func:`_read_json_file_ex` when
+    the difference between "could not read it" and "read it, it is junk" decides an action."""
+    return _read_json_file_ex(
+        path, bare_pid_ok=bare_pid_ok, unreadable_locked=unreadable_locked)[0]
 
 
 def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
@@ -1072,9 +1098,25 @@ def acquire_scoped_lock(
     profile = _profile_label_for_home(_get_process_hermes_home())
     if profile:
         record["profile"] = profile
-    existing = _read_json_file(lock_path)
-    if existing is None and lock_path.exists():
-        # Empty/invalid JSON: previous process died between O_EXCL create and json.dump().
+    existing, existing_status = _read_json_file_ex(lock_path)
+    if existing_status == "unreadable":
+        # A lock file that EXISTS but cannot be opened is evidence of a HOLDER, not of a
+        # corpse: refuse rather than delete. This branch used to fall into the unlink below,
+        # because _read_json_file collapses absent/empty/unreadable/invalid into None -- so a
+        # live incumbent's lock was removed and a second process could take the same token,
+        # which is the whole failure class scoped locks exist to prevent.
+        # Refusing is the safe direction: a wrong refusal costs one "token already in use"
+        # start and leaves this warning behind to chase; a wrong delete costs two live
+        # processes on one token, silently.
+        logger.warning(
+            "acquire_scoped_lock(%s): lock file %s exists but could not be read; treating it "
+            "as HELD and refusing. If no process owns it, fix the file's permissions -- it "
+            "will not be deleted automatically.", scope, lock_path,
+        )
+        return False, {"locked": True}
+    if existing is None and existing_status == "invalid":
+        # Read in full and not a JSON object: the previous process died between the O_EXCL
+        # create and the json.dump(). That -- and only that -- is a corpse.
         _unlink_quietly(lock_path)
     if existing:
         existing_pid = _pid_from_record(existing)

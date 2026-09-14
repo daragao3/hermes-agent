@@ -1246,6 +1246,92 @@ class TestScopedLocks:
         assert acquired is False
         assert sleep_calls == []  # default is 0 — no sleep
 
+    def test_acquire_scoped_lock_refuses_an_unreadable_lock_instead_of_deleting_it(
+        self, tmp_path, monkeypatch
+    ):
+        """A lock file that EXISTS but cannot be READ is a HOLDER, not a corpse.
+
+        ``_read_json_file`` collapses absent/empty/unreadable/invalid into None, so the
+        "previous process died between O_EXCL create and json.dump" cleanup used to fire on a
+        lock held by a live process -- deleting it and letting a second process take the same
+        token, which is the failure class scoped locks exist to prevent.
+        """
+        import pathlib
+
+        monkeypatch.setenv("HERMES_GATEWAY_LOCK_DIR", str(tmp_path / "locks"))
+        lock_path = tmp_path / "locks" / "telegram-bot-token-2bb80d537b1da3e3.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.write_text("held by a live process — unreadable", encoding="utf-8")
+
+        real_read_text = pathlib.Path.read_text
+
+        def deny_lock_read(self, *args, **kwargs):
+            if self.name.endswith(".lock"):
+                raise PermissionError(13, "Permission denied")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "read_text", deny_lock_read)
+
+        acquired, existing = status.acquire_scoped_lock(
+            "telegram-bot-token", "secret", metadata={"platform": "telegram"}
+        )
+
+        assert acquired is False
+        assert existing == {"locked": True}
+        # THE POINT: the incumbent's lock file survives.
+        assert lock_path.exists()
+
+    def test_acquire_scoped_lock_still_clears_a_truncated_lock(self, tmp_path, monkeypatch):
+        """The O_EXCL-crash corpse this cleanup was written for is still cleared: read in
+        full, not a JSON object."""
+        monkeypatch.setenv("HERMES_GATEWAY_LOCK_DIR", str(tmp_path / "locks"))
+        lock_path = tmp_path / "locks" / "telegram-bot-token-2bb80d537b1da3e3.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.write_text("not json at all", encoding="utf-8")
+
+        acquired, existing = status.acquire_scoped_lock(
+            "telegram-bot-token", "secret", metadata={"platform": "telegram"}
+        )
+
+        assert acquired is True
+        assert existing is None
+        assert json.loads(lock_path.read_text(encoding="utf-8"))["pid"] == os.getpid()
+
+    def test_read_json_file_ex_separates_unreadable_from_invalid(self, tmp_path, monkeypatch):
+        """The distinction the two tests above rest on, asserted directly."""
+        import pathlib
+
+        absent = tmp_path / "nope.json"
+        assert status._read_json_file_ex(absent) == (None, "absent")
+
+        empty = tmp_path / "empty.json"
+        empty.write_text("", encoding="utf-8")
+        assert status._read_json_file_ex(empty) == (None, "absent")
+
+        invalid = tmp_path / "invalid.json"
+        invalid.write_text("not json", encoding="utf-8")
+        assert status._read_json_file_ex(invalid) == (None, "invalid")
+
+        ok = tmp_path / "ok.json"
+        ok.write_text('{"pid": 7}', encoding="utf-8")
+        assert status._read_json_file_ex(ok) == ({"pid": 7}, "ok")
+
+        held = tmp_path / "held.json"
+        held.write_text("x", encoding="utf-8")
+        real_read_text = pathlib.Path.read_text
+
+        def deny(self, *args, **kwargs):
+            if self.name == "held.json":
+                raise PermissionError(13, "Permission denied")
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "read_text", deny)
+        # ``unreadable_locked`` is what turns the unreadable case into the {"locked": True}
+        # sentinel the PID/lock readers rely on; the status is "unreadable" either way.
+        assert status._read_json_file_ex(held) == (None, "unreadable")
+        assert status._read_json_file_ex(held, unreadable_locked=True) == (
+            {"locked": True}, "unreadable")
+
 
 
 class TestScopedLockOwnerLabel:
