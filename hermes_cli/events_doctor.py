@@ -17,7 +17,7 @@ from events.paths import (
 )
 from events.roster import ROSTER_PATH, RosterError, load_roster
 from events.producers.code_drift_monitor import (
-    DEFAULT_TRUNK_REF, sample_code_drift, watched_repos,
+    DEFAULT_TRUNK_REF, ref_display_name, sample_code_drift, watched_repos,
 )
 
 # DERIVED from events/subscriber_roster.json — the entries flagged "core".
@@ -105,7 +105,7 @@ def check_code_drift(
         )
 
     repo = Path(repo_path)
-    trunk_name = trunk_ref.rsplit("/", 1)[-1]
+    trunk_name = ref_display_name(trunk_ref)
     tag = f"code drift [{label}]" if label else "code drift"
 
     sample = sample_code_drift(

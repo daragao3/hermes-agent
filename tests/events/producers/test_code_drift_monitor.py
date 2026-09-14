@@ -365,9 +365,22 @@ class TestTrunkRefIsParameterised:
         from events.producers.code_drift_monitor import HERMES_EXECUTED_DIRS
 
         assert HERMES_EXECUTED_DIRS, "the gate must not be empty"
+        includes = [s for s in HERMES_EXECUTED_DIRS if not s.startswith(":(glob,exclude)")]
+        assert includes, "an all-exclude gate matches nothing"
         for spec in HERMES_EXECUTED_DIRS:
-            assert spec.startswith(":(glob)"), f"{spec} lacks the glob prefix"
-            assert spec.endswith("/**"), f"{spec} lacks the recursive suffix"
+            assert spec.startswith(":(glob"), f"{spec} lacks the glob prefix"
+        for spec in includes:
+            # A directory include recurses ('/**'); a file-type include recurses
+            # into every subdirectory ('/**/*.<ext>'). A trailing literal
+            # directory name never aligns and matches nothing.
+            assert spec.endswith("/**") or "/**/*." in spec, (
+                f"{spec} lacks the recursive suffix")
+        # ops/ is narrowed to what executes: a bare 'ops/**' also matched
+        # 126 task XMLs, 73 receipts and the reports that paged all afternoon
+        # on 2026-09-13.
+        assert ":(glob)ops/**" not in HERMES_EXECUTED_DIRS
+        assert ":(glob)ops/**/*.ps1" in HERMES_EXECUTED_DIRS
+        assert ":(glob)ops/**/*.py" in HERMES_EXECUTED_DIRS
 
     def test_each_watched_repo_gets_its_own_state_file(self, bus):
         """Episode state must not be shared: agent-src's cooldown must never
@@ -652,3 +665,117 @@ class TestCheckGating:
             raise RuntimeError("git exploded")
         m = make_monitor(bus, tmp_path, sampler=boom, clock=lambda: 0.0)
         assert m.check() is None
+
+
+class TestOpsGateIsNarrowedToExecutables:
+    """ops/ holds far more than it executes.
+
+    Measured on the live ~/.hermes 2026-09-13: ':(glob)ops/**' matched 372
+    tracked files -- 126 Scheduled-Task XML exports, 73 JSON receipts, 20
+    markdown reports, lockfiles, wheels, diffs -- and the hermes-repo drift
+    alert was kept alive for an afternoon by ops/reports/*.md landing on
+    master. Only scripts run by path may page.
+    """
+
+    def _sample(self, repo):
+        from events.producers.code_drift_monitor import HERMES_EXECUTED_DIRS
+        return sample_code_drift(repo, "refs/heads/master", repo_name="hermes",
+                                 executed_dirs=HERMES_EXECUTED_DIRS)
+
+    def test_a_report_landing_on_master_does_not_page(self, gated_repo):
+        _land_on_master(gated_repo, "ops/reports/2026-09-13-remediation.md",
+                        "findings", "docs: record remediation")
+        s = self._sample(gated_repo)
+        assert s.state == "behind"
+        assert s.executed_gated is True
+        assert s.executed_changed is False
+        assert s.alerts is False
+
+    def test_a_task_xml_or_receipt_does_not_page(self, gated_repo):
+        _land_on_master(gated_repo, "ops/tasks/Hermes-Foo.xml", "<Task/>", "task")
+        _land_on_master(gated_repo, "ops/agent-src-deployment-baseline.json",
+                        "{}", "receipt")
+        s = self._sample(gated_repo)
+        assert s.executed_changed is False
+        assert s.alerts is False
+
+    def test_an_ops_powershell_script_still_pages(self, gated_repo):
+        _land_on_master(gated_repo, "ops/gateway-restart-monitor.ps1", "v2",
+                        "fix(monitor)")
+        s = self._sample(gated_repo)
+        assert s.executed_changed is True
+        assert s.alerts is True
+        assert "ops/gateway-restart-monitor.ps1" in s.executed_files
+
+    def test_a_nested_ops_python_script_still_pages(self, gated_repo):
+        _land_on_master(gated_repo, "ops/homeops/refresh.py", "v2", "fix")
+        s = self._sample(gated_repo)
+        assert s.executed_changed is True
+        assert "ops/homeops/refresh.py" in s.executed_files
+
+    def test_backup_and_retired_scripts_do_not_page(self, gated_repo):
+        _land_on_master(gated_repo, "ops/task-backups-2026-09-06/Old.ps1", "v2",
+                        "backup")
+        _land_on_master(gated_repo, "ops/retired/old_probe.py", "v2", "retired")
+        _land_on_master(gated_repo, "ops/backups/snapshot.ps1", "v2", "backup")
+        s = self._sample(gated_repo)
+        assert s.executed_changed is False
+        assert s.alerts is False
+
+
+class TestAgentSrcTrunkResolution:
+    """agent-src's trunk is whatever branch the deployment ceremony accepted.
+
+    Since 2026-09-11 the deployed branch has been codex/wave2-hermes-accepted,
+    whose accepted commit is not an ancestor of main; measured against the
+    hard-coded main the alert read 'diverged, behind 173 / ahead 16,000+'
+    for a checkout exactly where it should be, ~17 pages per 4 h.
+    """
+
+    @pytest.fixture
+    def receipt(self, tmp_path, monkeypatch):
+        path = tmp_path / "ops" / "agent-src-deployment-baseline.json"
+        path.parent.mkdir(parents=True)
+        monkeypatch.delenv(drift_module.AGENT_SRC_TRUNK_ENV, raising=False)
+        monkeypatch.setattr(drift_module, "agent_src_baseline_path", lambda: path)
+        return path
+
+    def test_default_is_main_when_nothing_is_declared(self, receipt):
+        assert not receipt.exists()
+        assert drift_module.agent_src_trunk_ref() == "refs/heads/main"
+
+    def test_the_receipt_declares_the_deployed_branch(self, receipt):
+        receipt.write_text(json.dumps({"schema_version": 1, "state": "accepted",
+                                       "trunk_ref": "codex/wave2-hermes-accepted"}),
+                           encoding="utf-8")
+        assert drift_module.agent_src_trunk_ref() == \
+            "refs/heads/codex/wave2-hermes-accepted"
+
+    def test_a_qualified_ref_in_the_receipt_passes_through(self, receipt):
+        receipt.write_text(json.dumps({"trunk_ref": "refs/heads/release/2026"}),
+                           encoding="utf-8")
+        assert drift_module.agent_src_trunk_ref() == "refs/heads/release/2026"
+
+    def test_the_env_var_overrides_the_receipt(self, receipt, monkeypatch):
+        receipt.write_text(json.dumps({"trunk_ref": "codex/wave2-hermes-accepted"}),
+                           encoding="utf-8")
+        monkeypatch.setenv(drift_module.AGENT_SRC_TRUNK_ENV, "main")
+        assert drift_module.agent_src_trunk_ref() == "refs/heads/main"
+
+    @pytest.mark.parametrize("body", [
+        "not json", "[]", json.dumps({"trunk_ref": ""}),
+        json.dumps({"trunk_ref": 7}), json.dumps({"commit": "abc"}),
+    ])
+    def test_a_receipt_without_a_usable_declaration_falls_back(self, receipt, body):
+        receipt.write_text(body, encoding="utf-8")
+        assert drift_module.agent_src_trunk_ref() == "refs/heads/main"
+
+    def test_watched_repos_carries_the_declared_trunk(self, receipt):
+        receipt.write_text(json.dumps({"trunk_ref": "codex/wave2-hermes-accepted"}),
+                           encoding="utf-8")
+        by_name = {r.name: r for r in watched_repos()}
+        assert by_name["agent-src"].trunk_ref == "refs/heads/codex/wave2-hermes-accepted"
+        # The whole branch path, not its last segment.
+        assert by_name["agent-src"].trunk_name == "codex/wave2-hermes-accepted"
+        # ~/.hermes is unaffected by agent-src's declaration.
+        assert by_name["hermes"].trunk_ref == "refs/heads/master"
