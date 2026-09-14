@@ -3772,6 +3772,7 @@ class BasePlatformAdapter(ABC):
         ``send_multiple_images`` unless ``[[as_document]]``; otherwise audio → send_voice (MEDIA
         tags only, never bare local files), video → send_video, else send_document. Every failure is
         reported. Each send feeds ``record_delivery`` so media-only turns report SUCCESS."""
+        from urllib.parse import quote as _quote
 
         def _as_image(path: str) -> bool:
             return Path(path).suffix.lower() in _IMAGE_EXTS and not force_document_attachments
@@ -3779,10 +3780,12 @@ class BasePlatformAdapter(ABC):
         _image_paths += [p for p in local_files if _as_image(p)]
         if _image_paths:
             await self._send_image_batch(
-                # as_uri(), NOT f"file://{quote(p)}": on Windows those differ
-                # ("file:///C:/Users/..." vs "file://C%3A%5CUsers%5C...") and only
-                # as_uri() is a valid file URI there.
-                event, [(Path(p).absolute().as_uri(), "") for p in _image_paths], metadata, human_delay,
+                # NOT as_uri(). This is one half of a pair: _send_image_batch decodes
+                # with ``_unquote(image_url[7:])``, stripping exactly "file://". So
+                #   quote(p)  -> "file://C%3A%5C..." -> [7:] -> unquote -> C:\\Users\\...  correct
+                #   as_uri()  -> "file:///C:/Users/.." -> [7:] ->            /C:/Users/..   broken
+                # Change one side and you must change the other.
+                event, [(f"file://{_quote(p)}", "") for p in _image_paths], metadata, human_delay,
                 record_delivery)
         chat_id = event.source.chat_id
 
