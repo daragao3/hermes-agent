@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 import hermes_constants as hc
+from tests.symlink_support import make_dir_link, requires_dir_links
 
 
 def _uncached(path=None) -> str:
@@ -121,14 +122,12 @@ class TestHomeChanges:
 
 
 class TestSymlinks:
+    @requires_dir_links
     def test_a_link_resolves_to_its_target(self, tmp_path):
         target = tmp_path / "target"
         target.mkdir()
         link = tmp_path / "link"
-        try:
-            link.symlink_to(target, target_is_directory=True)
-        except (OSError, NotImplementedError):
-            pytest.skip("this platform or account cannot create symlinks")
+        make_dir_link(link, target)
         assert hc.hermes_home_key(str(link)) == _uncached(str(link))
         assert hc.hermes_home_key(str(link)) == hc.hermes_home_key(str(target))
 

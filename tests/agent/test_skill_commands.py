@@ -72,6 +72,13 @@ class TestScanSkillCommands:
         try:
             symlink_path.symlink_to(real_skill_dir, target_is_directory=True)
         except (OSError, NotImplementedError) as exc:
+            # A junction is NOT a substitute here, though it makes this test
+            # PASS: iter_skill_index_files walks with os.walk(followlinks=True),
+            # and on Windows os.walk recurses into a junction regardless of that
+            # flag (islink() is False for one). Measured 2026-09-14: with a
+            # junction this test still passes when followlinks is flipped to
+            # False, i.e. it stops discriminating the behaviour it exists to
+            # pin. An honest skip beats that vacuous green.
             pytest.skip(f"symlinks unavailable in test environment: {exc}")
 
         with patch("tools.skills_tool.SKILLS_DIR", skills_root):
