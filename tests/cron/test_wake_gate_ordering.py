@@ -30,6 +30,25 @@ def hermes_env(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def runtime_provider(monkeypatch):
+    """Stub provider resolution. Since 0.21.1 ``run_job`` validates the provider
+    BEFORE building the model session (pre-dispatch config validation blocks a
+    job with no credential and never reaches SessionDB), so a test about what
+    the gate lets be CONSTRUCTED must supply one."""
+    from unittest.mock import MagicMock, patch
+
+    import hermes_cli.runtime_provider as rp
+
+    monkeypatch.setattr(rp, "resolve_runtime_provider", lambda **_k: {
+        "provider": "openrouter", "api_mode": "chat_completions",
+        "base_url": "https://openrouter.ai/api/v1", "api_key": "test-key",
+        "source": "stub", "requested_provider": None,
+    })
+    with patch("run_agent.AIAgent", return_value=MagicMock()):
+        yield
+
+
+@pytest.fixture
 def session_db_calls(monkeypatch):
     """Count SessionDB constructions. The scheduler imports it lazily."""
     calls = []
@@ -75,7 +94,7 @@ def test_wake_gate_false_creates_no_session_or_agent(hermes_env, session_db_call
     assert session_db_calls == [], "no model-session state may exist before the gate"
 
 
-def test_wake_gate_true_still_builds_session(hermes_env, session_db_calls, monkeypatch):
+def test_wake_gate_true_still_builds_session(hermes_env, session_db_calls, runtime_provider, monkeypatch):
     from cron import scheduler
     from cron.scheduler import run_job
 
@@ -97,9 +116,10 @@ def test_gate_false_runs_the_script_exactly_once(hermes_env, session_db_calls):
     runs = []
     original = scheduler._run_job_script_with_claim_heartbeat
 
-    def _counting(job, script_path):
+    def _counting(job, script_path, *args, **kwargs):
+        # 0.21.1 passes workdir/cancel_event through; count and forward.
         runs.append(script_path)
-        return original(job, script_path)
+        return original(job, script_path, *args, **kwargs)
 
     scheduler._run_job_script_with_claim_heartbeat = _counting
     try:
@@ -110,7 +130,7 @@ def test_gate_false_runs_the_script_exactly_once(hermes_env, session_db_calls):
     assert len(runs) == 1
 
 
-def test_scriptless_job_still_reaches_the_session(hermes_env, session_db_calls, monkeypatch):
+def test_scriptless_job_still_reaches_the_session(hermes_env, session_db_calls, runtime_provider, monkeypatch):
     """A job with no pre-check script has no gate and must proceed."""
     from cron import scheduler
     from cron.jobs import create_job

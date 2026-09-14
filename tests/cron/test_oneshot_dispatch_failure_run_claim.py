@@ -81,7 +81,10 @@ class TestDispatchFailurePathsClearClaim:
 
     def _tick_one(self, job):
         from cron import scheduler as sched
-        with patch.object(sched, "get_due_jobs", return_value=[dict(job)]):
+        # tick() consumes get_due_and_skipped_jobs() (upstream); patching the
+        # get_due_jobs wrapper left the tick reading the real (empty) due list,
+        # so no dispatch-failure path ever ran and the claim was never cleared.
+        with patch.object(sched, "get_due_and_skipped_jobs", return_value=([dict(job)], [])):
             return sched.tick(verbose=False, sync=True)
 
     def test_interpreter_shutdown_path_clears_claim(self, cron_store):

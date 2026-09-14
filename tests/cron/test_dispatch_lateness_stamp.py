@@ -68,14 +68,23 @@ def _interval_job(jid, next_run_dt, **extra):
 
 class TestDueScanDispatchStamp:
     def test_catch_up_beyond_grace_stamped_and_persisted(self, cron_store):
-        # Scheduled yesterday 09:00, now is today 09:31 — far beyond the
-        # 2h max grace for a daily job: the catch-up path fires once now.
-        scheduled = FIXED_NOW - timedelta(hours=24, minutes=31)
-        save_jobs([_daily_job("daily", scheduled)])
+        # An hourly cron scheduled 3h31m ago (06:00, on the hourly lattice) —
+        # beyond its 30m grace, so the catch-up path fires once now.
+        #
+        # Upstream's version of this test used a DAILY job 24h31m late. The
+        # fork's recovery policy caps catch-up at a 24h miss
+        # (``miss_exceeded_24h_cap`` in _fast_forward_missed_recurring, pinned
+        # by tests/cron/test_jobs.py) and SKIPS anything older, and a daily
+        # cron has no on-lattice occurrence that is both beyond its 2h grace
+        # and inside 24h (an off-lattice instant is re-anchored, not fired),
+        # so the scenario moves to an hourly expression.
+        scheduled = FIXED_NOW - timedelta(hours=3, minutes=31)
+        save_jobs([_daily_job("hourly", scheduled,
+                              schedule={"kind": "cron", "expr": "0 * * * *"})])
 
         due = get_due_jobs()
 
-        assert [d["id"] for d in due] == ["daily"]
+        assert [d["id"] for d in due] == ["hourly"]
         stamp = due[0]["last_dispatch"]
         assert stamp["kind"] == "catch_up"
         assert stamp["scheduled_at"] == scheduled.isoformat()

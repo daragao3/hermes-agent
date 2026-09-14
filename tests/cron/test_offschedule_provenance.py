@@ -132,7 +132,7 @@ class TestEventWakeEmitsProvenance:
             "next_run_at": "2026-08-20T18:00:00+00:00",
         }])
         advanced = []
-        monkeypatch.setattr(s, "advance_next_run", lambda jid: advanced.append(jid))
+        monkeypatch.setattr(s, "advance_next_runs", lambda ids: advanced.extend(ids))
         wake_channel.request_wake("j1", caller="test", reason="r")
 
         s._collect_woken_jobs(exclude_ids=set())
