@@ -16,8 +16,10 @@ if __import__("typing").TYPE_CHECKING:
         _apply_compute_host_metadata_mirror,
         _apply_model_switch,
         _apply_personality_to_session,
+        _clear_session_context,
         _compress_session_history,
         _compute_host_compress_wait_seconds,
+        _current_runtime_session_record,
         _emit,
         _history_to_messages,
         _load_cfg,
@@ -29,6 +31,7 @@ if __import__("typing").TYPE_CHECKING:
         _session_info,
         _session_usage_snapshot,
         _session_uses_compute_host,
+        _set_session_context,
         _sync_session_key_after_compress,
         _validate_personality,
         broadcast_session_info,
@@ -66,6 +69,11 @@ def _format_live_review_output(sid: str, session: Optional[dict], arg: str) -> s
     with session.get("history_lock") or contextlib.nullcontext():
         snapshot = list(session.get("history", []))
     snapshot = snapshot or list(getattr(agent, "_session_messages", None) or [])
+    # slash.exec runs on the RPC pool, not inside a turn: bind the same session identity a turn binds
+    # (HERMES_UI_SESSION_ID + steer authority), or delegate_task registers the reviewer with no owner
+    # and `subagent.list` hides it — the Desktop status stack then shows nothing for /review.
+    tokens = _set_session_context(session["session_key"], ui_session_id=sid)
+    runtime_token = _current_runtime_session_record.set(session)
     try:
         from agent.review_engine import format_dispatch_note, start_review
         result = start_review(agent, snapshot, arg or "")
@@ -73,6 +81,9 @@ def _format_live_review_output(sid: str, session: Optional[dict], arg: str) -> s
         return str(exc)
     except Exception as exc:
         return f"/review failed to start: {exc}"
+    finally:
+        _current_runtime_session_record.reset(runtime_token)
+        _clear_session_context(tokens)
     return format_dispatch_note(result, arg or "")
 
 
