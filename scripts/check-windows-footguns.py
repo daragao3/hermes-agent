@@ -434,6 +434,151 @@ FOOTGUNS: list[Footgun] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Line prefilter
+#
+# scan_file's per-line work (the docstring machine aside) is dominated by three
+# things: the pure-Python character walk in _find_unquoted_hash, the GUARD_HINTS
+# substring sweep, and one regex search per rule. On this repo that is ~2.1M
+# lines x 15 rules, and only ~0.2% of lines can match ANY rule -- so ~99.8% of
+# that work is spent proving a line is boring.
+#
+# So: gate all of it behind a cheap literal test. The literals are DERIVED FROM
+# THE RULES THEMSELVES rather than hand-maintained, because a hand-written
+# trigger table silently stops matching the rule it guards the moment someone
+# edits the pattern -- and a prefilter that wrongly rejects a line is a
+# coverage reduction that reports itself as a clean scan.
+#
+# Soundness. _required_literals(node) returns a set L such that every string
+# the node matches contains at least one member of L. The union over all rules
+# therefore admits every line any rule could match. Two conditions have to hold
+# for that to lift from `code` (what the rules see) to `code_for_scan` (what
+# the prefilter sees):
+#
+#   1. `code` is always a PREFIX of `code_for_scan` -- _strip_code only ever
+#      truncates. A match inside a prefix sits at the same offsets in the whole
+#      string, so it survives.
+#   2. No rule may be anchored at the end ($ / \Z) or use a lookahead, since
+#      either can match a prefix but fail once more text follows.
+#
+# _has_unliftable_anchor enforces (2). If any rule trips it -- or the private
+# re parser moves, or a rule yields no guaranteed literal -- the prefilter is
+# disabled wholesale and every line is scanned. That fallback is slow, which is
+# the correct direction to fail: never silent, never lossy.
+# ---------------------------------------------------------------------------
+
+try:  # pragma: no cover - import shape differs across CPython versions
+    import re._constants as _re_constants
+    import re._parser as _re_parser
+except ImportError:  # pragma: no cover - CPython < 3.11
+    import sre_constants as _re_constants  # type: ignore[no-redef]
+    import sre_parse as _re_parser  # type: ignore[no-redef]
+
+
+def _required_literals(node) -> set[str] | None:
+    """Set L where every string `node` matches contains some member of L.
+
+    None means "nothing can be guaranteed" -- the caller must not filter.
+    """
+    best = ""  # longest run of adjacent literals at this level
+    run = ""
+    alts: list[set[str] | None] = []
+    for op, av in node:
+        if op is _re_constants.LITERAL:
+            run += chr(av)
+            if len(run) > len(best):
+                best = run
+            continue
+        run = ""
+        if op is _re_constants.BRANCH:
+            subs = [_required_literals(b) for b in av[1]]
+            # Every branch must guarantee something, or the branch as a whole
+            # guarantees nothing.
+            alts.append(None if any(s is None for s in subs) else set().union(*subs))
+        elif op is _re_constants.SUBPATTERN:
+            alts.append(_required_literals(av[3]))
+        elif op in (_re_constants.MAX_REPEAT, _re_constants.MIN_REPEAT):
+            if av[0] >= 1:  # min repeat count; 0 guarantees nothing
+                alts.append(_required_literals(av[2]))
+        elif op is getattr(_re_constants, "ATOMIC_GROUP", None):
+            alts.append(_required_literals(av))
+        # IN / ANY / AT / ASSERT / ASSERT_NOT / GROUPREF guarantee no literal.
+
+    candidates = [a for a in alts if a]
+    if best:
+        candidates.append({best})
+    if not candidates:
+        return None
+    # Any ONE guaranteed requirement is enough, so keep the most selective:
+    # the candidate whose weakest member is the longest, then the smallest set.
+    # Without this, `\.(read_text|write_text)` would pick the literal run "."
+    # -- technically sound, and useless as a filter.
+    return max(candidates, key=lambda s: (min(len(x) for x in s), -len(s)))
+
+
+def _has_unliftable_anchor(node) -> bool:
+    """True if the pattern can match a prefix but not the whole string.
+
+    End anchors and lookaheads both do that, and would break the
+    prefix-to-superstring step the prefilter relies on.
+    """
+    end_ats = {
+        getattr(_re_constants, n)
+        for n in ("AT_END", "AT_END_STRING")
+        if hasattr(_re_constants, n)
+    }
+    for op, av in node:
+        if op is _re_constants.AT and av in end_ats:
+            return True
+        if op is _re_constants.ASSERT:  # lookahead (ASSERT_NOT too, below)
+            if av[0] > 0 or _has_unliftable_anchor(av[1]):
+                return True
+        elif op is _re_constants.ASSERT_NOT:
+            if av[0] > 0 or _has_unliftable_anchor(av[1]):
+                return True
+        elif op is _re_constants.BRANCH:
+            if any(_has_unliftable_anchor(b) for b in av[1]):
+                return True
+        elif op is _re_constants.SUBPATTERN:
+            if _has_unliftable_anchor(av[3]):
+                return True
+        elif op in (_re_constants.MAX_REPEAT, _re_constants.MIN_REPEAT):
+            if _has_unliftable_anchor(av[2]):
+                return True
+    return False
+
+
+def build_prefilter(footguns: "list[Footgun]") -> tuple[str, ...]:
+    """Literals such that any line matching any rule contains one of them.
+
+    Returns () when no sound prefilter can be derived, meaning "scan every
+    line" -- correct but slow.
+    """
+    try:
+        literals: set[str] = set()
+        for fg in footguns:
+            if fg.pattern.flags & re.IGNORECASE:
+                return ()  # a literal test would have to be case-folded too
+            parsed = _re_parser.parse(fg.pattern.pattern, fg.pattern.flags)
+            if _has_unliftable_anchor(parsed):
+                return ()
+            got = _required_literals(parsed)
+            if not got:
+                return ()
+            literals |= got
+    except Exception:  # pragma: no cover - private re API moved
+        return ()
+    # Drop any literal that contains another: a line holding the longer one
+    # holds the shorter, so the shorter already admits it. Pure speed, no
+    # change to what is admitted.
+    return tuple(
+        sorted(s for s in literals if not any(o != s and o in s for o in literals))
+    )
+
+
+PREFILTER: tuple[str, ...] = build_prefilter(FOOTGUNS)
+
+
 def should_scan_file(path: Path) -> bool:
     """Return True if this file is in scope for the checker."""
     # Skip the excluded dirs
@@ -640,6 +785,15 @@ def scan_file(path: Path, footguns: list[Footgun]) -> list[tuple[int, str, Footg
                     code_for_scan = "".join(parts[::2])
                     break
 
+        # Cheap literal gate -- see PREFILTER. Everything below this point is
+        # per-line work that only matters if some rule could fire, and on a
+        # real tree ~99.8% of lines cannot. Placed AFTER the triple-quote
+        # state machine so docstring tracking still sees every line, and
+        # tested against code_for_scan (not `line`), because the single-line
+        # docstring branch above CONCATENATES non-adjacent pieces -- so
+        # code_for_scan is not always a substring of the raw line.
+        if PREFILTER and not any(s in code_for_scan for s in PREFILTER):
+            continue
         if SUPPRESS_MARKER.search(line):
             continue
         # Skip if the line has an obvious guard — e.g. hasattr/getattr/

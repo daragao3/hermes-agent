@@ -40,7 +40,7 @@ def get_bot_token() -> str:
     """Load bot token from .env file."""
     env_path = Path.home() / ".hermes" / "profiles" / "main" / ".env"
     if env_path.exists():
-        for line in env_path.read_text().splitlines():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
             if line.startswith("TELEGRAM_BOT_TOKEN="):
                 return line.split("=", 1)[1].strip()
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -185,10 +185,10 @@ def main():
     # Update .env with home channel
     env_path = Path.home() / ".hermes" / "profiles" / "main" / ".env"
     if env_path.exists():
-        content = env_path.read_text()
+        content = env_path.read_text(encoding="utf-8")
         if "TELEGRAM_HOME_CHANNEL" not in content:
             content += f"\nTELEGRAM_HOME_CHANNEL={chat_id}\n"
-            env_path.write_text(content)
+            env_path.write_text(content, encoding="utf-8")
             logger.info("\nAdded TELEGRAM_HOME_CHANNEL=%s to .env", chat_id)
 
     logger.info("\nSetup complete! Restart the gateway to activate notifications.")
