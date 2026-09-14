@@ -11,6 +11,7 @@ import os
 import queue
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -88,9 +89,31 @@ def _call_logged(cb: Callable[[dict], None], frame: dict, failure: str) -> None:
 
 
 def _pid_alive(pid: int) -> bool:
+    """Liveness for a host-visible pid, WITHOUT signalling the target.
+
+    ``os.kill(pid, 0)`` is not a no-op on Windows: ``CTRL_C_EVENT == 0``, so CPython takes the
+    console-control branch and delivers a real Ctrl+C to the process GROUP named by ``pid``
+    (bpo-14484). Both of its failure modes were MEASURED here on 2026-09-14, not inferred:
+
+    * it returns True for a pid that is already GONE -- every time. A liveness check that can
+      never say "dead" made ``reconcile_startup_orphan``'s ``not-running`` arm unreachable for
+      any non-zero pid, and made ``_terminate_pid`` spin its whole timeout after the target had
+      already exited;
+    * it INTERMITTENTLY kills the live process it was asked about. One of three identical
+      trials against our own ``start_new_session=True`` child exited ``0xC000013A``
+      (``STATUS_CONTROL_C_EXIT``). ``CREATE_NEW_PROCESS_GROUP`` disabling Ctrl+C for the new
+      group is not the reliable shield it looks like, and a RECYCLED pid naming a stranger's
+      group has no shield at all.
+
+    ``gateway.status._pid_exists`` is this repo's cross-platform probe that cannot signal
+    anything; it also reports zombies as dead.
+    """
     if pid <= 0:
         return False
-    try:
+    with contextlib.suppress(Exception):
+        from gateway.status import _pid_exists
+        return bool(_pid_exists(pid))
+    try:  # only when gateway.status is unimportable; POSIX-correct, Windows-unsafe
         os.kill(pid, 0)
         return True
     except Exception as exc:
@@ -110,17 +133,57 @@ def _signal_pid(pid: int, sig: int, label: str) -> bool:
 
 
 def _pid_command(pid: int) -> str:
+    """Command line of ``pid``, or ``""`` when it cannot be read.
+
+    ORDER IS LOAD-BEARING. ``/proc`` first keeps the psutil-free Linux fast path
+    byte-identical. ``psutil`` is the only branch that works on Windows -- neither ``/proc``
+    nor ``ps`` exists there and ``_check_output`` swallows the failure, so before this branch
+    existed the Windows result was ALWAYS ``""``. That made :func:`is_compute_host_identity`
+    False for every pid, pinning ``reconcile_startup_orphan`` on its ``pid-reuse-ignored`` arm
+    and leaving surviving hosts unreaped (measured 2026-09-14).
+    """
     if pid <= 0:
         return ""
-    with contextlib.suppress(Exception):  # Linux fast path
+    with contextlib.suppress(Exception):  # Linux fast path, psutil-free
         data = (Path("/proc") / str(pid) / "cmdline").read_bytes()
         if data:
             return data.replace(b"\x00", b" ").decode("utf-8", errors="replace")
+    with contextlib.suppress(Exception):  # cross-platform; the ONLY branch that works on Windows
+        import psutil
+        if argv := psutil.Process(pid).cmdline():
+            return " ".join(argv)
     return _check_output(["ps", "-p", str(pid), "-o", "command="])
 
 
 def is_compute_host_identity(pid: int) -> bool:
+    """True when ``pid`` is running our compute host.
+
+    Matches the SUPERVISED process (the ``argv[0]`` launcher we hold a handle on) and the real
+    interpreter alike: under a uv-trampoline venv the launcher is a stub and the interpreter is
+    its child, but BOTH carry ``-m tui_gateway.compute_host`` on their command line.
+    """
     return "tui_gateway.compute_host" in _pid_command(pid)
+
+
+def _force_kill_pid(pid: int) -> bool:
+    """Hard-kill ``pid`` and its descendants; never raises.
+
+    Windows has no ``SIGKILL``: ``signal.SIGKILL`` is undefined there, and merely NAMING it
+    raised ``AttributeError`` at argument evaluation -- before ``_signal_pid``'s own ``try`` --
+    so it escaped :meth:`HostSupervisor._terminate_pid`, then ``reconcile_startup_orphan``
+    (which has no ``except``), and reached ``start()``. ``taskkill /T /F`` is the documented
+    tree-kill primitive, mirroring ``tools.process_registry._terminate_host_pid``. The tree
+    matters: under a uv trampoline the interpreter is a grandchild of the pid we hold.
+    """
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                           timeout=10, stdin=subprocess.DEVNULL)
+            return True
+        except Exception:
+            logger.debug("failed to taskkill compute host pid=%s", pid, exc_info=True)
+            return False
+    return _signal_pid(pid, signal.SIGKILL, "SIGKILL")
 
 
 class HostSupervisor:
@@ -166,8 +229,24 @@ class HostSupervisor:
 
     @property
     def pid(self) -> int:
+        """Pid of the process we SPAWNED and hold a handle on -- our signalling target.
+
+        Not necessarily the interpreter running the host: under a uv-trampoline venv
+        ``argv[0]`` is a stub launcher and the interpreter is its child. Signalling this pid is
+        still correct -- the stub holds its child in a kill-on-close job object, so SIGTERM and
+        ``taskkill /T`` both cascade (measured 2026-09-14) -- but ATTRIBUTING anything to it is
+        not. Use :attr:`host_os_pid` to name the process that is actually running the host.
+        """
         proc = self._proc
         return int(proc.pid or 0) if proc is not None else 0
+
+    @property
+    def host_os_pid(self) -> int:
+        """Pid the host reports for ITSELF in its ``hello`` frame; 0 before the handshake."""
+        try:
+            return int(self._hello.get("host_pid") or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def is_running(self) -> bool:
         proc = self._proc
@@ -197,25 +276,41 @@ class HostSupervisor:
             self._remove_registry()
 
     def reconcile_startup_orphan(self) -> str:
-        """Terminate a stale registered host, guarding against PID reuse."""
+        """Terminate a stale registered host, guarding against PID reuse.
+
+        Considers both recorded pids: the launcher we signalled and, since 2026-09-14, the pid the
+        host reported for itself. Under a uv-trampoline venv those are different processes.
+        """
         try:
             data = json.loads(self.registry_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return "none"
         except Exception:
             data = None
-        try:
-            pid = int((data or {}).get("host_pid") or 0)
-        except Exception:
-            pid = 0
+
+        def _recorded(key: str) -> int:
+            try:
+                return int((data or {}).get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        # host_pid first: killing it cascades to the interpreter. host_os_pid is the fallback
+        # for when that number was recycled onto a stranger while the host itself is still up --
+        # without it a recycled launcher pid strands the orphan permanently, because the next
+        # line deletes the only record naming it. Absent from registries written before the
+        # field existed, which reads as 0 and simply skips this arm.
+        candidates = [pid for pid in (_recorded("host_pid"), _recorded("host_os_pid")) if pid > 0]
         if data is None:
             outcome = "invalid-registry"
-        elif pid <= 0 or not _pid_alive(pid):
+        elif not any(_pid_alive(pid) for pid in candidates):
             outcome = "not-running"
-        elif not self._pid_matches_compute_host(pid):
+        elif not (live := [pid for pid in candidates
+                           if _pid_alive(pid) and self._pid_matches_compute_host(pid)]):
             outcome = "pid-reuse-ignored"  # PID reused by another process: never signal it
         else:
-            self._terminate_pid(pid, timeout=_SHUTDOWN_TIMEOUT_SECS)
+            for pid in live:
+                if _pid_alive(pid):  # the first kill usually takes the second pid down with it
+                    self._terminate_pid(pid, timeout=_SHUTDOWN_TIMEOUT_SECS)
             outcome = "terminated"
         self._remove_registry()
         return outcome
@@ -337,7 +432,8 @@ class HostSupervisor:
             raise RuntimeError(f"compute host did not send hello; stderr={self._stderr_tail[-5:]}")
         self._validate_hello()
         self._persist_registry()
-        logger.info("compute host started pid=%s reason=%s", proc.pid, reason)
+        logger.info("compute host started pid=%s host_os_pid=%s reason=%s",
+                    proc.pid, self.host_os_pid, reason)
 
     def _validate_hello(self) -> None:
         hello = self._hello
@@ -355,7 +451,11 @@ class HostSupervisor:
     def _persist_registry(self) -> None:
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.registry_path.with_suffix(self.registry_path.suffix + ".tmp")
-        payload = {"host_pid": self.pid, "boot_id": self._hello.get("boot_id") or "",
+        # host_pid is the SIGNALLING handle (the spawned argv[0] process, whose kill cascades);
+        # host_os_pid is the interpreter actually running the host, for attribution and as a
+        # second reap witness when host_pid has been recycled. They differ under a trampoline.
+        payload = {"host_pid": self.pid, "host_os_pid": self.host_os_pid,
+                   "boot_id": self._hello.get("boot_id") or "",
                    "build_sha": self._hello.get("build_sha") or "", "started_at": time.time(),
                    "argv": self.argv}
         tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
@@ -477,7 +577,7 @@ class HostSupervisor:
         deadline = time.monotonic() + timeout
         while _pid_alive(pid):
             if time.monotonic() >= deadline:
-                _signal_pid(pid, signal.SIGKILL, "SIGKILL")
+                _force_kill_pid(pid)
                 return
             time.sleep(0.05)
 
