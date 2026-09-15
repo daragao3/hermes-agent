@@ -33,7 +33,14 @@ import pytest
 # How long to give a `docker run -d` container before declaring it not ready.
 # Generous because under arm64 QEMU emulation cont-init (a Python config
 # migration + chowns) runs several times slower than on native amd64.
-_RUN_READY_TIMEOUT_S = 60
+# 180s, raised from 60s together with the per-probe timeout below. These
+# two are coupled: with a 30s per-probe cap a 60s budget affords only two
+# slow attempts, so bumping the probe alone would have traded an ERROR for
+# a near-immediate readiness FAILURE on exactly the loaded hosts the bump
+# exists to tolerate. Costs nothing when healthy -- probes return in well
+# under a second and the loop polls ~5x/s -- and the suite's own pytest
+# timeout is 1800s (see conftest), so this stays far inside it.
+_RUN_READY_TIMEOUT_S = 180
 
 
 def _wait_for_cont_init(container: str) -> None:
@@ -63,11 +70,24 @@ def _wait_for_cont_init(container: str) -> None:
     deadline = time.monotonic() + _RUN_READY_TIMEOUT_S
     last = ""
     while time.monotonic() < deadline:
-        r = subprocess.run(
-            ["docker", "exec", container,
-             "cat", "/opt/data/logs/container-boot.log"],
-            capture_output=True, text=True, timeout=5,
-        )
+        # timeout=30 (was 5), and TimeoutExpired is CAUGHT rather than
+        # allowed to escape. The escape was the real defect: this loop has an
+        # outer deadline precisely so a transient hiccup is retried, but an
+        # inner TimeoutExpired bypassed it and aborted the fixture outright --
+        # reported as an ERROR at setup, not a readiness failure, so the
+        # message named subprocess instead of the container. Observed
+        # 2026-09-14 on a host still loaded from a 20-minute image build:
+        # `docker exec <c> cat container-boot.log` exceeded 5s and took the
+        # whole test with it. A slow probe means "not ready yet", which is
+        # exactly what the loop already knows how to handle.
+        try:
+            r = subprocess.run(
+                ["docker", "exec", container,
+                 "cat", "/opt/data/logs/container-boot.log"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            continue
         if r.returncode == 0:
             last = r.stdout
             if "profile=default" in last:
