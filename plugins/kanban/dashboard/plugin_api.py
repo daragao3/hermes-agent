@@ -1420,7 +1420,15 @@ def rename_board(slug: str, payload: RenameBoardBody):
 def delete_board(slug: str, delete: bool = Query(False, description="Hard-delete instead of archive")):
     """Archive (default) or hard-delete a board."""
     with _value_error_400():
-        res = kanban_db.remove_board(slug, archive=not delete)
+        try:
+            res = kanban_db.remove_board(slug, archive=not delete)
+        except kanban_db.BoardInUseError as exc:
+            # Another process holds the board's kanban.db open (Windows): the
+            # board is busy, not the request malformed, so 409 rather than the
+            # 400 every other ValueError maps to (it subclasses ValueError, so
+            # it must be caught before the mapper sees it).  Nothing was
+            # removed; the client can retry.
+            raise _conflict(str(exc))
     return {"result": res, "current": kanban_db.get_current_board()}
 
 
