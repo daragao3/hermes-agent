@@ -404,3 +404,80 @@ class TestMemoryMdCap:
         w._write_memory_md(ev, "y failing since 2026-07-14 (2 consecutive) — eek")
         out = mem.read_text(encoding="utf-8")
         assert "# Jaum Memory" in out and "- small" in out and "eek" in out
+
+
+class TestMemoryMdErrorTruncation:
+    """A cron failure's ``error`` is the job's whole stdout; MEMORY.md is a
+    system prompt with an 8,000-char cap (2026-09-15: one bullet carried
+    3,840 bytes / 77 lines of pytest output). The bullet must be one line and
+    bounded, and the bound must hold for APPLICATION_FAILED too."""
+
+    def _pytest_dump(self):
+        return (
+            "Script exited with code 1\nstdout:\nREPO TEST GATE: RED\n"
+            + "".join(f"tests/test_{i}.py::test_case FAILED\n" for i in range(120))
+            + "## Event 2099-01-01\n# MEMORY — main\n"   # header-shaped lines inside the error
+            + "1 failed, 4420 passed in 268.05s\n"
+        )
+
+    def test_cron_failed_consecutive_is_one_bounded_line(self, tmp_path):
+        w = _make_writer(tmp_path)
+        dump = self._pytest_dump()
+        assert len(dump) > 3000 and "\n" in dump
+        ev = Event.create(
+            EventType.CRON_FAILED_CONSECUTIVE, "cron",
+            {"job_name": "hermes-repo-test-gate", "consecutive_errors": 6, "error": dump},
+        )
+        out = w._build_content(ev, "memory_md")
+        assert "\n" not in out
+        assert out.startswith("hermes-repo-test-gate failing since ")
+        assert "(6 consecutive)" in out
+        assert "Script exited with code 1 stdout: REPO TEST GATE: RED" in out
+        assert out.endswith(mw._MEMORY_MD_TRUNCATED_SUFFIX)
+        # bounded: prefix + capped error + suffix, nowhere near the raw dump
+        assert len(out) < 100 + mw.MEMORY_MD_ERROR_MAX_CHARS + len(mw._MEMORY_MD_TRUNCATED_SUFFIX)
+
+    def test_application_failed_is_one_bounded_line(self, tmp_path):
+        w = _make_writer(tmp_path)
+        ev = Event.create(
+            EventType.APPLICATION_FAILED, "applier",
+            {"company": "Acme", "platform": "workday", "error": "boom\n" * 400},
+        )
+        out = w._build_content(ev, "memory_md")
+        assert "\n" not in out
+        assert out.startswith("Application to Acme failed: boom boom")
+        assert out.endswith(" — investigate workday compatibility")
+        assert mw._MEMORY_MD_TRUNCATED_SUFFIX in out
+        assert len(out) < 100 + mw.MEMORY_MD_ERROR_MAX_CHARS + len(mw._MEMORY_MD_TRUNCATED_SUFFIX)
+
+    def test_short_error_untouched_except_whitespace(self, tmp_path):
+        w = _make_writer(tmp_path)
+        ev = Event.create(
+            EventType.CRON_FAILED_CONSECUTIVE, "cron",
+            {"job_name": "x", "consecutive_errors": 2, "error": "  rc=1  \n  timeout  "},
+        )
+        out = w._build_content(ev, "memory_md")
+        assert out.endswith("(2 consecutive) — rc=1 timeout")
+        assert mw._MEMORY_MD_TRUNCATED_SUFFIX not in out
+
+    def test_missing_error_keeps_default(self, tmp_path):
+        w = _make_writer(tmp_path)
+        ev = Event.create(EventType.CRON_FAILED_CONSECUTIVE, "cron",
+                          {"job_name": "x", "consecutive_errors": 2})
+        assert w._build_content(ev, "memory_md").endswith("— investigate")
+
+    def test_end_to_end_write_stays_small(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path)
+        mem = tmp_path / "memories" / "MEMORY.md"
+        mem.parent.mkdir(parents=True)
+        mem.write_text("# Jaum Memory\n- keep me\n", encoding="utf-8")
+        w = _make_writer(tmp_path)
+        ev = Event.create(
+            EventType.CRON_FAILED_CONSECUTIVE, "cron",
+            {"job_name": "gate", "consecutive_errors": 6, "error": self._pytest_dump()},
+        )
+        w._write_memory_md(ev, w._build_content(ev, "memory_md"))
+        out = mem.read_text(encoding="utf-8")
+        assert len(out) < 700
+        assert out.count("\n## ") == 1          # exactly one '## Event' header, none smuggled in by the error
+        assert "- keep me" in out
