@@ -65,7 +65,7 @@ function readWindowsUserEnvVar(
   }: {
     platform?: NodeJS.Platform
     env?: NodeJS.ProcessEnv
-    exec?: typeof execFileSync | ((file?: string, args?: any) => string)
+    exec?: typeof execFileSync | ((file?: string, args?: any, options?: any) => string)
   } = {}
 ) {
   if (platform !== 'win32' || !name) {
@@ -78,7 +78,13 @@ function readWindowsUserEnvVar(
     stdout = exec('reg', ['query', 'HKCU\\Environment', '/v', name], {
       encoding: 'utf8',
       windowsHide: true,
-      timeout: 5000
+      timeout: 5000,
+      // Capture stdout only. execFileSync inherits stderr by default, so a
+      // missing value — the ordinary case for anyone who never set the
+      // variable — echoed reg's own "ERROR: The system was unable to find the
+      // specified registry key or value." into the desktop's console on every
+      // launch, even though the miss is handled below by falling back.
+      stdio: ['ignore', 'pipe', 'ignore']
     })
   } catch {
     // `reg` missing, or value absent (reg exits 1) — caller falls back.

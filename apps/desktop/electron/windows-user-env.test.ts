@@ -73,6 +73,19 @@ test('readWindowsUserEnvVar queries HKCU\\Environment and expands the value', ()
   assert.deepEqual(calls, [['reg', ['query', 'HKCU\\Environment', '/v', 'HERMES_HOME']]])
 })
 
+test("readWindowsUserEnvVar does not inherit stderr (a missing value must not echo reg's ERROR line)", () => {
+  let options
+
+  const exec = (cmd, args, opts) => {
+    options = opts
+
+    throw new Error('reg exited 1')
+  }
+
+  assert.equal(readWindowsUserEnvVar('HERMES_HOME', { platform: 'win32', exec }), null)
+  assert.deepEqual(options.stdio, ['ignore', 'pipe', 'ignore'])
+})
+
 test('readWindowsUserEnvVar returns null when reg exits non-zero (value missing)', () => {
   const exec = () => {
     throw new Error('reg exited 1')
