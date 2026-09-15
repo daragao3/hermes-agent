@@ -43,7 +43,7 @@ class TestDeprecatedCwdWarning:
         captured = capsys.readouterr()
         assert "MESSAGING_CWD" in captured.err
         assert "TERMINAL_CWD" in captured.err
-        assert "deprecated" in captured.err.lower()
+        assert "deprecated .env settings detected" in captured.err.lower()
         assert "config.yaml" in captured.err
 
     def test_dotenv_terminal_cwd_warns_with_explicit_config(

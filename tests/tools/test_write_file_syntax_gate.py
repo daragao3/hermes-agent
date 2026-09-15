@@ -30,7 +30,7 @@ class TestFailClosedSyntaxGate:
         target = tmp_path / "config.json"
         res = ops.write_file(str(target), '{"a": 1,')  # truncated / invalid
         assert res.error is not None
-        assert "json" in res.error.lower()
+        assert ".json syntax validation" in res.error.lower()
         assert not target.exists(), "invalid JSON must NOT be written to disk"
 
 

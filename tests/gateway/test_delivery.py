@@ -323,7 +323,7 @@ async def test_long_output_truncated_for_non_chunking_adapter(tmp_path, monkeypa
 
     delivered = adapter.calls[0]["content"]
     assert len(delivered) < 5000  # was truncated
-    assert "truncated" in delivered.lower()
+    assert "truncated, full output saved to" in delivered.lower()
     assert "full output saved to" in delivered
     # Full output was saved to disk
     saved_files = list(tmp_path.glob("cron/output/job1_*.txt"))

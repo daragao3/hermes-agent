@@ -136,7 +136,7 @@ class TestDoctorCertificates:
         issues = []
         doctor_platform.check_certificates(should_fix=False, issues=issues)
         out = capsys.readouterr().out
-        assert "broken" in out.lower()
+        assert "ca certificate bundle is broken" in out.lower()
         assert issues, "a broken bundle must be funneled into the action list"
         assert any("doctor --fix" in i for i in issues)
 
