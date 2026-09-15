@@ -27,8 +27,21 @@ def _docker_available() -> bool:
     if shutil.which("docker") is None:
         return False
     try:
+        # 120s, not 5s. This probe decides whether the WHOLE directory runs,
+        # and a timeout here is indistinguishable from "no docker on this
+        # host" -- it skips silently and the suite reports a clean-looking
+        # "3 skipped" having built and asserted nothing. Measured on a
+        # Windows/Docker-Desktop host 2026-09-14: `docker info` took 3.6-19.3s
+        # across 15 consecutive probes (ALL rc=0, never under 3s) while idle,
+        # and 48-90s for minutes after a large image build. At 5s that host
+        # false-skipped on 3 of 5 runs.
+        # A genuinely docker-less machine does NOT pay this: it returns via
+        # the shutil.which() check above, or the daemon connection fails fast
+        # with a non-zero rc. The cap only binds when a daemon IS present but
+        # slow, so the cost of being generous is bounded and one-off (this
+        # runs once, at collection).
         r = subprocess.run(
-            ["docker", "info"], capture_output=True, timeout=5,
+            ["docker", "info"], capture_output=True, timeout=120,
         )
         return r.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
