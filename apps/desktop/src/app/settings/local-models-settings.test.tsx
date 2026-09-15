@@ -127,7 +127,14 @@ beforeEach(() => {
   mocked.getLocalModelsStatus.mockResolvedValue(BASE_STATUS)
   mocked.getLocalHardware.mockResolvedValue(BASE_HARDWARE)
   mocked.getLocalCatalog.mockResolvedValue({ models: [FITTING_MODEL, SPILLED_MODEL, REFUSED_MODEL] })
-  mocked.getLocalModelsJobs.mockResolvedValue({ jobs: [] })
+  // The pane calls watchLocalRuntimeJobs() on mount, and that poller treats the
+  // BACKEND as authority: $localRuntimeJobs is a cache of the job registry, so a
+  // fake backend reporting no jobs deletes whatever a test seeded into the store
+  // and the row under test reverts. Serve the seeded jobs back instead -- that is
+  // what the real backend does when the pane is reopened mid-download, which is
+  // the scenario these tests describe. A test that seeds a running download while
+  // telling the backend there is none is describing a state that cannot occur.
+  mocked.getLocalModelsJobs.mockImplementation(async () => ({ jobs: [...$localRuntimeJobs.get()] }))
   $localRuntimeJobs.set([])
 })
 

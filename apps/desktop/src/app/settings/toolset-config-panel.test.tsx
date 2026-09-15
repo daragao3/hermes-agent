@@ -912,12 +912,18 @@ describe('ToolsetConfigPanel', () => {
   describe('provider expansion', () => {
     /** Poll raw macrotasks for a provider row. Deliberately not `findBy*`:
      *  waitFor's trailing `setTimeout(0)` usually lets React flush the pending
-     *  passive effects first, which hides the race this test exists to pin. */
+     *  passive effects first, which hides the race this test exists to pin.
+     *
+     *  A provider row is identified by `aria-expanded` -- row click expands and
+     *  collapses, it does not toggle activation. `aria-pressed` DOES exist in
+     *  this component, on the model-catalog buttons, so a matcher keyed on it
+     *  finds nothing here while still looking plausible: this poll then spins
+     *  all 2000 attempts and the test times out before its own error throws. */
     async function pollForRow(name: RegExp): Promise<HTMLElement> {
       for (let attempt = 0; attempt < 2000; attempt += 1) {
         const hit = screen
           .queryAllByRole('button')
-          .find(b => b.hasAttribute('aria-pressed') && name.test(b.textContent ?? ''))
+          .find(b => b.hasAttribute('aria-expanded') && name.test(b.textContent ?? ''))
 
         if (hit) {
           return hit
@@ -942,8 +948,12 @@ describe('ToolsetConfigPanel', () => {
       const row = await pollForRow(/ElevenLabs/)
       fireEvent.click(row)
 
-      expect(await screen.findByRole('button', { name: /Actions for ELEVENLABS_API_KEY/ })).toBeTruthy()
-      expect(row.getAttribute('aria-pressed')).toBe('true')
+      // The env-var actions trigger is labelled plainly 'Actions'
+      // (EnvVarActionsMenu passes t.settings.envActions.actions); it is not
+      // keyed by the variable name. Only the expanded row renders env rows, so
+      // a single match here IS the ElevenLabs row having expanded.
+      expect(await screen.findByRole('button', { name: /^Actions$/ })).toBeTruthy()
+      expect(row.getAttribute('aria-expanded')).toBe('true')
     })
   })
 
