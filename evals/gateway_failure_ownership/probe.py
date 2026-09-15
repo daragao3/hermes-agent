@@ -6,11 +6,18 @@ ROOT = Path(sys.argv[1]).resolve()
 RECEIPT = Path(sys.argv[2]).resolve()
 HOME = Path(tempfile.mkdtemp(prefix="hermes-104653-state-"))
 # Discard inherited credentials/config, preserve only interpreter essentials.
-keep = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "TZ")}
+# SYSTEMROOT: Windows Python needs it for the CRT/ssl/random seeding once the
+# environment is scrubbed; it carries no credential.
+keep = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "TZ", "SYSTEMROOT")}
 os.environ.clear()
 os.environ.update(keep)
 os.environ.update(
     HOME=str(HOME),
+    # Path.home() on Windows reads USERPROFILE, never HOME; without it
+    # hermes_constants.get_default_hermes_root() raised "Could not determine
+    # home directory" at import and the probe wrote no receipt (nightly gate
+    # 2026-09-15). Harmless on POSIX.
+    USERPROFILE=str(HOME),
     HERMES_HOME=str(HOME),
     HERMES_DISABLE_PLUGINS="1",
     NO_PROXY="127.0.0.1,localhost",

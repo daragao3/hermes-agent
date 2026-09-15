@@ -27,6 +27,15 @@ def _assert_diverted(tmp_path, sid, needle):
     assert needle in jsonl.read_text(encoding="utf-8")
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason=(
+        "os.replace over a state.db the store holds open is refused by Windows "
+        "(WinError 5): the rename-over-an-open-inode swap this test simulates "
+        "cannot happen there. The copyfile variant below covers the in-place "
+        "overwrite Windows does allow."
+    ),
+)
 def test_replaced_state_db_diverts_pending_without_fts_rebuild(tmp_path, monkeypatch):
     import hermes_state
 

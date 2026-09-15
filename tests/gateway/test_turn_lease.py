@@ -204,6 +204,12 @@ async def test_full_dispatch_rejects_lease_timeout_without_running_goal_hook(
     assert holder is not None
     monkeypatch.setenv("HERMES_AGENT_TIMEOUT", "5")
     monkeypatch.setenv("HERMES_TURN_LEASE_TIMEOUT", "0.02")
+    # Hermetic: _handle_message runs the pre_gateway_dispatch plugin hook before
+    # the lease wait, and invoke_hook's first call discovers and imports the
+    # BOX's live plugins -- measured 1.3-3.3s on this host, which alone blew the
+    # 1s wall budget below (nightly-test-gate RED, 2026-09-15). The budget is
+    # about the lease clock, not plugin import time.
+    monkeypatch.setattr("hermes_cli.lifecycle.invoke_hook", lambda *a, **k: [])
 
     runner.session_store.load_transcript.side_effect = AssertionError(
         "transcript must not load after a turn-lease timeout"

@@ -77,7 +77,7 @@ class DiscordMediaMixin:
         try:
             import discord as _discord_mod
             import io as _io
-            from urllib.parse import unquote as _unquote
+            from gateway.platforms.base import file_url_to_path
         except Exception:  # pragma: no cover
             return await super().send_multiple_images(chat_id, images, metadata, human_delay)
         try:
@@ -102,7 +102,10 @@ class DiscordMediaMixin:
                     if alt_text:
                         captions.append(alt_text)
                     if image_url.startswith("file://"):
-                        local_path = _unquote(image_url[7:])
+                        # file_url_to_path, not unquote(url[7:]): Path.as_uri() emits
+                        # file:///C:/... and the bare strip left /C:/... on Windows, so
+                        # every local image was "missing" there (nightly gate 2026-09-15).
+                        local_path = file_url_to_path(image_url)
                         if not os.path.exists(local_path):
                             logger.warning("[%s] Skipping missing image: %s", self.name, local_path)
                             continue

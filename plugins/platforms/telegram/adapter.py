@@ -4947,7 +4947,7 @@ class TelegramAdapter(BasePlatformAdapter):
             delivered = anim_result.success
         if not photos:
             return SendResult(success=delivered, error=None if delivered else "all images failed to send")
-        from urllib.parse import unquote as _unquote
+        from gateway.platforms.base import file_url_to_path
         CHUNK = 10  # Telegram's album limit
         chunks = [photos[i:i + CHUNK] for i in range(0, len(photos), CHUNK)]
         for chunk_idx, chunk in enumerate(chunks):
@@ -4959,7 +4959,8 @@ class TelegramAdapter(BasePlatformAdapter):
                 for image_url, alt_text in chunk:
                     source: Any = image_url
                     if image_url.startswith("file://"):
-                        local_path = _unquote(image_url[7:])
+                        # Same Windows /C:/ trap as the single-image path; see file_url_to_path.
+                        local_path = file_url_to_path(image_url)
                         if not os.path.exists(local_path):
                             logger.warning("[%s] Skipping missing image in media group: %s", self.name, local_path)
                             continue
