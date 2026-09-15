@@ -22,6 +22,21 @@ docker/entrypoint.sh text eol=lf
 docker/s6-rc.d/** text eol=lf
 docker/cont-init.d/** text eol=lf
 
+# Two EXTENSIONLESS executables -- /hermes and /scripts/hermes-gateway --
+# carry shebangs and are the same blind spot as the s6 files above: no
+# pattern in this file matches them, so core.autocrlf=true rewrites both on
+# every Windows checkout. Measured 2026-09-14 on the deployed checkout, where
+# the already-pinned docker/hermes-exec-shim.sh had gone CRLF from a checkout
+# predating its rule: a CRLF shebang makes the kernel exec /bin/sh<CR>, and
+# `docker exec ... hermes config set` fails with
+#   exec /opt/hermes/bin/hermes: no such file or directory
+# -- 'no such file' about a file that EXISTS. Without these pins `git add`
+# warns 'LF will be replaced by CRLF the next time Git touches it' on exactly
+# these three, i.e. any checkout re-breaks them.
+/hermes text eol=lf
+/scripts/hermes-gateway text eol=lf
+*.tmpl text eol=lf
+
 # Enforce LF for all source/text files. Windows editors and tools default to
 # CRLF; without normalization a Windows contributor's edit turns into a
 # whole-file phantom diff (every line "changed" by its ending), breaks
