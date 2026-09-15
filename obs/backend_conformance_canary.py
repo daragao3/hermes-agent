@@ -70,7 +70,15 @@ _REPAGE_SECONDS = 3600
 # (HINDSIGHT_API_LLM_MODEL) and hindsight/docker-compose.yaml's default.
 _MANIFEST_HARNESS_KEY_FILE = Path("C:/Users/diego/manifest/.mnfst-harness-key")
 _MANIFEST_HARNESS_BASE_URL = "http://localhost:2099/v1"
-_MANIFEST_HARNESS_MODEL = "openai/gpt-5.5-subscription"
+# 2026-09-15 (Diego): "auto" again, DELIBERATELY. The explicit pin fixed the 08-23
+# flap and created the next failure: an explicit model carries NO fallbacks in
+# Manifest, so when gpt-5.5 died upstream (ChatGPT Pro usage_limit_reached, 4-day
+# reset) all four sites went down with nothing behind them. "auto" now resolves
+# to the laptop-monitor agent's CONFIGURED default tier -- gpt-5.5 (Gmail) ->
+# gpt-5.5 (Gatech) -> opencode-go deepseek-v4-pro -- and Manifest benches a 429
+# route for its Retry-After and retries it after, so traffic returns to OpenAI on
+# its own at the reset. The routed hop is reported in the ProbeResult text.
+_MANIFEST_HARNESS_MODEL = "auto"
 
 
 @dataclass
@@ -182,8 +190,8 @@ def build_manifest_harness_probe_client() -> "Optional[tuple[Any, str]]":
 
     This replaces the raw-Anthropic arm so the canary no longer hammers
     api.anthropic.com directly (429 under the background agent fleet) —
-    _MANIFEST_HARNESS_MODEL is a deterministic known-good pin, not "auto"
-    (see the constant's comment for the 2026-08-23 flap evidence).
+    _MANIFEST_HARNESS_MODEL is "auto" against a CONFIGURED fallback chain (see the
+    constant's comment for the 2026-08-23 flap and the 2026-09-15 reversal).
     """
     key = _read_manifest_harness_key()
     if not key:
