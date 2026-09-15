@@ -15,9 +15,12 @@ Covers the pieces added when boards became a first-class concept:
 
 from __future__ import annotations
 
+import argparse
+import contextlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -195,6 +198,92 @@ class TestBoardCRUD:
         assert not leaks, (
             f"use kbc.connect_closing(...) instead of connect(...) at lines {leaks}"
         )
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="POSIX unlinks open files")
+    @pytest.mark.parametrize("archive", [True, False])
+    def test_remove_refuses_whole_when_another_handle_holds_db(self, fresh_home, archive, capsys):
+        # The product residual left by the test-side fix above: a REAL foreign
+        # handle on kanban.db (gateway dispatcher poll, dashboard) makes the
+        # move fail. Before this guard `rm --delete` had already unlinked
+        # board.json when rmtree died on kanban.db, and `rm` (archive) dumped a
+        # raw WinError 5 traceback; both had cleared the current-board pointer
+        # first. The handle is in-process here because NTFS does not care
+        # which process owns it -- the subprocess leg below is the same
+        # scenario with the CLI on the far side.
+        from hermes_cli.kanban_boards import _cmd_boards_rm
+
+        kb.create_board("held")
+        kb.set_current_board("held")
+        d = kb.board_dir("held")
+        with contextlib.closing(sqlite3.connect(d / "kanban.db")) as holder:
+            holder.execute("SELECT 1").fetchall()
+            rc = _cmd_boards_rm(argparse.Namespace(slug="held", delete=not archive, boards_action="rm"))
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "kanban boards rm:" in err
+        assert str(d) in err
+        assert "another process has its kanban.db open" in err
+        assert "gateway" in err and "dashboard" in err and "retry" in err
+        assert "Traceback" not in err and "reboot" not in err.lower()
+        # Refused WHOLE: nothing unlinked, nothing moved, pointer untouched.
+        assert (d / "board.json").exists() and (d / "kanban.db").exists()
+        assert kb.get_current_board() == "held"
+        archived = kb.boards_root() / "_archived"  # mkdir'd empty before the move, as before
+        assert not archived.exists() or not any(archived.iterdir())
+        assert not any(p.name.startswith("_deleting-") for p in kb.boards_root().iterdir())
+        # And the same removal succeeds once the holder is gone (no sticky state).
+        assert kb.remove_board("held", archive=archive)["slug"] == "held"
+        assert not d.exists()
+        assert kb.get_current_board() == kb.DEFAULT_BOARD
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="POSIX unlinks open files")
+    def test_cli_rm_reports_foreign_holder_instead_of_traceback(self, tmp_path):
+        env = {"HERMES_HOME": str(tmp_path)}
+        assert _cli(["boards", "create", "held"], env_extra=env).returncode == 0
+        db = tmp_path / "kanban" / "boards" / "held" / "kanban.db"
+        assert db.exists()
+        with contextlib.closing(sqlite3.connect(db)) as holder:  # this test IS the other process
+            holder.execute("SELECT 1").fetchall()
+            res = _cli(["boards", "rm", "held", "--delete"], env_extra=env)
+        assert res.returncode == 1, res.stderr
+        assert "another process has its kanban.db open" in res.stderr
+        assert "Traceback" not in res.stderr
+        assert db.exists() and (db.parent / "board.json").exists()
+
+    @pytest.mark.parametrize("archive", [True, False])
+    def test_remove_maps_windows_sharing_violation_on_any_platform(
+        self, fresh_home, archive, monkeypatch, capsys,
+    ):
+        # POSIX CI cannot hold a file open against a rename, so simulate the
+        # NTFS refusal at the seam remove_board actually calls, with the
+        # winerror the real one carries (see the win32 leg above).
+        from hermes_cli.kanban_boards import _cmd_boards_rm
+
+        class _SharingViolation(PermissionError):
+            winerror = 32  # class attr shadows OSError's descriptor on Windows too
+
+        def _refuse(self, target):
+            raise _SharingViolation(13, "simulated: file in use")
+
+        kb.create_board("held")
+        d = kb.board_dir("held")
+        monkeypatch.setattr(Path, "rename", _refuse)
+        monkeypatch.setattr(sys, "platform", "win32")
+        with pytest.raises(kb.BoardInUseError) as info:
+            kb.remove_board("held", archive=archive)
+        assert isinstance(info.value, ValueError)  # the CLI / dashboard seams catch ValueError
+        assert info.value.path == d
+        assert ("archive" if archive else "delete") in str(info.value)
+        assert "WinError 32" in str(info.value)
+        rc = _cmd_boards_rm(argparse.Namespace(slug="held", delete=not archive, boards_action="rm"))
+        assert rc == 1
+        assert "another process has its kanban.db open" in capsys.readouterr().err
+        assert (d / "board.json").exists()
+        # Control: the same error on a non-Windows platform is NOT ours to explain.
+        monkeypatch.setattr(sys, "platform", "linux")
+        with pytest.raises(PermissionError) as raw:
+            kb.remove_board("held", archive=archive)
+        assert not isinstance(raw.value, kb.BoardInUseError)
 
     def test_rename_updates_metadata(self, fresh_home):
         kb.create_board("slug-immutable")
