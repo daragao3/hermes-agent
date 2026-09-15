@@ -70,6 +70,27 @@ RATE_LIMITS = {
 MEMORY_MD_MAX_BYTES = 200_000
 _EVENT_HEADER_RE = re.compile(r"^## Event \d{4}-\d{2}-\d{2}")
 
+# MEMORY.md notes are ONE bullet each. A cron failure's ``error`` field is the
+# job's whole stdout/stderr (2026-09-15: 3,840 bytes of pytest output landed in
+# profiles/main/memories/MEMORY.md as a single "- ... failing since" bullet,
+# 77 lines, on a file whose configured memory_char_limit is 8,000 and which is
+# the system prompt of every main-profile agent). Collapse to one line and cap
+# it; the full text stays on the event bus and in the job's incident record.
+MEMORY_MD_ERROR_MAX_CHARS = 300
+_MEMORY_MD_TRUNCATED_SUFFIX = " …[truncated; full text on the event bus / `hermes cron incidents`]"
+
+
+def _one_line_error(text: Any, limit: int = MEMORY_MD_ERROR_MAX_CHARS) -> str:
+    """Whitespace-collapsed, length-capped rendering of an error payload for a
+    MEMORY.md bullet. Never returns a newline: a multi-line error would spill
+    the bullet across lines, and any of those lines beginning with ``## `` /
+    ``# `` would be read as a section header by ``_cap_memory_md`` and by the
+    curator's prefix cut."""
+    flat = " ".join(str(text if text is not None else "").split())
+    if len(flat) <= limit:
+        return flat
+    return flat[:limit].rstrip() + _MEMORY_MD_TRUNCATED_SUFFIX
+
 
 def _cap_memory_md(content: str, max_bytes: int) -> str:
     """Return ``content`` trimmed to <= ``max_bytes`` by dropping the oldest
@@ -210,10 +231,11 @@ class MemoryWriter(BaseSubscriber):
             if et == EventType.CRON_FAILED_CONSECUTIVE:
                 return (f"{p.get('job_name', '?')} failing since {event.timestamp[:10]} "
                         f"({p.get('consecutive_errors', '?')} consecutive) — "
-                        f"{p.get('error', 'investigate')}")
+                        f"{_one_line_error(p.get('error', 'investigate'))}")
             if et == EventType.APPLICATION_FAILED:
                 return (f"Application to {p.get('company', '?')} failed: "
-                        f"{p.get('error', 'unknown')} — investigate {p.get('platform', '?')} compatibility")
+                        f"{_one_line_error(p.get('error', 'unknown'))} — "
+                        f"investigate {p.get('platform', '?')} compatibility")
 
         return f"{et.type_string}: {str(p)[:200]}"
 
