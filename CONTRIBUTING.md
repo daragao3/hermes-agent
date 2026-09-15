@@ -746,9 +746,17 @@ that touches the OS, assume *any* platform can hit your code path.
    similar editors — use `encoding="utf-8-sig"` when reading files that
    could have been touched by a Windows GUI editor.
 
-4. **Process management.** `os.setsid()`, `os.killpg()`, `os.fork()`,
-   `os.getuid()`, and POSIX signal handling differ on Windows. Guard with
-   `platform.system()`, `sys.platform`, or `hasattr(os, "setsid")`:
+4. **Process management.** `os.setsid()`, `os.killpg()`, `os.getpgid()`,
+   `os.fork()`, `os.getuid()`, and POSIX signal handling differ on Windows.
+   The same goes for the rest of the POSIX-only `os` surface -- `chown`,
+   `mkfifo`, `fchmod`, `pread`, `sysconf`, `uname`, `getloadavg`,
+   `sched_getaffinity`, `O_NONBLOCK`, the `WNOHANG`/`WIFEXITED` wait-status
+   macros, `ttyname`/`openpty`, and `signal.alarm`/`setitimer`. Every one of
+   these is simply ABSENT on Windows, so the failure is an `AttributeError`
+   at attribute access -- which `except OSError` / `except PermissionError`
+   cannot catch (it is not an `OSError`). Guard the attribute or the
+   platform, not the errno: `platform.system()`, `sys.platform`, or
+   `hasattr(os, "setsid")`:
    ```python
    if platform.system() != "Windows":
        kwargs["preexec_fn"] = os.setsid

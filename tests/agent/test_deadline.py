@@ -486,7 +486,7 @@ class TestKillProcessTree:
         # Child in OUR process group: killpg would signal the test runner.
         proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         try:
-            assert os.getpgid(proc.pid) != proc.pid  # not a leader
+            assert os.getpgid(proc.pid) != proc.pid  # not a leader  # windows-footgun: ok -- class is skipped on win32 (POSIX process-group semantics)
             assert kill_process_tree(proc.pid, sig=signal.SIGTERM) is True
             proc.wait(timeout=5)
         finally:

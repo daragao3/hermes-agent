@@ -74,7 +74,7 @@ def run_case(root, output, name, behind, early=False, cancel=False):
             assert ready, f"{name}: prompt did not render: {data[-1500:]!r}"
             offset = len(data)
             if not early and not cancel:
-                fd = os.open(cache, os.O_WRONLY | os.O_NONBLOCK)
+                fd = os.open(cache, os.O_WRONLY | os.O_NONBLOCK)  # windows-footgun: ok -- POSIX-only probe: the same function drives a pty and a FIFO
                 os.write(fd, payload)
                 os.close(fd)
                 pump_until(lambda b: b"to update" in b[offset:] or b"update available" in b[offset:], 3)

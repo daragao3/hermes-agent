@@ -173,7 +173,7 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
     """POSIX: TERM the script's process group, then KILL if ANY member survived (a survivor holds
     the pipe write ends open and the caller's communicate() would block on EOF forever)."""
     try:
-        process_group = os.getpgid(proc.pid)
+        process_group = os.getpgid(proc.pid)  # windows-footgun: ok -- POSIX-only helper; the caller takes the win32 taskkill branch first
         os.killpg(process_group, signal.SIGTERM)  # windows-footgun: ok — POSIX-only branch
     except (ProcessLookupError, PermissionError, OSError):
         return

@@ -673,7 +673,7 @@ def _sweep_escaped_descendants(descendants: list, pgid: int) -> None:
             if not child.is_running():
                 continue
             try:
-                if os.getpgid(child.pid) == pgid:
+                if os.getpgid(child.pid) == pgid:  # windows-footgun: ok -- POSIX-only helper; callers sit behind the Windows gate
                     continue  # group-kill already covers it
             except OSError:  # ProcessLookupError / PermissionError included
                 pass
@@ -688,7 +688,7 @@ def _kill_process_group_posix(proc) -> None:
     init — and we wait on the group, not the wrapper, which can exit before
     grandchildren under load. POSIX-only (_IS_WINDOWS handled by the caller)."""
     try:
-        pgid = os.getpgid(proc.pid)
+        pgid = os.getpgid(proc.pid)  # windows-footgun: ok -- POSIX-only helper; the caller dispatches Windows to _kill_process_windows
     except ProcessLookupError:
         if (pgid := getattr(proc, "_hermes_pgid", None)) is None:
             raise
@@ -831,7 +831,7 @@ class LocalEnvironment(BaseEnvironment):
             **({"creationflags": windows_hide_flags()} if _IS_WINDOWS else {}))
         if not _IS_WINDOWS:
             with contextlib.suppress(ProcessLookupError):
-                proc._hermes_pgid = os.getpgid(proc.pid)
+                proc._hermes_pgid = os.getpgid(proc.pid)  # windows-footgun: ok -- inside the not-Windows gate on the previous line
         if stdin_data is not None:
             _pipe_stdin(proc, stdin_data)
         return proc

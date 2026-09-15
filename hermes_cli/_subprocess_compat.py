@@ -383,7 +383,7 @@ def _legacy_kill_process_tree(proc: "subprocess.Popen") -> None:
         try:
             import signal as _signal
 
-            pgid = os.getpgid(proc.pid)
+            pgid = os.getpgid(proc.pid)  # windows-footgun: ok -- inside the not-Windows gate two lines up
             if pgid == proc.pid:
                 os.killpg(pgid, _signal.SIGKILL)  # windows-footgun: ok — inside `if not IS_WINDOWS` gate
         except Exception:

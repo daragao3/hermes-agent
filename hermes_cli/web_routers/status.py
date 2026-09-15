@@ -540,7 +540,7 @@ async def get_system_stats():
         info["psutil"] = False
         # stdlib-only fallbacks for load average where the kernel exposes it.
         try:
-            info["load_avg"] = list(os.getloadavg())
+            info["load_avg"] = list(os.getloadavg())  # windows-footgun: ok -- AttributeError caught: load_avg is simply omitted on Windows
         except (OSError, AttributeError):
             pass
 

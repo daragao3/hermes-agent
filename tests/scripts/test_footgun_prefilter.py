@@ -48,9 +48,9 @@ def linter():
     return _load_linter_module()
 
 
-# One positive line per rule. The first eleven are real lines taken from this
-# repo's own scan output, not invented ones; the last four are rules with no
-# current in-tree hit, written from the rule's pattern.
+# One positive line per rule. Most are real lines taken from this repo's own
+# scan output, not invented ones; the rest are rules with no current in-tree
+# hit, written from the rule's pattern.
 EXAMPLES = {
     "open() without encoding= on text mode": "    with open(f) as fh:",
     "os.fdopen() without encoding= on text mode": '    with os.fdopen(fd, "w") as f:',
@@ -63,10 +63,24 @@ EXAMPLES = {
         "    os.chown(path, _HERMES_UID, _HERMES_GID)"  # windows-footgun: ok -- sample line for the rule under test, not a call
     ),
     "bare os.mkfifo": "        os.mkfifo(control, 0o660)",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare os.getpgid / os.getpgrp / os.setpgid": "            pgid = os.getpgid(pid)",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare os.fchmod": "        os.fchmod(fd, 0o600)",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare os.pread / os.pwrite": "            return os.pread(cached[0], length, 0)",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare os.O_NONBLOCK": "                fd = os.open(cache, os.O_WRONLY | os.O_NONBLOCK)",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare os.sysconf / os.getloadavg / os.uname / os.sched_getaffinity": (  # windows-footgun: ok -- sample line for the rule under test, not a call
+        '        return int(os.sysconf("SC_PAGE_SIZE")) * int(os.sysconf("SC_PHYS_PAGES"))'  # windows-footgun: ok -- sample line for the rule under test, not a call
+    ),
+    "bare os.WNOHANG / os.WIFEXITED / os.WIFSIGNALED / os.WEXITSTATUS / os.WTERMSIG": (  # windows-footgun: ok -- sample line for the rule under test, not a call
+        "                    pid, status = os.waitpid(-1, os.WNOHANG)"  # windows-footgun: ok -- sample line for the rule under test, not a call
+    ),
+    "bare os.ttyname / os.openpty / os.ptsname / os.login_tty": (  # windows-footgun: ok -- sample line for the rule under test, not a call
+        "            name = os.ttyname(fd.fileno())"  # windows-footgun: ok -- sample line for the rule under test, not a call
+    ),
     "bare signal.SIGKILL": "    if sig == signal.SIGKILL:",  # windows-footgun: ok -- sample line for the rule under test, not a call
     "bare signal.SIGHUP / SIGUSR1 / SIGUSR2 / SIGALRM / SIGCHLD / SIGPIPE / SIGQUIT": (  # windows-footgun: ok -- sample line for the rule under test, not a call
         "    assert sent == [(67890, signal.SIGHUP)]"  # windows-footgun: ok -- sample line for the rule under test, not a call
     ),
+    "bare signal.alarm / signal.setitimer / signal.pause": "  start=time.monotonic();signal.alarm(2)",  # windows-footgun: ok -- sample line for the rule under test, not a call
     "subprocess shebang script invocation": '    subprocess.run(["./script.sh"])',  # windows-footgun: ok -- sample line for the rule under test, not a call
     "wmic invocation without shutil.which guard": (
         '    subprocess.run(["wmic", "process", "list"])'  # windows-footgun: ok -- sample line for the rule under test, not a call

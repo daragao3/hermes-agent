@@ -234,7 +234,7 @@ def _kill_orphaned_mcp_children(include_active: bool = False, server_name: Optio
         return
 
     try:  # our own pgid, so we never killpg() the gateway itself
-        my_pgid = os.getpgrp()
+        my_pgid = os.getpgrp()  # windows-footgun: ok -- AttributeError caught below; my_pgid is None on Windows
     except (AttributeError, OSError):
         my_pgid = None  # Windows or restricted environment
 

@@ -911,7 +911,7 @@ def _spawn_pytest(
     pgid: int | None = None
     if sys.platform != "win32":
         try:
-            pgid = os.getpgid(proc.pid)
+            pgid = os.getpgid(proc.pid)  # windows-footgun: ok -- inside the not-win32 gate on the previous line
         except (ProcessLookupError, PermissionError):
             pgid = None
 

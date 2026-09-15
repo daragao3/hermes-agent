@@ -135,7 +135,7 @@ def test_hook_child_leads_own_process_group(tmp_path):
     assert r["returncode"] == 0
     pid, pgid = r["stdout"].split()
     assert pid == pgid, f"hook child pid={pid} does not lead its group pgid={pgid}"
-    assert int(pgid) != os.getpgid(0), "hook child must not share our group"
+    assert int(pgid) != os.getpgid(0), "hook child must not share our group"  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
 
 
 def test_fast_path_contract_unchanged(tmp_path):
