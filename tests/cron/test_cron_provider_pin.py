@@ -292,7 +292,7 @@ def _run_with_current_provider_and_model(job, current_provider, current_model, t
     set to ``current_model`` (the unpinned-model fire-time source)."""
     (tmp_path / "config.yaml").write_text(
         f"model:\n  default: {current_model}\n"
-    )
+    , encoding="utf-8")
     fake_db = MagicMock()
     with patch("cron.scheduler._hermes_home", tmp_path), \
          patch("cron.scheduler._get_hermes_home", return_value=tmp_path), \

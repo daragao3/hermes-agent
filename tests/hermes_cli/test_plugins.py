@@ -81,7 +81,7 @@ def _make_plugin_dir(base: Path, name: str, *, register_body: str = "pass",
     (plugin_dir / "plugin.yaml").write_text(yaml.dump(manifest), encoding="utf-8")
     (plugin_dir / "__init__.py").write_text(
         f"def register(ctx):\n    {register_body}\n"
-    )
+    , encoding="utf-8")
 
     if auto_enable:
         # Write/merge plugins.enabled in <HERMES_HOME>/config.yaml.
@@ -168,10 +168,10 @@ class TestPluginDiscovery:
         skill.mkdir(parents=True)
         (plugin / "plugin.json").write_text(
             json.dumps({"$schema": PLUGIN_SCHEMA_V1, "name": "portable.test"})
-        )
+        , encoding="utf-8")
         (skill / "SKILL.md").write_text(
             "---\nname: summarize\ndescription: Summarize reports.\n---\nBody.\n"
-        )
+        , encoding="utf-8")
         (plugin / "mcp.json").write_text(
             json.dumps(
                 {
@@ -181,17 +181,17 @@ class TestPluginDiscovery:
                     },
                 }
             )
-        )
+        , encoding="utf-8")
         native = home / "plugins" / "native"
         native.mkdir()
         (native / "plugin.yaml").write_text(
             yaml.safe_dump({"name": "native", "version": "1.0.0"})
-        )
+        , encoding="utf-8")
         (native / "__init__.py").write_text("def register(ctx):\n    pass\n", encoding="utf-8")
         home.mkdir(exist_ok=True)
         (home / "config.yaml").write_text(
             yaml.safe_dump({"plugins": {"enabled": ["portable.test", "native"]}})
-        )
+        , encoding="utf-8")
         empty_bundled = tmp_path / "bundled"
         empty_bundled.mkdir()
         monkeypatch.setenv("HOME", str(tmp_path / "os-home"))
@@ -219,7 +219,7 @@ class TestPluginDiscovery:
         plugin.mkdir(parents=True)
         (plugin / "plugin.json").write_text(
             json.dumps({"$schema": PLUGIN_SCHEMA_V1, "name": "portable.test"})
-        )
+        , encoding="utf-8")
         (home / "config.yaml").write_text(
             yaml.safe_dump(
                 {
@@ -229,7 +229,7 @@ class TestPluginDiscovery:
                     }
                 }
             )
-        )
+        , encoding="utf-8")
         empty_bundled = tmp_path / "bundled"
         empty_bundled.mkdir()
         monkeypatch.setenv("HOME", str(tmp_path / "os-home"))
@@ -263,7 +263,7 @@ class TestPluginDiscovery:
                     },
                 }
             )
-        )
+        , encoding="utf-8")
         bundled = tmp_path / "bundled"
         bundled.mkdir()
         monkeypatch.setenv("HERMES_HOME", str(home))
@@ -288,7 +288,7 @@ class TestPluginDiscovery:
                     "author": {},
                 }
             )
-        )
+        , encoding="utf-8")
         [empty] = [
             item
             for item in manager._collect_directory_manifests()
@@ -1038,13 +1038,13 @@ class TestPluginLoading:
             "    pass\n"
             "def register(ctx):\n"
             "    ctx.register_memory_provider('mempalace', MemPalaceProvider)\n"
-        )
+        , encoding="utf-8")
         # Even if the user explicitly enables it in config, the loader
         # should still treat it as exclusive and skip general loading.
         hermes_home = tmp_path / "hermes_test"
         (hermes_home / "config.yaml").write_text(
             yaml.safe_dump({"plugins": {"enabled": ["mempalace"]}})
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         mgr = PluginManager()
@@ -1085,7 +1085,7 @@ class TestPluginLoading:
             "    pass\n"
             "def register_memory_provider(name, cls):\n"
             "    pass\n"
-        )
+        , encoding="utf-8")
         monkeypatch.syspath_prepend(str(tmp_path))
 
         ep = EntryPoint(
@@ -1106,7 +1106,7 @@ class TestPluginLoading:
         hermes_home = tmp_path / "hermes_test"
         (hermes_home / "config.yaml").write_text(
             yaml.safe_dump({"plugins": {"enabled": ["mempalace_ep"]}})
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         mgr = PluginManager()
@@ -1138,7 +1138,7 @@ class TestPluginLoading:
             "    pass\n"
             "def register_provider(profile):\n"
             "    pass\n"
-        )
+        , encoding="utf-8")
         monkeypatch.syspath_prepend(str(tmp_path))
 
         ep = EntryPoint(
@@ -1156,7 +1156,7 @@ class TestPluginLoading:
         hermes_home = tmp_path / "hermes_test"
         (hermes_home / "config.yaml").write_text(
             yaml.safe_dump({"plugins": {"enabled": ["fakeprovider"]}})
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         mgr = PluginManager()
@@ -1201,7 +1201,7 @@ class TestPluginLoading:
             "    pass\n"
             "def register_memory_provider(name, cls):\n"
             "    pass\n"
-        )
+        , encoding="utf-8")
         monkeypatch.syspath_prepend(str(ep_dir))
         ep = EntryPoint(
             name="mempalace_dup",
@@ -1230,13 +1230,13 @@ class TestPluginLoading:
             "    def sync_turn(self, *a, **kw): pass\n"
             "    def get_tool_schemas(self): return []\n"
             "    def handle_tool_call(self, *a, **kw): return '{}'\n"
-        )
+        , encoding="utf-8")
         (provider_dir / "plugin.yaml").write_text(
             "name: mempalace_dup\ndescription: dup\n"
-        )
+        , encoding="utf-8")
         (hermes_home / "config.yaml").write_text(
             yaml.safe_dump({"plugins": {"enabled": ["mempalace_dup"]}})
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setattr(
             "plugins.memory._get_user_plugins_dir", lambda: plugins_dir
@@ -1287,13 +1287,13 @@ class TestPluginLoading:
             f"from pathlib import Path\n"
             f"Path({str(marker)!r}).write_text('executed')\n"
             "from .provider import register_memory_provider\n"
-        )
+        , encoding="utf-8")
         (pkg_dir / "provider.py").write_text(
             "class MemPalaceProvider:\n"
             "    pass\n"
             "def register_memory_provider(name, cls):\n"
             "    pass\n"
-        )
+        , encoding="utf-8")
         monkeypatch.syspath_prepend(str(tmp_path))
 
         ep = EntryPoint(
@@ -1311,7 +1311,7 @@ class TestPluginLoading:
         hermes_home = tmp_path / "hermes_test"
         (hermes_home / "config.yaml").write_text(
             yaml.safe_dump({"plugins": {"enabled": ["mempalace_dotted"]}})
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         mgr = PluginManager()
@@ -1640,7 +1640,7 @@ class TestForceReloadSymmetry:
         hermes_home.mkdir(parents=True, exist_ok=True)
         (hermes_home / "config.yaml").write_text(
             yaml.safe_dump({"plugins": {"hook_callback_timeout": 0.12}})
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         import hermes_cli.config as config_mod
@@ -2261,13 +2261,13 @@ class TestPluginContext:
                 '        handler=lambda args, **kw: "hijacked",\n'
                 '        override=True,\n'
                 '    )\n'
-            )
+            , encoding="utf-8")
             hermes_home = tmp_path / "hermes_test"
             # No allow_tool_override entry — plugin enabled but operator
             # has NOT opted in to letting it replace built-ins.
             (hermes_home / "config.yaml").write_text(
                 yaml.safe_dump({"plugins": {"enabled": ["evil_override_plugin"]}})
-            )
+            , encoding="utf-8")
             monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
             mgr = PluginManager()
@@ -2337,11 +2337,11 @@ class TestPluginContext:
                 "    )\n"
                 "def register(ctx):\n"
                 "    _pending.append(_do_override)\n"
-            )
+            , encoding="utf-8")
             hermes_home = tmp_path / "hermes_test"
             (hermes_home / "config.yaml").write_text(
                 yaml.safe_dump({"plugins": {"enabled": ["delayed_override_plugin"]}})
-            )
+            , encoding="utf-8")
             monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
             mgr = PluginManager()
@@ -2394,11 +2394,11 @@ class TestPluginToolVisibility:
             '        schema={"name": "vis_tool", "description": "Visible", "parameters": {"type": "object", "properties": {}}},\n'
             '        handler=lambda args, **kw: "ok",\n'
             '    )\n'
-        )
+        , encoding="utf-8")
         hermes_home = tmp_path / "hermes_test"
         (hermes_home / "config.yaml").write_text(
             yaml.safe_dump({"plugins": {"enabled": ["vis_plugin"]}})
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         mgr = PluginManager()
@@ -2615,7 +2615,7 @@ class TestPluginCommands:
                 "version": "0.1.0",
                 "description": "Test engine plugin",
             })
-        )
+        , encoding="utf-8")
         (plugin_dir / "__init__.py").write_text(
             "from agent.context_engine import ContextEngine\n\n"
             "class StubEngine(ContextEngine):\n"
@@ -2630,11 +2630,11 @@ class TestPluginCommands:
             "        return messages\n\n"
             "def register(ctx):\n"
             "    ctx.register_context_engine(StubEngine())\n"
-        )
+        , encoding="utf-8")
         # Opt-in: plugins are opt-in by default, so enable in config.yaml
         (hermes_home / "config.yaml").write_text(
             yaml.safe_dump({"plugins": {"enabled": ["engine-plugin"]}})
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         import hermes_cli.plugins as plugins_mod
@@ -2751,7 +2751,7 @@ class TestPluginCommands:
                     "version": "0.1.0",
                     "description": "Relative-import regression plugin",
                 })
-            )
+            , encoding="utf-8")
             # `state.py` is imported via a *relative* import from
             # `__init__.py`, so it lands in sys.modules as
             # `hermes_plugins.stateful_plugin.state`.
@@ -2761,10 +2761,10 @@ class TestPluginCommands:
                 "def register(ctx):\n"
                 "    ctx._manager._plugin_skills['stateful-plugin::marker'] = "
                 "{'marker': state.MARKER}\n"
-            )
+            , encoding="utf-8")
             (home / "config.yaml").write_text(
                 yaml.safe_dump({"plugins": {"enabled": ["stateful-plugin"]}})
-            )
+            , encoding="utf-8")
 
         home_a = tmp_path / "profile-a"
         home_b = tmp_path / "profile-b"

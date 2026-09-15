@@ -161,7 +161,7 @@ def test_pin_is_withheld_when_the_churn_cannot_be_cleared(tmp_path: Path) -> Non
     shim = tmp_path / "git-no-checkout"
     shim.write_text(
         '#!/bin/sh\nfor a in "$@"; do [ "$a" = checkout ] && exit 1; done\nexec git "$@"\n'
-    )
+    , encoding="utf-8")
     shim.chmod(0o755)
 
     _normalize_managed_eol([str(shim)], repo)

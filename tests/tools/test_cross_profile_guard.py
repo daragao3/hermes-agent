@@ -27,7 +27,7 @@ def fake_hermes(tmp_path, monkeypatch):
     (root / "skills" / "shared-skill").mkdir(parents=True)
     (root / "skills" / "shared-skill" / "SKILL.md").write_text(
         "---\nname: shared-skill\ndescription: default copy.\n---\n"
-    )
+    , encoding="utf-8")
 
     sec_home = root / "profiles" / "hermes-security"
     (sec_home / "skills").mkdir(parents=True)
@@ -155,7 +155,7 @@ class TestSkillManageCrossProfileErrorUX:
         d.mkdir(parents=True, exist_ok=True)
         (d / "SKILL.md").write_text(
             f"---\nname: {name}\ndescription: a skill.\n---\n"
-        )
+        , encoding="utf-8")
 
     def test_error_names_other_profile_when_skill_lives_there(
         self, fake_hermes, monkeypatch

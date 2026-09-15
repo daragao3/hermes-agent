@@ -461,7 +461,7 @@ def test_live_temp_home_fixture_plugin_routes_and_hardline_stays_core_owned(
                 "description": "approval transport fixture",
             }
         )
-    )
+    , encoding="utf-8")
     (plugin_dir / "__init__.py").write_text(
         """import json
 import os
@@ -484,7 +484,7 @@ def present(request):
 def register(ctx):
     ctx.register_approval_transport("fixture", present)
 """
-    )
+    , encoding="utf-8")
     home.mkdir(exist_ok=True)
     (home / "config.yaml").write_text(
         yaml.safe_dump(
@@ -497,7 +497,7 @@ def register(ctx):
                 },
             }
         )
-    )
+    , encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setenv("HERMES_BUNDLED_PLUGINS", str(bundled))
     monkeypatch.delenv("HERMES_GATEWAY_SESSION", raising=False)

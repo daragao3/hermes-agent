@@ -306,7 +306,7 @@ def test_model_flow_nous_does_not_restore_stale_custom_api_key(tmp_path, monkeyp
             },
             sort_keys=False,
         )
-    )
+    , encoding="utf-8")
 
     stale_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     selected_model = "deepseek/deepseek-v4-flash"
@@ -376,7 +376,7 @@ def _seed_stale_custom_model(tmp_path, monkeypatch):
             },
             sort_keys=False,
         )
-    )
+    , encoding="utf-8")
     (config_home / ".env").write_text("", encoding="utf-8")
     return config_path
 

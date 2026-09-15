@@ -130,7 +130,7 @@ class TestCollectInlineCatalog:
             d.mkdir(parents=True)
             (d / "SKILL.md").write_text(
                 f"---\nname: {n}\ndescription: test skill {n}\n---\n# {n}\n"
-            )
+            , encoding="utf-8")
         # SKILLS_DIR is resolved at import time — in a full-suite run it
         # points at an earlier test's HERMES_HOME, so pin it (both the
         # scanner in agent.skill_commands and the prefix allowlist in

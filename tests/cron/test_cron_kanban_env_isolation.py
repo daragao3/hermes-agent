@@ -397,7 +397,7 @@ def test_dispatcher_grants_only_the_assigned_worker_scope(tmp_path, monkeypatch)
         f"#!{sys.executable}\nimport sys, os, json;sys.path.insert(0, {root!r})\n"
         "from tools.kanban_tools import _handle_complete\n"
         f"result=_handle_complete({{'summary':'assigned worker'}});open({str(output)!r}, 'w').write(result)\n"  # windows-footgun: ok -- source of a probe script written to a temp file, not a call
-    )
+    , encoding="utf-8")
     worker.chmod(0o700)
     monkeypatch.setenv("HERMES_BIN", str(worker))
     # Building a new worker under an existing task must replace, not inherit, its scope.

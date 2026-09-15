@@ -49,7 +49,7 @@ def hermes_auth_only_env(tmp_path, monkeypatch):
                 "last_refresh": "2026-04-12T00:00:00Z",
             }
         },
-    }))
+    }), encoding="utf-8")
 
     for var in [
         "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
@@ -88,7 +88,7 @@ def claude_code_only_env(tmp_path, monkeypatch):
 
     (hermes_home / "auth.json").write_text(
         json.dumps({"version": 2, "providers": {}})
-    )
+    , encoding="utf-8")
 
     # Claude Code credentials in the correct format
     claude_dir = tmp_path / ".claude"
@@ -99,7 +99,7 @@ def claude_code_only_env(tmp_path, monkeypatch):
             "refreshToken": "fake-refresh",
             "expiresAt": int(time.time() * 1000) + 3_600_000,
         }
-    }))
+    }), encoding="utf-8")
 
     # Patch Path.home() so the adapter finds the file
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
@@ -142,7 +142,7 @@ def test_no_codex_when_no_credentials(tmp_path, monkeypatch):
 
     (hermes_home / "auth.json").write_text(
         json.dumps({"version": 2, "providers": {}})
-    )
+    , encoding="utf-8")
 
     for var in [
         "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",

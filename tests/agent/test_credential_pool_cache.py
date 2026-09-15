@@ -29,7 +29,7 @@ def hermes_home(tmp_path, monkeypatch) -> Path:
         "version": 1,
         "providers": {},
         "credential_pool": {"openai-codex": []},
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
     return home
 

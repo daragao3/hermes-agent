@@ -499,7 +499,7 @@ class TestCodexOAuthContextLength:
         cache_file.write_text(_yaml.dump({"context_lengths": {
             stale_key: stale_context,
             other_key: 128_000,
-        }}))
+        }}), encoding="utf-8")
 
         fake_response = MagicMock()
         fake_response.status_code = 200
@@ -958,7 +958,7 @@ class TestNousPortalContextResolution:
         cache_file.write_text(yaml.dump({"context_lengths": {
             stale_key: 1_000_000,     # pre-fix OR-derived value
             other_key: 128_000,       # unrelated, must survive
-        }}))
+        }}), encoding="utf-8")
 
         mock_portal.return_value = {
             "qwen3.6-plus": {"context_length": 262_144},

@@ -93,7 +93,7 @@ def codex_auth_dir(tmp_path, monkeypatch):
             "access_token": "codex-test-token-abc123",
             "refresh_token": "codex-refresh-xyz",
         }
-    }))
+    }), encoding="utf-8")
     monkeypatch.setattr(
         "agent.auxiliary_client._read_codex_access_token",
         lambda: "codex-test-token-abc123",
@@ -318,7 +318,7 @@ class TestMoaAggregatorSharedResolution:
                     }
                 }
             )
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
         return home
 
@@ -527,7 +527,7 @@ class TestReadCodexAccessToken:
                     "tokens": {"access_token": "tok-123", "refresh_token": "r-456"},
                 },
             },
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         result = _read_codex_access_token()
         assert result == "tok-123"
@@ -558,7 +558,7 @@ class TestReadCodexAccessToken:
                     "tokens": {"access_token": expired_jwt, "refresh_token": "r"},
                 },
             },
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         with patch("agent.auxiliary_client._select_pool_entry", return_value=(False, None)):
             result = _read_codex_access_token()
@@ -583,7 +583,7 @@ class TestReadCodexAccessToken:
                     "tokens": {"access_token": valid_jwt, "refresh_token": "r"},
                 },
             },
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         result = _read_codex_access_token()
         assert result == valid_jwt
@@ -606,7 +606,7 @@ class TestResolveXaiOAuthForAux:
         (hermes_home / "auth.json").write_text(json.dumps({
             "version": 1,
             "providers": {},
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.delenv("HERMES_XAI_BASE_URL", raising=False)
         monkeypatch.delenv("XAI_BASE_URL", raising=False)
@@ -638,7 +638,7 @@ class TestResolveXaiOAuthForAux:
         (hermes_home / "auth.json").write_text(json.dumps({
             "version": 1,
             "providers": {},
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setenv("HERMES_XAI_BASE_URL", "https://example.x.ai/v1/")
 
@@ -892,7 +892,7 @@ class TestExpiredCodexFallback:
                     "tokens": {"access_token": expired_jwt, "refresh_token": "r"},
                 },
             },
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         # Set up Anthropic as fallback
@@ -943,7 +943,7 @@ class TestExpiredCodexFallback:
                     "tokens": {"access_token": expired_jwt, "refresh_token": "r"},
                 },
             },
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
 

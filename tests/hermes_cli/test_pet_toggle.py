@@ -22,7 +22,7 @@ def boba_installed(tmp_path, monkeypatch):
     sheet.save(pet_dir / "spritesheet.webp")
     (pet_dir / "pet.json").write_text(
         '{"id":"boba","displayName":"Boba","description":"d","spritesheetPath":"spritesheet.webp"}'
-    )
+    , encoding="utf-8")
     return home
 
 

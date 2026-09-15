@@ -149,7 +149,7 @@ class TestResolveProviderClientNamedCustom:
                     }
                 ]
             },
-        }))
+        }), encoding="utf-8")
         from agent.auxiliary_client import resolve_provider_client
         client, _model = resolve_provider_client("b-ai", "b-ai-model")
         assert client is not None

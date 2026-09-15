@@ -132,7 +132,7 @@ def main():
                     helper = home / "mint.py"
                     helper.write_text("from pathlib import Path\n"
                                       f"with Path({str(mint_log)!r}).open('a') as f: f.write('mint\\n')\n"
-                                      f"print({TOKEN!r})\n")
+                                      f"print({TOKEN!r})\n", encoding="utf-8")
                     entry = {"name": "Live Keycmd", "base_url": f"http://127.0.0.1:{server.server_port}/v1",
                              "key_cmd": f"{shlex.quote(sys.executable)} {shlex.quote(str(helper))}",
                              "model": CATALOG[0], "models": {CATALOG[0]: {}},

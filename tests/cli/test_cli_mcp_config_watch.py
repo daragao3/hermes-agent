@@ -84,7 +84,7 @@ class TestMCPConfigWatch:
         cfg_file.write_text(yaml.dump({
             "mcp": {"auto_reload_on_config_change": False},
             "mcp_servers": {"github": {"url": "https://mcp.github.com"}},
-        }))
+        }), encoding="utf-8")
         obj._config_mtime = 0.0  # force stale mtime
 
         with patch("hermes_cli.config.get_config_path", return_value=cfg_file):
@@ -107,7 +107,7 @@ class TestMCPConfigWatch:
         cfg_file.write_text(yaml.dump({
             "mcp": {"auto_reload_on_config_change": False},
             "mcp_servers": {"github": {"url": "https://mcp.github.com"}},
-        }))
+        }), encoding="utf-8")
         obj._config_mtime = 0.0
 
         with patch("hermes_cli.config.get_config_path", return_value=cfg_file):
@@ -136,7 +136,7 @@ class TestMCPConfigWatch:
         cfg_file.write_text(yaml.dump({
             "auxiliary": {"mcp": {"auto_reload_on_config_change": False}},
             "mcp_servers": {"github": {"url": "https://mcp.github.com"}},
-        }))
+        }), encoding="utf-8")
         obj._config_mtime = 0.0
 
         with patch("hermes_cli.config.get_config_path", return_value=cfg_file):
@@ -181,7 +181,7 @@ class TestMCPConfigWatch:
         cfg_file.write_text(yaml.dump({
             "agent": {"reasoning_effort": "high"},
             "mcp_servers": raw_servers,
-        }))
+        }), encoding="utf-8")
         obj._config_mtime = 0.0
 
         with patch("hermes_cli.config.get_config_path", return_value=cfg_file):

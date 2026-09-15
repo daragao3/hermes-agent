@@ -20,7 +20,7 @@ def _write_plugin_config(tmp_path, monkeypatch, entry: dict) -> None:
     hermes_home.mkdir()
     (hermes_home / "config.yaml").write_text(
         yaml.safe_dump({"plugins": {"entries": {"notify-plugin": entry}}})
-    )
+    , encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
 

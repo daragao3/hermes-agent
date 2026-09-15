@@ -29,7 +29,7 @@ def _write_plugin(base, name, manifest_extra=None, register_body="pass"):
     (plugin_dir / "plugin.yaml").write_text(yaml.dump(manifest), encoding="utf-8")
     (plugin_dir / "__init__.py").write_text(
         f"def register(ctx):\n    {register_body}\n"
-    )
+    , encoding="utf-8")
     return plugin_dir
 
 

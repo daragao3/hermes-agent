@@ -214,7 +214,7 @@ class TestMountApiRoutesRefusesUntrusted:
         # short-circuit before the importer runs.
         (dash / "api.py").write_text(
             "from fastapi import APIRouter\nrouter = APIRouter()\n"
-        )
+        , encoding="utf-8")
         return {
             "name": "synthetic",
             "label": "Synthetic",

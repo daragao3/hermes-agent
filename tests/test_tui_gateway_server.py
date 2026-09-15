@@ -3087,7 +3087,7 @@ def test_expand_skill_invocation_for_replay_round_trips_the_projection(
     (skills_dir / "worktree-kickoff" / "SKILL.md").write_text(
         "---\nname: worktree-kickoff\ndescription: Spin up a worktree\n---\n\n"
         "# kickoff\n\nSPIN UP A WORKTREE, never the primary checkout.\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(skills_tool, "SKILLS_DIR", skills_dir)
     monkeypatch.setattr(skill_utils, "get_external_skills_dirs", lambda *a, **k: [])
     monkeypatch.setattr(skill_commands, "_skill_commands", {})
@@ -8367,7 +8367,7 @@ def test_config_get_approval_mode_uses_smart_default_when_key_is_missing(
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     (tmp_path / "config.yaml").write_text(
         yaml.safe_dump({"approvals": {"timeout": 15}})
-    )
+    , encoding="utf-8")
 
     response = server.handle_request(
         {"id": "1", "method": "config.get", "params": {"key": "approvals.mode"}}
@@ -8388,7 +8388,7 @@ def test_config_get_approval_mode_fails_safe_to_manual_for_invalid_explicit_valu
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     (tmp_path / "config.yaml").write_text(
         yaml.safe_dump({"approvals": {"mode": "sometimes"}})
-    )
+    , encoding="utf-8")
 
     response = server.handle_request(
         {"id": "1", "method": "config.get", "params": {"key": "approvals.mode"}}
@@ -8405,7 +8405,7 @@ def test_config_get_approval_mode_normalizes_yaml_off(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     (tmp_path / "config.yaml").write_text(
         yaml.safe_dump({"approvals": {"mode": False}})
-    )
+    , encoding="utf-8")
 
     response = server.handle_request(
         {"id": "1", "method": "config.get", "params": {"key": "approvals.mode"}}
@@ -8457,7 +8457,7 @@ def test_pet_gallery_quoted_false_enabled_reports_disabled(tmp_path, monkeypatch
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     (tmp_path / "config.yaml").write_text(
         yaml.safe_dump({"display": {"pet": {"enabled": "false"}}})
-    )
+    , encoding="utf-8")
 
     response = server.handle_request(
         {"id": "1", "method": "pet.gallery", "params": {}}
@@ -8803,7 +8803,7 @@ def test_config_set_details_mode_pins_all_sections(tmp_path, monkeypatch):
         yaml.safe_dump(
             {"display": {"sections": {"tools": "expanded", "activity": "hidden"}}}
         )
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(server, "_hermes_home", tmp_path)
 
     resp = server.handle_request(
@@ -8852,7 +8852,7 @@ def test_config_set_section_clears_override_on_empty_value(tmp_path, monkeypatch
         yaml.safe_dump(
             {"display": {"sections": {"activity": "hidden", "tools": "expanded"}}}
         )
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(server, "_hermes_home", tmp_path)
 
     resp = server.handle_request(
@@ -19990,7 +19990,7 @@ def test_persist_model_switch_preserves_sibling_model_keys(tmp_path, monkeypatch
         "    - claude-haiku\n"
         "agent:\n"
         "  system_prompt: keepme\n"
-    )
+    , encoding="utf-8")
     # save_config_value() resolves the config path from get_hermes_home() (live
     # env var), always targeting HERMES_HOME/config.yaml — point it at tmp_path.
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
@@ -20025,7 +20025,7 @@ def test_persist_model_switch_clears_stale_base_url(tmp_path, monkeypatch):
         "  default: local-model\n"
         "  provider: custom:mylocal\n"
         "  base_url: http://localhost:1234/v1\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.setattr(cli, "_hermes_home", tmp_path)
 

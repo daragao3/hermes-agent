@@ -191,7 +191,7 @@ class TestFindAllSkills:
             git_dir.mkdir(parents=True)
             (git_dir / "SKILL.md").write_text(
                 "---\nname: fake\ndescription: x\n---\n\nBody.\n"
-            )
+            , encoding="utf-8")
             # Neither are skills vendored inside a nested virtualenv.
             typer_skill = (
                 tmp_path
@@ -223,12 +223,12 @@ class TestFindAllSkills:
         no_desc.mkdir()
         (no_desc / "SKILL.md").write_text(
             "---\nname: no-desc\n---\n\n# Heading\n\nFirst paragraph.\n"
-        )
+        , encoding="utf-8")
         long_dir = tmp_path / "long-desc"
         long_dir.mkdir()
         (long_dir / "SKILL.md").write_text(
             f"---\nname: long\ndescription: {'x' * (MAX_DESCRIPTION_LENGTH + 100)}\n---\n\nBody.\n"
-        )
+        , encoding="utf-8")
 
         with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
             skills = {s["name"]: s for s in _find_all_skills()}
@@ -321,7 +321,7 @@ class TestSkillView:
                 "---\n\n"
                 "# real-skill-name\n\n"
                 "Step 1: Do the thing.\n"
-            )
+            , encoding="utf-8")
             by_dir = json.loads(skill_view("my-skill"))
             by_name = json.loads(skill_view("real-skill-name"))
 

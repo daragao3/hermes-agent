@@ -26,7 +26,7 @@ class TestRealProfilePin:
         (root / "Crashpad").mkdir()
         (root / "Local State").write_text(
             json.dumps({"os_crypt": {}, "profile": {"last_used": last_used}})
-        )
+        , encoding="utf-8")
         return root
 
     def test_pin_wins_over_last_used(self, tmp_path, monkeypatch):
@@ -84,7 +84,7 @@ class TestRealProfilePin:
         # User browses HM (Profile 4) in between; last_used flips.
         (src / "Local State").write_text(
             json.dumps({"os_crypt": {}, "profile": {"last_used": "Profile 4"}})
-        )
+        , encoding="utf-8")
         _auth_db((src / "Profile 2" / "Cookies"), "cookies-Profile 2-v2")
 
         dst2, err2 = bc.snapshot_real_profile("chrome", src=str(src))

@@ -1607,7 +1607,7 @@ class TestWatchdogDailySummary:
         verbosity_path.parent.mkdir(parents=True, exist_ok=True)
         verbosity_path.write_text(json.dumps(
             {"watchdog_alerts": {"mode": "all"}}
-        ))
+        ), encoding="utf-8")
         sent = []
         notifier = TelegramNotifier(
             bus, topics_path=topics_config, verbosity_path=verbosity_path,
@@ -1631,7 +1631,7 @@ class TestWatchdogDailySummary:
         verbosity_path.parent.mkdir(parents=True, exist_ok=True)
         verbosity_path.write_text(json.dumps(
             {"watchdog_alerts": {"mode": "significant_only"}}
-        ))
+        ), encoding="utf-8")
         sent = []
         notifier = TelegramNotifier(
             bus, topics_path=topics_config, verbosity_path=verbosity_path,
@@ -1665,7 +1665,7 @@ class TestWatchdogDailySummary:
         verbosity_path.parent.mkdir(parents=True, exist_ok=True)
         verbosity_path.write_text(json.dumps(
             {"watchdog_alerts": {"mode": "digest_only"}}
-        ))
+        ), encoding="utf-8")
         sent = []
         notifier = TelegramNotifier(
             bus, topics_path=topics_config, verbosity_path=verbosity_path,
@@ -1692,7 +1692,7 @@ class TestWatchdogDailySummary:
         verbosity_path.parent.mkdir(parents=True, exist_ok=True)
         verbosity_path.write_text(json.dumps(
             {"watchdog_alerts": {"mode": "digest_only"}}
-        ))
+        ), encoding="utf-8")
         sent = []
         notifier = TelegramNotifier(
             bus, topics_path=topics_config, verbosity_path=verbosity_path,
@@ -1732,7 +1732,7 @@ class TestWatchdogDailySummary:
         verbosity_path.parent.mkdir(parents=True, exist_ok=True)
         verbosity_path.write_text(json.dumps(
             {"jobflow_firehose": {"mode": "digest_only"}}
-        ))
+        ), encoding="utf-8")
         sent = []
         notifier = TelegramNotifier(
             bus, topics_path=topics_config, verbosity_path=verbosity_path,
@@ -1765,9 +1765,9 @@ def test_notifier_restores_batch_buffer_on_restart(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     (tmp_path / "telegram").mkdir()
     (tmp_path / "telegram" / "topics.json").write_text(
-        '{"group_chat_id": "-1", "topics": {"system": {"thread_id": 15}}}')
+        '{"group_chat_id": "-1", "topics": {"system": {"thread_id": 15}}}', encoding="utf-8")
     (tmp_path / "telegram" / "verbosity.json").write_text(
-        '{"system": {"mode": "all"}}')
+        '{"system": {"mode": "all"}}', encoding="utf-8")
     from events.bus import EventBus
     from events.subscribers.telegram_notifier import TelegramNotifier
     bus = EventBus(db_path=tmp_path / "db.sqlite")
@@ -1793,9 +1793,9 @@ class TestBatchAgeSurvivesRestart:
     def _write_configs(self, tmp_path):
         (tmp_path / "telegram").mkdir(exist_ok=True)
         (tmp_path / "telegram" / "topics.json").write_text(
-            '{"group_chat_id": "-1", "topics": {"system": {"thread_id": 15}}}')
+            '{"group_chat_id": "-1", "topics": {"system": {"thread_id": 15}}}', encoding="utf-8")
         (tmp_path / "telegram" / "verbosity.json").write_text(
-            '{"system": {"mode": "all"}}')
+            '{"system": {"mode": "all"}}', encoding="utf-8")
 
     def _write_batch_state(self, tmp_path, state):
         path = tmp_path / "notifications" / "notifier_batch.json"

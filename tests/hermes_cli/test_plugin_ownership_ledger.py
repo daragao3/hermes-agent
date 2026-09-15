@@ -24,7 +24,7 @@ def _write_plugin(hermes_home: Path) -> None:
                 "description": "ownership ledger probe",
             }
         )
-    )
+    , encoding="utf-8")
     (plugin_dir / "SKILL.md").write_text("# Ledger probe\n", encoding="utf-8")
     (plugin_dir / "__init__.py").write_text(
         "from pathlib import Path\n"
@@ -76,10 +76,10 @@ def _write_plugin(hermes_home: Path) -> None:
         "        'ledger_probe_transport', lambda request: 'deny',\n"
         "    )\n"
         "    ctx.on_unload(lambda: UNLOADED.append('ledger_probe'))\n"
-    )
+    , encoding="utf-8")
     (hermes_home / "config.yaml").write_text(
         yaml.safe_dump({"plugins": {"enabled": ["ledger_probe"]}})
-    )
+    , encoding="utf-8")
 
 
 def _write_profile_probe(hermes_home: Path, marker: str) -> None:
@@ -93,7 +93,7 @@ def _write_profile_probe(hermes_home: Path, marker: str) -> None:
                 "description": f"profile probe {marker}",
             }
         )
-    )
+    , encoding="utf-8")
     (plugin_dir / "__init__.py").write_text(
         "def register(ctx):\n"
         "    ctx.register_tool(\n"
@@ -108,10 +108,10 @@ def _write_profile_probe(hermes_home: Path, marker: str) -> None:
         f"        adapter_factory=lambda config: {marker!r},\n"
         "        check_fn=lambda: True,\n"
         "    )\n"
-    )
+    , encoding="utf-8")
     (hermes_home / "config.yaml").write_text(
         yaml.safe_dump({"plugins": {"enabled": ["profile_probe"]}})
-    )
+    , encoding="utf-8")
 
 
 def test_load_force_reload_and_unload_remove_every_manager_registration(

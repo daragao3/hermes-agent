@@ -571,13 +571,19 @@ FOOTGUNS: list[Footgun] = [
     ),
     Footgun(
         name="bare Path.read_text()/write_text() without encoding=",
+        multiline_encoding_aware=True,
         # Match ``.read_text(`` / ``.write_text(`` when the same line does
-        # not pass ``encoding=``. Multi-line calls where encoding= sits on
-        # a later line are handled by the post_filter's lookahead-free
-        # heuristic accepting a small false-negative rate — the AST guard
-        # test in tests/gateway/test_gateway_utf8_encoding.py catches the
-        # gateway/adapters exactly, and this rule catches the common
-        # single-line form everywhere else.
+        # not pass ``encoding=``. A call that wraps is re-checked against its
+        # full paren span (multiline_encoding_aware) and dropped only when
+        # ``encoding=`` is genuinely in there -- the same filter the open()
+        # and subprocess rules use. Until 2026-09-15 this rule instead
+        # exempted EVERY multi-line call on shape alone; switching it
+        # surfaced 600 wrapped read_text/write_text calls in tests/ and
+        # evals/ with no encoding= anywhere, swept in the same change, plus
+        # two the old shape test hid outright: ``write_text("def broken(\n")``
+        # (a ``(`` inside the string made the line look unclosed) and a
+        # 23-line ``write_text(<child script>)`` whose script TEXT mentioned
+        # encoding= (the old span walk did not track string state).
         pattern=re.compile(r"\.(read_text|write_text)\s*\("),
         message=(
             "Path.read_text()/write_text() without encoding= uses "
@@ -591,22 +597,10 @@ FOOTGUNS: list[Footgun] = [
             "encoding=" not in line
             and "encoding =" not in line
             and not _looks_like_string_literal(line, m)
-            # Skip calls that continue onto the next line — if the call's
-            # own closing paren isn't on this line, encoding= may follow
-            # on a later line. Balance parens from the call opener instead
-            # of requiring the line to END with ``)`` so chained forms like
-            # ``read_text()[:4000]`` / ``read_text().splitlines()`` are
-            # still caught. AST-level enforcement for multi-line calls
-            # lives in the gateway guard test.
-            #
-            # NOT switched to multiline_encoding_aware (2026-09-15), on
-            # purpose: measured on the current tree, span-checking this rule
-            # instead of skipping multi-line calls surfaces 600 findings
-            # (tests/ and evals/ read_text calls wrapped without encoding=).
-            # That is a backlog to sweep under its own claim, not a filter
-            # change to slip into a blocking gate. Once swept, drop this
-            # line and set the flag -- the mechanism is already in place.
-            and _call_closes_on_line(line, m.end())
+            # Chained forms like ``read_text()[:4000]`` / ``.splitlines()``
+            # close on the line and are caught here; a wrapped call goes
+            # through _encoding_in_call_span. AST-level enforcement for the
+            # gateway/adapters lives in tests/gateway/test_gateway_utf8_encoding.py.
         ),
     ),
 ]
@@ -921,9 +915,12 @@ def _is_likely_subprocess_call(line: str) -> bool:
 
 def _call_closes_on_line(line: str, open_paren_end: int) -> bool:
     """True when the call whose ``(`` sits at ``open_paren_end - 1`` closes
-    on this same line (paren-balance walk). Multi-line calls return False —
-    the missing ``encoding=`` may sit on a continuation line, so the caller
-    should skip them rather than false-positive."""
+    on this same line (naive paren-balance walk -- a ``(`` inside a string
+    counts, so ``write_text("def broken(\n")`` reads as unclosed). Used only
+    to decide whether a match needs the span walk in
+    ``_encoding_in_call_span``; it is NOT a filter on its own. It was one for
+    the read_text rule until 2026-09-15, which exempted every wrapped call on
+    shape alone and hid a 600-site backlog plus two footguns outright."""
     depth = 1
     for ch in line[open_paren_end:]:
         if ch == "(":
@@ -944,8 +941,8 @@ def _call_closes_on_line(line: str, open_paren_end: int) -> bool:
 # positive; the repo carried four, all resolved by hand with suppression
 # markers.
 #
-# The tempting fix -- give these rules the read_text rule's
-# `_call_closes_on_line` filter, i.e. skip every multi-line call -- was
+# The tempting fix -- give these rules the `_call_closes_on_line` filter the
+# read_text rule then had, i.e. skip every multi-line call -- was
 # MEASURED AND REJECTED. A/B of both scanners over the pre-sweep tree
 # (9c5250323c, 2996 findings / 6651 files) lost exactly six findings: two
 # false positives, and FOUR GENUINE FOOTGUNS -- the very calls the tests/evals
@@ -958,10 +955,14 @@ def _call_closes_on_line(line: str, open_paren_end: int) -> bool:
 # the per-line prefilter that already rejects ~99.8% of lines.
 # ---------------------------------------------------------------------------
 
-# Upper bound on continuation lines inspected for one call. Far above the
-# widest real call site (the widest in-repo is 3 lines); the bound exists so a
-# runaway unbalanced-paren walk cannot read to end of file on every match.
-_MAX_CALL_SPAN_LINES = 40
+# Upper bound on continuation lines inspected for one call. Above the widest
+# real call site (the widest in-repo, measured 2026-09-15, is a 76-line
+# ``write_text(textwrap.dedent("""<child script>"""), encoding="utf-8")`` in
+# tests/tools/test_mcp_discovery_cross_process.py -- the 40-line bound this
+# started with reported that correct call); the bound exists so a runaway
+# unbalanced-paren walk cannot read to end of file on every match. A call
+# wider than this is reported and needs a `# windows-footgun: ok` marker.
+_MAX_CALL_SPAN_LINES = 200
 
 
 def _encoding_in_call_span(
@@ -974,13 +975,22 @@ def _encoding_in_call_span(
     paren depth 1 inside the call. Walks forward balancing parens until the
     call closes, and reports whether any line of the span passes ``encoding=``.
 
-    Comments are stripped before the test, so explanatory prose that merely
-    mentions ``encoding=`` cannot suppress a real finding. Returns False if the
-    call does not close within ``_MAX_CALL_SPAN_LINES`` -- an unterminated walk
-    is reported as "no encoding found", which keeps the finding rather than
-    silently dropping it.
+    The walk tracks string-literal state ACROSS lines (single, double and
+    triple quotes, with backslash escapes), so a ``)`` inside a string
+    argument cannot close the span early and a ``#`` inside one is not a
+    comment. Measured 2026-09-15 on the read_text sweep: three correctly
+    written ``write_text(<shell script>, encoding="utf-8")`` calls were
+    reported because a ``case ... )`` in the script text closed the walk
+    before the kwarg line. Comments are still dropped, so explanatory prose
+    that merely mentions ``encoding=`` cannot suppress a real finding, and
+    ``encoding=`` INSIDE a string literal does not count either.
+
+    Returns False if the call does not close within ``_MAX_CALL_SPAN_LINES``
+    -- an unterminated walk is reported as "no encoding found", which keeps
+    the finding rather than silently dropping it.
     """
     depth = 1
+    quote = ""  # "", "'", '"', "'''" or '"""' while inside a string literal
     segment = lines[start_idx][open_paren_end:]
     for offset in range(_MAX_CALL_SPAN_LINES):
         idx = start_idx + offset
@@ -988,16 +998,39 @@ def _encoding_in_call_span(
             return False
         if offset:
             segment = lines[idx]
-        code = _strip_code(segment)
-        if "encoding=" in code or "encoding =" in code:
-            return True
-        for ch in code:
+        code_chars: list[str] = []
+        i = 0
+        n = len(segment)
+        while i < n:
+            ch = segment[i]
+            if quote:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if segment.startswith(quote, i):
+                    i += len(quote)
+                    quote = ""
+                    continue
+                i += 1
+                continue
+            if ch in "\"'":
+                quote = ch * 3 if segment.startswith(ch * 3, i) else ch
+                i += len(quote)
+                continue
+            if ch == "#":
+                break  # trailing comment: rest of the line is prose
+            code_chars.append(ch)
             if ch == "(":
                 depth += 1
             elif ch == ")":
                 depth -= 1
                 if depth == 0:
-                    return False
+                    code = "".join(code_chars)
+                    return "encoding=" in code or "encoding =" in code
+            i += 1
+        code = "".join(code_chars)
+        if "encoding=" in code or "encoding =" in code:
+            return True
     return False
 
 

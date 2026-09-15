@@ -2128,7 +2128,7 @@ def test_auto_saved_catalog_round_trips_without_pinning(tmp_path, monkeypatch):
         "custom_providers:\n"
         f"  - name: Local MLX\n    base_url: {_LOCAL_ENDPOINT}\n"
         "    model: omlx-model-1\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg_path), raising=False)
 
     _save_discovered_models_to_config(_LOCAL_ENDPOINT, list(_LOCAL_CATALOG))
@@ -2210,7 +2210,7 @@ def test_legacy_sentinel_catalog_still_resolves_and_migrates(tmp_path, monkeypat
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
         yaml.safe_dump({"custom_providers": [legacy_entry]})
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg_path), raising=False)
 
     _save_discovered_models_to_config(_LOCAL_ENDPOINT, list(_LOCAL_CATALOG))

@@ -155,7 +155,7 @@ class TestCheckpointNotify:
             "command": "sleep 999",
             "pid": os.getpid(),
             "task_id": "t1",
-        }]))
+        }]), encoding="utf-8")
         with patch("tools.process_registry.CHECKPOINT_PATH", checkpoint):
             recovered = registry.recover_from_checkpoint()
             assert recovered == 1

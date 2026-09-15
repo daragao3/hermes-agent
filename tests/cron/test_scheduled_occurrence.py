@@ -64,7 +64,7 @@ def test_completed_occurrence_survives_restart_and_prestamp_rollback(tmp_path, m
     (home / 'scripts').mkdir()
     script = home / 'scripts' / 'effect.py'
     script.write_text(f"from pathlib import Path\np = Path({str(effect)!r})\n"
-                      "with p.open('a') as f: f.write('effect\\n')\nprint('done')\n")
+                      "with p.open('a') as f: f.write('effect\\n')\nprint('done')\n", encoding="utf-8")
     slot = (now() - timedelta(minutes=30)).isoformat()
     job = {'id': 'occurrence', 'name': 'occurrence', 'prompt': '',
            'schedule': {'kind': 'interval', 'minutes': 240},

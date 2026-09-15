@@ -98,7 +98,7 @@ class TestModelResolution:
         import yaml
         (tmp_path / "config.yaml").write_text(
             yaml.safe_dump({"image_gen": {"openai": {"model": "gpt-image-2-low"}}})
-        )
+        , encoding="utf-8")
         model_id, meta = openai_plugin._resolve_model()
         assert model_id == "gpt-image-2-low"
         assert meta["quality"] == "low"
@@ -189,7 +189,7 @@ class TestGenerate:
         monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
         (tmp_path / "config.yaml").write_text(yaml.safe_dump({
             "image_gen": {"openai": {"model": tier}}
-        }))
+        }), encoding="utf-8")
         source = tmp_path / "source.png"
         source.write_bytes(bytes.fromhex(_PNG_HEX))
         fake_client = MagicMock()

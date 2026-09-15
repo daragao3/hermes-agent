@@ -687,7 +687,7 @@ class TestReviewBugFixes:
             (root / prof / "Network").mkdir(parents=True)
         (root / "Local State").write_text(
             '{"profile": {"last_used": "Profile 6"}}'
-        )
+        , encoding="utf-8")
         # Default is signed OUT (tracking cookies only); Profile 6 has the session.
         _auth_db((root / "Default" / "Cookies"), "default-tracking-only")
         _auth_db((root / "Profile 6" / "Cookies"), "PROFILE6-SESSION-AUTH")

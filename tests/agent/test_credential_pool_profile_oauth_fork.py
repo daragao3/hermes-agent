@@ -123,7 +123,7 @@ def _profile(fleet, name, **kw):
 def test_clone_all_strips_oauth_grant_but_keeps_api_keys(fleet):
     (fleet["root"] / ".anthropic_oauth.json").write_text(
         json.dumps({"accessToken": "sk-ant-oat01-AT0", "refreshToken": "sk-ant-ort-RT0", "expiresAt": 1})
-    )
+    , encoding="utf-8")
     pdir = _profile(fleet, "forge", clone_all=True)
     store = json.loads((pdir / "auth.json").read_text(encoding="utf-8"))
     assert "anthropic" not in store["credential_pool"], "OAuth grant was forked into the clone"
@@ -145,7 +145,7 @@ def test_strip_helper_drops_device_code_blocks_and_reports(tmp_path):
                 {"id": "key", "auth_type": "api_key", "access_token": "sk-ant-api03-x"},
             ],
         },
-    }))
+    }), encoding="utf-8")
     summary = strip_cloned_single_use_oauth_grants(pdir)
     store = json.loads((pdir / "auth.json").read_text(encoding="utf-8"))
     assert sorted(summary["pool"]) == ["anthropic", "xai-oauth"]
@@ -275,7 +275,7 @@ def test_borrower_prune_never_deletes_root_singleton_grant(fleet, tmp_path):
     (root / ".anthropic_oauth.json").write_text(json.dumps({
         "accessToken": "sk-ant-oat01-AT0", "refreshToken": "sk-ant-ort-RT0",
         "expiresAt": int((time.time() - 3600) * 1000),
-    }))
+    }), encoding="utf-8")
     store = json.loads((root / "auth.json").read_text(encoding="utf-8"))
     store["active_provider"] = "anthropic"
     del store["credential_pool"]["anthropic"]
@@ -525,7 +525,7 @@ def test_heal_leaves_a_different_account_alone(fleet):
             {"id": "kidk", "auth_type": "api_key", "priority": 1, "source": "manual",
              "access_token": "xai-static"},
         ]},
-    }))
+    }), encoding="utf-8")
     fleet["use"](kid)
     load_pool("xai-oauth")
     rows = (json.loads((kid / "auth.json").read_text(encoding="utf-8"))["credential_pool"])["xai-oauth"]
@@ -546,7 +546,7 @@ def test_heal_pkce_singleton_shape_commits_live_pair_to_root_singleton(fleet):
     (root / ".anthropic_oauth.json").write_text(json.dumps({
         "accessToken": "sk-ant-oat01-AT0", "refreshToken": "sk-ant-ort-RT0",
         "expiresAt": int((time.time() - 3600) * 1000),
-    }))
+    }), encoding="utf-8")
     fleet["use"](root)
     load_pool("anthropic")  # seeds root's hermes_pkce row from the singleton
 
@@ -557,7 +557,7 @@ def test_heal_pkce_singleton_shape_commits_live_pair_to_root_singleton(fleet):
     (kid / ".anthropic_oauth.json").write_text(json.dumps({
         "accessToken": "sk-ant-oat01-AT1", "refreshToken": "sk-ant-ort-RT1",
         "expiresAt": int((time.time() - 60) * 1000),
-    }))
+    }), encoding="utf-8")
     kstore = json.loads((kid / "auth.json").read_text(encoding="utf-8"))
     kstore["credential_pool"]["anthropic"][0].update(
         access_token="sk-ant-oat01-AT1", refresh_token="sk-ant-ort-RT1",
@@ -665,7 +665,7 @@ def test_heal_leaves_an_aliased_anthropic_singleton_alone(fleet):
     (root / ".anthropic_oauth.json").write_text(json.dumps({
         "accessToken": "AT-shared", "refreshToken": "RT-shared",
         "expiresAt": int((time.time() + 3600) * 1000),
-    }))
+    }), encoding="utf-8")
     kid = _profile(fleet, "kid")
     kid.mkdir(parents=True, exist_ok=True)
     (kid / "auth.json").write_text(json.dumps({"providers": {}, "credential_pool": {}}), encoding="utf-8")
@@ -745,7 +745,7 @@ def _kid_with_api_key_only(fleet, name="kid"):
             "id": "k1", "label": "static", "auth_type": "api_key",
             "priority": 0, "source": "manual", "access_token": "sk-local",
         }]},
-    }))
+    }), encoding="utf-8")
     return pdir
 
 

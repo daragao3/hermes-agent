@@ -957,7 +957,7 @@ def test_config_reads_dashboard_kanban_section(tmp_path, monkeypatch, client):
         "    lane_by_profile: false\n"
         "    include_archived_by_default: true\n"
         "    render_markdown: false\n"
-    )
+    , encoding="utf-8")
     r = client.get("/api/plugins/kanban/config")
     assert r.status_code == 200
     data = r.json()

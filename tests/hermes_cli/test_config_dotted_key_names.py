@@ -250,7 +250,7 @@ class TestAtomicRoundtripYamlUpdate:
             "  zai:\n"
             "    glm-5.3:\n"
             "      supports_reasoning: false\n"
-        )
+        , encoding="utf-8")
         atomic_roundtrip_yaml_update(
             path, "model_overrides.zai.glm-5.3.supports_reasoning", True
         )

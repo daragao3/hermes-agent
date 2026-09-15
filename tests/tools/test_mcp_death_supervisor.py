@@ -306,7 +306,7 @@ def test_reaps_a_grandchild_left_in_the_registered_group(tmp_path):
         "child = subprocess.Popen([sys.executable, '-c',"
         " 'import time; time.sleep(300)'])\n"
         "print(child.pid, flush=True)\n"
-    )
+    , encoding="utf-8")
 
     # start_new_session mirrors how the MCP SDK spawns stdio servers.
     server = subprocess.Popen(

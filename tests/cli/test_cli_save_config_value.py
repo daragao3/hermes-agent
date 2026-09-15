@@ -20,7 +20,7 @@ class TestSaveConfigValueAtomic:
         config_path.write_text(yaml.dump({
             "model": {"default": "test-model", "provider": "openrouter"},
             "display": {"skin": "default"},
-        }))
+        }), encoding="utf-8")
         # save_config_value resolves the target live via get_hermes_home(), so
         # point HERMES_HOME at the temp dir (the _hermes_home import-time
         # constant is no longer consulted).

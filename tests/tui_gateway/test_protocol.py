@@ -1304,10 +1304,10 @@ def test_slash_exec_scopes_skill_lookup_to_session_profile(server, tmp_path):
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
         "---\nname: b-only\ndescription: Only in profile b.\n---\n\n# b-only\n\nDo the thing.\n"
-    )
+    , encoding="utf-8")
     (profile_b / "config.yaml").write_text(
         f"skills:\n  external_dirs:\n    - {external_b}\n"
-    )
+    , encoding="utf-8")
 
     sid = "test-session-profile-b"
     server._sessions[sid] = {
@@ -1433,7 +1433,7 @@ def test_skin_live_switch_end_to_end(server, tmp_path, monkeypatch):
     (tmp_path / "skins").mkdir()
     (tmp_path / "skins" / "midnight.yaml").write_text(
         "name: midnight\ndescription: t\ncolors:\n  banner_title: '#00ffcc'\n  background: '#001010'\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(skin_engine, "get_hermes_home", lambda: tmp_path)
     monkeypatch.setattr(server, "_hermes_home", tmp_path)
     monkeypatch.setattr(server, "_last_skin_sig", None, raising=False)

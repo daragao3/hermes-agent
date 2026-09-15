@@ -344,7 +344,7 @@ async def test_compress_command_multiplexed_runs_under_profile_secret_scope(tmp_
     profile_home.mkdir(parents=True)
     (profile_home / ".env").write_text(
         "OPENROUTER_BASE_URL=https://scoped.example/v1\n"
-    )
+    , encoding="utf-8")
     runner._resolve_profile_home_for_source = MagicMock(return_value=profile_home)
 
     agent_instance = MagicMock()

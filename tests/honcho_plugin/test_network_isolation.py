@@ -68,7 +68,7 @@ class TestAmbientProductionConfig:
             "baseUrl": "http://localhost:8000",
             "workspace": "iris_curated_v1",
             "hosts": {"hermes": {"apiKey": "live-looking-key", "saveMessages": True}},
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
         fake = MagicMock()
         monkeypatch.setattr(session_module, "get_honcho_client", lambda *a, **k: fake)

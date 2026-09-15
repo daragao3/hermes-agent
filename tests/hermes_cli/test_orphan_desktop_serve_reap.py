@@ -151,13 +151,13 @@ def test_lock_owned_serve_pids_reads_valid_backend_lock(tmp_path):
     (lock_root / oid).mkdir(parents=True)
     (lock_root / oid / "backend.lock.json").write_text(
         json.dumps(_valid_lock_payload(7777, oid, nonce))
-    )
+    , encoding="utf-8")
     # A second, malformed lock (bad schemaVersion) must contribute nothing.
     other_oid = "e" * 32
     (lock_root / other_oid).mkdir(parents=True)
     (lock_root / other_oid / "backend.lock.json").write_text(
         json.dumps({**_valid_lock_payload(8888, other_oid, nonce), "schemaVersion": 99})
-    )
+    , encoding="utf-8")
     assert _lock_owned_serve_pids(base_dir=lock_root) == {7777}
 
 
@@ -356,7 +356,7 @@ def test_reap_spare_lock_owned_backend_even_without_exclude_match(tmp_path):
     (lock_root / oid).mkdir(parents=True)
     (lock_root / oid / "backend.lock.json").write_text(
         json.dumps(_valid_lock_payload(4242, oid, nonce))
-    )
+    , encoding="utf-8")
 
     scanned = [(4242, "hermes serve --host 127.0.0.1 --port 0")]
     terms: list[int] = []

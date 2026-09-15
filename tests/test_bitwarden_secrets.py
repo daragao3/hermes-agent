@@ -258,7 +258,7 @@ def test_env_loader_calls_bsm_when_enabled(tmp_path, monkeypatch):
         "    cache_ttl_seconds: 0\n"
         "    override_existing: false\n"
         "    auto_install: false\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setenv("BWS_ACCESS_TOKEN", "0.t")
     monkeypatch.delenv("MY_BSM_KEY", raising=False)
@@ -322,7 +322,7 @@ def test_disk_cache_key_mismatch_triggers_refetch(monkeypatch, tmp_path):
         "key": "deadbeef00000000|other-project|",
         "secrets": {"OTHER": "should-not-leak"},
         "fetched_at": time.time(),
-    }))
+    }), encoding="utf-8")
 
     secrets, _ = bw.fetch_bitwarden_secrets(
         access_token="0.t", project_id="proj-1", binary=fake_binary,
@@ -459,7 +459,7 @@ def _seed_stale_disk_cache(home, *, secrets, age_seconds, project_id="proj-1",
         "key": bw._cache_key_str(cache_key),
         "secrets": secrets,
         "fetched_at": time.time() - age_seconds,
-    }))
+    }), encoding="utf-8")
 
 
 def test_stale_disk_cache_returned_when_bws_fails(monkeypatch, tmp_path):

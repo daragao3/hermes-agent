@@ -18,7 +18,7 @@ def test_full_stack_score_result_reaches_telegram(tmp_path, monkeypatch):
         "correlation_id": "abc",
         "payload": {"score": 8.9, "company": "Acme", "title": "VP Fin",
                     "recommendation": "PROCEED"},
-    }))
+    }), encoding="utf-8")
 
     (tmp_path / "telegram").mkdir()
     # v2 topic keys (Hermes Telegram cutover 20260424T233627Z). Thread IDs
@@ -39,10 +39,10 @@ def test_full_stack_score_result_reaches_telegram(tmp_path, monkeypatch):
             "curator_digest": {"thread_id": 16},
             "critic_proposals": {"thread_id": 17},
         }
-    }))
+    }), encoding="utf-8")
     (tmp_path / "telegram" / "verbosity.json").write_text(json.dumps({
         "jobflow_firehose": {"mode": "all"}, "watchdog_alerts": {"mode": "all"},
-    }))
+    }), encoding="utf-8")
 
     bus = EventBus(db_path=tmp_path / "events" / "event_bus.db")
     try:

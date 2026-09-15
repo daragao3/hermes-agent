@@ -230,7 +230,7 @@ class TestDefaultModelFromCache:
         cache.mkdir()
         (cache / "model_catalog.json").write_text(
             json.dumps(self._manifest_with_default())
-        )
+        , encoding="utf-8")
         with patch.object(model_catalog, "_fetch_manifest") as fetch:
             assert (
                 model_catalog.get_default_model_from_cache("openrouter")
@@ -364,7 +364,7 @@ class TestIntegrationWithModelsModule:
                         "credential_pool": {},
                     }
                 )
-            )
+            , encoding="utf-8")
 
             # Stub the Portal recommendation union so the row is deterministic
             # (the curated list alone) and never touches the network. ``expected``
@@ -414,7 +414,7 @@ class TestIntegrationWithModelsModule:
                         "credential_pool": {},
                     }
                 )
-            )
+            , encoding="utf-8")
             with patch.object(
                 model_catalog, "_fetch_manifest", return_value=_valid_manifest()
             ), patch("hermes_cli.models.check_nous_free_tier", return_value=False), patch(

@@ -137,7 +137,7 @@ def test_persist_personality_never_touches_system_prompt(tmp_path):
     home.mkdir()
     (home / "config.yaml").write_text(
         yaml.safe_dump({"agent": {"system_prompt": "manual forever"}})
-    )
+    , encoding="utf-8")
     with patch.dict(os.environ, {"HERMES_HOME": str(home)}):
         assert persist_personality("kawaii") is True
         raw = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))

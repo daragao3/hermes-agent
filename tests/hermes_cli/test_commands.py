@@ -680,7 +680,7 @@ class TestTelegramMenuCommands:
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         (tmp_path / "config.yaml").write_text(
             f"skills:\n  external_dirs:\n    - {external_dir}\n"
-        )
+        , encoding="utf-8")
 
         fake_cmds = {
             "/local-one": {

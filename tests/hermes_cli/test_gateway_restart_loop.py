@@ -720,7 +720,7 @@ class TestTerminalToolGatewayLifecycleGuard:
         script = tmp_path / "wrapper.sh"
         script.write_text(
             "#!/bin/bash\nlaunchctl submit -l ai.hermes.loop -- /bin/true\n"
-        )
+        , encoding="utf-8")
         self._patch_env(monkeypatch, self._make_fake_env(), inside_gateway=True)
 
         result = json.loads(tt.terminal_tool(command=f"/bin/bash {script.as_posix()}"))
@@ -1104,7 +1104,7 @@ class TestLifecycleGuardModule:
         script = tmp_path / "persistent.sh"
         script.write_text(
             "#!/bin/bash\nlaunchctl submit -l ai.hermes.loop -- /bin/true\n"
-        )
+        , encoding="utf-8")
         with pytest.raises(GatewayLifecycleBlocked):
             check_gateway_lifecycle("clean prompt", str(script))
 
@@ -1152,7 +1152,7 @@ class TestLifecycleGuardModule:
         scripts_dir.mkdir(parents=True)
         (scripts_dir / "restart.sh").write_text(
             "launchctl kickstart -k gui/501/ai.hermes.gateway\n"
-        )
+        , encoding="utf-8")
         with pytest.raises(GatewayLifecycleBlocked):
             check_gateway_lifecycle("daily", "restart.sh")
 
@@ -1174,7 +1174,7 @@ class TestLifecycleGuardModule:
             "from pathlib import Path\n"
             'ENV = Path.home() / ".hermes" / ".env"\n'
             'print("digest ok")\n'
-        )
+        , encoding="utf-8")
         check_gateway_lifecycle("clean prompt", str(script))
 
     def test_python_script_with_literal_lifecycle_command_still_blocked(

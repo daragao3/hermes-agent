@@ -237,7 +237,7 @@ class TestParseSkillFile:
         skill_file = tmp_path / "SKILL.md"
         skill_file.write_text(
             "---\nname: test-skill\ndescription: A useful test skill\n---\n\nBody here"
-        )
+        , encoding="utf-8")
         is_compat, frontmatter, desc = _parse_skill_file(skill_file)
         assert is_compat is True
         assert frontmatter.get("name") == "test-skill"
@@ -328,7 +328,7 @@ class TestBuildSkillsSystemPrompt:
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(
             "---\nname: thread-writer\ndescription: Write threads\n---\n"
-        )
+        , encoding="utf-8")
         # Nested category ("social-media/twitter") demoted via its parent:
         # name visible, description gone.
         compact = build_skills_system_prompt(
@@ -352,13 +352,13 @@ class TestBuildSkillsSystemPrompt:
         enabled_skill.mkdir()
         (enabled_skill / "SKILL.md").write_text(
             "---\nname: web-search\ndescription: Search the web\n---\n"
-        )
+        , encoding="utf-8")
 
         disabled_skill = skills_dir / "old-tool"
         disabled_skill.mkdir()
         (disabled_skill / "SKILL.md").write_text(
             "---\nname: old-tool\ndescription: Deprecated tool\n---\n"
-        )
+        , encoding="utf-8")
 
         from unittest.mock import patch
 
@@ -377,14 +377,14 @@ class TestBuildSkillsSystemPrompt:
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: cached-skill\ndescription: Cached skill\n---\n"
-        )
+        , encoding="utf-8")
 
         first = build_skills_system_prompt()
         assert "cached-skill" in first
 
         (tmp_path / "config.yaml").write_text(
             "skills:\n  disabled: [cached-skill]\n"
-        )
+        , encoding="utf-8")
 
         second = build_skills_system_prompt()
         assert "cached-skill" not in second
@@ -1054,7 +1054,7 @@ class TestBuildSkillsSystemPromptConditional:
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: openhue\ndescription: Hue lights\nmetadata:\n  hermes:\n    requires_toolsets: [terminal]\n---\n"
-        )
+        , encoding="utf-8")
         result = build_skills_system_prompt(
             available_tools=set(),
             available_toolsets=set(),
@@ -1070,7 +1070,7 @@ class TestBuildSkillsSystemPromptConditional:
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: duckduckgo\ndescription: Free web search\nmetadata:\n  hermes:\n    fallback_for_toolsets: [web]\n---\n"
-        )
+        , encoding="utf-8")
         result = build_skills_system_prompt()
         assert "duckduckgo" in result
 

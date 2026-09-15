@@ -261,7 +261,7 @@ async def test_relay_restart_notification_uses_logical_platform_and_owner(tmp_pa
                 "delivered_via_upstream_relay": True,
             }
         )
-    )
+    , encoding="utf-8")
 
     runner, _native = make_restart_runner()
     relay = MagicMock()
@@ -306,7 +306,7 @@ async def test_send_restart_notification_logs_warning_on_sendresult_failure(
     notify_path.write_text(json.dumps({
         "platform": "telegram",
         "chat_id": "42",
-    }))
+    }), encoding="utf-8")
 
     runner, adapter = make_restart_runner()
     adapter.send = AsyncMock(
@@ -352,7 +352,7 @@ async def test_send_restart_notification_logs_info_on_sendresult_success(
     notify_path.write_text(json.dumps({
         "platform": "telegram",
         "chat_id": "42",
-    }))
+    }), encoding="utf-8")
 
     runner, adapter = make_restart_runner()
     adapter.send = AsyncMock(return_value=SendResult(success=True, message_id="m-1"))

@@ -295,7 +295,7 @@ class TestCmdUpdateNpmLockfileCache:
 
         (tmp_path / "package.json").write_text(
             '{"dependencies": {"left-pad": "^1.0.0"}}'
-        )
+        , encoding="utf-8")
         assert hm._npm_lockfile_changed(tmp_path) is True
 
 
@@ -1212,7 +1212,7 @@ termux-all = ["x[termux]", "x[mcp]"]
 mcp = ["mcp>=1"]
 termux = ["rich>=14"]
 """.strip()
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(hm, "PROJECT_ROOT", tmp_path)
 
     assert main_install_repair._load_installable_optional_extras(group="all") == ["mcp"]

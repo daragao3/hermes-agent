@@ -49,7 +49,7 @@ def test_load_heals_legacy_row_and_exposes_it_to_resolver(tmp_path, monkeypatch)
                 "access_token": token,
             }],
         },
-    }))
+    }), encoding="utf-8")
 
     from agent.anthropic_credentials import resolve_anthropic_token
     from agent.credential_pool import load_pool

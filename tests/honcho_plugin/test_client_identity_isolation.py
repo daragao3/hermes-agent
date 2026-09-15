@@ -212,7 +212,7 @@ class TestCredentialIdentity:
             # Operator re-runs setup: same file, new account credentials.
             (home / "honcho.json").write_text(json.dumps({
                 "hosts": {"hermes": {"apiKey": "key-account-2", "workspace": "tenant-a"}},
-            }))
+            }), encoding="utf-8")
             cfg2 = HonchoClientConfig.from_global_config()
             c2 = get_honcho_client(cfg2)
         finally:
@@ -241,7 +241,7 @@ class TestCredentialIdentity:
         (home / "honcho.json").write_text(json.dumps({
             "hosts": {"hermes": {"apiKey": "access-token-1", "workspace": "w",
                                   "oauth": oauth_block}},
-        }))
+        }), encoding="utf-8")
 
         token = set_hermes_home_override(home)
         try:
@@ -258,7 +258,7 @@ class TestCredentialIdentity:
             (home / "honcho.json").write_text(json.dumps({
                 "hosts": {"hermes": {"apiKey": "access-token-3", "workspace": "w",
                                       "oauth": oauth_block2}},
-            }))
+            }), encoding="utf-8")
             cfg2 = HonchoClientConfig.from_global_config()
             fp2 = client_cache_mod._credential_fingerprint(cfg2)
         finally:

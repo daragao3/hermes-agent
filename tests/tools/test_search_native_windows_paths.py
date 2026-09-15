@@ -398,7 +398,7 @@ class TestLiveWindowsPublicSearchApi:
         for i in range(3):
             (root / f"20260906T14040{i}_SCORE_REQUEST_tracker_{i}.json").write_text(
                 '{"kind": "SCORE_REQUEST"}\n'
-            )
+            , encoding="utf-8")
         return root
 
     def test_file_search_finds_the_envelopes(self, inbox):

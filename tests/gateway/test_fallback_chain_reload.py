@@ -24,7 +24,7 @@ def test_refresh_fallback_model_rereads_config(tmp_path, monkeypatch):
         "fallback_providers:\n"
         "  - provider: deepseek\n"
         "    model: deepseek-v4-flash\n"
-    )
+    , encoding="utf-8")
 
     runner = SimpleNamespace(
         _fallback_model=None,
@@ -40,7 +40,7 @@ def test_refresh_fallback_model_rereads_config(tmp_path, monkeypatch):
         "fallback_providers:\n"
         "  - provider: openrouter\n"
         "    model: anthropic/claude-sonnet-4.6\n"
-    )
+    , encoding="utf-8")
     updated = bound()
     assert updated == [
         {"provider": "openrouter", "model": "anthropic/claude-sonnet-4.6"}
@@ -110,7 +110,7 @@ def test_load_fallback_model_static_unchanged_contract(tmp_path, monkeypatch):
         "fallback_model:\n"
         "  provider: nous\n"
         "  model: Hermes-4\n"
-    )
+    , encoding="utf-8")
 
     chain = GatewayRunner._load_fallback_model()
     assert chain == [

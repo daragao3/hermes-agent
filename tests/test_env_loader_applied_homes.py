@@ -25,7 +25,7 @@ def _write_enabled_config(home: Path):
         "  bitwarden:\n"
         "    enabled: true\n"
         "    project_id: proj\n"
-    )
+    , encoding="utf-8")
 
 
 def test_malformed_config_does_not_permanently_skip(tmp_path, monkeypatch):
@@ -74,7 +74,7 @@ def test_disabled_sources_do_not_mark_applied(tmp_path):
     home.mkdir()
     (home / "config.yaml").write_text(
         "secrets:\n  bitwarden:\n    enabled: false\n    project_id: p\n"
-    )
+    , encoding="utf-8")
     from agent.secret_sources import registry
     registry._reset_registry_for_tests()
     env_loader._apply_external_secret_sources(home)

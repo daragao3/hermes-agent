@@ -218,10 +218,10 @@ class TestScanSkillCommands:
         _make_skill(external_b, "b-only")
         (profile_a / "config.yaml").write_text(
             f"skills:\n  external_dirs:\n    - {external_a}\n"
-        )
+        , encoding="utf-8")
         (profile_b / "config.yaml").write_text(
             f"skills:\n  external_dirs:\n    - {external_b}\n"
-        )
+        , encoding="utf-8")
 
         with (
             patch("tools.skills_tool.SKILLS_DIR", empty_local_dir),
@@ -346,12 +346,12 @@ class TestScanSkillCommands:
             first.mkdir()
             (first / "SKILL.md").write_text(
                 "---\nname: git_helper\ndescription: First skill.\n---\n\nBody.\n"
-            )
+            , encoding="utf-8")
             second = tmp_path / "z-second"
             second.mkdir()
             (second / "SKILL.md").write_text(
                 "---\nname: git-helper\ndescription: Second skill.\n---\n\nBody.\n"
-            )
+            , encoding="utf-8")
             result = scan_skill_commands()
         assert "/git-helper" in result
         # First-wins: the entry resolves to the first skill, not the shadowing one.
@@ -367,12 +367,12 @@ class TestScanSkillCommands:
             first.mkdir()
             (first / "SKILL.md").write_text(
                 "---\nname: my-skill\ndescription: First.\n---\n\nBody.\n"
-            )
+            , encoding="utf-8")
             second = tmp_path / "z-second"
             second.mkdir()
             (second / "SKILL.md").write_text(
                 "---\nname: my_skill\ndescription: Second.\n---\n\nBody.\n"
-            )
+            , encoding="utf-8")
             with caplog.at_level(_logging.WARNING, logger="agent.skill_commands"):
                 scan_skill_commands()
         assert any("already claimed" in r.message for r in caplog.records)

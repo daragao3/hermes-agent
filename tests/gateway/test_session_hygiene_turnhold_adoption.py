@@ -75,7 +75,7 @@ def _write_turnhold_config(tmp_path):
         "  hygiene_total_ceiling_seconds: 600\n"
         "  hygiene_max_turn_hold_seconds: 0.3\n"
         "  hygiene_failure_cooldown_seconds: 120\n"
-    )
+    , encoding="utf-8")
 
 
 def _build_runner(gateway_run, adapter, fake_db):

@@ -62,7 +62,7 @@ def test_jobs_lock_excludes_another_process(tmp_path, monkeypatch):
                     time.sleep(0.01)
             """
         )
-    )
+    , encoding="utf-8")
 
     blocker = tmp_path / "blocker.py"
     blocker.write_text(
@@ -81,7 +81,7 @@ def test_jobs_lock_excludes_another_process(tmp_path, monkeypatch):
                 pathlib.Path({str(blocker_acquired)!r}).write_text("1")
             """
         )
-    )
+    , encoding="utf-8")
 
     child = subprocess.Popen([sys.executable, str(holder)])
     blocker_child = None

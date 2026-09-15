@@ -197,7 +197,7 @@ def main() -> int:
                  "rep": rep, "records": records},
                 indent=2,
             )
-        )
+        , encoding="utf-8")
         print(f"wrote {rep_path}")
     return 0
 

@@ -156,7 +156,7 @@ class TestUserSkins:
         (skins_dir / "pirate.yaml").write_text(yaml.dump({
             "name": "pirate",
             "description": "Arr matey",
-        }))
+        }), encoding="utf-8")
         monkeypatch.setattr("hermes_cli.skin_engine._skins_dir", lambda: skins_dir)
 
         skins = list_skins()

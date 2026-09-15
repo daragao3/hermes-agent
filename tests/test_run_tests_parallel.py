@@ -363,7 +363,7 @@ def _make_probe_dir(tmp_path: Path) -> Path:
     (probe_dir / "test_flagprobe.py").write_text(
         "def test_alpha():\n    assert True\n\n"
         "def test_beta():\n    assert True\n"
-    )
+    , encoding="utf-8")
     return probe_dir
 
 

@@ -70,7 +70,7 @@ def main():
         '  api_key: local-fixture-key\n  api_mode: chat_completions\n'
         'mcp_servers: {}\nmemory:\n  memory_enabled: false\n  user_profile_enabled: false\n'
         'agent:\n  max_iterations: 1\n  disabled_toolsets: [all]\n'
-    )
+    , encoding="utf-8")
     env = {k: os.environ[k] for k in ('PATH', 'LANG', 'TZ') if k in os.environ}
     env.update(HOME=str(home), HERMES_HOME=str(hermes), PYTHONPATH=os.pathsep.join([str(repo), os.environ.get('PYTHONPATH', '')]),
                HERMES_ACP_SKIP_CONFIGURED_MCP='1', OPENAI_API_KEY='local-fixture-key',

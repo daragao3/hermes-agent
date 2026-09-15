@@ -1057,7 +1057,7 @@ class TestMultiplexProfileWebhookAuthentication:
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: worker-only\ndescription: w\n---\n\nBody of worker-only.\n"
-        )
+        , encoding="utf-8")
         (worker / "config.yaml").write_text("{}\n", encoding="utf-8")
         (worker / ".env").write_text("", encoding="utf-8")
         monkeypatch.setattr(

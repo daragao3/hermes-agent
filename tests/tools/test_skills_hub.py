@@ -1284,7 +1284,7 @@ class TestInstallPathSafety:
                     "updated_at": "now",
                 }
             }
-        }))
+        }), encoding="utf-8")
 
         patch_lock_file(lock_path)
         ok, msg = uninstall_skill("evil")
@@ -1312,7 +1312,7 @@ class TestInstallPathSafety:
                     "installed_at": "now", "updated_at": "now",
                 }
             }
-        }))
+        }), encoding="utf-8")
 
         patch_lock_file(lock_path)
         ok, msg = uninstall_skill("evil")
@@ -1340,7 +1340,7 @@ class TestInstallPathSafety:
                     "installed_at": "now", "updated_at": "now",
                 }
             }
-        }))
+        }), encoding="utf-8")
 
         patch_lock_file(lock_path)
         ok, msg = uninstall_skill("evil")

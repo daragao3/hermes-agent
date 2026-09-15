@@ -35,7 +35,7 @@ def _write_skewed_tree(root: Path, *, skewed: bool) -> None:
     (root / "provider" / "__init__.py").write_text("", encoding="utf-8")
     (root / "provider" / "thing.py").write_text(
         "OTHER = 1\n" if skewed else "SHARED_NAME = 'x'\nOTHER = 1\n"
-    )
+    , encoding="utf-8")
     (root / "consumer.py").write_text("from provider.thing import SHARED_NAME\n", encoding="utf-8")
 
 
@@ -77,7 +77,7 @@ def test_import_guard_ignores_non_import_errors(monkeypatch, tmp_path):
     update breakage -- the guard must not roll back a good update."""
     (tmp_path / "consumer.py").write_text(
         "raise RuntimeError('no API key configured')\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(update_cmd, "_UPDATE_CRITICAL_MODULES", ("consumer",))
     monkeypatch.setattr(update_cmd_deps, "_UPDATE_CRITICAL_MODULES", ("consumer",))
 
@@ -184,7 +184,7 @@ def test_import_guard_does_not_accept_forged_static_marker(monkeypatch, tmp_path
         "sys.stdout.write('__HERMES_IMPORT_HEALTH__[]')\n"
         "sys.stdout.flush()\n"
         "os._exit(7)\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(update_cmd, "_UPDATE_CRITICAL_MODULES", ("consumer",))
     monkeypatch.setattr(update_cmd_deps, "_UPDATE_CRITICAL_MODULES", ("consumer",))
 

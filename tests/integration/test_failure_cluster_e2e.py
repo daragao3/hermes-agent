@@ -51,7 +51,7 @@ def stub_critic_script(tmp_path):
         ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S-%f")
         out = retros / f"retro-{{ts}}.md"
         out.write_text(f"# E2E retro\\ncluster={{cluster_arg}}\\n")
-    '''))
+    '''), encoding="utf-8")
     return script, retros_dir
 
 

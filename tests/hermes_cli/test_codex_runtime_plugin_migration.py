@@ -242,7 +242,7 @@ class TestMigrate:
             "[mcp_servers.user-above]\n"
             'command = "/usr/bin/above-server"\n'
             'args = ["--above"]\n'
-        )
+        , encoding="utf-8")
         # First migrate — adds managed block below user content
         migrate({"mcp_servers": {"hermes-mcp": {"command": "npx"}}},
                 codex_home=tmp_path, discover_plugins=False,
@@ -254,7 +254,7 @@ class TestMigrate:
         # Append another user entry below the managed block
         target.write_text(
             text + "\n[mcp_servers.user-below]\ncommand = \"below-server\"\n"
-        )
+        , encoding="utf-8")
         # Re-migrate — both should survive
         migrate({"mcp_servers": {"hermes-mcp": {"command": "npx"}}},
                 codex_home=tmp_path, discover_plugins=False,
@@ -351,7 +351,7 @@ class TestStripUnmanagedPluginTables:
             "\n"
             '[plugins."tasks@openai-curated"]\n'
             "enabled = true\n"
-        )
+        , encoding="utf-8")
 
         # Simulate codex's plugin/list reporting the same plugin tasks@openai-curated.
         def fake_query(codex_home=None, timeout=8.0):

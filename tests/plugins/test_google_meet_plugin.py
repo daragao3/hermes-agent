@@ -121,7 +121,7 @@ def test_transcript_reads_last_n_lines(tmp_path):
         "[10:00:00] Alice: one\n"
         "[10:00:01] Bob: two\n"
         "[10:00:02] Alice: three\n"
-    )
+    , encoding="utf-8")
     pm._write_active({
         "pid": 0, "meeting_id": "abc-defg-hij",
         "out_dir": str(meeting_dir),

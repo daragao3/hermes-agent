@@ -71,7 +71,7 @@ class TestExportSecretScrub:
         skill.write_text(
             "---\nname: demo\ndescription: Demo.\n---\n"
             f"Use OPENROUTER_API_KEY={_LEAKED_KEY}\n"
-        )
+        , encoding="utf-8")
 
         memories = profile_dir / "memories"
         memories.mkdir()

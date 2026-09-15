@@ -63,7 +63,7 @@ class TestGetActiveProvider:
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         (tmp_path / "config.yaml").write_text(
             yaml.safe_dump({"image_gen": {"provider": "openai"}})
-        )
+        , encoding="utf-8")
         image_gen_registry.register_provider(_FakeProvider("fal"))
         image_gen_registry.register_provider(_FakeProvider("openai"))
         active = image_gen_registry.get_active_provider()

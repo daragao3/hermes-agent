@@ -221,6 +221,68 @@ _MULTILINE_FIXTURES = (
         '               timeout=30)  # encoding= is deliberately omitted\n',
         True,
     ),
+    # read_text/write_text joined the span-aware filter on 2026-09-15; until
+    # then the rule exempted every wrapped call on shape alone.
+    (
+        "write_text encoding on continuation line",
+        'path.write_text(\n'
+        '    "gateway:\\n"\n'
+        '    "  strict: true\\n",\n'
+        '    encoding="utf-8",\n'
+        ')\n',
+        False,
+    ),
+    (
+        "read_text encoding on continuation line",
+        'data = path.read_text(\n'
+        '    encoding="utf-8"\n'
+        ').splitlines()\n',
+        False,
+    ),
+    (
+        "write_text with NO encoding anywhere",
+        'path.write_text(\n'
+        '    "gateway:\\n"\n'
+        '    "  strict: true\\n"\n'
+        ')\n',
+        True,
+    ),
+    (
+        "read_text with NO encoding anywhere",
+        'data = path.read_text(\n'
+        ').splitlines()\n',
+        True,
+    ),
+    # The span walk tracks string state across lines: a ``)`` inside a string
+    # argument must not close the span early (three correctly written
+    # write_text(<shell script>, encoding=...) calls were reported before
+    # this), and encoding= INSIDE a string argument is not the kwarg (a
+    # child-script fixture whose TEXT said encoding= slipped through).
+    (
+        "close paren inside a string argument does not end the span",
+        'script.write_text(\n'
+        '    "case $1 in\\n"\n'
+        '    "  bootout) exit 3 ;;\\n"\n'
+        '    "esac\\n",\n'
+        '    encoding="utf-8",\n'
+        ')\n',
+        False,
+    ),
+    (
+        "encoding= inside a string argument is not the kwarg",
+        'script.write_text(\n'
+        '    """import json\n'
+        'with open(p, encoding="utf-8") as fh:\n'
+        '    pass\n'
+        '"""\n'
+        ')\n',
+        True,
+    ),
+    (
+        "open paren inside a one-line string argument still reports",
+        'f.write_text("def broken(\\n")\n',
+        True,
+    ),
 )
 
 

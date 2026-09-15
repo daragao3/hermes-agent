@@ -730,7 +730,7 @@ def _write_external_skill(external_dir: Path, name: str = "ext-skill") -> Path:
     (skill_dir / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: An external skill.\n---\n\n"
         "# External\n\nBody with OLD_MARKER here.\n"
-    )
+    , encoding="utf-8")
     return skill_dir
 
 

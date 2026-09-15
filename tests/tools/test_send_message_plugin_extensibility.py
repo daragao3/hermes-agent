@@ -215,7 +215,7 @@ def test_fresh_process_real_plugin_fixture_covers_host_send_and_cron(tmp_path):
     plugin.mkdir(parents=True)
     (plugin / "plugin.yaml").write_text(
         "name: fmsg-fixture\nversion: 0.1.0\ndescription: fixture\nkind: platform\n"
-    )
+    , encoding="utf-8")
     (home / "config.yaml").write_text("plugins:\n  enabled:\n    - fmsg-fixture\n", encoding="utf-8")
     (plugin / "__init__.py").write_text(
         "async def _send(args, chat_id, platform_name, pconfig):\n"
@@ -227,7 +227,7 @@ def test_fresh_process_real_plugin_fixture_covers_host_send_and_cron(tmp_path):
         "    ctx.register_platform(name='fmsg', label='Fmsg', "
         "adapter_factory=lambda cfg: None, check_fn=lambda: True, "
         "parse_target_ref_fn=_parse, send_message_handler=_send)\n"
-    )
+    , encoding="utf-8")
     script = r'''
 import json
 from types import SimpleNamespace

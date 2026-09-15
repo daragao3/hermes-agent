@@ -81,7 +81,7 @@ class TestResolveAccessTokenEnvOverrideWins:
                     },
                 }
             )
-        )
+        , encoding="utf-8")
         return auth_file
 
     def _run_and_capture(self, monkeypatch, auth):

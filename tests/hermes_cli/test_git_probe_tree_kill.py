@@ -39,7 +39,7 @@ def _write_forking_script(tmp_path, marker_name="child.pid"):
             sleep 300
             """
         )
-    )
+    , encoding="utf-8")
     script.chmod(0o755)
     return script, marker
 

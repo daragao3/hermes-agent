@@ -1255,7 +1255,7 @@ class TestCheckpoint:
             "command": "sleep 999",
             "pid": 999999999,  # almost certainly not running
             "task_id": "t1",
-        }]))
+        }]), encoding="utf-8")
         with patch("tools.process_registry.CHECKPOINT_PATH", checkpoint):
             recovered = registry.recover_from_checkpoint()
             assert recovered == 0
@@ -1275,7 +1275,7 @@ class TestCheckpoint:
             "command": "stale",
             "pid": 30752,
             "task_id": "t1",
-        }]))
+        }]), encoding="utf-8")
 
         fake_oserror = OSError(
             "[WinError 11] An attempt was made to load a program with an incorrect format"
@@ -1321,7 +1321,7 @@ class TestCheckpoint:
             "watcher_user_name": "alice",
             "watcher_thread_id": "42",
             "watcher_interval": 60,
-        }]))
+        }]), encoding="utf-8")
         with patch("tools.process_registry.CHECKPOINT_PATH", checkpoint):
             recovered = registry.recover_from_checkpoint()
             assert recovered == 1

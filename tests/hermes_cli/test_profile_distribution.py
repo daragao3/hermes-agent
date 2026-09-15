@@ -65,7 +65,7 @@ def _make_staging_dir(root: Path, name: str = "src", *, manifest: DistributionMa
     (staged / "skills" / "demo").mkdir(exist_ok=True)
     (staged / "skills" / "demo" / "SKILL.md").write_text(
         "---\nname: demo\ndescription: test\n---\n# Demo skill\n"
-    )
+    , encoding="utf-8")
     (staged / "cron").mkdir(exist_ok=True)
     (staged / "cron" / "daily.json").write_text('{"schedule": "0 9 * * *"}', encoding="utf-8")
 
@@ -106,7 +106,7 @@ class TestManifestParsing:
             "distribution_owned:\n"
             "  - SOUL.md\n"
             "  - skills/\n"
-        )
+        , encoding="utf-8")
         m = read_manifest(tmp_path)
         assert m.name == "telem"
         assert m.version == "1.2.3"
@@ -296,7 +296,7 @@ class TestInstall:
         (staged / "skills" / "research").mkdir()
         (staged / "skills" / "research" / "SKILL.md").write_text(
             "---\nname: research\ndescription: r\n---\n# R\n"
-        )
+        , encoding="utf-8")
         (staged / "cron" / "digest.json").write_text('{"schedule": "0 8 * * *"}', encoding="utf-8")
 
         plan = install_distribution(str(staged), name="nested")
@@ -409,7 +409,7 @@ class TestUpdate:
         # User edits config
         (plan.target_dir / "config.yaml").write_text(
             "model:\n  model: gpt-5\n# user override\n"
-        )
+        , encoding="utf-8")
 
         # Bump source config
         (staged / "config.yaml").write_text("model:\n  model: claude\n", encoding="utf-8")
@@ -648,7 +648,7 @@ class TestProfileInfoDistribution:
         # Write a distribution.yaml that isn't a valid mapping
         (get_profile_dir("brokenmeta") / "distribution.yaml").write_text(
             "not: [a, valid, mapping\n"  # broken YAML
-        )
+        , encoding="utf-8")
         # list_profiles must NOT raise; distribution_* stay None for this row.
         rows = {p.name: p for p in list_profiles()}
         assert rows["brokenmeta"].distribution_name is None

@@ -137,9 +137,9 @@ class TestResetNoticeSessionInfo:
         profile.mkdir(parents=True)
         base.mkdir()
         base.joinpath("config.yaml").write_text(
-            "model:\n  default: base-model\n  provider: custom\n  context_length: 1000\n")
+            "model:\n  default: base-model\n  provider: custom\n  context_length: 1000\n", encoding="utf-8")
         profile.joinpath("config.yaml").write_text(
-            "model:\n  default: profile-model\n  provider: anthropic\n  context_length: 2000\n")
+            "model:\n  default: profile-model\n  provider: anthropic\n  context_length: 2000\n", encoding="utf-8")
         return base, profile
 
     def test_multiplex_uses_profile_config(self, runner, tmp_path):

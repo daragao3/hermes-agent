@@ -55,7 +55,7 @@ class TestCustomProviderModelSwitch:
             "  base_url: https://old.example.test/v1\n"
             "  api_key: sk-old-config\n"
             "  model: old-model\n"
-        )
+        , encoding="utf-8")
         write_credential_pool(
             "custom:old-endpoint",
             [
@@ -134,7 +134,7 @@ class TestCustomProviderModelSwitch:
             "  base_url: https://api.example-provider.test/v1\n"
             "  api_key: ${EXAMPLE_PROVIDER_API_KEY}\n"
             "  model: qwen3.6-35b-fast\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("EXAMPLE_PROVIDER_API_KEY", "sk-live-example-provider")
 
         provider_info = {
@@ -176,7 +176,7 @@ class TestCustomProviderModelSwitch:
             "  base_url: https://api.example-provider.test/v1\n"
             "  key_env: EXAMPLE_PROVIDER_API_KEY\n"
             "  model: qwen3.6-35b-fast\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("EXAMPLE_PROVIDER_API_KEY", "sk-live-example-provider")
 
         provider_info = {
@@ -225,7 +225,7 @@ class TestCustomProviderModelSwitch:
             "  api_key: ${NEURALWATT_API_KEY}\n"
             "  model: qwen3.6-35b-fast\n"
             "  models: []\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("NEURALWATT_API_BASE", "https://api.neuralwatt.com/v1")
         monkeypatch.setenv("NEURALWATT_API_KEY", "sk-live-neuralwatt-secret")
 
@@ -293,7 +293,7 @@ class TestCustomProviderModelSwitch:
             "    model: claude-opus-4-7\n"
             "    default_model: claude-opus-4-7\n"
             "custom_providers: []\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_CRS_HENKEE_KEY", "cr_live_secret_xyz")
 
         # provider_info as built by _named_custom_provider_map for a
@@ -408,7 +408,7 @@ class TestCustomProviderModelSwitch:
             "    model: claude-opus-4-7\n"
             "    default_model: claude-opus-4-7\n"
             "custom_providers: []\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_CRS_HENKEE_KEY", "cr_live_secret_xyz")
 
         provider_info = {

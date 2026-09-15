@@ -137,7 +137,7 @@ class TestCreateProfile:
         default_home = profile_env / ".hermes"
         (default_home / "config.yaml").write_text(
             "model:\n  provider: nous\n  default: some/model\n"
-        )
+        , encoding="utf-8")
 
         profile_dir = create_profile("coder", no_alias=True)
 
@@ -155,12 +155,12 @@ class TestCreateProfile:
         default_home = profile_env / ".hermes"
         (default_home / "config.yaml").write_text(
             "model:\n  provider: nous\n  default: some/model\n"
-        )
+        , encoding="utf-8")
         profile_dir = create_profile("coder", no_alias=True)
 
         (default_home / "config.yaml").write_text(
             "model:\n  provider: other\n  default: changed/model\n"
-        )
+        , encoding="utf-8")
 
         cfg = yaml.safe_load((profile_dir / "config.yaml").read_text(encoding="utf-8"))
         assert cfg["model"]["provider"] == "nous"
@@ -825,7 +825,7 @@ class TestRenameProfile:
                     "enabled": True,
                 }
             }
-        }))
+        }), encoding="utf-8")
 
         with patch("hermes_cli.profiles.check_alias_collision", return_value="skip"):
             rename_profile("ssi_health", "heimdall")

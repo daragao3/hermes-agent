@@ -65,7 +65,7 @@ def _write_token_files(tokens_dir: Path, server="stripe", resource="https://mcp.
     (tokens_dir / f"{server}.json").write_text(json.dumps(tok), encoding="utf-8")
     (tokens_dir / f"{server}.client.json").write_text(
         json.dumps({"client_id": "cid-1", "token_endpoint_auth_method": "none"})
-    )
+    , encoding="utf-8")
     return tok
 
 

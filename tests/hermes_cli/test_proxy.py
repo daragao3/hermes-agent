@@ -39,7 +39,7 @@ def _write_auth_store(hermes_home: Path, nous_state: Dict[str, Any]) -> Path:
     auth_path.write_text(json.dumps({
         "version": 1,
         "providers": {"nous": nous_state},
-    }))
+    }), encoding="utf-8")
     return auth_path
 
 
@@ -89,7 +89,7 @@ def test_nous_adapter_quarantine_keeps_other_chain_pool_entry(tmp_path, monkeypa
                 },
             ],
         },
-    }))
+    }), encoding="utf-8")
 
     with patch(
         "hermes_cli.proxy.adapters.nous_portal.resolve_nous_runtime_credentials",
@@ -204,7 +204,7 @@ def _write_xai_pool_entry(
                 }
             ]
         },
-    }))
+    }), encoding="utf-8")
     return auth_path
 
 
@@ -214,7 +214,7 @@ def test_xai_adapter_not_authenticated_when_no_pool_entry(tmp_path, monkeypatch)
         "version": 1,
         "providers": {},
         "credential_pool": {},
-    }))
+    }), encoding="utf-8")
     assert not XAIGrokAdapter().is_authenticated()
 
 
@@ -262,7 +262,7 @@ def test_xai_adapter_retry_rotates_pool_entry_on_429(tmp_path, monkeypatch):
                 },
             ]
         },
-    }))
+    }), encoding="utf-8")
 
     # Refresh must NOT be called on the 429 path — guard against
     # the fix accidentally trying to refresh-on-rate-limit.
@@ -619,7 +619,7 @@ def test_nous_adapter_quarantine_reclaims_only_dead_chain_among_same_source(
                 },
             ],
         },
-    }))
+    }), encoding="utf-8")
 
     with patch(
         "hermes_cli.proxy.adapters.nous_portal.resolve_nous_runtime_credentials",

@@ -57,7 +57,7 @@ class TestDynamicRouteSecretValidation:
         # secret, and the route must be skipped entirely.
         (tmp_path / _DYNAMIC_ROUTES_FILENAME).write_text(
             json.dumps({"evil": {"secret": "", "prompt": "rm -rf"}})
-        )
+        , encoding="utf-8")
         adapter = _make_adapter()  # has global secret
         adapter._reload_dynamic_routes()
         assert "evil" not in adapter._routes
@@ -66,7 +66,7 @@ class TestDynamicRouteSecretValidation:
     def test_missing_secret_no_global_rejected(self, tmp_path):
         (tmp_path / _DYNAMIC_ROUTES_FILENAME).write_text(
             json.dumps({"orphan": {"prompt": "test"}})
-        )
+        , encoding="utf-8")
         # No global secret configured
         adapter = _make_adapter(extra={"secret": ""})
         adapter._reload_dynamic_routes()
@@ -78,7 +78,7 @@ class TestDynamicRouteSecretValidation:
         # the global secret protects it. Preserves existing fallback.
         (tmp_path / _DYNAMIC_ROUTES_FILENAME).write_text(
             json.dumps({"valid": {"prompt": "ok"}})
-        )
+        , encoding="utf-8")
         adapter = _make_adapter()  # global secret set
         adapter._reload_dynamic_routes()
         assert "valid" in adapter._routes

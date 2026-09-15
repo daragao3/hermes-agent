@@ -91,7 +91,7 @@ def _seed_lock(lock_dir, scope, identity, pid, start_time=123):
         "pid": pid,
         "start_time": start_time,
         "kind": "hermes-gateway",
-    }))
+    }), encoding="utf-8")
 
 
 class TestPlatformLockRecheckPath:

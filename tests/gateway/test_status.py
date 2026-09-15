@@ -105,7 +105,7 @@ class TestGatewayPidState:
             "kind": "hermes-gateway",
             "argv": ["python", "-m", "hermes_cli.main", "gateway"],
             "start_time": 123,
-        }))
+        }), encoding="utf-8")
 
         monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123)
         monkeypatch.setattr(status, "_read_process_cmdline", lambda pid: None)
@@ -189,7 +189,7 @@ class TestGatewayPidState:
             "kind": "hermes-gateway",
             "argv": ["hermes", "gateway", "run"],
             "start_time": None,
-        }))
+        }), encoding="utf-8")
         assert status.verify_pid_file_matches_self() is False
 
     def test_verify_pid_file_matches_self_false_on_malformed_file(self, tmp_path, monkeypatch):
@@ -246,7 +246,7 @@ class TestGatewayPidState:
             "kind": "hermes-gateway",
             "argv": ["python", "-m", "hermes_cli.main", "gateway"],
             "start_time": 123,
-        }))
+        }), encoding="utf-8")
         lock_path = tmp_path / status._GATEWAY_LOCK_FILENAME
         lock_path.write_text("held by the live gateway — unreadable", encoding="utf-8")
 
@@ -306,7 +306,7 @@ class TestGatewayPidState:
             "kind": "hermes-gateway",
             "argv": ["python", "-m", "hermes_cli.main", "gateway"],
             "start_time": 123,
-        }))
+        }), encoding="utf-8")
 
         # Runtime lock is held by a live gateway, but the lock record is
         # readable (no locked sentinel) → execution falls through to the loop.
@@ -343,7 +343,7 @@ class TestGatewayPidState:
             "kind": "hermes-gateway",
             "argv": ["python", "-m", "hermes_cli.main", "gateway"],
             "start_time": 123,
-        }))
+        }), encoding="utf-8")
 
         monkeypatch.setattr(
             status, "is_gateway_runtime_lock_active", lambda lock_path=None: True
@@ -386,7 +386,7 @@ class TestGatewayPidState:
             "kind": "hermes-gateway",
             "argv": ["python", "-m", "hermes_cli.main", "gateway"],
             "start_time": 123,
-        }))
+        }), encoding="utf-8")
 
         monkeypatch.setattr(
             status, "is_gateway_runtime_lock_active", lambda lock_path=None: True
@@ -549,7 +549,7 @@ class TestGatewayRuntimeStatus:
             "kind": "hermes-gateway",
             "platforms": {},
             "updated_at": "2025-01-01T00:00:00Z",
-        }))
+        }), encoding="utf-8")
 
         status.write_runtime_status(gateway_state="running")
 
@@ -888,7 +888,7 @@ class TestScopedLocks:
             "pid": 99999,
             "start_time": 123,
             "kind": "hermes-gateway",
-        }))
+        }), encoding="utf-8")
 
         # Post-#21561 the liveness probe routes through
         # ``gateway.status._pid_exists`` (psutil-first, safe on Windows).
@@ -916,7 +916,7 @@ class TestScopedLocks:
             "start_time": None,
             "kind": "hermes-gateway",
             "argv": ["/Users/user/.hermes/hermes-agent/hermes_cli/main.py", "gateway", "run", "--replace"],
-        }))
+        }), encoding="utf-8")
 
         # Post-#21561 the liveness probe routes through
         # ``gateway.status._pid_exists`` (psutil-first, safe on Windows),
@@ -954,7 +954,7 @@ class TestScopedLocks:
             "kind": "hermes-gateway",
             "argv": ["hermes_cli/main.py", "--profile", "milena", "gateway", "run", "--replace"],
             "scope": "discord-bot-token",
-        }))
+        }), encoding="utf-8")
 
         # Live process can resolve start_time; disk cannot — the mismatch
         # that previously failed the self-reacquire short-circuit.
@@ -984,7 +984,7 @@ class TestScopedLocks:
             "pid": os.getpid(),
             "start_time": None,
             "kind": "hermes-gateway",
-        }))
+        }), encoding="utf-8")
         monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 987654321)
 
         status.release_scoped_lock("discord-bot-token", "secret")
@@ -1009,7 +1009,7 @@ class TestScopedLocks:
             "kind": "hermes-gateway",
             "argv": ["hermes_cli/main.py", "gateway", "run", "--replace"],
             "scope": "discord-bot-token",
-        }))
+        }), encoding="utf-8")
 
         monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 987654321)
 
@@ -1074,7 +1074,7 @@ class TestScopedLocks:
             "pid": 99999,
             "start_time": 123,
             "kind": "hermes-gateway",
-        }))
+        }), encoding="utf-8")
 
         # Post-#21561: simulate "PID gone" via _pid_exists returning False.
         monkeypatch.setattr(status, "_pid_exists", lambda pid: False)
@@ -1098,12 +1098,12 @@ class TestScopedLocks:
             "pid": 111,
             "start_time": 222,
             "kind": "hermes-gateway",
-        }))
+        }), encoding="utf-8")
         other_lock.write_text(json.dumps({
             "pid": 999,
             "start_time": 333,
             "kind": "hermes-gateway",
-        }))
+        }), encoding="utf-8")
 
         removed = status.release_all_scoped_locks(
             owner_pid=111,
@@ -1160,7 +1160,7 @@ class TestScopedLocks:
             "pid": 99999,
             "start_time": 123,
             "kind": "hermes-gateway",
-        }))
+        }), encoding="utf-8")
 
         # Round 1: alive (the zombie). Round 2: dead (Windows reaped).
         call_count = {"n": 0}
@@ -1200,7 +1200,7 @@ class TestScopedLocks:
             "pid": 99999,
             "start_time": 123,
             "kind": "hermes-gateway",
-        }))
+        }), encoding="utf-8")
 
         # Both checks return alive.
         monkeypatch.setattr(status, "_pid_exists", lambda pid: True)
@@ -1230,7 +1230,7 @@ class TestScopedLocks:
             "pid": 99999,
             "start_time": 123,
             "kind": "hermes-gateway",
-        }))
+        }), encoding="utf-8")
 
         monkeypatch.setattr(status, "_pid_exists", lambda pid: True)
         monkeypatch.setattr(status, "_pid_exists", lambda pid: True)
@@ -1474,7 +1474,7 @@ class TestTakeoverMarker:
             "replacer_pid": 99999,
             "replacer_hermes_home": str(tmp_path / "profiles" / "other"),
             "written_at": datetime.now(timezone.utc).isoformat(),
-        }))
+        }), encoding="utf-8")
 
         result = status.consume_takeover_marker_for_self()
 
@@ -1496,7 +1496,7 @@ class TestTakeoverMarker:
             "target_start_time": 100,
             "replacer_pid": 99999,
             "written_at": datetime.now(timezone.utc).isoformat(),
-        }))
+        }), encoding="utf-8")
 
         result = status.consume_takeover_marker_for_self()
 

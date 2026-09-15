@@ -76,13 +76,13 @@ def test_self_heals_missing_singleton_access_token_from_codex_cli(tmp_path, monk
                 "auth_mode": "chatgpt",
             },
         },
-    }))
+    }), encoding="utf-8")
     (codex_home / "auth.json").write_text(json.dumps({
         "tokens": {
             "access_token": "fresh-access",
             "refresh_token": "fresh-refresh",
         },
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
@@ -114,7 +114,7 @@ def _write_stores(tmp_path, *, hermes_last_refresh, cli_last_refresh):
                 "auth_mode": "chatgpt",
             },
         },
-    }))
+    }), encoding="utf-8")
     (codex_home / "auth.json").write_text(json.dumps({
         "auth_mode": "chatgpt",
         "last_refresh": cli_last_refresh,
@@ -122,7 +122,7 @@ def _write_stores(tmp_path, *, hermes_last_refresh, cli_last_refresh):
             "access_token": "cli-access",
             "refresh_token": "cli-refresh",
         },
-    }))
+    }), encoding="utf-8")
     return hermes_home, codex_home
 
 

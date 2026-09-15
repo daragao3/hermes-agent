@@ -105,7 +105,7 @@ class TestWriteFrequencyParsing:
             "apiKey": "k",
             "writeFrequency": "turn",
             "hosts": {"hermes": {"writeFrequency": "session"}},
-        }))
+        }), encoding="utf-8")
         cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
         assert cfg.write_frequency == "session"
 

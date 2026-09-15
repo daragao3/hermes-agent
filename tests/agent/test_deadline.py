@@ -422,13 +422,13 @@ class TestKillProcessTree:
             f"pathlib.Path({str(started)!r}).write_text('x')\n"
             "time.sleep(10)\n"
             f"pathlib.Path({str(marker)!r}).write_text('x')\n"
-        )
+        , encoding="utf-8")
         parent_py = tmp_path / "parent.py"
         parent_py.write_text(
             "import subprocess, sys, time\n"
             f"subprocess.Popen([sys.executable, {str(grandchild_py)!r}])\n"
             "time.sleep(10)\n"
-        )
+        , encoding="utf-8")
         proc = subprocess.Popen(
             [sys.executable, str(parent_py)], start_new_session=True
         )
@@ -457,14 +457,14 @@ class TestKillProcessTree:
             f"pathlib.Path({str(started)!r}).write_text('x')\n"
             "time.sleep(10)\n"
             f"pathlib.Path({str(marker)!r}).write_text('x')\n"
-        )
+        , encoding="utf-8")
         parent_py = tmp_path / "parent.py"
         parent_py.write_text(
             "import subprocess, sys, time\n"
             # grandchild leaves the parent's session/group entirely
             f"subprocess.Popen([sys.executable, {str(grandchild_py)!r}], start_new_session=True)\n"
             "time.sleep(10)\n"
-        )
+        , encoding="utf-8")
         proc = subprocess.Popen(
             [sys.executable, str(parent_py)], start_new_session=True
         )

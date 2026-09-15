@@ -51,7 +51,7 @@ def test_repair_runs_force_reinstall_with_pyproject_pins(
             ]
         """
         )
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(m, "PROJECT_ROOT", tmp_path)
 
     calls: list[list[str]] = []

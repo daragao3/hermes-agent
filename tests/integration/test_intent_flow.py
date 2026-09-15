@@ -72,7 +72,7 @@ def pipeline_path(tmp_path):
             "history": [],
         }],
         "stats": {},
-    }))
+    }), encoding="utf-8")
     return p
 
 

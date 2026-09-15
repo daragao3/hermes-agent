@@ -41,7 +41,7 @@ def test_invalid_entries_are_skipped_not_raised(tmp_path):
 
 def test_find_removed_matches_name_or_normalized_repo(tmp_path):
     (tmp_path / "removed.yaml").write_text(yaml.safe_dump({"removed": [
-        {"name": "evil", "repo": "https://github.com/x/evil.git", "reason": "malware", "date": "2026-01-01"}]}))
+        {"name": "evil", "repo": "https://github.com/x/evil.git", "reason": "malware", "date": "2026-01-01"}]}), encoding="utf-8")
     assert pc.find_removed("evil", tmp_path).reason == "malware"
     assert pc.find_removed("https://github.com/x/EVIL/", tmp_path) is not None
     assert pc.find_removed("https://github.com/x/fine", tmp_path) is None
@@ -56,6 +56,6 @@ def test_live_catalog_falls_back_to_in_tree_and_unions_removals(tmp_path, monkey
 
     cache.parent.mkdir(parents=True)
     cache.write_text(json.dumps({"entries": [_entry("live-only")],
-                                 "removed": [{"name": "pulled-live", "reason": "cve"}]}))
+                                 "removed": [{"name": "pulled-live", "reason": "cve"}]}), encoding="utf-8")
     assert [e.name for e in pc.load_catalog_live()] == ["live-only"]
     assert pc.find_removed("pulled-live").reason == "cve"

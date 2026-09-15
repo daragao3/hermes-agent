@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 os.chdir(HOME)
 (HOME / "config.yaml").write_text(
     "model:\n  provider: openai-compat\n  default: fixture-model\n  context_length: 131072\nagent:\n  max_iterations: 2\ncompression:\n  enabled: false\ndatabase:\n  journal_mode: delete\n"
-)
+, encoding="utf-8")
 # Fence all network calls to loopback, including optional discovery/aux paths.
 orig_connect = socket.socket.connect
 blocked = []

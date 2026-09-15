@@ -319,7 +319,7 @@ class TestApiKeyHintRealPool:
                     },
                 }
             )
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         from agent.credential_pool import load_pool
 

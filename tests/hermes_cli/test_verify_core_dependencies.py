@@ -42,7 +42,7 @@ def temp_pyproject(tmp_path, monkeypatch):
           "ptyprocess>=0.7.0,<1; sys_platform != 'win32'",
           "tzdata>=2024.1; sys_platform == 'win32'",
         ]
-    """))
+    """), encoding="utf-8")
     import hermes_cli.main as main_mod
     monkeypatch.setattr(main_mod, "PROJECT_ROOT", tmp_path)
     return tmp_path

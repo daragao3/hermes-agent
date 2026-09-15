@@ -328,7 +328,7 @@ class TestLoadConfigParseFailure:
             cfg.write_text(
                 "model:\n  default: test/custom-model\n"
                 "approvals:\n  deny:\n    - 'curl*evil.com*'\n"
-            )
+            , encoding="utf-8")
 
             good = load_config()
             assert good["model"]["default"] == "test/custom-model"
@@ -361,7 +361,7 @@ class TestEmptyConfigSections:
                 "model:\n  default: test/custom\n"
                 "terminal:\n"
                 "display:\n"
-            )
+            , encoding="utf-8")
             config = load_config()
             assert config["model"]["default"] == "test/custom"
             assert isinstance(config["terminal"], dict)
@@ -1161,7 +1161,7 @@ class TestSanitizeEnvLines:
         env_file.write_text(
             "FAL_KEY=good\n"
             "OPENROUTER_API_KEY=valFIRECRAWL_API_KEY=val2\n"
-        )
+        , encoding="utf-8")
         with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
             fixes = sanitize_env_file()
             assert fixes == 0

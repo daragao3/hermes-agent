@@ -106,7 +106,7 @@ def _write_valid_ssh_backend_lock(tmp_path, monkeypatch) -> int:
         "hermesHome": str(tmp_path),
         "logPath": f"{tmp_path}/desktop-ssh/{ownership_id}/{spawn_nonce}.log",
         "startedAt": "2026-08-21T15:27:39Z",
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.delenv("HERMES_DESKTOP_CHILD_PID", raising=False)
     return pid

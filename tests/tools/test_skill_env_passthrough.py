@@ -38,7 +38,7 @@ def _create_skill(tmp_path, name, frontmatter_extra=""):
         f"---\n\n"
         f"# {name}\n\n"
         f"Test content.\n"
-    )
+    , encoding="utf-8")
     return skill_dir
 
 

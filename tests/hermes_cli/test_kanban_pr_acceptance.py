@@ -62,7 +62,7 @@ def github(tmp_path, monkeypatch):
     gh = shim / "gh"
     gh.write_text(f"#!{sys.executable}\nimport sys,urllib.request\n"
                   f"u='http://127.0.0.1:{server.server_port}/'+sys.argv[2]\n"
-                  "print(urllib.request.urlopen(u).read().decode())\n")
+                  "print(urllib.request.urlopen(u).read().decode())\n", encoding="utf-8")
     gh.chmod(0o755)
     monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))

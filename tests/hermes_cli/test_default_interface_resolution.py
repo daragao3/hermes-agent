@@ -100,7 +100,7 @@ class TestWantsTuiEarly:
         def _make(interface):
             (tmp_path / "config.yaml").write_text(
                 f"display:\n  interface: {interface}\n"
-            )
+            , encoding="utf-8")
             monkeypatch.setenv("HERMES_HOME", str(tmp_path))
             monkeypatch.setattr(m, "_EARLY_INTERFACE_CACHE", None)
 

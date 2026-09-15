@@ -771,7 +771,7 @@ class TestSubdirInstallE2E:
         repo_root.mkdir()
         (repo_root / "plugin.json").write_text(
             json.dumps({"$schema": PLUGIN_SCHEMA_V1, "name": "portable.test"})
-        )
+        , encoding="utf-8")
         env = {
             **os.environ,
             "GIT_AUTHOR_NAME": "t",
@@ -813,7 +813,7 @@ def test_portable_manifest_is_visible_to_plugin_cli(tmp_path):
                 "description": "Portable test plugin",
             }
         )
-    )
+    , encoding="utf-8")
 
     assert _read_manifest_info(plugin, "") == (
         "portable.test",

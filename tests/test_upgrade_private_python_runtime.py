@@ -71,4 +71,4 @@ def test_candidate_runtime_uses_private_sqlite_and_wal(tmp_path):
             assert reader.search_messages('runtime')
     (evidence / 'private-runtime-consumer.json').write_text(json.dumps({
         'executable':sys.executable, 'base_prefix':sys.base_prefix,
-        'sqlite':sqlite3.sqlite_version, 'wal':True}, indent=2))
+        'sqlite':sqlite3.sqlite_version, 'wal':True}, indent=2), encoding="utf-8")

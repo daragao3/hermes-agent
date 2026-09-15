@@ -338,7 +338,7 @@ def test_live_connection_keeps_its_write_lock_across_a_repair_pass(tmp_path):
                 print("BLOCKED")
             """
         )
-    )
+    , encoding="utf-8")
 
     def _peer_can_write() -> bool:
         out = subprocess.run(

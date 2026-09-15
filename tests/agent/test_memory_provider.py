@@ -390,10 +390,10 @@ class TestUserInstalledProviderDiscovery:
             "    def sync_turn(self, *a, **kw): pass\n"
             "    def get_tool_schemas(self): return []\n"
             "    def handle_tool_call(self, *a, **kw): return '{}'\n"
-        )
+        , encoding="utf-8")
         (plugin_dir / "plugin.yaml").write_text(
             f"name: {name}\ndescription: Test user provider\n"
-        )
+        , encoding="utf-8")
         return plugin_dir
 
 
@@ -426,7 +426,7 @@ class TestUserInstalledProviderDiscovery:
             "    def sync_turn(self, *a, **kw): pass\n"
             "    def get_tool_schemas(self): return []\n"
             "    def handle_tool_call(self, *a, **kw): return '{}'\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setattr(
             "plugins.memory._get_user_plugins_dir",
             lambda: tmp_path / "plugins",
@@ -554,7 +554,7 @@ class TestEntryPointMemoryProviderDiscovery:
             skill_md.write_text(
                 "---\nname: maintenance\ndescription: Memory maintenance\n---\n\n"
                 "Packaged provider maintenance body.\n"
-            )
+            , encoding="utf-8")
             register_skill = (
                 "    ctx.register_skill(\n"
                 "        'maintenance',\n"
@@ -577,7 +577,7 @@ class TestEntryPointMemoryProviderDiscovery:
             f"{register_skill}"
             "def make_provider():\n"
             "    return Provider()\n"
-        )
+        , encoding="utf-8")
         return module_name, exposure
 
     def test_discover_finds_entry_point_provider(self, tmp_path, monkeypatch):

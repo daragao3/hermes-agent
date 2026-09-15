@@ -91,7 +91,7 @@ def slack_platform_config(monkeypatch, tmp_path):
     home.mkdir()
     (home / "config.yaml").write_text(
         "platforms:\n  slack:\n    enabled: true\n    token: xoxb-test\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
     # Config caches are process-global; clear them so the temp HERMES_HOME wins.
     try:
@@ -237,7 +237,7 @@ class TestMediaPolicyEnvBridge:
             # scalar with DOUBLED backslashes, which the env then carries verbatim.
             f"  media_delivery_allow_dirs: [{json.dumps(str(allow_dir))}]\n"
             "  trust_recent_files: false\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
         for var in (
             "HERMES_MEDIA_DELIVERY_STRICT",
@@ -273,7 +273,7 @@ class TestMediaPolicyEnvBridge:
             # json.dumps, not !r: a repr'd Windows path is a YAML single-quoted
             # scalar with DOUBLED backslashes, which the env then carries verbatim.
             f"  media_delivery_allow_dirs: [{json.dumps(str(allow_dir))}]\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
         for var in ("HERMES_MEDIA_DELIVERY_STRICT", "HERMES_MEDIA_ALLOW_DIRS"):
             monkeypatch.delenv(var, raising=False)
@@ -308,7 +308,7 @@ class TestMediaPolicyEnvBridge:
             "  strict: true\n"
             f"  media_delivery_allow_dirs: [{media_dir!r}]\n"
             "  trust_recent_files: false\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
         # Strict comes from the shared .env in both processes...
         monkeypatch.setenv("HERMES_MEDIA_DELIVERY_STRICT", "1")

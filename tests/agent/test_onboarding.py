@@ -43,7 +43,7 @@ class TestMarkSeen:
         cfg_path.write_text(yaml.safe_dump({
             "model": {"default": "claude-sonnet-4.6"},
             "display": {"skin": "default"},
-        }))
+        }), encoding="utf-8")
 
         assert mark_seen(cfg_path, BUSY_INPUT_FLAG) is True
         loaded = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))

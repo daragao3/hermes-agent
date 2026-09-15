@@ -157,7 +157,7 @@ class TestGetTokensReconstructsExpiresIn:
                     "refresh_token": "r",
                 }
             )
-        )
+        , encoding="utf-8")
 
         storage = HermesTokenStorage("srv")
         reloaded = asyncio.run(storage.get_tokens())
@@ -195,7 +195,7 @@ class TestGetTokensReconstructsExpiresIn:
                     "refresh_token": "r",
                 }
             )
-        )
+        , encoding="utf-8")
         stale_time = time.time() - 7200  # 2hr ago, exceeds 3600s TTL
         import os
 

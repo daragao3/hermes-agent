@@ -94,7 +94,7 @@ assert 'cryptography.hazmat.bindings._rust' not in sys.modules, \\
 print('PASS: update check path is clean of cryptography')
 sys.exit(0)
 """
-        )
+        , encoding="utf-8")
         try:
             result = subprocess.run(
                 [sys.executable, script.name],

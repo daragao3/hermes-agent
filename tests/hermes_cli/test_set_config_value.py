@@ -207,7 +207,7 @@ class TestConfigGetUnset:
             "    extra:\n"
             "      access_token: yaml-token\n"
             "      tenant_id: tenant\n"
-        )
+        , encoding="utf-8")
 
         args = argparse.Namespace(config_command="unset", key="platforms.teams.extra.access_token")
         config_command(args)

@@ -45,7 +45,7 @@ def _seed_custom_provider_config(api_mode: str = "anthropic_messages") -> None:
             },
             sort_keys=False,
         )
-    )
+    , encoding="utf-8")
 
 
 class TestUpdateConfigForProviderClearsStaleCustomFields:

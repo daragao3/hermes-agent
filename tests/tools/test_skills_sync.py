@@ -132,7 +132,7 @@ class TestReadSkillName:
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: audiocraft-audio-generation\n---\n# Skill"
-        )
+        , encoding="utf-8")
         skills = _discover_bundled_skills(tmp_path)
         assert skills[0][0] == "audiocraft-audio-generation"
 
@@ -353,7 +353,7 @@ class TestRenamedBundledSkillRecovery:
         manifest_file.parent.mkdir(parents=True, exist_ok=True)
         manifest_file.write_text(
             f"moved-skill:{edited_hash}\nhub-skill:{hub_hash}\n"
-        )
+        , encoding="utf-8")
         lock = skills_dir / ".hub" / "lock.json"
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_text(
@@ -365,7 +365,7 @@ class TestRenamedBundledSkillRecovery:
                     },
                 }
             )
-        )
+        , encoding="utf-8")
 
         # Upstream moved both into a new category.
         self._skill(bundled, "newcat/moved-skill", body="# Updated upstream\n")
@@ -545,7 +545,7 @@ class TestResetBundledSkill:
         (bundled / "productivity" / "google-workspace").mkdir(parents=True)
         (bundled / "productivity" / "google-workspace" / "SKILL.md").write_text(
             "---\nname: google-workspace\n---\n# GW v2 (upstream)\n"
-        )
+        , encoding="utf-8")
         return bundled
 
     def _patches(self, bundled, skills_dir, manifest_file):
@@ -638,7 +638,7 @@ class TestResetBundledSkill:
         (sub / "ref.md").write_text("# nested ref\n", encoding="utf-8")
         manifest_file.write_text(
             "google-workspace:STALEHASH000000000000000000000000\n"
-        )
+        , encoding="utf-8")
 
         # Read-only files AND directories — the real Nix-store case.
         ro_dir = (
@@ -681,7 +681,7 @@ class TestResetBundledSkill:
         (dest / "SKILL.md").write_text("# user version\n", encoding="utf-8")
         manifest_file.write_text(
             "google-workspace:STALEHASH000000000000000000000000\n"
-        )
+        , encoding="utf-8")
 
         # Simulate an unremovable tree (e.g. a busy mountpoint or a path even
         # chmod can't rescue) by making the removal helper raise.

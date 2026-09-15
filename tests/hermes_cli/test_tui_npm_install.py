@@ -64,12 +64,12 @@ def test_make_tui_argv_uses_bundled_tui_when_workspace_missing(
         '{"packages":{'
         '"node_modules/foo":{"version":"1.0.0","dev":true,"peer":true,"resolved":"https://x/foo.tgz"}'
         '}}'
-    )
+    , encoding="utf-8")
     (tmp_path / "node_modules" / ".package-lock.json").write_text(
         '{"packages":{'
         '"node_modules/foo":{"version":"1.0.0","dev":true,"resolved":"https://x/foo.tgz"}'
         '}}'
-    )
+    , encoding="utf-8")
     assert main_tui_launch._tui_need_npm_install(tmp_path) is False
 
 
@@ -78,10 +78,10 @@ def test_install_when_version_differs_even_with_peer_drop(tmp_path: Path, main_m
     _touch_ink(tmp_path)
     (tmp_path / "package-lock.json").write_text(
         '{"packages":{"node_modules/foo":{"version":"2.0.0","dev":true,"peer":true}}}'
-    )
+    , encoding="utf-8")
     (tmp_path / "node_modules" / ".package-lock.json").write_text(
         '{"packages":{"node_modules/foo":{"version":"1.0.0","dev":true}}}'
-    )
+    , encoding="utf-8")
     assert main_tui_launch._tui_need_npm_install(tmp_path) is True
 
 
@@ -593,7 +593,7 @@ def test_need_npm_install_false_with_reduced_npm11_hidden_lockfile(
                 }
             }
         )
-    )
+    , encoding="utf-8")
     # Hidden lockfile as npm 11 writes it: reduced, plus extraneous.
     (tmp_path / "node_modules").mkdir(parents=True, exist_ok=True)
     (tmp_path / "node_modules" / ".package-lock.json").write_text(
@@ -609,7 +609,7 @@ def test_need_npm_install_false_with_reduced_npm11_hidden_lockfile(
                 }
             }
         )
-    )
+    , encoding="utf-8")
 
     # Must be False: real skew keys (resolved/integrity) match, declarative
     # omissions and extraneous are ignored, and the workspace link is skipped.
@@ -636,7 +636,7 @@ def test_need_npm_install_true_when_resolved_drifts(tmp_path: Path, main_mod) ->
                 }
             }
         )
-    )
+    , encoding="utf-8")
     (tmp_path / "node_modules").mkdir(parents=True, exist_ok=True)
     (tmp_path / "node_modules" / ".package-lock.json").write_text(
         json.dumps(
@@ -649,7 +649,7 @@ def test_need_npm_install_true_when_resolved_drifts(tmp_path: Path, main_mod) ->
                 }
             }
         )
-    )
+    , encoding="utf-8")
 
     # resolved/integrity differ on both sides → must reinstall.
     assert main_tui_launch._tui_need_npm_install(ws) is True
@@ -678,7 +678,7 @@ def test_need_npm_install_true_when_regular_pkg_missing(tmp_path: Path, main_mod
                 }
             }
         )
-    )
+    , encoding="utf-8")
     (tmp_path / "node_modules").mkdir(parents=True, exist_ok=True)
     (tmp_path / "node_modules" / ".package-lock.json").write_text(
         json.dumps(
@@ -691,7 +691,7 @@ def test_need_npm_install_true_when_regular_pkg_missing(tmp_path: Path, main_mod
                 }
             }
         )
-    )
+    , encoding="utf-8")
 
     assert main_tui_launch._tui_need_npm_install(ws) is True
 

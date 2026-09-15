@@ -52,7 +52,7 @@ def run_env(monkeypatch, tmp_path):
     home.mkdir()
     (home / "config.yaml").write_text(
         "platforms:\n  slack:\n    enabled: true\n    token: xoxb-test\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
 
     send_calls = []
