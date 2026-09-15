@@ -25,7 +25,13 @@ def _frames(out: io.StringIO) -> list[dict]:
     return [json.loads(line) for line in out.getvalue().splitlines() if line.strip()]
 
 
-def _wait(out: io.StringIO, predicate, timeout: float = 5.0) -> dict:
+def _wait(out: io.StringIO, predicate, timeout: float = 20.0) -> dict:
+    # 20s, not 5s: a fake turn's post-turn work (message.complete -> session.info
+    # -> the 1s-granularity thread join before turn.end) measured 2.9s+ on a
+    # loaded runner and a healthy node reached 10.5s, so 5s sat inside the
+    # healthy distribution (flaky in 12-worker sweeps, 2026-09-15). Kept under
+    # the 30s addopts cap so one blown wait still fails at THIS assertion, with
+    # the frame list, not at the watchdog.
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         for frame in _frames(out):
@@ -86,6 +92,10 @@ def _session(agent) -> dict:
     }
 
 
+# The two real-turn tests override the 30s addopts cap: a healthy interrupt turn
+# measured 19s on a heavily loaded box, and a blown 20s _wait plus host.close()'s
+# join must still end at THIS file's assertion rather than the watchdog.
+@pytest.mark.timeout(90)
 def test_turn_start_streams_deltas_then_turn_end_with_history_identity(turn_env):
     out = io.StringIO()
     host = ComputeHost(stdout=out, heartbeat_secs=0)
@@ -169,6 +179,7 @@ def test_stale_queued_prompt_generation_ends_turn_as_interrupted(turn_env):
     assert not any(f["type"] == "turn.started" for f in _frames(out))
 
 
+@pytest.mark.timeout(90)
 def test_interrupt_frame_acks_and_marks_turn_interrupted(turn_env):
     """The turn runs on the host worker while ``interrupt`` arrives on the control path."""
     out = io.StringIO()
