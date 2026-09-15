@@ -63,13 +63,14 @@ def pytest_collection_modifyitems(config, items):  # noqa: D401 - pytest hook
     # directory was unrunnable on any host that actually HAS docker (it only
     # looked green where the skip above fired).
     #
-    # Sized ABOVE built_image's own 1200s subprocess budget on purpose: an
+    # Sized ABOVE built_image's own 3600s subprocess budget on purpose: an
     # outer cap below the inner one preempts the build's own clean
     # "docker build failed" assertion, and ``--timeout-method=thread`` cannot
     # interrupt a blocked ``subprocess.wait`` anyway -- it dumps a stack
     # ending in ``threading._wait_for_tstate_lock``, which is exactly the
-    # misleading traceback this red presented as.
-    extend_timeout = pytest.mark.timeout(1800)
+    # misleading traceback this red presented as. Keep the two coupled: if
+    # you move one, move the other (see the derivation on the inner cap).
+    extend_timeout = pytest.mark.timeout(4200)
     for item in items:
         if "tests/docker/" not in str(item.fspath).replace(os.sep, "/"):
             continue
@@ -96,16 +97,38 @@ def built_image() -> str:
     # (~/.docker/cli-plugins/docker-buildx.exe) — so buildx is a grandchild of
     # this call and inherits the capture pipe handles, holding the write end
     # open. The pipe never reaches EOF, subprocess.run kills only docker.exe at
-    # 1200s and then blocks re-draining. This is a SESSION-scoped fixture, so
+    # the budget and then blocks re-draining. This is a SESSION-scoped fixture, so
     # that hang takes the entire tests/docker suite with it rather than one
     # test. The run/exec/logs/rm calls elsewhere in this directory stay on
     # pipes: container processes are children of the DAEMON, not of docker.exe,
     # so nothing inherits these handles.
     from hermes_cli._subprocess_compat import run_text_capture
 
+    # 3600s, raised from 1200s on measurement, not taste. A COLD build on the
+    # Windows/WSL2 dev host could not finish inside 1200s three times running
+    # (TimeoutExpired at 1204s, 1210s, 1206.60s), and the cost is not one
+    # thing the build can shed:
+    #   - stage-3's single apt-get install (gcc/g++/cmake/ffmpeg/python3-dev
+    #     ...) measured 1138.0s, 1232.6s and 1351.7s cold. Only ~40% of that
+    #     is download (281 MB at 350-600 kB/s container egress); ~745s is
+    #     dpkg unpack/configure. An apt cache mount was A/B-tested here and
+    #     REFUTED (1232.6s -> 1351.7s, full re-download), so do not reach for
+    #     one -- and it could not touch the unpack share anyway.
+    #   - everything AFTER that stage (uv sync, npm install, playwright
+    #     chromium, ui builds) is ~1150s by itself: with stage-3 already
+    #     cached, build + 3 tests took 1239s and the tests alone take ~89s.
+    # Sum ~2300-2500s, and the download share swings ~10x with egress
+    # (154 kB/s to 1.7 MB/s measured on the same host within a day). 1200s
+    # was therefore a guaranteed false failure from cold, and 2400 would be a
+    # coin-flip; 3600 buys real margin. This cap exists to catch a HUNG build
+    # (the buildx grandchild pipe case above), and a hung build costing an
+    # hour instead of twenty minutes is the right trade against a budget
+    # that fails honest builds. Build context is NOT a factor: it is 130 MB,
+    # loads in ~107s, and runs in parallel, so .dockerignore changes cannot
+    # move this number. Warm-cache builds are unaffected by any of this.
     result = run_text_capture(
         ["docker", "build", "-t", IMAGE_TAG, repo_root],
-        timeout=1200,
+        timeout=3600,
     )
     assert result.returncode == 0, (
         f"docker build failed:\n{result.stderr[-2000:]}"
