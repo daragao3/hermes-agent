@@ -285,6 +285,7 @@ test('resolveInstallScript surfaces an actionable error when the 404 fallback is
         assert.match(err.message, /not available upstream/i)
         assert.match(err.message, /HERMES_DESKTOP_HERMES_ROOT/)
         assert.match(err.message, /reinstall/i)
+
         return true
       }
     )
@@ -295,6 +296,7 @@ test('resolveInstallScript surfaces an actionable error when the 404 fallback is
 
 test('resolveInstallScript rethrows non-404 download failures untouched', async () => {
   const home = mkTmpHome()
+
   try {
     const commit = 'c'.repeat(40)
     // Transient network failures (offline, DNS, 5xx) stay retryable -- they
@@ -314,6 +316,7 @@ test('resolveInstallScript rethrows non-404 download failures untouched', async 
       (err: TaggedError) => {
         assert.notEqual(err.installScriptUnavailable, true)
         assert.match(err.message, /ENOTFOUND/)
+
         return true
       }
     )
@@ -324,15 +327,18 @@ test('resolveInstallScript rethrows non-404 download failures untouched', async 
 
 test('resolveInstallScript does not re-fetch a commit that already 404ed this session', async () => {
   const home = mkTmpHome()
+
   try {
     const commit = 'd'.repeat(40)
     let downloads = 0
+
     const download404 = async () => {
       downloads++
       const err: TaggedError = new Error('Failed to download install.sh: HTTP 404')
       err.statusCode = 404
       throw err
     }
+
     const attempt = () =>
       resolveInstallScript({
         installStamp: { commit },
@@ -354,6 +360,7 @@ test('resolveInstallScript does not re-fetch a commit that already 404ed this se
 
 test('a 404-memoized commit still picks up the installed-agent fallback on retry', async () => {
   const home = mkTmpHome()
+
   try {
     const commit = 'e'.repeat(40)
     await assert.rejects(
@@ -386,6 +393,7 @@ test('a 404-memoized commit still picks up the installed-agent fallback on retry
         throw new Error('must not be called for a memoized 404')
       }
     })
+
     assert.equal(result.source, 'installed-agent')
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
@@ -394,6 +402,7 @@ test('a 404-memoized commit still picks up the installed-agent fallback on retry
 
 test('runBootstrap propagates installScriptUnavailable in its failure result', async () => {
   const home = mkTmpHome()
+
   try {
     const commit = 'f'.repeat(40)
     // Seed the 404 memo through the injectable path, then drive the real
@@ -417,6 +426,7 @@ test('runBootstrap propagates installScriptUnavailable in its failure result', a
     )
 
     const events = []
+
     const result = await runBootstrap({
       installStamp: { commit },
       activeRoot: path.join(home, 'hermes-agent'),

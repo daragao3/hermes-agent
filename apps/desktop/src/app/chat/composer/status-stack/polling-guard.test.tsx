@@ -89,6 +89,7 @@ describe('ComposerStatusStack hidden-pane poll', () => {
       ? { processes: [{ command: 'dev server', session_id: 'bg1', status: 'running' }] }
       : {}
   )
+
   const processListCalls = () => runningList.mock.calls.filter(([method]) => method === 'process.list').length
 
   function renderStackBg(visible: boolean) {
