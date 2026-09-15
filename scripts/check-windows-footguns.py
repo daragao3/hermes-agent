@@ -796,6 +796,23 @@ def build_prefilter(footguns: "list[Footgun]") -> tuple[str, ...]:
 PREFILTER: tuple[str, ...] = build_prefilter(FOOTGUNS)
 
 
+def repo_relative(path: Path) -> str | None:
+    """POSIX-style path of ``path`` relative to ``REPO_ROOT``, or ``None``
+    when it lives outside the repo.
+
+    Paths outside the repo are legitimate CLI input -- the documented
+    pre-merge step scans upstream ``.py`` files copied into a temp tree with
+    the widened scanner -- and ``Path.relative_to`` raises ``ValueError`` on
+    them rather than returning anything.  Only the self-exclusion below and
+    the finding printer need the relative form, so callers fall back to the
+    absolute path when this returns ``None``.
+    """
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return None
+
+
 def should_scan_file(path: Path) -> bool:
     """Return True if this file is in scope for the checker."""
     # Skip the excluded dirs
@@ -806,9 +823,10 @@ def should_scan_file(path: Path) -> bool:
     for suffix in EXCLUDED_SUFFIXES:
         if str(path).endswith(suffix):
             return False
-    # Skip self and docs that intentionally mention the patterns
-    rel = path.relative_to(REPO_ROOT).as_posix()
-    if rel in EXCLUDED_FILES:
+    # Skip self and docs that intentionally mention the patterns.  A path
+    # outside the repo can never be one of them, so it stays scannable.
+    rel = repo_relative(path)
+    if rel is not None and rel in EXCLUDED_FILES:
         return False
     # Only scan text files (rough heuristic — .py, .md, .sh, .ps1, .yaml, etc.)
     if path.suffix in {".py", ".pyw", ".pyi"}:
@@ -1344,7 +1362,9 @@ def main(argv: list[str]) -> int:
         files_scanned += 1
         matches = scan_file(path, FOOTGUNS)
         for lineno, line, fg in matches:
-            rel = path.relative_to(REPO_ROOT).as_posix()
+            rel = repo_relative(path)
+            if rel is None:
+                rel = path.as_posix()
             print(f"{rel}:{lineno}: [{fg.name}]")
             print(f"    {line.strip()}")
             print(f"    — {fg.message}")
