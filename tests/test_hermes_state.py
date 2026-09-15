@@ -1023,19 +1023,32 @@ class TestFTS5Search:
         ]
         assert all("context" in row and row["context"] for row in default)
 
-    def test_search_projection_skips_context_enrichment_queries(self, db):
+    def test_search_projection_skips_context_enrichment_queries(self, db, monkeypatch):
         db.create_session(session_id="s1", source="cli")
         db.append_message("s1", role="user", content="before")
         db.append_message("s1", role="assistant", content="projectionneedle")
         db.append_message("s1", role="user", content="after")
 
+        # Trace the connections search actually runs on. ``_read_ctx`` borrows
+        # from ``_read_pool`` via ``_checkout_read_conn`` and opens a fresh
+        # read-only connection on a miss, so a probe connection obtained with a
+        # bare ``db._get_read_conn()`` (never returned to the pool) is one the
+        # search never touches: its trace saw nothing and the count read 0.
+        # Hook the checkout instead, so every borrowed connection is traced;
+        # the writer stays traced for the locked fallback path.
         statements = []
-        read_conn = db._get_read_conn() or db._conn
         traced_connections = [db._conn]
-        if read_conn is not db._conn:
-            traced_connections.append(read_conn)
-        for conn in traced_connections:
-            conn.set_trace_callback(statements.append)
+        db._conn.set_trace_callback(statements.append)
+        real_checkout = db._checkout_read_conn
+
+        def _traced_checkout():
+            conn = real_checkout()
+            if conn is not None and all(conn is not seen for seen in traced_connections):
+                conn.set_trace_callback(statements.append)
+                traced_connections.append(conn)
+            return conn
+
+        monkeypatch.setattr(db, "_checkout_read_conn", _traced_checkout)
 
         def context_query_count():
             normalized = (" ".join(sql.upper().split()) for sql in statements)
@@ -6493,15 +6506,53 @@ class TestExecuteReadRetry:
             db._execute_read(_fn)
         assert calls["n"] == db._WRITE_MAX_RETRIES
 
-    def test_read_serializes_under_the_same_lock(self, db):
-        """The helper holds ``self._lock`` while running fn (parity with
-        the bare ``with self._lock`` reads it replaces)."""
+    @staticmethod
+    def _probe_writer_lock(db) -> bool:
+        """True when ``db._lock`` is held by someone else at the moment of the
+        probe. The non-blocking acquire is released in ``finally`` when it
+        succeeds: an assertion on a leaked acquire would leave the lock held
+        and wedge the fixture's ``close()`` -- and with it the whole pytest
+        process -- so the probe reports and lets the caller assert."""
+        got = db._lock.acquire(blocking=False)
+        try:
+            return not got
+        finally:
+            if got:
+                db._lock.release()
+
+    def test_read_runs_on_a_pooled_connection_without_the_writer_lock(self, db):
+        """Under WAL the helper runs fn on a pooled read-only connection with
+        ``self._lock`` NOT held (WAL readers never block on the writer; queueing
+        reads behind writer flushes was the pre-0.21.1 shape this replaces)."""
+        assert db._wal_active  # the pooled path is WAL-only; guard the premise
         db.create_session("s1", source="cli")
+        observed = {}
 
         def _fn(conn):
-            assert not db._lock.acquire(blocking=False)  # already held by helper
+            observed["writer_conn"] = conn is db._conn
+            observed["lock_held"] = self._probe_writer_lock(db)
             return conn.execute(
                 "SELECT id FROM sessions WHERE id = ?", ("s1",)
             ).fetchone()["id"]
 
         assert db._execute_read(_fn) == "s1"
+        assert observed == {"writer_conn": False, "lock_held": False}
+
+    def test_read_falls_back_to_the_writer_under_the_same_lock(self, db, monkeypatch):
+        """When no pooled connection is available (non-WAL, open failure, pool
+        ceiling) the helper degrades to the writer connection and holds
+        ``self._lock`` while running fn (parity with the bare ``with
+        self._lock`` reads that path replaces)."""
+        db.create_session("s1", source="cli")
+        monkeypatch.setattr(db, "_checkout_read_conn", lambda: None)
+        observed = {}
+
+        def _fn(conn):
+            observed["writer_conn"] = conn is db._conn
+            observed["lock_held"] = self._probe_writer_lock(db)
+            return conn.execute(
+                "SELECT id FROM sessions WHERE id = ?", ("s1",)
+            ).fetchone()["id"]
+
+        assert db._execute_read(_fn) == "s1"
+        assert observed == {"writer_conn": True, "lock_held": True}
