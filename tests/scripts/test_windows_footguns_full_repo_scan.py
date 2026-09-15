@@ -164,3 +164,104 @@ def test_all_scan_skip_list_is_pinned():
         "design -- the tests/evals backlog that justified it is gone. "
         "Excluding anything here hides first-party code from a blocking gate."
     )
+
+
+# ---------------------------------------------------------------------------
+# MULTI-LINE ENCODING CALLS
+#
+# `open()` and `subprocess text=True` are `multiline_encoding_aware`: a call
+# that does not close on the flagged line is re-checked against its full paren
+# span and dropped only if `encoding=` is genuinely in there.
+#
+# The cheap alternative -- skip every multi-line call, the way the read_text
+# rule does -- was measured over the pre-sweep tree (9c5250323c) and lost six
+# findings: two false positives and FOUR REAL FOOTGUNS. So the property under
+# test is not "multi-line calls are exempt", it is "multi-line calls are exempt
+# ONLY when the kwarg is actually present". Both directions are asserted
+# together, from one source, so a filter that exempts too much cannot pass by
+# also making the positive case disappear.
+# ---------------------------------------------------------------------------
+
+_MULTILINE_FIXTURES = (
+    # (label, source, should_report)
+    (
+        "subprocess encoding on continuation line",
+        'subprocess.run(cmd, capture_output=True, text=True,\n'
+        '               encoding="utf-8")\n',
+        False,
+    ),
+    (
+        "subprocess with NO encoding anywhere",
+        'subprocess.run(cmd, capture_output=True, text=True,\n'
+        '               timeout=30)\n',
+        True,
+    ),
+    (
+        "open() encoding on continuation line",
+        'fh = open(path, "r",\n'
+        '          encoding="utf-8")\n',
+        False,
+    ),
+    (
+        "open() with NO encoding anywhere",
+        'fh = open(path, "r",\n'  # windows-footgun: ok -- fixture source text, not a live call site
+        '          newline="")\n',
+        True,
+    ),
+    (
+        "encoding= only AFTER the call closes is not in the span",
+        'subprocess.run(cmd, text=True,\n'
+        '               timeout=30)\n'
+        'other(encoding="utf-8")\n',
+        True,
+    ),
+    (
+        "a comment mentioning encoding= does not count as the kwarg",
+        'subprocess.run(cmd, text=True,\n'
+        '               timeout=30)  # encoding= is deliberately omitted\n',
+        True,
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "label,source,should_report",
+    _MULTILINE_FIXTURES,
+    ids=[f[0] for f in _MULTILINE_FIXTURES],
+)
+def test_multiline_call_is_exempt_only_when_encoding_is_really_in_the_span(
+    tmp_path, label, source, should_report
+):
+    linter = _load_linter_module()
+    target = tmp_path / "probe.py"
+    target.write_text(source, encoding="utf-8", newline="")
+
+    found = linter.scan_file(target, linter.FOOTGUNS)
+    encoding_hits = [
+        m for m in found if "encoding=" in m[2].name
+    ]
+
+    if should_report:
+        assert encoding_hits, (
+            f"{label}: a multi-line call with no encoding= in its span was "
+            "NOT reported. The multi-line filter is exempting calls on shape "
+            "alone -- that is the change measured to hide four real footguns."
+        )
+    else:
+        assert not encoding_hits, (
+            f"{label}: a correctly-written multi-line call was reported. "
+            f"Findings: {[(m[0], m[2].name) for m in encoding_hits]}"
+        )
+
+
+def test_multiline_span_walk_is_bounded():
+    """An unbalanced paren must not send the span walk to end of file, and an
+    unterminated walk must report NO encoding -- i.e. keep the finding rather
+    than silently drop it."""
+    linter = _load_linter_module()
+    lines = ['subprocess.run(cmd, text=True,'] + ["    # filler"] * 500
+    lines.append('    encoding="utf-8")')
+    assert linter._encoding_in_call_span(lines, 0, len("subprocess.run(")) is False, (
+        "the walk ran past _MAX_CALL_SPAN_LINES and found a kwarg it should "
+        "not have reached"
+    )
