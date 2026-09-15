@@ -256,3 +256,94 @@ def test_zero_grace_period_is_strict_writer_preference(monkeypatch):
     assert entered.wait(timeout=5)
     tr.join(timeout=5)
     assert order == ["writer", "reader"]
+
+
+def test_abandoned_reader_does_not_keep_the_lock_from_writers():
+    """An abandoned reader must not block writers for the length of its hang.
+
+    PRODUCTION INCIDENT, 2026-09-14. ``jobflow-notifier`` (a reader: no profile)
+    hung 29,288s -- 8.14 hours, against a 450s median -- inside a provider call
+    that ended ``RuntimeError: Hermes can't reach the model provider``. run_job
+    releases its lock directly, or for a reader with a live model future from
+    that future's done-callback; the soft deadline abandons the runaway worker
+    without either running, so the read lock stayed held for the whole hang.
+
+    The lock is writer-preferring and every ``profile`` job is a writer, so the
+    financier profile stalled behind it: financier-digest-am and
+    financier-canvas-am were both claimed 07:20:53 and did not start until
+    15:06:08 / 15:06:44 -- a 7.75-hour wait that ended the instant the hung
+    reader errored out.
+    """
+    import contextvars
+
+    import cron.scheduler as sched
+
+    release_lock = threading.Event()
+    reader_holds = threading.Event()
+
+    def _hanging_reader(job, _abandoned=None, _deadline_box=None):
+        # Mirror run_job: wrap the release exactly-once and publish it on the
+        # deadline box (NOT keyed by thread -- this lock is not thread-affine).
+        rel = sched._CronLockRelease(sched._terminal_cwd_lock.release_read)
+        sched._terminal_cwd_lock.acquire_read()
+        if _deadline_box is not None:
+            _deadline_box["release_cron_lock"] = rel
+        reader_holds.set()
+        try:
+            release_lock.wait(30)  # the wedged provider call
+        finally:
+            rel()
+        return True
+
+    job = {"id": "hung-reader", "name": "jobflow-notifier-like", "timeout_seconds": 0.5}
+    assert sched._job_mutates_process_globals(job) is False, "must dispatch as a reader"
+
+    try:
+        sched._run_callable_with_deadline(
+            job, _hanging_reader, True, contextvars.copy_context())
+        assert reader_holds.wait(5), "reader never took the read lock"
+
+        got_write = threading.Event()
+
+        def _writer():
+            sched._terminal_cwd_lock.acquire_write()
+            try:
+                got_write.set()
+            finally:
+                sched._terminal_cwd_lock.release_write()
+
+        threading.Thread(target=_writer, daemon=True).start()
+        assert got_write.wait(5), (
+            "a writer is still blocked by an ABANDONED reader's read lock -- "
+            "this is the 2026-09-14 jobflow-notifier 7.75h financier stall")
+    finally:
+        release_lock.set()
+
+
+def test_cron_lock_release_runs_exactly_once():
+    """Two paths release the same lock; it must actually release only once.
+
+    The deadline owner releases an abandoned reader's lock, and the worker's own
+    direct release or future done-callback calls the same hook when it finally
+    unwinds. A second release would corrupt the reader count and let a writer
+    run beside a live reader -- the corruption the lock exists to prevent.
+    """
+    import cron.scheduler as sched
+
+    calls = []
+    rel = sched._CronLockRelease(lambda: calls.append(1))
+    start = threading.Barrier(4)
+
+    def _race():
+        start.wait(5)
+        rel()
+
+    threads = [threading.Thread(target=_race, daemon=True) for _ in range(3)]
+    for t in threads:
+        t.start()
+    start.wait(5)
+    for t in threads:
+        t.join(5)
+    rel()
+
+    assert calls == [1], f"release ran {len(calls)} times, expected exactly 1"
