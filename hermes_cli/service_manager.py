@@ -293,8 +293,15 @@ _HERMES_GID = 10000
 
 
 def _chown_hermes(path: Path) -> None:
+    # os.chown is POSIX-only: off POSIX it raises AttributeError at attribute-access time, and
+    # AttributeError is not an OSError subclass, so the except clause below does NOT catch it.
+    # Production is always Linux (this module is the in-container s6 manager), but the unit suite
+    # reconciles against a fake $HERMES_HOME on dev/CI hosts -- tests/hermes_cli/test_container_boot.py
+    # drove all six of its failures through this one line before the guard.
+    if not hasattr(os, "chown"):
+        return
     try:
-        os.chown(path, _HERMES_UID, _HERMES_GID)
+        os.chown(path, _HERMES_UID, _HERMES_GID)  # windows-footgun: ok -- the guard above returns first
     except PermissionError:
         # Already running as hermes → the dir is hermes-owned by default; swallowing keeps root
         # and unprivileged callers on one code path.
@@ -337,8 +344,11 @@ def _seed_supervise_skeleton(svc_dir: Path) -> None:
         # explicit chmod is required because mkfifo honors the umask (0022 on dev hosts strips
         # group-write → 0o640); stage2 runs umask 0 but be defensive for any invocation context.
         control = supervise / "control"
-        if not control.exists():
-            os.mkfifo(control, 0o660)
+        # os.mkfifo is POSIX-only and has no Windows equivalent (named pipes are a different API
+        # and s6 would not consume one). Same reachability as the chown guard above: never taken
+        # in a container, taken by the unit suite on a Windows host.
+        if not control.exists() and hasattr(os, "mkfifo"):
+            os.mkfifo(control, 0o660)  # windows-footgun: ok -- the guard on the line above
             control.chmod(0o660)
             _chown_hermes(control)
 

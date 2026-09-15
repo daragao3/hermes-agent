@@ -89,7 +89,7 @@ class TestPreserveMode:
         chown_calls: list[tuple[Path, int, int]] = []
         monkeypatch.setattr("utils._preserve_file_owner", lambda _p: (123, 456))
         monkeypatch.setattr(
-            "utils.os.chown",
+            "utils.os.chown",  # windows-footgun: ok -- module-level skip off POSIX
             lambda path, uid, gid: chown_calls.append((Path(path), uid, gid)),
         )
 
@@ -108,7 +108,7 @@ class TestPreserveMode:
         chown_calls: list[tuple] = []
         monkeypatch.setattr("utils._preserve_file_owner", lambda _p: (123, 456))
         monkeypatch.setattr(
-            "utils.os.chown", lambda *a: chown_calls.append(a)
+            "utils.os.chown", lambda *a: chown_calls.append(a)  # windows-footgun: ok -- module-level skip off POSIX
         )
 
         atomic_write_text(target, "new\n")

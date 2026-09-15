@@ -163,6 +163,31 @@ def run_prover(candidates: list[dict], extra_args: list[str]) -> dict:
             "targets must be inside the repo; pytest hangs when run with "
             f"cwd={REPO} against an out-of-tree path. Offending: {outside[0]}"
         )
+
+    # RUN THE CANDIDATE TESTS, NOT THEIR WHOLE FILES.  Passing the files alone
+    # makes ``--all`` execute every test they contain: measured 2026-09-15,
+    # 3,597 tests to decide 81 candidate functions, a 44x overshoot that put the
+    # full audit past ten minutes and made it impractical on a loaded box.
+    #
+    # ``-k`` rather than constructed ``file::Class::func`` node ids, deliberately.
+    # Node ids have to be rebuilt from the scanner's view of the class stack, and
+    # that view can disagree with pytest's -- one did, on a nested class, and an
+    # unresolvable node id is a pytest USAGE error that aborts the entire run
+    # rather than skipping one target.  ``-k`` matches pytest's own collected
+    # names, so parametrised cases (``test_x[a-b]``) and nested classes need no
+    # special handling, and a name that matches nothing simply selects nothing.
+    #
+    # Over-selection is harmless and deliberate: ``-k`` is a substring match, so
+    # ``test_foo`` also selects ``test_foo_bar``.  Extra tests only cost time --
+    # the plugin still reports on candidate SITES only.  Under-selection is the
+    # direction that could lie, and it cannot hide: a candidate whose test is
+    # deselected never fires the hook, so it lands in UNPROVEN, and a filter that
+    # selected nothing at all trips the "observed nothing" guard.
+    selector = " or ".join(sorted({h["func"] for h in candidates}))
+    # Windows caps a command line near 32k; keep well clear and fall back to
+    # whole files rather than truncating the filter, which would silently
+    # deselect real candidates.
+    k_args = ["-k", selector] if selector and len(selector) < 16000 else []
     with tempfile.TemporaryDirectory() as td:
         cand_path = Path(td) / "candidates.json"
         res_path = Path(td) / "results.json"
@@ -215,6 +240,7 @@ def run_prover(candidates: list[dict], extra_args: list[str]) -> dict:
             # verbosity and VISIBLE under ``-vv``.  Dropping this flag turns the
             # gate green by truncation.
             "-vv",
+            *k_args,
             *extra_args,
         ]
         proc = subprocess.run(

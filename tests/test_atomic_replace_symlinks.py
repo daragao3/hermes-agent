@@ -161,7 +161,7 @@ def test_atomic_yaml_write_restores_owner_on_real_symlink_target(
     chown_calls: list[tuple[Path, int, int]] = []
     monkeypatch.setattr("utils._preserve_file_owner", lambda _path: (123, 456))
     monkeypatch.setattr(
-        "utils.os.chown",
+        "utils.os.chown",  # windows-footgun: ok -- guarded by the os.name check at the top of each test
         lambda path, uid, gid: chown_calls.append((Path(path), uid, gid)),
     )
 
@@ -186,7 +186,7 @@ def test_atomic_roundtrip_yaml_save_restores_owner(
     chown_calls: list[tuple[Path, int, int]] = []
     monkeypatch.setattr("utils._preserve_file_owner", lambda _path: (345, 678))
     monkeypatch.setattr(
-        "utils.os.chown",
+        "utils.os.chown",  # windows-footgun: ok -- guarded by the os.name check at the top of each test
         lambda path, uid, gid: chown_calls.append((Path(path), uid, gid)),
     )
 

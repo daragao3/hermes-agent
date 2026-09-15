@@ -5,8 +5,21 @@ import { defineConfig } from 'vitest/config'
 // survive a starved runner. That only helps if the test itself is allowed to
 // outlive the wait — at vitest's 5s default the test dies first and reports an
 // opaque "Test timed out" instead of the query error. Keep testTimeout well
-// above asyncUtilTimeout so the failing query is the thing that gets reported.
-const TEST_TIMEOUT_MS = 30_000
+// above asyncUtilTimeout (15s) so the failing query is the thing that gets
+// reported.
+//
+// 30s was not enough, and the symptom was misleading. MEASURED 2026-09-15:
+// config-settings.test.tsx costs 5.6s of test time and keys-settings.test.tsx
+// 3.1s when their file is run alone, yet BOTH died at exactly
+// "Test timed out in 30000ms" under the full 764-file suite — a >5x load
+// inflation on a box that routinely carries 20+ concurrent agent worktrees.
+// An opaque timeout is the one failure mode this constant exists to prevent,
+// so it was doing the opposite of its job: the reds looked like defects in
+// the autosave and env-var logic, which are both fine. 60s keeps the 4x
+// margin over asyncUtilTimeout and leaves ~2x headroom over the measured
+// loaded cost. The cost of the raise is that a genuinely hung test now takes
+// 60s to report instead of 30s.
+const TEST_TIMEOUT_MS = 60_000
 
 const reactUi: TestProjectConfiguration = {
   extends: './vite.config.ts',

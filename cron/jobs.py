@@ -2188,7 +2188,7 @@ def _preserve_file_ownership(path: Path, before: Optional[os.stat_result]) -> No
         euid = geteuid()
         if euid != 0 or (before.st_uid, before.st_gid) == (euid, getegid()):
             return  # unprivileged writer, or already ours before the rewrite
-        os.chown(path, before.st_uid, before.st_gid)
+        os.chown(path, before.st_uid, before.st_gid)  # windows-footgun: ok -- the os.name != 'posix' early return at the top of this function
     except OSError as e:
         logger.warning(
             "Could not restore ownership of %s to uid=%s gid=%s after rewrite: %s "

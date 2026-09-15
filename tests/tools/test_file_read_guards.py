@@ -257,11 +257,11 @@ class TestNonRegularFileReads(unittest.TestCase):
 
     def test_read_file_tool_on_fifo_errors_instead_of_blocking(self):
         if not hasattr(os, "mkfifo"):
-            self.skipTest("platform has no os.mkfifo")
+            self.skipTest("platform cannot create FIFOs")
         with tempfile.TemporaryDirectory() as tmpdir:
             fifo_path = os.path.join(tmpdir, "pipe")
             try:
-                os.mkfifo(fifo_path)
+                os.mkfifo(fifo_path)  # windows-footgun: ok -- the local attribute check on the preceding lines skips first
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"mkfifo unavailable: {exc}")
 

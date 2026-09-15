@@ -34,7 +34,7 @@ def test_is_zeroed_never_probes_special_files(tmp_path):
     from hermes_cli.backup import is_zeroed_sqlite_file
 
     fifo = tmp_path / "state.db"
-    os.mkfifo(fifo)
+    os.mkfifo(fifo)  # windows-footgun: ok -- the test carries its own skipif for this symbol
     # Would hang forever before the regular-file guard if either probe
     # attempted open()+read on the FIFO.
     assert is_zeroed_sqlite_file(fifo) is False

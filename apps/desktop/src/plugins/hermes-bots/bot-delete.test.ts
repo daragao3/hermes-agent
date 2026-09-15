@@ -104,9 +104,22 @@ async function loadModules() {
 // Pay the graph's cold transform once, up front. `loadModules` re-imports on
 // every test, and charging that one-time cost to whichever test happens to run
 // first makes it time out under a loaded runner.
+//
+// MEASURED 2026-09-15, and the budget is sized from it rather than guessed.
+// The re-import is NOT the expensive part: successive resetModules+import
+// rounds of this graph cost ~150-300ms. The FIRST one costs ~27s -- it is a
+// one-time cold vite transform, which is exactly what this hook exists to
+// absorb. Every test in this file then runs in 5-14ms.
+// So this budget covers a module transform and nothing else, and 60s had no
+// headroom: the same file measured 26.6s and 59.4s on two runs of this box,
+// which routinely carries 20+ concurrent agent worktrees. Under the full
+// suite it crossed 60s and the hook failed the WHOLE FILE (all tests
+// reported as skipped, which reads as a collection error rather than a
+// timeout). A hang here would be a build problem, not a slow test, so a
+// generous budget hides nothing that the 5-14ms testTimeout would not catch.
 beforeAll(async () => {
   await loadModules()
-}, 60_000)
+}, 180_000)
 
 beforeEach(() => {
   vi.clearAllMocks()

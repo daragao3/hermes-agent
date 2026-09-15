@@ -95,7 +95,7 @@ class TestSaveJobsOwnershipPreservation:
         jobs.save_jobs([{"id": "seed", "prompt": "hello"}])
 
         def _fail_chown(*a, **k):
-            raise AssertionError("unprivileged save must not call os.chown")
+            raise AssertionError("unprivileged save must not call os.chown")  # windows-footgun: ok -- module-level skip off POSIX; the name appears in an assertion message
 
         monkeypatch.setattr(jobs.os, "chown", _fail_chown)
         jobs.save_jobs([{"id": "seed", "prompt": "updated"}])  # must not raise
