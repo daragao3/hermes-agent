@@ -114,16 +114,35 @@ def test_deliver_lands_in_live_bot_chat_instead_of_subprocess(home, monkeypatch)
     handler must route through prompt.submit (the composer's choke point) and
     never spawn the CLI.
     """
+    import threading
+
     spawned = []
     submitted = []
+    main_thread = threading.main_thread()
 
     class _Proc:
         returncode, stdout, stderr = 0, "pong", ""
 
     def _fake_run(argv, *a, **k):
-        # The server module's import-time update prefetch runs `git ...` on a
-        # daemon thread; only the relay's `hermes` CLI spawn is under test.
-        if argv and argv[0] != "git":
+        # Capture only what the handler itself spawns. ``bot_relay.deliver`` runs
+        # synchronously on the calling thread, so anything arriving here from
+        # another thread is background noise, not the transport under test.
+        #
+        # The noise is the server module's import-time ``prefetch_update_check()``
+        # daemon thread: ``check_for_updates`` -> ``_check_via_local_git`` ->
+        # ``_fetch`` -> ``hermes_cli.gitlock.clear_stale_{git_locks,tmp_packs}`` ->
+        # ``_git_proc_running()``, which is a bare ``git fetch`` on POSIX and a
+        # ``tasklist /FI "IMAGENAME eq git.exe"`` probe on Windows. Whether it lands
+        # inside the monkeypatch window is a race, and it only runs at all when the
+        # 6h ``.update_check`` cache is cold AND ``.git`` is a real directory (in a
+        # git worktree it is a file, so the sweep returns before the probe) -- which
+        # is why this reproduced on the main checkout and never under a worktree.
+        #
+        # Filtering on the THREAD excludes that whole class at source. Matching on
+        # argv instead only ever excluded ``git`` and so missed the ``tasklist``
+        # form; naming each background command in turn is whack-a-mole, and every
+        # spawn the deliver path itself makes -- ``git`` included -- is still caught.
+        if argv and threading.current_thread() is main_thread:
             spawned.append(argv)
         return _Proc()
 
