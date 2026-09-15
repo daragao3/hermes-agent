@@ -43,7 +43,7 @@ def _install_skill(tmp_path, monkeypatch, name="work", body=SKILL_BODY):
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: Description for {name}\n---\n\n# {name}\n\n{body}\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(skills_tool, "SKILLS_DIR", skills_dir)
     monkeypatch.setattr(skill_commands, "_skill_commands", {})
     monkeypatch.setattr(skill_commands, "_skill_commands_platform", None)

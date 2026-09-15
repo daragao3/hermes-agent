@@ -947,7 +947,7 @@ def test_load_pool_prefers_dotenv_over_stale_os_environ(tmp_path, monkeypatch):
     # User edited ~/.hermes/.env with the fresh key
     (hermes_home / ".env").write_text(
         "OPENROUTER_API_KEY=sk-or-FRESH-from-dotenv\n"
-    )
+    , encoding="utf-8")
 
     _write_auth_store(tmp_path, {"version": 1, "providers": {}})
 
@@ -1300,7 +1300,7 @@ def test_custom_endpoint_pool_seeds_from_config(tmp_path, monkeypatch):
                 "api_key": "sk-config-seeded",
             }
         ]
-    }))
+    }), encoding="utf-8")
 
     from agent.credential_pool import load_pool
 
@@ -1331,7 +1331,7 @@ def test_custom_endpoint_pool_seeds_from_model_config(tmp_path, monkeypatch):
             "base_url": "https://api.together.ai/v1",
             "api_key": "sk-model-key",
         },
-    }))
+    }), encoding="utf-8")
 
     from agent.credential_pool import load_pool
 

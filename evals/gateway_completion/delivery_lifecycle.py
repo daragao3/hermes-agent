@@ -7,7 +7,7 @@ HOME = Path(os.environ["HERMES_HOME"])
 HOME.mkdir(parents=True, exist_ok=True)
 (HOME / "config.yaml").write_text(
     "display:\n  background_process_notifications: concise\n"
-)
+, encoding="utf-8")
 from gateway.run import GatewayRunner
 from gateway.config import GatewayConfig, Platform, PlatformConfig
 from plugins.platforms.discord.adapter import DiscordAdapter

@@ -30,7 +30,7 @@ def _valid_marker(tmp_path: Path) -> Path:
         "image": "nousresearch/hermes-agent",
         "version": "1.0.0",
         "revision": "a" * 40,
-    }))
+    }), encoding="utf-8")
     return marker
 
 

@@ -1698,7 +1698,7 @@ class TestMultiplexBackgroundScope:
         (home / ".env").write_text("HINDSIGHT_LLM_API_KEY=p1-secret\n", encoding="utf-8")
         (home / "hindsight" / "config.json").write_text(json.dumps(
             {"mode": "local_embedded", "llm_provider": "openai", "llm_model": "m", "memory_mode": "hybrid"}
-        ))
+        ), encoding="utf-8")
         # Enter the profile scope the way gateway _profile_runtime_scope does.
         set_multiplex_active(True)
         monkeypatch.setattr("plugins.memory.hindsight.get_hermes_home", lambda: home)

@@ -560,7 +560,7 @@ async def test_session_hygiene_timeout_continues_to_agent_and_sets_cooldown(monk
         "  enabled: true\n"
         "  hygiene_timeout_seconds: 0.01\n"
         "  hygiene_failure_cooldown_seconds: 120\n"
-    )
+    , encoding="utf-8")
 
     gateway_run = importlib.import_module("gateway.run")
     GatewayRunner = gateway_run.GatewayRunner
@@ -727,7 +727,7 @@ async def test_session_hygiene_turn_hold_budget_abandons_streaming_wait(
         "  hygiene_total_ceiling_seconds: 600\n"
         "  hygiene_max_turn_hold_seconds: 0.3\n"
         "  hygiene_failure_cooldown_seconds: 120\n"
-    )
+    , encoding="utf-8")
 
     gateway_run = importlib.import_module("gateway.run")
     GatewayRunner = gateway_run.GatewayRunner
@@ -904,7 +904,7 @@ async def test_session_hygiene_idle_timeout_still_takes_failure_path(
         "  hygiene_total_ceiling_seconds: 600\n"
         "  hygiene_max_turn_hold_seconds: 60\n"
         "  hygiene_failure_cooldown_seconds: 120\n"
-    )
+    , encoding="utf-8")
 
     gateway_run = importlib.import_module("gateway.run")
     GatewayRunner = gateway_run.GatewayRunner
@@ -1193,7 +1193,7 @@ async def test_session_hygiene_honors_configurable_hard_message_limit(
         "compression:\n"
         "  enabled: true\n"
         "  hygiene_hard_message_limit: 10\n"
-    )
+    , encoding="utf-8")
 
     gateway_run = importlib.import_module("gateway.run")
     GatewayRunner = gateway_run.GatewayRunner

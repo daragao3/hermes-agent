@@ -34,7 +34,7 @@ if len(sys.argv) == 1:
     hh.mkdir(exist_ok=True)
     (hh / "config.yaml").write_text(
         "context_file_max_chars: 100000\nagent:\n  coding_context: auto\n  environment_probe: false\n"
-    )
+    , encoding="utf-8")
     fixture = BASE / "fixture"
     fixture.mkdir(exist_ok=True)
     git("init", "-b", "main", cwd=fixture)

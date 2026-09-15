@@ -51,7 +51,7 @@ def curator_status_env(tmp_path, monkeypatch):
             "    agent_created: true\n"
             "---\n"
             f"# {name}\n"
-        )
+        , encoding="utf-8")
 
     return {
         "home": home,

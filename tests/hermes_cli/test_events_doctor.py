@@ -33,10 +33,10 @@ def test_doctor_all_green_on_healthy_setup(tmp_path, monkeypatch, capsys):
     (tmp_path / "notifications").mkdir()
     sqlite3.connect(str(tmp_path / "events" / "event_bus.db")).close()
     (tmp_path / "telegram" / "topics.json").write_text(
-        json.dumps({"group_chat_id": "-1", "topics": {}}))
+        json.dumps({"group_chat_id": "-1", "topics": {}}), encoding="utf-8")
     (tmp_path / "telegram" / "verbosity.json").write_text(json.dumps({}), encoding="utf-8")
     (tmp_path / "notifications" / "quiet_hours.json").write_text(
-        json.dumps({"enabled": True}))
+        json.dumps({"enabled": True}), encoding="utf-8")
 
     run_doctor(check_telegram_api=False)
     captured = capsys.readouterr().out

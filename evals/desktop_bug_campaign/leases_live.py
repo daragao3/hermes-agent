@@ -134,7 +134,7 @@ dashboard:
 memory:
   memory_enabled: false
   user_profile_enabled: false
-''')
+''', encoding="utf-8")
     env = {'PATH': os.environ.get('PATH', ''), 'HOME': str(home / 'user'), 'LANG': 'C.UTF-8'}
     (home / 'user').mkdir()
     env.update(HERMES_HOME=str(home), HERMES_DASHBOARD_SESSION_TOKEN='lease-probe',

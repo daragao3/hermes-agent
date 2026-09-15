@@ -29,7 +29,7 @@ def _seed_pool(tmp_path, monkeypatch, entries, provider="openrouter"):
     hermes_home.mkdir(parents=True, exist_ok=True)
     (hermes_home / "auth.json").write_text(
         json.dumps({"version": 1, "credential_pool": {provider: entries}})
-    )
+    , encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     from agent.credential_pool import load_pool
 

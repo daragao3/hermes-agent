@@ -16,7 +16,7 @@ def _assert_posix_surrogateescape_roundtrip(tmp_path):
     # delivers it after the newline we send).
     script.write_text(
         f"import sys\nopen({str(out)!r}, 'wb').write(sys.stdin.buffer.readline())\n"
-    )
+    , encoding="utf-8")
     session = registry.spawn_local(
         f"python3 {shlex.quote(str(script))}",
         cwd=str(tmp_path),

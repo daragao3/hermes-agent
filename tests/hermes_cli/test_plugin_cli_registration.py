@@ -69,10 +69,10 @@ class TestMemoryPluginCliDiscovery:
             "\n"
             "def testplugin_command(args):\n"
             "    pass\n"
-        )
+        , encoding="utf-8")
         (plugin_dir / "plugin.yaml").write_text(
             "name: testplugin\ndescription: A test plugin\n"
-        )
+        , encoding="utf-8")
 
         # Also create a second plugin that should NOT be discovered
         other_dir = tmp_path / "otherplugin"
@@ -81,7 +81,7 @@ class TestMemoryPluginCliDiscovery:
         (other_dir / "cli.py").write_text(
             "def register_cli(subparser):\n"
             "    subparser.add_argument('--other')\n"
-        )
+        , encoding="utf-8")
 
         import plugins.memory as pm
         original_dir = pm._MEMORY_PLUGINS_DIR
@@ -111,7 +111,7 @@ class TestMemoryPluginCliDiscovery:
         (plugin_dir / "__init__.py").write_text("pass\n", encoding="utf-8")
         (plugin_dir / "cli.py").write_text(
             "def register_cli(subparser):\n    pass\n"
-        )
+        , encoding="utf-8")
 
         import plugins.memory as pm
         original_dir = pm._MEMORY_PLUGINS_DIR

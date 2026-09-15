@@ -54,7 +54,7 @@ def topics_config(tmp_path):
             "security_and_system": {"thread_id": 106, "name": "Security & System"},
             "action_required": {"thread_id": 107, "name": "Action Required"},
         },
-    }))
+    }), encoding="utf-8")
     return path
 
 
@@ -65,7 +65,7 @@ def verbosity_config(tmp_path):
     path.write_text(json.dumps({
         "security_and_system": {"mode": "all"},
         "action_required": {"mode": "all"},
-    }))
+    }), encoding="utf-8")
     return path
 
 

@@ -203,7 +203,7 @@ def test_speaker_run_until_stopped_processes_queue(tmp_path):
     queue.write_text(
         json.dumps({"id": "a", "text": "hello one"}) + "\n"
         + json.dumps({"id": "b", "text": "hello two"}) + "\n"
-    )
+    , encoding="utf-8")
 
     stub = _StubSession()
     speaker = RealtimeSpeaker(stub, queue_path=queue, processed_path=processed)

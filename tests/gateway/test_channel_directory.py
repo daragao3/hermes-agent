@@ -289,7 +289,7 @@ class TestBuildSlack:
         sessions_path.parent.mkdir(parents=True)
         sessions_path.write_text(json.dumps({
             "s1": {"origin": {"platform": "slack", "chat_id": "D123", "chat_name": "Alice"}},
-        }))
+        }), encoding="utf-8")
 
         with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
             entries = asyncio.run(_build_slack(_make_slack_adapter({})))

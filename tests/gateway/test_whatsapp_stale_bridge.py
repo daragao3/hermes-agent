@@ -100,7 +100,7 @@ def _fresh_node_modules(bridge_dir: Path) -> None:
     nm.mkdir()
     (nm / ".hermes-pkg-hash").write_text(
         _file_content_hash(bridge_dir / "package.json")
-    )
+    , encoding="utf-8")
 
 
 class TestFileContentHash:

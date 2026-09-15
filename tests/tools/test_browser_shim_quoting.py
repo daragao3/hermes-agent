@@ -88,7 +88,7 @@ class TestWindowsShimResolution:
         shim.write_text(
             '@ECHO off\r\n'
             '"%~dp0node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe" %*\r\n'
-        )
+        , encoding="utf-8")
 
         assert _resolve_batch_shim(str(shim)) == str(target)
 
@@ -133,7 +133,7 @@ class TestChromeFallbackSpawnIsSafe:
         shim.write_text(
             '@ECHO off\r\n'
             '"%~dp0node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe" %*\r\n'
-        )
+        , encoding="utf-8")
 
         js = "Array.from(x).map(b=>b.outerHTML).slice(0,20)"
         seen = []
@@ -239,7 +239,7 @@ class TestBatchShimReparseIsFixed:
         shim.write_text(
             '@ECHO off\r\n'
             '"%~dp0node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe" %*\r\n'
-        )
+        , encoding="utf-8")
 
         resolved = _resolve_batch_shim(str(shim))
         assert resolved == str(real)

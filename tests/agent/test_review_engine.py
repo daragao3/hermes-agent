@@ -401,7 +401,7 @@ def test_child_system_prompt_embeds_workspace_context(tmp_path):
     workspace.mkdir()
     (workspace / "AGENTS.md").write_text(
         "# Project Rules\nAll fixes must cover sibling call sites.\n"
-    )
+    , encoding="utf-8")
     prompt = _build_child_system_prompt(
         "do the thing", None, workspace_path=str(workspace)
     )

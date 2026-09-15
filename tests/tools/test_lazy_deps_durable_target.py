@@ -283,7 +283,7 @@ class TestCoreNeverShadowed:
         shadow_pkg.mkdir()
         (shadow_pkg / "__init__.py").write_text(
             "SHADOW_SENTINEL = True\n__version__ = '0.0.0-shadow'\n"
-        )
+        , encoding="utf-8")
         assert (shadow_pkg / "__init__.py").exists(), "shadow copy must exist on disk"
 
         # Activate the target (append-only) and re-resolve the import.

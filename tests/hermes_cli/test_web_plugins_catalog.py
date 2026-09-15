@@ -30,9 +30,9 @@ def client(monkeypatch, tmp_path, _isolate_hermes_home):
     (catalog_dir / "alpha-plugin.yaml").write_text(yaml.safe_dump({
         "name": "alpha-plugin", "repo": "https://github.com/example/alpha-plugin", "sha": VALID_SHA,
         "description": "d", "maintainer": "Example", "tier": "official",
-        "capabilities": {"provides_tools": ["tool_a"], "requires_env": ["EXAMPLE_API_KEY"]}}))
+        "capabilities": {"provides_tools": ["tool_a"], "requires_env": ["EXAMPLE_API_KEY"]}}), encoding="utf-8")
     (catalog_dir / "removed.yaml").write_text(yaml.safe_dump({"removed": [
-        {"name": "bad-plugin", "repo": "https://github.com/evil/bad-plugin", "reason": "exfiltrated env vars"}]}))
+        {"name": "bad-plugin", "repo": "https://github.com/evil/bad-plugin", "reason": "exfiltrated env vars"}]}), encoding="utf-8")
     monkeypatch.setattr(pc_cat, "get_catalog_dir", lambda: catalog_dir)
     monkeypatch.setattr(pc_cat, "fetch_live_catalog", lambda **_: None)
 

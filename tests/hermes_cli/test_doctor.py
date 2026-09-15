@@ -729,7 +729,7 @@ def test_run_doctor_accepts_named_provider_from_providers_section(monkeypatch, t
                 },
             }
         )
-    )
+    , encoding="utf-8")
 
     monkeypatch.setattr(doctor_mod, "HERMES_HOME", home)
     monkeypatch.setattr(doctor_mod, "PROJECT_ROOT", tmp_path / "project")

@@ -376,7 +376,7 @@ class TestStdioPgroupReaping:
             f"os.replace(tmp, {str(grandchild_pid_file)!r})\n"
             "while True:\n"
             "    time.sleep(0.5)\n"
-        )
+        , encoding="utf-8")
 
         # Parent: spawn grandchild, exit immediately (without killing it).
         parent_script = tmp_path / "parent.py"
@@ -384,7 +384,7 @@ class TestStdioPgroupReaping:
             "import subprocess, sys\n"
             f"subprocess.Popen([sys.executable, {str(grandchild_script)!r}])\n"
             # Parent exits — grandchild reparents to init.
-        )
+        , encoding="utf-8")
 
         # Spawn parent in its own session (mirrors stdio_client behaviour).
         parent = subprocess.Popen(

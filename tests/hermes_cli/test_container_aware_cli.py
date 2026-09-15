@@ -34,7 +34,7 @@ def container_env(tmp_path, monkeypatch):
         "container_name=hermes-agent\n"
         "exec_user=hermes\n"
         "hermes_bin=/data/current-package/bin/hermes\n"
-    )
+    , encoding="utf-8")
     return hermes_home
 
 

@@ -50,7 +50,7 @@ def _write_forking_script(tmp_path, stall_after: bool):
             {tail}
             """
         )
-    )
+    , encoding="utf-8")
     script.chmod(0o755)
     return script, marker
 
@@ -111,7 +111,7 @@ def test_successful_hook_preserves_detached_helpers(tmp_path):
             exit 0
             """
         )
-    )
+    , encoding="utf-8")
 
     r = _spawn(_spec(str(script), timeout=10), "{}")
     assert r["timed_out"] is False
@@ -143,7 +143,7 @@ def test_fast_path_contract_unchanged(tmp_path):
     script = tmp_path / "echoer.sh"
     script.write_text(
         "#!/bin/bash\ncat\necho errline >&2\nexit 3\n"
-    )
+    , encoding="utf-8")
     script.chmod(0o755)
 
     r = _spawn(_spec(str(script), timeout=10), '{"tool_name": "terminal"}')

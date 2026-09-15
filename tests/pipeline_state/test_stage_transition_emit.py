@@ -32,7 +32,7 @@ def pipeline_with_one_job(tmp_path: Path):
             "history": [],
         }],
         "stats": {},
-    }))
+    }), encoding="utf-8")
     mgr = PipelineManager(path=pipeline_path)
     return mgr
 

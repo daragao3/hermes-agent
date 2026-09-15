@@ -173,7 +173,7 @@ class TestHooksDoctor:
                     "script_mtime_at_approval": "2000-01-01T00:00:00Z",
                 }
             ]
-        }))
+        }), encoding="utf-8")
 
         cfg = {"hooks": {"on_session_start": [{"command": str(script)}]}}
         with patch("hermes_cli.config.load_config", return_value=cfg):

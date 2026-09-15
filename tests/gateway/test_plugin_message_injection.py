@@ -84,7 +84,7 @@ async def test_plugin_context_routes_through_live_gateway_to_existing_session(
         yaml.safe_dump({
             "plugins": {"entries": {"notify-plugin": {"allow_gateway_injection": True}}}
         })
-    )
+    , encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     store = SessionStore(sessions_dir=tmp_path / "sessions", config=GatewayConfig())

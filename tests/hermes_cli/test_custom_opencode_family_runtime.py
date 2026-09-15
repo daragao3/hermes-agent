@@ -31,7 +31,7 @@ providers:
     base_url: https://opencode.ai/zen/go/v1
     key_env: OPENCODE_GO_BRIDGE_API_KEY
 {extra}"""
-        )
+        , encoding="utf-8")
 
     return write_config
 

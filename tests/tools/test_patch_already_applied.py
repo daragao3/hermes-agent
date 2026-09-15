@@ -107,7 +107,7 @@ class TestV4AAlreadyApplied:
             "\n"
             "def second_helper(y):\n"
             "    return y + 1\n"
-        )
+        , encoding="utf-8")
         patch_content = (
             "*** Begin Patch\n"
             f"*** Update File: {f}\n"

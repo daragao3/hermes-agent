@@ -147,7 +147,7 @@ def test_save_codex_tokens_syncs_credential_pool(tmp_path, monkeypatch):
                 },
             ],
         },
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     _save_codex_tokens({"access_token": "new-at", "refresh_token": "new-rt"},
@@ -244,7 +244,7 @@ def test_save_codex_tokens_syncs_manual_device_code_entries(tmp_path, monkeypatc
                 },
             ],
         },
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     _save_codex_tokens({"access_token": "fresh-at", "refresh_token": "fresh-rt"},
@@ -342,7 +342,7 @@ def test_save_codex_tokens_does_not_overwrite_independent_manual_entries(tmp_pat
                 },
             ],
         },
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     # User re-authenticates account A — fresh device-code login produces new
@@ -416,7 +416,7 @@ def test_save_codex_tokens_clears_error_markers_only_on_refreshed_entries(tmp_pa
                 },
             ],
         },
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     _save_codex_tokens(

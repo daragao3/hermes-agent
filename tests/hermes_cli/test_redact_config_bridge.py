@@ -34,7 +34,7 @@ def test_redact_secrets_false_in_config_yaml_is_honored(tmp_path):
               redact_secrets: false
             """
         )
-    )
+    , encoding="utf-8")
     # Empty .env so nothing else sets the env var
     (hermes_home / ".env").write_text("", encoding="utf-8")
 
@@ -125,7 +125,7 @@ def test_dotenv_redact_secrets_beats_config_yaml(tmp_path):
               redact_secrets: false
             """
         )
-    )
+    , encoding="utf-8")
     # .env force-enables redaction
     (hermes_home / ".env").write_text("HERMES_REDACT_SECRETS=true\n", encoding="utf-8")
 

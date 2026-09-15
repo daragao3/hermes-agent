@@ -550,7 +550,7 @@ class TestHasAnyProviderConfigured:
         config_file = hermes_home / "config.yaml"
         config_file.write_text(yaml.dump({
             "model": {"default": "anthropic/claude-opus-4.6", "provider": "openrouter"},
-        }))
+        }), encoding="utf-8")
         monkeypatch.setattr(config_module, "get_env_path", lambda: hermes_home / ".env")
         monkeypatch.setattr(config_module, "get_hermes_home", lambda: hermes_home)
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
@@ -596,7 +596,7 @@ class TestHasAnyProviderConfigured:
         hermes_home = self._setup_home(monkeypatch, tmp_path)
         (hermes_home / "config.yaml").write_text(yaml.dump({
             "model": {"default": "anthropic/claude-opus-4.6", "provider": "openrouter"},
-        }))
+        }), encoding="utf-8")
         sweep_calls = []
 
         def _trap(provider_id):
@@ -621,7 +621,7 @@ class TestHasAnyProviderConfigured:
                 "base_url": "http://localhost:8000/v1",
                 "api_key": "sk-local-test",
             },
-        }))
+        }), encoding="utf-8")
         sweep_calls = []
 
         def _trap(provider_id):
@@ -644,7 +644,7 @@ class TestHasAnyProviderConfigured:
         hermes_home = self._setup_home(monkeypatch, tmp_path)
         (hermes_home / "auth.json").write_text(json.dumps({
             "active_provider": "nous",
-        }))
+        }), encoding="utf-8")
         calls = []
 
         def _guarded_status(provider_id):

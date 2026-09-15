@@ -116,7 +116,7 @@ def test_stale_breadcrumb_ignored_and_pruned(hermes_home, monkeypatch, no_termin
     stale = directory / "tty-dev-pts-1"
     stale.write_text(
         json.dumps({"session_id": "old", "cwd": "/", "ts": time.time() - 40 * 86400})
-    )
+    , encoding="utf-8")
     old_mtime = time.time() - 40 * 86400
     os.utime(stale, (old_mtime, old_mtime))
     # read: stale payload rejected

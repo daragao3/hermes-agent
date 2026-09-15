@@ -69,7 +69,7 @@ def topics_config(tmp_path):
     path.write_text(json.dumps({
         "group_chat_id": "-1001234567890",
         "topics": {"watchdog_alerts": {"thread_id": 100, "name": "Alerts"}},
-    }))
+    }), encoding="utf-8")
     return path
 
 
@@ -82,7 +82,7 @@ def verbosity_config(tmp_path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "watchdog_alerts": {"mode": "significant_only", "min_priority": "normal"},
-    }))
+    }), encoding="utf-8")
     return path
 
 
@@ -93,7 +93,7 @@ def quiet_config(tmp_path):
     path.write_text(json.dumps({
         "enabled": False,          # quiet hours are a SEPARATE axis; off here
         "start": "23:00", "end": "07:00", "timezone": "America/New_York",
-    }))
+    }), encoding="utf-8")
     return path
 
 

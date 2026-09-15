@@ -36,7 +36,7 @@ ch.mkdir()
     '[model_providers.fixture]\nname="fixture"\nbase_url="http://127.0.0.1:9/v1"\nwire_api="responses"\n'
     '[mcp_servers.hermes-mcp]\ncommand=' + json.dumps(sys.executable) + '\nargs=["-m","agent.transports.hermes_tools_mcp_server"]\nstartup_timeout_sec=40\n'
     '[mcp_servers.hermes-mcp.env]\nPYTHONPATH=' + json.dumps(str(repo)) + '\nHERMES_HOME=' + json.dumps(str(hh)) + '\n'
-)
+, encoding="utf-8")
 report = {}
 with CodexAppServerClient(codex_bin=shutil.which("codex") or "codex", codex_home=str(ch)) as c:
     try:

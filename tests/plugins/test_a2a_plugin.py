@@ -1607,7 +1607,7 @@ if '--resume' not in sys.argv:
     con.execute('INSERT INTO sessions (id, source, started_at, title) VALUES (?, ?, ?, ?)', ('sess-1', 'a2a', time.time(), None))
     con.commit()
 print('fake reply')
-""")
+""", encoding="utf-8")
         hermes.chmod(0o755)
         monkeypatch.setenv("PATH", str(fakebin) + os.pathsep + os.environ.get("PATH", ""))
         monkeypatch.setenv("FAKE_HERMES_CALLS", str(calls))

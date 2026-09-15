@@ -166,7 +166,7 @@ class TestLoadMCPConfig:
         plugin.mkdir(parents=True)
         (plugin / "plugin.json").write_text(
             json.dumps({"$schema": PLUGIN_SCHEMA_V1, "name": "portable.test"})
-        )
+        , encoding="utf-8")
         (plugin / "mcp.json").write_text(
             json.dumps(
                 {
@@ -176,11 +176,11 @@ class TestLoadMCPConfig:
                     },
                 }
             )
-        )
+        , encoding="utf-8")
         home.mkdir(exist_ok=True)
         (home / "config.yaml").write_text(
             yaml.safe_dump({"plugins": {"enabled": ["portable.test"]}})
-        )
+        , encoding="utf-8")
         bundled = tmp_path / "bundled"
         bundled.mkdir()
         monkeypatch.setenv("HERMES_HOME", str(home))

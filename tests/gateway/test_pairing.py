@@ -36,7 +36,7 @@ class TestSplitPairingDirMigration:
         new.mkdir(parents=True)
         (new / "feishu-approved.json").write_text(json.dumps({
             "ou_user": {"user_name": "Alice", "approved_at": 123.0}
-        }))
+        }), encoding="utf-8")
 
         with patch("gateway.pairing.PAIRING_DIR", legacy), patch("gateway.pairing.get_hermes_home", return_value=home):
             store = PairingStore()
@@ -523,7 +523,7 @@ class TestUnreadablePairingFile:
         approved_path = tmp_path / "weixin-approved.json"
         approved_path.write_text(
             '{"o9cq80fake@im.wechat": {"user_name": "x", "approved_at": 0}}'
-        )
+        , encoding="utf-8")
 
         def fake_read_text(self, *a, **kw):
             # Path.read_text uses Path.open internally; raise PermissionError

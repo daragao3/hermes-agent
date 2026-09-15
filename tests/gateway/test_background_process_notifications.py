@@ -103,7 +103,7 @@ class TestLoadBackgroundNotificationsMode:
     def test_unknown_mode_falls_back_to_concise(self, monkeypatch, tmp_path):
         (tmp_path / "config.yaml").write_text(
             "display:\n  background_process_notifications: bogus\n"
-        )
+        , encoding="utf-8")
         import gateway.run as gw
         monkeypatch.setattr(gw, "_hermes_home", tmp_path)
         monkeypatch.delenv("HERMES_BACKGROUND_NOTIFICATIONS", raising=False)
@@ -112,7 +112,7 @@ class TestLoadBackgroundNotificationsMode:
     def test_reads_config_yaml(self, monkeypatch, tmp_path):
         (tmp_path / "config.yaml").write_text(
             "display:\n  background_process_notifications: error\n"
-        )
+        , encoding="utf-8")
         import gateway.run as gw
         monkeypatch.setattr(gw, "_hermes_home", tmp_path)
         monkeypatch.delenv("HERMES_BACKGROUND_NOTIFICATIONS", raising=False)

@@ -4190,7 +4190,7 @@ class TestDiscoverUserThemes:
             "    alpha: 1.0\n"
             "layout:\n"
             "  density: spacious\n"
-        )
+        , encoding="utf-8")
         from hermes_cli import web_server as web_server
         results = _web_server_dashboard._discover_user_themes()
         assert len(results) == 1

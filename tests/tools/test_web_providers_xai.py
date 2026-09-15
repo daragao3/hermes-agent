@@ -481,7 +481,7 @@ class TestXAIProviderOAuthPath:
                     },
                 },
             },
-        }))
+        }), encoding="utf-8")
 
         captured: dict = {}
 
@@ -513,7 +513,7 @@ class TestXAIProviderOAuthPath:
         monkeypatch.delenv("XAI_OAUTH_ACCESS_TOKEN", raising=False)
         (tmp_path / "config.yaml").write_text(
             "credential_pool_strategies:\n  xai-oauth: round_robin\n"
-        )
+        , encoding="utf-8")
         auth_path = tmp_path / "auth.json"
         auth_path.write_text(json.dumps({
             "version": 1,
@@ -540,7 +540,7 @@ class TestXAIProviderOAuthPath:
                     "base_url": "https://api.x.ai/v1",
                 }],
             },
-        }))
+        }), encoding="utf-8")
 
         refresh_calls = []
 

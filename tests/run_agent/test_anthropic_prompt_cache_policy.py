@@ -281,7 +281,7 @@ class TestThirdPartyAnthropicGateway:
                         prompt_caching: false
                 """
             )
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         # load_config's cache is keyed by resolved config path, so pointing
         # HERMES_HOME at a fresh tempdir needs no cache invalidation.
@@ -451,7 +451,7 @@ class TestCustomProviderOpenAIWireCapability:
                         prompt_caching: true
                 """
             )
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         agent = _make_agent(
             provider="edge-router",

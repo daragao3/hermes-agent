@@ -290,7 +290,7 @@ class TestSendUpdateNotification:
         pending_path = hermes_home / ".update_pending.json"
         pending_path.write_text(json.dumps({
             "platform": "telegram", "chat_id": "67890", "user_id": "12345",
-        }))
+        }), encoding="utf-8")
         (hermes_home / ".update_output.txt").write_text("still running", encoding="utf-8")
 
         mock_adapter = AsyncMock()
@@ -313,7 +313,7 @@ class TestSendUpdateNotification:
         claimed_path = hermes_home / ".update_pending.claimed.json"
         claimed_path.write_text(json.dumps({
             "platform": "telegram", "chat_id": "67890", "user_id": "12345",
-        }))
+        }), encoding="utf-8")
         (hermes_home / ".update_output.txt").write_text("done", encoding="utf-8")
         (hermes_home / ".update_exit_code").write_text("0", encoding="utf-8")
 
@@ -344,7 +344,7 @@ class TestSendUpdateNotification:
         (hermes_home / ".update_pending.json").write_text(json.dumps(pending), encoding="utf-8")
         (hermes_home / ".update_output.txt").write_text(
             "→ Found 3 new commit(s)\n✓ Code updated!\n✓ Update complete!"
-        )
+        , encoding="utf-8")
         (hermes_home / ".update_exit_code").write_text("0", encoding="utf-8")
 
         # Mock the adapter
@@ -373,7 +373,7 @@ class TestSendUpdateNotification:
         exit_code_path = hermes_home / ".update_exit_code"
         pending_path.write_text(json.dumps({
             "platform": "telegram", "chat_id": "111", "user_id": "222",
-        }))
+        }), encoding="utf-8")
         output_path.write_text("✓ Done", encoding="utf-8")
         exit_code_path.write_text("0", encoding="utf-8")
 
@@ -541,7 +541,7 @@ class TestWatchUpdateProgress:
             "platform": "telegram",
             "chat_id": "67890",
             "user_id": "12345",
-        }))
+        }), encoding="utf-8")
         (hermes_home / ".update_output.txt").write_bytes(
             b"ok before\n\xe2\x9c invalid-continuation: \x96\ncontinued after\n"
         )

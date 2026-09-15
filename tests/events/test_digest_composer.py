@@ -200,7 +200,7 @@ class TestDeliveryTopicLookup:
                 "scribe_daily": {"thread_id": 105},
                 "curator_digest": {"thread_id": 107},
             },
-        }))
+        }), encoding="utf-8")
 
         captured = {}
         def fake_deliver(job, body, skip_cron_framing=False):

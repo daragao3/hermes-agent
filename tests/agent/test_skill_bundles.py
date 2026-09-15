@@ -48,7 +48,7 @@ def _make_skill(skills_dir: Path, name: str, body: str = "Do the thing.") -> Pat
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: Description for {name}\n---\n\n# {name}\n\n{body}\n"
-    )
+    , encoding="utf-8")
     return skill_dir
 
 

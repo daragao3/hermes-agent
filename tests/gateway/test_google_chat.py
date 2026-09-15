@@ -289,7 +289,7 @@ class TestEnvConfigLoading:
         profile_home.mkdir()
         (profile_home / ".env").write_text(
             "GOOGLE_CHAT_PROJECT_ID=beta-proj\nGOOGLE_CHAT_SUBSCRIPTION_NAME=beta-sub\n"
-        )
+        , encoding="utf-8")
         set_multiplex_active(True)
         token = set_secret_scope(build_profile_secret_scope(profile_home))
         try:
@@ -1196,7 +1196,7 @@ class TestPerUserAttachmentRouting:
             "type": "authorized_user",
             "client_id": "cid", "client_secret": "csec",
             "refresh_token": "rtok", "token": "atok",
-        }))
+        }), encoding="utf-8")
         adapter._last_sender_by_chat["spaces/S"] = "alice@example.com"
 
         per_user_api = MagicMock()
@@ -1804,7 +1804,7 @@ class TestGoogleChatStandaloneSend:
             "client_email": "bot@example.iam.gserviceaccount.com",
             "private_key": "fake",
             "token_uri": "https://example/token",
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("GOOGLE_CHAT_SERVICE_ACCOUNT_JSON", str(sa_file))
 
         fake_creds = MagicMock()

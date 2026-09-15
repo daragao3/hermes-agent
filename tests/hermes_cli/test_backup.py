@@ -1300,7 +1300,7 @@ class TestQuickSnapshot:
         (home / "auth.json").write_text('{"providers": {}}\n', encoding="utf-8")
         (home / "channel_aliases.json").write_text(
             '{"whatsapp": {"120363408391911677@g.us": "general"}}\n'
-        )
+        , encoding="utf-8")
         (home / "cron").mkdir()
         (home / "cron" / "jobs.json").write_text('{"jobs": []}\n', encoding="utf-8")
 
@@ -1430,19 +1430,19 @@ class TestQuickSnapshot:
         (hermes_home / "platforms" / "pairing").mkdir(parents=True)
         (hermes_home / "platforms" / "pairing" / "telegram-approved.json").write_text(
             '{"12345": {"user_name": "alice"}}'
-        )
+        , encoding="utf-8")
         (hermes_home / "platforms" / "pairing" / "discord-approved.json").write_text(
             '{"67890": {"user_name": "bob"}}'
-        )
+        , encoding="utf-8")
         # Legacy pairing store (old location)
         (hermes_home / "pairing").mkdir()
         (hermes_home / "pairing" / "matrix-approved.json").write_text(
             '{"@charlie:server": {"user_name": "charlie"}}'
-        )
+        , encoding="utf-8")
         # Feishu's separate JSON
         (hermes_home / "feishu_comment_pairing.json").write_text(
             '{"doc_abc": {"allow_from": ["user_xyz"]}}'
-        )
+        , encoding="utf-8")
 
         snap_id = create_quick_snapshot(hermes_home=hermes_home)
         assert snap_id is not None
@@ -1750,7 +1750,7 @@ class TestRunPreUpdateBackup:
         (hermes_home / "config.yaml").write_text(yaml.safe_dump({
             "_config_version": 22,
             "updates": {"pre_update_backup": value},
-        }))
+        }), encoding="utf-8")
 
     @staticmethod
     def _zips(hermes_home):

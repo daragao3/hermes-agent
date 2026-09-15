@@ -921,7 +921,7 @@ def test_logout_resets_codex_config_when_auth_state_already_cleared(tmp_path, mo
         "  default: gpt-5.3-codex\n"
         "  provider: openai-codex\n"
         "  base_url: https://chatgpt.com/backend-api/codex\n"
-    )
+    , encoding="utf-8")
 
     from types import SimpleNamespace
     from hermes_cli.auth import logout_command
@@ -945,7 +945,7 @@ def test_logout_defaults_to_configured_codex_when_no_active_provider(tmp_path, m
         "  default: gpt-5.3-codex\n"
         "  provider: openai-codex\n"
         "  base_url: https://chatgpt.com/backend-api/codex\n"
-    )
+    , encoding="utf-8")
 
     from types import SimpleNamespace
     from hermes_cli.auth import logout_command
@@ -976,7 +976,7 @@ def test_logout_clears_stale_active_codex_without_provider_credentials(tmp_path,
         "  default: gpt-5.3-codex\n"
         "  provider: openai-codex\n"
         "  base_url: https://chatgpt.com/backend-api/codex\n"
-    )
+    , encoding="utf-8")
 
     from types import SimpleNamespace
     from hermes_cli.auth import logout_command
@@ -1399,7 +1399,7 @@ def test_seed_from_singletons_respects_hermes_pkce_suppression(tmp_path, monkeyp
         "version": 1,
         "providers": {},
         "suppressed_sources": {"anthropic": ["hermes_pkce"]},
-    }))
+    }), encoding="utf-8")
 
     # Stub the readers so only hermes_pkce is "available"; claude_code returns None
     import agent.anthropic_credentials as aa

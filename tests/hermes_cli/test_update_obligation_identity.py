@@ -73,7 +73,7 @@ def test_every_owed_identity_requires_current_evidence(monkeypatch, bad):
                 ]
             },
         })
-    )
+    , encoding="utf-8")
     rows = [{"profile": "alpha", "state": "current", "code_sha": "new"}]
     if bad != "missing":
         rows.append({

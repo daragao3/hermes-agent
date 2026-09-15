@@ -23,7 +23,7 @@ def test_routed_profile_prompt_resolves_from_its_own_config(tmp_path, monkeypatc
     (default_home / "config.yaml").write_text("agent:\n  system_prompt: DEFAULT-PERSONA\n", encoding="utf-8")
     (routed_home / "config.yaml").write_text(
         "agent:\n  system_prompt: BETA-PERSONA\n  personalities:\n    pirate: ARR\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(gateway_run, "_hermes_home", default_home)
     monkeypatch.setenv("HERMES_HOME", str(default_home))
     monkeypatch.delenv("HERMES_EPHEMERAL_SYSTEM_PROMPT", raising=False)

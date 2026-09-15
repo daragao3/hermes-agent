@@ -127,7 +127,7 @@ class TestRunJobScript:
                 print("PRESENT" if os.environ.get(key) else "ABSENT")
                 """
             )
-        )
+        , encoding="utf-8")
 
         success, output = _run_job_script("env_probe.py")
         assert success is True

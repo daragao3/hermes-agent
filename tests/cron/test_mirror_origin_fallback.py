@@ -131,7 +131,7 @@ class TestFallbackMirrorEndToEnd:
         (home / "config.yaml").write_text(
             "cron:\n  mirror_delivery: true\n"
             "platforms:\n  slack:\n    enabled: true\n    token: xoxb-test\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
 
         send_calls = []

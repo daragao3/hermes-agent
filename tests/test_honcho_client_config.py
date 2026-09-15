@@ -19,7 +19,7 @@ class TestHonchoClientConfigAutoEnable:
         config_path.write_text(json.dumps({
             "apiKey": "test-api-key-12345",
             # Note: no "enabled" field
-        }))
+        }), encoding="utf-8")
 
         cfg = HonchoClientConfig.from_global_config(config_path=config_path)
 
@@ -32,7 +32,7 @@ class TestHonchoClientConfigAutoEnable:
         config_path.write_text(json.dumps({
             "apiKey": "test-api-key-12345",
             "enabled": False,  # Explicitly disabled
-        }))
+        }), encoding="utf-8")
 
         cfg = HonchoClientConfig.from_global_config(config_path=config_path)
 
@@ -46,7 +46,7 @@ class TestHonchoClientConfigAutoEnable:
         config_path.write_text(json.dumps({
             "workspace": "test",
             # No apiKey, no enabled
-        }))
+        }), encoding="utf-8")
 
         # Clear env var if set
         env_key = os.environ.pop("HONCHO_API_KEY", None)
@@ -105,7 +105,7 @@ class TestLatencyFlagResolution:
                 'firstTurnBaseWait': 0,
                 'firstTurnDialecticWait': 0.5,
             }},
-        }))
+        }), encoding="utf-8")
         cfg = HonchoClientConfig.from_global_config(config_path=config_path)
         assert cfg.query_rewrite is True
         assert cfg.first_turn_base_wait == 0.0
@@ -118,7 +118,7 @@ class TestLatencyFlagResolution:
             'apiKey': 'k',
             'timeout': 30,
             'hosts': {'hermes': {'timeout': 5}},
-        }))
+        }), encoding="utf-8")
         cfg = HonchoClientConfig.from_global_config(config_path=config_path)
         assert cfg.timeout == 5.0
 
@@ -130,7 +130,7 @@ class TestHonchoBaseUrlSanitize:
         config_path.write_text(json.dumps({
             'apiKey': 'k',
             'baseUrl': 'https://honcho.example.com',
-        }))
+        }), encoding="utf-8")
         cfg = HonchoClientConfig.from_global_config(config_path=config_path)
         assert cfg.base_url == 'https://honcho.example.com'
 
@@ -141,7 +141,7 @@ class TestHonchoBaseUrlSanitize:
         config_path.write_text(json.dumps({
             'apiKey': 'k',
             'baseUrl': bad,
-        }))
+        }), encoding="utf-8")
         cfg = HonchoClientConfig.from_global_config(config_path=config_path)
         assert cfg.base_url is None
 
@@ -166,7 +166,7 @@ class TestProfileKeyIsolationWarning:
                 'hermes': {'apiKey': 'shared-key'},
                 'hermes_coder': {'baseUrl': 'http://192.168.1.50:8000'},
             },
-        }))
+        }), encoding="utf-8")
         with caplog.at_level(logging.WARNING, logger='plugins.memory.honcho.client'):
             cfg = HonchoClientConfig.from_global_config(
                 host='hermes_coder', config_path=config_path,
@@ -183,7 +183,7 @@ class TestProfileKeyIsolationWarning:
                 'hermes': {'apiKey': 'shared-key'},
                 'hermes_coder': {'apiKey': 'coder-key'},
             },
-        }))
+        }), encoding="utf-8")
         with caplog.at_level(logging.WARNING, logger='plugins.memory.honcho.client'):
             cfg = HonchoClientConfig.from_global_config(
                 host='hermes_coder', config_path=config_path,
@@ -197,7 +197,7 @@ class TestProfileKeyIsolationWarning:
         config_path = tmp_path / 'config.json'
         config_path.write_text(json.dumps({
             'hosts': {'hermes': {'baseUrl': 'http://localhost:8000'}},
-        }))
+        }), encoding="utf-8")
         with caplog.at_level(logging.WARNING, logger='plugins.memory.honcho.client'):
             HonchoClientConfig.from_global_config(
                 host='hermes', config_path=config_path,

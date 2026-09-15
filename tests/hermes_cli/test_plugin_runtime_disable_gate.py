@@ -63,7 +63,7 @@ def _make_user_plugin(tmp_path, name="hot"):
         "name": name,
         "label": name.title(),
         "entry": "dist/index.js",
-    }))
+    }), encoding="utf-8")
     return dashboard_dir
 
 
@@ -78,7 +78,7 @@ def _make_bundled_plugin(tmp_path, name="bundledx"):
         "name": name,
         "label": name.title(),
         "entry": "dist/index.js",
-    }))
+    }), encoding="utf-8")
     return dashboard_dir
 
 

@@ -320,7 +320,7 @@ class TestSkillViewQualifiedName:
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             f"---\nname: maintenance\ndescription: Memory maintenance\n---\n\n{body}\n"
-        )
+        , encoding="utf-8")
         (plugin_dir / "__init__.py").write_text(
             "from pathlib import Path\n"
             "from agent.memory_provider import MemoryProvider\n"
@@ -335,7 +335,7 @@ class TestSkillViewQualifiedName:
             "def register(ctx):\n"
             "    ctx.register_memory_provider(Provider())\n"
             "    ctx.register_skill('maintenance', Path(__file__).parent / 'skills' / 'maintenance' / 'SKILL.md')\n"
-        )
+        , encoding="utf-8")
         return plugin_dir
 
     def test_lazily_loads_memory_provider_registered_skill(self, tmp_path, monkeypatch):

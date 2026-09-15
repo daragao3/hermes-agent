@@ -253,7 +253,7 @@ class TestSessionDbInitTimeout:
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         (tmp_path / "config.yaml").write_text(
             yaml.safe_dump({"cron": {"session_db_timeout_seconds": 0.2}})
-        )
+        , encoding="utf-8")
         job = {"id": "config-timeout", "name": "test", "prompt": "hello"}
         timeouts: list = []
 
@@ -639,7 +639,7 @@ class TestSessionDbInitTimeoutRealWorker:
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         (tmp_path / "config.yaml").write_text(
             yaml.safe_dump({"cron": {"session_db_timeout_seconds": 0.2}})
-        )
+        , encoding="utf-8")
         wedge = _WedgedSessionDb()
         job = {"id": "config-timeout", "name": "test", "prompt": "hello"}
 

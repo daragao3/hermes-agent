@@ -417,7 +417,7 @@ def test_get_nous_auth_status_checks_credential_pool(tmp_path, monkeypatch):
     # Empty auth store — no Nous provider entry
     (hermes_home / "auth.json").write_text(json.dumps({
         "version": 1, "providers": {},
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     # Seed the credential pool with a Nous entry
@@ -455,7 +455,7 @@ def test_get_nous_auth_status_empty_returns_not_logged_in(tmp_path, monkeypatch)
     hermes_home.mkdir(parents=True, exist_ok=True)
     (hermes_home / "auth.json").write_text(json.dumps({
         "version": 1, "providers": {},
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     status = get_nous_auth_status()
@@ -623,14 +623,14 @@ class TestLoginNousSkipKeepsCurrent:
                 "provider": "openrouter",
                 "default": "anthropic/claude-opus-4.6",
             },
-        }, sort_keys=False))
+        }, sort_keys=False), encoding="utf-8")
 
         auth_path = hermes_home / "auth.json"
         auth_path.write_text(json.dumps({
             "version": 1,
             "active_provider": "openrouter",
             "providers": {"openrouter": {"api_key": "sk-or-fake"}},
-        }))
+        }), encoding="utf-8")
         return hermes_home, config_path, auth_path
 
     def _patch_login_internals(self, monkeypatch, *, prompt_returns):
@@ -812,7 +812,7 @@ def test_persist_nous_credentials_writes_both_pool_and_providers(tmp_path, monke
     hermes_home.mkdir(parents=True, exist_ok=True)
     (hermes_home / "auth.json").write_text(json.dumps({
         "version": 1, "providers": {},
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     state = _full_state_fixture()
@@ -856,7 +856,7 @@ def test_persist_nous_credentials_idempotent_no_duplicate_pool_entries(tmp_path,
     hermes_home.mkdir(parents=True, exist_ok=True)
     (hermes_home / "auth.json").write_text(json.dumps({
         "version": 1, "providers": {},
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     first = _full_state_fixture()
@@ -896,7 +896,7 @@ def test_persist_nous_credentials_no_label_uses_auto_derived(tmp_path, monkeypat
     hermes_home.mkdir(parents=True, exist_ok=True)
     (hermes_home / "auth.json").write_text(json.dumps({
         "version": 1, "providers": {},
-    }))
+    }), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     entry = persist_nous_credentials(_full_state_fixture())
@@ -1084,7 +1084,7 @@ def test_persist_nous_credentials_mirrors_to_shared_store(
     hermes_home.mkdir(parents=True, exist_ok=True)
     (hermes_home / "auth.json").write_text(
         json.dumps({"version": 1, "providers": {}})
-    )
+    , encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     persist_nous_credentials(_full_state_fixture())
@@ -1166,7 +1166,7 @@ class TestStalePortalBaseUrlMigration:
                     "refresh_token": "test-refresh",
                 }
             },
-        }))
+        }), encoding="utf-8")
 
         store = _load_auth_store(auth_file)
         nous = store["providers"]["nous"]

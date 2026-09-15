@@ -1062,7 +1062,7 @@ class TestInstallCli:
             'target="$UV_TOOL_BIN_DIR/browser-use"\n'
             'echo "#!/bin/sh" > "$target"\n'
             '/bin/chmod +x "$target"\n'
-        )
+        , encoding="utf-8")
         uv.chmod(uv.stat().st_mode | stat.S_IXUSR)
         import sys as _sys
         import types as _types

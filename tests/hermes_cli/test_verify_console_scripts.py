@@ -25,7 +25,7 @@ def temp_pyproject(tmp_path, monkeypatch):
         hermes-acp = "acp_adapter.entry:main"
     """
         )
-    )
+    , encoding="utf-8")
     import hermes_cli.main as main_mod
 
     monkeypatch.setattr(main_mod, "PROJECT_ROOT", tmp_path)

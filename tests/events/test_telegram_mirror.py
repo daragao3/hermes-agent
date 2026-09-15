@@ -61,7 +61,7 @@ class TestDeliveryTopicLookup:
                 "jobflow_firehose": {"thread_id": 101},
                 "scribe_daily": {"thread_id": 105},
             },
-        }))
+        }), encoding="utf-8")
 
         captured = {}
         def fake_deliver(job, body, skip_cron_framing=False):

@@ -31,7 +31,7 @@ def _write_skill(skills_dir: Path, name: str, description: str = "") -> Path:
             body
             """
         )
-    )
+    , encoding="utf-8")
     return skill_dir
 
 

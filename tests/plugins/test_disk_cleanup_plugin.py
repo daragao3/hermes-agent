@@ -168,7 +168,7 @@ class TestStaleCronEntryMigration:
             "category": "cron-output",
             "timestamp": "2025-01-01T00:00:00+00:00",  # very old
             "size": 123,
-        }]))
+        }]), encoding="utf-8")
 
         summary = dg.quick()
         assert summary["deleted"] == 0, "cron/jobs.json must not be deleted"
@@ -193,7 +193,7 @@ class TestStaleCronEntryMigration:
             "category": "cron-output",
             "timestamp": "2025-01-01T00:00:00+00:00",
             "size": 123,
-        }]))
+        }]), encoding="utf-8")
 
         auto, prompt = dg.dry_run()
         assert len(auto) == 0, "stale cron-output for jobs.json must not appear"
@@ -218,7 +218,7 @@ class TestStaleCronEntryMigration:
             "category": "cron-output",
             "timestamp": old_ts,
             "size": 10,
-        }]))
+        }]), encoding="utf-8")
 
         summary = dg.quick()
         assert summary["deleted"] == 1, "valid old cron-output should be deleted"
@@ -400,7 +400,7 @@ class TestBundledDiscovery:
                 "enabled": ["disk-cleanup"],
                 "disabled": ["disk-cleanup"],
             }
-        }))
+        }), encoding="utf-8")
         from hermes_cli import plugins as pmod
         mgr = pmod.PluginManager()
         mgr.discover_and_load()

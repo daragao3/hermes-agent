@@ -462,7 +462,7 @@ def test_cached_pinned_port_is_not_handed_to_a_sibling_server(
     settled._client_info_path().write_text(json.dumps({
         "client_id": _CIMD_CLIENT_METADATA_URL,
         "redirect_uris": [f"http://127.0.0.1:{private_ports[0]}/callback"],
-    }))
+    }), encoding="utf-8")
 
     restored = _configure_callback_port({}, settled)
     fresh = _maybe_use_cimd({}, HermesTokenStorage("fresh"))

@@ -16,7 +16,7 @@ def _install(home, monkeypatch, *, label="first", enabled=True):
     monkeypatch.chdir(home)
     (home / "config.yaml").write_text(
         f"plugins:\n  enabled: {'[dual]' if enabled else '[]'}\nmemory:\n  provider: dual\n"
-    )
+    , encoding="utf-8")
     plugin = home / "plugins" / "dual"
     plugin.mkdir(parents=True)
     (plugin / "plugin.yaml").write_text("name: dual\nversion: 1.0.0\nkind: standalone\n", encoding="utf-8")
@@ -40,7 +40,7 @@ def _install(home, monkeypatch, *, label="first", enabled=True):
             ctx.register_memory_provider(Provider())
             ctx.register_hook("pre_llm_call", make_hook(LABEL))
             ctx.register_hook("pre_llm_call", make_hook("second"))
-    '''))
+    '''), encoding="utf-8")
     return get_plugin_manager()
 
 

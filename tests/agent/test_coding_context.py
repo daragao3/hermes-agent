@@ -161,7 +161,7 @@ class TestProjectFacts:
     def test_detect_project_facts_structured(self, tmp_path):
         (tmp_path / "package.json").write_text(
             json.dumps({"scripts": {"test": "vitest", "dev": "vite"}})
-        )
+        , encoding="utf-8")
         (tmp_path / "pnpm-lock.yaml").write_text("", encoding="utf-8")
         facts = cc.detect_project_facts(tmp_path)
         assert facts.manifests == ["package.json"]
@@ -175,7 +175,7 @@ class TestProjectFacts:
         _git_init(tmp_path)
         (tmp_path / "package.json").write_text(
             json.dumps({"scripts": {"test": "vitest", "lint": "eslint ."}})
-        )
+        , encoding="utf-8")
         (tmp_path / "pnpm-lock.yaml").write_text("", encoding="utf-8")
         facts = cc.project_facts_for(tmp_path)
         assert facts is not None

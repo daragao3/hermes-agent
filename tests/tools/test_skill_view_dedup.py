@@ -20,7 +20,7 @@ def skills_home(tmp_path, monkeypatch):
     (d / "SKILL.md").write_text(
         "---\nname: demo-dedup-skill\ndescription: Demo skill for dedup tests.\n---\n"
         "# Demo\n\nStep one: run the demo procedure fully.\n"
-    )
+    , encoding="utf-8")
     refs = d / "references"
     refs.mkdir()
     (refs / "guide.md").write_text("# Guide\n\nDetailed reference content here.\n", encoding="utf-8")

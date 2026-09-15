@@ -121,7 +121,7 @@ class TestFromGlobalConfig:
         config_file.write_text(json.dumps({
             "apiKey": "key",
             "endpoint": {"baseUrl": "http://localhost:8000"},
-        }))
+        }), encoding="utf-8")
 
         with patch.dict(os.environ, {}, clear=True):
             config = HonchoClientConfig.from_global_config(config_path=config_file)
@@ -134,7 +134,7 @@ class TestFromGlobalConfig:
             "endpoint": {"baseUrl": "http://localhost:8000"},
             "baseUrl": "http://localhost:9001",
             "base_url": "http://localhost:9002",
-        }))
+        }), encoding="utf-8")
 
         with patch.dict(os.environ, {"HONCHO_BASE_URL": "http://localhost:9003"}, clear=True):
             config = HonchoClientConfig.from_global_config(config_path=config_file)
@@ -147,7 +147,7 @@ class TestFromGlobalConfig:
         config_file.write_text(json.dumps({
             "endpoint": "http://localhost:8000",
             "baseUrl": "http://localhost:9001",
-        }))
+        }), encoding="utf-8")
 
         with patch.dict(os.environ, {}, clear=True):
             config = HonchoClientConfig.from_global_config(config_path=config_file)
@@ -166,7 +166,7 @@ class TestFromGlobalConfig:
                     "aiPeer": "host-ai",
                 }
             }
-        }))
+        }), encoding="utf-8")
 
         config = HonchoClientConfig.from_global_config(config_path=config_file)
         assert config.workspace_id == "host-ws"
@@ -188,7 +188,7 @@ class TestFromGlobalConfig:
             "apiKey": "key",
             "recallMode": "tools",
             "hosts": {"hermes": {"recallMode": "context"}},
-        }))
+        }), encoding="utf-8")
         config = HonchoClientConfig.from_global_config(config_path=config_file)
         assert config.recall_mode == "context"
 
@@ -207,7 +207,7 @@ class TestFromGlobalConfig:
         config_file.write_text(json.dumps({
             "baseUrl": "http://root:9000",
             "hosts": {"hermes": {"baseUrl": "http://host-block:9001"}},
-        }))
+        }), encoding="utf-8")
 
         with patch.dict(os.environ, {"HONCHO_BASE_URL": "http://env:8000"}, clear=False):
             config = HonchoClientConfig.from_global_config(config_path=config_file)
@@ -349,7 +349,7 @@ class TestObservationModeMigration:
         cfg_file.write_text(json.dumps({
             "apiKey": "k",
             "hosts": {"hermes": {"enabled": True, "aiPeer": "hermes"}},
-        }))
+        }), encoding="utf-8")
         cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
         assert cfg.observation_mode == "unified"
 
@@ -373,7 +373,7 @@ class TestObservationModeMigration:
                     "ai": {"observeMe": False, "observeOthers": True},
                 },
             }},
-        }))
+        }), encoding="utf-8")
         cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
         # observation_mode falls back to "unified" (migration), but
         # granular booleans from the observation object win
@@ -694,7 +694,7 @@ class TestGetHonchoClientBaseUrlDoublePrefixFix:
                     "apiKey": "",
                 },
             },
-        }))
+        }), encoding="utf-8")
 
         with patch.dict(os.environ, {}, clear=True), \
              patch("hermes_cli.profiles.get_active_profile_name", return_value="default"), \

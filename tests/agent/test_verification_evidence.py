@@ -23,7 +23,7 @@ def _ledger_on(monkeypatch):
 def _node_project(root: Path) -> None:
     (root / "package.json").write_text(
         json.dumps({"scripts": {"test": "vitest", "lint": "eslint .", "dev": "vite"}})
-    )
+    , encoding="utf-8")
     (root / "pnpm-lock.yaml").write_text("", encoding="utf-8")
     scripts = root / "scripts"
     scripts.mkdir()

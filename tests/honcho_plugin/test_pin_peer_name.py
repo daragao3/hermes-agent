@@ -40,7 +40,7 @@ class TestPinPeerNameConfigParsing:
             "apiKey": "k",
             "peerName": "Igor",
             "pinPeerName": True,
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "isolated"))
 
         config = HonchoClientConfig.from_global_config(config_path=config_file)
@@ -56,7 +56,7 @@ class TestPinPeerNameConfigParsing:
             "hosts": {
                 "hermes": {"pinPeerName": True},
             },
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "isolated"))
 
         config = HonchoClientConfig.from_global_config(config_path=config_file)
@@ -69,7 +69,7 @@ class TestPinPeerNameConfigParsing:
             "apiKey": "k",
             "peerName": "Igor",
             "pinPeerName": False,
-        }))
+        }), encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "isolated"))
 
         config = HonchoClientConfig.from_global_config(config_path=config_file)
@@ -88,7 +88,7 @@ class TestRuntimePeerMappingConfigParsing:
         config_file.write_text(json.dumps({
             "apiKey": "k",
             "userPeerAliases": ["not", "a", "map"],
-        }))
+        }), encoding="utf-8")
 
         config = HonchoClientConfig.from_global_config(config_path=config_file)
 
@@ -441,7 +441,7 @@ class TestPinUserPeerAlias:
             "apiKey": "***",
             "peerName": "eri",
             "hosts": {"hermes": {"pinPeerName": True}},
-        }))
+        }), encoding="utf-8")
         config = HonchoClientConfig.from_global_config(config_path=config_file)
         assert config.pin_peer_name is True
 

@@ -130,7 +130,7 @@ class TestEnvFileParsing:
     def test_load_env_file_single_quotes_and_plain_values(self, tmp_path):
         (tmp_path / ".env").write_text(
             "PLAIN=abc123\nQUOTED='single quoted'\nEMPTY=\n"
-        )
+        , encoding="utf-8")
         assert ss.load_env_file(tmp_path / ".env") == {
             "PLAIN": "abc123",
             "QUOTED": "single quoted",
@@ -158,7 +158,7 @@ class TestEnvFileParsing:
         (tmp_path / ".env").write_text(
             "DQ=\"has # inside\" # trailing\n"
             "SQ='single # inside' # trailing\n"
-        )
+        , encoding="utf-8")
         assert ss.load_env_file(tmp_path / ".env") == {
             "DQ": "has # inside",
             "SQ": "single # inside",
@@ -168,7 +168,7 @@ class TestEnvFileParsing:
         r"""Escape-aware close-quote scan: `\"` must not terminate the value."""
         (tmp_path / ".env").write_text(
             'KEY="a \\" quote # x" # trail\n'
-        )
+        , encoding="utf-8")
         assert ss.load_env_file(tmp_path / ".env") == {"KEY": 'a " quote # x'}
 
     def test_round_trip_writer_value_with_trailing_comment(self, tmp_path):

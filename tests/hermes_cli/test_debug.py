@@ -24,19 +24,19 @@ def hermes_home(tmp_path, monkeypatch):
         "2026-04-12 17:00:00 INFO agent: session started\n"
         "2026-04-12 17:00:01 INFO tools.terminal: running ls\n"
         "2026-04-12 17:00:02 WARNING agent: high token usage\n"
-    )
+    , encoding="utf-8")
     (logs_dir / "errors.log").write_text(
         "2026-04-12 17:00:05 ERROR gateway.run: connection lost\n"
-    )
+    , encoding="utf-8")
     (logs_dir / "gateway.log").write_text(
         "2026-04-12 17:00:10 INFO gateway.run: started\n"
-    )
+    , encoding="utf-8")
     (logs_dir / "gui.log").write_text(
         "2026-04-12 17:00:12 INFO hermes_cli.web_server: dashboard request\n"
-    )
+    , encoding="utf-8")
     (logs_dir / "desktop.log").write_text(
         "2026-04-12 17:00:15 INFO desktop: backend spawned\n"
-    )
+    , encoding="utf-8")
 
     return home
 
@@ -234,7 +234,7 @@ class TestCaptureLogSnapshotRedaction:
         logs_dir.mkdir()
         (logs_dir / "agent.log").write_text(
             f"2026-04-12 17:00:00 INFO config: api_key={_REDACT_FIXTURE_TOKEN} loaded\n"
-        )
+        , encoding="utf-8")
         (logs_dir / "errors.log").write_text("", encoding="utf-8")
         (logs_dir / "gateway.log").write_text("", encoding="utf-8")
         return home
@@ -294,7 +294,7 @@ class TestCaptureLogSnapshotRedaction:
             "2026-04-12 17:00:00 INFO gateway.run: "
             "inbound message: platform=bluebubbles "
             "user=person@example.com chat=iMessage;-;person@example.com msg='hello'\n"
-        )
+        , encoding="utf-8")
 
         snap = _capture_log_snapshot("agent", tail_lines=10)
 
@@ -311,7 +311,7 @@ class TestCaptureLogSnapshotRedaction:
             "2026-04-12 17:00:00 INFO gateway.run: "
             "inbound message: platform=bluebubbles "
             "user=person@example.com chat=iMessage;-;person@example.com msg='hello'\n"
-        )
+        , encoding="utf-8")
 
         snap = _capture_log_snapshot("agent", tail_lines=10, redact=False)
 
@@ -461,11 +461,11 @@ class TestRunDebugShareRedaction:
         logs_dir.mkdir()
         (logs_dir / "agent.log").write_text(
             f"2026-04-12 17:00:00 INFO config: api_key={_REDACT_FIXTURE_TOKEN} loaded\n"
-        )
+        , encoding="utf-8")
         (logs_dir / "errors.log").write_text("", encoding="utf-8")
         (logs_dir / "gateway.log").write_text(
             f"2026-04-12 17:00:01 INFO gateway.run: token {_REDACT_FIXTURE_TOKEN}\n"
-        )
+        , encoding="utf-8")
         return home
 
     def test_default_share_redacts_uploaded_content(
@@ -867,7 +867,7 @@ class TestBuildDebugShare:
         secret = "sk-proj-SUPERSECRETtoken1234567890"
         (hermes_home / "logs" / "agent.log").write_text(
             f"line one\nauthorization token={secret}\nline three\n"
-        )
+        , encoding="utf-8")
 
         uploaded = []
 
@@ -926,7 +926,7 @@ class TestCollectShareBundle:
         secret = "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"
         (hermes_home / "logs" / "agent.log").write_text(
             f"line one\nOPENAI_API_KEY={secret}\nline three\n"
-        )
+        , encoding="utf-8")
         with patch("hermes_cli.dump.run_dump"):
             redacted = collect_share_bundle(log_lines=50, redact=True)
             unredacted = collect_share_bundle(log_lines=50, redact=False)

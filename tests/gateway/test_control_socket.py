@@ -288,7 +288,7 @@ def test_collect_fleet_versions_prefers_socket(tmp_path: Path, monkeypatch):
     # stale state file that would report a WRONG pid — socket must win
     (home / "gateway_state.json").write_text(
         json.dumps({"pid": 1, "code_sha": "stalefile", "kind": "hermes-gateway"})
-    )
+    , encoding="utf-8")
     monkeypatch.setattr(
         "gateway.control_socket.identify_gateway",
         lambda h, **kw: _fake_identity(31337, "HEADSHA"),
@@ -331,7 +331,7 @@ def test_collect_fleet_versions_falls_back_to_state_file(tmp_path: Path, monkeyp
                 "kind": "hermes-gateway",
             }
         )
-    )
+    , encoding="utf-8")
 
     fleet = ur.collect_fleet_versions()
     assert len(fleet) == 1

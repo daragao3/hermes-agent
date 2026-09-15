@@ -48,7 +48,7 @@ def _write_skill(skills_dir, name, body=SKILL_BODY):
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: Description for {name}\n---\n\n# {name}\n\n{body}\n"
-    )
+    , encoding="utf-8")
     return skill_dir
 
 

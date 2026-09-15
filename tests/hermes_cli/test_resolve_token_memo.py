@@ -41,7 +41,7 @@ def _write_valid_auth_file(tmp_path, token="memo-token"):
                 },
             }
         )
-    )
+    , encoding="utf-8")
 
 
 def _count_transactions(monkeypatch):

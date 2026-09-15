@@ -75,7 +75,7 @@ def _make_profile(
     if with_pid:
         (p / "gateway.pid").write_text(json.dumps(
             {"pid": 99999, "host": "old-container"},
-        ))
+        ), encoding="utf-8")
         (p / "processes.json").write_text("[]", encoding="utf-8")
     return p
 
@@ -91,11 +91,11 @@ def _seed_default_root(
     if state is not None:
         (hermes_home / "gateway_state.json").write_text(json.dumps({
             "gateway_state": state, "timestamp": 1234567890,
-        }))
+        }), encoding="utf-8")
     if with_pid:
         (hermes_home / "gateway.pid").write_text(json.dumps(
             {"pid": 99999, "host": "old-container"},
-        ))
+        ), encoding="utf-8")
         (hermes_home / "processes.json").write_text("[]", encoding="utf-8")
 
 
@@ -259,7 +259,7 @@ def test_register_service_overwrites_existing_slot(tmp_path: Path) -> None:
     # for now just exercise the overwrite path).
     (profile / "gateway_state.json").write_text(
         '{"gateway_state": "stopped"}',
-    )
+    encoding="utf-8")
     reconcile_profile_gateways(
         hermes_home=tmp_path, scandir=scandir, dry_run=False,
     )

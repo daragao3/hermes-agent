@@ -167,7 +167,7 @@ class TestSnapshotEndToEnd:
         init_file.write_text(
             'export HERMES_SHELL_INIT_PROBE="probe-ok"\n'
             'export PATH="/opt/shell-init-probe/bin:$PATH"\n'
-        )
+        , encoding="utf-8")
 
         with patch(
             "tools.environments.local._read_terminal_shell_init_config",
@@ -208,7 +208,7 @@ class TestSnapshotEndToEnd:
         profile.write_text(
             f'export PATH="{fake_n_bin}:$PATH"\n'
             'export FROM_PROFILE=profile-ok\n'
-        )
+        , encoding="utf-8")
         bashrc = tmp_path / ".bashrc"
         bashrc.write_text(
             'case $- in\n'
@@ -216,7 +216,7 @@ class TestSnapshotEndToEnd:
             '      *) return;;\n'
             'esac\n'
             'export FROM_BASHRC=bashrc-should-not-appear\n'
-        )
+        , encoding="utf-8")
 
         monkeypatch.setenv("HOME", str(tmp_path))
 

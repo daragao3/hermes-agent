@@ -1144,7 +1144,7 @@ class TestGpgIsolation:
             "[commit]\n    gpgsign = true\n"
             "[tag]\n    gpgSign = true\n"
             "[gpg]\n    program = /nonexistent/fake-gpg-binary\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HOME", str(fake_home))
         monkeypatch.delenv("GPG_TTY", raising=False)
         monkeypatch.delenv("DISPLAY", raising=False)

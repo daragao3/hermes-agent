@@ -49,7 +49,7 @@ def test_terminal_descendants_cannot_mutate_even_after_task_is_removed(tmp_path,
         f"p = subprocess.run([sys.executable, '-m', 'hermes_cli.main', 'kanban', 'complete', foreign, '--result', 'must refuse'], cwd={str(ROOT)!r}, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=45)\n"
         "out['later_cli'] = {'rc': p.returncode, 'out':p.stdout, 'err':p.stderr}\n"
         "print('SCOPE_RESULT=' + json.dumps(out))\n"
-    )
+    , encoding="utf-8")
     terminal = LocalEnvironment(cwd=str(tmp_path))
     try:
         result = terminal.execute(f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}")

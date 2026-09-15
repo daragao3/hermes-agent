@@ -37,7 +37,7 @@ providers:
 auxiliary:
   title_generation:
     enabled: false
-''')
+''', encoding="utf-8")
     (home / '.env').write_text('MOCK_API_KEY=fixture-only\n', encoding="utf-8")
     secondary = home / 'profiles/wave1-secondary'
     secondary.mkdir(parents=True)

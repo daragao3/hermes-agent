@@ -467,7 +467,7 @@ def test_get_flow_status_reports_stored_connection(tmp_path, monkeypatch, reset_
         "apiKey": "hch-at-tok",
         "oauth": {"refreshToken": "hch-rt-x", "expiresAt": 9_999_999_999,
                   "clientId": "hermes-desktop", "tokenEndpoint": "http://x/oauth/token"},
-    }}}))
+    }}}), encoding="utf-8")
     s = oauth_flow.get_flow_status()
     assert s["connected"] is True and s["auth"] == "oauth"
 

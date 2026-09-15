@@ -30,7 +30,7 @@ def config_home(tmp_path, monkeypatch):
         "approvals:\n  mode: manual\n  timeout: 300\n  cron_mode: deny\n"
         "command_allowlist: []\n"
         "security:\n  tirith_enabled: false\n"
-    )
+    , encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
     hc._LOAD_CONFIG_CACHE.clear()
     yield home

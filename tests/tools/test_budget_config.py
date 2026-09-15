@@ -210,7 +210,7 @@ class TestMcpPrefixThreshold:
     def test_config_override_via_hermes_home(self, tmp_path, monkeypatch):
         (tmp_path / "config.yaml").write_text(
             "tool_budget:\n  mcp_result_size_chars: 30000\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         cfg = budget_for_context_window(None)
         assert cfg.resolve_threshold("mcp_composio_multi_execute") == 30_000
@@ -220,7 +220,7 @@ class TestMcpPrefixThreshold:
     def test_config_override_survives_window_scaling(self, tmp_path, monkeypatch):
         (tmp_path / "config.yaml").write_text(
             "tool_budget:\n  mcp_result_size_chars: 30000\n"
-        )
+        , encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         cfg = budget_for_context_window(200_000)
         assert cfg.mcp_result_size == 30_000
