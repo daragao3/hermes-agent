@@ -159,8 +159,12 @@ class CodexAppServerClient:
         owned_task = os.environ.get("HERMES_KANBAN_TASK") and is_dispatcher_owned_worker_context()
         if owned_task:
             for key in (*KANBAN_ENV_KEYS, "HERMES_KANBAN_DB", "HERMES_KANBAN_BOARD"):
-                if key in os.environ:
-                    cmd += ["-c", f"mcp_servers.hermes-mcp.env.{key}={json.dumps(os.environ[key])}"]
+                # Read ONCE via .get(): `if key in os.environ` followed by
+                # os.environ[key] is check-then-act against process-global
+                # state, and raises KeyError if the key is removed in between.
+                value = os.environ.get(key)
+                if value is not None:
+                    cmd += ["-c", f"mcp_servers.hermes-mcp.env.{key}={json.dumps(value)}"]
             cmd += ["-c", f'mcp_servers.hermes-mcp.env.{DELEGATED_CHILD_ENV_MARKER}=""']
         spawn_env = delegated_child_subprocess_env(spawn_env)
         # Kanban workers must write handoff/status to the board DB outside the

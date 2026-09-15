@@ -91,6 +91,23 @@ _CONTEXT_VAR_RESOLVERS = {
     "workspaceFolderBasename": _workspace_basename, "pathSeparator": lambda: os.sep, "/": lambda: os.sep}
 
 
+def _environ_snapshot() -> dict:
+    """Race-free copy of ``os.environ``.
+
+    ``dict(os.environ)`` / ``.copy()`` / ``.items()`` are NOT atomic:
+    ``os._Environ.__iter__`` snapshots the key list (``keys = list(self._data)``)
+    but every value is then re-read live, so a key removed by another thread
+    between the two makes ``__getitem__`` raise ``KeyError(key)`` mid-copy.
+    Iterating the key snapshot and reading through ``.get()`` (which swallows
+    that KeyError) cannot fail; a key that vanished is simply absent.
+
+    See the note in ``gateway/kanban_watchers_dispatcher.py`` — a process-global
+    env pin there took down a cron job this way on 2026-09-15.
+    """
+    return {key: value for key in list(os.environ)
+            if (value := os.environ.get(key)) is not None}
+
+
 def _build_safe_env(user_env: Optional[dict]) -> dict:
     """Filtered env for stdio subprocesses so API keys/tokens don't leak: the safe baseline
     keys, ``XDG_*``, vars injected by an external secret source (users configured that backend
@@ -99,13 +116,17 @@ def _build_safe_env(user_env: Optional[dict]) -> dict:
         from hermes_cli.env_loader import get_secret_source
     except Exception:  # pragma: no cover — early bootstrap/import fallback
         get_secret_source = None
+    # One snapshot for BOTH reads below: they used to hit os.environ separately
+    # and could observe different states of a concurrent mutation.
+    environ = _environ_snapshot()
     env = {
-        key: value for key, value in os.environ.items()
+        key: value for key, value in environ.items()
         if key in _SAFE_ENV_KEYS or key.upper() in _SAFE_ENV_KEYS_CASE_INSENSITIVE
         or key.startswith("XDG_") or (get_secret_source is not None and get_secret_source(key))}
     for key in ("HERMES_KANBAN_DB", "HERMES_KANBAN_BOARD"):
-        if key in os.environ:
-            env[key] = os.environ[key]
+        value = environ.get(key)
+        if value is not None:
+            env[key] = value
     if user_env:
         env.update(user_env)
     from agent.delegation_context import delegated_child_subprocess_env

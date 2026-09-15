@@ -8,7 +8,6 @@ the singleton lock and the health telemetry; everything that only needs the
 from __future__ import annotations
 
 import contextlib
-import os
 import sqlite3
 import time
 from dataclasses import asdict, dataclass
@@ -250,11 +249,31 @@ class _KanbanDispatcher:
         for slug in self._board_slugs():
             if attempted >= auto_decompose_per_tick:
                 break
-            # Pin the board via env for the call: the decomposer connects
-            # with no board kwarg (same pattern as the dashboard specify endpoint).
-            prev_env = os.environ.get("HERMES_KANBAN_BOARD")
-            try:
-                os.environ["HERMES_KANBAN_BOARD"] = slug
+            # Pin the board for the call: the decomposer connects with no board
+            # kwarg (same pattern as the dashboard specify endpoint), resolving
+            # through kanban_db.get_current_board().
+            #
+            # This pin MUST stay context-local. It used to set and pop
+            # os.environ["HERMES_KANBAN_BOARD"], which is process-global: while
+            # the key was absent, ANY concurrent os.environ reader in the
+            # gateway could die with KeyError. os._Environ.__iter__ snapshots
+            # the key list but re-reads each value live, so dict(os.environ),
+            # os.environ.copy(), .items() loops and dict.update(os.environ) all
+            # raise KeyError(key) if a key vanishes mid-read -- including inside
+            # dependencies we cannot guard. That is not theoretical: on
+            # 2026-09-15 cron job jobflow-ats-url-resolve died with
+            # KeyError: 'HERMES_KANBAN_BOARD' raised by python-dotenv's
+            # `env.update(os.environ)` (dotenv/main.py:307), reached from
+            # cron.scheduler._reload_dotenv_and_publish_delivery_target, 711ms
+            # into this dispatcher's first tick after a gateway restart.
+            #
+            # The cron readers-writer lock (cron/scheduler.py _ReadWriteLock)
+            # cannot protect against this: it keys on _job_mutates_process_globals,
+            # which classifies cron JOBS, and this dispatcher is an embedded
+            # gateway service on a worker thread -- an unlocked writer racing
+            # locked readers. A ContextVar is confined to this thread's
+            # Context (see _run_in_fresh_context), so there is nothing to race.
+            with self.kb.scoped_current_board(slug):
                 try:
                     triage_ids = _decomp.list_triage_ids()
                 except Exception as exc:
@@ -265,11 +284,6 @@ class _KanbanDispatcher:
                         break
                     attempted += 1
                     successes += self._decompose_one(_decomp, slug, tid)
-            finally:
-                if prev_env is None:
-                    os.environ.pop("HERMES_KANBAN_BOARD", None)
-                else:
-                    os.environ["HERMES_KANBAN_BOARD"] = prev_env
         return successes
 
     @staticmethod
