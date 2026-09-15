@@ -2368,6 +2368,13 @@ def run_job(
     set_stage("isolation_wait")
     _note_isolation_wait(deadline_box)
     acquire()
+    # Exactly-once, so the soft-deadline owner can release this lock when it
+    # ABANDONS a runaway reader -- neither path below runs while the worker is
+    # still wedged (see _CronLockRelease). Writers are never abandoned, so
+    # publishing is harmless for them.
+    release = _CronLockRelease(release)
+    if deadline_box is not None:
+        deadline_box["release_cron_lock"] = release
     prerun_token = _prerun_script_failure.set(None)
     worker_state = {}
     try:
@@ -5049,6 +5056,22 @@ def _run_callable_with_deadline(job, process_fn, abandon_on_timeout, ctx, *, wai
     # overwritten by the provisional deadline failure.
     if abandon_on_timeout:
         abandoned.set()
+        # The abandoned worker is a daemon thread still inside run_job holding
+        # its READ lock; neither its direct release nor its future's
+        # done-callback runs until the hang ends. The lock is writer-preferring,
+        # so leaving it held stalls every profile job in the process (2026-09-14:
+        # an 8.14h hang -> a 7.75h financier stall). _CronLockRelease makes the
+        # later release a no-op rather than a double release.
+        _release_cron_lock = box.get("release_cron_lock")
+        if _release_cron_lock is not None:
+            try:
+                if _release_cron_lock():
+                    logger.warning(
+                        "Cron job '%s' (%s): released the abandoned run's cron lock so "
+                        "profile jobs are not blocked behind it", job_name, job_id)
+            except Exception:
+                logger.exception(
+                    "Cron job %s: releasing the abandoned run's cron lock failed", job_id)
     box["deadline_decided"].set()
     msg = "soft deadline exceeded: still running after %ds%s" % (
         int(timeout_s),
@@ -6177,6 +6200,59 @@ def _collect_woken_jobs(*, exclude_ids: set) -> list:
 
 
 _terminal_cwd_lock = _ReadWriteLock()
+
+
+class _CronLockRelease:
+    """Release one held cron lock exactly once, from whichever caller gets there first.
+
+    ``run_job`` releases its lock either directly or, for a reader whose model
+    future is still in flight, from that future's done-callback.  Neither runs
+    when the soft deadline ABANDONS a runaway reader: the worker is a daemon
+    thread the tick has already given up on, and the future does not complete
+    until the hang ends, so the read lock stays held for the whole hang.  The
+    lock is writer-preferring and every ``profile`` job is a writer, so one
+    wedged reader stalls every profile job in the process.
+
+    Production, 2026-09-14: ``jobflow-notifier`` hung 29,288s (8.14h, against a
+    450s median) on ``RuntimeError: Hermes can't reach the model provider`` and
+    the whole financier profile queued behind it for 7.75 hours --
+    financier-digest-am and financier-canvas-am were claimed 07:20:53 and
+    started 15:06:08 / 15:06:44, the instant the hung reader finally errored.
+    CronStaleMonitor flagged it at 20 minutes and nothing acted on that.
+
+    So the deadline owner releases the abandoned reader's lock via
+    ``deadline_box["release_cron_lock"]``, and this guard makes the later direct
+    release or done-callback a no-op rather than a DOUBLE release (which would
+    corrupt the reader count and let a writer run beside a live reader -- the
+    corruption the lock exists to prevent).  Deliberately not keyed on thread
+    id: as the release site notes, this lock is not thread-affine.
+
+    Only readers are abandoned -- writers dispatch ``abandon_on_timeout=False``
+    (alert-only) to keep the sequential invariant -- so no write lock is
+    released early by this path.
+
+    TRADE-OFF, deliberate: an abandoned reader keeps running without its lock,
+    so a writer may mutate the Hermes home while that dead run is still
+    executing.  Its results are already void (the deadline marked the run
+    failed, released its slot, and set ``_abandoned`` to suppress late side
+    effects) and the measured alternative is a multi-hour fleet-wide stall.
+    """
+
+    __slots__ = ("_release", "_mutex", "_done")
+
+    def __init__(self, release_fn: Callable[[], None]) -> None:
+        self._release = release_fn
+        self._mutex = threading.Lock()
+        self._done = False
+
+    def __call__(self) -> bool:
+        """Release if nobody has yet; True if this call did it."""
+        with self._mutex:
+            if self._done:
+                return False
+            self._done = True
+        self._release()
+        return True
 _CRON_RUN_POLL_INTERVAL_S = 5.0
 
 # ---------------------------------------------------------------------------

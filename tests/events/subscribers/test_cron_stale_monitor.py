@@ -236,6 +236,15 @@ class TestCronStaleMonitor:
             # 1200s default fired on 12 of its last 14 healthy runs. Entry 3600,
             # below its 5400s timeout_seconds (loops telegram-alert-triage-20260909).
             "devflow-execute-approved",
+            # 2026-09-14: jobflow-scout was the one per_job entry set BELOW its own
+            # normal band -- 2400 fired on 17 of its last 34 healthy runs (50%; 58%
+            # over the last 7d), against <=9% for every other entry. Re-derived to
+            # 3500 from cron_completed durations (median 2394, p95 3283, max 3468
+            # excluding one 10013.8s anomaly), inside the only window its 3600s
+            # timeout_seconds allows. It was unguarded here, so the misconfiguration
+            # could never have been caught by this suite.
+            # Loops cron-stale-threshold-rederive-scout-20260914.
+            "jobflow-scout",
         ],
     )
     def test_production_threshold_boundaries(self, bus, job_name):
