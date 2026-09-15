@@ -133,11 +133,19 @@ class Footgun:
     # the regex can't fully distinguish (e.g. open() where mode may contain
     # "b" for binary, or the line may have `encoding=` elsewhere).
     post_filter: "callable | None" = None
+    # Opt-in for encoding-rules whose call can span lines. When set, a match
+    # whose call does NOT close on the flagged line is re-checked against the
+    # call's FULL paren span: it is dropped only if `encoding=` genuinely
+    # appears somewhere in that span. A multi-line call with no encoding=
+    # anywhere still reports, so this removes false positives WITHOUT buying
+    # any false negative. See _encoding_in_call_span and MULTILINE ENCODING.
+    multiline_encoding_aware: bool = False
 
 
 FOOTGUNS: list[Footgun] = [
     Footgun(
         name="open() without encoding= on text mode",
+        multiline_encoding_aware=True,
         # Match builtins.open() specifically — NOT os.open(), .open()
         # method calls (Path.open, tarfile.open, zf.open, webbrowser.open,
         # Image.open, wave.open, etc), or `async def open()` method
@@ -352,6 +360,7 @@ FOOTGUNS: list[Footgun] = [
     ),
     Footgun(
         name="subprocess text=True without explicit encoding=",
+        multiline_encoding_aware=True,
         # Match ``text=True`` (or ``text = True``) anywhere on a line. We
         # rely on the post_filter to (a) skip lines that already pass
         # ``encoding=`` on the same line, and (b) skip false positives like
@@ -428,6 +437,14 @@ FOOTGUNS: list[Footgun] = [
             # ``read_text()[:4000]`` / ``read_text().splitlines()`` are
             # still caught. AST-level enforcement for multi-line calls
             # lives in the gateway guard test.
+            #
+            # NOT switched to multiline_encoding_aware (2026-09-15), on
+            # purpose: measured on the current tree, span-checking this rule
+            # instead of skipping multi-line calls surfaces 600 findings
+            # (tests/ and evals/ read_text calls wrapped without encoding=).
+            # That is a backlog to sweep under its own claim, not a filter
+            # change to slip into a blocking gate. Once swept, drop this
+            # line and set the flag -- the mechanism is already in place.
             and _call_closes_on_line(line, m.end())
         ),
     ),
@@ -712,6 +729,72 @@ def _call_closes_on_line(line: str, open_paren_end: int) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# MULTILINE ENCODING
+#
+# The encoding rules are line-based, but `open(...)` / `subprocess.run(...)`
+# calls routinely wrap, and a correctly-written call can carry its
+# `encoding="utf-8"` on a continuation line. Flagging those is a false
+# positive; the repo carried four, all resolved by hand with suppression
+# markers.
+#
+# The tempting fix -- give these rules the read_text rule's
+# `_call_closes_on_line` filter, i.e. skip every multi-line call -- was
+# MEASURED AND REJECTED. A/B of both scanners over the pre-sweep tree
+# (9c5250323c, 2996 findings / 6651 files) lost exactly six findings: two
+# false positives, and FOUR GENUINE FOOTGUNS -- the very calls the tests/evals
+# encoding sweep then had to find and fix. A blanket multi-line skip on a
+# blocking gate buys two false positives at the price of four real bugs.
+#
+# So: only skip a multi-line call when `encoding=` is actually THERE. The walk
+# below is bounded and runs only for a match that does not close on its own
+# line -- a few dozen sites in the whole tree -- so it costs nothing against
+# the per-line prefilter that already rejects ~99.8% of lines.
+# ---------------------------------------------------------------------------
+
+# Upper bound on continuation lines inspected for one call. Far above the
+# widest real call site (the widest in-repo is 3 lines); the bound exists so a
+# runaway unbalanced-paren walk cannot read to end of file on every match.
+_MAX_CALL_SPAN_LINES = 40
+
+
+def _encoding_in_call_span(
+    lines: list[str], start_idx: int, open_paren_end: int
+) -> bool:
+    """Does ``encoding=`` appear anywhere in this call's full paren span?
+
+    ``lines`` is the file's raw lines, ``start_idx`` the 0-based index of the
+    flagged line, and ``open_paren_end`` an offset on that line that sits at
+    paren depth 1 inside the call. Walks forward balancing parens until the
+    call closes, and reports whether any line of the span passes ``encoding=``.
+
+    Comments are stripped before the test, so explanatory prose that merely
+    mentions ``encoding=`` cannot suppress a real finding. Returns False if the
+    call does not close within ``_MAX_CALL_SPAN_LINES`` -- an unterminated walk
+    is reported as "no encoding found", which keeps the finding rather than
+    silently dropping it.
+    """
+    depth = 1
+    segment = lines[start_idx][open_paren_end:]
+    for offset in range(_MAX_CALL_SPAN_LINES):
+        idx = start_idx + offset
+        if idx >= len(lines):
+            return False
+        if offset:
+            segment = lines[idx]
+        code = _strip_code(segment)
+        if "encoding=" in code or "encoding =" in code:
+            return True
+        for ch in code:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return False
+    return False
+
+
 def _looks_like_string_literal(line: str, match: "re.Match") -> bool:
     """Heuristic: is the ``text=True`` match inside a string literal?
 
@@ -749,7 +832,8 @@ def scan_file(path: Path, footguns: list[Footgun]) -> list[tuple[int, str, Footg
     # triple-quote we see; we don't try to handle nested or f-string cases.
     in_triple: str | None = None  # None, "'''", or '"""'
 
-    for i, line in enumerate(text.splitlines(), start=1):
+    lines = text.splitlines()
+    for i, line in enumerate(lines, start=1):
         # Update triple-quote state based on this line's occurrences.
         code_for_scan = line
         if in_triple:
@@ -816,6 +900,15 @@ def scan_file(path: Path, footguns: list[Footgun]) -> list[tuple[int, str, Footg
                         continue
                 except (IndexError, AttributeError):
                     # Post-filter assumed a named group that isn't there — skip.
+                    continue
+            # A call that wraps may carry its encoding= on a later line. Drop
+            # the match only when that kwarg is genuinely in the call's span —
+            # never merely because the call is multi-line. See MULTILINE
+            # ENCODING above for the measurement that rejected the latter.
+            if fg.multiline_encoding_aware and not _call_closes_on_line(
+                code, match.end()
+            ):
+                if _encoding_in_call_span(lines, i - 1, match.end()):
                     continue
             matches.append((i, line.rstrip(), fg))
     return matches

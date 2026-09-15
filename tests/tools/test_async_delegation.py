@@ -1118,7 +1118,7 @@ from tools import async_delegation as ad
 q = queue.Queue(); ad.restore_undelivered_completions(q)
 print(json.dumps(q.get_nowait(), sort_keys=True))
 '''
-    second = subprocess.run([sys.executable, "-c", consumer], cwd=repo, env=env, text=True, capture_output=True,  # windows-footgun: ok -- encoding= is passed on the continuation line
+    second = subprocess.run([sys.executable, "-c", consumer], cwd=repo, env=env, text=True, capture_output=True,
                             timeout=15, check=True, encoding="utf-8")
     evt = json.loads(second.stdout.strip().splitlines()[-1])
     by_index = {r["task_index"]: r for r in evt["results"]}
