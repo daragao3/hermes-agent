@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -155,7 +156,7 @@ class TestBoardCRUD:
         # downstream readers hit `no such table: task_events`.
         kb.create_board("recycle")
         # First connect populates _INITIALIZED_PATHS for this DB.
-        with kbc.connect(board="recycle") as conn:
+        with kbc.connect_closing(board="recycle") as conn:
             kb.create_task(conn, title="t1", assignee="dev")
         db_path = kb.board_dir("recycle") / "kanban.db"
         assert str(db_path.resolve()) in kb._INITIALIZED_PATHS
@@ -167,7 +168,7 @@ class TestBoardCRUD:
 
         # Simulate the event-stream poll: re-open the same slug. connect()
         # recreates the directory + empty .db; the schema must be re-applied.
-        with kbc.connect(board="recycle") as conn:
+        with kbc.connect_closing(board="recycle") as conn:
             tables = {
                 row[0]
                 for row in conn.execute(
@@ -176,6 +177,24 @@ class TestBoardCRUD:
             }
         assert "task_events" in tables
         assert "tasks" in tables
+
+    def test_no_unclosed_connect_in_this_module(self):
+        # Using connect() as a `with` target is sqlite3's TRANSACTION context
+        # manager: it commits/rolls back and leaves the handle open. On Windows
+        # that open handle inside boards/<slug>/ makes remove_board() fail --
+        # d.rename() with WinError 5 (archive) or shutil.rmtree() with WinError 32
+        # (delete) -- while POSIX unlinks happily and CI stays green. Upstream
+        # ships this pattern, so every merge can re-import it; pin the closing
+        # form here. The remove test above is the live proof: it was red on
+        # Windows in both parametrizations until this file switched.
+        src = Path(__file__).read_text(encoding="utf-8")
+        leaks = [
+            i + 1 for i, line in enumerate(src.splitlines())
+            if re.search(r"with\s+kbc?\.connect\(", line.split("#", 1)[0])
+        ]
+        assert not leaks, (
+            f"use kbc.connect_closing(...) instead of connect(...) at lines {leaks}"
+        )
 
     def test_rename_updates_metadata(self, fresh_home):
         kb.create_board("slug-immutable")
@@ -194,18 +213,18 @@ class TestConnectionIsolation:
         kb.create_board("alpha")
         kb.create_board("beta")
 
-        with kbc.connect(board="alpha") as conn:
+        with kbc.connect_closing(board="alpha") as conn:
             kb.create_task(conn, title="alpha-task-1", assignee="dev")
             kb.create_task(conn, title="alpha-task-2", assignee="dev")
 
-        with kbc.connect(board="beta") as conn:
+        with kbc.connect_closing(board="beta") as conn:
             kb.create_task(conn, title="beta-only", assignee="dev")
 
-        with kbc.connect(board="alpha") as conn:
+        with kbc.connect_closing(board="alpha") as conn:
             a = kb.list_tasks(conn)
-        with kbc.connect(board="beta") as conn:
+        with kbc.connect_closing(board="beta") as conn:
             b = kb.list_tasks(conn)
-        with kbc.connect(board="default") as conn:
+        with kbc.connect_closing(board="default") as conn:
             d = kb.list_tasks(conn)
 
         assert {t.title for t in a} == {"alpha-task-1", "alpha-task-2"}
@@ -215,9 +234,9 @@ class TestConnectionIsolation:
     def test_connect_without_args_uses_current(self, fresh_home):
         kb.create_board("curr")
         kb.set_current_board("curr")
-        with kbc.connect() as conn:
+        with kbc.connect_closing() as conn:
             kb.create_task(conn, title="implicit", assignee="x")
-        with kbc.connect(board="curr") as conn:
+        with kbc.connect_closing(board="curr") as conn:
             tasks = kb.list_tasks(conn)
         assert [t.title for t in tasks] == ["implicit"]
 
@@ -226,11 +245,11 @@ class TestConnectionIsolation:
         kb.create_board("envwin")
         kb.set_current_board("persist")
         monkeypatch.setenv("HERMES_KANBAN_BOARD", "envwin")
-        with kbc.connect() as conn:
+        with kbc.connect_closing() as conn:
             kb.create_task(conn, title="via-env", assignee="x")
-        with kbc.connect(board="envwin") as conn:
+        with kbc.connect_closing(board="envwin") as conn:
             assert [t.title for t in kb.list_tasks(conn)] == ["via-env"]
-        with kbc.connect(board="persist") as conn:
+        with kbc.connect_closing(board="persist") as conn:
             assert kb.list_tasks(conn) == []
 
 
