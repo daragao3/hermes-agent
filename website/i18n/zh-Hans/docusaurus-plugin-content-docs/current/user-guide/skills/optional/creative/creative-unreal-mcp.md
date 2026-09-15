@@ -21,7 +21,6 @@ description: "当用户想通过 Epic 官方内嵌于编辑器的 MCP 服务器�
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `unreal`, `unreal-engine`, `ue5`, `3d`, `mcp`, `scenes`, `cinematics`, `lighting`, `gamedev` |
-| 相关 skill | [`blender-mcp`](/user-guide/skills/optional/creative/creative-blender-mcp) |
 
 ## 参考：完整 SKILL.md
 

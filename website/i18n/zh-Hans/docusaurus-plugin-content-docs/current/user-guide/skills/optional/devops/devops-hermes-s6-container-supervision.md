@@ -22,7 +22,7 @@ profile gateway、理解 Architecture B 主程序模式。
 | 许可证 | MIT |
 | 平台 | linux |
 | 标签 | `docker`, `s6`, `supervision`, `gateway`, `profiles` |
-| 相关 skills | [`hermes-agent`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent), `hermes-agent-dev` |
+| 相关 skills | [`hermes-agent`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent) |
 
 ## 参考：完整 SKILL.md
 

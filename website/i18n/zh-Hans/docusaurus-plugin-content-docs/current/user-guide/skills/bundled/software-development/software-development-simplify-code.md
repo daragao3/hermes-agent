@@ -21,7 +21,7 @@ description: "用 3 个并行 agent 清理最近的代码改动"
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `code-review`, `cleanup`, `refactor`, `delegation`, `subagent`, `parallel`, `simplify` |
-| 相关 skill | [`requesting-code-review`](/user-guide/skills/bundled/software-development/software-development-requesting-code-review)、[`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development)、[`plan`](/user-guide/skills/bundled/software-development/software-development-plan) |
+| 相关 skill | [`requesting-code-review`](/user-guide/skills/bundled/software-development/software-development-requesting-code-review), [`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development) |
 
 ## 参考：完整 SKILL.md
 

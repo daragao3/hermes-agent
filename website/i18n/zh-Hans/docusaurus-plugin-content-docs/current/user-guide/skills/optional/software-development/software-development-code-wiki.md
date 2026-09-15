@@ -21,7 +21,7 @@ description: "为任意代码库生成 wiki 文档 + Mermaid 图表"
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `Documentation`, `Mermaid`, `Architecture`, `Diagrams`, `Wiki`, `Code-Analysis` |
-| 相关 skill | [`codebase-inspection`](/user-guide/skills/bundled/github/github-codebase-inspection)、[`github-repo-management`](/user-guide/skills/bundled/github/github-github-repo-management) |
+| 相关 skill | [`codebase-inspection`](/user-guide/skills/bundled/software-development/software-development-codebase-inspection), [`github`](/user-guide/skills/bundled/software-development/software-development-github) |
 
 ## 参考：完整 SKILL.md
 

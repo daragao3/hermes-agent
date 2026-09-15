@@ -201,7 +201,3 @@ display:
 - petdex 的 npm CLI 会安装到 `~/.codex/pets`；Hermes 使用的是它自己的
   按配置档隔离的 `<HERMES_HOME>/pets/`——请通过 `hermes pets` 安装。
 
-## 另请参阅
-
-- [`petdex` skill](../skills/bundled/productivity/productivity-petdex.md)
-  可让智能体按你的要求替你安装和切换宠物。
