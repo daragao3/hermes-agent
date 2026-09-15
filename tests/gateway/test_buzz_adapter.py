@@ -3265,8 +3265,8 @@ class TestCredentialResolution:
         scoped_tag = ["auth", "b" * 64, "", "c" * 128]
         ambient = tmp_path / "ambient.json"
         scoped = tmp_path / "scoped.json"
-        ambient.write_text(json.dumps({"nsec": "nsec1ambient", "auth_tag": ambient_tag}))
-        scoped.write_text(json.dumps({"nsec": "nsec1scoped", "auth_tag": scoped_tag}))
+        ambient.write_text(json.dumps({"nsec": "nsec1ambient", "auth_tag": ambient_tag}), encoding="utf-8")
+        scoped.write_text(json.dumps({"nsec": "nsec1scoped", "auth_tag": scoped_tag}), encoding="utf-8")
         monkeypatch.setenv("BUZZ_CREDENTIALS_FILE", str(ambient))
         monkeypatch.setenv("BUZZ_AUTH_TAG", json.dumps(ambient_tag))
         ss.set_multiplex_active(True)

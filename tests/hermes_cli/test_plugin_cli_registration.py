@@ -62,7 +62,7 @@ class TestMemoryPluginCliDiscovery:
         """Only the active memory provider's CLI commands are discovered."""
         plugin_dir = tmp_path / "testplugin"
         plugin_dir.mkdir()
-        (plugin_dir / "__init__.py").write_text("pass\n")
+        (plugin_dir / "__init__.py").write_text("pass\n", encoding="utf-8")
         (plugin_dir / "cli.py").write_text(
             "def register_cli(subparser):\n"
             "    subparser.add_argument('--test')\n"
@@ -77,7 +77,7 @@ class TestMemoryPluginCliDiscovery:
         # Also create a second plugin that should NOT be discovered
         other_dir = tmp_path / "otherplugin"
         other_dir.mkdir()
-        (other_dir / "__init__.py").write_text("pass\n")
+        (other_dir / "__init__.py").write_text("pass\n", encoding="utf-8")
         (other_dir / "cli.py").write_text(
             "def register_cli(subparser):\n"
             "    subparser.add_argument('--other')\n"
@@ -108,7 +108,7 @@ class TestMemoryPluginCliDiscovery:
         """No commands when memory.provider is not set in config."""
         plugin_dir = tmp_path / "testplugin"
         plugin_dir.mkdir()
-        (plugin_dir / "__init__.py").write_text("pass\n")
+        (plugin_dir / "__init__.py").write_text("pass\n", encoding="utf-8")
         (plugin_dir / "cli.py").write_text(
             "def register_cli(subparser):\n    pass\n"
         )

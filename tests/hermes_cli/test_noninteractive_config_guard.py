@@ -69,7 +69,7 @@ def test_noninteractive_guard_rejects_malformed_yaml(args, tmp_path, caplog, cap
 def test_prepare_rejects_bad_config_before_plugin_discovery(monkeypatch, tmp_path):
     from hermes_cli import main as main_mod
 
-    (tmp_path / "config.yaml").write_text("model: [unterminated\n")
+    (tmp_path / "config.yaml").write_text("model: [unterminated\n", encoding="utf-8")
     discovery_calls = []
     monkeypatch.setitem(
         sys.modules,
@@ -106,7 +106,7 @@ def test_noninteractive_guard_accepts_missing_empty_and_mapping_configs(
 def test_noninteractive_guard_rejects_non_mapping_yaml(tmp_path, capsys):
     from hermes_cli import main as main_mod
 
-    (tmp_path / "config.yaml").write_text("- model\n- provider\n")
+    (tmp_path / "config.yaml").write_text("- model\n- provider\n", encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc_info:
         main_mod._guard_noninteractive_user_config(_args())
@@ -126,7 +126,7 @@ def test_noninteractive_guard_rejects_non_mapping_yaml(tmp_path, capsys):
 def test_explicit_config_bypasses_allow_noninteractive_recovery(args, tmp_path):
     from hermes_cli import main as main_mod
 
-    (tmp_path / "config.yaml").write_text("model: [unterminated\n")
+    (tmp_path / "config.yaml").write_text("model: [unterminated\n", encoding="utf-8")
 
     main_mod._guard_noninteractive_user_config(args)
 
@@ -137,7 +137,7 @@ def test_explicit_config_bypasses_allow_noninteractive_recovery(args, tmp_path):
 def test_interactive_chat_keeps_existing_repair_behavior(tmp_path):
     from hermes_cli import main as main_mod
 
-    (tmp_path / "config.yaml").write_text("model: [unterminated\n")
+    (tmp_path / "config.yaml").write_text("model: [unterminated\n", encoding="utf-8")
     args = _args(query=None)
 
     main_mod._guard_noninteractive_user_config(args)
@@ -158,7 +158,7 @@ def test_interactive_chat_keeps_existing_repair_behavior(tmp_path):
 def test_queryless_chat_keeps_interactive_repair_behavior(args, tmp_path):
     from hermes_cli import main as main_mod
 
-    (tmp_path / "config.yaml").write_text("model: [unterminated\n")
+    (tmp_path / "config.yaml").write_text("model: [unterminated\n", encoding="utf-8")
 
     main_mod._guard_noninteractive_user_config(args)
 
@@ -169,7 +169,7 @@ def test_queryless_chat_keeps_interactive_repair_behavior(args, tmp_path):
 def test_env_only_config_bypass_allows_noninteractive_recovery(monkeypatch, tmp_path):
     from hermes_cli import main as main_mod
 
-    (tmp_path / "config.yaml").write_text("model: [unterminated\n")
+    (tmp_path / "config.yaml").write_text("model: [unterminated\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_IGNORE_USER_CONFIG", "1")
     args = _args()
 
@@ -183,13 +183,13 @@ def test_reused_args_can_retry_after_config_repair(tmp_path):
     from hermes_cli import main as main_mod
 
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("model: [unterminated\n")
+    config_path.write_text("model: [unterminated\n", encoding="utf-8")
     args = _args()
 
     with pytest.raises(SystemExit):
         main_mod._guard_noninteractive_user_config(args)
 
-    config_path.write_text("model:\n  default: local/test\n")
+    config_path.write_text("model:\n  default: local/test\n", encoding="utf-8")
     main_mod._guard_noninteractive_user_config(args)
 
     assert args._noninteractive_config_validated is True

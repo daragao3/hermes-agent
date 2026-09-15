@@ -21,8 +21,8 @@ def test_code_scoped_stamp_wins_over_home_stamp(tmp_path):
     home = tmp_path / "home"
     code.mkdir()
     home.mkdir()
-    (code / ".install_method").write_text("git\n")
-    (home / ".install_method").write_text("docker\n")  # container contamination
+    (code / ".install_method").write_text("git\n", encoding="utf-8")
+    (home / ".install_method").write_text("docker\n", encoding="utf-8")  # container contamination
     with patch("hermes_cli.config.get_managed_system", return_value=None), \
          patch("hermes_cli.config.get_hermes_home", return_value=home):
         from hermes_cli.config import detect_install_method

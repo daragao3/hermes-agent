@@ -45,9 +45,9 @@ def _install(name: str, sidecar: dict | None):
     from hermes_constants import get_hermes_home
     d = get_hermes_home() / "plugins" / name
     d.mkdir(parents=True)
-    (d / "plugin.yaml").write_text(yaml.safe_dump({"name": name, "version": "1.0", "description": "x"}))
+    (d / "plugin.yaml").write_text(yaml.safe_dump({"name": name, "version": "1.0", "description": "x"}), encoding="utf-8")
     if sidecar:
-        (d / ".hermes-catalog.json").write_text(json.dumps(sidecar))
+        (d / ".hermes-catalog.json").write_text(json.dumps(sidecar), encoding="utf-8")
 
 
 def test_catalog_endpoint_merges_installed_state_from_sidecar(client):

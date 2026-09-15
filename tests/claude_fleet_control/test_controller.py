@@ -320,7 +320,7 @@ def test_both_gates_satisfied_calls_injected_executor(tmp_path):
     assert result.status == RESULT_HARD_TERMINATED
     assert result.executor_called is True and calls["n"] == 1
     # cooldown recorded
-    state = json.loads((state_dir / "state.json").read_text())
+    state = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
     assert state["last_enforce_intent_at"] is not None
 
 

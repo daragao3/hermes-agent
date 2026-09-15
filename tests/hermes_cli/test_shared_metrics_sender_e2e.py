@@ -254,10 +254,10 @@ class TestRealTransport:
     def test_the_outbox_directory_is_untouched(self, store, server, tmp_path):
         _add(store, "pkg-1")
         marker = store.outbox_directory / "pkg-1.json"
-        marker.write_text('{"kept": true}')
+        marker.write_text('{"kept": true}', encoding="utf-8")
         _sender(store, server).send_pending()
         assert marker.exists()
-        assert json.loads(marker.read_text()) == {"kept": True}
+        assert json.loads(marker.read_text(encoding="utf-8")) == {"kept": True}
 
     def test_a_dead_server_defers_without_raising(self, store, server):
         _add(store, "pkg-1")

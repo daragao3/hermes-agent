@@ -115,7 +115,7 @@ def test_jobs_lock_excludes_another_process(tmp_path, monkeypatch):
         time.sleep(0.05)
         assert not blocker_acquired.exists(), "second process entered _jobs_lock() while held"
     finally:
-        release.write_text("1")
+        release.write_text("1", encoding="utf-8")
         child.wait(timeout=15)
         if blocker_child is not None:
             blocker_child.wait(timeout=15)

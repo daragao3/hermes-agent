@@ -155,7 +155,7 @@ class TestWhatsAppChatIdIdentityMatching:
     def _write_lid_mapping(self, tmp_path, monkeypatch):
         mapping_dir = tmp_path / "platforms" / "whatsapp" / "session"
         mapping_dir.mkdir(parents=True)
-        (mapping_dir / f"lid-mapping-{self.PHONE}.json").write_text(json.dumps(f"{self.LID}@lid"))
+        (mapping_dir / f"lid-mapping-{self.PHONE}.json").write_text(json.dumps(f"{self.LID}@lid"), encoding="utf-8")
         (mapping_dir / f"lid-mapping-{self.LID}_reverse.json").write_text(
             json.dumps(f"{self.PHONE}@s.whatsapp.net")
         )

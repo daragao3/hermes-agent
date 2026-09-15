@@ -20,12 +20,12 @@ def _isolate(tmp_path, monkeypatch):
     hermes_home = tmp_path / ".hermes"
     hermes_home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    (hermes_home / "config.yaml").write_text("model:\n  default: test-model\n")
+    (hermes_home / "config.yaml").write_text("model:\n  default: test-model\n", encoding="utf-8")
 
 
 def _write_config(tmp_path, config_dict):
     import yaml
-    (tmp_path / ".hermes" / "config.yaml").write_text(yaml.dump(config_dict))
+    (tmp_path / ".hermes" / "config.yaml").write_text(yaml.dump(config_dict), encoding="utf-8")
 
 
 class TestApplyUserDefaultHeadersHelper:

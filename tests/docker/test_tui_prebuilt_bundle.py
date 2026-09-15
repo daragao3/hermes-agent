@@ -34,7 +34,7 @@ def _exec_py(image: str, py: str) -> str:
         "docker", "run", "--rm", "--entrypoint", "su", image,
         "hermes", "-s", "/bin/bash", "-c", inner,
     ]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding="utf-8")
     assert r.returncode == 0, f"in-container python failed:\n{r.stderr[-2000:]}"
     return r.stdout.strip()
 

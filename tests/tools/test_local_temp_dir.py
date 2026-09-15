@@ -93,25 +93,25 @@ def test_cleanup_terminal_temp_cache(tmp_path, monkeypatch):
 
     # Stale loose artifact — pruned.
     stale = root / "hermes-snap-deadbeef.sh"
-    stale.write_text("x")
+    stale.write_text("x", encoding="utf-8")
     os.utime(stale, (old, old))
 
     # Fresh artifact — kept.
     keep = root / "hermes-snap-cafef00d.sh"
-    keep.write_text("x")
+    keep.write_text("x", encoding="utf-8")
 
     # Live bg group: stale .pid but fresh .log — WHOLE group kept.
     live_pid = root / "hermes_bg_live1.pid"
-    live_pid.write_text("123")
+    live_pid.write_text("123", encoding="utf-8")
     os.utime(live_pid, (old, old))
     live_log = root / "hermes_bg_live1.log"
-    live_log.write_text("running")
+    live_log.write_text("running", encoding="utf-8")
     os.utime(live_log, (fresh, fresh))
 
     # Dead bg group: everything stale — pruned.
     for suffix in ("log", "pid", "exit"):
         f = root / f"hermes_bg_dead1.{suffix}"
-        f.write_text("x")
+        f.write_text("x", encoding="utf-8")
         os.utime(f, (old, old))
 
     removed = local_mod.cleanup_terminal_temp_cache(max_age_hours=72)

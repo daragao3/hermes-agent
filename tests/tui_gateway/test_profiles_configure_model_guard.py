@@ -59,7 +59,7 @@ def _profile_model(home: Path):
     cfg_path = home / "config.yaml"
     if not cfg_path.is_file():
         return None
-    cfg = yaml.safe_load(cfg_path.read_text()) or {}
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
     model_cfg = cfg.get("model") or {}
     return model_cfg.get("default")
 

@@ -96,14 +96,14 @@ class TestWindowsShimResolution:
         from tools.browser_tool import _resolve_batch_shim
 
         exe = tmp_path / "agent-browser"
-        exe.write_text("#!/bin/sh\n")
+        exe.write_text("#!/bin/sh\n", encoding="utf-8")
         assert _resolve_batch_shim(str(exe)) == str(exe)
 
     def test_shim_pointing_at_missing_target_falls_back_to_shim(self, tmp_path):
         from tools.browser_tool import _resolve_batch_shim
 
         shim = tmp_path / "agent-browser.cmd"
-        shim.write_text('@ECHO off\r\n"%~dp0node_modules\\nope\\gone.exe" %*\r\n')
+        shim.write_text('@ECHO off\r\n"%~dp0node_modules\\nope\\gone.exe" %*\r\n', encoding="utf-8")
         assert _resolve_batch_shim(str(shim)) == str(shim)
 
     def test_unreadable_shim_falls_back_to_shim(self, tmp_path):
@@ -185,7 +185,7 @@ class TestBatchShimReparseIsFixed:
 
     def _echo_shim(self, directory: Path, name: str) -> Path:
         shim = directory / name
-        shim.write_text('@echo off\r\necho ARGV:%*\r\n')
+        shim.write_text('@echo off\r\necho ARGV:%*\r\n', encoding="utf-8")
         return shim
 
     def test_redirect_arrow_creates_stray_file_without_the_fix(self, tmp_path):

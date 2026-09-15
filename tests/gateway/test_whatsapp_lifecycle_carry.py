@@ -55,11 +55,11 @@ def test_bridge_log_rotates_only_above_cap(tmp_path, monkeypatch):
     log = tmp_path / "bridge.log"
     log.write_text("1234", encoding="utf-8")
     wa._rotate_bridge_log_if_large(log)
-    assert log.read_text() == "1234"
+    assert log.read_text(encoding="utf-8") == "1234"
     log.write_text("12345", encoding="utf-8")
     wa._rotate_bridge_log_if_large(log)
     assert not log.exists()
-    assert (tmp_path / "bridge.log.1").read_text() == "12345"
+    assert (tmp_path / "bridge.log.1").read_text(encoding="utf-8") == "12345"
 
 
 @pytest.mark.asyncio

@@ -303,7 +303,7 @@ class TestExtractCacheBustingConfig:
         from gateway.run import GatewayRunner
 
         config_path = tmp_path / "honcho.json"
-        config_path.write_text("{}")
+        config_path.write_text("{}", encoding="utf-8")
         parse_calls = []
 
         class FakeConfig:
@@ -332,7 +332,7 @@ class TestExtractCacheBustingConfig:
         assert first["honcho.user_peer_aliases"] == [("123", "eri")]
         assert parse_calls == [config_path]
 
-        config_path.write_text("{\n  \"changed\": true\n}")
+        config_path.write_text("{\n  \"changed\": true\n}", encoding="utf-8")
         # Stamp an explicitly later mtime instead of trusting the write to
         # produce one. Windows advances a file's last-write time on the
         # ~15.6ms system tick, so a rewrite inside the same tick as the

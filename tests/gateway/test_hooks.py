@@ -16,7 +16,7 @@ def _create_hook(hooks_dir, hook_name, events, handler_code):
         f"description: Test hook\n"
         f"events: {events}\n"
     )
-    (hook_dir / "handler.py").write_text(handler_code)
+    (hook_dir / "handler.py").write_text(handler_code, encoding="utf-8")
     return hook_dir
 
 
@@ -49,8 +49,8 @@ class TestDiscoverAndLoad:
     def test_skips_no_events(self, tmp_path):
         hook_dir = tmp_path / "empty-hook"
         hook_dir.mkdir()
-        (hook_dir / "HOOK.yaml").write_text("name: empty\nevents: []\n")
-        (hook_dir / "handler.py").write_text("def handle(e, c): pass\n")
+        (hook_dir / "HOOK.yaml").write_text("name: empty\nevents: []\n", encoding="utf-8")
+        (hook_dir / "handler.py").write_text("def handle(e, c): pass\n", encoding="utf-8")
 
         reg = HookRegistry()
         with patch("gateway.hooks.HOOKS_DIR", tmp_path), _patch_no_builtins(reg):

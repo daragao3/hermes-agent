@@ -57,7 +57,7 @@ def _write_forking_script(tmp_path, stall_after: bool):
 
 def _pid_alive(pid: int) -> bool:
     try:
-        os.kill(pid, 0)
+        os.kill(pid, 0)  # windows-footgun: ok -- POSIX-only module (module-level skip off POSIX)
     except ProcessLookupError:
         return False
     return True
@@ -66,8 +66,8 @@ def _pid_alive(pid: int) -> bool:
 def _read_marker(marker, timeout=5.0) -> int:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if marker.exists() and marker.read_text().strip():
-            return int(marker.read_text().strip())
+        if marker.exists() and marker.read_text(encoding="utf-8").strip():
+            return int(marker.read_text(encoding="utf-8").strip())
         time.sleep(0.05)
     raise AssertionError("hook script never wrote its descendant pid")
 
@@ -128,7 +128,7 @@ def test_successful_hook_preserves_detached_helpers(tmp_path):
 def test_hook_child_leads_own_process_group(tmp_path):
     """The hook child must lead its own group (killpg ownership precondition)."""
     script = tmp_path / "pgid.sh"
-    script.write_text("#!/bin/bash\necho \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"\n")
+    script.write_text("#!/bin/bash\necho \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"\n", encoding="utf-8")
     script.chmod(0o755)
 
     r = _spawn(_spec(str(script), timeout=10), "{}")

@@ -141,7 +141,7 @@ def main():
                     cfg = {"model": {"provider": slug, "default": CATALOG[0]},
                            schema: {slug: entry} if schema == "providers" else [entry]}
                     # JSON is valid YAML; no third-party harness dependencies.
-                    (state / "config.yaml").write_text(json.dumps(cfg))
+                    (state / "config.yaml").write_text(json.dumps(cfg), encoding="utf-8")
                     env = {"HOME": str(home), "HERMES_HOME": str(state),
                            "PATH": "/usr/bin:/bin", "TERM": "xterm-256color", "LANG": "C.UTF-8",
                            "PYTHONPATH": str(repo), "PYTHONUNBUFFERED": "1"}
@@ -160,12 +160,12 @@ def main():
                                                if s.startswith("RECEIPT_ROWS=")))
                         assert len(rows) == 1, rows
                         results[phase] = {"model_count": rows[0]["total_models"], "models": rows[0]["models"]}
-                    results[phase]["helper_invocations"] = len(mint_log.read_text().splitlines()) if mint_log.exists() else 0
-                    (args.output / (phase.replace("/", "-") + ".txt")).write_text(transcript)
+                    results[phase]["helper_invocations"] = len(mint_log.read_text(encoding="utf-8").splitlines()) if mint_log.exists() else 0
+                    (args.output / (phase.replace("/", "-") + ".txt")).write_text(transcript, encoding="utf-8")
         receipt = {"repo": str(repo), "sha": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
             "server_catalog": CATALOG, "results": results, "requests": requests}
-        (args.output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        (args.output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(receipt, indent=2))
         if args.expect:
             expected = 1 if args.expect == "before" else len(CATALOG)

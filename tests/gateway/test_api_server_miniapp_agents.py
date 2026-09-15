@@ -263,7 +263,7 @@ async def test_miniapp_document_policy_preserves_assets_and_api_isolation(tmp_pa
     adapter = _make_adapter()
     document = tmp_path / ".hermes" / "miniapp" / "index.html"
     document.parent.mkdir(parents=True)
-    document.write_text('<html><script src="/assets/app.js"></script></html>')
+    document.write_text('<html><script src="/assets/app.js"></script></html>', encoding="utf-8")
     app = _create_app(adapter)
     app.router.add_get("/miniapp", adapter._handle_miniapp_index)
     app.router.add_get("/miniapp/index.html", adapter._handle_miniapp_index)

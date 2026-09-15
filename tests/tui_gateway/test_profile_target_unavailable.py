@@ -31,7 +31,7 @@ def test_explicit_profile_target_never_falls_back(tmp_path, monkeypatch):
     # launch-profile branch rebuilds against THIS home. monkeypatch restores it.
     monkeypatch.setattr(server, "_db", None)
     for path, marker in ((home, "launch"), (worker, "worker")):
-        (path / "config.yaml").write_text(f"terminal:\n  cwd: /{marker}\n")
+        (path / "config.yaml").write_text(f"terminal:\n  cwd: /{marker}\n", encoding="utf-8")
         with SessionDB(db_path=path / "state.db") as db:
             db.create_session(marker, "tui")
     for name, marker in ((None, "launch"), ("default", "launch"), ("DEFAULT", "launch"), ("worker", "worker")):
@@ -86,7 +86,7 @@ def test_custom_root_basename_target_fails_closed_when_unavailable(tmp_path, mon
 
     custom_home = tmp_path / "customer-data"
     custom_home.mkdir()
-    (custom_home / "config.yaml").write_text("terminal:\n  cwd: /custom\n")
+    (custom_home / "config.yaml").write_text("terminal:\n  cwd: /custom\n", encoding="utf-8")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setenv("HERMES_HOME", str(custom_home))
     monkeypatch.setattr(server, "_hermes_home", custom_home)

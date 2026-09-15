@@ -113,7 +113,7 @@ def test_scripts_use_explicit_utf8_text_io(name):
                 continue  # binary mode
             if "encoding" not in args:
                 line = content[: m.start()].count("\n") + 1
-                offenders.append(f"{script.relative_to(skill_dir)}:{line}: open({args})")
+                offenders.append(f"{script.relative_to(skill_dir)}:{line}: open({args})")  # windows-footgun: ok -- builds an offender label for the report, not a call
     assert not offenders, (
         f"{name}: text-mode open() without explicit encoding:\n" + "\n".join(offenders)
     )

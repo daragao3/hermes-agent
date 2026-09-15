@@ -34,7 +34,7 @@ def test_doctor_all_green_on_healthy_setup(tmp_path, monkeypatch, capsys):
     sqlite3.connect(str(tmp_path / "events" / "event_bus.db")).close()
     (tmp_path / "telegram" / "topics.json").write_text(
         json.dumps({"group_chat_id": "-1", "topics": {}}))
-    (tmp_path / "telegram" / "verbosity.json").write_text(json.dumps({}))
+    (tmp_path / "telegram" / "verbosity.json").write_text(json.dumps({}), encoding="utf-8")
     (tmp_path / "notifications" / "quiet_hours.json").write_text(
         json.dumps({"enabled": True}))
 
@@ -198,7 +198,7 @@ def _head_sha(repo):
 def _commit(repo, msg):
     f = repo / "f.txt"
     tracked = f.exists()
-    f.write_text(f.read_text() + msg + "\n" if tracked else msg + "\n")
+    f.write_text(f.read_text() + msg + "\n" if tracked else msg + "\n", encoding="utf-8")
     if tracked:
         # ``f.txt`` is the only file these tests ever touch, so once it is
         # tracked ``commit -a`` covers it and the separate ``git add`` spawn
@@ -320,7 +320,7 @@ class TestCodeDrift:
 
     def test_dirty_tree_noted_but_not_counted(self, tmp_path, capsys):
         repo, _ = _shape(tmp_path, "one_commit_detached")
-        (repo / "scratch.txt").write_text("uncommitted")
+        (repo / "scratch.txt").write_text("uncommitted", encoding="utf-8")
 
         issues = check_code_drift(repo_path=repo)
         out = capsys.readouterr().out
@@ -396,12 +396,12 @@ class TestCodeDrift:
     def test_check_never_mutates_repo(self, tmp_path):
         repo, shas = _shape(tmp_path, "lagging")
         sha_a = shas[0]
-        (repo / "scratch.txt").write_text("uncommitted")
+        (repo / "scratch.txt").write_text("uncommitted", encoding="utf-8")
 
         check_code_drift(repo_path=repo)
 
         assert _git(repo, "rev-parse", "HEAD").stdout.strip() == sha_a
-        assert (repo / "scratch.txt").read_text() == "uncommitted"
+        assert (repo / "scratch.txt").read_text(encoding="utf-8") == "uncommitted"
         status = _git(repo, "status", "--porcelain").stdout
         assert "scratch.txt" in status  # still untracked, nothing committed/stashed
 

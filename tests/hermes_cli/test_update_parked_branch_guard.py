@@ -57,7 +57,7 @@ def repo_pair(tmp_path):
     _git(origin, "init", "-q", "-b", "main")
     _git(origin, "config", "user.email", "test@example.com")
     _git(origin, "config", "user.name", "Test")
-    (origin / "a.txt").write_text("one\n")
+    (origin / "a.txt").write_text("one\n", encoding="utf-8")
     _git(origin, "add", "a.txt")
     _git(origin, "commit", "-qm", "c1")
 
@@ -69,9 +69,9 @@ def repo_pair(tmp_path):
     _git(clone, "checkout", "-qb", "old-feature")
 
     # main advances upstream (two commits).
-    (origin / "a.txt").write_text("two\n")
+    (origin / "a.txt").write_text("two\n", encoding="utf-8")
     _git(origin, "commit", "-aqm", "c2")
-    (origin / "b.txt").write_text("three\n")
+    (origin / "b.txt").write_text("three\n", encoding="utf-8")
     _git(origin, "add", "b.txt")
     _git(origin, "commit", "-qm", "c3")
 
@@ -102,7 +102,7 @@ def test_clean_fully_merged_branch_is_safe_to_switch(repo_pair):
 
 def test_dirty_tree_blocks_auto_switch(repo_pair):
     """Uncommitted changes on the parked branch → do not touch it."""
-    (repo_pair / "a.txt").write_text("local edit\n")
+    (repo_pair / "a.txt").write_text("local edit\n", encoding="utf-8")
     safe, reason = update_cmd._assess_parked_branch_switch(
         GIT, repo_pair, "old-feature", "main"
     )
@@ -112,7 +112,7 @@ def test_dirty_tree_blocks_auto_switch(repo_pair):
 
 def test_untracked_file_blocks_auto_switch(repo_pair):
     """Untracked files count as dirty too — they'd ride along on checkout."""
-    (repo_pair / "scratch.py").write_text("wip\n")
+    (repo_pair / "scratch.py").write_text("wip\n", encoding="utf-8")
     safe, reason = update_cmd._assess_parked_branch_switch(
         GIT, repo_pair, "old-feature", "main"
     )
@@ -126,7 +126,7 @@ def test_unmerged_commits_switch_with_kept_notice(repo_pair):
     caller prints the loud 'kept' notice. Non-interactive callers (desktop
     update button, gateway /update, cron) depend on this: they cannot
     resolve a skip."""
-    (repo_pair / "feature.txt").write_text("unmerged work\n")
+    (repo_pair / "feature.txt").write_text("unmerged work\n", encoding="utf-8")
     _git(repo_pair, "add", "feature.txt")
     _git(repo_pair, "commit", "-qm", "feature work")
 
@@ -280,7 +280,7 @@ def test_update_skips_and_warns_on_dirty_parked_branch(
     """Tonight's incident shape: parked branch + dirty tree. The update must
     NOT print '✓ Code updated!', must warn loudly, and must exit non-zero
     with the branch named in the summary."""
-    (repo_pair / "a.txt").write_text("local edit\n")
+    (repo_pair / "a.txt").write_text("local edit\n", encoding="utf-8")
     _patch_update_flow(monkeypatch, repo_pair)
     args = SimpleNamespace(branch=None, yes=False, force=False, force_venv=False)
 
@@ -310,7 +310,7 @@ def test_update_switches_unmerged_parked_branch_with_kept_notice(
     cannot resolve a skip), prints the loud 'kept' notice, ends on main
     fast-forwarded to origin/main, and the commits stay on the parked
     branch untouched."""
-    (repo_pair / "feature.txt").write_text("unmerged work\n")
+    (repo_pair / "feature.txt").write_text("unmerged work\n", encoding="utf-8")
     _git(repo_pair, "add", "feature.txt")
     _git(repo_pair, "commit", "-qm", "feature work")
     feature_sha = _git(repo_pair, "rev-parse", "old-feature").stdout.strip()
@@ -364,7 +364,7 @@ def test_update_updates_unmerged_branch_in_place_when_configured(
         "load_config",
         lambda: {"updates": {"parked_branch_strategy": "update_in_place"}},
     )
-    (repo_pair / "feature.txt").write_text("unmerged work\n")
+    (repo_pair / "feature.txt").write_text("unmerged work\n", encoding="utf-8")
     _git(repo_pair, "add", "feature.txt")
     _git(repo_pair, "commit", "-qm", "feature work")
     _patch_update_flow(monkeypatch, repo_pair)
@@ -393,9 +393,9 @@ def test_update_updates_unmerged_branch_in_place_when_configured(
     )
     # origin/main's code actually arrived (b.txt lands with c3)...
     assert (repo_pair / "b.txt").exists()
-    assert (repo_pair / "a.txt").read_text() == "two\n"
+    assert (repo_pair / "a.txt").read_text(encoding="utf-8") == "two\n"
     # ...and the branch's own commit survived it.
-    assert (repo_pair / "feature.txt").read_text() == "unmerged work\n"
+    assert (repo_pair / "feature.txt").read_text(encoding="utf-8") == "unmerged work\n"
     assert "feature work" in _git(repo_pair, "log", "--oneline").stdout
 
 
@@ -417,7 +417,7 @@ def test_switch_branch_flag_overrides_in_place_strategy(
         "load_config",
         lambda: {"updates": {"parked_branch_strategy": "update_in_place"}},
     )
-    (repo_pair / "feature.txt").write_text("unmerged work\n")
+    (repo_pair / "feature.txt").write_text("unmerged work\n", encoding="utf-8")
     _git(repo_pair, "add", "feature.txt")
     _git(repo_pair, "commit", "-qm", "feature work")
     branch_tip_before = _git(
@@ -470,7 +470,7 @@ def test_unmerged_branch_still_updates_in_place_without_the_flag(
         "load_config",
         lambda: {"updates": {"parked_branch_strategy": "update_in_place"}},
     )
-    (repo_pair / "feature.txt").write_text("unmerged work\n")
+    (repo_pair / "feature.txt").write_text("unmerged work\n", encoding="utf-8")
     _git(repo_pair, "add", "feature.txt")
     _git(repo_pair, "commit", "-qm", "feature work")
     _patch_update_flow(monkeypatch, repo_pair)
@@ -550,7 +550,7 @@ def test_update_up_to_date_path_does_not_repark_merged_branch(
     _git(origin, "init", "-q", "-b", "main")
     _git(origin, "config", "user.email", "test@example.com")
     _git(origin, "config", "user.name", "Test")
-    (origin / "a.txt").write_text("one\n")
+    (origin / "a.txt").write_text("one\n", encoding="utf-8")
     _git(origin, "add", "a.txt")
     _git(origin, "commit", "-qm", "c1")
 

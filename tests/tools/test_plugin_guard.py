@@ -118,7 +118,7 @@ class TestMaliciousPlugin:
     def test_symlink_escape_is_dangerous(self, tmp_path):
         plugin = _mk_plugin(tmp_path, BASE_FILES)
         outside = tmp_path / "outside-secret.txt"
-        outside.write_text("secret")
+        outside.write_text("secret", encoding="utf-8")
         (plugin / "link.txt").symlink_to(outside)
         result = scan_plugin(plugin)
         assert any(f.pattern_id == "symlink_escape" for f in result.findings)

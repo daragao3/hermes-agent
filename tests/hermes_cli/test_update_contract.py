@@ -63,7 +63,7 @@ def test_reader_valid_marker(tmp_path):
 )
 def test_reader_fails_closed_on_malformed(tmp_path, payload, reason_prefix):
     marker = tmp_path / "image-provenance.json"
-    marker.write_text(payload)
+    marker.write_text(payload, encoding="utf-8")
     provenance = read_image_provenance(marker)
     assert provenance is not None and not provenance.valid
     assert provenance.error.startswith(reason_prefix)
@@ -105,7 +105,7 @@ def test_admission_invalid_marker_fails_closed(tmp_path, monkeypatch):
     import hermes_cli.image_provenance as ip
 
     bad = tmp_path / "image-provenance.json"
-    bad.write_text("corrupted {{{")
+    bad.write_text("corrupted {{{", encoding="utf-8")
     monkeypatch.setattr(ip, "IMAGE_PROVENANCE_PATH", bad)
     refusal = evaluate_update_admission(tmp_path)
     assert refusal is not None
@@ -168,7 +168,7 @@ def test_refusal_receipt_written_as_refused(tmp_path, monkeypatch):
     receipts = list((tmp_path / "receipts").glob("*.json"))
     receipts = [p for p in receipts if p.name != "latest.json"]
     assert receipts, "a refusal receipt must be written"
-    data = json.loads(receipts[0].read_text())
+    data = json.loads(receipts[0].read_text(encoding="utf-8"))
     assert data["outcome"] == "refused"
     assert data["stop_reason"] == "image-marker"
     steps = {s["name"]: s for s in data["steps"]}

@@ -376,7 +376,7 @@ def test_heartbeat_write_is_awaited_so_a_frozen_loop_still_goes_stale():
     """
     src = pathlib.Path(
         inspect.getsourcefile(loop_heartbeat_forever) or ""
-    ).read_text()
+    ).read_text(encoding="utf-8")
     body = src[src.index("async def loop_heartbeat_forever("):]
     body = body[: body.index("\ndef ") if "\ndef " in body else len(body)]
     assert "await asyncio.to_thread(" in body, "the write is not handed to a thread"
@@ -397,7 +397,7 @@ def test_loop_scheduling_witness_is_served_by_the_loop_itself():
     """
     src = pathlib.Path(
         inspect.getsourcefile(loop_heartbeat_forever) or ""
-    ).read_text()
+    ).read_text(encoding="utf-8")
     body = src[src.index("async def loop_heartbeat_forever("):]
     body = body[: body.index("\ndef ") if "\ndef " in body else len(body)]
     # Awaited directly on the loop task: a coroutine cannot run inside a
@@ -491,7 +491,7 @@ def test_windows_tcp_witness_arms_on_loop_task_source_shape():
     """
     src = pathlib.Path(
         inspect.getsourcefile(loop_heartbeat_forever) or ""
-    ).read_text()
+    ).read_text(encoding="utf-8")
     body = src[src.index("async def loop_heartbeat_forever("):]
     body = body[: body.index("\ndef ") if "\ndef " in body else len(body)]
     assert "await asyncio.start_server(" in body, (

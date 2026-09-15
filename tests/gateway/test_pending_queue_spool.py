@@ -72,7 +72,7 @@ class TestSpoolOnDrop:
         # The oldest n_extra messages were evicted — and spooled, not lost.
         files = _spool_files(spool_home)
         assert len(files) == n_extra
-        payloads = [json.loads(p.read_text()) for p in files]
+        payloads = [json.loads(p.read_text(encoding="utf-8")) for p in files]
         assert all(
             p["reason"] == shutdown_flush.TRANSCRIPT_CAP_DROP_REASON
             for p in payloads
@@ -126,7 +126,7 @@ class TestSpoolOnDrop:
 
         # Only sess-a's spooled drop was replayed; sess-b's remains on disk.
         remaining = [
-            json.loads(p.read_text()) for p in _spool_files(spool_home)
+            json.loads(p.read_text(encoding="utf-8")) for p in _spool_files(spool_home)
         ]
         assert len(remaining) == 1
         assert remaining[0]["session_key"] == "sess-b"

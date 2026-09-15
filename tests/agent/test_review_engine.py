@@ -434,7 +434,7 @@ def test_review_child_gets_workspace_context_via_dispatch(monkeypatch, tmp_path)
 
     workspace = tmp_path / "repo"
     workspace.mkdir()
-    (workspace / "AGENTS.md").write_text("# Rules\nNever break prompt caching.\n")
+    (workspace / "AGENTS.md").write_text("# Rules\nNever break prompt caching.\n", encoding="utf-8")
     monkeypatch.setattr(dt, "_resolve_workspace_hint", lambda parent: str(workspace))
 
     fake_child = MagicMock()

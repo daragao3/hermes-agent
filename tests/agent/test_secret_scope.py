@@ -124,7 +124,7 @@ class TestEnvFileParsing:
         from hermes_cli.config import _quote_env_value
 
         original = 'tok"en\\with spaces'
-        (tmp_path / ".env").write_text(f"MY_TOKEN={_quote_env_value(original)}\n")
+        (tmp_path / ".env").write_text(f"MY_TOKEN={_quote_env_value(original)}\n", encoding="utf-8")
         assert ss.load_env_file(tmp_path / ".env") == {"MY_TOKEN": original}
 
     def test_load_env_file_single_quotes_and_plain_values(self, tmp_path):
@@ -139,7 +139,7 @@ class TestEnvFileParsing:
 
     def test_inline_comment_stripped_from_unquoted_value(self, tmp_path):
         """`KEY=value # comment` → `value` (python-dotenv semantics)."""
-        (tmp_path / ".env").write_text("KEY=value # comment\nTABBED=foo\t#tabbed\n")
+        (tmp_path / ".env").write_text("KEY=value # comment\nTABBED=foo\t#tabbed\n", encoding="utf-8")
         assert ss.load_env_file(tmp_path / ".env") == {
             "KEY": "value",
             "TABBED": "foo",
@@ -147,7 +147,7 @@ class TestEnvFileParsing:
 
     def test_hash_without_preceding_whitespace_is_not_a_comment(self, tmp_path):
         """`KEY=foo#bar` stays intact — dotenv only strips `#` after whitespace."""
-        (tmp_path / ".env").write_text("KEY=foo#bar\nLEAD=#leading\n")
+        (tmp_path / ".env").write_text("KEY=foo#bar\nLEAD=#leading\n", encoding="utf-8")
         assert ss.load_env_file(tmp_path / ".env") == {
             "KEY": "foo#bar",
             "LEAD": "#leading",
@@ -178,7 +178,7 @@ class TestEnvFileParsing:
 
         original = 'we#ird "tok\\en" # not a comment'
         quoted = _quote_env_value(original)
-        (tmp_path / ".env").write_text(f"MY_TOKEN={quoted} # rotated 2026-08\n")
+        (tmp_path / ".env").write_text(f"MY_TOKEN={quoted} # rotated 2026-08\n", encoding="utf-8")
         assert ss.load_env_file(tmp_path / ".env") == {"MY_TOKEN": original}
 
 
@@ -212,7 +212,7 @@ class TestEnvFileParsing:
             ss.set_multiplex_active(False)
 
     def test_build_profile_secret_scope(self, tmp_path):
-        (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-profile\n")
+        (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-profile\n", encoding="utf-8")
         assert ss.build_profile_secret_scope(tmp_path) == {
             "ANTHROPIC_API_KEY": "sk-profile"
         }
@@ -220,7 +220,7 @@ class TestEnvFileParsing:
     def test_build_profile_secret_scope_includes_home_external_secrets(
         self, tmp_path, monkeypatch
     ):
-        (tmp_path / ".env").write_text("XIAOMI_API_KEY=placeholder\n")
+        (tmp_path / ".env").write_text("XIAOMI_API_KEY=placeholder\n", encoding="utf-8")
         from hermes_cli import env_loader
 
         home_key = str(tmp_path.resolve())

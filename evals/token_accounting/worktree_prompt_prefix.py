@@ -42,8 +42,8 @@ if len(sys.argv) == 1:
         "Use deterministic local operations and preserve project conventions.\n" * 1100
     )
     content = content[:66000]
-    (fixture / "AGENTS.md").write_text(content)
-    (fixture / "app.py").write_text('print("fixture")\n')
+    (fixture / "AGENTS.md").write_text(content, encoding="utf-8")
+    (fixture / "app.py").write_text('print("fixture")\n', encoding="utf-8")
     git("add", "AGENTS.md", "app.py", cwd=fixture)
     git(
         "-c",
@@ -89,7 +89,7 @@ if len(sys.argv) == 1:
         if p.returncode:
             raise SystemExit(p.returncode)
     a, b = [
-        json.loads((BASE / (name + ".json")).read_text())
+        json.loads((BASE / (name + ".json")).read_text(encoding="utf-8"))
         for name in ("worktree-a", "worktree-b")
     ]
 
@@ -117,7 +117,7 @@ if len(sys.argv) == 1:
         "provider_usage": None,
         "billing_measured": False,
     }
-    (BASE / "measurements.json").write_text(json.dumps(diff, indent=2))
+    (BASE / "measurements.json").write_text(json.dumps(diff, indent=2), encoding="utf-8")
     print(json.dumps(diff, indent=2))
 else:
     # Fresh credential-free process, real production imports; no prompt seams mocked.
@@ -190,5 +190,5 @@ else:
         "metrics": metrics,
         "cache_plan": plan_data,
     }
-    (BASE / (name + ".json")).write_text(json.dumps(out, indent=2, default=str))
+    (BASE / (name + ".json")).write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
     print(json.dumps(metrics, indent=2))

@@ -11,6 +11,11 @@ import subprocess
 import sys
 import threading
 
+from gateway.status import _pid_exists
+
+# signal.SIGKILL does not exist on Windows and raises AttributeError at
+# attribute-access time; SIGTERM is the strongest signal available there.
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
 def _spawn_sleep(seconds: float = 60) -> subprocess.Popen:
@@ -21,12 +26,16 @@ def _spawn_sleep(seconds: float = 60) -> subprocess.Popen:
 
 
 def _pid_alive(pid: int) -> bool:
-    """Return True if a process with the given PID is still running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
-        return False
+    """Return True if a process with the given PID is still running.
+
+    Delegates to the one sanctioned liveness helper rather than probing with
+    ``os.kill(pid, 0)``.  This module carries no platform skip, so that probe
+    really did run on Windows -- where Python maps signal 0 to CTRL_C_EVENT
+    and broadcasts Ctrl+C across the target's whole console process group,
+    i.e. the probe killed what it was asking about.  See CONTRIBUTING.md
+    "Critical rules" #1 and bpo-14484.
+    """
+    return _pid_exists(pid)
 
 
 class TestZombieReproduction:
@@ -58,8 +67,8 @@ class TestZombieReproduction:
         finally:
             for pid in pids:
                 try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
+                    os.kill(pid, _SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
                     pass
 
     def test_explicit_terminate_reaps_processes(self):

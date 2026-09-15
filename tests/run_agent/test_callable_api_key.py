@@ -221,7 +221,7 @@ class TestBatchRunnerCallableHandling:
         importing avoids spinning up the full BatchRunner."""
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent.parent
-               / "batch_runner.py").read_text()
+               / "batch_runner.py").read_text(encoding="utf-8")
         assert "callable(self.api_key) and not isinstance(self.api_key, str)" in src, (
             "BatchRunner.api_key callable check changed — update test or "
             "verify the new predicate still routes Entra token providers "
@@ -253,7 +253,7 @@ class TestCliEnsureRuntimeCredentialsCallable:
         # ``CLIAgentSetupMixin`` (god-file decomposition Phase 4). Read the
         # module the method actually lives in now.
         src = (Path(__file__).resolve().parent.parent.parent
-               / "hermes_cli" / "cli_agent_setup_mixin.py").read_text()
+               / "hermes_cli" / "cli_agent_setup_mixin.py").read_text(encoding="utf-8")
         # The fix gates the string-only check on ``callable(api_key)`` so callable
         # token providers survive.
         assert "if not callable(api_key) and not (isinstance(api_key, str) and api_key):" in src, (
@@ -281,7 +281,7 @@ class TestInlinedDisplayMasks:
         crash ``len(api_key)``."""
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent.parent
-               / "agent" / "agent_init.py").read_text()
+               / "agent" / "agent_init.py").read_text(encoding="utf-8")
         # Both banner paths route through the shared ``_print_key_banner`` helper,
         # which owns the single ``is_token_provider`` guard.
         assert src.count("_print_key_banner(") >= 3, (
@@ -304,7 +304,7 @@ class TestInlinedDisplayMasks:
         run_agent banners."""
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent.parent
-               / "cli.py").read_text()
+               / "cli.py").read_text(encoding="utf-8")
         assert "is_token_provider(display_key)" in src, (
             "cli.HermesCLI.show_config must guard the displayed key via "
             "is_token_provider so callable Entra ID providers don't "

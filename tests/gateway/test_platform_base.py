@@ -29,7 +29,7 @@ def test_media_delivery_denies_encrypted_bitwarden_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(base, "_HERMES_ROOT", hermes_home)
     path = hermes_home / "cache" / "bws_cache.enc.json"
     path.parent.mkdir()
-    path.write_text("encrypted-secret-cache")
+    path.write_text("encrypted-secret-cache", encoding="utf-8")
 
     assert path in base._media_delivery_denied_paths()
     assert base.validate_media_delivery_path(str(path)) is None
@@ -610,7 +610,7 @@ class TestMediaDeliveryDefaultMode:
         self._patch_roots(monkeypatch)
 
         notes = tmp_path / "notes.md"
-        notes.write_text("# Old notes\n")
+        notes.write_text("# Old notes\n", encoding="utf-8")
         old_mtime = time.time() - 7200  # 2 hours ago — far outside any window
         os.utime(notes, (old_mtime, old_mtime))
 
@@ -636,7 +636,7 @@ class TestMediaDeliveryDefaultMode:
         hermes_dir = fake_home / ".hermes"
         (hermes_dir / "mcp-tokens").mkdir(parents=True)
         secret = hermes_dir / rel
-        secret.write_text('{"access_token": "live-bearer-abc123"}')
+        secret.write_text('{"access_token": "live-bearer-abc123"}', encoding="utf-8")
         monkeypatch.setenv("HOME", str(fake_home))
         monkeypatch.setattr(
             "gateway.platforms.base._HERMES_HOME",
@@ -663,7 +663,7 @@ class TestMediaDeliveryDefaultMode:
         hermes_dir = fake_home / ".hermes"
         hermes_dir.mkdir(parents=True)
         token = hermes_dir / "google_token.json"
-        token.write_text('{"access_token": "***", "refresh_token": "***"}')
+        token.write_text('{"access_token": "***", "refresh_token": "***"}', encoding="utf-8")
         monkeypatch.setenv("HOME", str(fake_home))
         monkeypatch.setattr("gateway.platforms.base._HERMES_HOME", hermes_dir)
         monkeypatch.setattr("gateway.platforms.base._HERMES_ROOT", hermes_dir)
@@ -839,7 +839,7 @@ class TestMediaDeliveryDefaultMode:
         hermes_dir = fake_home / ".hermes"
         hermes_dir.mkdir(parents=True)
         env_file = hermes_dir / ".env"
-        env_file.write_text("OPENAI_API_KEY=sk-...")
+        env_file.write_text("OPENAI_API_KEY=sk-...", encoding="utf-8")
         monkeypatch.setenv("HOME", str(fake_home))
         # Windows expanduser() resolves USERPROFILE, not HOME (since 3.8).
         monkeypatch.setenv("USERPROFILE", str(fake_home))
@@ -991,7 +991,7 @@ class TestDockerContainerMediaPathTranslation:
         home = sandbox / "docker" / "default" / "home"
         secret = home / ".hermes"
         secret.mkdir(parents=True)
-        (secret / "auth.json").write_text('{"token": "SECRET"}')
+        (secret / "auth.json").write_text('{"token": "SECRET"}', encoding="utf-8")
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
@@ -1503,7 +1503,7 @@ class TestDockerProfileSandboxMediaTranslation:
         home = self._sandbox_dir() / "home"
         home.mkdir(parents=True, exist_ok=True)
         produced = home / "note.txt"
-        produced.write_text("hi")
+        produced.write_text("hi", encoding="utf-8")
 
         assert BasePlatformAdapter.validate_media_delivery_path(
             "/root/note.txt", session_key=self.SESSION_KEY
@@ -1517,7 +1517,7 @@ class TestDockerProfileSandboxMediaTranslation:
         for task in ("default", f"session:{self.SESSION_KEY}"):
             secrets = self._sandbox_dir(task) / "home" / ".hermes"
             secrets.mkdir(parents=True, exist_ok=True)
-            (secrets / "auth.json").write_text("{}")
+            (secrets / "auth.json").write_text("{}", encoding="utf-8")
 
         assert (
             BasePlatformAdapter.validate_media_delivery_path(

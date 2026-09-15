@@ -222,7 +222,7 @@ def _cmd_yaml(provider_name: str, transcript: str) -> str:
     # quotes. Single quotes inside the body are not needed; the body uses
     # double quotes for module references and string literals.
     payload = (
-        f"import sys; open(sys.argv[1], 'w').write('{transcript}')"
+        f"import sys; open(sys.argv[1], 'w').write('{transcript}')"  # windows-footgun: ok -- source of a probe script written to a temp file, not a call
     )
     command = f'{interp} -c "{payload}" {{output_path}}'
     # YAML-escape: double-quote the whole thing, escape inner " and \.

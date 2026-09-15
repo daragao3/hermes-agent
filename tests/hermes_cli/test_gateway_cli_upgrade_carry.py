@@ -37,7 +37,7 @@ def test_cleanup_preserves_replacement_owner_during_liveness_probe(tmp_path, mon
         return False
     monkeypatch.setattr(status, "_pid_exists", probe)
     assert gw.cleanup_gateway_state_files() == []
-    assert json.loads(pid.read_text())["pid"] == 20
+    assert json.loads(pid.read_text(encoding="utf-8"))["pid"] == 20
 
 
 @pytest.mark.real_gateway_pid_scan

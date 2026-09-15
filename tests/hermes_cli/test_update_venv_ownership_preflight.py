@@ -23,13 +23,13 @@ def _make_fake_venv(tmp_path):
     """Minimal POSIX venv layout with a dist-info directory."""
     venv = tmp_path / "venv"
     (venv / "bin").mkdir(parents=True)
-    (venv / "bin" / "hermes").write_text("#!stub\n")
-    (venv / "bin" / "python").write_text("#!stub\n")
+    (venv / "bin" / "hermes").write_text("#!stub\n", encoding="utf-8")
+    (venv / "bin" / "python").write_text("#!stub\n", encoding="utf-8")
     sp = venv / "lib" / "python3.12" / "site-packages"
     dist_info = sp / "hermes_agent-1.0.0.dist-info"
     dist_info.mkdir(parents=True)
-    (dist_info / "INSTALLER").write_text("pip\n")
-    (dist_info / "RECORD").write_text("\n")
+    (dist_info / "INSTALLER").write_text("pip\n", encoding="utf-8")
+    (dist_info / "RECORD").write_text("\n", encoding="utf-8")
     (sp / "some_pkg").mkdir()
     return venv
 
@@ -93,7 +93,7 @@ def test_limit_caps_reported_paths(tmp_path, monkeypatch):
     venv = _make_fake_venv(tmp_path)
     bin_dir = venv / "bin"
     for i in range(10):
-        (bin_dir / f"tool{i}").write_text("x")
+        (bin_dir / f"tool{i}").write_text("x", encoding="utf-8")
     monkeypatch.setattr(
         update_cmd,
         "_path_uid",

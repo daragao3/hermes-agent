@@ -20,7 +20,7 @@ def hermes_env(tmp_path, monkeypatch):
     home.mkdir()
     (home / "scripts").mkdir()
     (home / "cron").mkdir()
-    (home / "scripts" / "watch.sh").write_text("#!/bin/bash\necho alert\n")
+    (home / "scripts" / "watch.sh").write_text("#!/bin/bash\necho alert\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
 
     import importlib
@@ -133,7 +133,7 @@ def test_jobs_json_on_disk_matches_merge(hermes_env):
         repeat=0,
     )
     save_jobs([])
-    payload = json.loads((Path(hermes_env) / "cron" / "jobs.json").read_text())
+    payload = json.loads((Path(hermes_env) / "cron" / "jobs.json").read_text(encoding="utf-8"))
     assert [j["id"] for j in payload["jobs"]] == [job["id"]]
 
 

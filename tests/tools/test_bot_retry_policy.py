@@ -178,7 +178,7 @@ def test_run_delivery_retries_transient_and_reemits_stdout(monkeypatch, tmp_path
     from tools import bot_mode_dm
 
     dm = tmp_path / "dm.txt"
-    dm.write_text("hello")
+    dm.write_text("hello", encoding="utf-8")
     calls = []
 
     def _fake_run(argv, **kwargs):
@@ -202,7 +202,7 @@ def test_run_delivery_no_retry_for_missing_config(monkeypatch, tmp_path):
     from tools import bot_mode_dm
 
     dm = tmp_path / "dm.txt"
-    dm.write_text("hello")
+    dm.write_text("hello", encoding="utf-8")
     calls = []
 
     def _fake_run(argv, **kwargs):

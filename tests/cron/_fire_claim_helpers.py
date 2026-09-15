@@ -75,7 +75,7 @@ def live_foreign_run(ledger: Path, job_id: str, *, timeout: float = 120.0):
                     f"{err.decode(errors='replace')[-2000:]}"
                 )
             try:
-                worker_pid = int(ready.read_text().strip())
+                worker_pid = int(ready.read_text(encoding="utf-8").strip())
                 break
             except (OSError, ValueError):
                 time.sleep(0.05)

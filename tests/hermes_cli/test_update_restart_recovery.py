@@ -477,7 +477,7 @@ def test_recovery_module_end_to_end_in_a_real_fresh_process(tmp_path):
         "verified": ["default"],
         "serve_units": {"verified": [], "failed": []},
     }
-    restarts = [json.loads(line) for line in ledger.read_text().splitlines()]
+    restarts = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
     assert [argv[argv.index("-p") + 1] for argv in restarts] == ["coder", "default"]
     for argv in restarts:
         assert argv[-2:] == ["gateway", "restart"]

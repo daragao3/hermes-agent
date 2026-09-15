@@ -44,7 +44,7 @@ def test_save_writes_manifest(tmp_path):
     assert code == 0
     manifest = tmp_path / ".hermes" / "environment.json"
     assert manifest.exists()
-    payload = json.loads(manifest.read_text())
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert payload["version"] == 1
     assert payload["recipe"]["kind"] == "go"
 

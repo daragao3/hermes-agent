@@ -133,7 +133,7 @@ def test_ssh_runtime_readonly_purelib_falls_back_to_stat(tmp_path, monkeypatch):
     # exercises the genuine OSError path.
     if os.name == "nt":
         pytest.skip("POSIX permission semantics: chmod does not enforce write bits on Windows")
-    if os.geteuid() == 0:  # pragma: no cover - root ignores mode bits
+    if os.geteuid() == 0:  # pragma: no cover - root ignores mode bits  # windows-footgun: ok -- the POSIX-permissions skip on the line above already returned
         pytest.skip("directory write bits are not enforced for root")
     purelib.chmod(0o555)
     try:

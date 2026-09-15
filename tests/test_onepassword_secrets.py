@@ -94,7 +94,7 @@ def test_validate_references_filters_bad_names_and_refs():
 
 def test_fetch_happy_path(monkeypatch, tmp_path):
     fake_op = tmp_path / "op"
-    fake_op.write_text("")
+    fake_op.write_text("", encoding="utf-8")
     values = {
         "op://Private/OpenAI/api key": "sk-abc\n",
         "op://Private/Anthropic/credential": "sk-ant-xyz",
@@ -126,7 +126,7 @@ def test_fetch_happy_path(monkeypatch, tmp_path):
 
 def test_fetch_read_failure_becomes_warning(monkeypatch, tmp_path):
     fake_op = tmp_path / "op"
-    fake_op.write_text("")
+    fake_op.write_text("", encoding="utf-8")
     monkeypatch.setattr(
         op.subprocess, "run", lambda *a, **k: _err(1, "\x1b[31m[ERROR] not signed in\x1b[0m")
     )
@@ -157,7 +157,7 @@ def test_fetch_read_failure_becomes_warning(monkeypatch, tmp_path):
 
 def test_inprocess_cache_hit(monkeypatch, tmp_path):
     fake_op = tmp_path / "op"
-    fake_op.write_text("")
+    fake_op.write_text("", encoding="utf-8")
     calls = {"n": 0}
 
     def fake_run(*a, **k):
@@ -183,7 +183,7 @@ def test_inprocess_cache_hit(monkeypatch, tmp_path):
 def test_connect_credential_change_invalidates_cache(monkeypatch, tmp_path):
     """A different 1Password Connect identity must not reuse a cached value."""
     fake_op = tmp_path / "op"
-    fake_op.write_text("")
+    fake_op.write_text("", encoding="utf-8")
     calls = {"n": 0}
 
     def fake_run(*a, **k):
@@ -220,7 +220,7 @@ def test_connect_credential_change_invalidates_cache(monkeypatch, tmp_path):
 
 def test_find_op_pinned_path_not_on_path(tmp_path, monkeypatch):
     pinned = tmp_path / "op"
-    pinned.write_text("")
+    pinned.write_text("", encoding="utf-8")
     pinned.chmod(0o755)
     # PATH lookup must NOT be consulted when a binary_path is pinned.
     monkeypatch.setattr(op.shutil, "which", lambda name: "/usr/bin/op")
@@ -251,7 +251,7 @@ def test_apply_missing_binary_sets_error(monkeypatch):
 
 def test_apply_sets_env(monkeypatch, tmp_path):
     fake_op = tmp_path / "op"
-    fake_op.write_text("")
+    fake_op.write_text("", encoding="utf-8")
     monkeypatch.setattr(op, "find_op", lambda binary_path="": fake_op)
     monkeypatch.setattr(op.subprocess, "run", lambda *a, **k: _ok("resolved-val"))
     monkeypatch.delenv("MY_OP_KEY", raising=False)
@@ -266,7 +266,7 @@ def test_apply_sets_env(monkeypatch, tmp_path):
 
 def test_apply_skips_before_fetch_when_not_overriding(monkeypatch, tmp_path):
     fake_op = tmp_path / "op"
-    fake_op.write_text("")
+    fake_op.write_text("", encoding="utf-8")
     monkeypatch.setattr(op, "find_op", lambda binary_path="": fake_op)
     monkeypatch.setenv("MY_OP_KEY", "from-env")
     calls = {"n": 0}
@@ -288,7 +288,7 @@ def test_apply_skips_before_fetch_when_not_overriding(monkeypatch, tmp_path):
 
 def test_apply_never_overrides_token_var(monkeypatch, tmp_path):
     fake_op = tmp_path / "op"
-    fake_op.write_text("")
+    fake_op.write_text("", encoding="utf-8")
     monkeypatch.setattr(op, "find_op", lambda binary_path="": fake_op)
     monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "original")
     calls = {"n": 0}

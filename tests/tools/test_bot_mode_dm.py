@@ -746,7 +746,7 @@ def test_dm_dir_is_private_and_uid_scoped_on_posix(tmp_path, monkeypatch):
     dm_dir = bot_mode_dm._dm_dir()
 
     if hasattr(os, "getuid"):
-        assert dm_dir.name == f"{bot_mode_dm._DM_DIR_NAME}-{os.getuid()}"
+        assert dm_dir.name == f"{bot_mode_dm._DM_DIR_NAME}-{os.getuid()}"  # windows-footgun: ok -- guarded by the hasattr check on the line above
     else:
         assert dm_dir.name == bot_mode_dm._DM_DIR_NAME
     if os.name != "nt":
@@ -776,7 +776,7 @@ def test_dm_dir_repairs_restrictive_owner_mode(tmp_path, monkeypatch):
 def test_dm_dir_rejects_precreated_symlink(tmp_path, monkeypatch):
     target = tmp_path / "attacker-controlled"
     target.mkdir()
-    expected = tmp_path / f"{bot_mode_dm._DM_DIR_NAME}-{os.getuid()}"
+    expected = tmp_path / f"{bot_mode_dm._DM_DIR_NAME}-{os.getuid()}"  # windows-footgun: ok -- guarded by the hasattr check above
     expected.symlink_to(target, target_is_directory=True)
     monkeypatch.setattr(bot_mode_dm.tempfile, "gettempdir", lambda: str(tmp_path))
 

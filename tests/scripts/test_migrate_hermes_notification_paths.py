@@ -36,7 +36,7 @@ def fake_hermes(tmp_path):
 def test_migrate_moves_profile_files_to_root(fake_hermes):
     migrate(root=fake_hermes)
     assert (fake_hermes / "telegram" / "topics.json").exists()
-    data = json.loads((fake_hermes / "telegram" / "topics.json").read_text())
+    data = json.loads((fake_hermes / "telegram" / "topics.json").read_text(encoding="utf-8"))
     assert data["group_chat_id"] == "-100"
     # old global preserved
     assert (fake_hermes / "telegram" / "topics.json.pre-2026-04-16").exists()
@@ -60,5 +60,5 @@ def test_migrate_idempotent(fake_hermes):
 def test_migrate_dry_run_does_not_move(fake_hermes):
     migrate(root=fake_hermes, dry_run=True)
     assert (fake_hermes / "profiles" / "main" / "telegram" / "topics.json").exists()
-    data = json.loads((fake_hermes / "telegram" / "topics.json").read_text())
+    data = json.loads((fake_hermes / "telegram" / "topics.json").read_text(encoding="utf-8"))
     assert data["group_chat_id"] == "-OLD"

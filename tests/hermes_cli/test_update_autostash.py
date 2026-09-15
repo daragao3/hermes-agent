@@ -770,13 +770,13 @@ def test_bootstrap_marker_not_autostashed_by_update(tmp_path):
     git("init", "-q")
     git("config", "user.email", "t@example.com")
     git("config", "user.name", "t")
-    (tmp_path / ".gitignore").write_text(repo_gitignore.read_text())
-    (tmp_path / "tracked.txt").write_text("x\n")
+    (tmp_path / ".gitignore").write_text(repo_gitignore.read_text(), encoding="utf-8")
+    (tmp_path / "tracked.txt").write_text("x\n", encoding="utf-8")
     git("add", "-A")
     git("commit", "-qm", "init")
 
     marker = tmp_path / ".hermes-bootstrap-complete"
-    marker.write_text("")
+    marker.write_text("", encoding="utf-8")
 
     # Exact flags used by hermes update (hermes_cli/main.py).
     git("stash", "push", "--include-untracked", "-m", "hermes-update-autostash")
@@ -814,7 +814,7 @@ def test_update_autostash_survives_undeletable_untracked_dir(tmp_path):
         pytest.skip("git not available")
     if os.name == "nt":
         pytest.skip("POSIX permission semantics")
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # windows-footgun: ok -- the POSIX-permissions skip on the line above already returned
         pytest.skip("root ignores directory write bits")
 
     def git(*args, check=True):
@@ -825,28 +825,28 @@ def test_update_autostash_survives_undeletable_untracked_dir(tmp_path):
     git("init", "-q", "-b", "main")
     git("config", "user.email", "t@example.com")
     git("config", "user.name", "t")
-    (tmp_path / "tracked.txt").write_text("v1\n")
+    (tmp_path / "tracked.txt").write_text("v1\n", encoding="utf-8")
     git("add", "-A")
     git("commit", "-qm", "init")
 
-    (tmp_path / "tracked.txt").write_text("v2 local change\n")
+    (tmp_path / "tracked.txt").write_text("v2 local change\n", encoding="utf-8")
     pkg = tmp_path / "packaging" / "homebrew"
     pkg.mkdir(parents=True)
-    (pkg / "hermes-agent.rb").write_text("formula\n")
+    (pkg / "hermes-agent.rb").write_text("formula\n", encoding="utf-8")
     os.chmod(pkg, 0o555)  # undeletable contents, like a root-owned dir
     try:
         stash_ref = hermes_main._stash_local_changes_if_needed(["git"], tmp_path)
         assert stash_ref
 
         # The tracked change is stashed; simulate the updater's checkout window.
-        assert (tmp_path / "tracked.txt").read_text() == "v1\n"
+        assert (tmp_path / "tracked.txt").read_text(encoding="utf-8") == "v1\n"
 
         restored = hermes_main._restore_stashed_changes(
             ["git"], tmp_path, stash_ref, prompt_user=False
         )
         assert restored is True
-        assert (tmp_path / "tracked.txt").read_text() == "v2 local change\n"
-        assert (pkg / "hermes-agent.rb").read_text() == "formula\n"
+        assert (tmp_path / "tracked.txt").read_text(encoding="utf-8") == "v2 local change\n"
+        assert (pkg / "hermes-agent.rb").read_text(encoding="utf-8") == "formula\n"
     finally:
         os.chmod(pkg, 0o755)
 
@@ -1258,11 +1258,11 @@ def test_merge_base_detects_orphan_vs_ordinary_divergence_with_real_git(tmp_path
     git(ordinary, "init", "-q", "-b", "main")
     git(ordinary, "config", "user.email", "t@example.com")
     git(ordinary, "config", "user.name", "t")
-    (ordinary / "f.txt").write_text("v1\n")
+    (ordinary / "f.txt").write_text("v1\n", encoding="utf-8")
     git(ordinary, "add", "-A")
     git(ordinary, "commit", "-qm", "init")
     git(ordinary, "checkout", "-qb", "origin-main")
-    (ordinary / "f.txt").write_text("v2\n")
+    (ordinary / "f.txt").write_text("v2\n", encoding="utf-8")
     git(ordinary, "add", "-A")
     git(ordinary, "commit", "-qm", "upstream")
     git(ordinary, "checkout", "-q", "main")
@@ -1277,7 +1277,7 @@ def test_merge_base_detects_orphan_vs_ordinary_divergence_with_real_git(tmp_path
     git(orphan, "init", "-q", "-b", "main")
     git(orphan, "config", "user.email", "t@example.com")
     git(orphan, "config", "user.name", "t")
-    (orphan / "f.txt").write_text("local\n")
+    (orphan / "f.txt").write_text("local\n", encoding="utf-8")
     git(orphan, "add", "-A")
     git(orphan, "commit", "-qm", "local init")
 
@@ -1286,7 +1286,7 @@ def test_merge_base_detects_orphan_vs_ordinary_divergence_with_real_git(tmp_path
     git(remote, "init", "-q", "-b", "main")
     git(remote, "config", "user.email", "t@example.com")
     git(remote, "config", "user.name", "t")
-    (remote / "f.txt").write_text("remote\n")
+    (remote / "f.txt").write_text("remote\n", encoding="utf-8")
     git(remote, "add", "-A")
     git(remote, "commit", "-qm", "remote init")
 
@@ -1316,7 +1316,7 @@ def test_prune_orphan_rescue_refs_with_real_git_unpins_objects(tmp_path):
     git("config", "user.email", "t@example.com")
     git("config", "user.name", "t")
     git("config", "gc.auto", "0")
-    (tmp_path / "f.txt").write_text("base\n")
+    (tmp_path / "f.txt").write_text("base\n", encoding="utf-8")
     git("add", "-A")
     git("commit", "-qm", "init")
 

@@ -219,13 +219,13 @@ def test_committed_recovery_refuses_changed_authority_without_writes(fixture, co
         store.set_state(OWNER_STATE_KEY, {"root_id": "elsewhere", "source_root_id": "source"})
     elif conflict == "selection_changed":
         (handoff._prompt_root / "other").mkdir()
-        (handoff._prompt_root / "other" / "SKILL.md").write_text("prompt")
-        source.write_text(json.dumps({"scheduledTasks": [_task("watch", False), _task("other", False)]}))
+        (handoff._prompt_root / "other" / "SKILL.md").write_text("prompt", encoding="utf-8")
+        source.write_text(json.dumps({"scheduledTasks": [_task("watch", False), _task("other", False)]}), encoding="utf-8")
         selected.append("other")
     elif conflict == "target_present":
-        target.write_text(json.dumps({"scheduledTasks": [_task("watch", False)]}))
+        target.write_text(json.dumps({"scheduledTasks": [_task("watch", False)]}), encoding="utf-8")
     elif conflict == "old_owner_enabled":
-        source.write_text(json.dumps({"scheduledTasks": [_task("watch", True)]}))
+        source.write_text(json.dumps({"scheduledTasks": [_task("watch", True)]}), encoding="utf-8")
     before = {path: path.read_bytes() for path in (source, target)}
     backup_dirs = set((tmp_path / "outside-backups").iterdir())
     with pytest.raises(CatalogConflict):

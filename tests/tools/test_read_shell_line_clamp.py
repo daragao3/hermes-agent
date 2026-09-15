@@ -36,7 +36,7 @@ def test_monster_line_clamped_in_shell(tmp_path, ops):
     """A single multi-MB line comes back clamped, with the truncated suffix."""
     max_len = get_max_line_length()
     monster = tmp_path / "monster.txt"
-    with open(monster, "w") as f:
+    with open(monster, "w", encoding="utf-8") as f:
         f.write("x" * 5_000_000)
         f.write("\n")
         f.write("after\n")
@@ -52,7 +52,7 @@ def test_monster_line_clamped_in_shell(tmp_path, ops):
 
 def test_offset_past_monster_returns_normal_lines(tmp_path, ops):
     monster = tmp_path / "monster.txt"
-    with open(monster, "w") as f:
+    with open(monster, "w", encoding="utf-8") as f:
         f.write("y" * 1_000_000 + "\n")
         for i in range(5):
             f.write(f"normal line {i}\n")
@@ -66,7 +66,7 @@ def test_offset_past_monster_returns_normal_lines(tmp_path, ops):
 
 def test_normal_multiline_read_unchanged(tmp_path, ops):
     p = tmp_path / "plain.txt"
-    p.write_text("alpha\nbeta\ngamma\n")
+    p.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
     result = ops.read_file(str(p))
     assert result.error is None
     assert result.content.startswith("1|alpha\n2|beta\n3|gamma")
@@ -75,7 +75,7 @@ def test_normal_multiline_read_unchanged(tmp_path, ops):
 def test_no_trailing_newline_preserved(tmp_path, ops):
     """cut newline-terminates its output; read_file must strip the artifact."""
     p = tmp_path / "nonl.txt"
-    p.write_text("a\nb")
+    p.write_text("a\nb", encoding="utf-8")
     result = ops.read_file(str(p))
     assert result.content == "1|a\n2|b"
 
@@ -120,7 +120,7 @@ def test_read_file_raw_not_clamped(tmp_path, ops):
     max_len = get_max_line_length()
     p = tmp_path / "long_raw.txt"
     long_line = "z" * (10 * max_len)
-    p.write_text(long_line + "\n")
+    p.write_text(long_line + "\n", encoding="utf-8")
     result = ops.read_file_raw(str(p))
     assert result.error is None
     assert result.content == long_line + "\n"

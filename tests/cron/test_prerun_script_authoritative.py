@@ -115,7 +115,7 @@ def test_failed_prerun_still_delivers_the_agent_report(tmp_path):
 def test_nonzero_exit_prerun_fails_the_run(tmp_path):
     """Wider than 'not found': a nonzero exit was equally invisible."""
     script = _scripts_dir(tmp_path) / "boom.sh"
-    script.write_text("#!/bin/bash\necho 'partial output'\nexit 3\n")
+    script.write_text("#!/bin/bash\necho 'partial output'\nexit 3\n", encoding="utf-8")
     job = _job(script="boom.sh")
 
     success, _output, _final, error, agent_constructed = _drive(job, tmp_path)
@@ -129,7 +129,7 @@ def test_nonzero_exit_prerun_fails_the_run(tmp_path):
 def test_successful_prerun_still_succeeds(tmp_path):
     """No false positives: a healthy script must leave the run green."""
     script = _scripts_dir(tmp_path) / "fine.sh"
-    script.write_text("#!/bin/bash\necho 'real data'\n")
+    script.write_text("#!/bin/bash\necho 'real data'\n", encoding="utf-8")
     job = _job(script="fine.sh")
 
     success, _output, final_response, error, agent_constructed = \
@@ -160,7 +160,7 @@ def test_wake_gate_false_still_skips_silently(tmp_path):
     contract and must not be swept into the new failure path.
     """
     script = _scripts_dir(tmp_path) / "gate.sh"
-    script.write_text('#!/bin/bash\necho \'{"wakeAgent": false}\'\n')
+    script.write_text('#!/bin/bash\necho \'{"wakeAgent": false}\'\n', encoding="utf-8")
     job = _job(script="gate.sh")
 
     success, _output, final_response, error, agent_constructed = \

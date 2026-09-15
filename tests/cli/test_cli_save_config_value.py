@@ -44,7 +44,7 @@ class TestSaveConfigValueAtomic:
         from cli import save_config_value
         save_config_value("auxiliary.compression.model", "google/gemini-3-flash-preview")
 
-        result = yaml.safe_load(config_env.read_text())
+        result = yaml.safe_load(config_env.read_text(encoding="utf-8"))
         assert result["auxiliary"]["compression"]["model"] == "google/gemini-3-flash-preview"
 
 
@@ -65,7 +65,7 @@ class TestSaveConfigValueAtomic:
 
     def test_file_not_truncated_on_error(self, config_env, monkeypatch):
         """If atomic_yaml_write raises, the original file is untouched."""
-        original_content = config_env.read_text()
+        original_content = config_env.read_text(encoding="utf-8")
 
         def exploding_write(*args, **kwargs):
             raise OSError("disk full")
@@ -76,7 +76,7 @@ class TestSaveConfigValueAtomic:
         result = save_config_value("display.skin", "broken")
 
         assert result is False
-        assert config_env.read_text() == original_content
+        assert config_env.read_text(encoding="utf-8") == original_content
 
 
 class TestSaveConfigValueTargetsUserConfig:
@@ -100,7 +100,7 @@ class TestSaveConfigValueTargetsUserConfig:
 
         config_path = hermes_home / "config.yaml"
         assert config_path.exists(), "user config.yaml must be created, not skipped"
-        result = yaml.safe_load(config_path.read_text())
+        result = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         assert result["wake_word"]["enabled"] is True
 
     def test_does_not_write_repo_cli_config(self, tmp_path, monkeypatch):
@@ -109,7 +109,7 @@ class TestSaveConfigValueTargetsUserConfig:
         import cli as cli_module
 
         repo_cli_config = Path(cli_module.__file__).parent / "cli-config.yaml"
-        before = repo_cli_config.read_text() if repo_cli_config.exists() else None
+        before = repo_cli_config.read_text(encoding="utf-8") if repo_cli_config.exists() else None
 
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
@@ -120,8 +120,8 @@ class TestSaveConfigValueTargetsUserConfig:
         save_config_value("wake_word.enabled", True)
 
         # The repo template is untouched…
-        after = repo_cli_config.read_text() if repo_cli_config.exists() else None
+        after = repo_cli_config.read_text(encoding="utf-8") if repo_cli_config.exists() else None
         assert after == before
         # …and the value landed in the user config.
-        result = yaml.safe_load((hermes_home / "config.yaml").read_text())
+        result = yaml.safe_load((hermes_home / "config.yaml").read_text(encoding="utf-8"))
         assert result["wake_word"]["enabled"] is True

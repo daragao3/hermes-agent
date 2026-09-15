@@ -283,7 +283,7 @@ def _orphaned_fork_holder(db_path: Path):
         yield grandchild
     finally:
         with contextlib.suppress(OSError):
-            os.kill(grandchild, signal.SIGKILL)
+            os.kill(grandchild, signal.SIGKILL)  # windows-footgun: ok -- POSIX-only module (module-level skip off POSIX)
 
 
 class TestOrphanedHolderStalenessBreak:
@@ -364,7 +364,7 @@ os._exit(1)
                 assert holding is True
         finally:
             with contextlib.suppress(OSError):
-                os.kill(grandchild, signal.SIGKILL)
+                os.kill(grandchild, signal.SIGKILL)  # windows-footgun: ok -- POSIX-only module (module-level skip off POSIX)
 
 
 class TestNonContentionErrnoFailsFast:

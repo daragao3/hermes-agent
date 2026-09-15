@@ -29,7 +29,7 @@ class TestTruncationSpill:
         assert r["output_total_chars"] > 2000
         p = Path(r["full_output_path"])
         assert p.exists()
-        full = p.read_text()
+        full = p.read_text(encoding="utf-8")
         assert "marker_head" in full and "marker_tail" in full
         # The spill contains rows that were cut from the visible window.
         assert "row_100 " in full
@@ -46,14 +46,14 @@ class TestTruncationSpill:
             "python3 -c \"print('sk-proj-' + 'a1B2c3D4e5F6g7H8i9J0' * 3); [print('pad', 'y'*90) for i in range(200)]\"",
             task_id="t-spill-3"))
         p = Path(r["full_output_path"])
-        full = p.read_text()
+        full = p.read_text(encoding="utf-8")
         assert "a1B2c3D4e5F6g7H8i9J0a1B2c3D4e5F6g7H8i9J0" not in full
 
     def test_old_spills_cleaned(self, small_cap, tmp_path):
         spill_dir = tmp_path / ".hermes" / "cache" / "terminal-output"
         spill_dir.mkdir(parents=True, exist_ok=True)
         stale = spill_dir / "out-1-2-dead.log"
-        stale.write_text("old")
+        stale.write_text("old", encoding="utf-8")
         os.utime(stale, (1, 1))
         json.loads(terminal_tool(
             "python3 -c \"[print('z'*90) for i in range(200)]\"", task_id="t-spill-4"))

@@ -1303,7 +1303,7 @@ def test_profile_databases_are_opened_once_not_per_call(
     assert after_first >= 2, f"fixture must open the profiles at least once ({opens})"
     assert after_second == after_first, (
         f"second call re-opened {after_second - after_first} profile database(s) "
-        f"that were already open ({opens[after_first:]}); handles must be reused"
+        f"that were already open ({opens[after_first:]}); handles must be reused"  # windows-footgun: ok -- prose in an assertion message, not a call
     )
 
 

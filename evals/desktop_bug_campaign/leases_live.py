@@ -142,7 +142,7 @@ memory:
     processes = []
     logs = []
     service = fixture(18042)
-    results = {'sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(),
+    results = {'sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True, encoding="utf-8").strip(),
                'home': str(home), 'fidelity': 'real backend subprocesses + WebSocket; deterministic local HTTP inference; lost-timer fault injection', 'checks': []}
     def check(name, ok, detail=None):
         results['checks'].append({'name': name, 'pass': bool(ok), 'detail': detail})
@@ -243,7 +243,7 @@ memory:
         for log in logs:
             log.close()
         service.shutdown()
-        (out / 'result.json').write_text(json.dumps(results, indent=2))
+        (out / 'result.json').write_text(json.dumps(results, indent=2), encoding="utf-8")
     return 0 if all(x['pass'] for x in results['checks']) else 1
 
 

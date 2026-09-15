@@ -396,7 +396,7 @@ def test_dispatcher_grants_only_the_assigned_worker_scope(tmp_path, monkeypatch)
     worker.write_text(
         f"#!{sys.executable}\nimport sys, os, json;sys.path.insert(0, {root!r})\n"
         "from tools.kanban_tools import _handle_complete\n"
-        f"result=_handle_complete({{'summary':'assigned worker'}});open({str(output)!r}, 'w').write(result)\n"
+        f"result=_handle_complete({{'summary':'assigned worker'}});open({str(output)!r}, 'w').write(result)\n"  # windows-footgun: ok -- source of a probe script written to a temp file, not a call
     )
     worker.chmod(0o700)
     monkeypatch.setenv("HERMES_BIN", str(worker))
@@ -405,7 +405,7 @@ def test_dispatcher_grants_only_the_assigned_worker_scope(tmp_path, monkeypatch)
     pid = _default_spawn(task, str(tmp_path), board="default")
     assert pid is not None
     os.waitpid(pid, 0)  # windows-footgun: ok — Linux-only real dispatcher spawn
-    assert json.loads(output.read_text())["ok"]
+    assert json.loads(output.read_text(encoding="utf-8"))["ok"]
     assert kb.get_task(conn, tid).status == "done"
     assert os.environ["HERMES_KANBAN_TASK"] == "prior-task"
     conn.close()

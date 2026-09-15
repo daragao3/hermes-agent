@@ -59,8 +59,8 @@ def run_cell(cell):
     cmd = [PY, os.path.join(HARNESS, "worker.py"), arm, MODEL, task_id, str(rep), out]
     t0 = time.time()
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 60,
-                           env=os.environ.copy())
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 60,  # windows-footgun: ok -- encoding= is passed on the continuation line
+                           env=os.environ.copy(), encoding="utf-8")
         if p.returncode == 3:
             return (cell, "INFRA_ABORT", p.stderr[-500:])
         if p.returncode != 0 and not os.path.exists(out):

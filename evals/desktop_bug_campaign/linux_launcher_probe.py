@@ -36,7 +36,7 @@ def main():
     # Reuse dependencies read-only; put the tested checkout before its editable install.
     site = next(venv_dir.glob("lib/python*/site-packages"))
     dependencies = Path(sys.prefix) / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
-    (site / "probe.pth").write_text(str(repo) + "\n" + str(dependencies) + "\n")
+    (site / "probe.pth").write_text(str(repo) + "\n" + str(dependencies) + "\n", encoding="utf-8")
     assert python.is_symlink() and python.resolve() != python
     install = (
         "import sys,json; from pathlib import Path; "
@@ -45,7 +45,7 @@ def main():
         f"p=install_desktop_entry(Path({str(repo)!r})); "
         "print(json.dumps({'path':str(p),'text':p.read_text(),'python':sys.executable}))"
     )
-    rows: dict = {"source_sha": args.source_sha or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
+    rows: dict = {"source_sha": args.source_sha or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True, encoding="utf-8").strip(),
             "root": str(root), "lexical_python": str(python), "base_python": str(python.resolve())}
     rows["venv_import"] = run([str(python), "-I", "-c", "import yaml,hermes_cli.main; print(yaml.__version__)"], env, "/")
     rows["base_import_negative"] = run([str(python.resolve()), "-I", "-c", "import yaml,hermes_cli.main"], env, "/")
@@ -64,12 +64,12 @@ def main():
     custom = original.replace(b"Name=Hermes\n", b"Name=Hermes custom\n").replace(b"Terminal=false", b"Terminal=true")
     entry.write_bytes(custom)
     config = Path(env["HERMES_HOME"]) / "config.yaml"
-    config.write_text("desktop:\n  manage_launcher_entry: false\n")
+    config.write_text("desktop:\n  manage_launcher_entry: false\n", encoding="utf-8")
     rows["custom_install"] = run([str(python), "-c", install], env, "/")
     rows["custom_preserved"] = entry.read_bytes() == custom
     rows["generated_exec"] = exec_line
     rows["fidelity"] = "real venv, native Linux XDG installer, real generated argv --help; NOT Electron window/menu-click proof"
-    (args.output / "probe.json").write_text(json.dumps(rows, indent=2))
+    (args.output / "probe.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
     print(json.dumps(rows, indent=2))
     assert rows["venv_import"]["returncode"] == 0
     assert rows["base_import_negative"]["returncode"] != 0

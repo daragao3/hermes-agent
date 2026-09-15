@@ -291,7 +291,7 @@ class TestLoadConfig:
         monkeypatch.delenv("HERMES_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         repos_path = tmp_path / "repos.json"
-        repos_path.write_text(json.dumps({"repos": ["o/r"]}))
+        repos_path.write_text(json.dumps({"repos": ["o/r"]}), encoding="utf-8")
         assert load_config(repos_path=repos_path) is None
 
     def test_returns_none_when_repos_file_missing(self, tmp_path, monkeypatch):
@@ -304,14 +304,14 @@ class TestLoadConfig:
         from events.producers.devflow_pr_build_poller import load_config
         monkeypatch.setenv("HERMES_GITHUB_TOKEN", "ghp_fake")
         repos_path = tmp_path / "repos.json"
-        repos_path.write_text(json.dumps({"repos": []}))
+        repos_path.write_text(json.dumps({"repos": []}), encoding="utf-8")
         assert load_config(repos_path=repos_path) is None
 
     def test_parses_valid_config(self, tmp_path, monkeypatch):
         from events.producers.devflow_pr_build_poller import load_config
         monkeypatch.setenv("HERMES_GITHUB_TOKEN", "ghp_fake")
         repos_path = tmp_path / "repos.json"
-        repos_path.write_text(json.dumps({"repos": ["o/r1", "o/r2"]}))
+        repos_path.write_text(json.dumps({"repos": ["o/r1", "o/r2"]}), encoding="utf-8")
         cfg = load_config(repos_path=repos_path)
         assert cfg is not None
         assert cfg.repos == ["o/r1", "o/r2"]
@@ -322,7 +322,7 @@ class TestLoadConfig:
         monkeypatch.delenv("HERMES_GITHUB_TOKEN", raising=False)
         monkeypatch.setenv("GITHUB_TOKEN", "gh-from-fallback")
         repos_path = tmp_path / "repos.json"
-        repos_path.write_text(json.dumps({"repos": ["o/r"]}))
+        repos_path.write_text(json.dumps({"repos": ["o/r"]}), encoding="utf-8")
         cfg = load_config(repos_path=repos_path)
         assert cfg is not None
         assert cfg.token == "gh-from-fallback"

@@ -61,11 +61,11 @@ def main():
     config = {'model': {'default': 'persistence-fixture', 'provider': 'custom', 'base_url': f'http://127.0.0.1:{args.port+1}/v1'}, 'agent': {'max_turns': 1}, 'compression': {'enabled': False}, 'toolsets': [], 'platform_toolsets': {'gui': [], 'cli': []}, 'memory': {'memory_enabled': False, 'user_profile_enabled': False}}
     import yaml
     for p in (home, profile):
-        (p / 'config.yaml').write_text(yaml.safe_dump(config))
-        (p / '.env').write_text('OPENAI_API_KEY=local-fixture\n')
-        (p / 'SOUL.md').write_text('You are a deterministic test assistant.\n')
+        (p / 'config.yaml').write_text(yaml.safe_dump(config), encoding="utf-8")
+        (p / '.env').write_text('OPENAI_API_KEY=local-fixture\n', encoding="utf-8")
+        (p / 'SOUL.md').write_text('You are a deterministic test assistant.\n', encoding="utf-8")
         (p / '.no-bundled-skills').touch()
-    (profile / 'profile.yaml').write_text('name: worker\nui_meta:\n  hermes-bots:\n    title: Worker\n')
+    (profile / 'profile.yaml').write_text('name: worker\nui_meta:\n  hermes-bots:\n    title: Worker\n', encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if not (k.startswith('HERMES_') or 'API_KEY' in k or 'TOKEN' in k or k in ('PYTHONPATH', 'PYTEST_PLUGINS'))}
     env.update(HERMES_HOME=str(home), HOME=str(home / 'os-home'), HERMES_DASHBOARD_SESSION_TOKEN='persistence-fixture-token', HERMES_IGNORE_RULES='1', PYTHONPATH=str(args.repo), OPENAI_API_KEY='local-fixture')
     log = (args.out / 'serve.log').open('w')
@@ -75,7 +75,7 @@ def main():
                'serve', '--isolated', '--port', str(args.port)]
     proc = subprocess.Popen(cmd, cwd=args.repo, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
     transcript = []
-    result = {'home': str(home), 'command': cmd, 'sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=args.repo, text=True).strip()}
+    result = {'home': str(home), 'command': cmd, 'sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=args.repo, text=True, encoding="utf-8").strip()}
     try:
         for _ in range(180):
             if proc.poll() is not None:
@@ -144,7 +144,7 @@ def main():
                 from hermes_cli.config import read_user_config_raw
                 result['worker_tools'] = read_user_config_raw(profile / 'config.yaml')['platform_toolsets']['cli']
             else:
-                (profile / 'SOUL.md').write_text('Capabilities changed for the worker.\n')
+                (profile / 'SOUL.md').write_text('Capabilities changed for the worker.\n', encoding="utf-8")
             if observe and args.reset:
                 result['ownership_after_failure'] = rpc('probe.ownership', {'session_id': sid})
             turn(sid, 'PERSISTENCE_AFTER_REBUILD')
@@ -178,9 +178,9 @@ def main():
         model.shutdown()
         model.server_close()
         log.close()
-        (args.out / 'wire.json').write_text(json.dumps(transcript, indent=2))
+        (args.out / 'wire.json').write_text(json.dumps(transcript, indent=2), encoding="utf-8")
         result['model_requests'] = requests
-        (args.out / 'result.json').write_text(json.dumps(result, indent=2))
+        (args.out / 'result.json').write_text(json.dumps(result, indent=2), encoding="utf-8")
         print(json.dumps({k: result[k] for k in ('sha', 'home', 'wrong_profile_writes', 'duplicate_active_groups') if k in result}, indent=2))
     assert not result['wrong_profile_writes'], 'rebuild wrote the next turn to launch state.db'
     assert any('PERSISTENCE_AFTER_REBUILD' in str(row) for row in result['stores']['worker'])

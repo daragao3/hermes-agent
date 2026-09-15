@@ -67,7 +67,7 @@ def test_unwritable_bin_dir_is_skipped(fake_home):
         _ensure_acp_launcher()
         assert not (fake_home / "hermes-acp").exists()
         return
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # windows-footgun: ok -- guarded by the hasattr early-return above
         pytest.skip("root ignores directory write permissions")
     fake_home.chmod(0o555)
     try:

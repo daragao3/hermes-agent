@@ -54,24 +54,24 @@ def linter():
 EXAMPLES = {
     "open() without encoding= on text mode": "    with open(f) as fh:",
     "os.fdopen() without encoding= on text mode": '    with os.fdopen(fd, "w") as f:',
-    "os.kill(pid, 0)": "    os.kill(pid, 0)",
-    "bare os.setsid": "        preexec_fn=os.setsid,",
-    "bare os.killpg": '    patch("os.killpg") as killpg,',
-    "bare os.getuid / os.geteuid / os.getgid": "    if os.geteuid() == 0:",
-    "bare os.fork": "    pid = os.fork()",
-    "bare signal.SIGKILL": "    if sig == signal.SIGKILL:",
-    "bare signal.SIGHUP / SIGUSR1 / SIGUSR2 / SIGALRM / SIGCHLD / SIGPIPE / SIGQUIT": (
-        "    assert sent == [(67890, signal.SIGHUP)]"
+    "os.kill(pid, 0)": "    os.kill(pid, 0)",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare os.setsid": "        preexec_fn=os.setsid,",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare os.killpg": '    patch("os.killpg") as killpg,',  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare os.getuid / os.geteuid / os.getgid": "    if os.geteuid() == 0:",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare os.fork": "    pid = os.fork()",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare signal.SIGKILL": "    if sig == signal.SIGKILL:",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare signal.SIGHUP / SIGUSR1 / SIGUSR2 / SIGALRM / SIGCHLD / SIGPIPE / SIGQUIT": (  # windows-footgun: ok -- sample line for the rule under test, not a call
+        "    assert sent == [(67890, signal.SIGHUP)]"  # windows-footgun: ok -- sample line for the rule under test, not a call
     ),
-    "subprocess shebang script invocation": '    subprocess.run(["./script.sh"])',
+    "subprocess shebang script invocation": '    subprocess.run(["./script.sh"])',  # windows-footgun: ok -- sample line for the rule under test, not a call
     "wmic invocation without shutil.which guard": (
-        '    subprocess.run(["wmic", "process", "list"])'
+        '    subprocess.run(["wmic", "process", "list"])'  # windows-footgun: ok -- sample line for the rule under test, not a call
     ),
     "hardcoded ~/Desktop (OneDrive trap)": (
-        r'    assert argv == ["export", r"C:\Users\me\Desktop\out.jsonl"]'
+        r'    assert argv == ["export", r"C:\Users\me\Desktop\out.jsonl"]'  # windows-footgun: ok -- sample line for the rule under test, not a call
     ),
     "asyncio add_signal_handler without try/except": (
-        "    loop.add_signal_handler(signal.SIGINT, handler)"
+        "    loop.add_signal_handler(signal.SIGINT, handler)"  # windows-footgun: ok -- sample line for the rule under test, not a call
     ),
     "subprocess text=True without explicit encoding=": (
         "    result = subprocess.run(argv, capture_output=True, text=True)"

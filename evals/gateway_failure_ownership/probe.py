@@ -349,7 +349,7 @@ async def main():
         passed=sum(o["pass_"] and o["reached"] for o in observations),
         total=len(observations),
     )
-    RECEIPT.write_text(json.dumps(receipt, indent=2))
+    RECEIPT.write_text(json.dumps(receipt, indent=2), encoding="utf-8")
     print(json.dumps(receipt, indent=2))
     return receipt["passed"] == receipt["total"]
 

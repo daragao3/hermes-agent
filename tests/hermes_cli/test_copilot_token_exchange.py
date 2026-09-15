@@ -156,7 +156,7 @@ class TestJwtDiskStoreBounds:
         import hermes_cli.copilot_auth as mod
 
         path = self._store_path(tmp_path, monkeypatch)
-        path.write_text("x" * (mod._JWT_DISK_MAX_BYTES + 1))
+        path.write_text("x" * (mod._JWT_DISK_MAX_BYTES + 1), encoding="utf-8")
         assert mod._read_jwt_store(path) is None
         # Load path treats it as unusable → caller re-exchanges.
         assert mod._load_jwt_from_disk("deadbeef") is None
@@ -165,9 +165,9 @@ class TestJwtDiskStoreBounds:
         import hermes_cli.copilot_auth as mod
 
         path = self._store_path(tmp_path, monkeypatch)
-        path.write_text("[1, 2, 3]")
+        path.write_text("[1, 2, 3]", encoding="utf-8")
         assert mod._read_jwt_store(path) is None
-        path.write_text("{not json")
+        path.write_text("{not json", encoding="utf-8")
         assert mod._read_jwt_store(path) is None
 
     def test_evict_ignores_oversized_store(self, tmp_path, monkeypatch):
@@ -176,10 +176,10 @@ class TestJwtDiskStoreBounds:
 
         path = self._store_path(tmp_path, monkeypatch)
         blob = "x" * (mod._JWT_DISK_MAX_BYTES + 1)
-        path.write_text(blob)
+        path.write_text(blob, encoding="utf-8")
         mod.evict_cached_exchanged_token("gho_whatever")
         # Untouched — bounded read refused it before any rewrite.
-        assert path.read_text() == blob
+        assert path.read_text(encoding="utf-8") == blob
 
     def test_save_discards_oversized_store_instead_of_merging(self, tmp_path, monkeypatch):
         """Saving over a corrupt/oversized store starts fresh rather than
@@ -189,9 +189,9 @@ class TestJwtDiskStoreBounds:
         import hermes_cli.copilot_auth as mod
 
         path = self._store_path(tmp_path, monkeypatch)
-        path.write_text("x" * (mod._JWT_DISK_MAX_BYTES + 1))
+        path.write_text("x" * (mod._JWT_DISK_MAX_BYTES + 1), encoding="utf-8")
         mod._save_jwt_to_disk("fp1", "tid=fresh", _time.time() + 1800, None)
-        store = _json.loads(path.read_text())
+        store = _json.loads(path.read_text(encoding="utf-8"))
         assert set(store) == {"fp1"}
         assert store["fp1"]["api_token"] == "tid=fresh"
 

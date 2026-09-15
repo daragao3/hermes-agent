@@ -63,19 +63,19 @@ def _make_profile(
     if config:
         # SOUL.md is what the reconciler keys on — it's always seeded by
         # `hermes profile create`. See container_boot._render_run_script.
-        (p / "SOUL.md").write_text("# fake profile\n")
+        (p / "SOUL.md").write_text("# fake profile\n", encoding="utf-8")
     if state is not None or desired_state is not None:
         payload: dict[str, object] = {"timestamp": 1234567890}
         if state is not None:
             payload["gateway_state"] = state
         if desired_state is not None:
             payload["desired_state"] = desired_state
-        (p / "gateway_state.json").write_text(json.dumps(payload))
+        (p / "gateway_state.json").write_text(json.dumps(payload), encoding="utf-8")
     if with_pid:
         (p / "gateway.pid").write_text(json.dumps(
             {"pid": 99999, "host": "old-container"},
         ))
-        (p / "processes.json").write_text("[]")
+        (p / "processes.json").write_text("[]", encoding="utf-8")
     return p
 
 
@@ -95,7 +95,7 @@ def _seed_default_root(
         (hermes_home / "gateway.pid").write_text(json.dumps(
             {"pid": 99999, "host": "old-container"},
         ))
-        (hermes_home / "processes.json").write_text("[]")
+        (hermes_home / "processes.json").write_text("[]", encoding="utf-8")
 
 
 def _named_actions(actions: list[ReconcileAction]) -> list[ReconcileAction]:
@@ -123,7 +123,7 @@ def test_running_profile_is_registered_and_autostarted(tmp_path: Path) -> None:
     svc = scandir / "gateway-coder"
     assert (svc / "run").exists()
     assert (svc / "run").stat().st_mode & 0o111  # executable
-    assert (svc / "type").read_text().strip() == "longrun"
+    assert (svc / "type").read_text(encoding="utf-8").strip() == "longrun"
     # Auto-start means no down-marker.
     assert not (svc / "down").exists()
 
@@ -184,7 +184,7 @@ def test_registered_profile_has_finish_script(tmp_path: Path) -> None:
     finish = scandir / "gateway-coder" / "finish"
     assert finish.exists()
     assert finish.stat().st_mode & 0o111  # executable
-    text = finish.read_text()
+    text = finish.read_text(encoding="utf-8")
     assert "78" in text
     assert "125" in text
 
@@ -211,7 +211,7 @@ def test_register_service_overwrites_existing_slot(tmp_path: Path) -> None:
     reconcile_profile_gateways(
         hermes_home=tmp_path, scandir=scandir, dry_run=False,
     )
-    first_run = (scandir / "gateway-coder" / "run").read_text()
+    first_run = (scandir / "gateway-coder" / "run").read_text(encoding="utf-8")
 
     # Mutate the profile state so the run-script changes (extra_env
     # rendering would differ if we wired profile config through, but
@@ -225,7 +225,7 @@ def test_register_service_overwrites_existing_slot(tmp_path: Path) -> None:
 
     # Slot still exists, no .tmp remnants (staging dir is dot-prefixed,
     # so match it explicitly — a leading-`*` glob won't catch dotfiles).
-    assert (scandir / "gateway-coder" / "run").read_text() == first_run
+    assert (scandir / "gateway-coder" / "run").read_text(encoding="utf-8") == first_run
     assert list(scandir.glob("*.tmp")) == []
     assert list(scandir.glob(".*.tmp")) == []
     # Down marker now present (state went from running → stopped).
@@ -339,6 +339,6 @@ def test_main_skips_reconcile_in_dashboard_container_s6v3(
 def _write_lifecycle_sentinel(profile_dir: Path, payload: dict) -> None:
     state_dir = profile_dir / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "gateway.lifecycle.json").write_text(json.dumps(payload))
+    (state_dir / "gateway.lifecycle.json").write_text(json.dumps(payload), encoding="utf-8")
 
 

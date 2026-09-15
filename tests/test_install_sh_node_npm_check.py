@@ -21,7 +21,7 @@ def test_check_node_requires_npm_alongside_node() -> None:
     failed silently, and the desktop build died with an opaque
     "Node.js / npm unavailable" (#77003).
     """
-    text = INSTALL_SH.read_text()
+    text = INSTALL_SH.read_text(encoding="utf-8")
 
     # The system-toolchain branch now gates on BOTH node and npm.
     assert (
@@ -34,7 +34,7 @@ def test_check_node_requires_npm_alongside_node() -> None:
 
 def test_check_node_managed_requires_npm() -> None:
     """The Hermes-managed Node fallback also requires its npm to exist."""
-    text = INSTALL_SH.read_text()
+    text = INSTALL_SH.read_text(encoding="utf-8")
     assert (
         '[ -x "$HERMES_HOME/node/bin/node" ] && [ -x "$HERMES_HOME/node/bin/npm" ] \\'
         in text

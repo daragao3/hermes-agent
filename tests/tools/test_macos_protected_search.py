@@ -152,10 +152,10 @@ def test_grep_pruned_search_still_finds_nested_protected_names(tmp_path, monkeyp
     home = tmp_path / "Users" / "alice"
     project = home / "work" / "repo" / "Downloads"
     project.mkdir(parents=True)
-    (project / "notes.txt").write_text("needle here\n")
+    (project / "notes.txt").write_text("needle here\n", encoding="utf-8")
     protected = home / "Downloads"
     protected.mkdir()
-    (protected / "secret.txt").write_text("needle protected\n")
+    (protected / "secret.txt").write_text("needle protected\n", encoding="utf-8")
     monkeypatch.setattr(file_operations, "_HOME", str(home))
     monkeypatch.setattr(file_operations.sys, "platform", "darwin")
     ops = ShellFileOperations(LocalEnvironment(cwd=str(home)))
@@ -371,8 +371,8 @@ def test_real_ripgrep_does_not_descend_into_protected_folder(tmp_path, monkeypat
     protected = home / "Downloads"
     safe.mkdir(parents=True)
     protected.mkdir()
-    (safe / "visible.txt").write_text("needle")
-    (protected / "protected.txt").write_text("needle")
+    (safe / "visible.txt").write_text("needle", encoding="utf-8")
+    (protected / "protected.txt").write_text("needle", encoding="utf-8")
     monkeypatch.setattr(file_operations, "_HOME", str(home))
     monkeypatch.setattr(file_operations.sys, "platform", "darwin")
     ops = ShellFileOperations(LocalEnvironment(cwd=str(home)))

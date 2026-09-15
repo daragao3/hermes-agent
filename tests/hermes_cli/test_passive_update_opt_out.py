@@ -29,7 +29,7 @@ def test_explicit_check_fetches_local_origin_despite_passive_opt_out(tmp_path, m
     remote = tmp_path / "remote"
     local = tmp_path / "checkout"
     def git(*args):
-        return subprocess.run(["git", *map(str, args)], check=True, capture_output=True, text=True)
+        return subprocess.run(["git", *map(str, args)], check=True, capture_output=True, text=True, encoding="utf-8")
     git("init", "-b", "main", remote)
     git("-C", remote, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "initial")
     git("clone", remote, local)

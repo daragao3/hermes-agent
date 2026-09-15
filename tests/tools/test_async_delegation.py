@@ -1111,15 +1111,15 @@ dt.delegate_task(tasks=[{"goal": "fast member of the group task", "group": "g"},
 time.sleep(2.0)
 sys.stdout.flush(); os._exit(1)
 '''
-    subprocess.run([sys.executable, "-c", producer], cwd=repo, env=env, text=True, capture_output=True, timeout=30)
+    subprocess.run([sys.executable, "-c", producer], cwd=repo, env=env, text=True, capture_output=True, timeout=30, encoding="utf-8")
     consumer = r'''
 import json, queue
 from tools import async_delegation as ad
 q = queue.Queue(); ad.restore_undelivered_completions(q)
 print(json.dumps(q.get_nowait(), sort_keys=True))
 '''
-    second = subprocess.run([sys.executable, "-c", consumer], cwd=repo, env=env, text=True, capture_output=True,
-                            timeout=15, check=True)
+    second = subprocess.run([sys.executable, "-c", consumer], cwd=repo, env=env, text=True, capture_output=True,  # windows-footgun: ok -- encoding= is passed on the continuation line
+                            timeout=15, check=True, encoding="utf-8")
     evt = json.loads(second.stdout.strip().splitlines()[-1])
     by_index = {r["task_index"]: r for r in evt["results"]}
     assert by_index[0]["status"] == "completed" and by_index[0]["summary"] == "done: fast member of the group task"

@@ -550,7 +550,7 @@ def test_has_agent_browser_import_failure_falls_back_to_hermes_managed_node_path
     managed_dir = tmp_path / "node"
     managed_dir.mkdir()
     managed_bin = managed_dir / "agent-browser"
-    managed_bin.write_text("#!/bin/sh\nexit 0\n")
+    managed_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     managed_bin.chmod(0o755)
 
     real_which = shutil.which

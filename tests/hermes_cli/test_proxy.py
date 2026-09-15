@@ -104,7 +104,7 @@ def test_nous_adapter_quarantine_keeps_other_chain_pool_entry(tmp_path, monkeypa
         with pytest.raises(RuntimeError, match="Refresh session has been revoked"):
             adapter.get_credential()
 
-    stored = json.loads(auth_path.read_text())
+    stored = json.loads(auth_path.read_text(encoding="utf-8"))
     surviving = [entry["id"] for entry in stored["credential_pool"]["nous"]]
     assert "singleton-seeded" not in surviving
     assert surviving == ["other-chain"]
@@ -634,7 +634,7 @@ def test_nous_adapter_quarantine_reclaims_only_dead_chain_among_same_source(
         with pytest.raises(RuntimeError, match="Refresh session has been revoked"):
             adapter.get_credential()
 
-    stored = json.loads(auth_path.read_text())
+    stored = json.loads(auth_path.read_text(encoding="utf-8"))
     surviving = [entry["id"] for entry in stored["credential_pool"]["nous"]]
     # The dead chain is reclaimed (the chain was captured before the pop)...
     assert "dead-same-source" not in surviving

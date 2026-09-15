@@ -171,7 +171,7 @@ def test_terminate_tree_survives_missing_psutil(monkeypatch):
 
 def test_reap_orphans_kills_only_our_parentless_binaries(tmp_path, monkeypatch):
     exe = tmp_path / "llama-server.exe"
-    exe.write_text("")
+    exe.write_text("", encoding="utf-8")
 
     _FakeChild(300)
     _FakeChild(301)     # parent alive -> not an orphan

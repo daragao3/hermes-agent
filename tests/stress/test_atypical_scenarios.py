@@ -787,7 +787,7 @@ def _idempotency_race_worker(hermes_home: str, key: str, result_file: str,
         )
     finally:
         conn.close()
-    with open(result_file, "w") as f:
+    with open(result_file, "w", encoding="utf-8") as f:
         f.write(tid)
 
 
@@ -813,7 +813,7 @@ def _(home, kb):
         p.start()
     time.sleep(0.1)  # let them hit the spin
     # Fire the gun
-    with open(barrier, "w") as f:
+    with open(barrier, "w", encoding="utf-8") as f:
         f.write("go")
     # Incidental safety net, not the assertion (tests/timeout_budget.py
     # rule 2). The children do ~6s of work but each pays a full spawn:

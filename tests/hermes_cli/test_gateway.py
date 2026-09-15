@@ -378,7 +378,7 @@ def test_spawn_detached_gateway_timestamps_stderr(monkeypatch, tmp_path):
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="systemd user-linger is Linux-only (drives os.getuid())",
+    reason="systemd user-linger is Linux-only (drives os.getuid())",  # windows-footgun: ok -- prose in a skip reason, not a call
 )
 def test_systemd_install_checks_linger_status(monkeypatch, tmp_path, capsys):
     unit_path = tmp_path / "systemd" / "user" / "hermes-gateway.service"

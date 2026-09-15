@@ -134,14 +134,14 @@ class TestWriteFileSurrogates:
 
     def test_patch_replace_funnel_rejects_surrogate_new_string(self, ops, tmp_path):
         p = tmp_path / "patchme.txt"
-        p.write_text("old\n")
+        p.write_text("old\n", encoding="utf-8")
         # \udc7f is OUTSIDE the surrogateescape round-trip range (U+DC80–U+DCFF)
         # — unencodable even with surrogateescape — so write_file's early
         # rejection must catch it through the patch funnel. (An in-range
         # surrogate like \udcff legitimately round-trips, per the spec.)
         res = ops.patch_replace(str(p), "old", "new" + "\udc7f")
         assert res.error and "surrogate" in res.error
-        assert p.read_text() == "old\n"
+        assert p.read_text(encoding="utf-8") == "old\n"
 
     def test_normal_content_verified(self, ops, tmp_path):
         p = tmp_path / "normal.txt"

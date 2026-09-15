@@ -44,7 +44,7 @@ class TestResolveVerifyFallback:
         from hermes_cli.auth import _resolve_verify
 
         ca_file = tmp_path / "ca-bundle.pem"
-        ca_file.write_text("fake cert")
+        ca_file.write_text("fake cert", encoding="utf-8")
 
         # Avoid loading actual PEM — just verify the return type
         mock_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -122,7 +122,7 @@ def _setup_nous_auth(
             }
         },
     }
-    (hermes_home / "auth.json").write_text(json.dumps(auth_store, indent=2))
+    (hermes_home / "auth.json").write_text(json.dumps(auth_store, indent=2), encoding="utf-8")
 
 
 def _jwt_with_claims(claims: dict) -> str:
@@ -168,7 +168,7 @@ def test_resolve_nous_runtime_credentials_prefers_invoke_jwt_and_mirrors(
     assert creds["source"] == auth_mod.NOUS_AUTH_PATH_INVOKE_JWT
     assert creds["auth_path"] == auth_mod.NOUS_AUTH_PATH_INVOKE_JWT
 
-    payload = json.loads((hermes_home / "auth.json").read_text())
+    payload = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     singleton = payload["providers"]["nous"]
     assert singleton["agent_key"] == token
     assert datetime.fromisoformat(singleton["agent_key_expires_at"]).timestamp() > time.time() + 300
@@ -222,8 +222,8 @@ def test_resolve_nous_runtime_credentials_invoke_jwt_is_idempotent(
         },
     }
     auth_path = hermes_home / "auth.json"
-    auth_path.write_text(json.dumps(auth_store, indent=2))
-    before_content = auth_path.read_text()
+    auth_path.write_text(json.dumps(auth_store, indent=2), encoding="utf-8")
+    before_content = auth_path.read_text(encoding="utf-8")
     before_mtime = auth_path.stat().st_mtime_ns
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
@@ -249,10 +249,10 @@ def test_resolve_nous_runtime_credentials_invoke_jwt_is_idempotent(
 
     assert creds["api_key"] == token
     assert creds["source"] == auth_mod.NOUS_AUTH_PATH_INVOKE_JWT
-    assert auth_path.read_text() == before_content
+    assert auth_path.read_text(encoding="utf-8") == before_content
     assert auth_path.stat().st_mtime_ns == before_mtime
     assert sync_calls == []
-    payload = json.loads(auth_path.read_text())
+    payload = json.loads(auth_path.read_text(encoding="utf-8"))
     assert (
         payload["providers"]["nous"]["agent_key_obtained_at"]
         == original_obtained_at
@@ -286,7 +286,7 @@ def test_resolve_nous_runtime_credentials_reauths_when_invoke_scope_missing(
 
     assert exc.value.code == "missing_inference_invoke_scope"
     assert exc.value.relogin_required is True
-    payload = json.loads((hermes_home / "auth.json").read_text())
+    payload = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     assert payload["providers"]["nous"]["agent_key"] is None
     assert "credential_pool" not in payload or not payload["credential_pool"].get("nous")
 
@@ -311,7 +311,7 @@ def test_removed_legacy_session_env_var_does_not_change_jwt_auth(tmp_path, monke
     creds = auth_mod.resolve_nous_runtime_credentials()
 
     assert creds["api_key"] == token
-    payload = json.loads((hermes_home / "auth.json").read_text())
+    payload = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     assert payload["providers"]["nous"]["agent_key"] == token
 
     requested_scopes = []
@@ -469,9 +469,9 @@ def test_get_nous_auth_status_empty_returns_not_logged_in(tmp_path, monkeypatch)
 def _seed_nous_pool(hermes_home: Path, entries: list[dict]) -> None:
     """Write ``credential_pool.nous`` into an auth.json built by _setup_nous_auth."""
     auth_path = hermes_home / "auth.json"
-    payload = json.loads(auth_path.read_text())
+    payload = json.loads(auth_path.read_text(encoding="utf-8"))
     payload.setdefault("credential_pool", {})["nous"] = entries
-    auth_path.write_text(json.dumps(payload, indent=2))
+    auth_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _two_chain_nous_pool() -> list[dict]:
@@ -548,7 +548,7 @@ def test_managed_access_token_refresh_failure_keeps_other_chain_pool_entry(
     with pytest.raises(AuthError, match="Invalid refresh token"):
         auth_mod.resolve_nous_access_token()
 
-    payload = json.loads((hermes_home / "auth.json").read_text())
+    payload = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     surviving = [entry["id"] for entry in payload["credential_pool"]["nous"]]
     # The dead chain is reclaimed...
     assert "singleton-seeded" not in surviving
@@ -588,7 +588,7 @@ def test_runtime_refresh_failure_keeps_other_chain_pool_entry(
     with pytest.raises(AuthError, match="Refresh session has been revoked"):
         auth_mod.resolve_nous_runtime_credentials()
 
-    payload = json.loads((hermes_home / "auth.json").read_text())
+    payload = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     surviving = [entry["id"] for entry in payload["credential_pool"]["nous"]]
     assert "singleton-seeded" not in surviving
     assert surviving == ["other-chain"]
@@ -694,13 +694,13 @@ class TestLoginNousSkipKeepsCurrent:
         _login_nous(args, PROVIDER_REGISTRY["nous"])
 
         # config.yaml model section must be unchanged
-        cfg_after = yaml.safe_load(config_path.read_text())
+        cfg_after = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         assert cfg_after["model"]["provider"] == "openrouter"
         assert cfg_after["model"]["default"] == "anthropic/claude-opus-4.6"
         assert "base_url" not in cfg_after["model"]
 
         # auth.json: active_provider restored to openrouter, but Nous creds saved
-        auth_after = json.loads(auth_path.read_text())
+        auth_after = json.loads(auth_path.read_text(encoding="utf-8"))
         assert auth_after["active_provider"] == "openrouter"
         assert "nous" in auth_after["providers"]
         assert auth_after["providers"]["nous"]["access_token"] == "fake-nous-token"
@@ -726,12 +726,12 @@ class TestLoginNousSkipKeepsCurrent:
         )
         _login_nous(args, PROVIDER_REGISTRY["nous"])
 
-        cfg_after = yaml.safe_load(config_path.read_text())
+        cfg_after = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         assert cfg_after["model"]["provider"] == "nous"
         assert cfg_after["model"]["default"] == "xiaomi/mimo-v2-pro"
         assert free_tier_calls == [{"force_fresh": True}]
 
-        auth_after = json.loads(auth_path.read_text())
+        auth_after = json.loads(auth_path.read_text(encoding="utf-8"))
         assert auth_after["active_provider"] == "nous"
 
     def test_skip_with_no_prior_active_provider_clears_it(self, tmp_path, monkeypatch):
@@ -746,7 +746,7 @@ class TestLoginNousSkipKeepsCurrent:
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         config_path = hermes_home / "config.yaml"
-        config_path.write_text(yaml.safe_dump({"model": {}}, sort_keys=False))
+        config_path.write_text(yaml.safe_dump({"model": {}}, sort_keys=False), encoding="utf-8")
 
         # No auth.json yet — simulates first-run before any OAuth
         self._patch_login_internals(monkeypatch, prompt_returns=None)
@@ -758,7 +758,7 @@ class TestLoginNousSkipKeepsCurrent:
         _login_nous(args, PROVIDER_REGISTRY["nous"])
 
         auth_path = hermes_home / "auth.json"
-        auth_after = json.loads(auth_path.read_text())
+        auth_after = json.loads(auth_path.read_text(encoding="utf-8"))
         # active_provider should NOT be set to "nous" after Skip
         assert auth_after.get("active_provider") in {None, ""}
         # But Nous creds are still saved
@@ -822,7 +822,7 @@ def test_persist_nous_credentials_writes_both_pool_and_providers(tmp_path, monke
     assert entry.provider == "nous"
     assert entry.source == NOUS_DEVICE_CODE_SOURCE
 
-    payload = json.loads((hermes_home / "auth.json").read_text())
+    payload = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
 
     # providers.nous populated with the full state (new behaviour)
     singleton = payload["providers"]["nous"]
@@ -869,7 +869,7 @@ def test_persist_nous_credentials_idempotent_no_duplicate_pool_entries(tmp_path,
     second["agent_key_expires_at"] = _future_iso(7200)
     persist_nous_credentials(second)
 
-    payload = json.loads((hermes_home / "auth.json").read_text())
+    payload = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
 
     # providers.nous reflects the latest write (singleton semantics)
     assert payload["providers"]["nous"]["access_token"] == second_token
@@ -908,7 +908,7 @@ def test_persist_nous_credentials_no_label_uses_auto_derived(tmp_path, monkeypat
     assert entry.label != "my-personal"
 
     # No "label" key embedded in providers.nous when the caller didn't supply one.
-    payload = json.loads((hermes_home / "auth.json").read_text())
+    payload = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     assert "label" not in payload["providers"]["nous"]
 
 
@@ -1090,7 +1090,7 @@ def test_persist_nous_credentials_mirrors_to_shared_store(
     persist_nous_credentials(_full_state_fixture())
 
     # Per-profile auth.json populated
-    payload = json.loads((hermes_home / "auth.json").read_text())
+    payload = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     assert "nous" in payload.get("providers", {})
 
     # Shared store populated with the same refresh_token
@@ -1193,11 +1193,11 @@ class TestStalePortalBaseUrlMigration:
             expires_in=0,
         )
         auth_file = hermes_home / "auth.json"
-        store = json.loads(auth_file.read_text())
+        store = json.loads(auth_file.read_text(encoding="utf-8"))
         store["providers"]["nous"]["portal_base_url"] = (
             "http://portal.nousresearch.com"
         )
-        auth_file.write_text(json.dumps(store, indent=2))
+        auth_file.write_text(json.dumps(store, indent=2), encoding="utf-8")
 
         refresh_calls = []
 
@@ -1416,7 +1416,7 @@ def test_runtime_refresh_failure_reclaims_only_dead_chain_among_same_source(
     with pytest.raises(AuthError, match="Refresh session has been revoked"):
         auth_mod.resolve_nous_runtime_credentials()
 
-    payload = json.loads((hermes_home / "auth.json").read_text())
+    payload = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     surviving = [entry["id"] for entry in payload["credential_pool"]["nous"]]
     assert "dead-same-source" not in surviving
     assert surviving == ["live-same-source"]

@@ -52,7 +52,7 @@ class TestForegroundTimeoutCap:
         deadline = time.time() + 10
         while not marker.exists() and time.time() < deadline:
             time.sleep(0.05)
-        assert marker.read_text().count("x") == 1  # ran exactly once, in the background
+        assert marker.read_text(encoding="utf-8").count("x") == 1  # ran exactly once, in the background
 
     def test_shell_backgrounding_is_still_refused(self):
         """`&`/nohup need the command rewritten; the tool cannot do that safely, so it still refuses."""

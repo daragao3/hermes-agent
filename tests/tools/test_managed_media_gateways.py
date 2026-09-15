@@ -262,7 +262,7 @@ def test_transcription_uses_model_specific_response_formats(monkeypatch, tmp_pat
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     # The managed audio route is the stored "nous" selection (strict model);
     # a stored "openai" selection now means direct credentials only.
-    (tmp_path / "config.yaml").write_text("stt:\n  provider: nous\n")
+    (tmp_path / "config.yaml").write_text("stt:\n  provider: nous\n", encoding="utf-8")
     monkeypatch.delenv("VOICE_TOOLS_OPENAI_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("TOOL_GATEWAY_DOMAIN", "nousresearch.com")

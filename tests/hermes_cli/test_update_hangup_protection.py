@@ -155,11 +155,11 @@ class TestInstallHangupProtection:
             assert state["installed"] is False
             # SIGHUP must still be installed even when log setup fails.
             if hasattr(signal, "SIGHUP"):
-                assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+                assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN  # windows-footgun: ok -- guarded by the hasattr check on the line above
         finally:
             _finalize_update_output(state)
             if hasattr(signal, "SIGHUP") and original_handler is not None:
-                signal.signal(signal.SIGHUP, original_handler)
+                signal.signal(signal.SIGHUP, original_handler)  # windows-footgun: ok -- guarded by the hasattr check above
 
 
 # -----------------------------------------------------------------------------

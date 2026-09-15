@@ -65,7 +65,7 @@ class TestWriteFileCrossProfileGuard:
         result = json.loads(result_json)
         assert not result.get("error"), f"In-profile write should succeed: {result}"
         assert target.exists()
-        assert target.read_text() == "in-profile content"
+        assert target.read_text(encoding="utf-8") == "in-profile content"
 
     def test_cross_profile_write_allowed_guard_retired(self, fake_hermes):
         """Guard RETIRED (maintainer decision): profiles are not isolated —
@@ -77,7 +77,7 @@ class TestWriteFileCrossProfileGuard:
         result_json = write_file_tool(str(target), "cross-profile write, allowed")
         result = json.loads(result_json)
         assert not result.get("error"), f"guard retired; write must succeed: {result}"
-        assert target.read_text() == "cross-profile write, allowed"
+        assert target.read_text(encoding="utf-8") == "cross-profile write, allowed"
 
 
     def test_non_hermes_path_unaffected(self, fake_hermes, tmp_path):
@@ -107,7 +107,7 @@ class TestPatchCrossProfileGuard:
         )
         result = json.loads(result_json)
         assert not result.get("error"), f"guard retired; patch must succeed: {result}"
-        assert "patched without any flag." in target.read_text()
+        assert "patched without any flag." in target.read_text(encoding="utf-8")
 
     def test_cross_profile_patch_bypass(self, fake_hermes):
         from tools.file_tools import patch_tool
@@ -121,7 +121,7 @@ class TestPatchCrossProfileGuard:
         )
         result = json.loads(result_json)
         assert not result.get("error"), f"cross_profile still handler-accepted (compat): {result}"
-        assert "user-directed update." in target.read_text()
+        assert "user-directed update." in target.read_text(encoding="utf-8")
 
     def test_v4a_patch_writes_through_guard_retired(self, fake_hermes):
         """V4A patch to a cross-profile path succeeds (guard retired).
@@ -141,7 +141,7 @@ class TestPatchCrossProfileGuard:
         result_json = patch_tool(mode="patch", patch=v4a)
         result = json.loads(result_json)
         assert not result.get("error"), f"guard retired; V4A must succeed: {result}"
-        assert "v4a cross-profile write, allowed." in target.read_text()
+        assert "v4a cross-profile write, allowed." in target.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +220,7 @@ class TestSystemPromptActiveProfile:
         # paths, (3) says "do not modify another profile's" without
         # explicit user direction.
         from pathlib import Path
-        src = Path("agent/system_prompt.py").read_text()
+        src = Path("agent/system_prompt.py").read_text(encoding="utf-8")
         assert "Active Hermes profile" in src
         assert "cross_profile=True" not in src  # guard retired
         assert "~/.hermes/profiles/" in src

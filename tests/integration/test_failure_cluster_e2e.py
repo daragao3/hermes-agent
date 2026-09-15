@@ -100,7 +100,7 @@ def test_three_scout_failures_produce_critic_retro_within_60s(
     assert retro_files, (
         "No Critic retro file appeared within 60s — pipeline broken"
     )
-    content = retro_files[0].read_text()
+    content = retro_files[0].read_text(encoding="utf-8")
     assert "agent=scout" in content
     assert "type=captcha" in content
 
@@ -174,6 +174,6 @@ def test_three_mailbox_errors_produce_critic_retro_within_60s(
         "No Critic retro file appeared within 60s for mailbox-ERROR path "
         "— MailboxTranslator → cluster wiring broken"
     )
-    content = retro_files[0].read_text()
+    content = retro_files[0].read_text(encoding="utf-8")
     assert "agent=scout" in content
     assert "type=captcha" in content

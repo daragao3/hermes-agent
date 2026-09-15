@@ -13,7 +13,7 @@ import pytest
 def _make_home(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     home.mkdir()
-    (home / "config.yaml").write_text("model: {}\n")
+    (home / "config.yaml").write_text("model: {}\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
     return home
 
@@ -25,7 +25,7 @@ def test_backup_unwritable_parent_errors_cleanly(tmp_path, monkeypatch, capsys):
     # A parent directory that cannot be created (a file stands where the dir
     # would go) reliably triggers an OSError on mkdir without needing root.
     blocker = tmp_path / "blocker"
-    blocker.write_text("i am a file, not a dir")
+    blocker.write_text("i am a file, not a dir", encoding="utf-8")
     bad_out = blocker / "sub" / "backup.zip"
 
     with pytest.raises(SystemExit) as exc:

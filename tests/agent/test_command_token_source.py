@@ -291,7 +291,7 @@ class TestAbsoluteExpiry:
         assert src._expires_at is not None, "cache must carry a deadline"
         src._expires_at = time.monotonic() - 1  # simulate crossing it
         src()
-        assert len(counter.read_text()) == 2, "expired cache must re-run the helper"
+        assert len(counter.read_text(encoding="utf-8")) == 2, "expired cache must re-run the helper"
 
 
 class TestAuxiliaryResolverHonoursKeyCmd:

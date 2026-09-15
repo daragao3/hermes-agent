@@ -74,7 +74,7 @@ def test_cancel_event_terminates_script_process_tree(tmp_path, monkeypatch):
     assert started.exists(), "script did not start"
 
     import psutil
-    child = psutil.Process(int(started.read_text()))
+    child = psutil.Process(int(started.read_text(encoding="utf-8")))
     try:
         assert child.is_running()
         cancel.set()

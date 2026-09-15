@@ -150,7 +150,7 @@ def test_install_bws_happy_path(hermes_home, monkeypatch):
         if url.endswith(".zip"):
             Path(dest).write_bytes(zip_bytes)
         elif url.endswith(".txt"):
-            Path(dest).write_text(checksum_text)
+            Path(dest).write_text(checksum_text, encoding="utf-8")
         else:
             raise AssertionError(f"unexpected download url: {url}")
 
@@ -193,7 +193,7 @@ def _fake_bws_payload(items):
 def test_fetch_server_url_sets_env(monkeypatch, tmp_path):
     """server_url must be plumbed into the subprocess as BWS_SERVER_URL."""
     fake_binary = tmp_path / "bws"
-    fake_binary.write_text("")
+    fake_binary.write_text("", encoding="utf-8")
     payload = _fake_bws_payload([{"key": "K", "value": "v"}])
 
     captured_env = {}
@@ -305,7 +305,7 @@ def test_disk_cache_key_mismatch_triggers_refetch(monkeypatch, tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
     fake_binary = tmp_path / "bws"
-    fake_binary.write_text("")
+    fake_binary.write_text("", encoding="utf-8")
     payload = _fake_bws_payload([{"key": "K1", "value": "v1"}])
 
     call_count = {"n": 0}
@@ -343,7 +343,7 @@ def test_encrypted_cache_writes_without_plaintext(monkeypatch, tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
     fake_binary = tmp_path / "bws"
-    fake_binary.write_text("")
+    fake_binary.write_text("", encoding="utf-8")
     payload = _fake_bws_payload([{"key": "K1", "value": "secret-value"}])
 
     monkeypatch.setattr(
@@ -377,7 +377,7 @@ def test_encrypted_cache_writes_without_plaintext(monkeypatch, tmp_path):
     if os.name == "posix":
         mode = stat.S_IMODE(os.stat(cache_path).st_mode)
         assert mode == 0o600, f"expected 0o600, got 0o{mode:o}"
-    text = cache_path.read_text()
+    text = cache_path.read_text(encoding="utf-8")
     assert "secret-value" not in text
     assert "0.t" not in text
     payload_disk = json.loads(text)
@@ -394,7 +394,7 @@ def test_encrypted_cache_falls_back_on_network_error(monkeypatch, tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
     fake_binary = tmp_path / "bws"
-    fake_binary.write_text("")
+    fake_binary.write_text("", encoding="utf-8")
     calls = {"n": 0}
 
     def fake_run(*a, **kw):
@@ -468,7 +468,7 @@ def test_stale_disk_cache_returned_when_bws_fails(monkeypatch, tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
     fake_binary = tmp_path / "bws"
-    fake_binary.write_text("")
+    fake_binary.write_text("", encoding="utf-8")
     bw._reset_cache_for_tests(home)
 
     # Seed a stale (older than TTL) disk cache from a previous successful fetch
@@ -506,7 +506,7 @@ def test_stale_fallback_skipped_on_auth_failure(monkeypatch, tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
     fake_binary = tmp_path / "bws"
-    fake_binary.write_text("")
+    fake_binary.write_text("", encoding="utf-8")
     bw._reset_cache_for_tests(home)
 
     _seed_stale_disk_cache(home, secrets={"K1": "v1"}, age_seconds=3600)

@@ -42,7 +42,7 @@ class TestSplitPairingDirMigration:
             store = PairingStore()
             assert store.is_approved("feishu", "ou_user") is True
 
-        migrated = json.loads((legacy / "feishu-approved.json").read_text())
+        migrated = json.loads((legacy / "feishu-approved.json").read_text(encoding="utf-8"))
         assert "ou_user" in migrated
 
 
@@ -313,7 +313,7 @@ class TestApprovalFlow:
             entry = store.list_pending("telegram")[0]
 
             digest = json.loads(
-                (tmp_path / "telegram-pending.json").read_text()
+                (tmp_path / "telegram-pending.json").read_text(encoding="utf-8")
             )[entry["request_id"]]["hash"]
 
             assert set(entry) == {

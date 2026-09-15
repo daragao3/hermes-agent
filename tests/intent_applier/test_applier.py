@@ -121,7 +121,7 @@ class TestApplierHappyPath:
         assert not f.exists()
         assert (mailbox["processed"] / "intent.json").exists()
         # Pipeline.json updated
-        data = json.loads(pipeline_path.read_text())
+        data = json.loads(pipeline_path.read_text(encoding="utf-8"))
         job = next(j for j in data["jobs"] if j["job_id"] == "linkedin-1")
         assert job["stage"] == "approved"
         last = job["history"][-1]
@@ -165,7 +165,7 @@ class TestApplierFailures:
         assert (mailbox["dead_letter"] / "intent.json").exists()
         sidecar = mailbox["dead_letter"] / "intent.json.error.json"
         assert sidecar.exists()
-        info = json.loads(sidecar.read_text())
+        info = json.loads(sidecar.read_text(encoding="utf-8"))
         assert info["error_class"] == "JobOpsClientPermanentError"
 
     def test_corrupt_json_goes_to_dead_letter(self, mailbox, applier):
@@ -189,7 +189,7 @@ class TestApplierFailures:
         assert (mailbox["dead_letter"] / "intent.json").exists()
         sidecar = mailbox["dead_letter"] / "intent.json.error.json"
         assert sidecar.exists()
-        info = json.loads(sidecar.read_text())
+        info = json.loads(sidecar.read_text(encoding="utf-8"))
         assert info["error_class"] == "RuntimeError"
         assert "simulated lock timeout" in info["error_message"]
 

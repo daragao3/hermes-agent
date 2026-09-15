@@ -18,7 +18,7 @@ def _make_agent(hermes_home: Path) -> Path:
     """Create a fake agent install: source package + venv."""
     agent_root = hermes_home / "hermes-agent"
     (agent_root / "hermes_cli").mkdir(parents=True)
-    (agent_root / "hermes_cli" / "__init__.py").write_text("")
+    (agent_root / "hermes_cli" / "__init__.py").write_text("", encoding="utf-8")
     (agent_root / "venv" / "bin").mkdir(parents=True)
     return agent_root
 
@@ -27,16 +27,16 @@ def _make_gui_build(hermes_home: Path) -> None:
     """Create the source-built GUI artifacts a `hermes desktop` run produces."""
     desktop = hermes_home / "hermes-agent" / "apps" / "desktop"
     (desktop / "dist").mkdir(parents=True)
-    (desktop / "dist" / "index.html").write_text("<html>")
+    (desktop / "dist" / "index.html").write_text("<html>", encoding="utf-8")
     (desktop / "release" / "linux-unpacked").mkdir(parents=True)
     (desktop / "node_modules").mkdir(parents=True)
     (hermes_home / "hermes-agent" / "node_modules").mkdir(parents=True)
-    (hermes_home / "desktop-build-stamp.json").write_text("{}")
+    (hermes_home / "desktop-build-stamp.json").write_text("{}", encoding="utf-8")
 
 
 def _make_user_data(hermes_home: Path) -> None:
-    (hermes_home / "config.yaml").write_text("x: 1\n")
-    (hermes_home / ".env").write_text("KEY=secret\n")
+    (hermes_home / "config.yaml").write_text("x: 1\n", encoding="utf-8")
+    (hermes_home / ".env").write_text("KEY=secret\n", encoding="utf-8")
     (hermes_home / "sessions").mkdir()
 
 

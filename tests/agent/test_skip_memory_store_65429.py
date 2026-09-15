@@ -97,7 +97,7 @@ def test_skip_memory_memory_tool_handler_works_and_provider_skipped(
     # The write must actually persist to the profile-scoped memories dir.
     memory_md = tmp_path / "hm" / "memories" / "MEMORY.md"
     assert memory_md.exists()
-    assert "User prefers concise answers." in memory_md.read_text()
+    assert "User prefers concise answers." in memory_md.read_text(encoding="utf-8")
 
 
 def test_skip_memory_disabled_toolset_does_not_load_store(monkeypatch, tmp_path):
@@ -111,8 +111,8 @@ def test_skip_memory_disabled_toolset_does_not_load_store(monkeypatch, tmp_path)
     mem_dir = home / "memories"
     mem_dir.mkdir(parents=True)
     secret = "cron-should-never-see-this-memory"
-    (mem_dir / "MEMORY.md").write_text(secret + "\n")
-    (mem_dir / "USER.md").write_text("cron-should-never-see-this-profile\n")
+    (mem_dir / "MEMORY.md").write_text(secret + "\n", encoding="utf-8")
+    (mem_dir / "USER.md").write_text("cron-should-never-see-this-profile\n", encoding="utf-8")
 
     agent = _make_agent(
         monkeypatch,

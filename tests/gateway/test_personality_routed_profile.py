@@ -20,7 +20,7 @@ def test_routed_profile_prompt_resolves_from_its_own_config(tmp_path, monkeypatc
     routed_home = tmp_path / "profiles" / "beta"
     default_home.mkdir()
     routed_home.mkdir(parents=True)
-    (default_home / "config.yaml").write_text("agent:\n  system_prompt: DEFAULT-PERSONA\n")
+    (default_home / "config.yaml").write_text("agent:\n  system_prompt: DEFAULT-PERSONA\n", encoding="utf-8")
     (routed_home / "config.yaml").write_text(
         "agent:\n  system_prompt: BETA-PERSONA\n  personalities:\n    pirate: ARR\n"
     )
@@ -41,5 +41,5 @@ def test_routed_profile_prompt_resolves_from_its_own_config(tmp_path, monkeypatc
     with _profile_runtime_scope(routed_home):
         assert persist_personality("pirate")
         assert runner._get_system_prompt_for_channel(Platform.TELEGRAM, "c") == "ARR"
-    assert "pirate" not in (default_home / "config.yaml").read_text()
+    assert "pirate" not in (default_home / "config.yaml").read_text(encoding="utf-8")
     assert runner._get_system_prompt_for_channel(Platform.TELEGRAM, "c") == "DEFAULT-PERSONA"

@@ -10,7 +10,7 @@ import pytest
 def local_snapshot(tmp_path):
     path = tmp_path / 'local.db'
     with sqlite3.connect(path) as conn:
-        conn.executescript((Path(__file__).parent / 'fixtures/local33-schema.sql').read_text())
+        conn.executescript((Path(__file__).parent / 'fixtures/local33-schema.sql').read_text(encoding="utf-8"))
         conn.execute('INSERT INTO schema_version VALUES (33)')
         conn.execute("INSERT INTO sessions(id, source, started_at, system_prompt) VALUES ('s', 'cli', 0, 'preserve prompt')")
         conn.execute("INSERT INTO messages(session_id, role, content, timestamp) VALUES ('s', 'user', 'preserve transcript needle', 0)")
@@ -84,7 +84,7 @@ def test_conversion_preserves_registry_values_across_local_domains(local_snapsho
     with closing(sqlite3.connect(local_snapshot)) as conn:
         if version == 34:
             conn.execute('DROP TABLE desktop_registry_baselines')
-            conn.executescript((Path(__file__).parent / 'fixtures/local34-registry-schema.sql').read_text())
+            conn.executescript((Path(__file__).parent / 'fixtures/local34-registry-schema.sql').read_text(encoding="utf-8"))
             conn.execute('INSERT INTO desktop_registry_values VALUES (?,?)', (digest, value))
             conn.execute("INSERT INTO session_bridge_migrations VALUES ('desktop_registry_values_v34',0)")
         conn.execute('INSERT INTO desktop_registry_baselines VALUES (?,?,?,?,?,?)',

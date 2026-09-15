@@ -32,12 +32,12 @@ class TestCredentialExclusion:
         profile_dir.mkdir(parents=True)
 
         # Create a profile with credentials
-        (profile_dir / "config.yaml").write_text("model: gpt-4\n")
-        (profile_dir / "auth.json").write_text('{"tokens": {"access": "sk-secret"}}')
-        (profile_dir / ".env").write_text("OPENROUTER_API_KEY=sk-secret-key\n")
-        (profile_dir / "SOUL.md").write_text("I am helpful.\n")
+        (profile_dir / "config.yaml").write_text("model: gpt-4\n", encoding="utf-8")
+        (profile_dir / "auth.json").write_text('{"tokens": {"access": "sk-secret"}}', encoding="utf-8")
+        (profile_dir / ".env").write_text("OPENROUTER_API_KEY=sk-secret-key\n", encoding="utf-8")
+        (profile_dir / "SOUL.md").write_text("I am helpful.\n", encoding="utf-8")
         (profile_dir / "memories").mkdir()
-        (profile_dir / "memories" / "MEMORY.md").write_text("# Memories\n")
+        (profile_dir / "memories" / "MEMORY.md").write_text("# Memories\n", encoding="utf-8")
 
         _patch_named_profile(monkeypatch, profiles_root, profile_dir)
 
@@ -63,7 +63,7 @@ class TestExportSecretScrub:
         profile_dir.mkdir(parents=True)
 
         soul = profile_dir / "SOUL.md"
-        soul.write_text(f"My key is {_LEAKED_KEY}\n")
+        soul.write_text(f"My key is {_LEAKED_KEY}\n", encoding="utf-8")
 
         skill_dir = profile_dir / "skills" / "demo"
         skill_dir.mkdir(parents=True)
@@ -76,9 +76,9 @@ class TestExportSecretScrub:
         memories = profile_dir / "memories"
         memories.mkdir()
         memory = memories / "MEMORY.md"
-        memory.write_text(f"token {_LEAKED_KEY}\n")
+        memory.write_text(f"token {_LEAKED_KEY}\n", encoding="utf-8")
 
-        (profile_dir / "config.yaml").write_text("model: gpt-4\n")
+        (profile_dir / "config.yaml").write_text("model: gpt-4\n", encoding="utf-8")
 
         _patch_named_profile(monkeypatch, profiles_root, profile_dir)
 
@@ -98,9 +98,9 @@ class TestExportSecretScrub:
         assert any("MEMORY.md" in n for n in members)
 
         # Live profile must keep the original plaintext.
-        assert _LEAKED_KEY in soul.read_text()
-        assert _LEAKED_KEY in skill.read_text()
-        assert _LEAKED_KEY in memory.read_text()
+        assert _LEAKED_KEY in soul.read_text(encoding="utf-8")
+        assert _LEAKED_KEY in skill.read_text(encoding="utf-8")
+        assert _LEAKED_KEY in memory.read_text(encoding="utf-8")
 
     def test_export_redacts_through_symlink_without_touching_source(
         self, tmp_path, monkeypatch
@@ -111,14 +111,14 @@ class TestExportSecretScrub:
         profile_dir.mkdir(parents=True)
 
         outside = tmp_path / "outside-skill.md"
-        outside.write_text(f"secret {_LEAKED_KEY}\n")
+        outside.write_text(f"secret {_LEAKED_KEY}\n", encoding="utf-8")
 
         skill_dir = profile_dir / "skills" / "linked"
         skill_dir.mkdir(parents=True)
         link = skill_dir / "SKILL.md"
         link.symlink_to(outside)
 
-        (profile_dir / "config.yaml").write_text("model: gpt-4\n")
+        (profile_dir / "config.yaml").write_text("model: gpt-4\n", encoding="utf-8")
         _patch_named_profile(monkeypatch, profiles_root, profile_dir)
 
         result = export_profile("linkme", str(tmp_path / "linkme.tar.gz"))
@@ -129,5 +129,5 @@ class TestExportSecretScrub:
             archived = tf.extractfile(skill_members[0]).read().decode("utf-8")
 
         assert _LEAKED_KEY not in archived
-        assert _LEAKED_KEY in outside.read_text()
+        assert _LEAKED_KEY in outside.read_text(encoding="utf-8")
         assert link.is_symlink()

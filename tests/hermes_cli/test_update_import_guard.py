@@ -32,11 +32,11 @@ def _write_skewed_tree(root: Path, *, skewed: bool) -> None:
     ``skewed`` is True the name is absent -- both files still parse.
     """
     (root / "provider").mkdir(parents=True, exist_ok=True)
-    (root / "provider" / "__init__.py").write_text("")
+    (root / "provider" / "__init__.py").write_text("", encoding="utf-8")
     (root / "provider" / "thing.py").write_text(
         "OTHER = 1\n" if skewed else "SHARED_NAME = 'x'\nOTHER = 1\n"
     )
-    (root / "consumer.py").write_text("from provider.thing import SHARED_NAME\n")
+    (root / "consumer.py").write_text("from provider.thing import SHARED_NAME\n", encoding="utf-8")
 
 
 def test_syntax_guard_passes_but_import_guard_catches_skew(monkeypatch, tmp_path):
@@ -87,7 +87,7 @@ def test_import_guard_ignores_non_import_errors(monkeypatch, tmp_path):
 
 def test_import_guard_can_report_non_import_errors(monkeypatch, tmp_path):
     """Stash restore can compare runtime failures before and after apply."""
-    (tmp_path / "consumer.py").write_text("raise RuntimeError('broken config')\n")
+    (tmp_path / "consumer.py").write_text("raise RuntimeError('broken config')\n", encoding="utf-8")
     monkeypatch.setattr(update_cmd, "_UPDATE_CRITICAL_MODULES", ("consumer",))
     monkeypatch.setattr(update_cmd_deps, "_UPDATE_CRITICAL_MODULES", ("consumer",))
 
@@ -104,7 +104,7 @@ def test_import_guard_can_report_missing_third_party_dependency(
     monkeypatch, tmp_path
 ):
     """Stash comparison must see newly introduced missing dependencies."""
-    (tmp_path / "consumer.py").write_text("import totally_not_installed_pkg\n")
+    (tmp_path / "consumer.py").write_text("import totally_not_installed_pkg\n", encoding="utf-8")
     monkeypatch.setattr(update_cmd, "_UPDATE_CRITICAL_MODULES", ("consumer",))
     monkeypatch.setattr(update_cmd_deps, "_UPDATE_CRITICAL_MODULES", ("consumer",))
 
@@ -121,11 +121,11 @@ def test_import_failure_comparison_preserves_exception_type(monkeypatch, tmp_pat
     source = tmp_path / "consumer.py"
     monkeypatch.setattr(update_cmd, "_UPDATE_CRITICAL_MODULES", ("consumer",))
     monkeypatch.setattr(update_cmd_deps, "_UPDATE_CRITICAL_MODULES", ("consumer",))
-    source.write_text("raise RuntimeError('stopped')\n")
+    source.write_text("raise RuntimeError('stopped')\n", encoding="utf-8")
     runtime_failure = update_cmd._critical_module_import_failures(
         tmp_path, report_runtime_errors=True
     )
-    source.write_text("raise SystemExit('stopped')\n")
+    source.write_text("raise SystemExit('stopped')\n", encoding="utf-8")
     terminating_failure = update_cmd._critical_module_import_failures(
         tmp_path, report_runtime_errors=True
     )
@@ -138,7 +138,7 @@ def test_import_guard_reports_probe_termination_when_comparing_states(
     monkeypatch, tmp_path
 ):
     """A terminating import is unsafe when validating a restored stash."""
-    (tmp_path / "consumer.py").write_text("import os\nos._exit(7)\n")
+    (tmp_path / "consumer.py").write_text("import os\nos._exit(7)\n", encoding="utf-8")
     monkeypatch.setattr(update_cmd, "_UPDATE_CRITICAL_MODULES", ("consumer",))
     monkeypatch.setattr(update_cmd_deps, "_UPDATE_CRITICAL_MODULES", ("consumer",))
 
@@ -153,7 +153,7 @@ def test_import_guard_reports_probe_termination_when_comparing_states(
 
 def test_import_guard_reports_probe_termination_by_default(monkeypatch, tmp_path):
     """A missing health marker must not classify a terminated probe as healthy."""
-    (tmp_path / "consumer.py").write_text("import os\nos._exit(9)\n")
+    (tmp_path / "consumer.py").write_text("import os\nos._exit(9)\n", encoding="utf-8")
     monkeypatch.setattr(update_cmd, "_UPDATE_CRITICAL_MODULES", ("consumer",))
     monkeypatch.setattr(update_cmd_deps, "_UPDATE_CRITICAL_MODULES", ("consumer",))
 
@@ -166,7 +166,7 @@ def test_import_guard_reports_probe_termination_by_default(monkeypatch, tmp_path
 
 def test_import_guard_reports_system_exit_by_default(monkeypatch, tmp_path):
     """Catchable terminating imports must not complete with a healthy marker."""
-    (tmp_path / "consumer.py").write_text("raise SystemExit('stopped')\n")
+    (tmp_path / "consumer.py").write_text("raise SystemExit('stopped')\n", encoding="utf-8")
     monkeypatch.setattr(update_cmd, "_UPDATE_CRITICAL_MODULES", ("consumer",))
     monkeypatch.setattr(update_cmd_deps, "_UPDATE_CRITICAL_MODULES", ("consumer",))
 
@@ -292,7 +292,7 @@ def test_import_guard_prefers_the_project_venv_interpreter(monkeypatch, tmp_path
     name = "python.exe" if update_cmd._m()._is_windows() else "python"
     venv_python = tmp_path / "venv" / bin_dir / name
     venv_python.parent.mkdir(parents=True)
-    venv_python.write_text("")
+    venv_python.write_text("", encoding="utf-8")
 
     seen: dict = {}
 
@@ -319,7 +319,7 @@ def test_import_guard_ignores_missing_third_party_dependency(monkeypatch, tmp_pa
     that adds a dependency would otherwise look like breakage and trigger a
     spurious `git reset --hard` rollback of a perfectly good update.
     """
-    (tmp_path / "consumer.py").write_text("import totally_not_installed_pkg\n")
+    (tmp_path / "consumer.py").write_text("import totally_not_installed_pkg\n", encoding="utf-8")
     monkeypatch.setattr(update_cmd, "_UPDATE_CRITICAL_MODULES", ("consumer",))
     monkeypatch.setattr(update_cmd_deps, "_UPDATE_CRITICAL_MODULES", ("consumer",))
 
@@ -329,8 +329,8 @@ def test_import_guard_ignores_missing_third_party_dependency(monkeypatch, tmp_pa
 def test_import_guard_flags_missing_first_party_module(monkeypatch, tmp_path):
     """A missing *first-party* module IS skew — the update dropped a file."""
     (tmp_path / "tools").mkdir()
-    (tmp_path / "tools" / "__init__.py").write_text("")
-    (tmp_path / "consumer.py").write_text("import tools.nonexistent_module\n")
+    (tmp_path / "tools" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "consumer.py").write_text("import tools.nonexistent_module\n", encoding="utf-8")
     monkeypatch.setattr(update_cmd, "_UPDATE_CRITICAL_MODULES", ("consumer",))
     monkeypatch.setattr(update_cmd_deps, "_UPDATE_CRITICAL_MODULES", ("consumer",))
 

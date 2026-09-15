@@ -13,14 +13,14 @@ def _isolate(tmp_path, monkeypatch):
     hermes_home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     # Write a minimal config so load_config doesn't fail
-    (hermes_home / "config.yaml").write_text("model:\n  default: test-model\n")
+    (hermes_home / "config.yaml").write_text("model:\n  default: test-model\n", encoding="utf-8")
 
 
 def _write_config(tmp_path, config_dict):
     """Write a config.yaml to the test HERMES_HOME."""
     import yaml
     config_path = tmp_path / ".hermes" / "config.yaml"
-    config_path.write_text(yaml.dump(config_dict))
+    config_path.write_text(yaml.dump(config_dict), encoding="utf-8")
 
 
 class TestNormalizeVisionProvider:

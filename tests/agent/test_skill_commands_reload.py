@@ -100,7 +100,7 @@ class TestReloadSkillsHelper:
 
         snapshot = _skills_prompt_snapshot_path()
         snapshot.parent.mkdir(parents=True, exist_ok=True)
-        snapshot.write_text("{}")
+        snapshot.write_text("{}", encoding="utf-8")
         assert snapshot.exists()
 
         reload_skills()

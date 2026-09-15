@@ -1058,8 +1058,8 @@ class TestMultiplexProfileWebhookAuthentication:
         (skill_dir / "SKILL.md").write_text(
             "---\nname: worker-only\ndescription: w\n---\n\nBody of worker-only.\n"
         )
-        (worker / "config.yaml").write_text("{}\n")
-        (worker / ".env").write_text("")
+        (worker / "config.yaml").write_text("{}\n", encoding="utf-8")
+        (worker / ".env").write_text("", encoding="utf-8")
         monkeypatch.setattr(
             "hermes_cli.profiles.get_profile_dir", lambda name: tmp_path / "profiles" / name
         )

@@ -64,7 +64,7 @@ def repo(tmp_path, monkeypatch):
     repo = tmp_path / "proj"
     repo.mkdir()
     _git(repo, "init", "-b", "main")
-    (repo / "a.txt").write_text("hello\n")
+    (repo / "a.txt").write_text("hello\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "init")
     monkeypatch.chdir(repo)
@@ -112,7 +112,7 @@ def test_new_named_creates_and_retargets(repo):
     assert cli_mod._active_worktree is not None
     assert cli_mod._active_worktree["branch"] == "hermes/fix-login"
     # Same file contents as the base commit.
-    assert (wt / "a.txt").read_text() == "hello\n"
+    assert (wt / "a.txt").read_text(encoding="utf-8") == "hello\n"
 
 
 @requires_git

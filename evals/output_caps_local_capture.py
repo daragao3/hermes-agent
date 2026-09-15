@@ -52,7 +52,7 @@ url = f"http://127.0.0.1:{server.server_port}"
 home = Path(os.environ["HERMES_HOME"])
 home.mkdir(parents=True, exist_ok=True)
 config = {"model": {"default": "fixture", "provider": "fixture-local", "max_tokens": 17}, "providers": {"fixture-local": {"api": url + "/v1", "api_key": "fixture", "max_output_tokens": 19}}}
-(home / "config.yaml").write_text(json.dumps(config))
+(home / "config.yaml").write_text(json.dumps(config), encoding="utf-8")
 os.environ["HERMES_MAX_TOKENS"] = "13"
 from gateway.run import _resolve_runtime_agent_kwargs
 from gateway.platforms.api_server import _resolve_request_runtime_agent_kwargs

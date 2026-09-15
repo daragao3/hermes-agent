@@ -56,7 +56,7 @@ def test_update_job_roundtrips_no_agent_flag(hermes_env):
     from cron.jobs import create_job, update_job, get_job
 
     script_path = hermes_env / "scripts" / "w.sh"
-    script_path.write_text("echo hi\n")
+    script_path.write_text("echo hi\n", encoding="utf-8")
     job = create_job(prompt=None, schedule="every 5m", script="w.sh", no_agent=True, deliver="local")
 
     update_job(job["id"], {"no_agent": False})
@@ -94,7 +94,7 @@ def test_run_job_no_agent_success_returns_script_stdout(hermes_env):
     from cron.scheduler import run_job
 
     script_path = hermes_env / "scripts" / "alert.sh"
-    script_path.write_text("#!/bin/bash\necho 'RAM 92% on host'\n")
+    script_path.write_text("#!/bin/bash\necho 'RAM 92% on host'\n", encoding="utf-8")
 
     job = create_job(
         prompt=None, schedule="every 5m", script="alert.sh", no_agent=True, deliver="local"
@@ -124,7 +124,7 @@ def test_run_job_no_agent_reloads_dotenv_before_script(hermes_env, monkeypatch):
     monkeypatch.setattr(env_loader, "load_hermes_dotenv", fake_load)
 
     script_path = hermes_env / "scripts" / "probe.sh"
-    script_path.write_text('#!/bin/bash\necho "ok"\n')
+    script_path.write_text('#!/bin/bash\necho "ok"\n', encoding="utf-8")
 
     job = create_job(
         prompt=None, schedule="every 5m", script="probe.sh", no_agent=True, deliver="local"
@@ -148,7 +148,7 @@ def test_timed_out_no_agent_script_delivery_is_not_mislabeled_as_provider_failur
     import cron.scheduler as scheduler
     from cron import scheduler_script as sched_script
 
-    (hermes_env / "scripts" / "slow.py").write_text("import time; time.sleep(999)\n")
+    (hermes_env / "scripts" / "slow.py").write_text("import time; time.sleep(999)\n", encoding="utf-8")
     job = create_job(
         prompt=None,
         schedule="every 5m",

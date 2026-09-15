@@ -101,8 +101,8 @@ def test_routed_pairing_grant_mirror_stays_in_profile_scope(tmp_path, monkeypatc
     root = tmp_path / ".hermes"
     prof = root / "profiles" / "b"
     prof.mkdir(parents=True)
-    (root / ".env").write_text("DISCORD_ALLOWED_USERS=default-admin\n")
-    (prof / ".env").write_text("DISCORD_ALLOWED_USERS=b-admin\n")
+    (root / ".env").write_text("DISCORD_ALLOWED_USERS=default-admin\n", encoding="utf-8")
+    (prof / ".env").write_text("DISCORD_ALLOWED_USERS=b-admin\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(root))
     monkeypatch.setenv("DISCORD_ALLOWED_USERS", "default-admin")
 
@@ -115,8 +115,8 @@ def test_routed_pairing_grant_mirror_stays_in_profile_scope(tmp_path, monkeypatc
     finally:
         ss.set_multiplex_active(was_active)
 
-    assert (prof / ".env").read_text().strip() == "DISCORD_ALLOWED_USERS=b-admin,111"
-    assert (root / ".env").read_text().strip() == "DISCORD_ALLOWED_USERS=default-admin"
+    assert (prof / ".env").read_text(encoding="utf-8").strip() == "DISCORD_ALLOWED_USERS=b-admin,111"
+    assert (root / ".env").read_text(encoding="utf-8").strip() == "DISCORD_ALLOWED_USERS=default-admin"
     assert os.environ["DISCORD_ALLOWED_USERS"] == "default-admin"
 
     # Single-profile: no multiplex -> save still publishes to the process env.

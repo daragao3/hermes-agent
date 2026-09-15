@@ -26,7 +26,7 @@ def display_config():
         home = get_hermes_home()
         home.mkdir(parents=True, exist_ok=True)
         body = "".join(f"  {name}: {str(on).lower()}\n" for name, on in flags.items())
-        (home / "config.yaml").write_text(textwrap.dedent("display:\n") + body)
+        (home / "config.yaml").write_text(textwrap.dedent("display:\n") + body, encoding="utf-8")
 
     return _write
 

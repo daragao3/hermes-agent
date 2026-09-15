@@ -59,9 +59,9 @@ def _populate_critical_tree(root: Path, *, broken_file: str | None = None) -> No
         path = root / relpath
         path.parent.mkdir(parents=True, exist_ok=True)
         if relpath == broken_file:
-            path.write_text(broken_payload)
+            path.write_text(broken_payload, encoding="utf-8")
         else:
-            path.write_text("# stub\n")
+            path.write_text("# stub\n", encoding="utf-8")
 
 
 
@@ -75,7 +75,7 @@ def test_validate_critical_files_syntax_tolerates_missing_files(tmp_path):
             continue
         path = tmp_path / relpath
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("# stub\n")
+        path.write_text("# stub\n", encoding="utf-8")
 
     ok, failing_path, error = update_cmd._validate_critical_files_syntax(tmp_path)
 

@@ -55,7 +55,7 @@ class TestPersistentAttemptCap:
         db = _make_unrepairable_db(tmp_path)
         report = repair_state_db_schema(db)
         assert report["repaired"] is False
-        ledger = json.loads(_repair_ledger_path(db).read_text())
+        ledger = json.loads(_repair_ledger_path(db).read_text(encoding="utf-8"))
         assert ledger["failed_attempts"] == 1
 
     def test_repair_refuses_after_cap_with_terminal_error(self, tmp_path):
@@ -99,11 +99,11 @@ class TestPersistentAttemptCap:
 
     def test_corrupt_ledger_is_ignored_not_fatal(self, tmp_path):
         db = _make_unrepairable_db(tmp_path)
-        _repair_ledger_path(db).write_text("{not json")
+        _repair_ledger_path(db).write_text("{not json", encoding="utf-8")
         assert not _persistent_repair_attempts_exhausted(db)
         # And a repair pass overwrites it cleanly.
         repair_state_db_schema(db)
-        assert json.loads(_repair_ledger_path(db).read_text())["failed_attempts"] == 1
+        assert json.loads(_repair_ledger_path(db).read_text(encoding="utf-8"))["failed_attempts"] == 1
 
 
 # ---------------------------------------------------------------------------

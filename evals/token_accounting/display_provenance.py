@@ -41,7 +41,7 @@ def child(out: Path) -> None:
         def do_POST(self):
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             request_file = "provider-request-unmetered.json" if getattr(self.server, "omit_usage", False) else "provider-request.json"
-            (out / request_file).write_text(json.dumps(request, indent=2))
+            (out / request_file).write_text(json.dumps(request, indent=2), encoding="utf-8")
             response = {"id": "fixture", "object": "chat.completion", "created": 0, "model": "fixture",
                         "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "fixture answer"}}],
                         "usage": {"prompt_tokens": 1234, "completion_tokens": 20, "total_tokens": 1254}}
@@ -94,7 +94,7 @@ def child(out: Path) -> None:
         print("=== gateway /usage category block ===", flush=True)
         print("\n".join(runner._context_breakdown_lines(agent, source)), flush=True)
         results[scenario] = {"breakdown": compute_session_context_breakdown(agent, cli.conversation_history), "usage": usage}
-    (out / "payloads.json").write_text(json.dumps(results, indent=2))
+    (out / "payloads.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
     server.omit_usage = True
     unmetered = AIAgent(model="fixture", provider="openai-compat", api_key="fixture", base_url=base_url, enabled_toolsets=[], quiet_mode=True, skip_context_files=True, skip_memory=True, save_trajectories=False)
     unmetered.context_compressor._config_context_length = 100_000
@@ -103,7 +103,7 @@ def child(out: Path) -> None:
     unmetered._disable_streaming = True
     unmetered_result = unmetered.run_conversation("fixture without usage")
     assert unmetered_result["completed"]
-    (out / "unmetered-result.json").write_text(json.dumps({"last_prompt_tokens": unmetered_result["last_prompt_tokens"]}))
+    (out / "unmetered-result.json").write_text(json.dumps({"last_prompt_tokens": unmetered_result["last_prompt_tokens"]}), encoding="utf-8")
     server.shutdown()
     server.server_close()
     print("DISPLAY_PROBE_COMPLETE", flush=True)
@@ -137,7 +137,7 @@ def main() -> None:
         os.close(fd)
         _, status = os.waitpid(pid, 0)
         transcript = b"".join(chunks).decode(errors="replace")
-        (out / "pty.txt").write_text(transcript)
+        (out / "pty.txt").write_text(transcript, encoding="utf-8")
         print(transcript)
         if status or "DISPLAY_PROBE_COMPLETE" not in transcript:
             raise SystemExit(1)

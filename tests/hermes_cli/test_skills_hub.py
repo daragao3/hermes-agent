@@ -433,11 +433,11 @@ def _update_env(monkeypatch, tmp_path, *, edit_after_install: bool):
     skills_dir = tmp_path / "skills"
     skill_dir = skills_dir / "category" / "hub-skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("# hub-skill\noriginal\n")
+    (skill_dir / "SKILL.md").write_text("# hub-skill\noriginal\n", encoding="utf-8")
 
     recorded = content_hash(skill_dir)
     if edit_after_install:
-        (skill_dir / "SKILL.md").write_text("# hub-skill\nuser edited\n")
+        (skill_dir / "SKILL.md").write_text("# hub-skill\nuser edited\n", encoding="utf-8")
 
     monkeypatch.setattr(hub, "SKILLS_DIR", skills_dir)
     monkeypatch.setattr(hub_install, "check_for_skill_updates", lambda **_kwargs: [{

@@ -216,7 +216,7 @@ def test_fresh_process_real_plugin_fixture_covers_host_send_and_cron(tmp_path):
     (plugin / "plugin.yaml").write_text(
         "name: fmsg-fixture\nversion: 0.1.0\ndescription: fixture\nkind: platform\n"
     )
-    (home / "config.yaml").write_text("plugins:\n  enabled:\n    - fmsg-fixture\n")
+    (home / "config.yaml").write_text("plugins:\n  enabled:\n    - fmsg-fixture\n", encoding="utf-8")
     (plugin / "__init__.py").write_text(
         "async def _send(args, chat_id, platform_name, pconfig):\n"
         "    return {'success': True, 'platform': platform_name, 'chat_id': chat_id}\n"

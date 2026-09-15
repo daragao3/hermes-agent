@@ -32,8 +32,8 @@ def _isolated_cwd(tmp_path, monkeypatch):
     decoy = tmp_path / "decoy"
     workspace.mkdir()
     decoy.mkdir()
-    (workspace / "target.py").write_text("WORKSPACE_ORIGINAL\n")
-    (decoy / "target.py").write_text("DECOY_ORIGINAL\n")
+    (workspace / "target.py").write_text("WORKSPACE_ORIGINAL\n", encoding="utf-8")
+    (decoy / "target.py").write_text("DECOY_ORIGINAL\n", encoding="utf-8")
     # Process cwd = decoy, analogous to "main repo" while the terminal is in
     # the worktree.
     monkeypatch.chdir(decoy)
@@ -249,7 +249,7 @@ def _two_worktree_sessions(tmp_path, monkeypatch):
     main = tmp_path / "main"
     for d in (wt_a, wt_b, main):
         d.mkdir()
-        (d / "target.py").write_text(f"{d.name}\n")
+        (d / "target.py").write_text(f"{d.name}\n", encoding="utf-8")
     monkeypatch.chdir(main)
     monkeypatch.delenv("TERMINAL_CWD", raising=False)
     monkeypatch.setattr(terminal_tool, "_task_env_overrides", {})
@@ -336,6 +336,6 @@ def test_v4a_patch_applies_to_resolved_workspace_not_backend_cwd(
     assert out.get("resolved_path") == expected
     assert out.get("files_modified") == [expected]
     # The workspace file — which the tool locked and reported — was edited.
-    assert (workspace / "target.py").read_text() == "WORKSPACE_PATCHED\n"
+    assert (workspace / "target.py").read_text(encoding="utf-8") == "WORKSPACE_PATCHED\n"
     # The decoy (backend cwd) was left untouched.
-    assert (decoy / "target.py").read_text() == "DECOY_ORIGINAL\n"
+    assert (decoy / "target.py").read_text(encoding="utf-8") == "DECOY_ORIGINAL\n"

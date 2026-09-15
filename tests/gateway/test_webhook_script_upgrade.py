@@ -11,7 +11,7 @@ def test_script_capture_uses_scoped_environment_and_payload(tmp_path, monkeypatc
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     script = scripts / "transform.py"
-    script.write_text('import json,os,sys; p=json.load(sys.stdin); p["scope"]=os.environ["WAVE_TEST_SCOPE"]; print(json.dumps(p))')
+    script.write_text('import json,os,sys; p=json.load(sys.stdin); p["scope"]=os.environ["WAVE_TEST_SCOPE"]; print(json.dumps(p))', encoding="utf-8")
     scoped_env = dict(os.environ, WAVE_TEST_SCOPE="isolated")
     with patch("tools.environments.local.build_subprocess_env", return_value=scoped_env) as build:
         accepted, result = WebhookRouteProcessor().run_route_script(str(script), {"event": "test"})
@@ -24,6 +24,6 @@ def test_script_timeout_drops_event_with_bounded_capture(tmp_path, monkeypatch):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     script = scripts / "slow.py"
-    script.write_text('import time; time.sleep(30)')
+    script.write_text('import time; time.sleep(30)', encoding="utf-8")
     with patch("tools.environments.local.build_subprocess_env", return_value=dict(os.environ)):
         assert WebhookRouteProcessor(script_timeout_seconds=1).run_route_script(str(script), {}) == (False, None)

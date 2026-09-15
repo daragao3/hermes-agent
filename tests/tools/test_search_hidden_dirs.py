@@ -29,7 +29,7 @@ def searchable_tree(tmp_path):
     # Visible files
     visible_dir = tmp_path / "skills" / "my-skill"
     visible_dir.mkdir(parents=True)
-    (visible_dir / "SKILL.md").write_text("# My Skill\nThis is a visible document.")
+    (visible_dir / "SKILL.md").write_text("# My Skill\nThis is a visible document.", encoding="utf-8")
 
     # Hidden directory mimicking .hub/index-cache
     hub_dir = tmp_path / "skills" / ".hub" / "index-cache"
@@ -41,13 +41,13 @@ def searchable_tree(tmp_path):
     # Another hidden dir (.git)
     git_dir = tmp_path / "skills" / ".git" / "objects"
     git_dir.mkdir(parents=True)
-    (git_dir / "pack-abc.idx").write_text("git internal data")
+    (git_dir / "pack-abc.idx").write_text("git internal data", encoding="utf-8")
 
     # An arbitrary hidden directory verifies the fallback is not limited to
     # a hard-coded list of known cache names.
     private_dir = tmp_path / "skills" / ".private-index"
     private_dir.mkdir(parents=True)
-    (private_dir / "notes.txt").write_text("unlisted hidden content")
+    (private_dir / "notes.txt").write_text("unlisted hidden content", encoding="utf-8")
 
     return tmp_path / "skills"
 
@@ -65,7 +65,7 @@ class TestFindExcludesHiddenDirs:
         cmd = (
             f"find {searchable_tree} -not -path '*/.*' -type f -name '*.json'"
         )
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding="utf-8")
         assert "catalog.json" not in result.stdout
         assert ".hub" not in result.stdout
 
@@ -75,7 +75,7 @@ class TestFindExcludesHiddenDirs:
         cmd = (
             f"find {searchable_tree} -not -path '*/.*' -type f -name '*.md'"
         )
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding="utf-8")
         assert "SKILL.md" in result.stdout
 
 
@@ -198,7 +198,7 @@ class TestIgnoreFileWritten:
 
         ignore_file = tmp_path / "skills" / ".hub" / ".ignore"
         assert ignore_file.exists(), ".ignore file should be created in .hub/"
-        content = ignore_file.read_text()
+        content = ignore_file.read_text(encoding="utf-8")
         assert "*" in content, ".ignore should contain wildcard to exclude all files"
 
     def test_write_index_cache_does_not_overwrite_existing_ignore(
@@ -218,8 +218,8 @@ class TestIgnoreFileWritten:
         hub_dir = tmp_path / "skills" / ".hub"
         hub_dir.mkdir(parents=True)
         ignore_file = hub_dir / ".ignore"
-        ignore_file.write_text("# custom\ncustom-pattern\n")
+        ignore_file.write_text("# custom\ncustom-pattern\n", encoding="utf-8")
 
         hub_mod._write_index_cache("test_key", {"data": "test"})
 
-        assert ignore_file.read_text() == "# custom\ncustom-pattern\n"
+        assert ignore_file.read_text(encoding="utf-8") == "# custom\ncustom-pattern\n"

@@ -61,7 +61,7 @@ def cron_env(tmp_path, monkeypatch):
         script="probe.py",
     )
     script = hermes_home / "scripts" / "probe.py"
-    script.write_text("print('ok')\n")
+    script.write_text("print('ok')\n", encoding="utf-8")
     return {"home": hermes_home, "job_id": job["id"]}
 
 

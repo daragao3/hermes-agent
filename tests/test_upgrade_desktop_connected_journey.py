@@ -38,10 +38,10 @@ auxiliary:
   title_generation:
     enabled: false
 ''')
-    (home / '.env').write_text('MOCK_API_KEY=fixture-only\n')
+    (home / '.env').write_text('MOCK_API_KEY=fixture-only\n', encoding="utf-8")
     secondary = home / 'profiles/wave1-secondary'
     secondary.mkdir(parents=True)
-    (secondary / 'config.yaml').write_text((home / 'config.yaml').read_text())
+    (secondary / 'config.yaml').write_text((home / 'config.yaml').read_text(), encoding="utf-8")
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
         port = listener.getsockname()[1]
@@ -58,7 +58,7 @@ auxiliary:
         try:
             deadline = time.monotonic() + 75
             while time.monotonic() < deadline:
-                assert proc.poll() is None, (output / 'backend.log').read_text(errors='replace')[-6000:]
+                assert proc.poll() is None, (output / 'backend.log').read_text(errors='replace', encoding="utf-8")[-6000:]
                 try:
                     req = urllib.request.Request(url + '/api/status', headers={'X-Hermes-Session-Token':token})
                     with urllib.request.urlopen(req, timeout=2) as response:
@@ -67,17 +67,17 @@ auxiliary:
                 except OSError:
                     time.sleep(0.25)
             else:
-                pytest.fail('Owned backend readiness deadline: ' + (output / 'backend.log').read_text(errors='replace')[-6000:])
+                pytest.fail('Owned backend readiness deadline: ' + (output / 'backend.log').read_text(errors='replace', encoding="utf-8")[-6000:])
             node = root.parent / 'runtime-wave01-20260908/node/node-v24.20.0-win-x64/node.exe'
             env.update(HERMES_UPGRADE_REMOTE_URL=url,HERMES_UPGRADE_REMOTE_TOKEN=token,HERMES_UPGRADE_CONTRACTS='profile-cron')
             result = run_text_capture([str(node),str(root / 'apps/desktop/e2e/upgrade-packaged-debugger-probe.mjs'),str(output / 'desktop')],cwd=root,env=env,timeout=150)
             print(result.stdout + result.stderr,flush=True)
             assert result.returncode == 0
-            assert json.loads((output / 'desktop/result.json').read_text())['scenario'] == 'connected'
+            assert json.loads((output / 'desktop/result.json').read_text(encoding="utf-8"))['scenario'] == 'connected'
         finally:
             if proc.poll() is None:
                 kill_process_tree(proc)
             proc.wait(timeout=15)
             after = protocol_command()
-            (output / 'cleanup.json').write_text(json.dumps({'backendPid':proc.pid,'exitCode':proc.returncode,'protocolUnchanged':before==after}))
+            (output / 'cleanup.json').write_text(json.dumps({'backendPid':proc.pid,'exitCode':proc.returncode,'protocolUnchanged':before==after}), encoding="utf-8")
             assert before == after

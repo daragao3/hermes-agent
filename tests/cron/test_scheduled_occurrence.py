@@ -73,26 +73,26 @@ def test_completed_occurrence_survives_restart_and_prestamp_rollback(tmp_path, m
            'repeat': {'times': None, 'completed': 0}}
     snapshot = json.dumps({'jobs': [job]})
     store = cron / 'jobs.json'
-    store.write_text(snapshot)
+    store.write_text(snapshot, encoding="utf-8")
     _fire(home, mode)
-    assert effect.read_text().splitlines() == ['effect']
-    store.write_text(snapshot)  # no last_dispatch stamp, no post-completion fields
+    assert effect.read_text(encoding="utf-8").splitlines() == ['effect']
+    store.write_text(snapshot, encoding="utf-8")  # no last_dispatch stamp, no post-completion fields
     _fire(home, mode)  # a fresh interpreter, same authoritative ledger
-    assert effect.read_text().splitlines() == ['effect'], 'completed occurrence executed twice'
+    assert effect.read_text(encoding="utf-8").splitlines() == ['effect'], 'completed occurrence executed twice'
 
     # A different missed slot must remain runnable despite the completed row.
     job['next_run_at'] = (now() - timedelta(minutes=10)).isoformat()
-    store.write_text(json.dumps({'jobs': [job]}))
+    store.write_text(json.dumps({'jobs': [job]}), encoding="utf-8")
     _fire(home, mode)
-    assert len(effect.read_text().splitlines()) == 2
+    assert len(effect.read_text(encoding="utf-8").splitlines()) == 2
     # Manual force is not a completion of the pending scheduled slot.
     job['next_run_at'] = (now() - timedelta(minutes=5)).isoformat()
     pending = json.dumps({'jobs': [job]})
-    store.write_text(pending)
+    store.write_text(pending, encoding="utf-8")
     _fire(home, 'manual')
-    store.write_text(pending)
+    store.write_text(pending, encoding="utf-8")
     _fire(home, mode)
-    assert len(effect.read_text().splitlines()) == 4
+    assert len(effect.read_text(encoding="utf-8").splitlines()) == 4
 
 
 def test_ledger_migration_and_completion_identity(tmp_path, monkeypatch):

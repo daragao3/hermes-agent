@@ -276,7 +276,7 @@ def test_zip_overlay_flag_is_valid_against_real_git(tmp_path):
     ignored user files.
     """
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    (tmp_path / ".gitignore").write_text("*.local\nvenv/\n")
+    (tmp_path / ".gitignore").write_text("*.local\nvenv/\n", encoding="utf-8")
     subprocess.run(
         ["git", "-C", str(tmp_path), "add", ".gitignore"], check=True
     )
@@ -291,13 +291,13 @@ def test_zip_overlay_flag_is_valid_against_real_git(tmp_path):
     # Clean tree: guard must pass (flag valid, no false refusal).
     assert update_cmd._zip_overlay_block_reason(tmp_path) is None
     # Ignored user file: guard must block.
-    (tmp_path / "data.local").write_text("x")
+    (tmp_path / "data.local").write_text("x", encoding="utf-8")
     reason = update_cmd._zip_overlay_block_reason(tmp_path)
     assert reason is not None
     # Ignored preserved entry: still no refusal.
     (tmp_path / "data.local").unlink()
     (tmp_path / "venv").mkdir()
-    (tmp_path / "venv" / "lib.py").write_text("x")
+    (tmp_path / "venv" / "lib.py").write_text("x", encoding="utf-8")
     assert update_cmd._zip_overlay_block_reason(tmp_path) is None
 
 

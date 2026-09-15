@@ -472,7 +472,7 @@ class TestOrphanedPipeReconciliation:
             ["sh", "-c", "exec 1>&2; ( sleep 30 ) & disown; exit 0"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,
+            preexec_fn=os.setsid,  # windows-footgun: ok -- POSIX-only class (class-level skip off POSIX)
         )
 
         s = _make_session(sid="proc_orphan_test")
@@ -502,7 +502,7 @@ class TestOrphanedPipeReconciliation:
 
         # Clean up the orphaned descendant.
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # windows-footgun: ok -- POSIX-only class (class-level skip off POSIX)
         except (ProcessLookupError, PermissionError):
             pass
 
@@ -512,7 +512,7 @@ class TestOrphanedPipeReconciliation:
             ["sh", "-c", "( sleep 30 ) & disown; exit 0"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,
+            preexec_fn=os.setsid,  # windows-footgun: ok -- POSIX-only class (class-level skip off POSIX)
         )
 
         s = _make_session(sid="proc_wait_orphan")
@@ -532,7 +532,7 @@ class TestOrphanedPipeReconciliation:
         )
 
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # windows-footgun: ok -- POSIX-only class (class-level skip off POSIX)
         except (ProcessLookupError, PermissionError):
             pass
 
@@ -1216,7 +1216,7 @@ class TestCheckpoint:
             registry._running[s.id] = s
             registry._write_checkpoint()
 
-            data = json.loads((tmp_path / "procs.json").read_text())
+            data = json.loads((tmp_path / "procs.json").read_text(encoding="utf-8"))
             assert len(data) == 1
             assert data[0]["session_id"] == s.id
 
@@ -1296,7 +1296,7 @@ class TestCheckpoint:
             registry._running[s.id] = s
             registry._write_checkpoint()
 
-            data = json.loads((tmp_path / "procs.json").read_text())
+            data = json.loads((tmp_path / "procs.json").read_text(encoding="utf-8"))
             assert len(data) == 1
             assert data[0]["watcher_platform"] == "telegram"
             assert data[0]["watcher_chat_id"] == "999"
@@ -1345,7 +1345,7 @@ class TestCheckpoint:
             "host_start_time": 123.0,
             "systemd_unit": "hermes-worker-proc_dead_scope.scope",
         }
-        checkpoint.write_text(json.dumps([entry]))
+        checkpoint.write_text(json.dumps([entry]), encoding="utf-8")
         monkeypatch.setattr(registry, "_host_pid_is_ours", lambda *_args: False)
         monkeypatch.setattr(registry, "_is_host_pid_alive", lambda *_args: False)
 
@@ -1355,7 +1355,7 @@ class TestCheckpoint:
             assert registry.recover_from_checkpoint() == 0
 
         stop_unit.assert_called_once_with(entry["systemd_unit"])
-        assert json.loads(checkpoint.read_text()) == [entry]
+        assert json.loads(checkpoint.read_text(encoding="utf-8")) == [entry]
 
     def test_recover_dead_wrapper_drops_reaped_systemd_scope(
         self, registry, tmp_path, monkeypatch
@@ -1369,7 +1369,7 @@ class TestCheckpoint:
             "host_start_time": 123.0,
             "systemd_unit": "hermes-worker-proc_dead_scope.scope",
         }
-        checkpoint.write_text(json.dumps([entry]))
+        checkpoint.write_text(json.dumps([entry]), encoding="utf-8")
         monkeypatch.setattr(registry, "_host_pid_is_ours", lambda *_args: False)
         monkeypatch.setattr(registry, "_is_host_pid_alive", lambda *_args: False)
 
@@ -1379,7 +1379,7 @@ class TestCheckpoint:
             assert registry.recover_from_checkpoint() == 0
 
         stop_unit.assert_called_once_with(entry["systemd_unit"])
-        assert json.loads(checkpoint.read_text()) == []
+        assert json.loads(checkpoint.read_text(encoding="utf-8")) == []
 
 
     def test_recovery_skips_explicit_sandbox_backed_entries(self, registry, tmp_path):
@@ -1391,14 +1391,14 @@ class TestCheckpoint:
             "task_id": "t1",
             "pid_scope": "sandbox",
         }]
-        checkpoint.write_text(json.dumps(original))
+        checkpoint.write_text(json.dumps(original), encoding="utf-8")
 
         with patch("tools.process_registry.CHECKPOINT_PATH", checkpoint):
             recovered = registry.recover_from_checkpoint()
             assert recovered == 0
             assert registry.get("proc_remote") is None
 
-            data = json.loads(checkpoint.read_text())
+            data = json.loads(checkpoint.read_text(encoding="utf-8"))
             assert data == []
 
     def test_checkpoint_redacts_command_with_inline_secret(self, registry, tmp_path):
@@ -1416,7 +1416,7 @@ class TestCheckpoint:
             registry._running[s.id] = s
             registry._write_checkpoint()
 
-            data = json.loads(checkpoint.read_text())
+            data = json.loads(checkpoint.read_text(encoding="utf-8"))
             assert data[0]["session_id"] == "proc_secret"
             assert secret not in data[0]["command"]
             assert data[0]["command"] != command
@@ -2092,7 +2092,7 @@ class TestSigkillEscalation:
         finally:
             for p in all_pids:
                 try:
-                    os.kill(p, signal.SIGKILL)
+                    os.kill(p, signal.SIGKILL)  # windows-footgun: ok -- POSIX-only class (class-level skip off POSIX)
                 except (ProcessLookupError, PermissionError, OSError):
                     pass
             parent.wait()
@@ -2199,7 +2199,7 @@ class TestReaderLoopOrphanedPipe:
             text=True,
             encoding="utf-8",
             errors="replace",
-            preexec_fn=os.setsid,
+            preexec_fn=os.setsid,  # windows-footgun: ok -- POSIX-only class (class-level skip off POSIX)
         )
         s = _make_session(sid="proc_orphan_reader")
         s.process = proc
@@ -2229,7 +2229,7 @@ class TestReaderLoopOrphanedPipe:
             assert s.id in registry._finished
         finally:
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # windows-footgun: ok -- POSIX-only class (class-level skip off POSIX)
             except (ProcessLookupError, PermissionError):
                 pass
 
@@ -2243,7 +2243,7 @@ class TestReaderLoopOrphanedPipe:
             text=True,
             encoding="utf-8",
             errors="replace",
-            preexec_fn=os.setsid,
+            preexec_fn=os.setsid,  # windows-footgun: ok -- POSIX-only class (class-level skip off POSIX)
         )
         s = _make_session(sid="proc_orphan_notify")
         s.process = proc
@@ -2270,7 +2270,7 @@ class TestReaderLoopOrphanedPipe:
             assert item["exit_code"] == 0
         finally:
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # windows-footgun: ok -- POSIX-only class (class-level skip off POSIX)
             except (ProcessLookupError, PermissionError):
                 pass
 
@@ -2557,11 +2557,13 @@ class TestSystemdCgroupIsolation:
         broken_reader = MagicMock()
         broken_reader.start.side_effect = RuntimeError("reader failed")
 
-        with patch("subprocess.Popen", return_value=fake_proc), \
-            patch("threading.Thread", return_value=broken_reader), \
-            patch("tools.process_registry._stop_systemd_unit", return_value=True) as stop_unit, \
-            patch("os.killpg") as killpg, \
-            patch.object(registry, "_write_checkpoint"):
+        with (
+            patch("subprocess.Popen", return_value=fake_proc),
+            patch("threading.Thread", return_value=broken_reader),
+            patch("tools.process_registry._stop_systemd_unit", return_value=True) as stop_unit,
+            patch("os.killpg") as killpg,  # windows-footgun: ok -- patch target name, never invoked on Windows
+            patch.object(registry, "_write_checkpoint"),
+        ):
             with pytest.raises(RuntimeError, match="reader failed"):
                 registry.spawn_local("echo hello", cwd="/tmp")
 

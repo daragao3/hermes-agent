@@ -186,7 +186,7 @@ def test_single_profile_scoped_load_keeps_override_behavior(tmp_path, monkeypatc
     monkeypatch.delenv("HERMES_TEST_SHARED_ADAPTER_CONFIG", raising=False)
     other_home = tmp_path / "other"
     other_home.mkdir()
-    (other_home / ".env").write_text("HERMES_TEST_SHARED_ADAPTER_CONFIG=second\n")
+    (other_home / ".env").write_text("HERMES_TEST_SHARED_ADAPTER_CONFIG=second\n", encoding="utf-8")
 
     was_active = secret_scope.is_multiplex_active()
     secret_scope.set_multiplex_active(False)

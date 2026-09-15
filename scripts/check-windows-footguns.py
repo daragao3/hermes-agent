@@ -859,17 +859,23 @@ def get_diff_files(ref: str) -> list[Path]:
 # exited 1. An allowlist fails toward a false green every time a package is
 # added; a denylist fails toward noise, which someone actually notices.
 #
-# The two entries below are a MEASURED backlog, not an exemption on principle:
-# 2996 findings on 2026-09-14 (tests/ 2888, evals/ 108), 2771 of them a bare
-# Path.read_text()/write_text() without encoding=. That is a triage job, not
-# something to land inside a coverage fix, so it is deferred EXPLICITLY here
-# rather than deferred invisibly by an allowlist that forgot about it.
+# This set is now EMPTY, and keeping it empty is the point. It briefly held
+# {"tests", "evals"} to defer a measured backlog -- 2996 findings on
+# 2026-09-14 (tests/ 2888, evals/ 108), 2771 of them a bare
+# Path.read_text()/write_text() without encoding=. That backlog was worked to
+# zero on 2026-09-15: ~2800 mechanical `encoding="utf-8"` insertions, 93
+# inline suppression markers (each mutation-checked to be load-bearing), one
+# missing platform skip on tests/tools/test_local_setsid_descendant_sweep.py,
+# and one real bug -- tests/tools/test_zombie_process_cleanup.py probed
+# liveness with `os.kill(pid, 0)` from a module carrying no platform skip, so
+# on Windows the probe broadcast Ctrl+C to the target's console process group
+# instead of asking a question.
 #
-# Nothing gates it today: lint.yml runs this script ONLY as `--all`, so test
-# code has never been covered by the blocking job (checked 2026-09-14). The
-# `--diff` and staged-file modes do scan tests when pointed at them. Pass
-# --include-tests to see the whole backlog.
-ALL_SCAN_SKIP_TOP_LEVEL = {"tests", "evals"}
+# Re-adding an entry here re-opens the same hole the git-derived file list was
+# written to close, so tests/scripts/test_windows_footguns_full_repo_scan.py
+# pins it empty. `--all` now covers tests/ and evals/, and `--include-tests`
+# is retained as a no-op for callers that still pass it.
+ALL_SCAN_SKIP_TOP_LEVEL: set[str] = set()
 
 
 def get_all_scan_files(include_tests: bool = False) -> list[Path]:
@@ -938,13 +944,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument(
         "--all",
         action="store_true",
-        help="Scan every tracked Python file (excluding tests/ and evals/ — "
-             "see --include-tests).",
+        help="Scan every tracked Python file, tests/ and evals/ included.",
     )
     p.add_argument(
         "--include-tests",
         action="store_true",
-        help="With --all, also scan tests/ and evals/ (a large known backlog).",
+        help="No-op since the tests/evals backlog reached zero; --all already "
+             "covers them. Kept so existing callers keep working.",
     )
     p.add_argument(
         "--diff",

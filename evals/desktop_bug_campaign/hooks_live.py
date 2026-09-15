@@ -66,13 +66,13 @@ for label in ['default', 'alpha', 'beta', 'unapproved']:
     h = home if label == 'default' else home / 'profiles' / label
     h.mkdir(parents=True, exist_ok=True)
     hook = h / 'guard.py'
-    hook.write_text('import json,sys\nfrom pathlib import Path\npayload=json.load(sys.stdin)\nwith Path(' + repr(str(out / (label + '-hooks.jsonl'))) + ').open("a") as f: f.write(json.dumps(payload)+"\\n")\nprint(json.dumps({"decision":"block","reason":' + repr('guard-' + label) + '}))\n')
+    hook.write_text('import json,sys\nfrom pathlib import Path\npayload=json.load(sys.stdin)\nwith Path(' + repr(str(out / (label + '-hooks.jsonl'))) + ').open("a") as f: f.write(json.dumps(payload)+"\\n")\nprint(json.dumps({"decision":"block","reason":' + repr('guard-' + label) + '}))\n', encoding="utf-8")
     cfg = {'model': {'default': 'fixture-model', 'provider': 'custom', 'base_url': f'http://127.0.0.1:{a.port+1}/v1', 'api_key': 'fixture-key'},
            'hooks_auto_accept': label != 'unapproved', 'hooks': {'pre_tool_call': [{'command': shlex.join([sys.executable, str(hook)]), 'matcher': a.tool, 'fail_closed': True}]},
            'toolsets': ['file', 'terminal'], 'agent': {'max_turns': 3}, 'memory': {'memory_enabled': False, 'user_profile_enabled': False},
            'curator': {'enabled': False}, 'compression': {'enabled': False}, 'terminal': {'cwd': str(out)}}
-    (h / 'config.yaml').write_text(yaml.safe_dump(cfg))
-    (h / '.env').write_text('OPENAI_API_KEY=fixture-key\nOPENAI_BASE_URL=http://127.0.0.1:' + str(a.port+1) + '/v1\n')
+    (h / 'config.yaml').write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    (h / '.env').write_text('OPENAI_API_KEY=fixture-key\nOPENAI_BASE_URL=http://127.0.0.1:' + str(a.port+1) + '/v1\n', encoding="utf-8")
 env = {k: v for k, v in os.environ.items() if not (k.startswith('HERMES_') or k.endswith(('_API_KEY', '_TOKEN')))}
 env.update(HOME=str(out / 'os-home'), HERMES_HOME=str(home), HERMES_DASHBOARD_SESSION_TOKEN='hooks-fixture-token', HERMES_IGNORE_RULES='1', PYTHONPATH=str(a.repo))
 cmd = [sys.executable, '-m', 'hermes_cli.main', 'serve', '--host', '127.0.0.1', '--port', str(a.port), '--skip-build']
@@ -105,7 +105,7 @@ try:
                 return event['result']
     for label in ['default', 'alpha', 'beta', 'alpha', 'unapproved']:
         hook_log = out / (label + '-hooks.jsonl')
-        calls_before = len(hook_log.read_text().splitlines()) if hook_log.exists() else 0
+        calls_before = len(hook_log.read_text(encoding="utf-8").splitlines()) if hook_log.exists() else 0
         session = rpc('session.create', {'source': 'gui', 'profile': '' if label == 'default' else label, 'cwd': str(out)})
         sid = session['session_id']
         rpc('prompt.submit', {'session_id': sid, 'text': f'{label} probe: write the protected file'})
@@ -119,7 +119,7 @@ try:
                 completed = data.get('payload', {}).get('status') == 'complete'
                 break
         assert completed, f'{label}: no successful completion for {sid}'
-        results.append({'profile': label, 'written': (out / (label + '-protected.txt')).exists(), 'hook_calls': len(hook_log.read_text().splitlines()) if hook_log.exists() else 0, 'hook_calls_before': calls_before})
+        results.append({'profile': label, 'written': (out / (label + '-protected.txt')).exists(), 'hook_calls': len(hook_log.read_text(encoding="utf-8").splitlines()) if hook_log.exists() else 0, 'hook_calls_before': calls_before})
         print(results[-1], flush=True)
     ws.close()
     assert all(not row['written'] and row['hook_calls'] - row['hook_calls_before'] == 1 for row in results if row['profile'] != 'unapproved'), 'consented profile hook did not protect the tool exactly once'
@@ -132,8 +132,8 @@ finally:
         proc.kill()
         proc.wait()
     provider.shutdown()
-    (out / 'events.json').write_text(json.dumps(events, indent=2))
-    (out / 'requests.json').write_text(json.dumps(requests, indent=2))
-    receipt = {'sha': subprocess.check_output(['git', '-C', str(a.repo), 'rev-parse', 'HEAD'], stdin=subprocess.DEVNULL, text=True).strip(), 'source_blob': subprocess.check_output(['git', '-C', str(a.repo), 'hash-object', 'tui_gateway/server.py'], stdin=subprocess.DEVNULL, text=True).strip(), 'tool': a.tool, 'process_exit': proc.returncode, 'command': cmd, 'results': results, 'provider_requests': len(requests)}
-    (out / 'receipt.json').write_text(json.dumps(receipt, indent=2))
+    (out / 'events.json').write_text(json.dumps(events, indent=2), encoding="utf-8")
+    (out / 'requests.json').write_text(json.dumps(requests, indent=2), encoding="utf-8")
+    receipt = {'sha': subprocess.check_output(['git', '-C', str(a.repo), 'rev-parse', 'HEAD'], stdin=subprocess.DEVNULL, text=True, encoding="utf-8").strip(), 'source_blob': subprocess.check_output(['git', '-C', str(a.repo), 'hash-object', 'tui_gateway/server.py'], stdin=subprocess.DEVNULL, text=True, encoding="utf-8").strip(), 'tool': a.tool, 'process_exit': proc.returncode, 'command': cmd, 'results': results, 'provider_requests': len(requests)}
+    (out / 'receipt.json').write_text(json.dumps(receipt, indent=2), encoding="utf-8")
     print(json.dumps(receipt, indent=2))

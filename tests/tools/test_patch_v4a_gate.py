@@ -68,7 +68,7 @@ class TestPatchV4AGate(unittest.TestCase):
         sessions whose schema never advertised it."""
         work = tempfile.mkdtemp(prefix="v4a_t_")
         f1 = os.path.join(work, "a.txt")
-        open(f1, "w").write("alpha beta\n")
+        open(f1, "w", encoding="utf-8").write("alpha beta\n")
         r = json.loads(ft.patch_tool(path=f1, old_string="beta", new_string="B"))
         self.assertFalse(r.get("error"), r)
         v4a = (
@@ -78,7 +78,7 @@ class TestPatchV4AGate(unittest.TestCase):
         )
         r = json.loads(ft.patch_tool(mode="patch", patch=v4a))
         self.assertFalse(r.get("error"), r)
-        self.assertEqual(open(f1).read().strip(), "A B")
+        self.assertEqual(open(f1, encoding="utf-8").read().strip(), "A B")
 
 
 if __name__ == "__main__":

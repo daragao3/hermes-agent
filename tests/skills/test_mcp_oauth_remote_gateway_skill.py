@@ -62,7 +62,7 @@ def _write_token_files(tokens_dir: Path, server="stripe", resource="https://mcp.
     }
     if refresh_token is None:
         del tok["refresh_token"]
-    (tokens_dir / f"{server}.json").write_text(json.dumps(tok))
+    (tokens_dir / f"{server}.json").write_text(json.dumps(tok), encoding="utf-8")
     (tokens_dir / f"{server}.client.json").write_text(
         json.dumps({"client_id": "cid-1", "token_endpoint_auth_method": "none"})
     )
@@ -150,7 +150,7 @@ def test_refresh_fixed_write_persists_atomically(tmp_path):
             [_init_revoked_error(), FakeResponse(200, refreshed), FakeResponse(200, _init_ok_body())],
         )
     assert "BRANCH=REFRESH_FIXED" in out
-    on_disk = json.loads((tokens_dir / "stripe.json").read_text())
+    on_disk = json.loads((tokens_dir / "stripe.json").read_text(encoding="utf-8"))
     assert on_disk["access_token"] == "at-new"
     assert on_disk["refresh_token"] == "rt-rotated"
     assert on_disk["scope"] == "read write"
@@ -185,7 +185,7 @@ def test_requests_send_httpx_user_agent(tmp_path):
 
 def test_skill_md_frontmatter_invariants():
     yaml = pytest.importorskip("yaml")
-    content = SKILL_MD.read_text()
+    content = SKILL_MD.read_text(encoding="utf-8")
     assert content.startswith("---\n")
     fm = yaml.safe_load(re.search(r"^---\n(.*?)\n---", content, re.DOTALL).group(1))
     assert len(fm["description"]) <= 60

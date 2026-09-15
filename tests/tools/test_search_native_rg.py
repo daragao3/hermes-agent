@@ -19,10 +19,10 @@ from tools.file_operations import ShellFileOperations
 
 @pytest.fixture
 def tree(tmp_path):
-    (tmp_path / "a.py").write_text("needle one\nplain\nneedle two\n")
-    (tmp_path / "b.txt").write_text("needle three\n")
+    (tmp_path / "a.py").write_text("needle one\nplain\nneedle two\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("needle three\n", encoding="utf-8")
     (tmp_path / "sub").mkdir()
-    (tmp_path / "sub" / "c.py").write_text("needle four\n")
+    (tmp_path / "sub" / "c.py").write_text("needle four\n", encoding="utf-8")
     return tmp_path
 
 

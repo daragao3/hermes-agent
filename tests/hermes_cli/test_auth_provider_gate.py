@@ -8,13 +8,13 @@ def _write_config(tmp_path, config: dict) -> None:
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir(parents=True, exist_ok=True)
     import yaml
-    (hermes_home / "config.yaml").write_text(yaml.dump(config))
+    (hermes_home / "config.yaml").write_text(yaml.dump(config), encoding="utf-8")
 
 
 def _write_auth_store(tmp_path, payload: dict) -> None:
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir(parents=True, exist_ok=True)
-    (hermes_home / "auth.json").write_text(json.dumps(payload, indent=2))
+    (hermes_home / "auth.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 @pytest.fixture(autouse=True)
@@ -88,7 +88,7 @@ def test_vertex_ambient_google_creds_env_does_not_count_as_explicit(tmp_path, mo
 
     # A real, existing SA file pointed to ONLY by the ambient Google var.
     sa = tmp_path / "adc.json"
-    sa.write_text("{}")
+    sa.write_text("{}", encoding="utf-8")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(sa))
 
     from hermes_cli.auth import is_provider_explicitly_configured
@@ -108,7 +108,7 @@ def test_vertex_credentials_path_must_be_readable_file(tmp_path, monkeypatch):
 
     # Valid readable file -> True
     sa_file = tmp_path / "vertex_sa.json"
-    sa_file.write_text("{}")
+    sa_file.write_text("{}", encoding="utf-8")
     monkeypatch.setenv("VERTEX_CREDENTIALS_PATH", str(sa_file))
     assert is_provider_explicitly_configured("vertex") is True
 

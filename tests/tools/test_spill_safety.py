@@ -55,12 +55,12 @@ def test_ensure_spill_dir_refuses_symlinked_leaf(tmp_path):
 def test_refuses_planted_symlink(tmp_path):
     """The core attack: symlink at the spill path must fail, not redirect."""
     victim = tmp_path / "victim.txt"
-    victim.write_text("original")
+    victim.write_text("original", encoding="utf-8")
     target = tmp_path / "spill.txt"
     target.symlink_to(victim)
     with pytest.raises(OSError):
         write_text_exclusive(target, "attacker-controlled")
-    assert victim.read_text() == "original"
+    assert victim.read_text(encoding="utf-8") == "original"
 
 
 def test_refuses_dangling_symlink(tmp_path):
@@ -73,19 +73,19 @@ def test_refuses_dangling_symlink(tmp_path):
 
 def test_overwrite_removes_symlink_not_its_target(tmp_path):
     victim = tmp_path / "victim.txt"
-    victim.write_text("original")
+    victim.write_text("original", encoding="utf-8")
     target = tmp_path / "spill.txt"
     target.symlink_to(victim)
     write_text_exclusive(target, "redacted copy", overwrite=True)
     # Link replaced by a real file; the link's target untouched.
     assert not target.is_symlink()
     assert target.read_text(encoding="utf-8") == "redacted copy"
-    assert victim.read_text() == "original"
+    assert victim.read_text(encoding="utf-8") == "original"
 
 
 def test_overwrite_replaces_regular_file(tmp_path):
     target = tmp_path / "spill.txt"
-    target.write_text("raw")
+    target.write_text("raw", encoding="utf-8")
     write_text_exclusive(target, "redacted", overwrite=True)
     assert target.read_text(encoding="utf-8") == "redacted"
 
@@ -100,10 +100,10 @@ def test_overwrite_refuses_directory(tmp_path):
 
 def test_exclusive_create_fails_on_existing_without_overwrite(tmp_path):
     target = tmp_path / "spill.txt"
-    target.write_text("first")
+    target.write_text("first", encoding="utf-8")
     with pytest.raises(OSError):
         write_text_exclusive(target, "second")
-    assert target.read_text() == "first"
+    assert target.read_text(encoding="utf-8") == "first"
 
 
 def test_open_exclusive_streaming_write(tmp_path):

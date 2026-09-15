@@ -123,7 +123,7 @@ def test_dangling_reference_link_flagged(tmp_path):
 def test_present_reference_link_not_flagged(tmp_path):
     skill_dir = tmp_path / "my-skill"
     (skill_dir / "references").mkdir(parents=True)
-    (skill_dir / "references" / "detail.md").write_text("x")
+    (skill_dir / "references" / "detail.md").write_text("x", encoding="utf-8")
     content = CLEAN + "\nSee references/detail.md for detail.\n"
     findings = lint_content(content, skill_dir=skill_dir)
     assert "dangling-reference" not in _rules(findings)
@@ -132,7 +132,7 @@ def test_present_reference_link_not_flagged(tmp_path):
 def test_posix_primitive_without_platforms_warns(tmp_path):
     skill_dir = tmp_path / "my-skill"
     (skill_dir / "scripts").mkdir(parents=True)
-    (skill_dir / "scripts" / "run.py").write_text("import fcntl\nfcntl.flock(1, 2)\n")
+    (skill_dir / "scripts" / "run.py").write_text("import fcntl\nfcntl.flock(1, 2)\n", encoding="utf-8")
     findings = lint_content(CLEAN, skill_dir=skill_dir)
     assert "platforms-gating" in _rules(findings)
 
@@ -140,7 +140,7 @@ def test_posix_primitive_without_platforms_warns(tmp_path):
 def test_posix_primitive_with_platforms_ok(tmp_path):
     skill_dir = tmp_path / "my-skill"
     (skill_dir / "scripts").mkdir(parents=True)
-    (skill_dir / "scripts" / "run.py").write_text("import fcntl\n")
+    (skill_dir / "scripts" / "run.py").write_text("import fcntl\n", encoding="utf-8")
     content = CLEAN.replace(
         "version: 1.0.0", "version: 1.0.0\nplatforms: [linux, macos]"
     )
@@ -151,7 +151,7 @@ def test_posix_primitive_with_platforms_ok(tmp_path):
 def test_forbidden_file_flagged(tmp_path):
     skill_dir = tmp_path / "my-skill"
     skill_dir.mkdir()
-    (skill_dir / "README.md").write_text("# readme")
+    (skill_dir / "README.md").write_text("# readme", encoding="utf-8")
     findings = lint_content(CLEAN, skill_dir=skill_dir)
     assert "forbidden-file" in _rules(findings)
 
@@ -168,7 +168,7 @@ def test_lint_skill_reads_from_disk(tmp_path):
     skill_dir = tmp_path / "my-skill"
     skill_dir.mkdir()
     skill_md = skill_dir / "SKILL.md"
-    skill_md.write_text(CLEAN)
+    skill_md.write_text(CLEAN, encoding="utf-8")
     findings = lint_skill(skill_md)
     assert findings == []
 
@@ -205,8 +205,8 @@ def test_references_sprawl_flagged_above_cap(tmp_path):
     refs = skill_dir / "references"
     refs.mkdir(parents=True)
     for i in range(_MAX_REFERENCE_FILES + 1):
-        (refs / f"note-{i}.md").write_text("x")
-    (skill_dir / "SKILL.md").write_text(CLEAN)
+        (refs / f"note-{i}.md").write_text("x", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(CLEAN, encoding="utf-8")
     assert "references-sprawl" in _rules(lint_skill(skill_dir / "SKILL.md"))
     (refs / f"note-{_MAX_REFERENCE_FILES}.md").unlink()
     assert "references-sprawl" not in _rules(lint_skill(skill_dir / "SKILL.md"))

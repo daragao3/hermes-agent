@@ -14,7 +14,7 @@ def project_env(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     (home / "skills").mkdir(parents=True)
     config = home / "config.yaml"
-    config.write_text("skills:\n  external_dirs: []\n")
+    config.write_text("skills:\n  external_dirs: []\n", encoding="utf-8")
 
     repo = tmp_path / "proj"
     (repo / ".git").mkdir(parents=True)
@@ -51,7 +51,7 @@ class TestFindProjectRoot:
         # Worktrees/submodules have a .git FILE, not a dir
         repo = tmp_path / "wt"
         repo.mkdir()
-        (repo / ".git").write_text("gitdir: /elsewhere\n")
+        (repo / ".git").write_text("gitdir: /elsewhere\n", encoding="utf-8")
         monkeypatch.chdir(repo)
         assert su.find_project_root() == repo.resolve()
 
@@ -101,7 +101,7 @@ class TestTrustGate:
     def test_no_skills_no_notice(self, tmp_path, monkeypatch):
         home = tmp_path / ".hermes"
         (home / "skills").mkdir(parents=True)
-        (home / "config.yaml").write_text("skills: {}\n")
+        (home / "config.yaml").write_text("skills: {}\n", encoding="utf-8")
         repo = tmp_path / "empty-proj"
         (repo / ".git").mkdir(parents=True)
         monkeypatch.setenv("HERMES_HOME", str(home))

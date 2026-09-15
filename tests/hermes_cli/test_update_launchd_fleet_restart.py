@@ -41,7 +41,7 @@ from hermes_cli.update_cmd import (
 
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32",
-    reason="launchd fleet restart is macOS-only; helpers use POSIX os.getuid",
+    reason="launchd fleet restart is macOS-only; helpers use POSIX os.getuid",  # windows-footgun: ok -- prose in a skip reason, not a call
 )
 
 UID = 501
@@ -265,7 +265,7 @@ def _fleet(monkeypatch, tmp_path, *, current, labels, located,
 
     plist = tmp_path / f"{current}.plist"
     if plist_exists:
-        plist.write_text("<plist/>")
+        plist.write_text("<plist/>", encoding="utf-8")
 
     def fake_locate(label):
         rec.locates.append(label)

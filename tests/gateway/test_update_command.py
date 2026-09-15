@@ -141,7 +141,7 @@ class TestHandleUpdateCommand:
 
         pending_path = hermes_home / ".update_pending.json"
         assert pending_path.exists()
-        data = json.loads(pending_path.read_text())
+        data = json.loads(pending_path.read_text(encoding="utf-8"))
         assert data["platform"] == "telegram"
         assert data["chat_id"] == "99999"
         assert data["chat_type"] == "dm"
@@ -291,7 +291,7 @@ class TestSendUpdateNotification:
         pending_path.write_text(json.dumps({
             "platform": "telegram", "chat_id": "67890", "user_id": "12345",
         }))
-        (hermes_home / ".update_output.txt").write_text("still running")
+        (hermes_home / ".update_output.txt").write_text("still running", encoding="utf-8")
 
         mock_adapter = AsyncMock()
         runner.adapters = {Platform.TELEGRAM: mock_adapter}
@@ -314,8 +314,8 @@ class TestSendUpdateNotification:
         claimed_path.write_text(json.dumps({
             "platform": "telegram", "chat_id": "67890", "user_id": "12345",
         }))
-        (hermes_home / ".update_output.txt").write_text("done")
-        (hermes_home / ".update_exit_code").write_text("0")
+        (hermes_home / ".update_output.txt").write_text("done", encoding="utf-8")
+        (hermes_home / ".update_exit_code").write_text("0", encoding="utf-8")
 
         mock_adapter = AsyncMock()
         runner.adapters = {Platform.TELEGRAM: mock_adapter}
@@ -341,11 +341,11 @@ class TestSendUpdateNotification:
             "user_id": "12345",
             "timestamp": "2026-03-04T21:00:00",
         }
-        (hermes_home / ".update_pending.json").write_text(json.dumps(pending))
+        (hermes_home / ".update_pending.json").write_text(json.dumps(pending), encoding="utf-8")
         (hermes_home / ".update_output.txt").write_text(
             "→ Found 3 new commit(s)\n✓ Code updated!\n✓ Update complete!"
         )
-        (hermes_home / ".update_exit_code").write_text("0")
+        (hermes_home / ".update_exit_code").write_text("0", encoding="utf-8")
 
         # Mock the adapter
         mock_adapter = AsyncMock()
@@ -374,8 +374,8 @@ class TestSendUpdateNotification:
         pending_path.write_text(json.dumps({
             "platform": "telegram", "chat_id": "111", "user_id": "222",
         }))
-        output_path.write_text("✓ Done")
-        exit_code_path.write_text("0")
+        output_path.write_text("✓ Done", encoding="utf-8")
+        exit_code_path.write_text("0", encoding="utf-8")
 
         # Adapter send raises
         mock_adapter = AsyncMock()
@@ -408,9 +408,9 @@ class TestSendUpdateNotification:
         pending_path = hermes_home / ".update_pending.json"
         output_path = hermes_home / ".update_output.txt"
         exit_code_path = hermes_home / ".update_exit_code"
-        pending_path.write_text(json.dumps(pending))
-        output_path.write_text("Done")
-        exit_code_path.write_text("0")
+        pending_path.write_text(json.dumps(pending), encoding="utf-8")
+        output_path.write_text("Done", encoding="utf-8")
+        exit_code_path.write_text("0", encoding="utf-8")
 
         # Only telegram adapter available, but pending says discord
         mock_adapter = AsyncMock()
@@ -446,9 +446,9 @@ class TestSendUpdateNotification:
         pending_path = hermes_home / ".update_pending.json"
         output_path = hermes_home / ".update_output.txt"
         exit_code_path = hermes_home / ".update_exit_code"
-        pending_path.write_text(json.dumps(pending))
-        output_path.write_text("✓ Update complete!")
-        exit_code_path.write_text("0")
+        pending_path.write_text(json.dumps(pending), encoding="utf-8")
+        output_path.write_text("✓ Update complete!", encoding="utf-8")
+        exit_code_path.write_text("0", encoding="utf-8")
 
         # First pass: target platform (discord) is still offline → defer.
         with patch("gateway.run._hermes_home", hermes_home):
@@ -485,9 +485,9 @@ class TestSendUpdateNotification:
         pending_path = hermes_home / ".update_pending.json"
         output_path = hermes_home / ".update_output.txt"
         exit_code_path = hermes_home / ".update_exit_code"
-        pending_path.write_text(json.dumps(pending))
+        pending_path.write_text(json.dumps(pending), encoding="utf-8")
         output_path.write_bytes(b"ok before\ninvalid byte: \x96\ncontinued after\n")
-        exit_code_path.write_text("0")
+        exit_code_path.write_text("0", encoding="utf-8")
 
         mock_adapter = AsyncMock()
         runner.adapters = {Platform.DISCORD: mock_adapter}
@@ -545,7 +545,7 @@ class TestWatchUpdateProgress:
         (hermes_home / ".update_output.txt").write_bytes(
             b"ok before\n\xe2\x9c invalid-continuation: \x96\ncontinued after\n"
         )
-        (hermes_home / ".update_exit_code").write_text("0")
+        (hermes_home / ".update_exit_code").write_text("0", encoding="utf-8")
 
         mock_adapter = AsyncMock()
         runner.adapters = {Platform.TELEGRAM: mock_adapter}

@@ -47,5 +47,5 @@ for arg in command_args:
                  'contract': contract.to_dict() if contract else None,
                  'prompt_count': len(prompts), 'prompts': prompts,
                  'output': '\n'.join(printed).replace(str(os.getpid()), '<PID>')})
-out.write_text(json.dumps(rows, indent=2, default=str))
+out.write_text(json.dumps(rows, indent=2, default=str), encoding="utf-8")
 print(json.dumps(rows, indent=2, default=str))

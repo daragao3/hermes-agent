@@ -32,17 +32,17 @@ def test_refused_hard_kill_preserves_the_targets_original_run_state(monkeypatch,
         start_new_session=True,
     )
     process = psutil.Process(proc.pid)
-    real_kill, real_killpg = os.kill, os.killpg
+    real_kill, real_killpg = os.kill, os.killpg  # windows-footgun: ok -- POSIX-only test (marked linux_only)
 
     def refuse_owned_kill(pid, sig):
         assert pid == proc.pid
-        if sig == signal.SIGKILL:
+        if sig == signal.SIGKILL:  # windows-footgun: ok -- POSIX-only test (marked linux_only)
             raise PermissionError("owned probe: hard kill refused")
         return real_kill(pid, sig)
 
     def refuse_owned_group(pgid, sig):
         assert pgid == proc.pid
-        if sig == signal.SIGKILL:
+        if sig == signal.SIGKILL:  # windows-footgun: ok -- POSIX-only test (marked linux_only)
             raise PermissionError("owned probe: hard kill refused")
         return real_killpg(pgid, sig)
 

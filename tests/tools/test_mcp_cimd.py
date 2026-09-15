@@ -46,7 +46,7 @@ _DOCUMENT_PATH = (
 
 
 def _document() -> dict:
-    return json.loads(_DOCUMENT_PATH.read_text())
+    return json.loads(_DOCUMENT_PATH.read_text(encoding="utf-8"))
 
 
 def _set_interactive_stdin(monkeypatch, *, is_tty: bool = True) -> None:
@@ -351,7 +351,7 @@ def test_existing_registration_falls_back_to_dcr(tmp_path, monkeypatch, private_
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     storage = HermesTokenStorage("srv")
     storage._client_info_path().parent.mkdir(parents=True, exist_ok=True)
-    storage._client_info_path().write_text('{"client_id": "dcr-issued"}')
+    storage._client_info_path().write_text('{"client_id": "dcr-issued"}', encoding="utf-8")
 
     assert _maybe_use_cimd({}, storage) is None
 

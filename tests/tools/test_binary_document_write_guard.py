@@ -124,7 +124,7 @@ class TestWriteFileToolGuard:
         target = tmp_path / "notes.txt"
         result = json.loads(write_file_tool(str(target), "hello world"))
         assert not result.get("error")
-        assert target.read_text() == "hello world"
+        assert target.read_text(encoding="utf-8") == "hello world"
 
 
 class TestPatchToolGuard:
@@ -176,10 +176,10 @@ class TestPatchToolGuard:
 
     def test_patch_replace_plain_text_unaffected(self, tmp_path: Path):
         target = tmp_path / "notes.txt"
-        target.write_text("hello world")
+        target.write_text("hello world", encoding="utf-8")
         result = json.loads(
             patch_tool(mode="replace", path=str(target),
                        old_string="world", new_string="there")
         )
         assert not result.get("error")
-        assert target.read_text() == "hello there"
+        assert target.read_text(encoding="utf-8") == "hello there"

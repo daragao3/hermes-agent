@@ -658,7 +658,7 @@ class TestResolveUpdatePrompt:
 
         await adapter._resolve_update_prompt(1, "y", "Alice", open_id="ou_user1", chat_id="oc_12345")
 
-        assert (tmp_path / ".hermes" / ".update_response").read_text() == "y"
+        assert (tmp_path / ".hermes" / ".update_response").read_text(encoding="utf-8") == "y"
         assert 1 not in adapter._update_prompt_state
 
     @pytest.mark.asyncio

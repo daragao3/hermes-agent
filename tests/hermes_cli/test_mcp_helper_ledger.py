@@ -92,7 +92,7 @@ def test_register_child_rejects_dead_or_invalid_pids(ledger):
     assert pi.register_child(0, "mcp-helper") is False
     assert pi.register_child(-5, "mcp-helper") is False
     assert pi.register_child("junk", "mcp-helper") is False  # type: ignore[arg-type]
-    assert not ledger.exists() or json.loads(ledger.read_text()) == []
+    assert not ledger.exists() or json.loads(ledger.read_text(encoding="utf-8")) == []
 
 
 def test_mcp_helper_is_reapable_purpose():

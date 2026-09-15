@@ -31,11 +31,11 @@ def test_shipped_catalog_entries_are_all_valid_and_pinned():
 
 
 def test_invalid_entries_are_skipped_not_raised(tmp_path):
-    (tmp_path / "a.yaml").write_text(yaml.safe_dump(_entry("ok")))
-    (tmp_path / "b.yaml").write_text(yaml.safe_dump(_entry("short-sha", sha="abc123")))
-    (tmp_path / "c.yaml").write_text(yaml.safe_dump(_entry("http-repo", repo="http://x/y")))
-    (tmp_path / "d.yaml").write_text(yaml.safe_dump(_entry("Bad Name")))
-    (tmp_path / "e.yaml").write_text("- not\n- a mapping\n")
+    (tmp_path / "a.yaml").write_text(yaml.safe_dump(_entry("ok")), encoding="utf-8")
+    (tmp_path / "b.yaml").write_text(yaml.safe_dump(_entry("short-sha", sha="abc123")), encoding="utf-8")
+    (tmp_path / "c.yaml").write_text(yaml.safe_dump(_entry("http-repo", repo="http://x/y")), encoding="utf-8")
+    (tmp_path / "d.yaml").write_text(yaml.safe_dump(_entry("Bad Name")), encoding="utf-8")
+    (tmp_path / "e.yaml").write_text("- not\n- a mapping\n", encoding="utf-8")
     assert [e.name for e in pc.load_catalog(tmp_path)] == ["ok"]
 
 

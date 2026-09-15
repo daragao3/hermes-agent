@@ -44,7 +44,7 @@ def served_repo(tmp_path, monkeypatch):
 
     repo = tmp_path / "upstream"
     repo.mkdir()
-    (repo / "SKILL.md").write_text(SKILL_MD)
+    (repo / "SKILL.md").write_text(SKILL_MD, encoding="utf-8")
     for rel, content in {
         "references/guide.md": "safe guide\n",
         "references/foo#bar.md": "encoded delimiter\n",
@@ -121,7 +121,7 @@ def test_same_dir_linked_siblings_are_fetched(served_repo, monkeypatch):
     repo, url = served_repo
     (repo / "CONTEXT-FORMAT.md").write_bytes(b"format\n")
     (repo / "DEEPENING.md").write_bytes(b"deepening\n")
-    (repo / "SKILL.md").write_text(SKILL_MD + "See [the format](./CONTEXT-FORMAT.md) and [deepening](DEEPENING.md).\n")
+    (repo / "SKILL.md").write_text(SKILL_MD + "See [the format](./CONTEXT-FORMAT.md) and [deepening](DEEPENING.md).\n", encoding="utf-8")
     monkeypatch.setattr("tools.skills_hub.is_safe_url", lambda _url: True)
     monkeypatch.setattr("tools.skills_hub.check_website_access", lambda _url: None)
 
@@ -344,15 +344,15 @@ def test_real_temp_repo_and_home_install_e2e(served_repo, monkeypatch, tmp_path)
     do_install(url, console=Console(file=sink, force_terminal=False), skip_confirm=True)
 
     installed = home / "skills" / "demo-bundle"
-    assert (installed / "references" / "guide.md").read_text() == "safe guide\n"
-    assert (installed / "references" / "foo#bar.md").read_text() == "encoded delimiter\n"
-    assert (installed / "references" / "my guide.md").read_text() == "encoded space\n"
+    assert (installed / "references" / "guide.md").read_text(encoding="utf-8") == "safe guide\n"
+    assert (installed / "references" / "foo#bar.md").read_text(encoding="utf-8") == "encoded delimiter\n"
+    assert (installed / "references" / "my guide.md").read_text(encoding="utf-8") == "encoded space\n"
     assert (installed / "templates" / "report.md").is_file()
     assert (installed / "scripts" / "run.py").is_file()
     assert (installed / "examples" / "endpoint-inventory.md").is_file()
     assert not (installed / "examples" / "not-installed.md").exists()
     assert (installed / "assets" / "logo.png").read_bytes() == b"\x89PNG\r\n\x1a\n\x00\xff"
-    entry = json.loads((home / "skills" / ".hub" / "lock.json").read_text())["installed"]["demo-bundle"]
+    entry = json.loads((home / "skills" / ".hub" / "lock.json").read_text(encoding="utf-8"))["installed"]["demo-bundle"]
     assert entry["scan_provenance"]["source_url"] == url
     assert entry["scan_provenance"]["fresh"] is True
     assert "Scan provenance: fresh" in sink.getvalue()
@@ -409,10 +409,10 @@ def test_install_with_junctioned_skills_dir(served_repo, monkeypatch, tmp_path):
     # Files landed in the real target, reached through the junction.
     installed = real_skills / "demo-bundle"
     assert (installed / "SKILL.md").is_file()
-    assert (installed / "references" / "guide.md").read_text() == "safe guide\n"
+    assert (installed / "references" / "guide.md").read_text(encoding="utf-8") == "safe guide\n"
     # Lock entry got a valid relative install_path AND the content hash — the
     # record_install call the pre-fix ValueError used to skip.
-    entry = json.loads((home / "skills" / ".hub" / "lock.json").read_text())["installed"]["demo-bundle"]
+    entry = json.loads((home / "skills" / ".hub" / "lock.json").read_text(encoding="utf-8"))["installed"]["demo-bundle"]
     assert entry["install_path"] == "demo-bundle"
     assert entry["content_hash"].startswith("sha256:")
     # The post-install "Installed:" line (relative_to on the display path)
@@ -442,7 +442,7 @@ def served_repo_missing_support(tmp_path, monkeypatch):
 
     repo = tmp_path / "upstream-missing"
     repo.mkdir()
-    (repo / "SKILL.md").write_text(SKILL_MD_MISSING_REF)
+    (repo / "SKILL.md").write_text(SKILL_MD_MISSING_REF, encoding="utf-8")
     # references/absent.md is deliberately NOT created, so the server 404s it.
     for rel, content in {
         "references/present.md": "present guide\n",
@@ -483,12 +483,12 @@ def test_install_skips_unreachable_support_file_e2e(served_repo_missing_support,
 
     installed = home / "skills" / "partial-bundle"
     assert (installed / "SKILL.md").is_file()
-    assert (installed / "references" / "present.md").read_text() == "present guide\n"
+    assert (installed / "references" / "present.md").read_text(encoding="utf-8") == "present guide\n"
     assert (installed / "scripts" / "run.py").is_file()
     # The unreachable reference neither blocked the install nor was written.
     assert not (installed / "references" / "absent.md").exists()
 
-    entry = json.loads((home / "skills" / ".hub" / "lock.json").read_text())["installed"]["partial-bundle"]
+    entry = json.loads((home / "skills" / ".hub" / "lock.json").read_text(encoding="utf-8"))["installed"]["partial-bundle"]
     assert entry["scan_provenance"]["source_url"] == url
     assert "references/present.md" in entry["files"]
     assert "references/absent.md" not in entry["files"]
@@ -504,8 +504,8 @@ def test_bundled_optional_source_still_includes_support_files(tmp_path, monkeypa
     root = tmp_path / "optional-skills"
     skill = root / "category" / "official-demo"
     (skill / "references").mkdir(parents=True)
-    (skill / "SKILL.md").write_text("---\nname: official-demo\ndescription: demo\n---\n")
-    (skill / "references" / "all.md").write_text("all")
+    (skill / "SKILL.md").write_text("---\nname: official-demo\ndescription: demo\n---\n", encoding="utf-8")
+    (skill / "references" / "all.md").write_text("all", encoding="utf-8")
     source = OptionalSkillSource()
     source._optional_dir = root
 
@@ -536,7 +536,7 @@ def test_optional_source_upstream_stub_fetches_from_external_repo(tmp_path, monk
     root = tmp_path / "optional-skills"
     skill = root / "creative" / "upstream-demo"
     skill.mkdir(parents=True)
-    (skill / "SKILL.md").write_text(UPSTREAM_STUB_MD)
+    (skill / "SKILL.md").write_text(UPSTREAM_STUB_MD, encoding="utf-8")
 
     source = OptionalSkillSource()
     source._optional_dir = root

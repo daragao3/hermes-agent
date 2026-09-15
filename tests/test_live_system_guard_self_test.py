@@ -91,7 +91,7 @@ def _refuse_to_fire_live_weapons(request):
             "REFUSING TO RUN: the live-system guard from tests/conftest.py is "
             "not active in this interpreter (os.kill is still the raw C "
             "builtin). This canary file executes real kill primitives — "
-            "os.kill(-1, SIGTERM), os.killpg, pkill -f python — and relies on "
+            "os.kill(-1, SIGTERM), os.killpg, pkill -f python — and relies on "  # windows-footgun: ok -- prose in a docstring/message, not a call
             "the guard to intercept them; unguarded, they SIGTERM every process "
             "the current user owns. This usually means the file was collected "
             "without its home tests/conftest.py (note: a test*.py copy glob "
@@ -134,7 +134,7 @@ def test_os_kill_blocks_negative_one():
 @pytest.mark.skipif(not hasattr(os, "killpg"), reason="killpg POSIX-only")
 def test_os_killpg_blocks_foreign_pgid():
     with pytest.raises(RuntimeError, match="live-system guard"):
-        os.killpg(FOREIGN_PID, signal.SIGTERM)
+        os.killpg(FOREIGN_PID, signal.SIGTERM)  # windows-footgun: ok -- POSIX-only test (skipped where killpg is absent)
 
 
 # ──────────────────── subprocess regex bypasses ────────────────
@@ -874,7 +874,7 @@ def test_bypass_marker_disables_guard():
     # A guarded wrapper is a Python function, never a native builtin.
     assert isinstance(os.kill, types.BuiltinFunctionType)
     if sys.platform != "win32":
-        os.kill(os.getpid(), 0)  # POSIX liveness check only.
+        os.kill(os.getpid(), 0)  # POSIX liveness check only.  # windows-footgun: ok -- the platform branch on the line above keeps this off Windows
     # Windows has no signal-zero liveness check: it terminates the target.
     # Owned-child signal delivery is covered by the pass-through tests.
 

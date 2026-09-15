@@ -64,7 +64,7 @@ def _run_count_block(*, shallow: bool, raw_count: str, api_count):
             if commit_count > 0 and apply_is_shallow:
                 from hermes_cli.banner import _github_compare_behind
 
-                head_sha = sub.run(git_cmd + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+                head_sha = sub.run(git_cmd + ["rev-parse", "HEAD"], capture_output=True, text=True, encoding="utf-8").stdout.strip()
                 target_sha = sub.run(
                     git_cmd + ["rev-parse", "origin/main"], capture_output=True, text=True
                 ).stdout.strip()

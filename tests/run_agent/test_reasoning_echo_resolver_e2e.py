@@ -46,7 +46,7 @@ def _write_home(tmp_path, monkeypatch, reasoning_echo: bool):
         "    base_url: http://127.0.0.1:8098/v1",
         "    key_env: LLAMACPP_KEY",
     ]
-    (home / "config.yaml").write_text("\n".join(lines) + "\n")
+    (home / "config.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
     # Drop any path-keyed config cache from a prior test.
     try:

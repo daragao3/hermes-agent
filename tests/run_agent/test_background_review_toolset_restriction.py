@@ -166,7 +166,7 @@ def test_read_file_registers_background_review_read_mark(tmp_path):
     )
 
     target = tmp_path / "SKILL.md"
-    target.write_text("---\nname: t\n---\nbody\n")
+    target.write_text("---\nname: t\n---\nbody\n", encoding="utf-8")
 
     token = set_current_write_origin(BACKGROUND_REVIEW)
     try:
@@ -196,7 +196,7 @@ def test_read_file_outside_review_does_not_mark(tmp_path):
     )
 
     target = tmp_path / "SKILL.md"
-    target.write_text("content\n")
+    target.write_text("content\n", encoding="utf-8")
     _reset_background_review_read_marks()
     read_file_tool(str(target), task_id="fg-test")
     assert not _background_review_has_read(target)

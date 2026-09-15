@@ -40,7 +40,7 @@ class TestGatewayGuard:
     def test_gateway_allows_valid_config(self, tmp_path):
         from gateway.run import _guard_corrupt_user_config
 
-        (tmp_path / "config.yaml").write_text("model:\n  default: local/test\n")
+        (tmp_path / "config.yaml").write_text("model:\n  default: local/test\n", encoding="utf-8")
         _guard_corrupt_user_config()  # must not raise
 
     def test_gateway_allows_missing_config(self, tmp_path):

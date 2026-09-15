@@ -51,7 +51,7 @@ def repo(tmp_path, monkeypatch):
 
     clone = tmp_path / "repo"
     _git(["clone", str(origin), str(clone)], tmp_path)
-    (clone / "README.md").write_text("hello\n")
+    (clone / "README.md").write_text("hello\n", encoding="utf-8")
     _git(["add", "."], clone)
     _git(["commit", "-m", "init"], clone)
     _git(["push", "origin", "main"], clone)
@@ -82,7 +82,7 @@ class TestAuditVerdicts:
 
     def test_tracked_modifications_keep(self, repo):
         tree, _ = _add_worktree(repo, "hermes-dirty")
-        (tree / "README.md").write_text("edited\n")
+        (tree / "README.md").write_text("edited\n", encoding="utf-8")
         records = worktree_gc.audit_worktrees(str(repo), with_sizes=False)
         record = _verdict(records, "hermes-dirty")
         assert record.verdict == "keep"
@@ -90,7 +90,7 @@ class TestAuditVerdicts:
 
     def test_untracked_only_is_reap_archive(self, repo):
         tree, _ = _add_worktree(repo, "hermes-scratch")
-        (tree / "PR_BODY_DRAFT.md").write_text("draft\n")
+        (tree / "PR_BODY_DRAFT.md").write_text("draft\n", encoding="utf-8")
         records = worktree_gc.audit_worktrees(str(repo), with_sizes=False)
         record = _verdict(records, "hermes-scratch")
         assert record.verdict == "reap-archive"
@@ -98,7 +98,7 @@ class TestAuditVerdicts:
 
     def test_unique_unpushed_commits_keep(self, repo):
         tree, _ = _add_worktree(repo, "hermes-work")
-        (tree / "new.py").write_text("x = 1\n")
+        (tree / "new.py").write_text("x = 1\n", encoding="utf-8")
         _git(["add", "."], tree)
         _git(["commit", "-m", "unique work"], tree)
         records = worktree_gc.audit_worktrees(str(repo), with_sizes=False)
@@ -110,7 +110,7 @@ class TestAuditVerdicts:
         """The squash/rebase-merge leak: local commit unreachable from any
         remote ref but patch-equivalent to an upstream commit → merged work."""
         tree, _ = _add_worktree(repo, "hermes-merged")
-        (tree / "feat.py").write_text("y = 2\n")
+        (tree / "feat.py").write_text("y = 2\n", encoding="utf-8")
         _git(["add", "."], tree)
         _git(["commit", "-m", "feat"], tree)
         sha = _git(["rev-parse", "HEAD"], tree)
@@ -155,14 +155,14 @@ class TestReclaim:
 
     def test_untracked_files_archived_before_removal(self, repo):
         tree, _ = _add_worktree(repo, "hermes-scratch")
-        (tree / "NOTES.md").write_text("important scribbles\n")
+        (tree / "NOTES.md").write_text("important scribbles\n", encoding="utf-8")
         records = worktree_gc.audit_worktrees(str(repo), with_sizes=False)
         worktree_gc.reclaim_worktrees(str(repo), records=records)
         assert not tree.exists()
         archive_root = Path.home() / ".hermes" / "archive" / "worktree-prune"
         archived = list(archive_root.rglob("NOTES.md"))
         assert archived, "untracked file must be archived, not destroyed"
-        assert archived[0].read_text() == "important scribbles\n"
+        assert archived[0].read_text(encoding="utf-8") == "important scribbles\n"
 
     def test_dry_run_changes_nothing(self, repo):
         tree, _ = _add_worktree(repo, "hermes-clean")
@@ -209,7 +209,7 @@ class TestBranchGC:
 
     def test_unique_commit_branch_kept(self, repo):
         _git(["checkout", "-b", "feat/real-work"], repo)
-        (repo / "wip.py").write_text("z = 3\n")
+        (repo / "wip.py").write_text("z = 3\n", encoding="utf-8")
         _git(["add", "."], repo)
         _git(["commit", "-m", "wip"], repo)
         _git(["checkout", "main"], repo)
@@ -222,7 +222,7 @@ class TestBranchGC:
         """Rebase-merged PR branch: SHAs differ from main but every commit is
         patch-equivalent — the dominant branch leak."""
         _git(["checkout", "-b", "fix/landed"], repo)
-        (repo / "fix.py").write_text("a = 4\n")
+        (repo / "fix.py").write_text("a = 4\n", encoding="utf-8")
         _git(["add", "."], repo)
         _git(["commit", "-m", "fix"], repo)
         sha = _git(["rev-parse", "HEAD"], repo)

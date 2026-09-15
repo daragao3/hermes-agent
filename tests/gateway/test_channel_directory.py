@@ -39,7 +39,7 @@ def _write_directory(tmp_path, platforms):
     """Helper to write a fake channel directory."""
     data = {"updated_at": "2026-01-01T00:00:00", "platforms": platforms}
     cache_file = tmp_path / "channel_directory.json"
-    cache_file.write_text(json.dumps(data))
+    cache_file.write_text(json.dumps(data), encoding="utf-8")
     return cache_file
 
 
@@ -56,7 +56,7 @@ class TestBuildChannelDirectoryWrites:
         cache_file = _write_directory(tmp_path, {
             "telegram": [{"id": "123", "name": "Alice", "type": "dm"}]
         })
-        previous = json.loads(cache_file.read_text())
+        previous = json.loads(cache_file.read_text(encoding="utf-8"))
 
         def broken_dump(data, fp, *args, **kwargs):
             fp.write('{"updated_at":')
@@ -182,7 +182,7 @@ class TestBuildFromSessions:
         """Write sessions.json at the path _build_from_sessions expects."""
         sessions_path = tmp_path / "sessions" / "sessions.json"
         sessions_path.parent.mkdir(parents=True)
-        sessions_path.write_text(json.dumps(sessions_data))
+        sessions_path.write_text(json.dumps(sessions_data), encoding="utf-8")
 
     def test_builds_from_sessions_json(self, tmp_path):
         self._write_sessions(tmp_path, {
@@ -366,7 +366,7 @@ class TestChannelAliases:
 
     def _setup_aliases(self, tmp_path, aliases):
         alias_file = tmp_path / "channel_aliases.json"
-        alias_file.write_text(json.dumps(aliases))
+        alias_file.write_text(json.dumps(aliases), encoding="utf-8")
         return patch("gateway.channel_directory.CHANNEL_ALIASES_PATH", alias_file)
 
 
@@ -393,7 +393,7 @@ class TestChannelAliases:
         with patch("gateway.channel_directory.DIRECTORY_PATH", cache_file), \
              self._setup_aliases(tmp_path, {"whatsapp": {"120363@g.us": "general"}}):
             asyncio.run(build_channel_directory({}))
-            on_disk = json.loads(cache_file.read_text())
+            on_disk = json.loads(cache_file.read_text(encoding="utf-8"))
         names = [e["name"] for e in on_disk["platforms"]["whatsapp"]
                  if e["id"] == "120363@g.us"]
         assert names == ["general"]

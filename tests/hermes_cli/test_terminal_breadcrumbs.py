@@ -131,7 +131,7 @@ def test_corrupt_breadcrumb_returns_none(hermes_home, monkeypatch, no_terminal_e
     _fake_tty(monkeypatch, "/dev/pts/1")
     directory = hermes_home / "terminal-sessions"
     directory.mkdir(parents=True)
-    (directory / "tty-dev-pts-1").write_text("not json{")
+    (directory / "tty-dev-pts-1").write_text("not json{", encoding="utf-8")
     assert tb.read_breadcrumb() is None
 
 

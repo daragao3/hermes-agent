@@ -84,11 +84,11 @@ def _setup_bridge_dir(tmp_path: Path) -> Path:
     """Create a real bridge dir with bridge.js + package.json + creds."""
     bridge_dir = tmp_path / "whatsapp-bridge"
     bridge_dir.mkdir()
-    (bridge_dir / "bridge.js").write_text("// current bridge code\n")
-    (bridge_dir / "package.json").write_text('{"name": "bridge"}\n')
+    (bridge_dir / "bridge.js").write_text("// current bridge code\n", encoding="utf-8")
+    (bridge_dir / "package.json").write_text('{"name": "bridge"}\n', encoding="utf-8")
     session_path = tmp_path / "session"
     session_path.mkdir()
-    (session_path / "creds.json").write_text("{}")
+    (session_path / "creds.json").write_text("{}", encoding="utf-8")
     return bridge_dir
 
 
@@ -108,7 +108,7 @@ class TestFileContentHash:
         from plugins.platforms.whatsapp.adapter import _file_content_hash
 
         f = tmp_path / "x.js"
-        f.write_text("abc")
+        f.write_text("abc", encoding="utf-8")
         h = _file_content_hash(f)
         assert len(h) == 16
         assert h == _file_content_hash(f)  # deterministic
@@ -182,7 +182,7 @@ class TestDepRefreshStamp:
         bridge_dir = _setup_bridge_dir(tmp_path)
         _fresh_node_modules(bridge_dir)
         # Simulate `hermes update` bumping the Baileys pin
-        (bridge_dir / "package.json").write_text('{"name": "bridge", "v": 2}\n')
+        (bridge_dir / "package.json").write_text('{"name": "bridge", "v": 2}\n', encoding="utf-8")
         adapter = _make_adapter(
             bridge_script=str(bridge_dir / "bridge.js"),
             session_path=tmp_path / "session",
@@ -206,7 +206,7 @@ class TestDepRefreshStamp:
         assert "install" in mock_run.call_args[0][0]
         # Stamp updated to the new package.json hash
         from plugins.platforms.whatsapp.adapter import _file_content_hash
-        stamp = (bridge_dir / "node_modules" / ".hermes-pkg-hash").read_text().strip()
+        stamp = (bridge_dir / "node_modules" / ".hermes-pkg-hash").read_text(encoding="utf-8").strip()
         assert stamp == _file_content_hash(bridge_dir / "package.json")
 
     @pytest.mark.asyncio

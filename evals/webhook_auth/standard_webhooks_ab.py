@@ -28,8 +28,8 @@ import aiohttp
 
 
 def _git_head() -> str:
-    return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
-                          stdin=subprocess.DEVNULL).stdout.strip()
+    return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,  # windows-footgun: ok -- encoding= is passed on the continuation line
+                          stdin=subprocess.DEVNULL, encoding="utf-8").stdout.strip()
 
 
 def _sign(secret: str, msg_id: str, ts: str, body: bytes) -> str:

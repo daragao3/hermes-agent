@@ -43,7 +43,7 @@ def topics_config(tmp_path):
     }
     path = tmp_path / "telegram" / "topics.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(config))
+    path.write_text(json.dumps(config), encoding="utf-8")
     return path
 
 
@@ -56,7 +56,7 @@ def verbosity_config(tmp_path):
     }
     path = tmp_path / "telegram" / "verbosity.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config))
+    path.write_text(json.dumps(config), encoding="utf-8")
     return path
 
 
@@ -73,7 +73,7 @@ def quiet_config(tmp_path):
     }
     path = tmp_path / "notifications" / "quiet_hours.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(config))
+    path.write_text(json.dumps(config), encoding="utf-8")
     return path
 
 
@@ -127,7 +127,7 @@ class TestCorrelationIdDeliveryChain:
         audit.poll()
 
         lines = [
-            json.loads(line) for line in audit_path.read_text().strip().split("\n")
+            json.loads(line) for line in audit_path.read_text(encoding="utf-8").strip().split("\n")
             if line
         ]
         # The original interview_signal must be in the audit log
@@ -177,7 +177,7 @@ class TestCorrelationIdDeliveryChain:
         audit.poll()
 
         lines = [
-            json.loads(line) for line in audit_path.read_text().strip().split("\n")
+            json.loads(line) for line in audit_path.read_text(encoding="utf-8").strip().split("\n")
             if line
         ]
         failed = [l for l in lines if l["event_type"] == "notification_failed"]
@@ -217,7 +217,7 @@ class TestCorrelationIdDeliveryChain:
         audit.poll()
 
         lines = [
-            json.loads(line) for line in audit_path.read_text().strip().split("\n")
+            json.loads(line) for line in audit_path.read_text(encoding="utf-8").strip().split("\n")
             if line
         ]
         delivered = [
@@ -272,7 +272,7 @@ class TestCorrelationIdDeliveryChain:
         #   1 telegram NOTIFICATION_DELIVERED (action_required topic)
         #   1 whatsapp NOTIFICATION_DELIVERED (IMMEDIATE breakthrough)
         lines = [
-            json.loads(line) for line in audit_path.read_text().strip().split("\n")
+            json.loads(line) for line in audit_path.read_text(encoding="utf-8").strip().split("\n")
             if line
         ]
         joined = [

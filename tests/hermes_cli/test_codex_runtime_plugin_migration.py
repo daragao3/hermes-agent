@@ -178,7 +178,7 @@ class TestMigrate:
         monkeypatch.setattr(crpm, "_query_codex_plugins", fake_query)
 
         report = migrate({}, codex_home=tmp_path, discover_plugins=True)
-        text = (tmp_path / "config.toml").read_text()
+        text = (tmp_path / "config.toml").read_text(encoding="utf-8")
         assert '[plugins."github@openai-curated"]' in text
         assert '[plugins."google-calendar@openai-curated"]' in text
         assert "enabled = true" in text
@@ -223,7 +223,7 @@ class TestMigrate:
         }
         report = migrate(hermes_cfg, codex_home=tmp_path, expose_hermes_tools=False)
         assert report.written
-        text = (tmp_path / "config.toml").read_text()
+        text = (tmp_path / "config.toml").read_text(encoding="utf-8")
         assert "[mcp_servers.filesystem]" in text
         assert "[mcp_servers.github]" in text
         assert 'command = "npx"' in text
@@ -247,7 +247,7 @@ class TestMigrate:
         migrate({"mcp_servers": {"hermes-mcp": {"command": "npx"}}},
                 codex_home=tmp_path, discover_plugins=False,
                 expose_hermes_tools=False)
-        text = target.read_text()
+        text = target.read_text(encoding="utf-8")
         assert "user-above" in text, "user MCP server above managed block got nuked"
         assert 'command = "/usr/bin/above-server"' in text
 
@@ -259,7 +259,7 @@ class TestMigrate:
         migrate({"mcp_servers": {"hermes-mcp": {"command": "npx"}}},
                 codex_home=tmp_path, discover_plugins=False,
                 expose_hermes_tools=False)
-        final = target.read_text()
+        final = target.read_text(encoding="utf-8")
         assert "user-above" in final
         assert "user-below" in final
         # And our managed block is still there with the new content
@@ -365,7 +365,7 @@ class TestStripUnmanagedPluginTables:
             fake_query,
         )
         migrate({}, codex_home=tmp_path, discover_plugins=True, expose_hermes_tools=False)
-        new_text = target.read_text()
+        new_text = target.read_text(encoding="utf-8")
         # Only ONE [plugins."tasks@openai-curated"] header should remain — inside
         # the managed block — not the original outside-the-block copy.
         assert new_text.count('[plugins."tasks@openai-curated"]') == 1

@@ -55,7 +55,7 @@ def live_home(monkeypatch):
             }
         ],
     }
-    (home / "config.yaml").write_text(yaml.safe_dump(config))
+    (home / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
     # hermes_constants caches the resolved home at first read — the env var
     # alone doesn't repoint an already-imported process. Use the override API

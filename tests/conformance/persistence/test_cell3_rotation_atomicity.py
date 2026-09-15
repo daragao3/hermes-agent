@@ -68,7 +68,7 @@ def _completed_rotations(journal: Path) -> int:
     if not journal.exists():
         return 0
     n = 0
-    for line in journal.read_text().splitlines():
+    for line in journal.read_text(encoding="utf-8").splitlines():
         try:
             json.loads(line)
             n += 1

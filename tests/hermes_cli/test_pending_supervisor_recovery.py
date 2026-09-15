@@ -44,7 +44,7 @@ def test_pending_marker_requires_complete_systemd_recovery(monkeypatch, tmp_path
 
     monkeypatch.setattr(fleet, "_systemctl", systemctl)
     marker = fleet._fleet_restart_pending_marker_path()
-    marker.write_text("expected_sha=pending\n")
+    marker.write_text("expected_sha=pending\n", encoding="utf-8")
     if failure not in (None, "running"):
         with pytest.raises(SystemExit, match="1"):
             fleet._apply_pending_fleet_restart_catchup()

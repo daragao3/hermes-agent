@@ -1003,7 +1003,7 @@ def test_heartbeat_write_failure_is_silent(tmp_path, monkeypatch):
     import cron.jobs as jobs
 
     blocker = tmp_path / "not_a_dir"
-    blocker.write_text("i am a file, not a directory")
+    blocker.write_text("i am a file, not a directory", encoding="utf-8")
     # Point HERMES_HOME *under a regular file* so the dynamically-resolved cron
     # dir (<home>/cron) cannot be created and mkdir/mkstemp genuinely fail.
     monkeypatch.setenv("HERMES_HOME", str(blocker))

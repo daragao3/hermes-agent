@@ -136,7 +136,7 @@ class TestURLRejection:
 class TestCodeBlockExclusion:
 
     def test_fenced_code_block_skipped(self):
-        text = "Here's how:\n```python\nimg = open('/tmp/image.png')\n```\nDone."
+        text = "Here's how:\n```python\nimg = open('/tmp/image.png')\n```\nDone."  # windows-footgun: ok -- fixture text for the extractor under test, not a call
         paths, cleaned = _extract(text)
         assert paths == []
         assert "/tmp/image.png" in cleaned  # not stripped

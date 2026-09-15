@@ -130,7 +130,7 @@ def main():
            "worst_regressions": sorted(({"name": h["name"], "base_tok": b["tokens"], "head_tok": h["tokens"], "head_file": h["file"]} for b, h in pairs), key=lambda x: x["base_tok"] - x["head_tok"])[:8],
            "best_wins": sorted(({"name": h["name"], "base_tok": b["tokens"], "head_tok": h["tokens"], "base_file": b["file"], "head_file": h["file"]} for b, h in pairs), key=lambda x: x["head_tok"] - x["base_tok"])[:8]}
     Path(a.out).mkdir(parents=True, exist_ok=True)
-    (Path(a.out) / f"lookup_sim_w{FIRST_READ}.json").write_text(json.dumps(res, indent=1))
+    (Path(a.out) / f"lookup_sim_w{FIRST_READ}.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
     print(json.dumps({k: v for k, v in res.items() if k not in ("worst_regressions", "best_wins")}, indent=1))
     print("best wins:", json.dumps(res["best_wins"][:4], indent=1)); print("worst regressions:", json.dumps(res["worst_regressions"][:4], indent=1))
 

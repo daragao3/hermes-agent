@@ -126,7 +126,7 @@ class TestScopedLockTakeoverReapsChildren:
             "start_time": start_time,
             "hermes_home": str(target_home),
         }
-        (target_home / "gateway.pid").write_text(json.dumps(record))
+        (target_home / "gateway.pid").write_text(json.dumps(record), encoding="utf-8")
         return record
 
     def _verified_owner_env(self, tmp_path, monkeypatch, *, alive_polls):

@@ -17,7 +17,7 @@ STAGE2_HOOK = REPO_ROOT / "docker" / "stage2-hook.sh"
 def stage2_text() -> str:
     if not STAGE2_HOOK.exists():
         pytest.skip("docker/stage2-hook.sh not present in this checkout")
-    return STAGE2_HOOK.read_text()
+    return STAGE2_HOOK.read_text(encoding="utf-8")
 
 
 def _chown_hermes_tree_function(text: str) -> str:
@@ -44,7 +44,7 @@ def _run_helper(
         f'chown() {{ printf "%s\\n" "$*" >> "{log_path}"; }}\n'
         f'chown_hermes_tree "{target}"\n'
     )
-    return subprocess.run([shell, "-c", script], capture_output=True, text=True)
+    return subprocess.run([shell, "-c", script], capture_output=True, text=True, encoding="utf-8")
 
 
 def test_chown_helper_repairs_real_directories(stage2_text: str, tmp_path: Path) -> None:
@@ -55,7 +55,7 @@ def test_chown_helper_repairs_real_directories(stage2_text: str, tmp_path: Path)
     proc = _run_helper(stage2_text, target, log_path)
 
     assert proc.returncode == 0, proc.stderr
-    assert log_path.read_text().splitlines() == [
+    assert log_path.read_text(encoding="utf-8").splitlines() == [
         f"-R hermes:hermes {target}",
     ]
 

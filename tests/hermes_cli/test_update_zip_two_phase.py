@@ -29,7 +29,7 @@ def _live_tree(root: Path, names: dict[str, str]) -> None:
     for name, marker in names.items():
         d = root / name
         d.mkdir(parents=True, exist_ok=True)
-        (d / "version.txt").write_text(marker)
+        (d / "version.txt").write_text(marker, encoding="utf-8")
 
 
 def _stage_all(root: Path, new: Path, names: list[str]) -> list[tuple[str, str]]:
@@ -50,8 +50,8 @@ def test_staging_touches_nothing_live(tmp_path):
 
     _stage_all(live, new, ["agent", "tools"])
 
-    assert (live / "agent" / "version.txt").read_text() == "old"
-    assert (live / "tools" / "version.txt").read_text() == "old"
+    assert (live / "agent" / "version.txt").read_text(encoding="utf-8") == "old"
+    assert (live / "tools" / "version.txt").read_text(encoding="utf-8") == "old"
 
 
 def test_commit_swaps_every_entry(tmp_path):
@@ -61,8 +61,8 @@ def test_commit_swaps_every_entry(tmp_path):
 
     update_cmd._commit_staged_replacements(_stage_all(live, new, ["agent", "tools"]))
 
-    assert (live / "agent" / "version.txt").read_text() == "new"
-    assert (live / "tools" / "version.txt").read_text() == "new"
+    assert (live / "agent" / "version.txt").read_text(encoding="utf-8") == "new"
+    assert (live / "tools" / "version.txt").read_text(encoding="utf-8") == "new"
     # No staging/backup litter left behind.
     assert not [p for p in os.listdir(live) if "hermes-update" in p]
 
@@ -97,7 +97,7 @@ def test_failed_swap_rolls_back_every_earlier_swap(tmp_path, monkeypatch):
     monkeypatch.undo()
     # Both entries must be back at the OLD version -- not one new, one old.
     versions = {
-        n: (live / n / "version.txt").read_text() for n in ("agent", "tools")
+        n: (live / n / "version.txt").read_text(encoding="utf-8") for n in ("agent", "tools")
     }
     assert versions == {"agent": "old", "tools": "old"}, (
         f"mixed-version tree after rollback: {versions}"
@@ -112,7 +112,7 @@ def test_commit_handles_entries_absent_from_the_install(tmp_path):
 
     update_cmd._commit_staged_replacements(_stage_all(live, new, ["brand_new"]))
 
-    assert (live / "brand_new" / "version.txt").read_text() == "new"
+    assert (live / "brand_new" / "version.txt").read_text(encoding="utf-8") == "new"
 
 
 def test_staging_clears_leftovers_from_an_interrupted_run(tmp_path):
@@ -121,11 +121,11 @@ def test_staging_clears_leftovers_from_an_interrupted_run(tmp_path):
     _live_tree(new, {"agent": "new"})
     stale = Path(f"{live / 'agent'}.hermes-update-staging")
     stale.mkdir()
-    (stale / "junk.txt").write_text("from a previous crash")
+    (stale / "junk.txt").write_text("from a previous crash", encoding="utf-8")
 
     update_cmd._commit_staged_replacements(_stage_all(live, new, ["agent"]))
 
-    assert (live / "agent" / "version.txt").read_text() == "new"
+    assert (live / "agent" / "version.txt").read_text(encoding="utf-8") == "new"
     assert not (live / "agent" / "junk.txt").exists()
 
 
@@ -204,8 +204,8 @@ def test_top_level_files_are_swapped_atomically(tmp_path):
     live, new = tmp_path / "live", tmp_path / "new"
     live.mkdir()
     new.mkdir()
-    (live / "run_agent.py").write_text("old")
-    (new / "run_agent.py").write_text("new")
+    (live / "run_agent.py").write_text("old", encoding="utf-8")
+    (new / "run_agent.py").write_text("new", encoding="utf-8")
 
     staged = [
         (
@@ -217,7 +217,7 @@ def test_top_level_files_are_swapped_atomically(tmp_path):
     ]
     update_cmd._commit_staged_replacements(staged)
 
-    assert (live / "run_agent.py").read_text() == "new"
+    assert (live / "run_agent.py").read_text(encoding="utf-8") == "new"
     assert not [p for p in os.listdir(live) if "hermes-update" in p]
 
 
@@ -227,8 +227,8 @@ def test_file_swap_failure_restores_the_original_file(tmp_path, monkeypatch):
     live.mkdir()
     new.mkdir()
     for name in ("cli.py", "run_agent.py"):
-        (live / name).write_text("old")
-        (new / name).write_text("new")
+        (live / name).write_text("old", encoding="utf-8")
+        (new / name).write_text("new", encoding="utf-8")
 
     staged = [
         (update_cmd._stage_replacement(str(new / n), str(live / n)), str(live / n))
@@ -249,7 +249,7 @@ def test_file_swap_failure_restores_the_original_file(tmp_path, monkeypatch):
         update_cmd._commit_staged_replacements(staged)
     monkeypatch.undo()
 
-    versions = {n: (live / n).read_text() for n in ("cli.py", "run_agent.py")}
+    versions = {n: (live / n).read_text(encoding="utf-8") for n in ("cli.py", "run_agent.py")}
     assert versions == {"cli.py": "old", "run_agent.py": "old"}, (
         f"mixed/corrupt root modules after rollback: {versions}"
     )
@@ -294,7 +294,7 @@ def test_failed_staging_leaves_no_orphaned_copies(tmp_path, monkeypatch):
     assert leftovers == [], f"orphaned staging copies: {leftovers}"
     # And nothing live was touched.
     for n in ("agent", "tools", "gateway"):
-        assert (live / n / "version.txt").read_text() == "old"
+        assert (live / n / "version.txt").read_text(encoding="utf-8") == "old"
 
 
 def test_atomic_replace_dir_still_works_as_a_shim(tmp_path):
@@ -305,7 +305,7 @@ def test_atomic_replace_dir_still_works_as_a_shim(tmp_path):
 
     update_cmd._atomic_replace_dir(str(new / "ui-tui"), str(live / "ui-tui"))
 
-    assert (live / "ui-tui" / "version.txt").read_text() == "new"
+    assert (live / "ui-tui" / "version.txt").read_text(encoding="utf-8") == "new"
     assert not [p for p in os.listdir(live) if "hermes-update" in p]
 
 
@@ -366,7 +366,7 @@ def test_staging_restores_backup_when_dst_is_missing(tmp_path, monkeypatch):
     # Simulate the crashed state: dst gone, backup holds the old tree.
     backup = live / "agent.hermes-update-old"
     backup.mkdir()
-    (backup / "version.txt").write_text("old")
+    (backup / "version.txt").write_text("old", encoding="utf-8")
 
     # Staging fails (disk full) on the fresh copy.
     def boom(src, dst, *a, **kw):
@@ -378,13 +378,13 @@ def test_staging_restores_backup_when_dst_is_missing(tmp_path, monkeypatch):
     monkeypatch.undo()
 
     # The old tree must have been restored to dst before the failure.
-    assert (live / "agent" / "version.txt").read_text() == "old"
+    assert (live / "agent" / "version.txt").read_text(encoding="utf-8") == "old"
     assert not backup.exists()
 
     # And a clean retry completes the update normally.
     staged = _stage_all(live, new, ["agent"])
     update_cmd._commit_staged_replacements(staged)
-    assert (live / "agent" / "version.txt").read_text() == "new"
+    assert (live / "agent" / "version.txt").read_text(encoding="utf-8") == "new"
     assert not [p for p in os.listdir(live) if "hermes-update" in p]
 
 
@@ -424,7 +424,7 @@ def test_commit_failure_plus_discard_leaves_no_staging_litter(tmp_path, monkeypa
 
     # Old tree intact...
     for n in ("agent", "tools", "gateway"):
-        assert (live / n / "version.txt").read_text() == "old"
+        assert (live / n / "version.txt").read_text(encoding="utf-8") == "old"
     # ...and zero litter of any kind (staging OR backup).
     litter = [p for p in os.listdir(live) if "hermes-update" in p]
     assert litter == [], f"orphaned update litter: {litter}"

@@ -18,7 +18,7 @@ def test_tools_configure_uses_live_session_profile(tmp_path, monkeypatch, explic
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     config = {"platform_toolsets": {"cli": ["terminal", "web"]}}
     for path in (home, profile):
-        (path / "config.yaml").write_text(yaml.safe_dump(config))
+        (path / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
     launch_before = (home / "config.yaml").read_bytes()
     seen = []
     monkeypatch.setattr(server, "_reset_session_agent", lambda *_: seen.append(get_hermes_home()) or {})
@@ -29,7 +29,7 @@ def test_tools_configure_uses_live_session_profile(tmp_path, monkeypatch, explic
     response = server._methods["tools.configure"](1, params)
     assert "error" not in response
     assert (home / "config.yaml").read_bytes() == launch_before
-    assert "terminal" not in yaml.safe_load((profile / "config.yaml").read_text())["platform_toolsets"]["cli"]
+    assert "terminal" not in yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))["platform_toolsets"]["cli"]
     assert seen == [profile]
     assert get_hermes_home() == home
     worker_before = (profile / "config.yaml").read_bytes()

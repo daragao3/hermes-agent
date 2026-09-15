@@ -13,7 +13,7 @@ class _BootReached(Exception):
 
 def _fake_user_bus(monkeypatch, *, present: bool) -> str:
     """Fake the on-disk state ``loginctl enable-linger`` leaves behind (or its absence)."""
-    runtime_dir = f"/run/user/{os.getuid()}"
+    runtime_dir = f"/run/user/{os.getuid()}"  # windows-footgun: ok -- helper for linux_only tests (fakes the systemd user bus)
     monkeypatch.setattr(
         gw, "_runtime_dir_is_ours", lambda d: present and str(d) == runtime_dir)
     monkeypatch.setattr(

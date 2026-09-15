@@ -88,7 +88,7 @@ class TestAbiStamp:
         assert err is None
         assert target.is_dir()
         stamp = target / ld._TARGET_STAMP_NAME
-        assert stamp.read_text().strip() == ld._python_abi_tag()
+        assert stamp.read_text(encoding="utf-8").strip() == ld._python_abi_tag()
 
 
     def test_readonly_target_reports_error(self, tmp_path, monkeypatch):

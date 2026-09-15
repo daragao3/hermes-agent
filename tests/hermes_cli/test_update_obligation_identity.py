@@ -23,7 +23,7 @@ def test_current_successors_settle_historical_obligations(monkeypatch, profiles)
         },
     }
     path = directory / "latest.json"
-    path.write_text(json.dumps(receipt))
+    path.write_text(json.dumps(receipt), encoding="utf-8")
     monkeypatch.setattr(update_cmd, "_current_checkout_sha", lambda: "new")
     monkeypatch.setattr(
         update_receipt,
@@ -35,7 +35,7 @@ def test_current_successors_settle_historical_obligations(monkeypatch, profiles)
     )
     assert not update_cmd_fleet._pending_fleet_restart_needed()
     assert (
-        json.loads(path.read_text()) == receipt
+        json.loads(path.read_text(encoding="utf-8")) == receipt
     )  # Historical failure remains truthful.
 
 
@@ -57,7 +57,7 @@ def test_every_owed_identity_requires_current_evidence(monkeypatch, bad):
     directory = home / "logs" / "update_receipts"
     directory.mkdir(parents=True)
     if bad == "marker":
-        (home / "fleet_restart_pending").write_text("expected_sha=new\n")
+        (home / "fleet_restart_pending").write_text("expected_sha=new\n", encoding="utf-8")
     owed = {"kind": "gateway", "profile": "beta", "code_sha": "old"}
     if bad == "wrong-kind":
         owed["kind"] = "serve"

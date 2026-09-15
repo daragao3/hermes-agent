@@ -292,7 +292,7 @@ def test_metadata_relative_path_matches_the_executors_constant():
 
 
 def _git(args, cwd):
-    subprocess.run(args, cwd=str(cwd), check=True, capture_output=True, text=True)
+    subprocess.run(args, cwd=str(cwd), check=True, capture_output=True, text=True, encoding="utf-8")
 
 
 @pytest.fixture

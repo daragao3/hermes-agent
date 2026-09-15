@@ -170,9 +170,9 @@ _swap_fallback_clients(
 request("timeout-fallback-first-request", a2.client, "model-b")
 # The rebuild must retain the live source, not just the most recent minted key.
 token_path = Path(home) / "rotating-token"
-token_path.write_text("fixture-command-token")
+token_path.write_text("fixture-command-token", encoding="utf-8")
 for dynamic in (False, True):
-    source = (lambda: token_path.read_text()) if dynamic else "fixture-command-token"
+    source = (lambda: token_path.read_text(encoding="utf-8")) if dynamic else "fixture-command-token"
     fresh = OpenAI(api_key=source, base_url=url, max_retries=0)
     holder = SimpleNamespace()
     _swap_fallback_clients(
@@ -180,20 +180,20 @@ for dynamic in (False, True):
     )
     derived = OpenAI(**holder._client_kwargs, max_retries=0)
     for token in ("fixture-command-token", "rotated-fixture-token"):
-        token_path.write_text(token)
+        token_path.write_text(token, encoding="utf-8")
         request(f"rotation-{dynamic}-{token}", derived, "model-b")
         assert captures[-1]["auth"] == "Bearer " + (
             token if dynamic else "fixture-command-token"
         )
     fresh.close()
     derived.close()
-token_path.write_text("fixture-command-token")
-source = lambda: token_path.read_text()
+token_path.write_text("fixture-command-token", encoding="utf-8")
+source = lambda: token_path.read_text(encoding="utf-8")
 fresh = OpenAI(api_key=source, base_url=url, max_retries=0)
 holder = SimpleNamespace()
 _swap_fallback_clients(holder, fresh, "anthropic", "model-b", url, "anthropic_messages")
 for token in ("fixture-command-token", "rotated-fixture-token"):
-    token_path.write_text(token)
+    token_path.write_text(token, encoding="utf-8")
     response = holder._anthropic_client.messages.create(
         model="model-b", max_tokens=8, messages=[{"role": "user", "content": "fixture"}]
     )

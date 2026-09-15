@@ -42,7 +42,7 @@ def repo_with_bare_origin(tmp_path):
     _run(["git", "init", "--initial-branch=main"], repo)
     _run(["git", "config", "user.email", "test@test.com"], repo)
     _run(["git", "config", "user.name", "Test"], repo)
-    (repo / "README.md").write_text("# repo\n")
+    (repo / "README.md").write_text("# repo\n", encoding="utf-8")
     _run(["git", "add", "."], repo)
     _run(["git", "commit", "-m", "init"], repo)
     _run(["git", "remote", "add", "origin", str(bare)], repo)
@@ -68,7 +68,7 @@ def _mk_worktree(repo, name, branch, commit=True, push=False, extra_commit_after
     p = repo / ".worktrees" / name
     _run(["git", "worktree", "add", str(p), "-b", branch, "HEAD"], repo)
     if commit:
-        (p / f"{name}.txt").write_text("payload\n")
+        (p / f"{name}.txt").write_text("payload\n", encoding="utf-8")
         _run(["git", "add", f"{name}.txt"], p)
         _run(["git", "commit", "-m", f"work on {name}"], p)
     if push:
@@ -77,7 +77,7 @@ def _mk_worktree(repo, name, branch, commit=True, push=False, extra_commit_after
         result = _run(["git", "push", "origin", branch], p)
         assert result.returncode == 0, result.stderr
     if extra_commit_after_push:
-        (p / "later.txt").write_text("post-push work\n")
+        (p / "later.txt").write_text("post-push work\n", encoding="utf-8")
         _run(["git", "add", "later.txt"], p)
         _run(["git", "commit", "-m", "post-push commit"], p)
     _age(p)
@@ -180,7 +180,7 @@ class TestStartupPrunerPushedTier:
         import cli
         repo = repo_with_bare_origin
         wt = _mk_worktree(repo, "hermes-pdirty", "hermes/hermes-pdirty", push=True)
-        (wt / "uncommitted.txt").write_text("in-flight\n")
+        (wt / "uncommitted.txt").write_text("in-flight\n", encoding="utf-8")
         _age(wt)
 
         cli._prune_stale_worktrees(str(repo))

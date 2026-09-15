@@ -97,7 +97,7 @@ class TestContextFileCwd:
 
         monkeypatch.setattr(runtime_cwd, "_PACKAGE_ROOT", tmp_path.resolve())
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "AGENTS.md").write_text("bundled contributor instructions")
+        (tmp_path / "AGENTS.md").write_text("bundled contributor instructions", encoding="utf-8")
 
         agent = _make_agent(
             platform="desktop",
@@ -119,7 +119,7 @@ class TestContextFileCwd:
 
         monkeypatch.setattr(runtime_cwd, "_PACKAGE_ROOT", tmp_path.resolve())
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "AGENTS.md").write_text("chosen workspace instructions")
+        (tmp_path / "AGENTS.md").write_text("chosen workspace instructions", encoding="utf-8")
 
         agent = _make_agent(
             platform="desktop",
@@ -159,7 +159,7 @@ def _init_code_repo(path):
     import subprocess
 
     subprocess.run(["git", "-C", str(path), "init", "-q"], check=True)
-    (path / "main.py").write_text("print('hi')\n")
+    (path / "main.py").write_text("print('hi')\n", encoding="utf-8")
 
 
 class TestCodingContextBlock:
@@ -195,7 +195,7 @@ def test_shared_project_context_precedes_worktree_bytes(monkeypatch, tmp_path):
     for name in ("worktree-a", "worktree-b"):
         cwd = tmp_path / name
         cwd.mkdir()
-        (cwd / "AGENTS.md").write_text("Shared project instructions.")
+        (cwd / "AGENTS.md").write_text("Shared project instructions.", encoding="utf-8")
         monkeypatch.setenv("TERMINAL_CWD", str(cwd))
         agent = _make_agent(platform="cli")
         parts = build_system_prompt_parts(agent)
@@ -216,7 +216,7 @@ def test_stored_prompt_cwd_ignores_project_host_decoys(monkeypatch, tmp_path):
     monkeypatch.setenv("TERMINAL_ENV", "local")
     monkeypatch.setenv("TERMINAL_CWD", str(cwd))
     decoy = "# Hermes runtime environment\n\nHost: Example\nUser home directory: /example\nCurrent working directory: /example\n"
-    (cwd / "AGENTS.md").write_text(decoy)
+    (cwd / "AGENTS.md").write_text(decoy, encoding="utf-8")
     monkeypatch.setenv("HERMES_ENVIRONMENT_HINT", decoy + "\nModel: decoy\nProvider: decoy\nPlatform: decoy")
     agent = _make_agent(
         platform="cli", model="test-model", provider="test-provider",
@@ -541,7 +541,7 @@ class TestTelegramRichMessagesHint:
         )
         home = tmp_path / "hermes_home"
         home.mkdir()
-        (home / "config.yaml").write_text(config_yaml)
+        (home / "config.yaml").write_text(config_yaml, encoding="utf-8")
 
         monkeypatch.setenv("HERMES_HOME", str(home))
         # Point config resolution at the temp file without mocking the loader:

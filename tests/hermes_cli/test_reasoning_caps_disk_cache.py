@@ -165,9 +165,9 @@ def test_stale_copy_is_still_served(cold_process, offline, monkeypatch):
     models_reasoning_caps._save_reasoning_caps_disk(
         url, {"deepseek/deepseek-v4-pro": {"supports_reasoning": True, "mandatory": False}}
     )
-    raw = json.loads(models_reasoning_caps._reasoning_caps_disk_path().read_text())
+    raw = json.loads(models_reasoning_caps._reasoning_caps_disk_path().read_text(encoding="utf-8"))
     raw[url]["ts"] = 0  # epoch — far past any TTL
-    models_reasoning_caps._reasoning_caps_disk_path().write_text(json.dumps(raw))
+    models_reasoning_caps._reasoning_caps_disk_path().write_text(json.dumps(raw), encoding="utf-8")
 
     cold_process()
     monkeypatch.setattr(models_mod, "_urlopen_model_catalog_request", offline)
@@ -180,7 +180,7 @@ def test_unreadable_mirror_degrades_to_unknown(cold_process, offline, monkeypatc
     """A corrupt file answers "unknown", never raises into the request path."""
     path = models_reasoning_caps._reasoning_caps_disk_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("{ this is not json")
+    path.write_text("{ this is not json", encoding="utf-8")
 
     monkeypatch.setattr(models_mod, "_urlopen_model_catalog_request", offline)
     assert models_reasoning_caps.nous_model_reasoning_capabilities("deepseek/deepseek-v4-pro") is None

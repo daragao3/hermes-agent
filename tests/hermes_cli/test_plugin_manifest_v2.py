@@ -26,7 +26,7 @@ def _write_plugin(base, name, manifest_extra=None, register_body="pass"):
     manifest = {"name": name, "version": "0.1.0", "description": f"test {name}"}
     if manifest_extra:
         manifest.update(manifest_extra)
-    (plugin_dir / "plugin.yaml").write_text(yaml.dump(manifest))
+    (plugin_dir / "plugin.yaml").write_text(yaml.dump(manifest), encoding="utf-8")
     (plugin_dir / "__init__.py").write_text(
         f"def register(ctx):\n    {register_body}\n"
     )
@@ -37,7 +37,7 @@ def _enable(home, names, entries=None):
     cfg = {"plugins": {"enabled": list(names)}}
     if entries:
         cfg["plugins"]["entries"] = entries
-    (home / "config.yaml").write_text(yaml.safe_dump(cfg))
+    (home / "config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
 
 @pytest.fixture

@@ -62,7 +62,7 @@ def test_sibling_behind_is_migrated_on_disk(monkeypatch, tmp_path):
     entry = next(m for m in migrated if m[0] == "research")
     assert entry[1] == 12 and entry[2] == _latest_version()
     # REAL file on disk carries the new version
-    on_disk = yaml.safe_load((sibling / "config.yaml").read_text())
+    on_disk = yaml.safe_load((sibling / "config.yaml").read_text(encoding="utf-8"))
     assert on_disk["_config_version"] == _latest_version()
     # and user settings survived
     assert on_disk["model"]["provider"] == "nous"
@@ -76,7 +76,7 @@ def test_active_profile_is_skipped(monkeypatch, tmp_path):
 
     assert "active" not in [m[0] for m in migrated]
     # active home untouched (the caller's own migration handles it)
-    on_disk = yaml.safe_load((active / "config.yaml").read_text())
+    on_disk = yaml.safe_load((active / "config.yaml").read_text(encoding="utf-8"))
     assert on_disk["_config_version"] == 12
 
 

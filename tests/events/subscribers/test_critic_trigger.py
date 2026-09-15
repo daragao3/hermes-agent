@@ -18,7 +18,7 @@ def bus(tmp_path):
 def critic_script(tmp_path):
     """Mock critic_retro.py path."""
     script = tmp_path / "critic_retro.py"
-    script.write_text("# stub")
+    script.write_text("# stub", encoding="utf-8")
     return script
 
 

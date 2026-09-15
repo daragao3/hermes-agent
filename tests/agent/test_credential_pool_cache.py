@@ -104,7 +104,7 @@ def test_load_pool_re_reads_after_auth_json_mtime_change(hermes_home, monkeypatc
     auth_json = hermes_home / "auth.json"
     # Ensure mtime actually advances on Windows by sleeping past FS granularity
     time.sleep(0.05)
-    auth_json.write_text(auth_json.read_text() + " ")
+    auth_json.write_text(auth_json.read_text() + " ", encoding="utf-8")
 
     cp_mod.load_pool("openai-codex")
     assert call_count["n"] == 2, (

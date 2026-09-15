@@ -49,7 +49,7 @@ class TestMetaAndValidation:
     def test_empty_clears_key_from_file(self, profile_env):
         write_profile_meta(profile_env, display_name="Harumesu")
         write_profile_meta(profile_env, display_name="")
-        data = yaml.safe_load((profile_env / "profile.yaml").read_text())
+        data = yaml.safe_load((profile_env / "profile.yaml").read_text(encoding="utf-8"))
         assert "display_name" not in data
 
     def test_setter_strips_and_caps_length(self, profile_env):

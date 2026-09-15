@@ -69,7 +69,7 @@ def _gated_job(hermes_env, body):
     from cron.jobs import create_job
 
     script = hermes_env / "scripts" / "probe.sh"
-    script.write_text(f"#!/bin/bash\n{body}\n")
+    script.write_text(f"#!/bin/bash\n{body}\n", encoding="utf-8")
     return create_job(
         prompt="do work",
         schedule="every 5m",

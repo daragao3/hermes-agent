@@ -45,8 +45,8 @@ def homes(tmp_path, monkeypatch):
     routed_home = tmp_path / "profiles" / "beta"
     default_home.mkdir()
     routed_home.mkdir(parents=True)
-    (default_home / "config.yaml").write_text("agent:\n  reasoning_effort: medium\n")
-    (routed_home / "config.yaml").write_text("agent:\n  reasoning_effort: none\n")
+    (default_home / "config.yaml").write_text("agent:\n  reasoning_effort: medium\n", encoding="utf-8")
+    (routed_home / "config.yaml").write_text("agent:\n  reasoning_effort: none\n", encoding="utf-8")
     monkeypatch.setattr(gateway_run, "_hermes_home", default_home)
     monkeypatch.setenv("HERMES_HOME", str(default_home))
     return default_home, routed_home
@@ -63,7 +63,7 @@ async def test_slash_config_writes_hit_routed_profile_and_leave_default_untouche
         await runner._handle_memory_command(_Event("approval on"))
         await runner._handle_skills_command(_Event("approval on"))
 
-    routed = yaml.safe_load((routed_home / "config.yaml").read_text())
+    routed = yaml.safe_load((routed_home / "config.yaml").read_text(encoding="utf-8"))
     assert routed["agent"]["reasoning_effort"] == "high"
     assert routed["memory"]["write_approval"] is True
     assert routed["skills"]["write_approval"] is True

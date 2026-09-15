@@ -137,7 +137,7 @@ def _script_job(hermes_env, script_name, body, **extra):
     from cron.jobs import create_job
 
     script = hermes_env / "scripts" / f"{script_name}.sh"
-    script.write_text(f"#!/bin/bash\n{body}\n")
+    script.write_text(f"#!/bin/bash\n{body}\n", encoding="utf-8")
     job = create_job(
         prompt=None,
         schedule="every 5m",
@@ -254,7 +254,7 @@ def test_hybrid_wake_gate_records_no_work_without_a_session(hermes_env, registry
     from cron.scheduler import run_job
 
     script = hermes_env / "scripts" / "gate.sh"
-    script.write_text('#!/bin/bash\necho \'{"wakeAgent": false}\'\n')
+    script.write_text('#!/bin/bash\necho \'{"wakeAgent": false}\'\n', encoding="utf-8")
     job = create_job(
         prompt="do the thing", schedule="every 5m", script="gate.sh", deliver="local"
     )

@@ -142,7 +142,7 @@ async def main():
         output = subprocess.check_output(
             ["/bin/sh", "-c", "printf CHILD_LOCAL_DONE"], text=True
         )
-        (HOME / "child-artifact.txt").write_text(output)
+        (HOME / "child-artifact.txt").write_text(output, encoding="utf-8")
         return {"summary": output, "status": "completed", "api_calls": 0}
 
     async def dispatch_case(route):

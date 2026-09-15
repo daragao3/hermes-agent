@@ -32,7 +32,7 @@ def _spawn_gateway_lookalike(bin_dir: Path, lock_path: Path) -> subprocess.Popen
     else:
         body = (
             "import fcntl, time\n"
-            f"fh = open({str(lock_path)!r}, 'a+')\n"
+            f"fh = open({str(lock_path)!r}, 'a+')\n"  # windows-footgun: ok -- source of a POSIX-only probe script, not a call
             "fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
             "time.sleep(120)\n"
         )
@@ -121,7 +121,7 @@ class TestCrossProfileStopRefusal:
         )
         try:
             record = _pid_record(proc, tmp_path / "bin" / "hermes", root_home)
-            (tim_home / "gateway.pid").write_text(json.dumps(record))
+            (tim_home / "gateway.pid").write_text(json.dumps(record), encoding="utf-8")
 
             from hermes_cli import gateway as gateway_cli
 
@@ -150,7 +150,7 @@ class TestCrossProfileStopRefusal:
         )
         try:
             record = _pid_record(proc, tmp_path / "bin" / "hermes", tim_home)
-            (tim_home / "gateway.pid").write_text(json.dumps(record))
+            (tim_home / "gateway.pid").write_text(json.dumps(record), encoding="utf-8")
 
             from hermes_cli import gateway as gateway_cli
 
@@ -181,7 +181,7 @@ class TestProfileDeleteStopRefusal:
         )
         try:
             record = _pid_record(proc, tmp_path / "bin" / "hermes", root_home)
-            (tim_home / "gateway.pid").write_text(json.dumps(record))
+            (tim_home / "gateway.pid").write_text(json.dumps(record), encoding="utf-8")
 
             from hermes_cli.profiles import _stop_gateway_process
 
@@ -205,7 +205,7 @@ class TestProfileDeleteStopRefusal:
         )
         try:
             record = _pid_record(proc, tmp_path / "bin" / "hermes", tim_home)
-            (tim_home / "gateway.pid").write_text(json.dumps(record))
+            (tim_home / "gateway.pid").write_text(json.dumps(record), encoding="utf-8")
 
             from hermes_cli.profiles import _stop_gateway_process
 

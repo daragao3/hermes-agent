@@ -90,7 +90,7 @@ def test_self_heals_missing_singleton_access_token_from_codex_cli(tmp_path, monk
 
     assert resolved["api_key"] == "fresh-access"
     assert resolved["source"] == "hermes-auth-store"
-    stored = json.loads((hermes_home / "auth.json").read_text())
+    stored = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     tokens = stored["providers"]["openai-codex"]["tokens"]
     assert tokens["access_token"] == "fresh-access"
     assert tokens["refresh_token"] == "fresh-refresh"
@@ -161,7 +161,7 @@ def test_does_not_adopt_codex_cli_token_superseded_by_hermes_copy(tmp_path, monk
     assert refresh_calls == [1]
     assert ei.value.code == "refresh_token_reused"
     # Hermes' own (newer) credentials must survive untouched.
-    stored = json.loads((hermes_home / "auth.json").read_text())
+    stored = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     tokens = stored["providers"]["openai-codex"]["tokens"]
     assert tokens["refresh_token"] == "hermes-refresh"
     assert tokens["access_token"] == "hermes-access"
@@ -199,5 +199,5 @@ def test_still_adopts_codex_cli_token_newer_than_hermes_copy(tmp_path, monkeypat
     assert refresh_calls == [1]
     assert out["access_token"] == "cli-access"
     assert out["refresh_token"] == "cli-refresh"
-    stored = json.loads((hermes_home / "auth.json").read_text())
+    stored = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     assert stored["providers"]["openai-codex"]["tokens"]["refresh_token"] == "cli-refresh"

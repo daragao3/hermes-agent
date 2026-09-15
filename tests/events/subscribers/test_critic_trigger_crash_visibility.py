@@ -47,7 +47,7 @@ def bus(tmp_path):
 @pytest.fixture
 def critic_script(tmp_path):
     script = tmp_path / "critic_retro.py"
-    script.write_text("# stub")
+    script.write_text("# stub", encoding="utf-8")
     return script
 
 

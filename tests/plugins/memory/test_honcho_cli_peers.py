@@ -32,7 +32,7 @@ def honcho_home(tmp_path, monkeypatch):
         },
     }
     path = tmp_path / "honcho.json"
-    path.write_text(json.dumps(cfg))
+    path.write_text(json.dumps(cfg), encoding="utf-8")
     monkeypatch.setattr(honcho_cli, "_config_path", lambda: path)
     return tmp_path
 
@@ -81,10 +81,10 @@ class TestAllProfileHostConfigs:
         stay readable, and _host_block() exists precisely for that fallback.
         A bare hosts.get(profile_host_key(...)) would regress them."""
         path = honcho_home / "honcho.json"
-        cfg = json.loads(path.read_text())
+        cfg = json.loads(path.read_text(encoding="utf-8"))
         del cfg["hosts"]["hermes_work"]
         cfg["hosts"]["hermes.work"] = {"peerName": "carol", "aiPeer": "hermes"}
-        path.write_text(json.dumps(cfg))
+        path.write_text(json.dumps(cfg), encoding="utf-8")
         monkeypatch.setattr(
             "hermes_cli.profiles.list_profiles",
             lambda: [SimpleNamespace(name="default"), SimpleNamespace(name="work")],

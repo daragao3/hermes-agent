@@ -83,7 +83,7 @@ async def test_serve_timer_runs_due_curator_once_and_honors_pause(tmp_path, monk
             while load_state()["run_count"] == 0:
                 await asyncio.sleep(.02)
         await asyncio.sleep(.15)
-        state = json.loads((tmp_path / "skills" / ".curator_state").read_text())
+        state = json.loads((tmp_path / "skills" / ".curator_state").read_text(encoding="utf-8"))
         assert state["run_count"] == 1
         assert "consolidation off" in state["last_run_summary"]
     finally:

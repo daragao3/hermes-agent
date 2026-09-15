@@ -18,7 +18,7 @@ for k in list(ENV):
 
 def run(argv, code=None, timeout=300):
     t0 = time.perf_counter()
-    r = subprocess.run([PY, *argv] if code is None else [PY, "-c", code], cwd=TREE, env=ENV, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    r = subprocess.run([PY, *argv] if code is None else [PY, "-c", code], cwd=TREE, env=ENV, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, encoding="utf-8")
     return time.perf_counter() - t0, r
 
 def warm_pyc():
@@ -59,7 +59,7 @@ for tgt in IMPORT_TARGETS:
     rows = []
     for _ in range(REPS):
         _, r = run([], code=None) if False else (None, None)
-        r = subprocess.run([PY, "-c", probe, tgt], cwd=TREE, env=ENV, capture_output=True, text=True, timeout=300)
+        r = subprocess.run([PY, "-c", probe, tgt], cwd=TREE, env=ENV, capture_output=True, text=True, timeout=300, encoding="utf-8")
         try: rows.append(json.loads([l for l in (r.stdout + "\n" + r.stderr).splitlines() if l.lstrip().startswith("{") and "\"dt\"" in l][-1].strip()))
         except Exception: rows.append({"dt": None, "mods": None, "rss_kb": None, "err": (r.stderr or r.stdout)[-300:]})
     ok = [x for x in rows if x["dt"] is not None and not x["err"]]

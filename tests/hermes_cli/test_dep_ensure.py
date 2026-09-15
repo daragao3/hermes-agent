@@ -104,7 +104,7 @@ def test_ensure_dependency_uses_powershell_on_windows(tmp_path):
     from hermes_cli.dep_ensure import ensure_dependency
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir(parents=True)
-    (scripts_dir / "install.ps1").write_text("# fake")
+    (scripts_dir / "install.ps1").write_text("# fake", encoding="utf-8")
     with patch("hermes_cli.dep_ensure._DEP_CHECKS", {"node": lambda: False}), \
          patch("hermes_cli.dep_ensure._find_install_script", return_value=(scripts_dir / "install.ps1", "powershell")), \
          patch("hermes_cli.dep_ensure.shutil") as mock_shutil, \

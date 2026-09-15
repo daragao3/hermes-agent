@@ -52,10 +52,10 @@ def progress(tmp_path):
 
         class Progress:
             def publish(self, state: str, message: str) -> None:
-                status.write_text(json.dumps({"status": state, "message": message}))
+                status.write_text(json.dumps({"status": state, "message": message}), encoding="utf-8")
 
             def corrupt(self) -> None:
-                status.write_text("}not json{")
+                status.write_text("}not json{", encoding="utf-8")
 
             def poll(self) -> dict:
                 with urlopen(f"http://127.0.0.1:{port}/progress", timeout=5) as r:
@@ -135,13 +135,13 @@ def _run_handoff(tmp_path, exits: dict[int, int]) -> list[dict]:
     install_root = tmp_path / "hermes-agent"
     (install_root / "venv" / "bin").mkdir(parents=True)
     hermes = install_root / "venv" / "bin" / "hermes"
-    hermes.write_text(FAKE_HERMES)
+    hermes.write_text(FAKE_HERMES, encoding="utf-8")
     hermes.chmod(0o755)
 
     capture = tmp_path / "seen"
     calls = tmp_path / "calls"
     for call, code in exits.items():
-        (tmp_path / f"exits.{call}").write_text(str(code))
+        (tmp_path / f"exits.{call}").write_text(str(code), encoding="utf-8")
 
     env = {
         **os.environ,
@@ -173,7 +173,7 @@ def _run_handoff(tmp_path, exits: dict[int, int]) -> list[dict]:
 
     seen = sorted(tmp_path.glob("seen.*"), key=lambda p: int(p.suffix[1:]))
 
-    return [json.loads(p.read_text()) for p in seen]
+    return [json.loads(p.read_text(encoding="utf-8")) for p in seen]
 
 
 @requires_posix_handoff

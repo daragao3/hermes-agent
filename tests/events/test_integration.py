@@ -43,7 +43,7 @@ class TestEndToEnd:
         # Subscriber consumes
         audit.poll()
 
-        lines = audit_path.read_text().strip().split("\n")
+        lines = audit_path.read_text(encoding="utf-8").strip().split("\n")
         # 2 lifecycle events: cron_started, cron_completed.
         # Domain events (job_discovered, etc.) now come from MailboxTranslator
         # consuming mailbox_message events, not from regex-parsing agent output.
@@ -67,7 +67,7 @@ class TestEndToEnd:
 
         audit.poll()
 
-        lines = audit_path.read_text().strip().split("\n")
+        lines = audit_path.read_text(encoding="utf-8").strip().split("\n")
         assert len(lines) == 3  # up, down, up (no duplicate down)
 
     def test_mailbox_to_event_flow(self, setup):

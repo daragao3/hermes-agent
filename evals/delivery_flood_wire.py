@@ -170,11 +170,11 @@ async def run_mode(output, mode):
     home = output / mode
     home.mkdir(parents=True, exist_ok=True)
     os.environ['HERMES_HOME'] = str(home)
-    (home / 'config.yaml').write_text('gateway:\n  delivery_ledger: true\n')
+    (home / 'config.yaml').write_text('gateway:\n  delivery_ledger: true\n', encoding="utf-8")
     wire = Wire()
     try:
         result = await scenario(wire, mode)
-        (output / f'{mode}.json').write_text(json.dumps(result, indent=2))
+        (output / f'{mode}.json').write_text(json.dumps(result, indent=2), encoding="utf-8")
         return result
     finally:
         wire.close()

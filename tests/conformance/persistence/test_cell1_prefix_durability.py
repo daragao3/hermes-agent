@@ -52,7 +52,7 @@ def _acknowledged(journal: Path) -> list[dict]:
     if not journal.exists():
         return []
     out = []
-    for line in journal.read_text().splitlines():
+    for line in journal.read_text(encoding="utf-8").splitlines():
         try:
             out.append(json.loads(line))
         except json.JSONDecodeError:
