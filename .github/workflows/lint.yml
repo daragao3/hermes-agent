@@ -207,6 +207,34 @@ jobs:
       - name: Run footgun checker
         run: python scripts/check-windows-footguns.py --all
 
+      # A presence assertion whose literal is also in its test's NAME can be
+      # satisfied by pytest's tmp_path instead of by production code, and then
+      # cannot fail however wrong production gets. 15 such sites were found and
+      # fixed in Sep 2026 (merge 1f8800ecd1); ~2-3 new ones arrive per month.
+      #
+      # THIS IS THE RUNTIME PROVER, NOT THE STATIC SCANNER, and the difference
+      # is the whole design. scripts/check_testname_substring_assertions.py is
+      # an audit tool that reports CANDIDATES -- 84 at its strictest width, of
+      # which only 15 were ever real. Gating on its count (or on a frozen
+      # allowlist of today's 84) would be ~85% false positives and would make
+      # waiving the normal response, which is how check-windows-footguns.py's
+      # unnecessary "# windows-footgun ok" markers ended up blinding that
+      # scanner. The prover instead RUNS each candidate and requires proof:
+      # the literal is inside the tmp_path basename AND that basename is inside
+      # the haystack, which together make the assertion green by construction.
+      # Zero false positives, because it is a proof rather than a heuristic.
+      #
+      # --diff, so the pre-existing benign population is not re-litigated on
+      # every PR. Note the deliberate gap that leaves: a PRODUCTION change can
+      # make an UNCHANGED test vacuous, and only `--all` catches that. Run
+      # `python scripts/check_testname_assertion_vacuity.py --all` for the full
+      # audit; it costs minutes, which is why it is not on the PR lane.
+      - name: Presence assertions cannot be satisfied by their own test name
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --deepen=200 origin "${{ github.base_ref }}" || true
+          python scripts/check_testname_assertion_vacuity.py --diff "origin/${{ github.base_ref }}"
+
       # The Sep 2026 decomposition kept old import paths alive for external plugins
       # (PLUGIN-COMPAT blocks, see COMPAT_MANIFEST.md). They are removed on schedule by
       # reverting one commit, so in-tree code must never depend on them.
