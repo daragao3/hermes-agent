@@ -46,6 +46,13 @@ function runGh(args, cwd, ghBin): Promise<{ ok: boolean; stdout: string }> {
   })
 }
 
+// simple-git's custom-binary plugin validates `binary` against
+// /^([a-z]:)?([a-z0-9/.\\_~-]+)$/i. With `unsafe.allowUnsafeCustomBinary` it
+// stops THROWING on a miss but still console.warn()s this exact string on every
+// construction — so each gitFor() call for a spaced path printed one line of
+// noise into the desktop console (two at boot on a stock Windows install).
+const SIMPLE_GIT_UNSAFE_BINARY_WARNING = 'Invalid value supplied for custom binary'
+
 function gitFor(cwd, gitBin) {
   // `gitBin` is resolved inside the Electron main process from known install
   // locations or PATH — never renderer/user input. simple-git's custom-binary
@@ -54,13 +61,39 @@ function gitFor(cwd, gitBin) {
   // For spaced paths, opt into simple-git's trusted-binary escape hatch instead
   // of falling back to PATH (often absent in GUI-launched apps, and PATH lookup
   // could resolve a repo-local git.exe).
-  return simpleGit({
-    baseDir: cwd,
-    binary: gitBin || 'git',
-    maxConcurrentProcesses: 4,
-    trimmed: false,
-    ...(gitBin && /\s/.test(gitBin) ? { unsafe: { allowUnsafeCustomBinary: true } } : {})
-  })
+  const unsafeBinary = Boolean(gitBin && /\s/.test(gitBin))
+
+  const build = () =>
+    simpleGit({
+      baseDir: cwd,
+      binary: gitBin || 'git',
+      maxConcurrentProcesses: 4,
+      trimmed: false,
+      ...(unsafeBinary ? { unsafe: { allowUnsafeCustomBinary: true } } : {})
+    })
+
+  if (!unsafeBinary) {
+    return build()
+  }
+
+  // The validation (and its warn) runs synchronously inside the constructor,
+  // so a scoped console.warn swap covers exactly that call and nothing else.
+  // Only the known string is dropped; any other warning passes through.
+  const warn = console.warn
+
+  console.warn = (...args) => {
+    if (typeof args[0] === 'string' && args[0].startsWith(SIMPLE_GIT_UNSAFE_BINARY_WARNING)) {
+      return
+    }
+
+    warn.apply(console, args)
+  }
+
+  try {
+    return build()
+  } finally {
+    console.warn = warn
+  }
 }
 
 // simple-git reports renames as `old => new` (and `dir/{old => new}/f`); resolve
