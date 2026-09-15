@@ -935,6 +935,42 @@ describe('ToolsetConfigPanel', () => {
       throw new Error(`provider row ${name} never appeared`)
     }
 
+    // The contract this pins is the one that made the click race impossible:
+    // the expanded row is seeded in the SAME batched update that first paints
+    // the rows, inside refresh(), not in a later effect. If it is ever deferred
+    // again there is a committed frame with every row collapsed and a
+    // setExpandedProvider(default) still queued -- which is exactly the window a
+    // click used to be lost in.
+    //
+    // This is deliberately the test that has TEETH here. The two ref guards
+    // around that seed (the row-onClick claim, and `current ?? initialProvider`)
+    // are UNFALSIFIABLE as the code now stands -- removing either, or both, kills
+    // no test and cannot: the seed block is gated on `!claimed`, the first
+    // successful load always sets claimed, and the only path that leaves claimed
+    // false is `providers.length === 0`, which renders no row for a user to
+    // click. They are redundant defence-in-depth, not uncovered behaviour, so do
+    // not "fix" a surviving mutant there by loosening this file.
+    it('never paints a frame of provider rows with none expanded', async () => {
+      render(<ToolsetConfigPanel onConfiguredChange={vi.fn()} toolset="tts" />)
+
+      // Raw macrotasks, not findBy*/waitFor: waitFor's trailing setTimeout(0)
+      // lets React flush pending passive effects first, which would paper over
+      // exactly the deferred-seed regression under test.
+      for (let attempt = 0; attempt < 2000; attempt += 1) {
+        const rows = screen.queryAllByRole('button').filter(b => b.hasAttribute('aria-expanded'))
+
+        if (rows.length > 0) {
+          expect(rows.some(r => r.getAttribute('aria-expanded') === 'true')).toBe(true)
+
+          return
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 0))
+      }
+
+      throw new Error('provider rows never appeared')
+    })
+
     it('keeps the clicked provider expanded when the row is clicked the instant it paints', async () => {
       // Regression: the default expanded provider used to be assigned by a
       // useEffect running a commit *after* the rows first painted. A click
