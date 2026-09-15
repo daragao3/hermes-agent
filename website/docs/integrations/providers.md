@@ -1,7 +1,7 @@
 ---
+sidebar_position: 1
 title: "LLM and Model Providers"
 sidebar_label: "AI Providers"
-sidebar_position: 1
 ---
 
 # LLM and Model Providers

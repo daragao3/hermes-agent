@@ -15,13 +15,13 @@ Stock quotes, history, search, compare, crypto via Yahoo.
 | | |
 |---|---|
 | Source | Optional — install with `hermes skills install official/finance/stocks` |
-| Path | `optional-skills/finance\stocks` |
+| Path | `optional-skills/finance/stocks` |
 | Version | `0.1.0` |
 | Author | Mibay (Mibayy), Hermes Agent |
 | License | MIT |
 | Platforms | linux, macos, windows |
 | Tags | `Stocks`, `Finance`, `Market`, `Crypto`, `Investing` |
-| Related skills | [`dcf-model`](/docs/user-guide/skills/optional/finance/finance-dcf-model), [`comps-analysis`](/docs/user-guide/skills/optional/finance/finance-comps-analysis), [`lbo-model`](/docs/user-guide/skills/optional/finance/finance-lbo-model) |
+| Related skills | [`dcf-model`](/user-guide/skills/optional/finance/finance-dcf-model), [`comps-analysis`](/user-guide/skills/optional/finance/finance-comps-analysis), [`lbo-model`](/user-guide/skills/optional/finance/finance-lbo-model) |
 
 ## Reference: full SKILL.md
 
@@ -88,7 +88,8 @@ Daily OHLCV plus stats (min, max, avg, total return %). Ranges: `1mo`,
 
 ### `compare SYMBOL1 SYMBOL2 [...]`
 
-Side-by-side: price, change%, 52-week performance.
+Side-by-side: price, change%, and `52w_range_position_pct` — where the
+price sits between the 52-week low (0%) and high (100%).
 
 ### `crypto SYMBOL [SYMBOL2 ...]`
 

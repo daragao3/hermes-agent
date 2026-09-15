@@ -8,6 +8,10 @@ description: "使用 Microsoft Graph webhook 配置 Microsoft Teams 会议摘要
 
 当你希望 Hermes 接收 Microsoft Graph 会议事件、优先获取转录文本、在无可用转录时回退到录音加 STT（语音转文字），并将结构化摘要输出到下游 sink 时，请使用 Teams 会议流水线。
 
+前提条件：底层的 bot/凭据配置请参见 [Microsoft Teams](./teams.md)。
+
+> 运行 `hermes gateway setup` 并选择 **Teams Meetings**，可获得引导式配置流程。
+
 本页重点介绍配置与启用：
 - Graph 凭据
 - webhook 监听器配置
@@ -65,6 +69,7 @@ webhook 监听器是一个名为 `msgraph_webhook` 的 gateway 平台。至少�
 
 ```bash
 MSGRAPH_WEBHOOK_ENABLED=true
+MSGRAPH_WEBHOOK_HOST=127.0.0.1
 MSGRAPH_WEBHOOK_PORT=8646
 MSGRAPH_WEBHOOK_CLIENT_STATE=<random-shared-secret>
 MSGRAPH_WEBHOOK_ACCEPTED_RESOURCES=communications/onlineMeetings
@@ -91,6 +96,7 @@ platforms:
   msgraph_webhook:
     enabled: true
     extra:
+      host: 127.0.0.1
       port: 8646
       client_state: "replace-me"
       accepted_resources:
@@ -119,6 +125,8 @@ platforms:
         linear:
           enabled: false
 ```
+
+如果你将监听器绑定到 `0.0.0.0` 等非环回主机，还必须将 `allowed_source_cidrs` 设置为 Microsoft 的 webhook 出口范围。环回绑定（`127.0.0.1` / `::1`）是推荐的 dev tunnel 和本地反向代理配置方式。
 
 ## Teams 投递模式
 

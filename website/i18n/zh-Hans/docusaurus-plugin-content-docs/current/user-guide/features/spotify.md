@@ -1,3 +1,8 @@
+---
+title: "Spotify"
+description: "通过官方 Web API 与 PKCE OAuth 控制 Spotify 的播放、队列、搜索、歌单和音乐库"
+---
+
 # Spotify
 
 Hermes 可以直接控制 Spotify——播放、队列、搜索、播放列表、已保存的曲目/专辑以及收听历史——通过 Spotify 官方 Web API 配合 PKCE OAuth 实现。Token（令牌）存储在 `~/.hermes/auth.json` 中，遇到 401 时自动刷新；每台机器只需登录一次。
@@ -68,7 +73,7 @@ hermes auth spotify
 
 同意条款并点击 **Save**。在下一页点击 **Settings** → 复制 **Client ID** 并粘贴到 Hermes 提示中。这是 Hermes 唯一需要的值——PKCE 不使用 client secret。
 
-### 通过 SSH / 在无头环境中运行
+### 通过 SSH / 在无头环境中运行 {#running-over-ssh--in-a-headless-environment}
 
 若设置了 `SSH_CLIENT` 或 `SSH_TTY`，Hermes 在向导和 OAuth 步骤中均会跳过自动打开浏览器。复制 Hermes 打印的 dashboard URL 和授权 URL，在本地机器的浏览器中打开，然后正常操作——本地 HTTP 监听器仍在远程主机的 `43827` 端口运行。你的笔记本浏览器无法直接访问远程回环地址，需要通过 SSH 本地端口转发：
 

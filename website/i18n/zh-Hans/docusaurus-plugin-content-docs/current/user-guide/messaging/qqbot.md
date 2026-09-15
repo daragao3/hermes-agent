@@ -1,3 +1,9 @@
+---
+sidebar_position: 24
+title: "QQ Bot"
+description: "通过官方 QQ Bot API v2 将 Hermes Agent 接入 QQ，支持私聊、群聊和频道消息"
+---
+
 # QQ Bot
 
 通过**官方 QQ Bot API（v2）**将 Hermes 接入 QQ——支持私聊（C2C）、群组 @-提及、频道及直接消息，并具备语音转写功能。

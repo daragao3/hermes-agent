@@ -1,8 +1,8 @@
 ---
-title: Home Assistant
-description: Control your smart home with Hermes Agent via Home Assistant integration.
-sidebar_label: Home Assistant
 sidebar_position: 5
+title: Home Assistant
+sidebar_label: Home Assistant
+description: Control your smart home with Hermes Agent via Home Assistant integration.
 ---
 
 # Home Assistant Integration

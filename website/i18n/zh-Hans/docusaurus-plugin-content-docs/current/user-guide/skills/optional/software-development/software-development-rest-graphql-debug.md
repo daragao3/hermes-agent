@@ -20,7 +20,7 @@ description: "调试 REST/GraphQL API：状态码、认证、Schema、复现"
 | 作者 | eren-karakus0 |
 | 许可证 | MIT |
 | 标签 | `api`, `rest`, `graphql`, `http`, `debugging`, `testing`, `curl`, `integration` |
-| 相关 skill | [`systematic-debugging`](/user-guide/skills/bundled/software-development/software-development-systematic-debugging)、[`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development) |
+| 相关 skill | [`systematic-debugging`](/user-guide/skills/bundled/software-development/software-development-systematic-debugging), [`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development) |
 
 ## 参考：完整 SKILL.md
 
@@ -414,7 +414,7 @@ class TestAPISmoke:
 
 ### Token 处理
 - 不要记录完整 token。脱敏处理：`Bearer <REDACTED>`。
-- 不要在脚本中硬编码 token。从环境变量（`os.environ["API_TOKEN"]`）或 `~/.hermes/.env` 读取。
+- 不要在脚本中硬编码 token。从环境变量（`os.environ["API_TOKEN"]`）或 `${HERMES_HOME:-~/.hermes}/.env` 读取。
 - 如果 token 出现在日志、错误信息或 git 历史中，立即轮换。
 
 ### 安全日志记录

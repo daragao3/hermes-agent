@@ -1,7 +1,7 @@
 ---
-sidebar_label: "Build a Plugin"
 slug: /developer-guide/plugins
 title: "Build a Hermes Plugin"
+sidebar_label: "Build a Plugin"
 description: "Step-by-step guide to building a complete Hermes plugin with tools, hooks, data files, and skills"
 ---
 

@@ -1,6 +1,6 @@
 ---
-title: Tool Search
 sidebar_position: 95
+title: Tool Search
 ---
 
 # Tool Search

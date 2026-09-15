@@ -34,8 +34,10 @@ YouTube 视频转文字摘要、推文、博客。
 
 ## 安装
 
+使用 `uv`，这样依赖会被安装到运行辅助脚本的同一个由 Hermes 管理的环境中：
+
 ```bash
-pip install youtube-transcript-api
+uv pip install youtube-transcript-api
 ```
 
 ## 辅助脚本
@@ -44,16 +46,16 @@ pip install youtube-transcript-api
 
 ```bash
 # JSON 输出（含元数据）
-python3 SKILL_DIR/scripts/fetch_transcript.py "https://youtube.com/watch?v=VIDEO_ID"
+uv run python3 SKILL_DIR/scripts/fetch_transcript.py "https://youtube.com/watch?v=VIDEO_ID"
 
 # 纯文本输出（适合管道传递给后续处理）
-python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --text-only
+uv run python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --text-only
 
 # 带时间戳
-python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --timestamps
+uv run python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --timestamps
 
 # 指定语言并设置回退链
-python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --language tr,en
+uv run python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --language tr,en
 ```
 
 ## 输出格式
@@ -79,7 +81,7 @@ python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --language tr,en
 
 ## 工作流程
 
-1. **获取**：使用辅助脚本并加上 `--text-only --timestamps` 参数获取文字稿。
+1. **获取**：通过 `uv run python3` 使用辅助脚本并加上 `--text-only --timestamps` 参数获取文字稿。
 2. **验证**：确认输出非空且语言符合预期。若为空，去掉 `--language` 参数重试以获取任意可用文字稿。若仍为空，告知用户该视频可能已禁用文字稿。
 3. **分块（如需）**：若文字稿超过约 50K 字符，将其拆分为有重叠的块（约 40K，重叠 2K），逐块摘要后再合并。
 4. **转换**：将内容转换为用户请求的输出格式。若用户未指定格式，默认输出摘要。
@@ -90,4 +92,4 @@ python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --language tr,en
 - **文字稿已禁用**：告知用户；建议其在视频页面检查字幕是否可用。
 - **视频不可用或为私密视频**：转达错误信息，请用户核实 URL。
 - **无匹配语言**：去掉 `--language` 参数重试以获取任意可用文字稿，并向用户说明实际语言。
-- **缺少依赖**：执行 `pip install youtube-transcript-api` 后重试。
+- **缺少依赖**：执行 `uv pip install youtube-transcript-api` 后重试。

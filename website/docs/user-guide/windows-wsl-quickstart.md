@@ -1,8 +1,8 @@
 ---
-title: "Windows (WSL2) Guide"
-description: "Run Hermes Agent on Windows via WSL2 — setup, filesystem access between Windows and Linux, networking, and common pitfalls"
-sidebar_label: "Windows (WSL2)"
 sidebar_position: 2
+title: "Windows (WSL2) Guide"
+sidebar_label: "Windows (WSL2)"
+description: "Run Hermes Agent on Windows via WSL2 — setup, filesystem access between Windows and Linux, networking, and common pitfalls"
 ---
 
 # Windows (WSL2) Guide

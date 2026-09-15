@@ -21,7 +21,7 @@ description: "4阶段根因调试：先理解缺陷再修复"
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `debugging`, `troubleshooting`, `problem-solving`, `root-cause`, `investigation` |
-| 相关 skill | [`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development), [`writing-plans`](/user-guide/skills/bundled/software-development/software-development-writing-plans), [`subagent-driven-development`](/user-guide/skills/bundled/software-development/software-development-subagent-driven-development) |
+| 相关 skill | [`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development), [`subagent-driven-development`](/user-guide/skills/optional/software-development/software-development-subagent-driven-development) |
 
 ## 参考：完整 SKILL.md
 
@@ -46,6 +46,12 @@ description: "4阶段根因调试：先理解缺陷再修复"
 ```
 
 如果尚未完成阶段 1，则不得提出修复方案。
+
+## 反馈回路法则
+
+反馈回路就是调试工作本身。在阅读代码构建理论之前，先创建或找出一条**紧凑**的命令：它能在用户描述的确切症状上变红，并在缺陷修复后变绿。紧凑的回路是快速的、确定性的、agent 可运行的，并且足够具体以捕获这个缺陷——而不仅仅是"没有崩溃"。
+
+当干净的复现很难获得时，就要不成比例地投入精力去构建这条回路。在没有能变红的回路时靠猜测，正是本 skill 要防止的失败模式。
 
 ## 适用场景
 
@@ -88,21 +94,46 @@ description: "4阶段根因调试：先理解缺陷再修复"
 
 **操作：** 对相关源文件使用 `read_file`。使用 `search_files` 在代码库中查找错误字符串。
 
-### 2. 稳定复现
+### 2. 构建紧凑的反馈回路
 
-- 能否可靠地触发该问题？
-- 确切步骤是什么？
-- 是否每次都会发生？
-- 若无法复现 → 收集更多数据，不要猜测
+- 你能用一条命令触发用户描述的确切症状吗？
+- 这条命令是否会因这个缺陷而失败，并且只有在缺陷修复后才通过？
+- 它是否足够快，可以反复运行？
+- 它是否确定性？对于不稳定（flaky）的缺陷，你能否把复现率提高到足以调试的程度？
+- 若无法复现 → 收集更多数据，不要猜测。
 
-**操作：** 使用 `terminal` 工具运行失败的测试或触发缺陷：
+**构建回路的方式——大致按此顺序尝试：**
+
+1. 在能触达缺陷的接缝处编写**失败测试**：单元、集成或端到端。
+2. 针对运行中的开发服务器使用 **HTTP 脚本 / curl**。
+3. 使用夹具输入执行 **CLI 调用**，将 stdout/stderr 与预期输出做 diff。
+4. 编写**无头浏览器脚本**（Playwright/Puppeteer），对 DOM、控制台或网络做断言。
+5. **重放已捕获的轨迹**：HAR、请求负载、事件日志、队列消息或 webhook body。
+6. 编写**一次性测试台**，启动系统中最小的有用切片并调用失败路径。
+7. 当缺陷表现为大输入空间上间歇性的错误输出时，使用**属性 / 模糊测试回路**。
+8. 当缺陷出现在两个已知状态之间时，构建适用于 `git bisect run` 的**二分测试台**。
+9. 使用**差分回路**对比新旧版本、两份配置、两个 provider 或两份数据集。
+10. 仅在万不得已时使用**人工参与脚本**：把人工步骤脚本化并记录其结果，让回路保持结构化。
+
+**回路建立后再收紧它：**
+
+- 让它更快：缓存初始化、缩小范围、跳过无关的初始化流程。
+- 让信号更锐利：断言确切症状，而不是笼统的成功。
+- 让它更确定：固定时间、设定随机种子、隔离文件系统、冻结网络。
+
+对于非确定性缺陷，眼下的目标是更高的复现率，而不是完美。把触发条件运行 100 次、并行化、加压、缩小时序窗口，或注入 sleep。50% 的 flake 是可调试的；1% 的通常不是。
+
+**操作：** 使用 `terminal` 工具运行这条紧凑回路：
 
 ```bash
 # 运行特定失败测试
 pytest tests/test_module.py::test_name -v
 
-# 使用详细输出运行
-pytest tests/test_module.py -v --tb=long
+# 或运行脚本化的复现
+python scripts/repro_bug.py
+
+# 或运行高重复次数的 flaky 复现
+for i in {1..100}; do pytest tests/test_flake.py::test_name -q || break; done
 ```
 
 ### 3. 检查近期变更
@@ -162,11 +193,13 @@ search_files("variable_name\\s*=", path="src/", file_glob="*.py")
 ### 阶段 1 完成检查清单
 
 - [ ] 错误信息已完整阅读并理解
-- [ ] 问题已稳定复现
+- [ ] 已存在一条紧凑回路命令，并且至少运行过一次
+- [ ] 回路具备变红能力：它断言的是用户描述的确切症状，而不是邻近的失败
+- [ ] 回路是确定性的，或 flaky 缺陷的复现率已高到足以调试
 - [ ] 近期变更已识别并审查
 - [ ] 证据已收集（日志、状态、数据流）
 - [ ] 问题已定位到具体组件/代码
-- [ ] 根因假设已形成
+- [ ] 根因假设可以被陈述并验证
 
 **停止：** 在理解问题发生的原因之前，不得进入阶段 2。
 
@@ -175,6 +208,12 @@ search_files("variable_name\\s*=", path="src/", file_glob="*.py")
 ## 阶段 2：模式分析
 
 **在修复之前找到规律：**
+
+### 0. 最小化复现
+
+一旦回路变红，就把复现收缩到仍会变红的最小场景。**一次删一项**地裁剪输入、调用方、配置、数据和步骤，每裁剪一次就重新运行回路。只保留对该失败起支撑作用的部分。
+
+当删除任何剩余元素都会让回路变绿时，就完成了。最小复现能缩小假设空间，并且往往会成为最干净的回归测试。
 
 ### 1. 查找可用示例
 
@@ -211,17 +250,22 @@ search_files("similar_pattern", path="src/", file_glob="*.py")
 
 **科学方法：**
 
-### 1. 形成单一假设
+### 1. 形成分级排序的可证伪假设
 
-- 清晰陈述："我认为 X 是根因，因为 Y"
-- 将其写下来
-- 要具体，不要模糊
+- 在验证任何单个假设之前，先生成 3–5 个合理的假设。
+- 按可能性以及证伪成本的高低给它们排序。
+- 写出每个假设所作的预测："如果 X 是根因，那么改变或观察 Y 应当使 Z 发生。"
+- 任何给不出可检验预测的假设，要么丢弃，要么把它收紧。
+
+如果用户在场，请在开始验证之前把排好序的清单给他们看。他们可能拥有能立刻重排这个顺序的领域知识。如果用户不在（AFK），就按你自己的排序继续。
 
 ### 2. 最小化测试
 
-- 做出最小可能的变更来验证假设
-- 每次只改变一个变量
-- 不要同时修复多处
+- 用尽可能小的探针来验证排名最高的假设。
+- 每次只改变一个变量。
+- 不要同时修复多处。
+- 在可用时优先使用调试器/REPL 检查；一个断点胜过十条日志。
+- 如果你要加日志，请给每一行临时日志打上唯一前缀（例如 `[DEBUG-a4f2]`），这样清理时一次搜索即可。
 
 ### 3. 继续前验证
 

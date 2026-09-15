@@ -10,6 +10,10 @@ description: "构建一个自动化每日简报机器人，研究主题、汇总
 
 完成后，你将拥有一个完全自动化的工作流，结合了 **网页搜索**、**cron 调度**、**委托（delegation）** 和 **消息推送** — 无需编写代码。
 
+:::tip
+本方案会用到网页搜索、摘要汇总以及可选的 TTS——这些都包含在 Portal 订阅中。最快的配置方式是 `hermes setup --portal`。参见 [Nous Portal](/integrations/nous-portal)。
+:::
+
 ## 我们要构建什么
 
 流程如下：

@@ -1,8 +1,8 @@
 ---
-title: "Nous Tool Gateway"
-description: "One subscription, every tool. Web search, image generation, TTS, and cloud browsers — all routed through Nous Portal with no extra API keys."
-sidebar_label: "Tool Gateway"
 sidebar_position: 2
+title: "Nous Tool Gateway"
+sidebar_label: "Tool Gateway"
+description: "One subscription, every tool. Web search, image generation, TTS, and cloud browsers — all routed through Nous Portal with no extra API keys."
 ---
 
 # Nous Tool Gateway

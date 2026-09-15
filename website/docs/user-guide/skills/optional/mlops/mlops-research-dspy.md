@@ -15,7 +15,7 @@ DSPy: declarative LM programs, auto-optimize prompts, RAG.
 | | |
 |---|---|
 | Source | Optional — install with `hermes skills install official/mlops/dspy` |
-| Path | `optional-skills/mlops\research\dspy` |
+| Path | `optional-skills/mlops/research/dspy` |
 | Version | `1.0.0` |
 | Author | Orchestra Research |
 | License | MIT |
@@ -536,7 +536,7 @@ class SummarizeArticle(dspy.Signature):
 ```python
 # Create diverse training examples
 trainset = [
-    dspy.Example(question="factual", answer="...).with_inputs("question"),
+    dspy.Example(question="factual", answer="...").with_inputs("question"),
     dspy.Example(question="reasoning", answer="...").with_inputs("question"),
     dspy.Example(question="calculation", answer="...").with_inputs("question"),
 ]

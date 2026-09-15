@@ -1,6 +1,6 @@
 ---
-title: Egress proxy
 sidebar_position: 1
+title: Egress proxy
 ---
 
 # Egress proxy

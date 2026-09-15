@@ -1,8 +1,8 @@
 ---
-title: X (Twitter) 搜索
-description: 使用 xAI 内置的 x_search Responses 工具在 agent 内搜索 X (Twitter) 帖子和话题串——支持 SuperGrok OAuth 登录或 XAI_API_KEY。
-sidebar_label: X (Twitter) 搜索
 sidebar_position: 7
+title: X (Twitter) 搜索
+sidebar_label: X (Twitter) 搜索
+description: 使用 xAI 内置的 x_search Responses 工具在 agent 内搜索 X (Twitter) 帖子和话题串——支持 SuperGrok OAuth 登录或 XAI_API_KEY。
 ---
 
 # X (Twitter) 搜索
@@ -10,6 +10,10 @@ sidebar_position: 7
 `x_search` 工具让 agent 可以直接搜索 X (Twitter) 的帖子、账号和话题串。其底层依托 xAI 在 Responses API（`https://api.x.ai/v1/responses`）上内置的 `x_search` 工具——Grok 在服务端执行搜索，并返回带有原始帖子引用的综合结果。
 
 **当你明确需要 X 上的当前讨论、反应或观点时，请使用此工具而非 `web_search`。** 对于一般网页内容，继续使用 `web_search` / `web_extract`。
+
+:::tip
+如果你本来就在为某个 xAI 模型付费使用 Portal，那么 Live Search 调用会计入为聊天配置的同一个 xAI 密钥。参见 [Nous Portal](/integrations/nous-portal)。
+:::
 
 ## 认证
 

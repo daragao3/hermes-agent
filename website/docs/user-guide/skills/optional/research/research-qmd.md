@@ -15,13 +15,13 @@ Hybrid local search over notes, docs, and transcripts.
 | | |
 |---|---|
 | Source | Optional — install with `hermes skills install official/research/qmd` |
-| Path | `optional-skills/research\qmd` |
+| Path | `optional-skills/research/qmd` |
 | Version | `1.0.0` |
 | Author | Hermes Agent + Teknium |
 | License | MIT |
 | Platforms | macos, linux |
 | Tags | `Search`, `Knowledge-Base`, `RAG`, `Notes`, `MCP`, `Local-AI` |
-| Related skills | [`obsidian`](/docs/user-guide/skills/bundled/note-taking/note-taking-obsidian), [`hermes-agent`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent), [`arxiv`](/docs/user-guide/skills/bundled/research/research-arxiv) |
+| Related skills | [`obsidian`](/user-guide/skills/bundled/note-taking/note-taking-obsidian), [`hermes-agent`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent), [`arxiv`](/user-guide/skills/bundled/research/research-arxiv) |
 
 ## Reference: full SKILL.md
 

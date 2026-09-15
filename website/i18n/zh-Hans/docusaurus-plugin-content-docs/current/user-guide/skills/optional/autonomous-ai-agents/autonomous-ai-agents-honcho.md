@@ -47,14 +47,14 @@ Honcho 提供 AI 原生的跨会话用户建模。它在多次对话中学习用
 ### 云端（app.honcho.dev）
 
 ```bash
-hermes honcho setup
+hermes memory setup honcho
 # select "cloud", paste API key from https://app.honcho.dev
 ```
 
 ### 自托管
 
 ```bash
-hermes honcho setup
+hermes memory setup honcho
 # select "local", enter base URL (e.g. http://localhost:8000)
 ```
 

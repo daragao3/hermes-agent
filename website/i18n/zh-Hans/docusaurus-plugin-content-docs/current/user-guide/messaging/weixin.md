@@ -123,6 +123,8 @@ hermes gateway
 | `allow_from` | `[]` | 允许发送私信的用户 ID（当 dm_policy=allowlist 时生效） |
 | `group_allow_from` | `[]` | 允许的群组 ID（当 group_policy=allowlist 时生效） |
 | `split_multiline_messages` | `false` | 为 `true` 时，将多行回复拆分为多条消息（旧版行为）；为 `false` 时，多行回复保持为单条消息，除非超出长度限制。 |
+| `text_batch_delay_seconds` | `3.0` | 将连续快速到达的文本消息缓冲为一次合并请求前的静默期（秒）。iLink 逐条投递消息，因此该防抖机制可避免每个片段都触发一次 agent 调用。设为 `0` 可立即分发每条消息。 |
+| `text_batch_split_delay_seconds` | `5.0` | 当最新片段接近拆分阈值时（iLink 可能已切分的长消息）所使用的延长刷新延迟。 |
 
 ## 访问策略
 
@@ -141,6 +143,17 @@ hermes gateway
 WEIXIN_DM_POLICY=allowlist
 WEIXIN_ALLOWED_USERS=user_id_1,user_id_2
 ```
+
+`WEIXIN_ALLOWED_USERS` 是一个**入站过滤器**，而不是邀请机制。扫码登录只会把一个 iLink bot 身份连接到 Hermes。其他人不会用自己的账号去扫 Hermes 的二维码；他们必须通过微信向已连接的 iLink bot/联系人发消息，只有当发送者的微信用户 ID 出现在 `WEIXIN_ALLOWED_USERS` 中时，Hermes 才会处理该私信。
+
+实际的配置流程如下：
+
+1. 使用 `hermes gateway setup` 完成一次配对，并记下已连接的 iLink bot 账号。
+2. 让每位被允许的用户向该 bot/联系人发送一条私信。
+3. 从 gateway 日志或入站事件 payload 中读取发送者/用户 ID。
+4. 将这些 ID 添加到 `WEIXIN_ALLOWED_USERS`，然后重启 gateway。
+
+如果只有扫码的那个账号能与 Hermes 对话，请确认其他用户是在向 iLink bot 身份本身发消息，而不是向执行扫码登录的个人微信账号发消息。iLink bot 是一个独立身份，而普通微信联系人/群组的路由可能受腾讯 iLink 行为的限制。
 
 ### 群组策略
 

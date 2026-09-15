@@ -1,13 +1,13 @@
 ---
 sidebar_position: 2
-sidebar_label: "Google Workspace"
 title: "Google Workspace — Gmail、Calendar、Drive、Sheets 与 Docs"
+sidebar_label: "Google Workspace"
 description: "通过 OAuth2 认证的 Google API，发送邮件、管理日历事件、搜索 Drive、读写 Sheets 并访问 Docs"
 ---
 
 # Google Workspace Skill
 
-Gmail、Calendar、Drive、Contacts、Sheets 和 Docs 与 Hermes 的集成。使用 OAuth2 并支持自动刷新 token（令牌）。优先使用 [Google Workspace CLI（`gws`）](https://github.com/nicholasgasior/gws)（如已安装）以获得更广泛的覆盖，否则回退到 Google 的 Python 客户端库。
+Gmail、Calendar、Drive、Contacts、Sheets 和 Docs 与 Hermes 的集成。使用 OAuth2 并支持自动刷新 token（令牌）。优先使用 [Google Workspace CLI（`gws`）](https://github.com/googleworkspace/cli)（如已安装）以获得更广泛的覆盖，否则回退到 Google 的 Python 客户端库。
 
 **Skill 路径：** `skills/productivity/google-workspace/`
 

@@ -40,12 +40,56 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 | 命令 | 功能 |
 |---|---|
 | `/goal <text>` | 设置（或替换）持续目标。立即启动第一轮，无需再发送单独消息。 |
+| `/goal draft <text>` | 从一句自然语言目标起草一份结构化的完成契约，然后设置它。参见[完成契约](#completion-contracts)。 |
+| `/goal show` | 打印当前活跃目标的完成契约。 |
 | `/goal` 或 `/goal status` | 显示当前目标、状态及已用轮次。 |
 | `/goal pause` | 停止自动续行循环，但不清除目标。 |
 | `/goal resume` | 恢复循环（将轮次计数器重置为零）。 |
 | `/goal clear` | 完全删除目标。 |
+| `/goal wait <pid> [reason]` | 将循环停靠在某个后台进程上——进程运行期间不再每轮催促 agent，进程退出后自动恢复。 |
+| `/goal unwait` | 撤销等待屏障并立即恢复循环。 |
 
 在 CLI 及所有 gateway 平台（Telegram、Discord、Slack、Matrix、Signal、WhatsApp、SMS、iMessage、Webhook、API server 以及 Web 控制台）上行为完全一致。
+
+## 完成契约 {#completion-contracts}
+
+裸的 `/goal <text>` 也能正常工作，但*含糊*的目标只能带来含糊的判定——裁判只能检查你告诉它想要的东西。Codex 的 `/goal` 指南也提出了同样的观点：一个持久的目标最好明确说明**「完成」意味着什么、如何证明、什么不能被破坏、范围有哪些、以及何时停止**。Hermes 将其改造为叠加在既有目标循环之上的可选**完成契约**。
+
+一份契约有五个字段，全部可选：
+
+| 字段 | 含义 |
+|---|---|
+| `outcome` | 完成时必须为真的那个唯一终态。 |
+| `verification` | *证明*该终态的具体测试 / 命令 / 产物。 |
+| `constraints` | 不得改变或退化的内容。 |
+| `boundaries` | 哪些文件、目录、工具或系统在范围内。 |
+| `stop_when` | Hermes 应当停下来征求输入的条件。 |
+
+设置契约后，两个 prompt 都会改变：**续行 prompt** 会要求 agent 瞄准验证面并遵守约束，**裁判 prompt** 则*只在验证条件被具体证据满足时*（命令结果、文件摘录、测试输出）才判定 `done`——而不是含糊的「看起来完成了」。这直接收紧了 `/goal` 最常见的失败模式（在目标欠定义时过早完成或无休止地过度续行）。
+
+### 设置契约的两种方式
+
+**1. 让 Hermes 起草**（推荐——改编自 Codex 的「让 agent 起草目标」技巧）：
+
+```
+/goal draft Migrate the auth service from session cookies to JWT
+```
+
+Hermes 会通过 `goal_judge` 辅助模型把你的一句话展开成完整契约、设置它，并把结果展示给你，方便你审阅或收紧任一字段。如果辅助模型不可用，它会回退为普通的自由格式目标——起草永远不会阻塞目标的设置。
+
+**2. 用 `field: value` 行内联书写**：
+
+```
+/goal Migrate auth to JWT
+verify: pytest tests/auth passes
+constraints: keep the /login response shape unchanged
+boundaries: only touch services/auth and its tests
+stop when: a DB schema migration is required
+```
+
+开头的非字段行是目标标题；被识别的字段前缀（`verify:`、`verified by:`、`constraints:`、`preserve:`、`boundaries:`、`scope:`、`stop when:`、`blocked:` 等）会填充契约。一个偶然含有冒号的普通目标（`Fix bug: the parser drops commas`）**不会**被拆坏——只有已知的字段前缀才会被提取出来。
+
+使用 `/goal show` 审阅当前活跃契约。契约与目标一起持久化在 `SessionDB.state_meta` 中，因此在 `/resume` 后依然有效。此功能之前设置的旧目标会原样加载（无契约）。契约与 `/subgoal` 条件可以组合：子目标会作为裁判同样必须满足的额外条件折入契约。
 
 ## 目标进行中追加条件：`/subgoal`
 
@@ -61,6 +105,29 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 子目标与目标一起持久化存储在 `SessionDB.state_meta` 中，因此在 `/resume` 后依然有效。设置新的 `/goal <text>` 会替换目标并清空子目标列表；`/goal clear` 同样如此。
 
 当你启动一个循环（"修复失败的测试"）后，中途发现还需要"为刚修复的 bug 添加回归测试"时，使用此功能——`/subgoal add a regression test` 可在不中断运行循环的情况下收紧成功条件。
+
+## 停靠在后台进程上：自动执行，并提供手动覆盖
+
+有些目标被某个需要数分钟、且自行运行的东西所阻塞——已推送 PR 的 CI、一次长时间构建、一个测试矩阵、一次部署，或一段限流冷却期。若无特殊处理，目标循环会在等待期间每轮都催促 agent 做「好了吗？」这类无用功。
+
+**这一点是自动处理的。** 每一轮中，裁判都会看到 agent 的实时后台进程（`terminal(background=true)` 注册表——pid、会话 id、命令、运行时长、近期输出，以及任何 `watch_patterns` / `notify_on_complete` 触发器），与目标和 agent 的回复一并呈现。当 agent 的进展确实被其中某个进程阻塞时，裁判会返回 **`wait`** 判定而非 `continue`，循环随即**停靠**：接下来的轮次被跳过（不调用裁判、不续行、不消耗轮次），直到等待条件被满足——然后带着结果正常恢复。裁判也可以基于**时间**停靠（`wait_for_seconds`），用于退避/冷却等待。停靠期间 `/goal status` 会显示 `⏳ Goal (parked …)`。
+
+裁判会根据进程自身的信号选择合适的等待类型：
+
+- **`wait_on_session <id>`** —— 在进程*自身的触发器*触发时释放：进程退出，**或**（若它是带 `watch_patterns` 启动的）其模式匹配成功。这适用于会在**运行中途**发出信号、且可能永远不会自行退出的长驻监视器 / 服务器 / 轮询器（例如打印 `BUILD SUCCESSFUL` 后继续运行的构建进程，或 `notify_on_complete` 监视器）。
+- **`wait_on_pid <pid>`** —— 仅在进程退出时释放。
+- **`wait_for_seconds <n>`** —— 在固定延迟后释放。
+
+你无需为此输入任何内容——这是裁判根据循环交给它的进程上下文做出的决定。手动命令仅作为覆盖手段存在：
+
+| 命令 | 功能 |
+|---|---|
+| `/goal wait <pid> [reason]` | 手动将循环停靠，直到该 PID 对应的进程退出。 |
+| `/goal unwait` | 清除任何等待屏障（由裁判或手动设置）并立即恢复。 |
+
+该屏障（基于 pid 或时间）与目标一起持久化在 `SessionDB.state_meta` 中，因此在 `/resume` 后依然有效。`/goal pause`、`/goal resume` 和 `/goal clear` 都会将其撤销。如果设置屏障时该 PID 已经死亡（或在停靠期间死亡），或时间期限已过，屏障会在下一次检查时清除——过期屏障永远不会卡住循环。
+
+典型流程：agent 推送一个 PR，用 `terminal(background=true, notify_on_complete=true)` 启动一个 CI 监视器，并报告「正在监视 CI」。裁判看到监视器进程仍在运行，于是对其 pid 返回 `wait`，循环随即安静下来——待 CI 一结束便立刻恢复，并针对实际结果判定目标。
 
 ## 行为细节
 
@@ -94,7 +161,7 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 
 ### 运行中安全性（gateway）
 
-agent 正在运行时，`/goal status`、`/goal pause` 和 `/goal clear` 可以安全执行——它们只操作控制面状态，不会中断当前轮次。在运行中设置**新**目标（`/goal <new text>`）会被拒绝，并提示你先执行 `/stop`，以防旧续行与新目标产生竞争。
+agent 正在运行时，`/goal status`、`/goal pause`、`/goal clear`、`/goal wait` 和 `/goal unwait` 可以安全执行——它们只操作控制面状态，不会中断当前轮次。在运行中设置**新**目标（`/goal <new text>`）会被拒绝，并提示你先执行 `/stop`，以防旧续行与新目标产生竞争。
 
 ### 持久化
 

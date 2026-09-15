@@ -1,7 +1,7 @@
 ---
 sidebar_position: 13
-sidebar_label: "Plugin Catalog"
 title: "Plugin Catalog"
+sidebar_label: "Plugin Catalog"
 description: "Browse and install reviewed, SHA-pinned Hermes plugins from the curated catalog"
 ---
 

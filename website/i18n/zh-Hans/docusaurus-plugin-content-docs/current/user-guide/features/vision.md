@@ -1,13 +1,17 @@
 ---
-title: 视觉与图像粘贴
-description: 将剪贴板中的图像粘贴到 Hermes CLI，进行多模态视觉分析。
-sidebar_label: 视觉与图像粘贴
 sidebar_position: 7
+title: 视觉与图像粘贴
+sidebar_label: 视觉与图像粘贴
+description: 将剪贴板中的图像粘贴到 Hermes CLI，进行多模态视觉分析。
 ---
 
 # 视觉与图像粘贴
 
 Hermes Agent 支持**多模态视觉**——你可以直接将剪贴板中的图像粘贴到 CLI，让 Agent 对其进行分析、描述或处理。图像以 base64 编码的内容块形式发送给模型，因此任何支持视觉的模型均可处理。
+
+:::tip
+Portal 订阅者可在同一模型目录中使用支持视觉的模型（Claude、GPT-5、Gemini）——无需额外凭据。参见 [Nous Portal](/integrations/nous-portal)。
+:::
 
 ## 工作原理
 
@@ -145,7 +149,7 @@ powershell.exe -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms;
 # 应输出 "True"
 ```
 
-## SSH 与远程会话
+## SSH 与远程会话 {#ssh--remote-sessions}
 
 **通过 SSH 进行剪贴板图像粘贴无法完全正常工作。** 当你 SSH 到远程机器时，Hermes CLI 运行在远程主机上。剪贴板工具（`xclip`、`wl-paste`、`powershell.exe`、`osascript`）读取的是其所在机器的剪贴板——即远程服务器，而非你的本地机器。因此，本地剪贴板中的图像在远程端无法访问。
 

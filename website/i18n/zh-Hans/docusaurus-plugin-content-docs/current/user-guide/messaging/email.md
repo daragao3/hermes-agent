@@ -8,9 +8,16 @@ description: "通过 IMAP/SMTP 将 Hermes Agent 设置为电子邮件助手"
 
 Hermes 可以使用标准 IMAP 和 SMTP 协议接收并回复电子邮件。向 Agent 的邮箱地址发送邮件，它会在同一线程中回复——无需特殊客户端或 bot API。支持 Gmail、Outlook、Yahoo、Fastmail，以及任何支持 IMAP/SMTP 的邮件服务商。
 
-:::info 无外部依赖
-Email 适配器使用 Python 内置的 `imaplib`、`smtplib` 和 `email` 模块，无需额外安装软件包或外部服务。
+:::info 仅限 gateway 适配器：无外部依赖
+本页介绍 Email gateway 适配器，它使用 Python 内置的 `imaplib`、`smtplib` 和 `email` 模块。这条 gateway 路径无需额外安装软件包或外部服务。
 :::
+
+这与内置的 [Himalaya 邮件 skill](/user-guide/skills/bundled/email/email-himalaya) 不同：后者让 agent 通过终端命令管理邮件，需要外部的 `himalaya` CLI 以及一个 Himalaya 配置文件。
+
+| 使用场景 | 需要配置什么 | 外部依赖 |
+|---|---|---|
+| 让别人给 Hermes agent 发邮件并收到回复 | 本页的 Email gateway 适配器 | 除 IMAP/SMTP 邮箱账户外无其他依赖 |
+| 让 agent 从终端工具中查看、撰写、移动和管理邮箱消息 | Himalaya 邮件 skill | `himalaya` CLI 和 `~/.config/himalaya/config.toml` |
 
 ---
 
@@ -135,14 +142,15 @@ platforms:
 
 ## 访问控制
 
-电子邮件访问遵循与所有其他 Hermes 平台相同的模式：
+电子邮件访问默认比聊天类平台更严格：
 
 1. **设置了 `EMAIL_ALLOWED_USERS`** → 仅处理来自这些地址的邮件
-2. **未设置白名单** → 未知发件人会收到配对码
+2. **未设置白名单** → 未知发件人被静默忽略
 3. **`EMAIL_ALLOW_ALL_USERS=true`** → 接受任意发件人（请谨慎使用）
+4. **`platforms.email.unauthorized_dm_behavior: pair`** → 未知发件人会收到配对码
 
 :::warning
-**请务必配置 `EMAIL_ALLOWED_USERS`。** 若不配置，任何知道 Agent 邮箱地址的人都可以发送命令。Agent 默认具有终端访问权限。
+**日常使用请使用专用收件箱并配置 `EMAIL_ALLOWED_USERS`。** 邮件配对是选择加入（opt-in）的，因为共享收件箱中常常有无关的未读邮件，Hermes 默认不应回复这些联系人。
 :::
 
 ---

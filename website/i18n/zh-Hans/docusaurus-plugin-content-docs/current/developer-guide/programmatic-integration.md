@@ -41,7 +41,8 @@ hermes acp --bootstrap      # 打印适用于支持 ACP 的 IDE 的安装代码�
 
 ```
 prompt.submit           prompt.background       session.steer
-session.create          session.list            session.interrupt
+session.create          session.list            session.active_list
+session.activate        session.close           session.interrupt
 session.history         session.compress        session.branch
 session.title           session.usage           session.status
 clarify.respond         sudo.respond            secret.respond
@@ -52,9 +53,11 @@ delegation.status       subagent.interrupt      spawn_tree.save / list / load
 terminal.resize         clipboard.paste         image.attach
 ```
 
+`session.active_list`、`session.activate` 和 `session.close` 是 TUI 会话切换器所使用的进程内实时会话控制方法。查找已保存的会话记录请使用 `session.list` / `/resume`；活跃会话相关方法仅适用于当前在 TUI gateway 进程中打开的会话。
+
 ### 流式返回的事件
 
-`message.delta`、`message.complete`、`tool.start`、`tool.progress`、`tool.complete`、`approval.request`、`clarify.request`、`sudo.request`、`secret.request`、`gateway.ready`，以及会话生命周期和错误事件。
+`message.delta`、`message.complete`、`tool.start`、`tool.progress`、`tool.complete`、`approval.request`、`clarify.request`、`sudo.request`、`sudo.expire`、`secret.request`、`secret.expire`、`gateway.ready`，以及会话生命周期和错误事件。过期（expire）事件会携带原始的 `{ request_id }`；外部宿主应仅清除与之匹配的待处理提示。
 
 ### Pi 风格 RPC 映射
 
@@ -115,7 +118,7 @@ GET  /health, /health/detailed
 - **CLI / TUI：** `/model claude-sonnet-4` 或 `/model openrouter:anthropic/claude-sonnet-4.6`
 - **TUI gateway RPC：** 使用 `{"command": "/model claude-sonnet-4"}` 调用 `command.dispatch`
 - **ACP：** IDE 将 slash 命令作为 prompt 发送，agent 负责分发
-- **API server：** 在请求体中包含 `model` 字段，或设置 `X-Hermes-Model`
+- **API server：** 在请求体中包含 `model` 字段
 
 内置 provider 感知解析（相同的模型名称会根据当前 provider 自动选择正确格式）。参见 `hermes_cli/model_switch.py`。
 
