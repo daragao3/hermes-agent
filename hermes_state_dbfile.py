@@ -74,7 +74,7 @@ def _pread_db_header(db_path: Path, length: int) -> "Optional[bytes]":
                 return None
             cached = _HEADER_PROBE_FDS[key] = (fd, fst.st_dev, fst.st_ino)
         with contextlib.suppress(OSError):
-            return os.pread(cached[0], length, 0)
+            return os.pread(cached[0], length, 0)  # windows-footgun: ok -- POSIX branch; Windows returned early with a plain read above
     return None
 
 

@@ -307,6 +307,115 @@ FOOTGUNS: list[Footgun] = [
         ),
     ),
     Footgun(
+        name="bare os.getpgid / os.getpgrp / os.setpgid",
+        pattern=re.compile(r"\bos\.(?:getpgid|getpgrp|setpgid)\b"),
+        message=(
+            "os.getpgid / os.getpgrp / os.setpgid do not exist on Windows "
+            "and raise AttributeError at attribute access. Process groups "
+            "are a POSIX concept; the usual os.killpg(os.getpgid(pid), sig) "
+            "tree-kill idiom crashes on Windows before killpg is reached."
+        ),
+        fix=(
+            "Gate the whole process-group branch on the platform:\n"
+            "    if hasattr(os, 'getpgid'):\n"
+            "        os.killpg(os.getpgid(pid), sig)\n"
+            "    else:\n"
+            "        ...psutil tree kill / CREATE_NEW_PROCESS_GROUP...\n"
+            "or return early off POSIX (if os.name != 'posix': return)."
+        ),
+    ),
+    Footgun(
+        name="bare os.fchmod",
+        pattern=re.compile(r"\bos\.fchmod\b"),
+        message=(
+            "os.fchmod does not exist on Windows and raises AttributeError "
+            "at attribute access; except OSError does not catch it. "
+            "os.chmod exists on every platform, so the fd-based form buys "
+            "nothing portable."
+        ),
+        fix=(
+            "Use os.chmod(path, mode) on the path (after close, or on the "
+            "still-open file's name), or gate with hasattr(os, 'fchmod')."
+        ),
+    ),
+    Footgun(
+        name="bare os.pread / os.pwrite",
+        pattern=re.compile(r"\b(?:os\.pread|os\.pwrite)\b"),
+        message=(
+            "os.pread / os.pwrite do not exist on Windows and raise "
+            "AttributeError at attribute access."
+        ),
+        fix=(
+            "Use os.lseek(fd, offset, os.SEEK_SET) followed by os.read / "
+            "os.write, or gate with hasattr(os, 'pread') and fall back."
+        ),
+    ),
+    Footgun(
+        name="bare os.O_NONBLOCK",
+        pattern=re.compile(r"\bos\.O_NONBLOCK\b"),
+        message=(
+            "os.O_NONBLOCK does not exist on Windows (nor does fcntl), "
+            "so referencing it raises AttributeError. Non-blocking "
+            "reads of a pipe/tty fd have no drop-in Windows equivalent."
+        ),
+        fix=(
+            "Branch on the platform: gate the fcntl/O_NONBLOCK path with "
+            "if os.name == 'posix' (or hasattr(os, 'O_NONBLOCK')) and use a "
+            "reader thread or msvcrt/overlapped I/O on Windows."
+        ),
+    ),
+    Footgun(
+        name="bare os.sysconf / os.getloadavg / os.uname / os.sched_getaffinity",
+        pattern=re.compile(
+            r"\bos\.(?:sysconf|sysconf_names|getloadavg|uname|sched_getaffinity)\b"
+        ),
+        message=(
+            "os.sysconf / os.getloadavg / os.uname / os.sched_getaffinity do "
+            "not exist on Windows and raise AttributeError at attribute "
+            "access. Each has a portable stdlib or psutil equivalent."
+        ),
+        fix=(
+            "Guard with hasattr(os, 'X') and fall back: platform.uname() for "
+            "uname; psutil.getloadavg() / psutil.cpu_percent() for "
+            "getloadavg; os.cpu_count() for sched_getaffinity; "
+            "psutil.virtual_memory() / os.cpu_count() for the sysconf "
+            "page/cpu keys."
+        ),
+    ),
+    Footgun(
+        name="bare os.WNOHANG / os.WIFEXITED / os.WIFSIGNALED / os.WEXITSTATUS / os.WTERMSIG",
+        pattern=re.compile(
+            r"\bos\.(?:WNOHANG|WIFEXITED|WIFSIGNALED|WEXITSTATUS|WTERMSIG|WIFSTOPPED|WSTOPSIG|WCOREDUMP|WUNTRACED)\b"
+        ),
+        message=(
+            "The wait-status macros (os.WNOHANG, os.WIFEXITED, "
+            "os.WEXITSTATUS, ...) do not exist on Windows and raise "
+            "AttributeError at attribute access. Windows os.waitpid exists "
+            "but returns a different status encoding, so the POSIX "
+            "reap-and-decode idiom cannot be ported piecemeal."
+        ),
+        fix=(
+            "Prefer subprocess.Popen.poll()/wait()/returncode (portable "
+            "status decoding), or psutil.Process.wait(). If a raw pid must "
+            "be reaped, gate the whole block on os.name == 'posix'."
+        ),
+    ),
+    Footgun(
+        name="bare os.ttyname / os.openpty / os.ptsname / os.login_tty",
+        pattern=re.compile(r"\bos\.(?:ttyname|openpty|ptsname|login_tty|forkpty)\b"),
+        message=(
+            "os.ttyname / os.openpty / os.ptsname / os.login_tty / "
+            "os.forkpty do not exist on Windows and raise AttributeError "
+            "at attribute access. Windows has no POSIX tty/pty devices."
+        ),
+        fix=(
+            "Gate with hasattr(os, 'ttyname') / hasattr(os, 'openpty') and "
+            "fall back (e.g. no tty identity, or a pipe). For a test that "
+            "inherently needs a pty, skip the module on Windows: "
+            "pytestmark = pytest.mark.skipif(os.name != 'posix', ...)"
+        ),
+    ),
+    Footgun(
         name="bare signal.SIGKILL",
         pattern=re.compile(r"\bsignal\.SIGKILL\b"),
         message=(
@@ -327,6 +436,23 @@ FOOTGUNS: list[Footgun] = [
         fix=(
             "Use getattr(signal, 'SIGXXX', None) and check for None "
             "before using, or gate the whole block behind a platform check."
+        ),
+    ),
+    Footgun(
+        name="bare signal.alarm / signal.setitimer / signal.pause",
+        pattern=re.compile(
+            r"\bsignal\.(?:alarm|setitimer|getitimer|pause|sigwait|pthread_kill|pthread_sigmask|siginterrupt|ITIMER_REAL)\b"
+        ),
+        message=(
+            "signal.alarm / signal.setitimer / signal.pause (and the other "
+            "POSIX-only signal helpers) do not exist on Windows and raise "
+            "AttributeError at attribute access. SIGALRM itself is also "
+            "absent, so a timeout built on alarm has no Windows path."
+        ),
+        fix=(
+            "Use a portable timeout: threading.Timer, subprocess timeout=, "
+            "or pytest-timeout (method='thread'). If the alarm path must "
+            "stay, gate it with getattr(signal, 'alarm', None) and branch."
         ),
     ),
     Footgun(
@@ -521,6 +647,38 @@ except ImportError:  # pragma: no cover - CPython < 3.11
     import sre_parse as _re_parser  # type: ignore[no-redef]
 
 
+def _leading_literals(node) -> set[str] | None:
+    """Set P where every string `node` matches STARTS WITH some member of P.
+
+    Stricter than _required_literals (starts-with, not contains), which is
+    what lets a caller glue it onto the literal run that precedes the node.
+    None means no non-empty prefix can be guaranteed.
+    """
+    acc = ""
+    for op, av in node:
+        if op is _re_constants.LITERAL:
+            acc += chr(av)
+            continue
+        sub = None
+        if op is _re_constants.BRANCH:
+            subs = [_leading_literals(b) for b in av[1]]
+            if all(s is not None for s in subs):
+                sub = set().union(*subs)
+        elif op is _re_constants.SUBPATTERN:
+            sub = _leading_literals(av[3])
+        elif op in (_re_constants.MAX_REPEAT, _re_constants.MIN_REPEAT):
+            if av[0] >= 1:
+                sub = _leading_literals(av[2])
+        elif op is getattr(_re_constants, "ATOMIC_GROUP", None):
+            sub = _leading_literals(av)
+        # Anything else (IN / ANY / AT / ASSERT / GROUPREF, or a group that
+        # guarantees no prefix) ends the guaranteed prefix here.
+        if sub:
+            return {acc + x for x in sub}
+        return {acc} if acc else None
+    return {acc} if acc else None
+
+
 def _required_literals(node) -> set[str] | None:
     """Set L where every string `node` matches contains some member of L.
 
@@ -535,6 +693,19 @@ def _required_literals(node) -> set[str] | None:
             if len(run) > len(best):
                 best = run
             continue
+        # A group that DIRECTLY follows a literal run extends it: every match
+        # spells the run and then, contiguously, one of the group's leading
+        # literals. Without this, `os\.(?:pread|pwrite)` -- which sre_parse
+        # rewrites as `os\.p(?:read|write)` -- could only offer "os.p", a
+        # literal that admits every os.path line in the tree.
+        if run and op in (
+            _re_constants.BRANCH,
+            _re_constants.SUBPATTERN,
+            getattr(_re_constants, "ATOMIC_GROUP", None),
+        ):
+            lead = _leading_literals([(op, av)])
+            if lead:
+                alts.append({run + x for x in lead} if all(lead) else None)
         run = ""
         if op is _re_constants.BRANCH:
             subs = [_required_literals(b) for b in av[1]]

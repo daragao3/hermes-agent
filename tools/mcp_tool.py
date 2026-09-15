@@ -514,7 +514,7 @@ def _spawn_death_supervisor():
         # start_new_session=True is load-bearing: shutdown paths killpg this process's own group,
         # which would kill the supervisor before it could reap anything.
         return subprocess.Popen(
-            [real_executable(), supervisor, "--parent-pgid", str(os.getpgid(0))],
+            [real_executable(), supervisor, "--parent-pgid", str(os.getpgid(0))],  # windows-footgun: ok -- except Exception below catches the AttributeError: no supervisor on Windows, by design
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=_get_mcp_stderr_log(),
             start_new_session=True, close_fds=True, text=True)
     except Exception:

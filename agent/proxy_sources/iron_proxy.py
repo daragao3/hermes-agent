@@ -332,7 +332,7 @@ def _write_private_file(path: Path, data: bytes) -> None:
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _O_NOFOLLOW, 0o600)
     try:
         with suppress(OSError, AttributeError):
-            os.fchmod(fd, 0o600)
+            os.fchmod(fd, 0o600)  # windows-footgun: ok -- AttributeError is in the suppress list: Windows has no fchmod and the 0o600 create mode already applied
         os.write(fd, data)
     finally:
         os.close(fd)
@@ -558,12 +558,15 @@ def _open_private_append(path: Path, *, strict_chmod: bool) -> int:
     """O_APPEND|O_CREAT 0o600 + O_NOFOLLOW (planted symlinks refused); fchmod tightens a pre-existing
     file (failure fatal iff ``strict_chmod``).  Raises OSError; caller owns the fd."""
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND | _O_NOFOLLOW, 0o600)
-    try:
-        os.fchmod(fd, 0o600)
-    except OSError:
-        if strict_chmod:
-            os.close(fd)
-            raise
+    # Windows has no os.fchmod (AttributeError, which ``except OSError`` cannot catch); the 0o600
+    # create mode above is all it can do, exactly as _write_private_file already assumes.
+    if hasattr(os, "fchmod"):
+        try:
+            os.fchmod(fd, 0o600)  # windows-footgun: ok -- guarded by the attribute check on the previous line; Windows keeps the 0o600 create mode
+        except OSError:
+            if strict_chmod:
+                os.close(fd)
+                raise
     return fd
 
 

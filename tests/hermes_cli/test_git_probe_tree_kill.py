@@ -89,7 +89,7 @@ def test_posix_spawn_uses_own_process_group(tmp_path):
     out = bounded_git_probe([str(script)], timeout=5.0)
     pid, pgid = out.split()
     assert pid == pgid, f"probe child pid={pid} does not lead its group pgid={pgid}"
-    assert int(pgid) != os.getpgid(0), "probe child must not share our group"
+    assert int(pgid) != os.getpgid(0), "probe child must not share our group"  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
 
 
 def test_group_kill_skipped_when_child_shares_our_group():
@@ -105,7 +105,7 @@ def test_group_kill_skipped_when_child_shares_our_group():
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
     )
-    assert os.getpgid(proc.pid) == os.getpgid(0)  # shared group precondition
+    assert os.getpgid(proc.pid) == os.getpgid(0)  # shared group precondition  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
     kill_process_tree(proc)
     proc.wait(timeout=5)
     # We are alive to make this assertion — killpg on our own group would have

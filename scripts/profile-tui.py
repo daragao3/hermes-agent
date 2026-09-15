@@ -455,7 +455,7 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
         try:
             os.kill(pid, signal.SIGTERM)
             for _ in range(10):
-                pid_done, _ = os.waitpid(pid, os.WNOHANG)
+                pid_done, _ = os.waitpid(pid, os.WNOHANG)  # windows-footgun: ok -- POSIX-only script (imports pty and fcntl at top)
                 if pid_done == pid:
                     break
                 time.sleep(0.1)

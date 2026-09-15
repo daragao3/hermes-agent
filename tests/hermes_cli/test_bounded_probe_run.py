@@ -104,7 +104,7 @@ def test_posix_child_gets_own_process_group():
     """POSIX spawns use process_group=0 so timeout cleanup can killpg the
     whole tree (same contract bounded_git_probe had)."""
     result = bounded_probe_run(
-        [_PY, "-c", "import os; print(os.getpgid(0) == os.getpid())"],
+        [_PY, "-c", "import os; print(os.getpgid(0) == os.getpid())"],  # windows-footgun: ok -- test is skipped on win32; the string is a child-side probe
         timeout=30,
     )
     assert result is not None

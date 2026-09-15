@@ -156,7 +156,7 @@ class MCPServerTransportMixin:
         new_pgids: Dict[int, int] = {}
         for pid in new_pids:
             try:
-                new_pgids[pid] = os.getpgid(pid)
+                new_pgids[pid] = os.getpgid(pid)  # windows-footgun: ok -- AttributeError caught below; pgids are simply not ledgered on Windows
             except ProcessLookupError:
                 # Raced and already exited. The SDK spawns with start_new_session=True, so the
                 # child was its own group leader (pgid == pid): keep that group covered — any

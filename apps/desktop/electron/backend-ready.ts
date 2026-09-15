@@ -19,7 +19,17 @@ export const READY_IN_MERGED_OUTPUT_RE = /(?<!\w)HERMES_(?:BACKEND|DASHBOARD)_RE
 // 45s deadline kills a *healthy but still-starting* backend and respawns it,
 // piling up orphaned processes (issue #50209). A roomier default absorbs the
 // cold-start cost; a warm start still announces in well under a second.
-const DEFAULT_PORT_ANNOUNCE_TIMEOUT_MS = 90_000
+//
+// Fork: upstream ships 90s. On this box a cold start under CPU saturation
+// measured ~184s to announce (2026-09-13) and 90s/180s deadlines both killed
+// backends that were making real import progress. The Start Menu launcher
+// passes HERMES_DESKTOP_PORT_ANNOUNCE_TIMEOUT_MS=360000 for that reason, but
+// a direct double-click of Hermes.exe bypasses the launcher and ran the 90s
+// default into a 12h "Timed out waiting for Hermes backend port announcement"
+// loop (2026-09-15). Bake the same 360s in as the default so every launch
+// path gets it. The cost is bounded: a backend that EXITS still rejects
+// immediately, so the deadline only governs a hung-but-alive child.
+const DEFAULT_PORT_ANNOUNCE_TIMEOUT_MS = 360_000
 // Never trust a deadline tighter than the warm-start path needs; floor at 45s
 // (the historical default) so a malformed override can't reintroduce the loop.
 const MIN_PORT_ANNOUNCE_TIMEOUT_MS = 45_000

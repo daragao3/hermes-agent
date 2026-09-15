@@ -173,15 +173,15 @@ def _classify_worker_exit(pid: int) -> "tuple[str, Optional[int]]":
         return ("unknown", None)
     raw, _ = entry
     try:
-        if os.WIFEXITED(raw):
-            code = os.WEXITSTATUS(raw)
+        if os.WIFEXITED(raw):  # windows-footgun: ok -- except Exception below catches the AttributeError; the reap registry is only fed on POSIX
+            code = os.WEXITSTATUS(raw)  # windows-footgun: ok -- except Exception below catches the AttributeError; the reap registry is only fed on POSIX
             if code == 0:
                 return ("clean_exit", 0)
             if code == _kb.KANBAN_RATE_LIMIT_EXIT_CODE:
                 return ("rate_limited", code)
             return ("nonzero_exit", code)
-        if os.WIFSIGNALED(raw):
-            return ("signaled", os.WTERMSIG(raw))
+        if os.WIFSIGNALED(raw):  # windows-footgun: ok -- except Exception below catches the AttributeError; the reap registry is only fed on POSIX
+            return ("signaled", os.WTERMSIG(raw))  # windows-footgun: ok -- except Exception below catches the AttributeError; the reap registry is only fed on POSIX
     except Exception:
         pass
     return ("unknown", None)
@@ -194,7 +194,7 @@ def reap_worker_zombies() -> "list[int]":
         try:
             while True:
                 try:
-                    pid, status = os.waitpid(-1, os.WNOHANG)
+                    pid, status = os.waitpid(-1, os.WNOHANG)  # windows-footgun: ok -- inside the os.name != nt gate above
                 except ChildProcessError:
                     break
                 if pid == 0:

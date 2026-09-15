@@ -376,6 +376,13 @@ def test_ca_key_created_with_0o600(hermes_home, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+# The two mode assertions are POSIX-only: Windows chmod can only toggle the read-only bit, so
+# ``st_mode & 0o777`` reads 0o666 there regardless. The Windows-reachable contract -- that
+# ensure_audit_log neither crashes nor raises -- is pinned by the missing-fchmod test below.
+_posix_mode_bits = pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits")
+
+
+@_posix_mode_bits
 def test_ensure_audit_log_creates_with_0o600(hermes_home, tmp_path):
     audit = tmp_path / "audit.log"
     ip.ensure_audit_log(audit)
@@ -384,6 +391,7 @@ def test_ensure_audit_log_creates_with_0o600(hermes_home, tmp_path):
     assert mode == 0o600
 
 
+@_posix_mode_bits
 def test_ensure_audit_log_tightens_existing_perms(hermes_home, tmp_path):
     audit = tmp_path / "audit.log"
     audit.write_text("preexisting content\n", encoding="utf-8")
@@ -391,6 +399,42 @@ def test_ensure_audit_log_tightens_existing_perms(hermes_home, tmp_path):
     ip.ensure_audit_log(audit)
     mode = audit.stat().st_mode & 0o777
     assert mode == 0o600
+
+
+def test_open_private_append_survives_missing_fchmod(hermes_home, tmp_path, monkeypatch):
+    """Regression for the 2026-09-15 windows-footgun finding: ``_open_private_append`` wrapped
+    ``os.fchmod`` in ``except OSError``, which cannot catch the ``AttributeError`` a platform
+    without fchmod raises -- so on Windows ``ensure_audit_log`` died with a traceback instead of
+    creating the file (or raising its documented RuntimeError).
+
+    Deliberately NOT a Windows skip: ``monkeypatch.delattr`` removes the attribute on every
+    platform, so POSIX CI pins the guard too. A scan-based test cannot -- the call line carries a
+    ``# windows-footgun: ok`` marker and stays clean with the guard deleted.
+    """
+    monkeypatch.delattr(os, "fchmod", raising=False)
+    audit = tmp_path / "audit.log"
+    fd = ip._open_private_append(audit, strict_chmod=True)
+    os.close(fd)
+    assert audit.exists()
+    ip.ensure_audit_log(audit)  # the strict caller: neither AttributeError nor RuntimeError
+
+
+def test_open_private_append_strict_still_fails_loud_on_a_real_chmod_error(hermes_home, tmp_path, monkeypatch):
+    """Positive control for the guard above: with fchmod PRESENT, a genuine chmod failure must
+    still surface under ``strict_chmod`` and be swallowed without it. Proves the attribute guard
+    did not turn the tightening step into a no-op."""
+    calls = []
+
+    def boom(fd, mode):
+        calls.append((fd, mode))
+        raise PermissionError("chmod refused")
+
+    monkeypatch.setattr(os, "fchmod", boom, raising=False)
+    with pytest.raises(PermissionError):
+        ip._open_private_append(tmp_path / "strict.log", strict_chmod=True)
+    fd = ip._open_private_append(tmp_path / "lenient.log", strict_chmod=False)
+    os.close(fd)
+    assert len(calls) == 2, "fchmod must be attempted on both paths when it exists"
 
 
 # ---------------------------------------------------------------------------

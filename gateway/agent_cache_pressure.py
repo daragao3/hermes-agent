@@ -83,7 +83,7 @@ def _cgroup_limit_bytes() -> Optional[int]:
 
 def _total_memory_bytes() -> Optional[int]:
     try:
-        return int(os.sysconf("SC_PAGE_SIZE")) * int(os.sysconf("SC_PHYS_PAGES"))
+        return int(os.sysconf("SC_PAGE_SIZE")) * int(os.sysconf("SC_PHYS_PAGES"))  # windows-footgun: ok -- AttributeError caught below: falls through to psutil on Windows
     except (OSError, ValueError, AttributeError):
         pass
     try:

@@ -26,7 +26,7 @@ MAX_RECOVERIES_PER_MINUTE = 10
 
 def _stdin_nonblock() -> bool:
     try:
-        return bool(fcntl.fcntl(0, fcntl.F_GETFL) & os.O_NONBLOCK)  # type: ignore[union-attr]
+        return bool(fcntl.fcntl(0, fcntl.F_GETFL) & os.O_NONBLOCK)  # type: ignore[union-attr]  # windows-footgun: ok -- except Exception below; fcntl is None on Windows so the probe reports False
     except Exception:
         return False
 
@@ -60,7 +60,7 @@ def diagnose_stdin_state() -> str:
     else:
         try:
             flags = fcntl.fcntl(0, fcntl.F_GETFL)
-            parts.append(f"O_NONBLOCK={'1' if flags & os.O_NONBLOCK else '0'}")
+            parts.append(f"O_NONBLOCK={'1' if flags & os.O_NONBLOCK else '0'}")  # windows-footgun: ok -- inside the fcntl-is-not-None branch, with except Exception
         except Exception as e:
             parts.append(f"F_GETFL error: {e}")
     tv = _stdin_sockopt(lambda s: s.getsockopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO))

@@ -292,7 +292,7 @@ class TestStdioPgroupReaping:
         monkeypatch.setattr(signal, "SIGKILL", fake_sigkill, raising=False)
 
         with (
-            patch("tools.mcp_tool.os.getpgrp", return_value=gateway_pgid),
+            patch("tools.mcp_tool.os.getpgrp", return_value=gateway_pgid),  # windows-footgun: ok -- patch target name; the test skips above when the platform lacks killpg/getpgrp
             patch("tools.mcp_tool.os.killpg") as mock_killpg,  # windows-footgun: ok -- patch target name, never invoked on Windows
             patch("tools.mcp_tool.os.kill") as mock_kill,
             patch("gateway.status._pid_exists", return_value=True),
@@ -391,7 +391,7 @@ class TestStdioPgroupReaping:
             [sys.executable, str(parent_script)],
             start_new_session=True,
         )
-        parent_pgid = os.getpgid(parent.pid)
+        parent_pgid = os.getpgid(parent.pid)  # windows-footgun: ok -- test is skipped on win32 (decorator above)
         # Wait for parent to exit and grandchild to spin up.
         parent.wait(timeout=15)
         deadline = _time.time() + 15  # fresh CPython spinup dilates under CI load
@@ -402,7 +402,7 @@ class TestStdioPgroupReaping:
 
         # Sanity: grandchild is alive and shares the parent's pgid.
         assert psutil.pid_exists(grandchild_pid)
-        assert os.getpgid(grandchild_pid) == parent_pgid
+        assert os.getpgid(grandchild_pid) == parent_pgid  # windows-footgun: ok -- test is skipped on win32 (decorator above)
 
         # Drive the reaper: register the parent pid + pgid as an orphan.
         from tools.mcp_tool_lifecycle import (

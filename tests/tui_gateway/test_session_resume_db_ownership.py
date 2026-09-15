@@ -248,7 +248,12 @@ def test_resume_hands_profile_db_to_deferred_history_worker(profile_dbs, monkeyp
 
         def get_resume_conversations(self, _target):
             history_started.set()
-            assert release_history.wait(timeout=2.0)
+            # This gate must outlast the main thread's whole path back to
+            # release_history.set() (its own history_started.wait plus
+            # scheduling). At 2s it expired under a 12-worker sweep, the resume
+            # failed, the worker closed the handle, and the main thread then
+            # read closed == 1 for the wrong reason (2026-09-15).
+            assert release_history.wait(timeout=10.0)
             assert self.closed == 0
             return ([], [])
 
@@ -268,12 +273,12 @@ def test_resume_hands_profile_db_to_deferred_history_worker(profile_dbs, monkeyp
         )
         sid = resp["result"]["session_id"]
         db = profile_dbs[0]
-        assert history_started.wait(timeout=1.0)
+        assert history_started.wait(timeout=5.0)
         assert db.closed == 0
 
         release_history.set()
-        assert server._sessions[sid]["resume_history_ready"].wait(timeout=1.0)
-        assert close_completed.wait(timeout=1.0)
+        assert server._sessions[sid]["resume_history_ready"].wait(timeout=5.0)
+        assert close_completed.wait(timeout=5.0)
         assert db.closed == 1
     finally:
         release_history.set()

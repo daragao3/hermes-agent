@@ -415,13 +415,22 @@ def _runtime(
         rooms=[BINDING],
         rpc=rpc,
         turn_lock=locks or RecordingTurnLocks(),
-        lease_ttl_seconds=kwargs.pop("lease_ttl_seconds", 0.4),
+        # Generous lease TTL, matching production (30s) rather than a sub-second
+        # value. The worker renews only inside the last ttl/2 of a lease and
+        # polls every active_poll_interval_seconds (0.25), so a 0.4s TTL left a
+        # 150ms jitter budget: on a loaded runner the lease expired between two
+        # polls, every in-process receipt then died in _on_terminal with
+        # "driver lease is stale or expired", and cancel() returned the still-
+        # "stopping" row (flaky test_completion_wins_a_race_with_unacknowledged_stop,
+        # 2026-09-15). No test here observes lease expiry on wall-clock time;
+        # the ones that do drive a fake clock and pass ttl_seconds explicitly.
+        lease_ttl_seconds=kwargs.pop("lease_ttl_seconds", 30.0),
         poll_interval_seconds=kwargs.pop("poll_interval_seconds", 0.01),
         **kwargs,
     )
 
 
-def _wait_for(predicate, *, timeout: float = 2.0) -> None:
+def _wait_for(predicate, *, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -481,7 +490,7 @@ def test_waiting_room_does_not_block_an_independent_local_room(tmp_path: Path):
         rooms=bindings,
         rpc=rpc,
         turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4,
+        lease_ttl_seconds=30.0,
         poll_interval_seconds=0.01,
         max_concurrent_rooms=2,
     )
@@ -530,7 +539,7 @@ def test_rotated_bounded_scheduler_eventually_runs_later_room(tmp_path: Path):
         rooms=bindings,
         rpc=FakeSessionRPC(),
         turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4,
+        lease_ttl_seconds=30.0,
         poll_interval_seconds=0.01,
         max_concurrent_rooms=2,
     )
@@ -624,7 +633,7 @@ def test_transport_resolver_selects_member_transport_without_forking_state(
         rooms=[BINDING],
         transport_resolver=resolve_transport,
         turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4,
+        lease_ttl_seconds=30.0,
         poll_interval_seconds=0.01,
     )
 
@@ -757,13 +766,13 @@ def test_waiting_room_does_not_block_an_independent_room(tmp_path: Path):
             waiting if binding.room_id == "room-waiting" else healthy
         ),
         turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4,
+        lease_ttl_seconds=30.0,
         poll_interval_seconds=0.01,
         max_concurrent_rooms=2,
     )
 
     runtime.start()
-    assert waiting.submitted.wait(1.0)
+    assert waiting.submitted.wait(5.0)
     _wait_for(lambda: state.get_task(db, identities[1])["status"] == "settled")
     assert state.get_task(db, identities[0])["status"] == "running"
     assert runtime.stop(timeout=5.0)
@@ -805,7 +814,7 @@ def test_bounded_scheduler_eventually_runs_later_room(tmp_path: Path):
         rooms=bindings,
         rpc=FakeSessionRPC(),
         turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4,
+        lease_ttl_seconds=30.0,
         poll_interval_seconds=0.01,
         max_concurrent_rooms=2,
     )
@@ -1109,7 +1118,7 @@ def test_deadline_releases_worker_capacity_for_later_room(tmp_path: Path):
         rooms=bindings,
         rpc=rpc,
         turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4,
+        lease_ttl_seconds=30.0,
         poll_interval_seconds=0.02,
         active_poll_interval_seconds=0.01,
         turn_timeout_seconds=0.05,
@@ -1188,7 +1197,7 @@ def test_retry_ignores_late_receipt_from_prior_execution_generation(db: Path):
     runtime = _runtime(db, rpc, clock=clock)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    assert rpc.submitted.wait(5.0)
     time.sleep(0.04)
     assert runtime.stop(timeout=5.0)
 
@@ -1559,7 +1568,7 @@ def test_post_submit_observation_failure_preserves_recoverable_outcome(db: Path)
     runtime = _runtime(db, rpc)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    assert rpc.submitted.wait(5.0)
     _wait_for(
         lambda: (
             "observation failed after submit"
@@ -1590,7 +1599,7 @@ def test_cancellation_is_persisted_before_interrupt_and_fences_late_result(
     )
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    assert rpc.submitted.wait(5.0)
     cancelled = runtime.cancel(identity, cancel_id="cancel-user")
     rpc.complete(identity.task_id, content="Too late.")
     runtime.wakeup()
@@ -1620,7 +1629,7 @@ def test_transient_remote_stop_failure_stays_pending_and_retries(db: Path):
 
     rpc.interrupt = flaky_interrupt
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    assert rpc.submitted.wait(5.0)
     stopping = runtime.cancel(identity, cancel_id="cancel-retry")
     assert stopping["status"] == "stopping"
     assert state.get_task(db, identity)["status"] == "stopping"
@@ -1643,7 +1652,7 @@ def test_provisional_stopping_response_does_not_acknowledge_cancellation(db: Pat
         gateway_id=BINDING.gateway_id,
         authority_epoch=BINDING.authority_epoch,
         process_generation=runtime.process_generation,
-        ttl_seconds=1,
+        ttl_seconds=30,  # real clock: a 1s lease expired between acquire and fence on loaded runners
         clock=time.time,
     )
     runtime._leases[ROOM_ID] = lease
@@ -1684,7 +1693,7 @@ def test_peer_terminal_status_acknowledges_durable_stop_on_retry(db: Path):
         gateway_id=BINDING.gateway_id,
         authority_epoch=BINDING.authority_epoch,
         process_generation=runtime.process_generation,
-        ttl_seconds=1,
+        ttl_seconds=30,  # real clock: a 1s lease expired between acquire and fence on loaded runners
         clock=time.time,
     )
     runtime._leases[ROOM_ID] = lease
@@ -1726,7 +1735,7 @@ def test_peer_terminal_status_must_match_exact_task_attempt(db: Path):
         gateway_id=BINDING.gateway_id,
         authority_epoch=BINDING.authority_epoch,
         process_generation=runtime.process_generation,
-        ttl_seconds=1,
+        ttl_seconds=30,  # real clock: a 1s lease expired between acquire and fence on loaded runners
         clock=time.time,
     )
     runtime._leases[ROOM_ID] = lease
@@ -1766,7 +1775,7 @@ def test_completion_wins_a_race_with_unacknowledged_stop(db: Path):
     runtime = _runtime(db, rpc)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    assert rpc.submitted.wait(5.0)
 
     def finish_only_after_stop_intent():
         if state.get_task(db, identity)["status"] == "stopping":
@@ -1901,7 +1910,7 @@ def test_stop_resumes_persisted_session_before_reading_runtime_history(db: Path)
         gateway_id=BINDING.gateway_id,
         authority_epoch=BINDING.authority_epoch,
         process_generation=runtime.process_generation,
-        ttl_seconds=1,
+        ttl_seconds=30,  # real clock: a 1s lease expired between acquire and fence on loaded runners
         clock=time.time,
     )
     runtime._leases[ROOM_ID] = lease
@@ -1959,7 +1968,7 @@ def test_pending_local_approval_is_reported_with_safe_choices(db: Path):
     )
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    assert rpc.submitted.wait(5.0)
     session_id = next(iter(rpc.states))
     with rpc._lock:
         rpc.states[session_id]["pending_approval"] = {
@@ -1984,7 +1993,7 @@ def test_cancel_never_interrupts_a_newer_task_in_the_same_session(db: Path):
     runtime = _runtime(db, rpc)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    assert rpc.submitted.wait(5.0)
     session_id = next(iter(rpc.states))
 
     def switch_to_newer_task() -> None:
@@ -2047,7 +2056,7 @@ def test_authority_loss_stops_terminal_commit(db: Path):
     runtime = _runtime(db, rpc, lease_ttl_seconds=30.0)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    assert rpc.submitted.wait(5.0)
     hosted_rooms.claim_authority(
         db,
         room_id=ROOM_ID,
@@ -2091,7 +2100,7 @@ def test_stop_is_bounded_and_does_not_interrupt_active_turn(db: Path):
     runtime = _runtime(db, rpc, poll_interval_seconds=0.01)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    assert rpc.submitted.wait(5.0)
     started = time.monotonic()
     stopped = runtime.stop(timeout=0.5)
 

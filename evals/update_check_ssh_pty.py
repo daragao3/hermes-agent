@@ -68,7 +68,7 @@ def probe(name, extra_env):
                 continue
             try:
                 pid = int(path.name)
-                if os.getpgid(pid) == child and pid != child:
+                if os.getpgid(pid) == child and pid != child:  # windows-footgun: ok -- POSIX-only eval harness (pty + /proc + process groups)
                     cmd = (path/'cmdline').read_bytes().replace(b'\0', b' ').decode(errors='replace')
                     if cmd:
                         descendants.append({'pid': pid, 'cmdline': cmd})

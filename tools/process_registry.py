@@ -146,9 +146,10 @@ def _worker_memory_max_bytes() -> int:
             raw_limit = (Path("/sys/fs/cgroup") / relative / "memory.max").read_text(encoding="utf-8").strip()
             if raw_limit.isdigit() and int(raw_limit) >= _MIN_WORKER_MEMORY_MAX_BYTES:
                 candidates.append(int(raw_limit))
-    with suppress(OSError, ValueError, TypeError):
-        physical_bytes = int(os.sysconf("SC_PHYS_PAGES")) * int(os.sysconf("SC_PAGE_SIZE"))
-        candidates.append(min(_WORKER_MEMORY_MAX_CAP_BYTES, max(_MIN_WORKER_MEMORY_MAX_BYTES, physical_bytes // 2)))
+    if hasattr(os, "sysconf"):  # absent on Windows: AttributeError, which the suppress below cannot catch
+        with suppress(OSError, ValueError, TypeError):
+            physical_bytes = int(os.sysconf("SC_PHYS_PAGES")) * int(os.sysconf("SC_PAGE_SIZE"))  # windows-footgun: ok -- guarded by the attribute check on the previous line; Windows falls through to the default bound
+            candidates.append(min(_WORKER_MEMORY_MAX_CAP_BYTES, max(_MIN_WORKER_MEMORY_MAX_BYTES, physical_bytes // 2)))
     safe_bound = min(candidates) if candidates else _DEFAULT_WORKER_MEMORY_MAX_BYTES
     return min(override_bound, safe_bound) if override_bound else safe_bound
 
@@ -1580,7 +1581,7 @@ class ProcessRegistry(ProcessCheckpointMixin):
                 import fcntl
                 fd = stdout.fileno()
                 flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-                fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+                fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)  # windows-footgun: ok -- inside the not-Windows gate above, and except Exception wraps the drain
                 try:
                     with suppress(BlockingIOError, OSError, ValueError):
                         chunk = stdout.read()

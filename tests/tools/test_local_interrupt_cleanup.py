@@ -161,7 +161,7 @@ def test_wait_for_process_kills_subprocess_on_keyboardinterrupt():
         assert target_pid is not None, (
             "test setup: couldn't find 'sleep 30' subprocess after 5 s"
         )
-        pgid = os.getpgid(target_pid)
+        pgid = os.getpgid(target_pid)  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         assert _pgid_still_alive(pgid), "sanity: subprocess should be alive"
 
         # Now inject a KeyboardInterrupt into the worker thread the same

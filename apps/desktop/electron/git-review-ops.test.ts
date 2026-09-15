@@ -6,7 +6,15 @@ import path from 'node:path'
 
 import { afterEach, test } from 'vitest'
 
-import { branchBase, reviewPush, gitFor, repoStatus, resolveRenamePath, REVIEW_FILE_CAP, reviewList } from './git-review-ops'
+import {
+  branchBase,
+  gitFor,
+  repoStatus,
+  resolveRenamePath,
+  REVIEW_FILE_CAP,
+  reviewList,
+  reviewPush
+} from './git-review-ops'
 
 const tempDirs: string[] = []
 
@@ -36,6 +44,35 @@ test('resolveRenamePath: plain path is unchanged', () => {
 
 test('gitFor accepts an internally resolved git binary path containing spaces', () => {
   assert.doesNotThrow(() => gitFor(process.cwd(), 'C:\\Program Files\\Git\\cmd\\git.exe'))
+})
+
+test("gitFor does not leak simple-git's custom-binary warning for a spaced path", () => {
+  // simple-git still console.warn()s "Invalid value supplied for custom binary ..."
+  // even when unsafe.allowUnsafeCustomBinary is set; that line showed up twice
+  // in the desktop console on every boot of a stock Windows install.
+  const warn = console.warn
+  const seen = []
+
+  console.warn = (...args) => {
+    seen.push(args)
+  }
+
+  try {
+    gitFor(process.cwd(), 'C:\\Program Files\\Git\\cmd\\git.exe')
+  } finally {
+    console.warn = warn
+  }
+
+  assert.deepEqual(seen, [])
+  // The swap is scoped to the constructor: console.warn is restored afterwards.
+  assert.equal(console.warn, warn)
+})
+
+test('gitFor leaves console.warn untouched for an unspaced path', () => {
+  const warn = console.warn
+
+  gitFor(process.cwd(), 'git')
+  assert.equal(console.warn, warn)
 })
 
 test('gitFor runs git through a spaced binary path', async () => {
@@ -113,9 +150,7 @@ function makeBranchRepo() {
 }
 
 function hasBranch(bare: string, branch: string) {
-  return execFileSync('git', ['branch', '--list', branch], { cwd: bare, encoding: 'utf8' }).includes(
-    branch
-  )
+  return execFileSync('git', ['branch', '--list', branch], { cwd: bare, encoding: 'utf8' }).includes(branch)
 }
 
 test('reviewPush refuses to guess origin when several remotes and no push default', async () => {

@@ -174,7 +174,7 @@ def test_refuses_to_run_inside_the_parents_own_process_group():
     # Started without start_new_session, a killpg of the parent's group would
     # take the supervisor out before it could reap. It must not pretend to work.
     proc = subprocess.run(
-        [sys.executable, SUPERVISOR, "--parent-pgid", str(os.getpgid(0))],
+        [sys.executable, SUPERVISOR, "--parent-pgid", str(os.getpgid(0))],  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -193,13 +193,13 @@ def test_refuses_to_run_inside_the_parents_own_process_group():
 def test_reaps_a_registered_group_when_the_control_pipe_reaches_eof():
     victim = subprocess.Popen(_VICTIM, start_new_session=True)
     supervisor = subprocess.Popen(
-        [sys.executable, SUPERVISOR, "--parent-pgid", str(os.getpgid(0))],
+        [sys.executable, SUPERVISOR, "--parent-pgid", str(os.getpgid(0))],  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         stdin=subprocess.PIPE,
         text=True,
         start_new_session=True,
     )
     try:
-        supervisor.stdin.write(f"register {os.getpgid(victim.pid)}\n")
+        supervisor.stdin.write(f"register {os.getpgid(victim.pid)}\n")  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         supervisor.stdin.flush()
         assert victim.poll() is None, "victim should outlive registration"
 
@@ -220,13 +220,13 @@ def test_leaves_an_unregistered_group_alone_at_eof():
     # a kill-everything event for servers that were handed back.
     survivor = subprocess.Popen(_VICTIM, start_new_session=True)
     supervisor = subprocess.Popen(
-        [sys.executable, SUPERVISOR, "--parent-pgid", str(os.getpgid(0))],
+        [sys.executable, SUPERVISOR, "--parent-pgid", str(os.getpgid(0))],  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         stdin=subprocess.PIPE,
         text=True,
         start_new_session=True,
     )
     try:
-        pgid = os.getpgid(survivor.pid)
+        pgid = os.getpgid(survivor.pid)  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         supervisor.stdin.write(f"register {pgid}\nunregister {pgid}\n")
         supervisor.stdin.flush()
         supervisor.stdin.close()
@@ -319,7 +319,7 @@ def test_reaps_a_grandchild_left_in_the_registered_group(tmp_path):
     server.wait(timeout=10)  # the direct child exits; the grandchild does not
 
     supervisor = subprocess.Popen(
-        [sys.executable, SUPERVISOR, "--parent-pgid", str(os.getpgid(0))],
+        [sys.executable, SUPERVISOR, "--parent-pgid", str(os.getpgid(0))],  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         stdin=subprocess.PIPE,
         text=True,
         start_new_session=True,
@@ -462,10 +462,10 @@ def test_supervisor_survives_the_real_eof_release():
         pytest.skip("POSIX-only supervisor")
     child = subprocess.Popen(_VICTIM, start_new_session=True)
     try:
-        mcp_tool._update_death_supervisor("register", [os.getpgid(child.pid)])
+        mcp_tool._update_death_supervisor("register", [os.getpgid(child.pid)])  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         proc = mcp_tool._death_supervisor
         assert proc is not None and proc.poll() is None
-        mcp_tool._update_death_supervisor("unregister", [os.getpgid(child.pid)])
+        mcp_tool._update_death_supervisor("unregister", [os.getpgid(child.pid)])  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         assert mcp_tool._death_supervisor is None
         assert proc.wait(timeout=10) == 0, "supervisor did not exit on the release EOF"
         assert child.poll() is None, "release reaped a group that had been unregistered"
@@ -639,7 +639,7 @@ def test_connecting_a_stdio_server_registers_its_real_process_group():
         with _stdio_connection(child.pid, fake) as server:
             asyncio.run(server.start({"command": "echo", "args": ["hi"]}))
 
-        assert f"register {os.getpgid(child.pid)}" in fake.lines(), (
+        assert f"register {os.getpgid(child.pid)}" in fake.lines(), (  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
             "connecting a stdio server did not hand its process group to the "
             f"supervisor; control stream was {fake.lines()}"
         )
@@ -659,7 +659,7 @@ def test_a_server_that_exited_is_released_on_teardown():
             async def _connect_then_lose_the_child():
                 await server.start({"command": "echo", "args": ["hi"]})
                 nonlocal pgid
-                pgid = os.getpgid(child.pid)
+                pgid = os.getpgid(child.pid)  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
                 # The server exits while connected. Reap it here so the
                 # teardown path sees a genuinely dead pid, not a zombie.
                 child.kill()
@@ -692,7 +692,7 @@ def test_a_server_that_survived_teardown_stays_registered():
 
             asyncio.run(_connect_then_shutdown())
 
-        pgid = os.getpgid(child.pid)
+        pgid = os.getpgid(child.pid)  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         assert f"register {pgid}" in fake.lines()
         assert f"unregister {pgid}" not in fake.lines(), (
             "a server that outlived teardown was released from the supervisor, "
@@ -718,7 +718,7 @@ def test_scoped_teardown_of_one_owner_keeps_the_other_owner_supervised(monkeypat
     a = subprocess.Popen(_VICTIM, start_new_session=True)
     b = subprocess.Popen(_VICTIM, start_new_session=True)
     try:
-        pg_a, pg_b = os.getpgid(a.pid), os.getpgid(b.pid)
+        pg_a, pg_b = os.getpgid(a.pid), os.getpgid(b.pid)  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
         with mcp_tool._lock:
             _mcp_lifecycle._stdio_pids[a.pid] = "profile-a"
             _mcp_lifecycle._stdio_pids[b.pid] = "profile-b"
@@ -760,9 +760,9 @@ def test_a_group_with_nothing_left_alive_is_forgotten_and_unregistered(monkeypat
     monkeypatch.setattr(mcp_tool, "_spawn_death_supervisor", lambda: fake)
 
     doomed = subprocess.Popen(_VICTIM, start_new_session=True)
-    doomed_pgid = os.getpgid(doomed.pid)
+    doomed_pgid = os.getpgid(doomed.pid)  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
     survivor = subprocess.Popen(_VICTIM, start_new_session=True)
-    survivor_pgid = os.getpgid(survivor.pid)
+    survivor_pgid = os.getpgid(survivor.pid)  # windows-footgun: ok -- module is skipped on Windows (pytestmark above)
     try:
         mcp_tool._update_death_supervisor("register", [doomed_pgid, survivor_pgid])
         assert mcp_tool._supervised_pgids == {doomed_pgid, survivor_pgid}

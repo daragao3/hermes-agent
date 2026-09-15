@@ -38,7 +38,7 @@ def get_terminal_id() -> Optional[str]:
     present multiplexer/emulator env var; ``None`` when neither exists (callers skip breadcrumbs)."""
     for fd in (sys.stdin, sys.stdout):
         try:
-            name = os.ttyname(fd.fileno())
+            name = os.ttyname(fd.fileno())  # windows-footgun: ok -- except Exception catches the AttributeError; Windows falls through to the env-var identity
         except Exception:
             continue
         if name:

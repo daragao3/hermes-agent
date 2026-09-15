@@ -55,6 +55,13 @@ test('default is cold-start tolerant (> the historical 45s floor)', () => {
   )
 })
 
+test('default matches the launcher allowance so a direct Hermes.exe launch is not shorter', () => {
+  // ~/.hermes/ops/launch-hermes-desktop.ps1 passes 360000; a double-clicked
+  // exe gets no env and must not fall back to a tighter deadline (2026-09-15).
+  assert.equal(DEFAULT_PORT_ANNOUNCE_TIMEOUT_MS, 360_000)
+  assert.equal(resolvePortAnnounceTimeoutMs({}), 360_000)
+})
+
 test('honors a valid HERMES_DESKTOP_PORT_ANNOUNCE_TIMEOUT_MS override', () => {
   const env = { HERMES_DESKTOP_PORT_ANNOUNCE_TIMEOUT_MS: '120000' }
   assert.equal(resolvePortAnnounceTimeoutMs(env), 120_000)
