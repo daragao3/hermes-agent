@@ -925,12 +925,14 @@ check_cxx_compiler() {
     return 1
 }
 
-# The dependency tree supports Node 22.22+, 24.11+, and 26+. nanoid 6 excludes
-# Node 23 and 25 while its >=26 arm accepts later releases, and @babel/* 8.x
-# requires ^22.18.0 || >=24.11.0 — so accepting 23/25 or an early Node 24
-# here only defers the failure to `npm ci` under engine-strict. Keep this in
-# sync with the root package.json. Anything outside the supported lines is
-# replaced with the Hermes-managed Node $NODE_VERSION.
+# The dependency tree supports Node 22.22.2+, 24.15+, and 26+. nanoid 6 excludes
+# Node 23 and 25 while its >=26 arm accepts later releases, @babel/* 8.x
+# requires ^22.18.0 || >=24.11.0, and jsdom 30 requires
+# ^22.22.2 || ^24.15.0 || >=26.0.0 — so accepting 23/25, an early Node 24, or
+# 22.22.0/22.22.1 here only defers the failure to `npm ci` under
+# engine-strict. Keep this in sync with the root package.json. Anything
+# outside the supported lines is replaced with the Hermes-managed Node
+# $NODE_VERSION.
 node_satisfies_build() {
     local ver="${1#v}"
     # Pre-release builds are rejected outright, however new they are. `node-pty`
@@ -946,8 +948,16 @@ node_satisfies_build() {
     local minor="${ver#*.}"; minor="${minor%%.*}"
     case "$major" in ''|*[!0-9]*) return 1 ;; esac
     case "$minor" in ''|*[!0-9]*) minor=0 ;; esac
-    if [ "$major" -eq 22 ] && [ "$minor" -ge 22 ]; then return 0; fi
-    if [ "$major" -eq 24 ] && [ "$minor" -ge 11 ]; then return 0; fi
+    local rest="${ver#*.}" patch=0
+    case "$rest" in *.*) patch="${rest#*.}"; patch="${patch%%[!0-9]*}" ;; esac
+    case "$patch" in ''|*[!0-9]*) patch=0 ;; esac
+    if [ "$major" -eq 22 ] && [ "$minor" -ge 22 ]; then
+        # jsdom 30 needs ^22.22.2: 22.22.0 and 22.22.1 clear the minor gate
+        # and still die at `npm ci` with EBADENGINE.
+        if [ "$minor" -eq 22 ] && [ "$patch" -lt 2 ]; then return 1; fi
+        return 0
+    fi
+    if [ "$major" -eq 24 ] && [ "$minor" -ge 15 ]; then return 0; fi
     if [ "$major" -ge 26 ]; then return 0; fi
     return 1
 }
@@ -1016,7 +1026,7 @@ check_node() {
     if command -v node &> /dev/null && ! command -v npm &> /dev/null; then
         log_warn "node found but npm is not on PATH (stray node symlink?) — installing Hermes-managed Node $NODE_VERSION LTS..."
     elif command -v node &> /dev/null; then
-        log_warn "Node.js $(node --version) is unsupported (Hermes requires Node 22.22+, 24.11+, or 26+) — installing Hermes-managed Node $NODE_VERSION..."
+        log_warn "Node.js $(node --version) is unsupported (Hermes requires Node 22.22.2+, 24.15+, or 26+) — installing Hermes-managed Node $NODE_VERSION..."
     elif [ "$DISTRO" = "termux" ]; then
         log_info "Node.js not found — installing Node.js via pkg..."
     else

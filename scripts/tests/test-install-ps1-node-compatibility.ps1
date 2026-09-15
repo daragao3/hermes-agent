@@ -103,9 +103,19 @@ $result = Invoke-SystemNodeProbe 'v24.18.0' '11.17.0'
 Assert-Equal $true $result.HasNode 'compatible system Node/npm is accepted'
 Assert-Equal 0 $result.DownloadAttempts 'compatible system npm avoids managed download'
 
-$result = Invoke-SystemNodeProbe 'v22.22.0' '10.9.8'
+$result = Invoke-SystemNodeProbe 'v22.22.2' '10.9.8'
 Assert-Equal $true $result.HasNode 'minimum Node with bundled npm is accepted'
 Assert-Equal 0 $result.DownloadAttempts 'bundled npm avoids managed download'
+
+# jsdom 30 requires ^22.22.2 || ^24.15.0: these clear a minor-only gate and
+# then die at `npm ci` with EBADENGINE, so the installer must not accept them.
+$result = Invoke-SystemNodeProbe 'v22.22.1' '10.9.8'
+Assert-Equal $false $result.HasNode 'Node 22.22.1 is below the jsdom 30 patch floor'
+Assert-Equal 1 $result.DownloadAttempts 'Node 22.22.1 falls through to managed Node'
+
+$result = Invoke-SystemNodeProbe 'v24.14.0' '11.17.0'
+Assert-Equal $false $result.HasNode 'Node 24.14 is below the jsdom 30 minor floor'
+Assert-Equal 1 $result.DownloadAttempts 'Node 24.14 falls through to managed Node'
 
 $result = Invoke-SystemNodeProbe 'v24.18.0' '11.16.0'
 Assert-Equal $false $result.HasNode 'incompatible system npm is not accepted'

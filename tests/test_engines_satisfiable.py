@@ -160,14 +160,15 @@ class TestEnginesAreSatisfiable:
         """
         desktop = json.loads((REPO_ROOT / "apps" / "desktop" / "package.json").read_text(encoding="utf-8"))
         node_range = desktop["engines"]["node"]
-        # The tightest floor any dependency actually declares (react-router
-        # 8.3.0 -> >=22.22.0). If this legitimately rises, the assertion
-        # documents the reason for the bump rather than blocking it.
-        assert _satisfies_range("22.22.0", node_range), (
+        # The tightest floor any dependency actually declares (jsdom 30.0.1
+        # -> ^22.22.2, raised from react-router 8.3.0's >=22.22.0 on
+        # 2026-09-15). If this legitimately rises, the assertion documents
+        # the reason for the bump rather than blocking it.
+        assert _satisfies_range("22.22.2", node_range), (
             f"apps/desktop engines.node is {node_range!r}, which rejects Node "
-            "22.12 — stricter than Vite requires. A desktop floor above the "
-            "build toolchain's own floor replaces working user toolchains for "
-            "nothing."
+            "22.22.2 — stricter than jsdom 30 requires. A desktop floor above "
+            "the build toolchain's own floor replaces working user toolchains "
+            "for nothing."
         )
 
 
@@ -232,6 +233,11 @@ class TestDeclaredFloorsClearTheLockedTree:
     Aug 2026 instance: @babel/* 8.x requires `^22.18.0 || >=24.11.0`; our
     engines arm said `^24.0.0`, so Node 24.4 passed the installer and the
     manifest and failed on 28 babel packages.
+
+    Sep 2026 instance: jsdom 30.0.1 requires `^22.22.2 || ^24.15.0 ||
+    >=26.0.0`; the arms said `^22.22.0 || ^24.11.0`, so Node 24.14 passed
+    every gate and `npm ci` died on jsdom alone. This test was red on the
+    trunk for three days before anyone ran it.
     """
 
     def _arm_floors(self, node_range: str) -> list[str]:
@@ -282,10 +288,27 @@ class TestDeclaredFloorsClearTheLockedTree:
         install_ps1 = (REPO_ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
         for arm in node_range.split("||"):
             arm = arm.strip()
-            major, minor = _parse_major_minor_patch(arm.lstrip("^>="))[:2]
+            major, minor, patch = _parse_major_minor_patch(arm.lstrip("^>="))
             if arm.startswith("^") and minor > 0:
                 sh_gate = f'[ "$major" -eq {major} ] && [ "$minor" -ge {minor} ]'
-                ps1_gate = f"if ($v.Major -eq {major}) {{ return ($v.Minor -ge {minor}) }}"
+                if patch > 0:
+                    # A patch-level floor (jsdom 30 -> ^22.22.2) needs a
+                    # second clause; a minor-only gate admits x.y.0.
+                    sh_reject = (
+                        f'if [ "$minor" -eq {minor} ] && [ "$patch" -lt {patch} ]; '
+                        "then return 1; fi"
+                    )
+                    ps1_gate = (
+                        f"if ($v.Major -eq {major}) {{ return ($v.Minor -ge {minor} "
+                        f"-and -not ($v.Minor -eq {minor} -and $v.Build -lt {patch})) }}"
+                    )
+                    assert sh_reject in install_sh, (
+                        f"engines.node arm {arm!r} has a patch-level floor but "
+                        f"install.sh node_satisfies_build has no patch reject "
+                        f"(expected: {sh_reject})"
+                    )
+                else:
+                    ps1_gate = f"if ($v.Major -eq {major}) {{ return ($v.Minor -ge {minor}) }}"
                 assert sh_gate in install_sh, (
                     f"engines.node arm {arm!r} has no matching gate in "
                     f"install.sh node_satisfies_build (expected: {sh_gate})"
