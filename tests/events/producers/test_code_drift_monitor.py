@@ -108,19 +108,19 @@ class TestSampleCodeDrift:
             "validation_receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
             "reload_receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
         }
-        (ops / "agent-src-deployment-baseline.json").write_text(json.dumps(baseline))
+        (ops / "agent-src-deployment-baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
         _git(repo, "checkout", "-b", "accepted-work")
         sample = sample_code_drift(repo)
         assert getattr(sample, "deployment_state", None) == "accepted"
         assert sample.state == "behind"  # Integration backlog remains visible.
         baseline["excluded_dirty_paths"] = ["a.txt"]
-        (ops / "agent-src-deployment-baseline.json").write_text(json.dumps(baseline))
-        (repo / "a.txt").write_text("explicitly excluded change")
+        (ops / "agent-src-deployment-baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
+        (repo / "a.txt").write_text("explicitly excluded change", encoding="utf-8")
         assert sample_code_drift(repo).deployment_state == "accepted"
-        (repo / "unapproved.py").write_text("print('new runtime source')")
+        (repo / "unapproved.py").write_text("print('new runtime source')", encoding="utf-8")
         assert sample_code_drift(repo).deployment_state == "unaccepted"
         (repo / "unapproved.py").unlink()
-        (repo / "a.txt").write_text("one")
+        (repo / "a.txt").write_text("one", encoding="utf-8")
         _git(repo, "checkout", "main")
         sample = sample_code_drift(repo)
         assert sample.deployment_state == "unaccepted"

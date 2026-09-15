@@ -23,7 +23,7 @@ class TestOfferOpenclawMigration:
         openclaw_dir = tmp_path / ".openclaw"
         openclaw_dir.mkdir()
         script = tmp_path / "openclaw_to_hermes.py"
-        script.write_text("# placeholder")
+        script.write_text("# placeholder", encoding="utf-8")
         with (
             patch("hermes_cli.setup.Path.home", return_value=tmp_path),
             patch.object(setup_migration, "_OPENCLAW_SCRIPT", script),
@@ -40,7 +40,7 @@ class TestOfferOpenclawMigration:
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         config_path = hermes_home / "config.yaml"
-        config_path.write_text("agent:\n  max_turns: 90\n")
+        config_path.write_text("agent:\n  max_turns: 90\n", encoding="utf-8")
 
         # Build a fake migration module
         fake_mod = ModuleType("openclaw_to_hermes")
@@ -54,7 +54,7 @@ class TestOfferOpenclawMigration:
         fake_mod.Migrator = MagicMock(return_value=fake_migrator)
 
         script = tmp_path / "openclaw_to_hermes.py"
-        script.write_text("# placeholder")
+        script.write_text("# placeholder", encoding="utf-8")
 
         with (
             patch("hermes_cli.setup.Path.home", return_value=tmp_path),
@@ -109,10 +109,10 @@ class TestOfferOpenclawMigration:
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         config_path = hermes_home / "config.yaml"
-        config_path.write_text("")
+        config_path.write_text("", encoding="utf-8")
 
         script = tmp_path / "openclaw_to_hermes.py"
-        script.write_text("# placeholder")
+        script.write_text("# placeholder", encoding="utf-8")
 
         with (
             patch("hermes_cli.setup.Path.home", return_value=tmp_path),

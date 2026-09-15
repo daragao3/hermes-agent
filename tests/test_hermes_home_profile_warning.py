@@ -62,7 +62,7 @@ class TestGetHermesHomeProfileWarning:
         """active_profile=coder + HERMES_HOME unset → warn loudly, still return fallback."""
         hermes_dir = tmp_path / ".hermes"
         hermes_dir.mkdir()
-        (hermes_dir / "active_profile").write_text("coder\n")
+        (hermes_dir / "active_profile").write_text("coder\n", encoding="utf-8")
 
         result = fresh_constants.get_hermes_home()
 
@@ -86,7 +86,7 @@ class TestGetHermesHomeProfileWarning:
         """Even if active_profile is 'coder', setting HERMES_HOME suppresses warning."""
         profile_dir = tmp_path / ".hermes" / "profiles" / "coder"
         profile_dir.mkdir(parents=True)
-        (tmp_path / ".hermes" / "active_profile").write_text("coder\n")
+        (tmp_path / ".hermes" / "active_profile").write_text("coder\n", encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(profile_dir))
 
         result = fresh_constants.get_hermes_home()
@@ -155,7 +155,7 @@ class TestPlatformDefaultHermesHome:
         (appdata / "hermes").mkdir(parents=True)  # exists, but no root marker
         legacy = tmp_path / ".hermes"
         legacy.mkdir()
-        (legacy / "config.yaml").write_text("")
+        (legacy / "config.yaml").write_text("", encoding="utf-8")
         constants = self._constants(monkeypatch, tmp_path, appdata)
         assert constants._get_platform_default_hermes_home() == legacy
 
@@ -166,10 +166,10 @@ class TestPlatformDefaultHermesHome:
         appdata = tmp_path / "AppData" / "Local"
         native = appdata / "hermes"
         native.mkdir(parents=True)
-        (native / "active_profile").write_text("default\n")
+        (native / "active_profile").write_text("default\n", encoding="utf-8")
         legacy = tmp_path / ".hermes"
         legacy.mkdir()
-        (legacy / "config.yaml").write_text("")
+        (legacy / "config.yaml").write_text("", encoding="utf-8")
         constants = self._constants(monkeypatch, tmp_path, appdata)
         assert constants._get_platform_default_hermes_home() == native
 

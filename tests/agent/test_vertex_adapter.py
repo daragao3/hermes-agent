@@ -151,7 +151,7 @@ def test_adc_refuses_foreign_profile_google_application_credentials(
     from agent import secret_scope
 
     sa_file = tmp_path / "other_profile_sa.json"
-    sa_file.write_text('{"project_id": "other-profile"}')
+    sa_file.write_text('{"project_id": "other-profile"}', encoding="utf-8")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(sa_file))
 
     secret_scope.set_multiplex_active(True)
@@ -178,7 +178,7 @@ def test_sa_file_rotation_invalidates_creds_cache(vertex_adapter, monkeypatch, t
     import os as _os
 
     sa_file = tmp_path / "sa.json"
-    sa_file.write_text('{"project_id": "first-identity"}')
+    sa_file.write_text('{"project_id": "first-identity"}', encoding="utf-8")
     monkeypatch.setattr(
         vertex_adapter, "_resolve_credentials_path", lambda explicit=None: str(sa_file)
     )
@@ -196,7 +196,7 @@ def test_sa_file_rotation_invalidates_creds_cache(vertex_adapter, monkeypatch, t
     assert vertex_adapter._creds_cache[key1b][0] is creds_obj_1
 
     # Rotate: rewrite the file with different content and a bumped mtime.
-    sa_file.write_text('{"project_id": "second-identity", "rotated": true}')
+    sa_file.write_text('{"project_id": "second-identity", "rotated": true}', encoding="utf-8")
     st = _os.stat(sa_file)
     _os.utime(sa_file, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
 
@@ -229,7 +229,7 @@ def test_adc_failure_retries_with_late_added_sa_file(vertex_adapter, monkeypatch
     old `cache_key == "__adc__"` string comparison silently disabled this
     retry (caught in review); the guard is now `not resolved_path`."""
     sa_file = tmp_path / "late_sa.json"
-    sa_file.write_text('{"project_id": "late-identity"}')
+    sa_file.write_text('{"project_id": "late-identity"}', encoding="utf-8")
 
     calls = {"n": 0}
 
@@ -261,7 +261,7 @@ def test_metadata_preserving_rotation_invalidates_creds_cache(vertex_adapter, mo
     import os as _os
 
     sa_file = tmp_path / "sa.json"
-    sa_file.write_text('{"project_id": "AAAA-identity"}')
+    sa_file.write_text('{"project_id": "AAAA-identity"}', encoding="utf-8")
     monkeypatch.setattr(
         vertex_adapter, "_resolve_credentials_path", lambda explicit=None: str(sa_file)
     )
@@ -273,7 +273,7 @@ def test_metadata_preserving_rotation_invalidates_creds_cache(vertex_adapter, mo
     # Same-length content, mtime restored, atomic replace.
     st = _os.stat(sa_file)
     new = tmp_path / "sa.json.new"
-    new.write_text('{"project_id": "BBBB-identity"}')  # equal length
+    new.write_text('{"project_id": "BBBB-identity"}', encoding="utf-8")  # equal length
     _os.utime(new, ns=(st.st_atime_ns, st.st_mtime_ns))
     _os.replace(new, sa_file)
     st2 = _os.stat(sa_file)

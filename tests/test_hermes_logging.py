@@ -153,7 +153,7 @@ class TestSetupLogging:
 
         agent_log = hermes_home / "logs" / "agent.log"
         assert agent_log.exists()
-        content = agent_log.read_text()
+        content = agent_log.read_text(encoding="utf-8")
         assert "test message for agent.log" in content
 
     def test_profile_routing_follows_context_home(self, hermes_home, tmp_path):
@@ -180,16 +180,16 @@ class TestSetupLogging:
 
         assert "profile-routed cron record" in (
             profile_home / "logs" / "agent.log"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "profile-routed cron record" not in (
             hermes_home / "logs" / "agent.log"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "default-home cron record" in (
             hermes_home / "logs" / "agent.log"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "default-home cron record" not in (
             profile_home / "logs" / "agent.log"
-        ).read_text()
+        ).read_text(encoding="utf-8")
 
 
 
@@ -198,7 +198,7 @@ class TestSetupLogging:
         """Explicit function params take precedence over config.yaml."""
         import yaml
         config = {"logging": {"level": "DEBUG"}}
-        (hermes_home / "config.yaml").write_text(yaml.dump(config))
+        (hermes_home / "config.yaml").write_text(yaml.dump(config), encoding="utf-8")
 
         hermes_logging.setup_logging(hermes_home=hermes_home, log_level="WARNING")
 
@@ -250,7 +250,7 @@ class TestGatewayMode:
 
         gw_log = hermes_home / "logs" / "gateway.log"
         assert gw_log.exists()
-        assert "telegram connected" in gw_log.read_text()
+        assert "telegram connected" in gw_log.read_text(encoding="utf-8")
 
     def test_gateway_log_rejects_non_gateway_records(self, hermes_home):
         """gateway.log does NOT capture records from tools.*, agent.*, etc."""
@@ -266,7 +266,7 @@ class TestGatewayMode:
 
         gw_log = hermes_home / "logs" / "gateway.log"
         if gw_log.exists():
-            content = gw_log.read_text()
+            content = gw_log.read_text(encoding="utf-8")
             assert "running command" not in content
             assert "compressing context" not in content
 
@@ -294,7 +294,7 @@ class TestGatewayMode:
 
         # mode="gateway" routes the catch-all to agent-gateway.log.
         agent_log = hermes_home / "logs" / "agent-gateway.log"
-        content = agent_log.read_text()
+        content = agent_log.read_text(encoding="utf-8")
         assert "gateway msg" in content
         assert "file msg" in content
 
@@ -378,7 +378,7 @@ class TestGatewayForensicsLog:
 
         forensics = hermes_home / "logs" / "gateway-forensics.log"
         assert forensics.exists()
-        content = forensics.read_text()
+        content = forensics.read_text(encoding="utf-8")
         assert "gateway started" in content
         assert "event published" in content
         assert "running command" in content
@@ -472,7 +472,7 @@ class TestGatewayForensicsLog:
         # will then fail at path.parent.mkdir() with NotADirectoryError on
         # both POSIX and Windows.
         blocker = tmp_path / "blocker-file"
-        blocker.write_text("not a directory")
+        blocker.write_text("not a directory", encoding="utf-8")
         monkeypatch.setenv(
             "HERMES_GATEWAY_LOG_FILE", str(blocker / "child" / "forensics.log")
         )
@@ -523,7 +523,7 @@ class TestGuiMode:
 
         gui_log = hermes_home / "logs" / "gui.log"
         assert gui_log.exists()
-        content = gui_log.read_text()
+        content = gui_log.read_text(encoding="utf-8")
         assert "dashboard online" in content
         assert "ws connected" in content
         assert "gateway event" not in content
@@ -543,7 +543,7 @@ class TestSessionContext:
         hermes_logging.flush_log_queue()
 
         agent_log = hermes_home / "logs" / "agent.log"
-        content = agent_log.read_text()
+        content = agent_log.read_text(encoding="utf-8")
         assert "[abc123]" in content
         assert "tagged message" in content
 
@@ -641,7 +641,7 @@ class TestAddRotatingHandler:
         hermes_logging.set_session_context("factory_test")
         logger.info("test msg")
         hermes_logging.flush_log_queue()
-        content = log_path.read_text()
+        content = log_path.read_text(encoding="utf-8")
         assert "[factory_test]" in content
 
         # Clean up
@@ -747,7 +747,7 @@ class TestReadLoggingConfig:
     def test_reads_logging_section(self, hermes_home):
         import yaml
         config = {"logging": {"level": "DEBUG", "max_size_mb": 10, "backup_count": 5}}
-        (hermes_home / "config.yaml").write_text(yaml.dump(config))
+        (hermes_home / "config.yaml").write_text(yaml.dump(config), encoding="utf-8")
 
         level, max_size, backup = hermes_logging._read_logging_config()
         assert level == "DEBUG"
@@ -889,7 +889,7 @@ class TestRoleScopedCatchAll:
         hermes_logging.flush_log_queue()
         agent_proxy = hermes_home / "logs" / "agent-proxy.log"
         assert agent_proxy.exists()
-        assert "proxy role line" in agent_proxy.read_text()
+        assert "proxy role line" in agent_proxy.read_text(encoding="utf-8")
 
 
 class TestLogsKnownFiles:
@@ -1120,7 +1120,7 @@ class TestExternalRotationRecovery:
         handler = self._make_handler(log_path)
         try:
             self._emit(handler, "before rotation")
-            assert log_path.read_text() == "before rotation\n"
+            assert log_path.read_text(encoding="utf-8") == "before rotation\n"
 
             # External rotation (NOT via handler.doRollover()).
             os.rename(log_path, rotated)
@@ -1131,8 +1131,8 @@ class TestExternalRotationRecovery:
             # The new write should land in a freshly recreated gateway.log,
             # not appended to the rotated backup.
             assert log_path.exists(), "handler did not recreate gateway.log"
-            assert log_path.read_text() == "after rotation\n"
-            assert rotated.read_text() == "before rotation\n"
+            assert log_path.read_text(encoding="utf-8") == "after rotation\n"
+            assert rotated.read_text(encoding="utf-8") == "before rotation\n"
         finally:
             handler.close()
 
@@ -1152,12 +1152,12 @@ class TestExternalRotationRecovery:
             self._emit(handler, "AAAA" * 32)
             assert log_path.stat().st_size > 0
 
-            with open(log_path, "w"):
+            with open(log_path, "w", encoding="utf-8"):
                 pass  # truncate to zero
             assert log_path.stat().st_size == 0
 
             self._emit(handler, "after truncate")
-            assert log_path.read_text() == "after truncate\n"
+            assert log_path.read_text(encoding="utf-8") == "after truncate\n"
         finally:
             handler.close()
 
@@ -1179,7 +1179,7 @@ class TestExternalRotationRecovery:
 
         logging.getLogger("gateway.run").info("line BEFORE rotation")
         hermes_logging.flush_log_queue()
-        assert "BEFORE rotation" in gw_path.read_text()
+        assert "BEFORE rotation" in gw_path.read_text(encoding="utf-8")
 
         # External actor renames the file out from under us.
         os.rename(gw_path, rotated)
@@ -1197,8 +1197,8 @@ class TestExternalRotationRecovery:
         # backup.  Allen's logs had everything past the rotation point
         # going into agent.log only, never gateway.log.
         assert gw_path.exists(), "gateway.log was never recreated"
-        assert "AFTER rotation" in gw_path.read_text()
-        assert "AFTER rotation" not in rotated.read_text()
+        assert "AFTER rotation" in gw_path.read_text(encoding="utf-8")
+        assert "AFTER rotation" not in rotated.read_text(encoding="utf-8")
 
 
 class TestSafeStderr:

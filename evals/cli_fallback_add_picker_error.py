@@ -51,12 +51,12 @@ def run(root: Path, output: Path) -> dict:
         (hh / "config.yaml").write_text(CONFIG, encoding="utf-8")
         (hh / ".env").write_text("OPENROUTER_API_KEY=local-not-used\n", encoding="utf-8")
         auth = hh / "auth.json"
-        auth.write_text(json.dumps({"version": 1, "providers": {}, "active_provider": "nous"}))
+        auth.write_text(json.dumps({"version": 1, "providers": {}, "active_provider": "nous"}), encoding="utf-8")
         # A stub ``curses`` package forces every menu onto its numbered fallback so the PTY
         # exchange is line-oriented (the curses UI is not what is under test here).
         shim = Path(home) / "shim" / "curses"
         shim.mkdir(parents=True)
-        (shim / "__init__.py").write_text("raise ImportError('curses disabled for PTY harness')\n")
+        (shim / "__init__.py").write_text("raise ImportError('curses disabled for PTY harness')\n", encoding="utf-8")
         env = {"PATH": os.environ["PATH"], "HOME": home, "HERMES_HOME": str(hh),
                "PYTHONPATH": f"{shim.parent}{os.pathsep}{root}", "PYTHONUNBUFFERED": "1",
                "TERM": "dumb", "LANG": "C.UTF-8"}
@@ -105,14 +105,14 @@ def run(root: Path, output: Path) -> dict:
             return {"exited": exited, "returncode": proc.returncode,
                     "picker_error_surfaced": "PermissionError" in text,
                     "model_after": model_after, "primary_restored": model_after == PRIMARY,
-                    "auth_active_provider": json.loads(auth.read_text()).get("active_provider"),
+                    "auth_active_provider": json.loads(auth.read_text(encoding="utf-8")).get("active_provider"),
                     "restore_note": "Could not fully restore" in text,
                     "raw_path": str(output / "fallback-add-picker-error.pty")}
         finally:
             output.mkdir(parents=True, exist_ok=True)
             (output / "fallback-add-picker-error.pty").write_bytes(data)
             if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGKILL)
+                os.killpg(proc.pid, signal.SIGKILL)  # windows-footgun: ok -- POSIX-only eval harness (pty + process groups)
                 proc.wait(timeout=30)
             os.close(master)
 
@@ -124,7 +124,7 @@ def main():
     parser.add_argument("--expect", choices=("stranded", "restored"), required=True)
     args = parser.parse_args()
     result = run(Path(args.root).resolve(), args.output)
-    (args.output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
+    (args.output / "results.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2))
     assert result["exited"] and result["returncode"] != 0, result
     assert result["picker_error_surfaced"], result

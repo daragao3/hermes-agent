@@ -40,7 +40,7 @@ def _setup_hermes_auth(hermes_home: Path, *, access_token: str = "access", refre
         },
     }
     auth_file = hermes_home / "auth.json"
-    auth_file.write_text(json.dumps(auth_store, indent=2))
+    auth_file.write_text(json.dumps(auth_store, indent=2), encoding="utf-8")
     return auth_file
 
 
@@ -95,7 +95,7 @@ def test_resolve_codex_runtime_credentials_falls_back_to_pool_when_singleton_emp
             ],
         },
     }
-    (hermes_home / "auth.json").write_text(json.dumps(auth_store))
+    (hermes_home / "auth.json").write_text(json.dumps(auth_store), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     resolved = resolve_codex_runtime_credentials()
@@ -153,7 +153,7 @@ def test_save_codex_tokens_syncs_credential_pool(tmp_path, monkeypatch):
     _save_codex_tokens({"access_token": "new-at", "refresh_token": "new-rt"},
                        last_refresh="2026-05-27T00:00:00Z")
 
-    auth = json.loads((hermes_home / "auth.json").read_text())
+    auth = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     pool = auth["credential_pool"]["openai-codex"]
     seeded = next(e for e in pool if e["source"] == "device_code")
     assert seeded["access_token"] == "new-at"
@@ -250,7 +250,7 @@ def test_save_codex_tokens_syncs_manual_device_code_entries(tmp_path, monkeypatc
     _save_codex_tokens({"access_token": "fresh-at", "refresh_token": "fresh-rt"},
                        last_refresh="2026-05-28T00:00:00Z")
 
-    auth = json.loads((hermes_home / "auth.json").read_text())
+    auth = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     pool = auth["credential_pool"]["openai-codex"]
 
     # Singleton-seeded device_code entry: refreshed and error markers cleared.
@@ -353,7 +353,7 @@ def test_save_codex_tokens_does_not_overwrite_independent_manual_entries(tmp_pat
         last_refresh="2026-06-05T00:00:00Z",
     )
 
-    auth = json.loads((hermes_home / "auth.json").read_text())
+    auth = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     pool = auth["credential_pool"]["openai-codex"]
 
     # Singleton-seeded entry: refreshed (legitimate sync).
@@ -424,7 +424,7 @@ def test_save_codex_tokens_clears_error_markers_only_on_refreshed_entries(tmp_pa
         last_refresh="2026-06-05T00:00:00Z",
     )
 
-    auth = json.loads((hermes_home / "auth.json").read_text())
+    auth = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     pool = auth["credential_pool"]["openai-codex"]
 
     # Singleton: refreshed AND error markers cleared.
@@ -451,7 +451,7 @@ def test_codex_tokens_not_written_to_shared_file(tmp_path, monkeypatch):
     hermes_home.mkdir(parents=True, exist_ok=True)
     codex_home.mkdir(parents=True, exist_ok=True)
 
-    (hermes_home / "auth.json").write_text(json.dumps({"version": 1, "providers": {}}))
+    (hermes_home / "auth.json").write_text(json.dumps({"version": 1, "providers": {}}), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 

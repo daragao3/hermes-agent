@@ -16,14 +16,14 @@ from gateway import cgroup_cleanup
 # attribute is absent; skip them there rather than mask a real regression.
 _requires_sigkill = pytest.mark.skipif(
     not hasattr(signal, "SIGKILL"),
-    reason="cgroup reaper is Linux-only; signal.SIGKILL absent on Windows",
+    reason="cgroup reaper is Linux-only; signal.SIGKILL absent on Windows",  # windows-footgun: ok -- prose in a skip reason, not a call
 )
 
 
 class TestOwnCgroupPath:
     def test_parses_v2_cgroup_path(self, tmp_path, monkeypatch):
         proc_self = tmp_path / "cgroup"
-        proc_self.write_text("0::/user.slice/user-1000.slice/hermes-gateway.service\n")
+        proc_self.write_text("0::/user.slice/user-1000.slice/hermes-gateway.service\n", encoding="utf-8")
         monkeypatch.setattr(
             cgroup_cleanup,
             "Path",

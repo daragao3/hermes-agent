@@ -35,7 +35,7 @@ pytestmark = [
 
 
 def _entries():
-    return [e for e in json.loads(MANIFEST.read_text())["entries"] if e["kind"] == "moved-lazy"]
+    return [e for e in json.loads(MANIFEST.read_text(encoding="utf-8"))["entries"] if e["kind"] == "moved-lazy"]
 
 
 # A pointer whose target module imports an OS-gated stdlib module cannot resolve on the other OS and

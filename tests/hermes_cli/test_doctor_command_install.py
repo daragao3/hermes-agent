@@ -40,7 +40,7 @@ def _setup_doctor_env(monkeypatch, tmp_path, venv_name="venv"):
     venv_bin_dir = project / venv_name / "bin"
     venv_bin_dir.mkdir(parents=True, exist_ok=True)
     hermes_bin = venv_bin_dir / "hermes"
-    hermes_bin.write_text("#!/usr/bin/env python\n# entry point\n")
+    hermes_bin.write_text("#!/usr/bin/env python\n# entry point\n", encoding="utf-8")
     hermes_bin.chmod(0o755)
 
     monkeypatch.setattr(doctor_mod, "HERMES_HOME", home)
@@ -140,7 +140,7 @@ class TestDoctorCommandInstallation:
         cmd_link_dir.mkdir(parents=True)
         cmd_link = cmd_link_dir / "hermes"
         wrong_target = tmp_path / "wrong_hermes"
-        wrong_target.write_text("#!/usr/bin/env python\n")
+        wrong_target.write_text("#!/usr/bin/env python\n", encoding="utf-8")
         cmd_link.symlink_to(wrong_target)
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)

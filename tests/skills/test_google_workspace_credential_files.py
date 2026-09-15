@@ -45,8 +45,8 @@ class TestGoogleWorkspaceCredentialFiles:
     def test_entries_are_registered_when_files_exist(self, tmp_path):
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
-        (hermes_home / "google_token.json").write_text("{}")
-        (hermes_home / "google_client_secret.json").write_text("{}")
+        (hermes_home / "google_token.json").write_text("{}", encoding="utf-8")
+        (hermes_home / "google_client_secret.json").write_text("{}", encoding="utf-8")
 
         from tools.credential_files import (
             clear_credential_files,

@@ -55,7 +55,7 @@ def fake_piper(monkeypatch, tmp_path):
     voices_dir = tmp_path / "voices"
     voices_dir.mkdir()
     (voices_dir / "en_US-test-medium.onnx").write_bytes(b"onnx")
-    (voices_dir / "en_US-test-medium.onnx.json").write_text("{}")
+    (voices_dir / "en_US-test-medium.onnx.json").write_text("{}", encoding="utf-8")
     cfg = {"provider": "piper", "piper": {"voice": "en_US-test-medium", "voices_dir": str(voices_dir)}}
     monkeypatch.setattr(tts_tool, "_load_tts_config", lambda: cfg)
     return cfg

@@ -37,9 +37,9 @@ def test_scan_source_finds_every_import_form(src, expect):
 
 
 def test_scan_plugin_walks_dir_and_skips_tests(tmp_path):
-    (tmp_path / "__init__.py").write_text("from tools.web_tools import prefers_gateway\n")
-    (tmp_path / "sub").mkdir(); (tmp_path / "sub" / "m.py").write_text("import hermes_cli.kanban_db as k\nk.connect()\n")
-    (tmp_path / "tests").mkdir(); (tmp_path / "tests" / "t.py").write_text("from tools.web_tools import prefers_gateway\n")
+    (tmp_path / "__init__.py").write_text("from tools.web_tools import prefers_gateway\n", encoding="utf-8")
+    (tmp_path / "sub").mkdir(); (tmp_path / "sub" / "m.py").write_text("import hermes_cli.kanban_db as k\nk.connect()\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir(); (tmp_path / "tests" / "t.py").write_text("from tools.web_tools import prefers_gateway\n", encoding="utf-8")
     hits = pc.scan_plugin(tmp_path, MANIFEST)
     assert sorted(h.file for h in hits) == ["__init__.py", "sub/m.py"]
 
@@ -51,16 +51,16 @@ def _manifest(name, path, source="user"):
 def test_compat_report_only_external_plugins_with_hits(tmp_path, monkeypatch):
     monkeypatch.setattr(pc, "load_manifest", lambda: MANIFEST)
     monkeypatch.setattr(pc, "_write_report_file", lambda r: None)
-    good = tmp_path / "good"; good.mkdir(); (good / "__init__.py").write_text("x = 1\n")
-    bad = tmp_path / "bad"; bad.mkdir(); (bad / "__init__.py").write_text("from tools.web_tools import prefers_gateway\n")
-    bundled = tmp_path / "bundled"; bundled.mkdir(); (bundled / "__init__.py").write_text("from tools.web_tools import prefers_gateway\n")
+    good = tmp_path / "good"; good.mkdir(); (good / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+    bad = tmp_path / "bad"; bad.mkdir(); (bad / "__init__.py").write_text("from tools.web_tools import prefers_gateway\n", encoding="utf-8")
+    bundled = tmp_path / "bundled"; bundled.mkdir(); (bundled / "__init__.py").write_text("from tools.web_tools import prefers_gateway\n", encoding="utf-8")
     report = pc.compat_report([_manifest("good", good), _manifest("bad", bad), _manifest("ours", bundled, "bundled")], force=True)
     assert list(report) == ["bad"] and report["bad"][0].old == "tools.web_tools.prefers_gateway"
 
 
 def test_disable_only_after_the_date_and_not_when_allowed(tmp_path, monkeypatch):
     monkeypatch.setattr(pc, "load_manifest", lambda: MANIFEST)
-    bad = tmp_path / "bad"; bad.mkdir(); (bad / "__init__.py").write_text("from tools.web_tools import prefers_gateway\n")
+    bad = tmp_path / "bad"; bad.mkdir(); (bad / "__init__.py").write_text("from tools.web_tools import prefers_gateway\n", encoding="utf-8")
     m = _manifest("bad", bad)
     before, after = pc.COMPAT_REMOVAL_DATE - dt.timedelta(days=1), pc.COMPAT_REMOVAL_DATE
     monkeypatch.setattr(pc, "allow_deprecated_imports", lambda config=None: False)
@@ -69,7 +69,7 @@ def test_disable_only_after_the_date_and_not_when_allowed(tmp_path, monkeypatch)
     assert reason and pc.COMPAT_REMOVAL in reason and "hermes plugins compat" in reason
     monkeypatch.setattr(pc, "allow_deprecated_imports", lambda config=None: True)
     assert pc.disable_reason(m, today=after) is None
-    good = tmp_path / "good"; good.mkdir(); (good / "__init__.py").write_text("x=1\n")
+    good = tmp_path / "good"; good.mkdir(); (good / "__init__.py").write_text("x=1\n", encoding="utf-8")
     monkeypatch.setattr(pc, "allow_deprecated_imports", lambda config=None: False)
     assert pc.disable_reason(_manifest("good", good), today=after) is None
 
@@ -88,7 +88,7 @@ def test_summary_lines_name_plugins_and_the_date():
 def test_report_file_written_and_removed(tmp_path, monkeypatch):
     monkeypatch.setattr(pc, "report_file_path", lambda: tmp_path / "r.json")
     pc._write_report_file({"p": [pc.Hit("a.py", 1, "x.y", "z.y")]})
-    data = json.loads((tmp_path / "r.json").read_text())
+    data = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
     assert data["plugins"]["p"][0]["old"] == "x.y" and data["removal_date"] == pc.COMPAT_REMOVAL and len(data["lines"]) == 2
     pc._write_report_file({})
     assert not (tmp_path / "r.json").exists()
@@ -101,7 +101,7 @@ def test_loader_skips_hitting_plugin_after_date(tmp_path, monkeypatch):
     monkeypatch.setattr(pc, "removal_in_effect", lambda today=None: True)
     monkeypatch.setattr(pc, "allow_deprecated_imports", lambda config=None: False)
     plugin = tmp_path / "plugins" / "oldpaths"; plugin.mkdir(parents=True)
-    (plugin / "plugin.yaml").write_text("name: oldpaths\nversion: 0.1\ndescription: t\n")
+    (plugin / "plugin.yaml").write_text("name: oldpaths\nversion: 0.1\ndescription: t\n", encoding="utf-8")
     (plugin / "__init__.py").write_text(textwrap.dedent("""
         from tools.web_tools import prefers_gateway
         LOADED = True
@@ -125,15 +125,15 @@ def test_discovery_refreshes_report_file(tmp_path, monkeypatch):
     monkeypatch.setattr(pc, "removal_in_effect", lambda today=None: False)
     monkeypatch.setattr(pc, "report_file_path", lambda: tmp_path / "r.json")
     plugin = tmp_path / "plugins" / "oldpaths"; plugin.mkdir(parents=True)
-    (plugin / "plugin.yaml").write_text("name: oldpaths\nversion: 0.1\ndescription: t\n")
-    (plugin / "__init__.py").write_text("from tools.web_tools import prefers_gateway\ndef register(ctx):\n    pass\n")
+    (plugin / "plugin.yaml").write_text("name: oldpaths\nversion: 0.1\ndescription: t\n", encoding="utf-8")
+    (plugin / "__init__.py").write_text("from tools.web_tools import prefers_gateway\ndef register(ctx):\n    pass\n", encoding="utf-8")
     from hermes_cli.plugins_manifest import PluginManifest
     real = PluginManifest(name="oldpaths", version="0.1", description="t", source="user", path=str(plugin))
     mgr = PluginManager(scope_key=str(tmp_path))
     mgr._refresh_plugin_compat_report([real])
-    data = json.loads((tmp_path / "r.json").read_text())
+    data = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
     assert list(data["plugins"]) == ["oldpaths"] and data["in_effect"] is False
-    (plugin / "__init__.py").write_text("from tools.tool_backend_helpers import prefers_gateway\ndef register(ctx):\n    pass\n")
+    (plugin / "__init__.py").write_text("from tools.tool_backend_helpers import prefers_gateway\ndef register(ctx):\n    pass\n", encoding="utf-8")
     mgr._refresh_plugin_compat_report([real])
     assert not (tmp_path / "r.json").exists()
 
@@ -143,11 +143,11 @@ def test_scan_root_never_falls_back_to_cwd(tmp_path, monkeypatch):
     launch directory; an entry point must resolve to its installed package, everything else to None."""
     monkeypatch.setattr(pc, "load_manifest", lambda: MANIFEST)
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "stray.py").write_text("from tools.web_tools import prefers_gateway\n")
+    (tmp_path / "stray.py").write_text("from tools.web_tools import prefers_gateway\n", encoding="utf-8")
     assert pc.plugin_hits(SimpleNamespace(source="directory", path=r"C:\Users\alice\plugin", name="w")) == []
     assert pc.plugin_hits(SimpleNamespace(source="entrypoint", path="no_such_pkg_xyz:register", name="e")) == []
     pkg = tmp_path / "site" / "vendor_plugin"; pkg.mkdir(parents=True)
-    (pkg / "__init__.py").write_text("from tools.web_tools import prefers_gateway\n")
+    (pkg / "__init__.py").write_text("from tools.web_tools import prefers_gateway\n", encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path / "site"))
     hits = pc.plugin_hits(SimpleNamespace(source="entrypoint", path="vendor_plugin:register", name="v"))
     assert [h.file for h in hits] == ["__init__.py"]

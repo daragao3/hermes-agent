@@ -52,7 +52,7 @@ def fleet(tmp_path, monkeypatch):
             }],
         },
     }
-    (root / "auth.json").write_text(json.dumps(store))
+    (root / "auth.json").write_text(json.dumps(store), encoding="utf-8")
 
     server = {"valid": {"sk-ant-ort-RT0"}, "spent": set(), "n": 0, "log": []}
 
@@ -107,7 +107,7 @@ def fleet(tmp_path, monkeypatch):
         p = home / "auth.json"
         if not p.exists():
             return None
-        return (json.loads(p.read_text()).get("credential_pool") or {}).get("anthropic")
+        return (json.loads(p.read_text(encoding="utf-8")).get("credential_pool") or {}).get("anthropic")
 
     return {"root": root, "server": server, "use": use, "rows": pool_rows}
 
@@ -125,7 +125,7 @@ def test_clone_all_strips_oauth_grant_but_keeps_api_keys(fleet):
         json.dumps({"accessToken": "sk-ant-oat01-AT0", "refreshToken": "sk-ant-ort-RT0", "expiresAt": 1})
     )
     pdir = _profile(fleet, "forge", clone_all=True)
-    store = json.loads((pdir / "auth.json").read_text())
+    store = json.loads((pdir / "auth.json").read_text(encoding="utf-8"))
     assert "anthropic" not in store["credential_pool"], "OAuth grant was forked into the clone"
     assert store["credential_pool"]["openai"][0]["access_token"] == "sk-static-key"
     assert not (pdir / ".anthropic_oauth.json").exists()
@@ -147,7 +147,7 @@ def test_strip_helper_drops_device_code_blocks_and_reports(tmp_path):
         },
     }))
     summary = strip_cloned_single_use_oauth_grants(pdir)
-    store = json.loads((pdir / "auth.json").read_text())
+    store = json.loads((pdir / "auth.json").read_text(encoding="utf-8"))
     assert sorted(summary["pool"]) == ["anthropic", "xai-oauth"]
     assert summary["providers"] == ["openai-codex"]
     assert "xai-oauth" not in store["credential_pool"]
@@ -174,13 +174,13 @@ def test_strip_helper_leaves_shared_root_auth_store_unchanged(fleet, link):
 
     root = fleet["root"]
     _seed_codex_grant(root)
-    before = (root / "auth.json").read_text()
+    before = (root / "auth.json").read_text(encoding="utf-8")
     shared = _shared_profile(fleet, "shared", link=link)
 
     assert strip_cloned_single_use_oauth_grants(shared) == {
         "pool": [], "providers": [], "files": [],
     }
-    assert (root / "auth.json").read_text() == before
+    assert (root / "auth.json").read_text(encoding="utf-8") == before
 
 
 def test_strip_helper_fails_closed_when_root_store_cannot_be_resolved(fleet, monkeypatch):
@@ -190,7 +190,7 @@ def test_strip_helper_fails_closed_when_root_store_cannot_be_resolved(fleet, mon
 
     root = fleet["root"]
     _seed_codex_grant(root)
-    before = (root / "auth.json").read_text()
+    before = (root / "auth.json").read_text(encoding="utf-8")
     shared = _shared_profile(
         fleet, "shared", link=lambda target, alias: alias.symlink_to(target))
     monkeypatch.setattr(
@@ -200,7 +200,7 @@ def test_strip_helper_fails_closed_when_root_store_cannot_be_resolved(fleet, mon
     assert strip_cloned_single_use_oauth_grants(shared) == {
         "pool": [], "providers": [], "files": [],
     }
-    assert (root / "auth.json").read_text() == before
+    assert (root / "auth.json").read_text(encoding="utf-8") == before
 
 
 def test_strip_helper_fails_closed_when_store_identity_check_errors(fleet, monkeypatch):
@@ -210,8 +210,8 @@ def test_strip_helper_fails_closed_when_store_identity_check_errors(fleet, monke
     root = fleet["root"]
     _seed_codex_grant(root)
     copied = _profile(fleet, "copied")
-    (copied / "auth.json").write_text((root / "auth.json").read_text())
-    before = (copied / "auth.json").read_text()
+    (copied / "auth.json").write_text((root / "auth.json").read_text(), encoding="utf-8")
+    before = (copied / "auth.json").read_text(encoding="utf-8")
     monkeypatch.setattr(
         type(copied), "samefile",
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("stat unavailable")))
@@ -219,7 +219,7 @@ def test_strip_helper_fails_closed_when_store_identity_check_errors(fleet, monke
     assert strip_cloned_single_use_oauth_grants(copied) == {
         "pool": [], "providers": [], "files": [],
     }
-    assert (copied / "auth.json").read_text() == before
+    assert (copied / "auth.json").read_text(encoding="utf-8") == before
 
 
 def test_first_profile_rotation_does_not_strand_root_or_siblings(fleet):
@@ -276,10 +276,10 @@ def test_borrower_prune_never_deletes_root_singleton_grant(fleet, tmp_path):
         "accessToken": "sk-ant-oat01-AT0", "refreshToken": "sk-ant-ort-RT0",
         "expiresAt": int((time.time() - 3600) * 1000),
     }))
-    store = json.loads((root / "auth.json").read_text())
+    store = json.loads((root / "auth.json").read_text(encoding="utf-8"))
     store["active_provider"] = "anthropic"
     del store["credential_pool"]["anthropic"]
-    (root / "auth.json").write_text(json.dumps(store))
+    (root / "auth.json").write_text(json.dumps(store), encoding="utf-8")
     fleet["use"](root)
     root_rows = [e for e in load_pool("anthropic").entries()]
     assert [e.source for e in root_rows] == ["hermes_pkce"]
@@ -294,7 +294,7 @@ def test_borrower_prune_never_deletes_root_singleton_grant(fleet, tmp_path):
     # Rotating from the profile commits BOTH the pool row and the singleton at ROOT.
     sel = pool.select()
     assert sel is not None and sel.access_token == "sk-ant-oat01-AT1"
-    assert json.loads((root / ".anthropic_oauth.json").read_text())["refreshToken"] == "sk-ant-ort-RT1"
+    assert json.loads((root / ".anthropic_oauth.json").read_text(encoding="utf-8"))["refreshToken"] == "sk-ant-ort-RT1"
     assert not (kid / ".anthropic_oauth.json").exists()
     assert fleet["rows"](root)[0]["refresh_token"] == "sk-ant-ort-RT1"
 
@@ -338,7 +338,7 @@ def _fork(fleet, name, *, rotated_to=None):
     """
     pdir = _profile(fleet, name)
     pdir.mkdir(parents=True, exist_ok=True)
-    store = json.loads((fleet["root"] / "auth.json").read_text())
+    store = json.loads((fleet["root"] / "auth.json").read_text(encoding="utf-8"))
     if rotated_to is not None:
         row = store["credential_pool"]["anthropic"][0]
         row["access_token"] = f"sk-ant-oat01-AT{rotated_to}"
@@ -349,7 +349,7 @@ def _fork(fleet, name, *, rotated_to=None):
         srv["valid"].discard("sk-ant-ort-RT0")
         srv["valid"].add(f"sk-ant-ort-RT{rotated_to}")
         srv["n"] = rotated_to
-    (pdir / "auth.json").write_text(json.dumps(store))
+    (pdir / "auth.json").write_text(json.dumps(store), encoding="utf-8")
     return pdir
 
 
@@ -383,7 +383,7 @@ def test_heal_consolidates_existing_forks_to_the_live_copy(fleet, caplog):
     assert [e[0] for e in fleet["server"]["log"]] == ["ROTATE"], fleet["server"]["log"]
     # API-key rows in the profiles were not touched.
     for home in (forge, atlas):
-        store = json.loads((home / "auth.json").read_text())
+        store = json.loads((home / "auth.json").read_text(encoding="utf-8"))
         assert store["credential_pool"]["openai"][0]["access_token"] == "sk-static-key"
 
 
@@ -399,12 +399,12 @@ def test_heal_is_idempotent_and_logs_once(fleet, caplog):
         assert fleet["rows"](kid) is None
         notices = consume_oauth_heal_notices()
         assert len(notices) == 1 and "profile kid" in notices[0]
-        root_before = (fleet["root"] / "auth.json").read_text()
+        root_before = (fleet["root"] / "auth.json").read_text(encoding="utf-8")
         # Second and third loads: nothing to do, nothing written, nothing logged.
         assert heal_forked_single_use_oauth_grants("anthropic") is None
         load_pool("anthropic")
     assert consume_oauth_heal_notices() == []
-    assert (fleet["root"] / "auth.json").read_text() == root_before
+    assert (fleet["root"] / "auth.json").read_text(encoding="utf-8") == root_before
     assert sum("consolidated forked" in r.message for r in caplog.records) == 1
 
 
@@ -414,15 +414,15 @@ def test_heal_never_deletes_the_only_surviving_copy(fleet):
     from agent.credential_pool import load_pool
 
     kid = _fork(fleet, "kid", rotated_to=1)
-    store = json.loads((fleet["root"] / "auth.json").read_text())
+    store = json.loads((fleet["root"] / "auth.json").read_text(encoding="utf-8"))
     del store["credential_pool"]["anthropic"]
-    (fleet["root"] / "auth.json").write_text(json.dumps(store))
+    (fleet["root"] / "auth.json").write_text(json.dumps(store), encoding="utf-8")
 
     fleet["use"](kid)
     sel = load_pool("anthropic").select()
     assert sel is not None and sel.access_token == "sk-ant-oat01-AT2"
     assert fleet["rows"](kid) and fleet["rows"](kid)[0]["refresh_token"] == "sk-ant-ort-RT2"
-    assert "anthropic" not in (json.loads((fleet["root"] / "auth.json").read_text())["credential_pool"])
+    assert "anthropic" not in (json.loads((fleet["root"] / "auth.json").read_text(encoding="utf-8"))["credential_pool"])
 
 
 @pytest.mark.parametrize("shape", ["pool", "provider"])
@@ -451,8 +451,8 @@ def test_heal_preserves_independent_grants_for_same_account(fleet, shape, claims
     kid = _profile(fleet, "independent")
     kid.mkdir(parents=True, exist_ok=True)
     profile = kid / "auth.json"
-    root.write_text(json.dumps(store("root-grant")))
-    profile.write_text(json.dumps(store("profile-grant")))
+    root.write_text(json.dumps(store("root-grant")), encoding="utf-8")
+    profile.write_text(json.dumps(store("profile-grant")), encoding="utf-8")
     before = (root.read_bytes(), profile.read_bytes())
     fleet["use"](kid)
     assert heal_forked_single_use_oauth_grants("openai-codex") is None
@@ -487,11 +487,11 @@ def test_heal_rotated_fork_moves_provider_block_with_the_pool_row(fleet):
     root = fleet["root"] / "auth.json"
     kid = _profile(fleet, "rotated")
     kid.mkdir(parents=True, exist_ok=True)
-    root.write_text(json.dumps(store("old", 100)))
-    (kid / "auth.json").write_text(json.dumps(store("new", 3600)))
+    root.write_text(json.dumps(store("old", 100)), encoding="utf-8")
+    (kid / "auth.json").write_text(json.dumps(store("new", 3600)), encoding="utf-8")
     fleet["use"](kid)
     assert heal_forked_single_use_oauth_grants("openai-codex")["adopted"] is True
-    r, p = json.loads(root.read_text()), json.loads((kid / "auth.json").read_text())
+    r, p = json.loads(root.read_text(encoding="utf-8")), json.loads((kid / "auth.json").read_text())
     assert r["credential_pool"]["openai-codex"][0]["refresh_token"] == "rt-new"
     assert r["providers"]["openai-codex"]["tokens"]["refresh_token"] == "rt-new"
     assert "openai-codex" not in p["providers"]
@@ -509,12 +509,12 @@ def test_heal_leaves_a_different_account_alone(fleet):
         payload = base64.urlsafe_b64encode(json.dumps({"sub": sub, "exp": int(time.time()) + 3600}).encode()).rstrip(b"=")
         return "h." + payload.decode() + ".s"
 
-    root_store = json.loads((fleet["root"] / "auth.json").read_text())
+    root_store = json.loads((fleet["root"] / "auth.json").read_text(encoding="utf-8"))
     root_store["credential_pool"]["xai-oauth"] = [{
         "id": "rootx", "auth_type": "oauth", "priority": 0, "source": "manual:device_code",
         "access_token": jwt("alice"), "refresh_token": "xr-alice",
     }]
-    (fleet["root"] / "auth.json").write_text(json.dumps(root_store))
+    (fleet["root"] / "auth.json").write_text(json.dumps(root_store), encoding="utf-8")
     kid = _profile(fleet, "kid")
     kid.mkdir(parents=True, exist_ok=True)
     (kid / "auth.json").write_text(json.dumps({
@@ -528,9 +528,9 @@ def test_heal_leaves_a_different_account_alone(fleet):
     }))
     fleet["use"](kid)
     load_pool("xai-oauth")
-    rows = (json.loads((kid / "auth.json").read_text())["credential_pool"])["xai-oauth"]
+    rows = (json.loads((kid / "auth.json").read_text(encoding="utf-8"))["credential_pool"])["xai-oauth"]
     assert [r["id"] for r in rows] == ["kidx", "kidk"]
-    assert json.loads((fleet["root"] / "auth.json").read_text())["credential_pool"]["xai-oauth"][0]["refresh_token"] == "xr-alice"
+    assert json.loads((fleet["root"] / "auth.json").read_text(encoding="utf-8"))["credential_pool"]["xai-oauth"][0]["refresh_token"] == "xr-alice"
 
 
 def test_heal_pkce_singleton_shape_commits_live_pair_to_root_singleton(fleet):
@@ -539,10 +539,10 @@ def test_heal_pkce_singleton_shape_commits_live_pair_to_root_singleton(fleet):
     from agent.credential_pool import load_pool
 
     root = fleet["root"]
-    store = json.loads((root / "auth.json").read_text())
+    store = json.loads((root / "auth.json").read_text(encoding="utf-8"))
     store["active_provider"] = "anthropic"
     del store["credential_pool"]["anthropic"]
-    (root / "auth.json").write_text(json.dumps(store))
+    (root / "auth.json").write_text(json.dumps(store), encoding="utf-8")
     (root / ".anthropic_oauth.json").write_text(json.dumps({
         "accessToken": "sk-ant-oat01-AT0", "refreshToken": "sk-ant-ort-RT0",
         "expiresAt": int((time.time() - 3600) * 1000),
@@ -558,12 +558,12 @@ def test_heal_pkce_singleton_shape_commits_live_pair_to_root_singleton(fleet):
         "accessToken": "sk-ant-oat01-AT1", "refreshToken": "sk-ant-ort-RT1",
         "expiresAt": int((time.time() - 60) * 1000),
     }))
-    kstore = json.loads((kid / "auth.json").read_text())
+    kstore = json.loads((kid / "auth.json").read_text(encoding="utf-8"))
     kstore["credential_pool"]["anthropic"][0].update(
         access_token="sk-ant-oat01-AT1", refresh_token="sk-ant-ort-RT1",
         expires_at_ms=int((time.time() - 60) * 1000),
     )
-    (kid / "auth.json").write_text(json.dumps(kstore))
+    (kid / "auth.json").write_text(json.dumps(kstore), encoding="utf-8")
     srv = fleet["server"]
     srv["spent"].add("sk-ant-ort-RT0"); srv["valid"] = {"sk-ant-ort-RT1"}; srv["n"] = 1
 
@@ -572,7 +572,7 @@ def test_heal_pkce_singleton_shape_commits_live_pair_to_root_singleton(fleet):
     assert sel is not None and sel.access_token == "sk-ant-oat01-AT2"
     assert not (kid / ".anthropic_oauth.json").exists()
     assert fleet["rows"](kid) is None
-    assert json.loads((root / ".anthropic_oauth.json").read_text())["refreshToken"] == "sk-ant-ort-RT2"
+    assert json.loads((root / ".anthropic_oauth.json").read_text(encoding="utf-8"))["refreshToken"] == "sk-ant-ort-RT2"
     fleet["use"](root)
     sel = load_pool("anthropic").select()
     assert sel is not None and sel.access_token == "sk-ant-oat01-AT2"
@@ -582,9 +582,9 @@ def test_heal_pkce_singleton_shape_commits_live_pair_to_root_singleton(fleet):
 def test_heal_is_a_noop_in_classic_mode(fleet):
     from hermes_cli.auth import heal_forked_single_use_oauth_grants
     fleet["use"](fleet["root"])
-    before = (fleet["root"] / "auth.json").read_text()
+    before = (fleet["root"] / "auth.json").read_text(encoding="utf-8")
     assert heal_forked_single_use_oauth_grants("anthropic") is None
-    assert (fleet["root"] / "auth.json").read_text() == before
+    assert (fleet["root"] / "auth.json").read_text(encoding="utf-8") == before
 
 
 # ── C. a SHARED root store is not a fork (#101356) ───────────────────────
@@ -592,7 +592,7 @@ def test_heal_is_a_noop_in_classic_mode(fleet):
 def _seed_codex_grant(root):
     """Give the root store an openai-codex pool row AND a providers block."""
     fresh = int((time.time() + 3600) * 1000)
-    store = json.loads((root / "auth.json").read_text())
+    store = json.loads((root / "auth.json").read_text(encoding="utf-8"))
     store["credential_pool"]["openai-codex"] = [{
         "id": "cdx001", "label": "codex", "auth_type": "oauth", "priority": 0,
         "source": "manual:device_code", "access_token": "cdx-AT0",
@@ -602,7 +602,7 @@ def _seed_codex_grant(root):
         "tokens": {"access_token": "cdx-AT0", "refresh_token": "cdx-RT0", "expires_at_ms": fresh},
         "last_refresh": fresh / 1000.0,
     }
-    (root / "auth.json").write_text(json.dumps(store))
+    (root / "auth.json").write_text(json.dumps(store), encoding="utf-8")
 
 
 def _shared_profile(fleet, name, *, link):
@@ -624,16 +624,16 @@ def test_heal_skips_profile_auth_json_symlinked_to_the_root_store(fleet):
 
     root = fleet["root"]
     _seed_codex_grant(root)
-    before = (root / "auth.json").read_text()
+    before = (root / "auth.json").read_text(encoding="utf-8")
 
     shared = _shared_profile(fleet, "shared", link=lambda target, alias: alias.symlink_to(target))
     fleet["use"](shared)
 
     assert heal_forked_single_use_oauth_grants("openai-codex") is None
-    assert (root / "auth.json").read_text() == before
+    assert (root / "auth.json").read_text(encoding="utf-8") == before
     assert (shared / "auth.json").is_symlink()
     assert consume_oauth_heal_notices() == []
-    store = json.loads((root / "auth.json").read_text())
+    store = json.loads((root / "auth.json").read_text(encoding="utf-8"))
     assert [r["id"] for r in store["credential_pool"]["openai-codex"]] == ["cdx001"]
     assert store["providers"]["openai-codex"]["tokens"]["refresh_token"] == "cdx-RT0"
 
@@ -645,13 +645,13 @@ def test_heal_skips_profile_auth_json_hardlinked_to_the_root_store(fleet):
 
     root = fleet["root"]
     _seed_codex_grant(root)
-    before = (root / "auth.json").read_text()
+    before = (root / "auth.json").read_text(encoding="utf-8")
 
     shared = _shared_profile(fleet, "twin", link=lambda target, alias: os.link(target, alias))
     fleet["use"](shared)
 
     assert heal_forked_single_use_oauth_grants("openai-codex") is None
-    assert (root / "auth.json").read_text() == before
+    assert (root / "auth.json").read_text(encoding="utf-8") == before
     assert (shared / "auth.json").samefile(root / "auth.json")
 
 
@@ -668,14 +668,14 @@ def test_heal_leaves_an_aliased_anthropic_singleton_alone(fleet):
     }))
     kid = _profile(fleet, "kid")
     kid.mkdir(parents=True, exist_ok=True)
-    (kid / "auth.json").write_text(json.dumps({"providers": {}, "credential_pool": {}}))
+    (kid / "auth.json").write_text(json.dumps({"providers": {}, "credential_pool": {}}), encoding="utf-8")
     (kid / ".anthropic_oauth.json").symlink_to(root / ".anthropic_oauth.json")
-    before = (root / ".anthropic_oauth.json").read_text()
+    before = (root / ".anthropic_oauth.json").read_text(encoding="utf-8")
 
     fleet["use"](kid)
     assert heal_forked_single_use_oauth_grants("anthropic") is None
     assert (kid / ".anthropic_oauth.json").is_symlink()
-    assert (root / ".anthropic_oauth.json").read_text() == before
+    assert (root / ".anthropic_oauth.json").read_text(encoding="utf-8") == before
 
 
 def test_heal_same_store_skip_is_memoized_off_the_hot_path(fleet, monkeypatch):
@@ -774,9 +774,9 @@ def test_persisted_mark_still_re_heals_when_the_root_store_gains_a_grant(fleet):
     from hermes_cli import auth_oauth_grants as grants
 
     root = fleet["root"]
-    store = json.loads((root / "auth.json").read_text())
+    store = json.loads((root / "auth.json").read_text(encoding="utf-8"))
     store["credential_pool"].pop("anthropic")
-    (root / "auth.json").write_text(json.dumps(store))
+    (root / "auth.json").write_text(json.dumps(store), encoding="utf-8")
 
     kid = _kid_with_api_key_only(fleet, "kid2")
     fork = {
@@ -786,17 +786,17 @@ def test_persisted_mark_still_re_heals_when_the_root_store_gains_a_grant(fleet):
         "expires_at_ms": int((time.time() + 3600) * 1000),
         "base_url": "https://api.anthropic.com",
     }
-    kid_store = json.loads((kid / "auth.json").read_text())
+    kid_store = json.loads((kid / "auth.json").read_text(encoding="utf-8"))
     kid_store["credential_pool"]["anthropic"] = [dict(fork)]
-    (kid / "auth.json").write_text(json.dumps(kid_store))
+    (kid / "auth.json").write_text(json.dumps(kid_store), encoding="utf-8")
 
     fleet["use"](kid)
     assert auth_mod.heal_forked_single_use_oauth_grants("anthropic") is None
     assert fleet["rows"](kid), "the only surviving copy must not be stripped"
-    marked = grants._oauth_heal_clean_mark_path().read_text()
+    marked = grants._oauth_heal_clean_mark_path().read_text(encoding="utf-8")
 
     store["credential_pool"]["anthropic"] = [dict(fork)]
-    (root / "auth.json").write_text(json.dumps(store))
+    (root / "auth.json").write_text(json.dumps(store), encoding="utf-8")
     _new_process(auth_mod)
     assert auth_mod.heal_forked_single_use_oauth_grants("anthropic") is not None, (
         "the persisted mark skipped a heal that had become necessary")
@@ -807,4 +807,4 @@ def test_persisted_mark_still_re_heals_when_the_root_store_gains_a_grant(fleet):
     # next process re-checks, finds the store clean, and re-stamps.
     _new_process(auth_mod)
     assert auth_mod.heal_forked_single_use_oauth_grants("anthropic") is None
-    assert grants._oauth_heal_clean_mark_path().read_text() != marked
+    assert grants._oauth_heal_clean_mark_path().read_text(encoding="utf-8") != marked

@@ -1550,11 +1550,11 @@ class TestOpenRouterCatalogDiskCache:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         stale = time.time() - _models_mod._openrouter_catalog_disk_ttl() - 1
-        path.write_text(json.dumps({"fetched_at": stale, "curated": [["old/model", ""]]}))
+        path.write_text(json.dumps({"fetched_at": stale, "curated": [["old/model", ""]]}), encoding="utf-8")
         assert fetch_openrouter_models() == [("a/one", "free")]
         assert len(calls) == 1
 
         _models_mod._openrouter_catalog_cache = None
-        path.write_text("{not json")
+        path.write_text("{not json", encoding="utf-8")
         assert fetch_openrouter_models() == [("a/one", "free")]
         assert len(calls) == 2

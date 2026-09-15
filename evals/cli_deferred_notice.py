@@ -99,7 +99,7 @@ def run_case(root, output, name, behind, early=False, cancel=False):
         finally:
             (output / f"{name}.pty").write_bytes(data)
             if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGKILL)
+                os.killpg(proc.pid, signal.SIGKILL)  # windows-footgun: ok -- POSIX-only eval harness (pty + process groups)
                 proc.wait(timeout=30)
             os.close(master)
 
@@ -116,7 +116,7 @@ def main():
              ("late-unknown-count", -1, False, False), ("early-count", 3, True, False),
              ("cancel-pending", 3, False, True)]
     results = [run_case(root, args.output, *case) for case in cases]
-    (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+    (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(results, indent=2))
     for row in results:
         expected_notice = row["case"] not in ("late-current", "cancel-pending")

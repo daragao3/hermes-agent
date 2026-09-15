@@ -25,7 +25,7 @@ from hermes_cli import banner
 if len(sys.argv) > 1:
     os.environ.clear()
     os.environ.update(env)
-    case = json.loads((BASE/'case.json').read_text())
+    case = json.loads((BASE/'case.json').read_text(encoding="utf-8"))
     os.environ.update(case['env'])
     start = time.monotonic()
     result = banner._check_via_local_git(BASE/'checkout')
@@ -44,7 +44,7 @@ def git(*args):
 
 
 def probe(name, extra_env):
-    (BASE/'case.json').write_text(json.dumps({'env': extra_env}))
+    (BASE/'case.json').write_text(json.dumps({'env': extra_env}), encoding="utf-8")
     child, fd = pty.fork()
     if child == 0:
         python = str(REPO/'.venv/bin/python')
@@ -82,7 +82,7 @@ def probe(name, extra_env):
     finally:
         os.close(fd)
         try:
-            os.killpg(child, signal.SIGKILL)
+            os.killpg(child, signal.SIGKILL)  # windows-footgun: ok -- POSIX-only eval harness (pty + process groups)
         except ProcessLookupError:
             pass
         os.waitpid(child, 0)
@@ -90,7 +90,7 @@ def probe(name, extra_env):
 
 for key in ('host_key', 'client_key'):
     run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(BASE/key)])
-(BASE/'authorized_keys').write_text((BASE/'client_key.pub').read_text())
+(BASE/'authorized_keys').write_text((BASE/'client_key.pub').read_text(encoding="utf-8"), encoding="utf-8")
 (BASE/'checkout').mkdir()
 git('init', '-b', 'main')
 git('-c', 'user.name=Probe', '-c', 'user.email=probe@localhost', 'commit', '--allow-empty', '-m', 'probe')
@@ -98,13 +98,13 @@ run(['git', 'clone', '--bare', str(BASE/'checkout'), str(BASE/'remote.git')])
 with socket.socket() as sock:
     sock.bind(('127.0.0.1', 0))
     port = sock.getsockname()[1]
-user = pwd.getpwuid(os.getuid()).pw_name
+user = pwd.getpwuid(os.getuid()).pw_name  # windows-footgun: ok -- POSIX-only eval harness (pty + process groups)
 config = BASE/'sshd_config'
-config.write_text(f'Port {port}\nListenAddress 127.0.0.1\nHostKey {BASE}/host_key\nPidFile {BASE}/sshd.pid\nAuthorizedKeysFile {BASE}/authorized_keys\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nStrictModes no\nLogLevel VERBOSE\n')
+config.write_text(f'Port {port}\nListenAddress 127.0.0.1\nHostKey {BASE}/host_key\nPidFile {BASE}/sshd.pid\nAuthorizedKeysFile {BASE}/authorized_keys\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nStrictModes no\nLogLevel VERBOSE\n', encoding="utf-8")
 ssh_config = BASE/'ssh_config'
-ssh_config.write_text(f'Host *\n User {user}\n UserKnownHostsFile {BASE}/known_hosts\n GlobalKnownHostsFile /dev/null\n IdentityFile {BASE}/client_key\n ConnectTimeout 3\n')
+ssh_config.write_text(f'Host *\n User {user}\n UserKnownHostsFile {BASE}/known_hosts\n GlobalKnownHostsFile /dev/null\n IdentityFile {BASE}/client_key\n ConnectTimeout 3\n', encoding="utf-8")
 wrapper = BASE/'bin/ssh'
-wrapper.write_text(f'#!/bin/sh\nexec /usr/bin/ssh -F {ssh_config} "$@"\n')
+wrapper.write_text(f'#!/bin/sh\nexec /usr/bin/ssh -F {ssh_config} "$@"\n', encoding="utf-8")
 wrapper.chmod(0o700)
 git('remote', 'add', 'origin', f'ssh://{user}@127.0.0.1:{port}{BASE}/remote.git')
 log = (BASE/'sshd.log').open('w')
@@ -115,7 +115,7 @@ rows = []
 try:
     for _ in range(40):
         if server.poll() is not None:
-            raise RuntimeError('sshd exited: '+(BASE/'sshd.log').read_text())
+            raise RuntimeError('sshd exited: '+(BASE/'sshd.log').read_text(encoding="utf-8"))
         try:
             with socket.create_connection(('127.0.0.1', port), timeout=.2) as conn:
                 assert conn.recv(256).startswith(b'SSH-')
@@ -125,8 +125,8 @@ try:
     else:
         raise RuntimeError('sshd readiness timed out')
     rows.append(probe('unofficial_unknown_host_default', {}))
-    pub = (BASE/'host_key.pub').read_text().split()
-    (BASE/'known_hosts').write_text(f'[127.0.0.1]:{port} {pub[0]} {pub[1]}\n')
+    pub = (BASE/'host_key.pub').read_text(encoding="utf-8").split()
+    (BASE/'known_hosts').write_text(f'[127.0.0.1]:{port} {pub[0]} {pub[1]}\n', encoding="utf-8")
     rows.append(probe('trusted_host_file_key', {}))
     agent = subprocess.Popen(['ssh-agent', '-D', '-a', str(BASE/'agent.sock')], env=env,
                              stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
@@ -136,19 +136,19 @@ try:
         time.sleep(.1)
     env['SSH_AUTH_SOCK'] = str(BASE/'agent.sock')
     run(['ssh-add', str(BASE/'client_key')])
-    ssh_config.write_text(ssh_config.read_text().replace(f'IdentityFile {BASE}/client_key', 'IdentityFile none'))
+    ssh_config.write_text(ssh_config.read_text(encoding="utf-8").replace(f'IdentityFile {BASE}/client_key', 'IdentityFile none'), encoding="utf-8")
     rows.append(probe('trusted_host_agent_key', {'SSH_AUTH_SOCK': str(BASE/'agent.sock')}))
     (BASE/'known_hosts').unlink()
     rows.append(probe('explicit_interactive_override', {'GIT_SSH_COMMAND': 'ssh -o BatchMode=no'}))
 finally:
     for proc in (agent, server):
         if proc is not None:
-            os.killpg(proc.pid, signal.SIGTERM)
+            os.killpg(proc.pid, signal.SIGTERM)  # windows-footgun: ok -- POSIX-only eval harness (pty + process groups)
             proc.wait(timeout=5)
     log.close()
 result = {'platform': sys.platform, 'production': banner.__file__, 'rows': rows,
           'isolation': 'PATH ssh adapter only adds -F fixture config; execs real /usr/bin/ssh; loopback sshd and disposable git repos',
           'server_stopped': server.poll() is not None, 'agent_stopped': agent is None or agent.poll() is not None}
-(BASE/'result.json').write_text(json.dumps(result, indent=2))
+(BASE/'result.json').write_text(json.dumps(result, indent=2), encoding="utf-8")
 print(json.dumps(result, indent=2))
 

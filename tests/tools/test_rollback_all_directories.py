@@ -15,10 +15,10 @@ from tools.checkpoint_manager import CheckpointManager, format_checkpoint_list
 def _make_store_with_project(tmp_path, workdir: str):
     store = tmp_path / "store"
     (store / cm._PROJECTS_DIRNAME).mkdir(parents=True)
-    (store / "HEAD").write_text("ref: refs/heads/main\n")
+    (store / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
     dir_hash = cm._project_hash(workdir)
     meta = {"workdir": workdir, "created_at": 1, "last_touch": 2}
-    (store / cm._PROJECTS_DIRNAME / f"{dir_hash}.json").write_text(json.dumps(meta))
+    (store / cm._PROJECTS_DIRNAME / f"{dir_hash}.json").write_text(json.dumps(meta), encoding="utf-8")
     return store
 
 

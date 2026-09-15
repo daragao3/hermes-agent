@@ -80,7 +80,7 @@ def _init_repo(path, first_commit):
         ["git", "config", "core.autocrlf", "false"],
     ):
         subprocess.run(cmd, cwd=path, check=True)
-    (path / "main.py").write_text("print(1)\n")
+    (path / "main.py").write_text("print(1)\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=path, check=True)
     subprocess.run(["git", "commit", "-qm", first_commit], cwd=path, check=True)
     return path
@@ -152,10 +152,10 @@ class TestWorkspaceSnapshotPinnedAcrossCompaction(unittest.TestCase):
                 self.assertIn("Workspace (snapshot at session start", p1)
 
                 # Now repo mutates (agent touched and committed new files)
-                (repo / "new_file.py").write_text("print(2)\n")
+                (repo / "new_file.py").write_text("print(2)\n", encoding="utf-8")
                 subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
                 subprocess.run(["git", "commit", "-qm", "second commit"], cwd=repo, check=True)
-                (repo / "untracked.txt").write_text("wip\n")
+                (repo / "untracked.txt").write_text("wip\n", encoding="utf-8")
 
                 # Invalidate prompt (as happens during context compression)
                 invalidate_system_prompt(agent)

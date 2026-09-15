@@ -85,6 +85,6 @@ class TestReadFileBinaryDisclosure:
     def test_text_file_unaffected(self, tmp_path, monkeypatch):
         monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
         p = tmp_path / "ok.txt"
-        p.write_text("hello world\n")
+        p.write_text("hello world\n", encoding="utf-8")
         result = json.loads(read_file_tool(str(p)))
         assert "hello world" in result.get("content", "")

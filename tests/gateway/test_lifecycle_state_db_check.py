@@ -61,7 +61,7 @@ def _exit_diag_records(home: Path) -> list:
     log = home / "logs" / "gateway-exit-diag.log"
     if not log.exists():
         return []
-    return [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 # ── the checker itself ──────────────────────────────────────────────────────

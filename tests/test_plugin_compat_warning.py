@@ -15,7 +15,7 @@ pytestmark = pytest.mark.skipif(not MANIFEST.exists(), reason="compat layer remo
 
 
 def _a_lazy_entry():
-    entries = json.loads(MANIFEST.read_text())["entries"]
+    entries = json.loads(MANIFEST.read_text(encoding="utf-8"))["entries"]
     e = next(x for x in entries if x["kind"] == "moved-lazy" and x["facade"] == "tools.web_tools")
     return e["facade"], e["name"]
 

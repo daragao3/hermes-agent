@@ -223,7 +223,7 @@ def _run_benchmarks(home):
     # to still be there next time. Not a literal "/tmp": on Windows that
     # resolves against the current drive (C:\tmp\...).
     out_path = os.path.join(tempfile.gettempdir(), "kanban_bench_results.json")
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults saved to {out_path}")
 

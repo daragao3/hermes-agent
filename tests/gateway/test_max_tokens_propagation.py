@@ -38,7 +38,7 @@ def isolated_home(tmp_path, monkeypatch):
     }
 
     def write_cfg(body: str) -> None:
-        (hermes_home / "config.yaml").write_text(textwrap.dedent(body))
+        (hermes_home / "config.yaml").write_text(textwrap.dedent(body), encoding="utf-8")
 
     def fresh_gateway():
         for mod in list(sys.modules.keys()):

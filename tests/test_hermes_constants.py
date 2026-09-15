@@ -185,7 +185,7 @@ class TestWindowsLegacyHomeFallback:
         if marker == "profiles":
             (legacy / marker).mkdir()
         else:
-            (legacy / marker).write_text("main")
+            (legacy / marker).write_text("main", encoding="utf-8")
 
         assert get_default_hermes_root() == legacy
         assert get_hermes_home() == legacy
@@ -196,9 +196,9 @@ class TestWindowsLegacyHomeFallback:
         """A deliberately initialized native root keeps upstream behaviour."""
         native, legacy = self._win_env(tmp_path, monkeypatch)
         native.mkdir(parents=True)
-        (native / "config.yaml").write_text("model: {}\n")
+        (native / "config.yaml").write_text("model: {}\n", encoding="utf-8")
         legacy.mkdir(parents=True)
-        (legacy / "active_profile").write_text("main")
+        (legacy / "active_profile").write_text("main", encoding="utf-8")
 
         assert get_default_hermes_root() == native
         assert get_hermes_home() == native
@@ -211,7 +211,7 @@ class TestWindowsLegacyHomeFallback:
         (native / "cron").mkdir(parents=True)
         (native / "state.db").write_bytes(b"")
         legacy.mkdir(parents=True)
-        (legacy / "active_profile").write_text("main")
+        (legacy / "active_profile").write_text("main", encoding="utf-8")
 
         assert get_default_hermes_root() == legacy
 
@@ -226,7 +226,7 @@ class TestWindowsLegacyHomeFallback:
         """An explicit HERMES_HOME bypasses the marker heuristic entirely."""
         native, legacy = self._win_env(tmp_path, monkeypatch)
         legacy.mkdir(parents=True)
-        (legacy / "active_profile").write_text("main")
+        (legacy / "active_profile").write_text("main", encoding="utf-8")
         explicit = tmp_path / "explicit"
         explicit.mkdir()
         monkeypatch.setenv("HERMES_HOME", str(explicit))
@@ -305,7 +305,7 @@ class TestHermesManagedNode:
         node_dir = home / "node"
         node_dir.mkdir(parents=True)
         npm_cmd = node_dir / "npm.cmd"
-        npm_cmd.write_text("@echo off\n")
+        npm_cmd.write_text("@echo off\n", encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setattr(hermes_constants, "node_tool_runnable", lambda path: True)
 
@@ -318,11 +318,11 @@ class TestHermesManagedNode:
         home = tmp_path / "hermes"
         managed_npm = home / "node" / "npm.cmd"
         managed_npm.parent.mkdir(parents=True)
-        managed_npm.write_text("@echo off\n")
+        managed_npm.write_text("@echo off\n", encoding="utf-8")
         bin_dir = tmp_path / "nodejs"
         bin_dir.mkdir()
         path_npm = bin_dir / "npm.cmd"
-        path_npm.write_text("@echo off\n")
+        path_npm.write_text("@echo off\n", encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setenv("PATH", str(bin_dir))
         monkeypatch.setattr(hermes_constants, "_managed_node_heal_attempted", False)
@@ -345,7 +345,7 @@ class TestNodeToolRunnable:
 
     def _stub(self, tmp_path, name, body, mode=0o755):
         path = tmp_path / name
-        path.write_text(body)
+        path.write_text(body, encoding="utf-8")
         path.chmod(mode)
         return path
 
@@ -374,7 +374,7 @@ class TestNodeToolRunnable:
 
         def _heal():
             heal_called["value"] = True
-            broken_npm.write_text("#!/bin/sh\necho '22.0.0'\nexit 0\n")
+            broken_npm.write_text("#!/bin/sh\necho '22.0.0'\nexit 0\n", encoding="utf-8")
             broken_npm.chmod(0o755)
             return True
 
@@ -420,7 +420,7 @@ class TestNodeToolRunnable:
 
         def _heal():
             heal_called["value"] = True
-            old_node.write_text(f"#!/bin/sh\necho 'v{target}.5.1'\nexit 0\n")
+            old_node.write_text(f"#!/bin/sh\necho 'v{target}.5.1'\nexit 0\n", encoding="utf-8")
             old_node.chmod(0o755)
             return True
 
@@ -507,7 +507,7 @@ class TestNodeExecutablePresent:
         home = tmp_path / "hermes"
         node_dir = home / "node"
         node_dir.mkdir(parents=True)
-        (node_dir / "node.exe").write_text("MZ")
+        (node_dir / "node.exe").write_text("MZ", encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
         self._no_spawn(monkeypatch)
 
@@ -521,10 +521,10 @@ class TestNodeExecutablePresent:
         node_dir = home / "node"
         node_dir.mkdir(parents=True)
         # A managed tree exists (npm is there) but the requested command is not.
-        (node_dir / "npm.cmd").write_text("@echo off\n")
+        (node_dir / "npm.cmd").write_text("@echo off\n", encoding="utf-8")
         system_bin = tmp_path / "system-bin"
         system_bin.mkdir()
-        (system_bin / "node.exe").write_text("MZ")
+        (system_bin / "node.exe").write_text("MZ", encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setenv("PATH", str(system_bin))
         self._no_spawn(monkeypatch)
@@ -536,7 +536,7 @@ class TestNodeExecutablePresent:
         home.mkdir()
         system_bin = tmp_path / "system-bin"
         system_bin.mkdir()
-        (system_bin / "node.exe").write_text("MZ")
+        (system_bin / "node.exe").write_text("MZ", encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setenv("PATH", str(system_bin))
         self._no_spawn(monkeypatch)
@@ -891,7 +891,7 @@ class TestAgentBrowserRunnable:
 
     def _stub(self, tmp_path, name, body, mode=0o755):
         p = tmp_path / name
-        p.write_text(body)
+        p.write_text(body, encoding="utf-8")
         p.chmod(mode)
         return p
 
@@ -980,7 +980,7 @@ class TestGetHermesDir:
         legacy.symlink_to(tmp_path / "does-not-exist")
         new = tmp_path / "platforms" / "pairing"
         new.mkdir(parents=True)
-        (new / "discord-approved.json").write_text("[]")
+        (new / "discord-approved.json").write_text("[]", encoding="utf-8")
         result = get_hermes_dir("platforms/pairing", "pairing")
         assert result == new
 
@@ -1058,7 +1058,7 @@ class TestAgentBrowserRunnableIsCached:
         probe.cache_clear()
 
         exe = tmp_path / "agent-browser"
-        exe.write_text("#!/bin/sh\nexit 0\n")
+        exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         exe.chmod(0o755)
 
         calls = []
@@ -1087,7 +1087,7 @@ class TestAgentBrowserRunnableIsCached:
         probe.cache_clear()
 
         exe = tmp_path / "agent-browser"
-        exe.write_text("#!/bin/sh\nexit 0\n")
+        exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         exe.chmod(0o755)
 
         calls = []
@@ -1116,7 +1116,7 @@ class TestAgentBrowserRunnableIsCached:
         a = tmp_path / "a-browser"
         b = tmp_path / "b-browser"
         for p in (a, b):
-            p.write_text("#!/bin/sh\nexit 0\n")
+            p.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             p.chmod(0o755)
 
         calls = []

@@ -310,7 +310,7 @@ def test_render_finish_script_does_not_restart_on_clean_exit(tmp_path) -> None:
     import subprocess
 
     script = tmp_path / "finish"
-    script.write_text(S6ServiceManager._render_finish_script())
+    script.write_text(S6ServiceManager._render_finish_script(), encoding="utf-8")
     script.chmod(0o755)
 
     def finish_exit(run_exit_code: int) -> int:
@@ -378,7 +378,7 @@ def test_s6_log_run_creates_leaf_as_hermes_without_chown(
     mgr = S6ServiceManager(scandir=s6_scandir)
     mgr.register_profile_gateway("coder")
 
-    log_text = (s6_scandir / "gateway-coder" / "log" / "run").read_text()
+    log_text = (s6_scandir / "gateway-coder" / "log" / "run").read_text(encoding="utf-8")
 
     assert not any(line.lstrip().startswith("chown ") for line in log_text.splitlines()), (
         "restartable log/run must not invoke chown on hermes-writable paths; "

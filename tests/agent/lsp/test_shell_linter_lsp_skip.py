@@ -53,7 +53,7 @@ def test_shell_linter_skipped_when_lsp_will_handle(ext, tmp_path):
     """
     fops = _make_fops()
     src = tmp_path / f"bad{ext}"
-    src.write_text("intentionally invalid content\n")
+    src.write_text("intentionally invalid content\n", encoding="utf-8")
 
     def _exec_must_not_run(*args, **kwargs):  # pragma: no cover
         raise AssertionError(
@@ -83,7 +83,7 @@ def test_lsp_will_handle_swallows_enabled_for_exception(tmp_path):
     shell linter still runs."""
     fops = _make_fops()
     src = tmp_path / "foo.ts"
-    src.write_text("const x = 1\n")
+    src.write_text("const x = 1\n", encoding="utf-8")
 
     fake_svc = MagicMock()
     fake_svc.enabled_for.side_effect = RuntimeError("server crashed")
@@ -101,7 +101,7 @@ def test_tsx_default_check_lint_returns_skipped(tmp_path):
     contract that addresses Copilot review #3271017282."""
     fops = _make_fops()
     src = tmp_path / "foo.tsx"
-    src.write_text("export const X = () => <div/>\n")
+    src.write_text("export const X = () => <div/>\n", encoding="utf-8")
 
     # Even with LSP claiming the file, no shell linter runs for .tsx
     # because there's no LINTERS entry — the ``ext not in LINTERS``
@@ -124,11 +124,11 @@ def test_ts_shell_linter_skipped_when_ancestor_tsconfig_present(tmp_path):
     the test.
     """
     fops = _make_fops()
-    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{}}\n')
+    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{}}\n', encoding="utf-8")
     sub = tmp_path / "src" / "app"
     sub.mkdir(parents=True)
     src = sub / "thing.ts"
-    src.write_text("import { x } from '@/store'\nexport const y = x\n")
+    src.write_text("import { x } from '@/store'\nexport const y = x\n", encoding="utf-8")
 
     def _exec_must_not_run(*args, **kwargs):  # pragma: no cover
         raise AssertionError("shell tsc ran despite an ancestor tsconfig.json")
@@ -149,7 +149,7 @@ def test_ts_shell_linter_runs_when_no_ancestor_tsconfig(tmp_path):
     files. We assert _exec IS reached (LSP inactive)."""
     fops = _make_fops()
     src = tmp_path / "loose.ts"
-    src.write_text("const x: number = 'nope'\n")
+    src.write_text("const x: number = 'nope'\n", encoding="utf-8")
 
     exec_result = MagicMock()
     exec_result.exit_code = 2

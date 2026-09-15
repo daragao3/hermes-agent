@@ -91,4 +91,4 @@ def test_recheck_does_not_remove_new_lock_owner(monkeypatch, tmp_path):
     monkeypatch.setattr(status.time, "sleep", lambda delay: path.write_text(json.dumps(new), encoding="utf-8"))
     acquired, owner = status.acquire_scoped_lock("test", "identity", pid_recheck_after_seconds=2)
     assert acquired is False and owner == new
-    assert json.loads(path.read_text()) == new
+    assert json.loads(path.read_text(encoding="utf-8")) == new

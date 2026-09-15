@@ -61,7 +61,7 @@ def _run(job, tmp_path, *, current_provider="openrouter", current_model=None, cr
         cron_lines.append(f"  model_provider: {cron_model_provider}")
     if cron_lines:
         config_yaml += "cron:\n" + "\n".join(cron_lines) + "\n"
-    (tmp_path / "config.yaml").write_text(config_yaml)
+    (tmp_path / "config.yaml").write_text(config_yaml, encoding="utf-8")
 
     resolve_kwargs = {}
 
@@ -209,7 +209,7 @@ class TestCreateJobSnapshot:
     def test_unpinned_model_captures_model_snapshot(self, monkeypatch, tmp_path):
         """An unpinned model captures config.yaml model.default into model_snapshot."""
         jobs = self._isolate_storage(monkeypatch)
-        (tmp_path / "config.yaml").write_text("model:\n  default: llama-3.3-70b:free\n")
+        (tmp_path / "config.yaml").write_text("model:\n  default: llama-3.3-70b:free\n", encoding="utf-8")
         monkeypatch.setattr(
             "cron.jobs.get_hermes_home", lambda: tmp_path, raising=True
         )
@@ -224,7 +224,7 @@ class TestCreateJobSnapshot:
     def test_pinned_model_skips_model_snapshot(self, monkeypatch, tmp_path):
         """An explicit model → pinned → no model_snapshot captured."""
         jobs = self._isolate_storage(monkeypatch)
-        (tmp_path / "config.yaml").write_text("model:\n  default: llama-3.3-70b:free\n")
+        (tmp_path / "config.yaml").write_text("model:\n  default: llama-3.3-70b:free\n", encoding="utf-8")
         monkeypatch.setattr(
             "cron.jobs.get_hermes_home", lambda: tmp_path, raising=True
         )

@@ -332,11 +332,11 @@ class TestLiveWindowsAbsolutePaths:
         # cwd, and a bare-glob search would otherwise count it.
         root = tmp_path / "tree"
         root.mkdir()
-        (root / "SCORE_REQUEST_one.json").write_text('{"needle": 1}\n')
-        (root / "SCORE_REQUEST_two.json").write_text('{"needle": 2}\n')
+        (root / "SCORE_REQUEST_one.json").write_text('{"needle": 1}\n', encoding="utf-8")
+        (root / "SCORE_REQUEST_two.json").write_text('{"needle": 2}\n', encoding="utf-8")
         sub = root / "nested"
         sub.mkdir()
-        (sub / "SCORE_REQUEST_three.json").write_text('{"needle": 3}\n')
+        (sub / "SCORE_REQUEST_three.json").write_text('{"needle": 3}\n', encoding="utf-8")
         return root
 
     def test_file_search_by_absolute_drive_path(self, tree):

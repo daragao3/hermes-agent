@@ -56,7 +56,7 @@ def test_real_python_compilation_does_not_freeze_update(skill_tree):
     _write(src, "scripts/helper.py", "ANSWER = 2\n")
     result = ss.sync_skills(quiet=True)
     assert result["updated"] == ["demo"]
-    assert (dest / "scripts/helper.py").read_text() == "ANSWER = 2\n"
+    assert (dest / "scripts/helper.py").read_text(encoding="utf-8") == "ANSWER = 2\n"
     assert ss._read_manifest()["demo"] == ss._dir_hash(src)
 
 
@@ -84,7 +84,7 @@ def test_genuine_edits_next_to_cache_are_preserved(skill_tree, edited_path):
     assert [entry["name"] for entry in list_user_modified_bundled_skills()] == ["demo"]
     result = ss.sync_skills(quiet=True)
     assert result["user_modified"] == ["demo"]
-    assert (dest / edited_path).read_text() == "user-owned content"
+    assert (dest / edited_path).read_text(encoding="utf-8") == "user-owned content"
     assert not (dest / "references/new-upstream.md").exists()
 
 
@@ -120,7 +120,7 @@ def test_legacy_hash_mismatch_never_rebaselines_user_edits(skill_tree):
     _write(src, "scripts/helper.py", "upstream edit\n")
     assert ss.sync_skills(quiet=True)["user_modified"] == ["demo"]
     assert ss._read_manifest()["demo"] == origin
-    assert (dest / "scripts/helper.py").read_text() == "user edit\n"
+    assert (dest / "scripts/helper.py").read_text(encoding="utf-8") == "user edit\n"
 
 
 def test_clean_manifest_hash_is_backwards_compatible(skill_tree):
@@ -149,7 +149,7 @@ def test_legacy_cache_origin_allows_rename_without_freezing(skill_tree):
     result = ss.sync_skills(quiet=True)
     assert result["updated"] == ["demo"]
     assert not dest.exists()
-    assert (ss._skills_dir() / "recategorized/demo/scripts/helper.py").read_text() == "ANSWER = 3\n"
+    assert (ss._skills_dir() / "recategorized/demo/scripts/helper.py").read_text(encoding="utf-8") == "ANSWER = 3\n"
 
 
 def test_hash_filter_is_skill_relative(tmp_path):

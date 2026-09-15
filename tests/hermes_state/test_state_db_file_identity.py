@@ -241,7 +241,7 @@ def _posix_locks_on(paths):
             continue
     pid = os.getpid()
     held = set()
-    for line in Path("/proc/locks").read_text().splitlines():
+    for line in Path("/proc/locks").read_text(encoding="utf-8").splitlines():
         parts = line.split()
         try:
             lpid = int(parts[4])

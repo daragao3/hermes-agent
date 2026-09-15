@@ -22,7 +22,7 @@ class TestRealProfilePin:
             (root / prof / "Network").mkdir(parents=True)
             _auth_db((root / prof / "Cookies"), f"cookies-{prof}")
             _auth_db((root / prof / "Login Data"), f"logins-{prof}")
-            (root / prof / "Preferences").write_text("{}")
+            (root / prof / "Preferences").write_text("{}", encoding="utf-8")
         (root / "Crashpad").mkdir()
         (root / "Local State").write_text(
             json.dumps({"os_crypt": {}, "profile": {"last_used": last_used}})

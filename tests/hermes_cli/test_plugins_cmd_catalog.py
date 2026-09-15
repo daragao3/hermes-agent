@@ -25,7 +25,7 @@ _GIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
 def _commit(repo: Path, msg: str) -> str:
     sp.run(["git", "add", "-A"], cwd=repo, check=True, env=_GIT_ENV)
     sp.run(["git", "commit", "-q", "-m", msg], cwd=repo, check=True, env=_GIT_ENV)
-    return sp.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+    return sp.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8").stdout.strip()
 
 
 @pytest.fixture
@@ -33,11 +33,11 @@ def world(tmp_path, monkeypatch):
     """A file:// plugin repo with two commits, a catalog pinned to the FIRST, an isolated plugins dir."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "plugin.yaml").write_text("name: cat-plugin\nversion: 1.0.0\ndescription: d\n")
-    (repo / "__init__.py").write_text("def register(ctx):\n    pass\n")
+    (repo / "plugin.yaml").write_text("name: cat-plugin\nversion: 1.0.0\ndescription: d\n", encoding="utf-8")
+    (repo / "__init__.py").write_text("def register(ctx):\n    pass\n", encoding="utf-8")
     sp.run(["git", "init", "-q"], cwd=repo, check=True, env=_GIT_ENV)
     sha1 = _commit(repo, "v1")
-    (repo / "__init__.py").write_text("def register(ctx):\n    pass  # v2\n")
+    (repo / "__init__.py").write_text("def register(ctx):\n    pass  # v2\n", encoding="utf-8")
     sha2 = _commit(repo, "v2")
 
     plugins_dir = tmp_path / "plugins"
@@ -61,7 +61,7 @@ def world(tmp_path, monkeypatch):
 
 
 def _head(path: Path) -> str:
-    return sp.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True).stdout.strip()
+    return sp.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, encoding="utf-8").stdout.strip()
 
 
 def test_catalog_name_installs_pinned_sha_with_sidecar_then_update_repins(world, monkeypatch):
@@ -70,7 +70,7 @@ def test_catalog_name_installs_pinned_sha_with_sidecar_then_update_repins(world,
     target, _m, name = cat.install_catalog_entry(entry, force=False)
     assert name == "cat-plugin"
     assert _head(target) == world["sha1"] != world["sha2"]  # pinned, not HEAD
-    sidecar = json.loads((target / cat.CATALOG_SIDECAR).read_text())
+    sidecar = json.loads((target / cat.CATALOG_SIDECAR).read_text(encoding="utf-8"))
     assert (sidecar["catalog_name"], sidecar["sha"]) == ("cat-plugin", world["sha1"])
     assert cat.catalog_annotation(target) == f"catalog:community@{world['sha1'][:8]}"
 

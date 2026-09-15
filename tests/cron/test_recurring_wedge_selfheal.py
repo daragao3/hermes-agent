@@ -64,7 +64,7 @@ def cron_env(tmp_path, monkeypatch):
     jobs_mod.update_job(job["id"], {"next_run_at": (now - timedelta(minutes=1)).isoformat()})
 
     script = hermes_home / "scripts" / "probe.py"
-    script.write_text("print('ok')\n")
+    script.write_text("print('ok')\n", encoding="utf-8")
 
     return {"home": hermes_home, "job_id": job["id"]}
 

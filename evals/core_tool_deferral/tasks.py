@@ -52,7 +52,7 @@ def _grep_home(ctx, needle):
     for root, _dirs, files in os.walk(ctx["hermes_home"]):
         for fn in files:
             try:
-                with open(os.path.join(root, fn), "rb") as f:
+                with open(os.path.join(root, fn), "rb") as f:  # windows-footgun: ok -- binary mode; the comma in the first argument hides "rb" from the rule
                     if nb in f.read():
                         return True
             except OSError:

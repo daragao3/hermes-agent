@@ -21,10 +21,32 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "check-windows-footguns.py"
 
 
+# TIMEOUT BUDGET, re-set 2026-09-15 when tests/ and evals/ joined `--all`.
+#
+# The scan went from 1932 files to 6651, i.e. ~7.9s to ~17.5s of per-line work
+# on an idle box -- already past the old `timeout=20`, and this box measured
+# 44.7s for the same scan while loaded, so a bound near the true cost is a
+# flake generator, not a hang detector.
+#
+# The ORDER of the two bounds is the part that matters. pyproject sets
+# `--timeout=30 --timeout-method=thread`; a thread watchdog cannot interrupt a
+# blocked `subprocess.run`, so when it wins the race it dumps a stack ending in
+# `threading._wait_for_tstate_lock` and, observed on this box, can take the
+# whole session down with an INTERNALERROR instead of failing one test. So the
+# per-test mark must sit ABOVE the subprocess bound, and the subprocess bound
+# must be what actually fires: `subprocess.TimeoutExpired` names the scan.
+_SCAN_TIMEOUT_S = 150
+_TEST_TIMEOUT_S = 180
+assert _SCAN_TIMEOUT_S < _TEST_TIMEOUT_S, "the subprocess bound must fire first"
+
+
+@pytest.mark.timeout(_TEST_TIMEOUT_S)
 def test_full_repo_scan_has_no_unsuppressed_windows_footguns():
     """Mirrors check_subprocess_stdin.py's wrapper: run the real checker
     against the whole repo (--all) and require a clean exit, so this test
@@ -34,20 +56,10 @@ def test_full_repo_scan_has_no_unsuppressed_windows_footguns():
         [sys.executable, str(SCRIPT), "--all"],
         capture_output=True,
         text=True,
-        # Must stay UNDER pyproject's `--timeout=30` per-test cap, not above
-        # it: pytest-timeout fires first and, with --timeout-method=thread,
-        # cannot interrupt a blocked subprocess.run cleanly -- it dumps a
-        # stack ending in threading._wait_for_tstate_lock, which reads like a
-        # deadlock in this test and says nothing about the scan. A bound here
-        # instead raises subprocess.TimeoutExpired, which names the scan.
-        #
-        # The old value was 60 -- above the cap, so unreachable, and in any
-        # case a performance budget rather than a hang detector: the scan took
-        # ~113s then and the gate could not report the five real footguns it
-        # had found. It measures ~5.6s since the prefilter landed, so 20s is
-        # ~3.5x headroom. Scan cost is pinned in test_footgun_prefilter.py;
-        # what this test asserts is the exit status.
-        timeout=20,
+        # See _SCAN_TIMEOUT_S above: a hang detector, not a performance
+        # budget. Scan cost is pinned in test_footgun_prefilter.py; what this
+        # test asserts is the exit status.
+        timeout=_SCAN_TIMEOUT_S,
         stdin=subprocess.DEVNULL,
     )
     assert result.returncode == 0, (
@@ -74,6 +86,7 @@ def _tracked_python_files() -> set[str]:
     return {rel for rel in (p.strip() for p in out.split("\0")) if rel}
 
 
+@pytest.mark.timeout(_TEST_TIMEOUT_S)
 def test_all_covers_every_tracked_first_party_python_file():
     """`--all` must not silently stop covering a package.
 
@@ -113,6 +126,7 @@ def test_all_covers_every_tracked_first_party_python_file():
     )
 
 
+@pytest.mark.timeout(_TEST_TIMEOUT_S)
 def test_all_never_descends_into_agent_worktrees_or_stale_venvs():
     """The named-root list excluded `.claude/worktrees/` (one checkout per
     agent session on this box) and the stale venvs by accident of never naming
@@ -138,10 +152,15 @@ def test_all_scan_skip_list_is_pinned():
     expects FROM ALL_SCAN_SKIP_TOP_LEVEL, so adding a package to that set would
     silence it rather than fail it -- the same shape as the drift that started
     this. Pin the set here so growing it costs a deliberate edit to a test whose
-    name says what it is guarding."""
+    name says what it is guarding.
+
+    It held {"tests", "evals"} while a measured 2996-finding backlog was worked
+    down. That reached zero on 2026-09-15, so the set is now pinned EMPTY: any
+    entry at all re-opens the hole the git-derived file list closed.
+    """
     linter = _load_linter_module()
-    assert linter.ALL_SCAN_SKIP_TOP_LEVEL == {"tests", "evals"}, (
-        "--all stopped scanning a top-level tree. Only tests/ and evals/ are "
-        "deferred (a measured backlog, see the comment on the constant); "
-        "excluding anything else hides first-party code from a blocking gate."
+    assert linter.ALL_SCAN_SKIP_TOP_LEVEL == set(), (
+        "--all stopped scanning a top-level tree. The skip list is empty by "
+        "design -- the tests/evals backlog that justified it is gone. "
+        "Excluding anything here hides first-party code from a blocking gate."
     )

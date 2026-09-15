@@ -31,10 +31,10 @@ def test_a_mirrored_switch_reaches_the_config_file(config_home, key):
     assert _set(key, "false")["result"] == {"key": key, "value": False}
 
     section, name = key.split(".")
-    assert yaml.safe_load(config_home.read_text())[section][name] is False
+    assert yaml.safe_load(config_home.read_text(encoding="utf-8"))[section][name] is False
 
     assert _set(key, "true")["result"] == {"key": key, "value": True}
-    assert yaml.safe_load(config_home.read_text())[section][name] is True
+    assert yaml.safe_load(config_home.read_text(encoding="utf-8"))[section][name] is True
 
 
 def test_a_non_boolean_is_refused_rather_than_written(config_home):

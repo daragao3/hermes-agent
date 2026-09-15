@@ -97,7 +97,7 @@ class TestEnsureFreshToken:
         assert token == "hch-at-new" and refreshed is True
 
         # Rotated refresh token + new access token + absolute expiry persisted.
-        saved = json.loads(path.read_text())["hosts"]["hermes"]
+        saved = json.loads(path.read_text(encoding="utf-8"))["hosts"]["hermes"]
         assert saved["apiKey"] == "hch-at-new"
         assert saved["oauth"]["refreshToken"] == "hch-rt-new"
         assert saved["oauth"]["expiresAt"] == 1000 + 3600
@@ -119,7 +119,7 @@ class TestEnsureFreshToken:
         # retry exactly once, then fail open.
         assert token == "hch-at-old" and refreshed is False
         assert len(calls) == 2
-        assert json.loads(path.read_text())["hosts"]["hermes"]["apiKey"] == "hch-at-old"
+        assert json.loads(path.read_text(encoding="utf-8"))["hosts"]["hermes"]["apiKey"] == "hch-at-old"
 
     def test_double_check_uses_disk_when_already_rotated(self, tmp_path, monkeypatch):
         # Simulates a concurrent thread that rotated the token on disk after our
@@ -164,7 +164,7 @@ class TestInstallGrant:
         )
         assert cred.expires_at == 1000 + 3600
 
-        saved = json.loads(path.read_text())
+        saved = json.loads(path.read_text(encoding="utf-8"))
         assert saved["apiKey"] == "hch-v3-root"  # untouched
         assert saved["hosts"]["obsidian"] == {"workspace": "obsidian"}  # untouched
         h = saved["hosts"]["hermes"]

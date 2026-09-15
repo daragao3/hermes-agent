@@ -22,9 +22,9 @@ def test_packaged_failure_journey():
         result = run_text_capture([str(node), str(app / 'e2e/upgrade-packaged-debugger-probe.mjs'), str(output)], cwd=app, timeout=150)
         print(result.stdout + result.stderr, flush=True)
         assert result.returncode == 0
-        assert json.loads((output / 'result.json').read_text())['passed'] is True
+        assert json.loads((output / 'result.json').read_text(encoding="utf-8"))['passed'] is True
     finally:
         after = protocol_command()
         if output.exists():
-            (output / 'protocol-state.json').write_text(json.dumps({'before':before,'after':after,'unchanged':before==after},indent=2))
+            (output / 'protocol-state.json').write_text(json.dumps({'before':before,'after':after,'unchanged':before==after},indent=2), encoding="utf-8")
         assert before == after, 'Protocol routing changed during guarded test'

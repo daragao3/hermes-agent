@@ -110,7 +110,7 @@ class TestIgnoresNonWork:
         assert scan_actionable(root, store, now=1000) == []
 
     def test_non_json_files_are_ignored(self, root, store):
-        (root / "tailor" / "inbox" / "20260810T01_TAILOR_REQUEST_main.txt").write_text("x")
+        (root / "tailor" / "inbox" / "20260810T01_TAILOR_REQUEST_main.txt").write_text("x", encoding="utf-8")
         assert scan_actionable(root, store, now=1000) == []
 
 

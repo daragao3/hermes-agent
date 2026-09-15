@@ -38,7 +38,7 @@ def _emit_under(home: Path, name: str, level: int, msg: str) -> None:
 
 def _contains(home: Path, filename: str, needle: str) -> bool:
     path = home / "logs" / filename
-    return path.exists() and needle in path.read_text()
+    return path.exists() and needle in path.read_text(encoding="utf-8")
 
 
 def test_multiplex_gateway_routes_profile_records_to_their_own_logs(

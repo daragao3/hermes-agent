@@ -246,12 +246,14 @@ class TestStdioPgroupReaping:
         # Ensure os.killpg exists on this platform for the test to make sense;
         # the production fallback path is covered by the per-pid tests above.
         if not hasattr(os, "killpg"):
-            pytest.skip("os.killpg not available on this platform")
+            pytest.skip("os.killpg not available on this platform")  # windows-footgun: ok -- prose in a skip message, not a call
 
-        with patch("tools.mcp_tool.os.killpg") as mock_killpg, \
-             patch("tools.mcp_tool.os.kill") as mock_kill, \
-             patch("gateway.status._pid_exists", return_value=True), \
-             patch("time.sleep"):
+        with (
+            patch("tools.mcp_tool.os.killpg") as mock_killpg,  # windows-footgun: ok -- patch target name, never invoked on Windows
+            patch("tools.mcp_tool.os.kill") as mock_kill,
+            patch("gateway.status._pid_exists", return_value=True),
+            patch("time.sleep"),
+        ):
             _kill_orphaned_mcp_children()
 
         # Both phases should have used killpg (pgroup reach), not per-pid kill.
@@ -273,7 +275,7 @@ class TestStdioPgroupReaping:
         from tools.mcp_tool import _lock
 
         if not hasattr(os, "killpg") or not hasattr(os, "getpgrp"):
-            pytest.skip("os.killpg/os.getpgrp not available on this platform")
+            pytest.skip("os.killpg/os.getpgrp not available on this platform")  # windows-footgun: ok -- prose in a skip message, not a call
 
         self._reset_state()
         gateway_pgid = 424242
@@ -289,11 +291,13 @@ class TestStdioPgroupReaping:
         fake_sigkill = 9
         monkeypatch.setattr(signal, "SIGKILL", fake_sigkill, raising=False)
 
-        with patch("tools.mcp_tool.os.getpgrp", return_value=gateway_pgid), \
-             patch("tools.mcp_tool.os.killpg") as mock_killpg, \
-             patch("tools.mcp_tool.os.kill") as mock_kill, \
-             patch("gateway.status._pid_exists", return_value=True), \
-             patch("time.sleep"):
+        with (
+            patch("tools.mcp_tool.os.getpgrp", return_value=gateway_pgid),
+            patch("tools.mcp_tool.os.killpg") as mock_killpg,  # windows-footgun: ok -- patch target name, never invoked on Windows
+            patch("tools.mcp_tool.os.kill") as mock_kill,
+            patch("gateway.status._pid_exists", return_value=True),
+            patch("time.sleep"),
+        ):
             _kill_orphaned_mcp_children()
 
         # killpg must NEVER be called for the gateway's own pgid (would self-kill).
@@ -336,7 +340,7 @@ class TestStdioPgroupReaping:
     @pytest.mark.live_system_guard_bypass
     @pytest.mark.skipif(
         not hasattr(os, "killpg") or not hasattr(os, "setsid"),
-        reason="POSIX-only: requires os.killpg and os.setsid",
+        reason="POSIX-only: requires os.killpg and os.setsid",  # windows-footgun: ok -- prose in a skip reason, not a call
     )
     def test_grandchild_reaped_via_pgroup(self, tmp_path):
         """End-to-end: parent spawns grandchild, parent exits, killpg reaps grandchild.
@@ -367,7 +371,7 @@ class TestStdioPgroupReaping:
         grandchild_script.write_text(
             "import os, sys, time\n"
             f"tmp = {str(grandchild_pid_file)!r} + '.tmp'\n"
-            "with open(tmp, 'w') as f:\n"
+            "with open(tmp, 'w') as f:\n"  # windows-footgun: ok -- source of a probe script written to a temp file, not a call
             "    f.write(str(os.getpid()))\n"
             f"os.replace(tmp, {str(grandchild_pid_file)!r})\n"
             "while True:\n"
@@ -394,7 +398,7 @@ class TestStdioPgroupReaping:
         while _time.time() < deadline and not grandchild_pid_file.exists():
             _time.sleep(0.05)
         assert grandchild_pid_file.exists(), "grandchild did not start"
-        grandchild_pid = int(grandchild_pid_file.read_text().strip())
+        grandchild_pid = int(grandchild_pid_file.read_text(encoding="utf-8").strip())
 
         # Sanity: grandchild is alive and shares the parent's pgid.
         assert psutil.pid_exists(grandchild_pid)
@@ -417,7 +421,7 @@ class TestStdioPgroupReaping:
         finally:
             # Belt-and-suspenders: ensure grandchild is dead even if test fails.
             try:
-                os.kill(grandchild_pid, signal.SIGKILL)
+                os.kill(grandchild_pid, signal.SIGKILL)  # windows-footgun: ok -- POSIX-only test (class/test skip off POSIX)
             except ProcessLookupError:
                 pass
 

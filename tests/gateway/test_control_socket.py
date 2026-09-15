@@ -81,7 +81,7 @@ def test_client_resolution_prefers_direct_then_pointer(home: Path, tmp_path: Pat
     # pointer file to an existing socket-ish file
     target = tmp_path / "elsewhere.sock"
     target.touch()
-    (home / "gateway.sock.path").write_text(str(target))
+    (home / "gateway.sock.path").write_text(str(target), encoding="utf-8")
     assert resolve_client_socket_path(home) == target
     # direct file wins over pointer
     direct = home / "gateway.sock"

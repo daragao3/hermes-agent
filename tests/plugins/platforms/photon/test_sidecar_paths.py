@@ -96,7 +96,7 @@ def test_dir_writable_probe(tmp_path) -> None:
     try:
         if os.name == "nt":
             pytest.skip("POSIX permission semantics: chmod does not enforce write bits on Windows")
-        if os.geteuid() == 0:  # pragma: no cover - root ignores perms
+        if os.geteuid() == 0:  # pragma: no cover - root ignores perms  # windows-footgun: ok -- the POSIX-permissions skip on the line above already returned
             pytest.skip("root bypasses directory permissions")
         assert sidecar_paths.dir_writable(ro) is False
     finally:

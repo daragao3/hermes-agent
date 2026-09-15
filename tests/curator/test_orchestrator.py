@@ -34,7 +34,7 @@ def test_orchestrator_dispatches_over_all_ten_agents(tmp_path):
         return f"# MEMORY — {agent}\n\n## Operating Stats\nrendered.\n"
 
     audit_path = tmp_path / "audit.jsonl"
-    audit_path.write_text("")  # empty
+    audit_path.write_text("", encoding="utf-8")  # empty
     # Build minimal profiles tree so writes succeed.
     for agent in AGENTS:
         (tmp_path / "profiles" / agent / "memories").mkdir(parents=True, exist_ok=True)
@@ -56,7 +56,7 @@ def test_orchestrator_dispatches_over_all_ten_agents(tmp_path):
 def test_orchestrator_writes_to_correct_path(tmp_path):
     """Each output lands at profiles/<agent>/memories/MEMORY.md."""
     audit_path = tmp_path / "audit.jsonl"
-    audit_path.write_text("")
+    audit_path.write_text("", encoding="utf-8")
     for agent in AGENTS:
         (tmp_path / "profiles" / agent / "memories").mkdir(parents=True, exist_ok=True)
 
@@ -78,7 +78,7 @@ def test_orchestrator_writes_to_correct_path(tmp_path):
 def test_orchestrator_main_uses_append_mode(tmp_path):
     """For agent='main', renderer mode='append' and existing content preserved."""
     audit_path = tmp_path / "audit.jsonl"
-    audit_path.write_text("")
+    audit_path.write_text("", encoding="utf-8")
     for agent in AGENTS:
         (tmp_path / "profiles" / agent / "memories").mkdir(parents=True, exist_ok=True)
 
@@ -111,7 +111,7 @@ def test_orchestrator_main_uses_append_mode(tmp_path):
 def test_orchestrator_other_agents_use_preserve_with_prior(tmp_path):
     """For non-main agents with >30 lines existing, mode='preserve_with_prior'."""
     audit_path = tmp_path / "audit.jsonl"
-    audit_path.write_text("")
+    audit_path.write_text("", encoding="utf-8")
     for agent in AGENTS:
         (tmp_path / "profiles" / agent / "memories").mkdir(parents=True, exist_ok=True)
 
@@ -135,7 +135,7 @@ def test_orchestrator_other_agents_use_preserve_with_prior(tmp_path):
 def test_orchestrator_dry_run_writes_nothing(tmp_path):
     """When dry_run=True, no MEMORY.md is modified."""
     audit_path = tmp_path / "audit.jsonl"
-    audit_path.write_text("")
+    audit_path.write_text("", encoding="utf-8")
     for agent in AGENTS:
         d = tmp_path / "profiles" / agent / "memories"
         d.mkdir(parents=True, exist_ok=True)
@@ -159,7 +159,7 @@ def test_orchestrator_dry_run_writes_nothing(tmp_path):
 def test_orchestrator_continues_on_per_agent_failure(tmp_path):
     """One agent's renderer raises; others still complete."""
     audit_path = tmp_path / "audit.jsonl"
-    audit_path.write_text("")
+    audit_path.write_text("", encoding="utf-8")
     for agent in AGENTS:
         (tmp_path / "profiles" / agent / "memories").mkdir(parents=True, exist_ok=True)
 
@@ -182,7 +182,7 @@ def test_orchestrator_continues_on_per_agent_failure(tmp_path):
 def test_orchestrator_emits_curator_daily_event(tmp_path):
     """When emit_event=True with a bus, exactly one curator_daily event lands."""
     audit_path = tmp_path / "audit.jsonl"
-    audit_path.write_text("")
+    audit_path.write_text("", encoding="utf-8")
     for agent in AGENTS:
         (tmp_path / "profiles" / agent / "memories").mkdir(parents=True, exist_ok=True)
 
@@ -209,7 +209,7 @@ def test_orchestrator_emits_curator_daily_event(tmp_path):
 def test_curator_daily_payload_schema(tmp_path):
     """The emitted event payload includes all spec'd keys (Task 7)."""
     audit_path = tmp_path / "audit.jsonl"
-    audit_path.write_text("")
+    audit_path.write_text("", encoding="utf-8")
     for agent in AGENTS:
         (tmp_path / "profiles" / agent / "memories").mkdir(parents=True, exist_ok=True)
 
@@ -352,7 +352,7 @@ def test_backfill_seeds_principles_and_patterns_for_every_agent(tmp_path):
     Constitutional Principles section and no seeded pattern candidates.
     """
     audit_path = tmp_path / "audit.jsonl"
-    audit_path.write_text("")
+    audit_path.write_text("", encoding="utf-8")
     for agent in AGENTS:
         (tmp_path / "profiles" / agent / "memories").mkdir(parents=True, exist_ok=True)
 

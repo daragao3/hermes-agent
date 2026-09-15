@@ -23,8 +23,8 @@ CLEAN = "Meeting notes\u2019 r\u00e9sum\u00e9 3.04 PM.txt"  # NFC + plain spaces
 def ws(tmp_path, monkeypatch):
     monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
     (tmp_path / "notes").mkdir()
-    (tmp_path / "notes" / HOSTILE).write_text("- rotate the keys\n")
-    (tmp_path / "AGENTS.md").write_text("npm run build:prod\n")
+    (tmp_path / "notes" / HOSTILE).write_text("- rotate the keys\n", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("npm run build:prod\n", encoding="utf-8")
     return tmp_path
 
 
@@ -50,8 +50,8 @@ class TestUnicodeVariantRepair:
 
     def test_ambiguous_twins_not_repaired(self, tmp_path, monkeypatch):
         monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
-        (tmp_path / "caf\u00e9.txt").write_text("nfc\n")
-        (tmp_path / "cafe\u0301.txt").write_text("nfd\n")
+        (tmp_path / "caf\u00e9.txt").write_text("nfc\n", encoding="utf-8")
+        (tmp_path / "cafe\u0301.txt").write_text("nfd\n", encoding="utf-8")
         # Both canonicalize to café.txt; a third spelling must not guess.
         result = json.loads(read_file_tool(str(tmp_path / "CAFE.txt")))
         assert "unicode-equivalent" not in (result.get("hint") or "")

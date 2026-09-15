@@ -70,7 +70,7 @@ def _write_manifest(catalog_dir: Path, name: str, body: dict) -> Path:
     entry_dir = catalog_dir / name
     entry_dir.mkdir(exist_ok=True)
     path = entry_dir / "manifest.yaml"
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(body, f)
     return path
 
@@ -514,7 +514,7 @@ class TestInstall:
         # load_config resolves it; config.yaml itself stays secret-free.
         from hermes_cli.config import get_config_path
 
-        raw = get_config_path().read_text()
+        raw = get_config_path().read_text(encoding="utf-8")
         assert "${MCP_DEMO_API_KEY}" in raw
         assert "secret-val" not in raw
 

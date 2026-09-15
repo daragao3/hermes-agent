@@ -62,7 +62,7 @@ class TestSkillManageBatch(unittest.TestCase):
         ])
         self.assertFalse(r["success"])
         self.assertEqual(r["failed_index"], 1)
-        content = open(os.path.join(self.home, "skills", "probe", "SKILL.md")).read()
+        content = open(os.path.join(self.home, "skills", "probe", "SKILL.md"), encoding="utf-8").read()
         self.assertIn("Step 1.", content)       # patch undone
         self.assertNotIn("Step ONE.", content)
 
@@ -130,7 +130,7 @@ class TestSkillManageBatch(unittest.TestCase):
             self.assertIn("discard", r["error"])
         # ...and rejected pre-effect: c.md still holds its seed text.
         c_md = os.path.join(self.home, "skills", "probe", "references", "c.md")
-        self.assertEqual(open(c_md).read(), "seed")
+        self.assertEqual(open(c_md, encoding="utf-8").read(), "seed")
         # write-then-patch on one supporting file stays legal (additive).
         r = self._call("probe", [
             {"action": "write_file", "file_path": "references/e.md", "file_content": "base"},
@@ -171,7 +171,7 @@ class TestSkillManageBatch(unittest.TestCase):
         self.assertFalse(r["success"])
         self.assertEqual(r["failed_index"], 2)
         # alpha's patch undone; beta (batch-created) removed entirely.
-        content = open(os.path.join(self.home, "skills", "alpha", "SKILL.md")).read()
+        content = open(os.path.join(self.home, "skills", "alpha", "SKILL.md"), encoding="utf-8").read()
         self.assertIn("Step 1.", content)
         self.assertNotIn("Step A.", content)
         self.assertFalse(os.path.exists(os.path.join(self.home, "skills", "beta")))
@@ -209,7 +209,7 @@ class TestSkillManageBatch(unittest.TestCase):
         # the half applied state survives instead of nothing at all.
         skill_md = os.path.join(self.home, "skills", "probe", "SKILL.md")
         self.assertTrue(os.path.exists(skill_md))
-        content = open(skill_md).read()
+        content = open(skill_md, encoding="utf-8").read()
         self.assertIn("Step ONE.", content)
 
     def test_single_op_path_unchanged(self):

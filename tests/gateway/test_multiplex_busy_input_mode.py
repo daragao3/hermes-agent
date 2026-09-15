@@ -236,8 +236,8 @@ async def test_busy_change_updates_only_routed_profile(tmp_path, monkeypatch):
     response = await runner._make_profile_message_handler("research")(event)
 
     assert "steer" in str(response).lower()
-    assert "busy_input_mode: steer" in (profile_home / "config.yaml").read_text()
-    assert "busy_input_mode: interrupt" in default_config.read_text()
+    assert "busy_input_mode: steer" in (profile_home / "config.yaml").read_text(encoding="utf-8")
+    assert "busy_input_mode: interrupt" in default_config.read_text(encoding="utf-8")
     assert runner._busy_input_mode == "interrupt"
     assert runner._effective_busy_input_mode(event.source) == "steer"
     assert adapter._busy_text_mode == "interrupt"

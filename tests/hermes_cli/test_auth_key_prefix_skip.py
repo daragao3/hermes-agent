@@ -47,7 +47,7 @@ def isolated_hermes_home(tmp_path, monkeypatch):
 
 def _write_env_file(home: Path, **kwargs) -> None:
     lines = [f"{k}={v}" for k, v in kwargs.items()]
-    (home / ".env").write_text("\n".join(lines) + "\n")
+    (home / ".env").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _mock_pool(*entries):

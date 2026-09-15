@@ -32,7 +32,7 @@ def test_syntax_error_does_not_crash(tmp_path):
 
 def test_recursion_error_does_not_crash(tmp_path):
     f = tmp_path / "deep.py"
-    f.write_text("a" + ".x" * 5000 + "\n")
+    f.write_text("a" + ".x" * 5000 + "\n", encoding="utf-8")
     orig = sys.getrecursionlimit()
     sys.setrecursionlimit(200)
     try:

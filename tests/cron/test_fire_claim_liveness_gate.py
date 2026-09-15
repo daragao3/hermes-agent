@@ -525,7 +525,7 @@ def test_a_genuinely_separate_live_process_blocks_then_releases(
                 pytest.fail(f"child died before opening its run: {err.decode()[-2000:]}")
             try:
                 # Guard against reading the file mid-write.
-                worker_pid = int(ready.read_text().strip())
+                worker_pid = int(ready.read_text(encoding="utf-8").strip())
                 break
             except (OSError, ValueError):
                 time.sleep(0.05)

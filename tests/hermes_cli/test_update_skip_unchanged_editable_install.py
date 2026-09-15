@@ -29,10 +29,10 @@ def repo(tmp_path):
         GIT + ["config", "user.email", "t@example.com"], cwd=tmp_path, check=True
     )
     subprocess.run(GIT + ["config", "user.name", "t"], cwd=tmp_path, check=True)
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'hermes'\n")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'hermes'\n", encoding="utf-8")
     (tmp_path / "agent").mkdir()
-    (tmp_path / "agent" / "__init__.py").write_text("")
-    (tmp_path / "cli.py").write_text("x = 1\n")
+    (tmp_path / "agent" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "cli.py").write_text("x = 1\n", encoding="utf-8")
     subprocess.run(GIT + ["add", "-A"], cwd=tmp_path, check=True)
     subprocess.run(GIT + ["commit", "-qm", "base"], cwd=tmp_path, check=True)
     return tmp_path
@@ -52,8 +52,8 @@ def _commit(cwd, message):
 def test_source_only_pull_skips_the_reinstall(repo):
     """The common update: .py churn inside already-mapped packages."""
     before = _head(repo)
-    (repo / "cli.py").write_text("x = 2\n")
-    (repo / "agent" / "loop.py").write_text("y = 1\n")
+    (repo / "cli.py").write_text("x = 2\n", encoding="utf-8")
+    (repo / "agent" / "loop.py").write_text("y = 1\n", encoding="utf-8")
     _commit(repo, "source churn")
 
     assert _editable_install_is_current(GIT, repo, before) is True
@@ -62,7 +62,7 @@ def test_source_only_pull_skips_the_reinstall(repo):
 def test_new_submodule_in_mapped_package_skips_the_reinstall(repo):
     """A new file inside an existing package resolves through its __path__."""
     before = _head(repo)
-    (repo / "agent" / "brand_new.py").write_text("z = 1\n")
+    (repo / "agent" / "brand_new.py").write_text("z = 1\n", encoding="utf-8")
     _commit(repo, "new submodule")
 
     assert _editable_install_is_current(GIT, repo, before) is True
@@ -75,7 +75,7 @@ def test_new_submodule_in_mapped_package_skips_the_reinstall(repo):
 def test_touching_a_file_that_defines_the_install_forces_the_reinstall(repo, filename):
     """Dependencies, entry points and the static module list all live here."""
     before = _head(repo)
-    (repo / filename).write_text("# changed\n")
+    (repo / filename).write_text("# changed\n", encoding="utf-8")
     _commit(repo, f"touch {filename}")
 
     assert _editable_install_is_current(GIT, repo, before) is False
@@ -84,8 +84,8 @@ def test_touching_a_file_that_defines_the_install_forces_the_reinstall(repo, fil
 def test_source_churn_alongside_a_pyproject_edit_still_reinstalls(repo):
     """The gate must not be fooled by burying the pyproject diff in noise."""
     before = _head(repo)
-    (repo / "cli.py").write_text("x = 3\n")
-    (repo / "pyproject.toml").write_text("[project]\nname = 'hermes'\ndeps = []\n")
+    (repo / "cli.py").write_text("x = 3\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text("[project]\nname = 'hermes'\ndeps = []\n", encoding="utf-8")
     _commit(repo, "mixed")
 
     assert _editable_install_is_current(GIT, repo, before) is False

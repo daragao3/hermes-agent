@@ -37,7 +37,7 @@ class TestWhatsAppEnvViaSecretScope:
         ss.set_multiplex_active(True)
 
         # Write a profile .env with bot mode
-        (tmp_path / ".env").write_text("WHATSAPP_MODE=bot\nWHATSAPP_DM_POLICY=allowlist\n")
+        (tmp_path / ".env").write_text("WHATSAPP_MODE=bot\nWHATSAPP_DM_POLICY=allowlist\n", encoding="utf-8")
 
         tok = ss.set_secret_scope(ss.build_profile_secret_scope(tmp_path))
         try:
@@ -65,9 +65,9 @@ class TestWhatsAppEnvViaSecretScope:
         ss.set_multiplex_active(True)
 
         (tmp_path / "profA").mkdir()
-        (tmp_path / "profA" / ".env").write_text("WHATSAPP_MODE=bot\n")
+        (tmp_path / "profA" / ".env").write_text("WHATSAPP_MODE=bot\n", encoding="utf-8")
         (tmp_path / "profB").mkdir()
-        (tmp_path / "profB" / ".env").write_text("WHATSAPP_MODE=self-chat\n")
+        (tmp_path / "profB" / ".env").write_text("WHATSAPP_MODE=self-chat\n", encoding="utf-8")
 
         tok_a = ss.set_secret_scope(ss.build_profile_secret_scope(tmp_path / "profA"))
         try:
@@ -94,7 +94,7 @@ class TestWhatsAppCommonUsesSecretScope:
         ss.set_multiplex_active(True)
 
         # Set scope with bot mode (should NOT add reply prefix)
-        (tmp_path / ".env").write_text("WHATSAPP_MODE=bot\n")
+        (tmp_path / ".env").write_text("WHATSAPP_MODE=bot\n", encoding="utf-8")
         tok = ss.set_secret_scope(ss.build_profile_secret_scope(tmp_path))
         try:
             mixin = object.__new__(WhatsAppBehaviorMixin)
@@ -117,7 +117,7 @@ class TestWhatsAppCommonUsesSecretScope:
         monkeypatch.delenv("WHATSAPP_REQUIRE_MENTION", raising=False)
         ss.set_multiplex_active(True)
 
-        (tmp_path / ".env").write_text("WHATSAPP_REQUIRE_MENTION=true\n")
+        (tmp_path / ".env").write_text("WHATSAPP_REQUIRE_MENTION=true\n", encoding="utf-8")
         tok = ss.set_secret_scope(ss.build_profile_secret_scope(tmp_path))
         try:
             mixin = object.__new__(WhatsAppBehaviorMixin)
@@ -139,7 +139,7 @@ class TestWhatsAppCloudAdapterUsesSecretScope:
         monkeypatch.delenv("WHATSAPP_DM_POLICY", raising=False)
         ss.set_multiplex_active(True)
 
-        (tmp_path / ".env").write_text("WHATSAPP_DM_POLICY=allowlist\n")
+        (tmp_path / ".env").write_text("WHATSAPP_DM_POLICY=allowlist\n", encoding="utf-8")
         tok = ss.set_secret_scope(ss.build_profile_secret_scope(tmp_path))
         try:
 

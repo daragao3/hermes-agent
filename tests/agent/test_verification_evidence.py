@@ -24,14 +24,14 @@ def _node_project(root: Path) -> None:
     (root / "package.json").write_text(
         json.dumps({"scripts": {"test": "vitest", "lint": "eslint .", "dev": "vite"}})
     )
-    (root / "pnpm-lock.yaml").write_text("")
+    (root / "pnpm-lock.yaml").write_text("", encoding="utf-8")
     scripts = root / "scripts"
     scripts.mkdir()
-    (scripts / "run_tests.sh").write_text("#!/bin/sh\n")
+    (scripts / "run_tests.sh").write_text("#!/bin/sh\n", encoding="utf-8")
 
 
 def _python_project(root: Path) -> None:
-    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
 
 
 

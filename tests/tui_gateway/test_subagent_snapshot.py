@@ -157,7 +157,7 @@ def test_reattach_preserves_child_controls_including_late_registration(runtime, 
     server, owner, old, call = runtime
     new = type("Transport", (), {"write": lambda self, frame: True})()
     transcript = tmp_path / "child.txt"
-    transcript.write_text("live child output")
+    transcript.write_text("live child output", encoding="utf-8")
     steered, stopped = [], []
 
     def register(sid):

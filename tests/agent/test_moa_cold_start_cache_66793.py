@@ -52,7 +52,7 @@ def test_preset_resolution_is_cached_across_create_calls(monkeypatch, tmp_path):
     # The cache keys on the config FILE's st_mtime_ns — give the test a real
     # stat-able file (no config file -> stamp=None -> caching fails open).
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text("moa: {}\n")
+    cfg_file.write_text("moa: {}\n", encoding="utf-8")
     monkeypatch.setattr(cfg_mod, "get_config_path", lambda: cfg_file)
     monkeypatch.setattr(cfg_mod, "load_config", lambda: _make_preset_config())
     monkeypatch.setattr(moa, "call_llm", lambda **k: _fake_response())
@@ -86,7 +86,7 @@ def test_preset_cache_invalidates_on_config_edit(monkeypatch, tmp_path):
     monkeypatch.setattr(moa_cfg_mod, "resolve_moa_preset", counting_resolve)
     import hermes_cli.config as cfg_mod
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text("moa: {}\n")
+    cfg_file.write_text("moa: {}\n", encoding="utf-8")
     monkeypatch.setattr(cfg_mod, "get_config_path", lambda: cfg_file)
     monkeypatch.setattr(cfg_mod, "load_config", lambda: _make_preset_config())
     monkeypatch.setattr(moa, "call_llm", lambda **k: _fake_response())
@@ -139,7 +139,7 @@ def test_slot_runtime_is_cached_across_create_calls(monkeypatch, tmp_path):
     monkeypatch.setattr(rt_mod, "resolve_runtime_provider", counting_resolve)
     import hermes_cli.config as cfg_mod
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text("moa: {}\n")
+    cfg_file.write_text("moa: {}\n", encoding="utf-8")
     monkeypatch.setattr(cfg_mod, "get_config_path", lambda: cfg_file)
     monkeypatch.setattr(cfg_mod, "load_config", lambda: _make_preset_config())
     monkeypatch.setattr(moa, "call_llm", lambda **k: _fake_response())

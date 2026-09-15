@@ -191,7 +191,7 @@ class TestNoDowngradeUnderConcurrentOpeners:
             finally:
                 conn.close()
         finally:
-            done.write_text("done")
+            done.write_text("done", encoding="utf-8")
             holder.wait(timeout=30)
 
         check = sqlite3.connect(str(db))

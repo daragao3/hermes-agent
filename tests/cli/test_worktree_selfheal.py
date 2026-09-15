@@ -30,7 +30,7 @@ def repo(tmp_path):
     _git(root, "init", "-q", "-b", "main")
     _git(root, "config", "user.email", "t@t")
     _git(root, "config", "user.name", "t")
-    (root / "f.txt").write_text("x\n")
+    (root / "f.txt").write_text("x\n", encoding="utf-8")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "init")
     return root
@@ -97,7 +97,7 @@ class TestMaintainPackHealth:
         pack_dir = repo / ".git" / "objects" / "pack"
         pack_dir.mkdir(parents=True, exist_ok=True)
         for i in range(n):
-            (repo / f"p{i}.txt").write_text(f"{i}\n")
+            (repo / f"p{i}.txt").write_text(f"{i}\n", encoding="utf-8")
             _git(repo, "add", "-A")
             _git(repo, "commit", "-qm", f"c{i}")
             sha = _git(repo, "rev-parse", "HEAD^{commit}").stdout.strip()

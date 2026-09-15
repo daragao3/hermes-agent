@@ -32,7 +32,7 @@ def quiet_config(tmp_path):
     }
     path = tmp_path / "notifications" / "quiet_hours.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(config))
+    path.write_text(json.dumps(config), encoding="utf-8")
     return path
 
 
@@ -167,7 +167,7 @@ class TestQuietHoursConfigHardening:
             "breakthrough_events": [],
         }
         config_path = tmp_path / "quiet_hours.json"
-        config_path.write_text(json.dumps(config))
+        config_path.write_text(json.dumps(config), encoding="utf-8")
 
         esc = WhatsAppEscalator(bus, quiet_config_path=config_path)
         # With bad tz, we must NOT silently return False (which would let
@@ -183,7 +183,7 @@ class TestQuietHoursConfigHardening:
             "timezone": "America/New_York",
         }
         config_path = tmp_path / "quiet_hours.json"
-        config_path.write_text(json.dumps(config))
+        config_path.write_text(json.dumps(config), encoding="utf-8")
 
         esc = WhatsAppEscalator(bus, quiet_config_path=config_path)
         # Same as bad tz: conservative, treat as quiet
@@ -194,7 +194,7 @@ class TestQuietHoursConfigHardening:
         config = {"enabled": False, "start": "23:00", "end": "07:00",
                   "timezone": "America/New_York"}
         config_path = tmp_path / "quiet_hours.json"
-        config_path.write_text(json.dumps(config))
+        config_path.write_text(json.dumps(config), encoding="utf-8")
 
         esc = WhatsAppEscalator(bus, quiet_config_path=config_path)
         assert esc._is_quiet_hours() is False
@@ -215,7 +215,7 @@ class TestQueueFileConfig:
             "queue_file": str(custom_queue),
         }
         config_path = tmp_path / "quiet_hours.json"
-        config_path.write_text(json.dumps(config))
+        config_path.write_text(json.dumps(config), encoding="utf-8")
 
         esc = WhatsAppEscalator(bus, quiet_config_path=config_path)
         assert esc._queue_path == custom_queue
@@ -229,7 +229,7 @@ class TestQueueFileConfig:
             "timezone": "America/New_York",
         }
         config_path = tmp_path / "quiet_hours.json"
-        config_path.write_text(json.dumps(config))
+        config_path.write_text(json.dumps(config), encoding="utf-8")
         explicit = tmp_path / "explicit.json"
 
         esc = WhatsAppEscalator(bus, quiet_config_path=config_path, queue_path=explicit)
@@ -885,7 +885,7 @@ class TestNotificationDeliveredReverseSignal:
         # the event to the quiet queue and never reach the throttle buffer.
         quiet_off = tmp_path / "notifications" / "quiet_hours_off.json"
         quiet_off.parent.mkdir(parents=True, exist_ok=True)
-        quiet_off.write_text(json.dumps({"enabled": False}))
+        quiet_off.write_text(json.dumps({"enabled": False}), encoding="utf-8")
         escalator = WhatsAppEscalator(
             bus, quiet_config_path=quiet_off, queue_path=queue_path,
             send_fn=lambda msg: None,

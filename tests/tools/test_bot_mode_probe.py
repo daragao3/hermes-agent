@@ -103,7 +103,7 @@ def test_soul_legacy_protocol_no_longer_suppresses_live_section(tmp_path):
         "# Me\n\n## Messaging other agents\nold plugin text\n", encoding="utf-8"
     )
     assert "`@coder`" in bot_mode_probe.get_bot_mode_protocol_section(home)
-    assert bot_mode_probe.strip_legacy_protocol((home / "SOUL.md").read_text()) == "# Me\n"
+    assert bot_mode_probe.strip_legacy_protocol((home / "SOUL.md").read_text(encoding="utf-8")) == "# Me\n"
 
 
 def test_deterministic_across_calls(tmp_path):

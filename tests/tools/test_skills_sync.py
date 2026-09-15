@@ -33,7 +33,7 @@ class TestReadWriteManifest:
 
         assert result == entries
         # Entries are written sorted for stable diffs.
-        names = [line.split(":")[0] for line in manifest_file.read_text().strip().splitlines()]
+        names = [line.split(":")[0] for line in manifest_file.read_text(encoding="utf-8").strip().splitlines()]
         assert names == ["alpha", "middle", "zebra"]
 
         # A missing manifest reads as empty, not an error.
@@ -44,7 +44,7 @@ class TestReadWriteManifest:
         manifest_file = tmp_path / ".bundled_manifest"
         # v1 format (plain names, no hashes) reads with empty hashes; blank
         # lines are ignored; mixed v1/v2 lines are handled gracefully.
-        manifest_file.write_text("old-skill\n\n  \nnew-skill:abc123\n")
+        manifest_file.write_text("old-skill\n\n  \nnew-skill:abc123\n", encoding="utf-8")
 
         with patch("tools.skills_sync.MANIFEST_FILE", manifest_file):
             result = _read_manifest()
@@ -70,11 +70,11 @@ class TestDirHash:
         dir_b = tmp_path / "b"
         for d in (dir_a, dir_b):
             d.mkdir()
-            (d / "SKILL.md").write_text("# Test")
-            (d / "main.py").write_text("print(1)")
+            (d / "SKILL.md").write_text("# Test", encoding="utf-8")
+            (d / "main.py").write_text("print(1)", encoding="utf-8")
         assert _dir_hash(dir_a) == _dir_hash(dir_b)
 
-        (dir_b / "SKILL.md").write_text("# Version 2")
+        (dir_b / "SKILL.md").write_text("# Version 2", encoding="utf-8")
         assert _dir_hash(dir_a) != _dir_hash(dir_b)
 
         empty = tmp_path / "empty"
@@ -87,14 +87,14 @@ class TestDirHash:
 class TestDiscoverBundledSkills:
     def test_finds_skill_dirs_and_ignores_non_skills(self, tmp_path):
         (tmp_path / "category" / "skill-a").mkdir(parents=True)
-        (tmp_path / "category" / "skill-a" / "SKILL.md").write_text("# Skill A")
+        (tmp_path / "category" / "skill-a" / "SKILL.md").write_text("# Skill A", encoding="utf-8")
         (tmp_path / "skill-b").mkdir()
-        (tmp_path / "skill-b" / "SKILL.md").write_text("# Skill B")
+        (tmp_path / "skill-b" / "SKILL.md").write_text("# Skill B", encoding="utf-8")
         (tmp_path / "not-a-skill").mkdir()
-        (tmp_path / "not-a-skill" / "README.md").write_text("Not a skill")
+        (tmp_path / "not-a-skill" / "README.md").write_text("Not a skill", encoding="utf-8")
         # .git internals never count as skills.
         (tmp_path / ".git" / "hooks").mkdir(parents=True)
-        (tmp_path / ".git" / "hooks" / "SKILL.md").write_text("# Fake")
+        (tmp_path / ".git" / "hooks" / "SKILL.md").write_text("# Fake", encoding="utf-8")
 
         skills = _discover_bundled_skills(tmp_path)
         assert {name for name, _ in skills} == {"skill-a", "skill-b"}
@@ -105,8 +105,8 @@ class TestDiscoverBundledSkills:
         real = tmp_path / "category" / "umbrella"
         nested = real / "references" / "archived-skill"
         nested.mkdir(parents=True)
-        (real / "SKILL.md").write_text("---\nname: umbrella\n---\n")
-        (nested / "SKILL.md").write_text("---\nname: archived-skill\n---\n")
+        (real / "SKILL.md").write_text("---\nname: umbrella\n---\n", encoding="utf-8")
+        (nested / "SKILL.md").write_text("---\nname: archived-skill\n---\n", encoding="utf-8")
 
         assert [name for name, _ in _discover_bundled_skills(tmp_path)] == ["umbrella"]
 
@@ -115,16 +115,16 @@ class TestReadSkillName:
     def test_name_from_frontmatter_with_dir_name_fallbacks(self, tmp_path):
         skill_md = tmp_path / "SKILL.md"
 
-        skill_md.write_text("---\nname: audiocraft-audio-generation\n---\n# Skill")
+        skill_md.write_text("---\nname: audiocraft-audio-generation\n---\n# Skill", encoding="utf-8")
         assert _read_skill_name(skill_md, "audiocraft") == "audiocraft-audio-generation"
 
-        skill_md.write_text('---\nname: "serving-llms-vllm"\n---\n')
+        skill_md.write_text('---\nname: "serving-llms-vllm"\n---\n', encoding="utf-8")
         assert _read_skill_name(skill_md, "vllm") == "serving-llms-vllm"
 
-        skill_md.write_text("# Just a heading\nNo frontmatter here")
+        skill_md.write_text("# Just a heading\nNo frontmatter here", encoding="utf-8")
         assert _read_skill_name(skill_md, "my-skill") == "my-skill"
 
-        skill_md.write_text("---\nname:\n---\n")
+        skill_md.write_text("---\nname:\n---\n", encoding="utf-8")
         assert _read_skill_name(skill_md, "fallback") == "fallback"
 
     def test_discover_uses_frontmatter_name(self, tmp_path):
@@ -194,7 +194,7 @@ class TestRmtreeWritableScopeGuard:
         skills.mkdir()
         sub = skills / "category" / "old-skill"
         sub.mkdir(parents=True)
-        (sub / "SKILL.md").write_text("# old")
+        (sub / "SKILL.md").write_text("# old", encoding="utf-8")
 
         with patch("tools.skills_sync.SKILLS_DIR", skills):
             _rmtree_writable(sub)
@@ -210,17 +210,17 @@ class TestExternalDirsIndexing:
         """Create a fake bundled skills directory."""
         bundled = tmp_path / "bundled_skills"
         (bundled / "devops" / "clair-qa").mkdir(parents=True)
-        (bundled / "devops" / "clair-qa" / "SKILL.md").write_text("# bundled clair")
+        (bundled / "devops" / "clair-qa" / "SKILL.md").write_text("# bundled clair", encoding="utf-8")
         (bundled / "creative" / "ascii-art").mkdir(parents=True)
-        (bundled / "creative" / "ascii-art" / "SKILL.md").write_text("# bundled ascii")
+        (bundled / "creative" / "ascii-art" / "SKILL.md").write_text("# bundled ascii", encoding="utf-8")
         return bundled
 
     def _setup_external(self, tmp_path):
         """Create a fake external skills directory."""
         ext_dir = tmp_path / "external_skills"
         (ext_dir / "devops" / "clair-qa").mkdir(parents=True)
-        (ext_dir / "devops" / "clair-qa" / "SKILL.md").write_text("# external clair")
-        (ext_dir / "devops" / "clair-qa" / "main.py").write_text("print('ext')")
+        (ext_dir / "devops" / "clair-qa" / "SKILL.md").write_text("# external clair", encoding="utf-8")
+        (ext_dir / "devops" / "clair-qa" / "main.py").write_text("print('ext')", encoding="utf-8")
         return ext_dir
 
     def _patches(self, bundled, skills_dir, manifest_file):
@@ -301,7 +301,7 @@ class TestRenamedBundledSkillRecovery:
     def _skill(self, root, rel, body="# Body\n", name="moved-skill"):
         d = root / rel
         d.mkdir(parents=True, exist_ok=True)
-        (d / "SKILL.md").write_text(f"---\nname: {name}\n---\n{body}")
+        (d / "SKILL.md").write_text(f"---\nname: {name}\n---\n{body}", encoding="utf-8")
         return d
 
     def test_rename_relocates_unmodified_copy(self, tmp_path):
@@ -314,7 +314,7 @@ class TestRenamedBundledSkillRecovery:
         old = self._skill(skills_dir, "oldcat/moved-skill")
         origin_hash = _dir_hash(old)
         manifest_file.parent.mkdir(parents=True, exist_ok=True)
-        manifest_file.write_text(f"moved-skill:{origin_hash}\n")
+        manifest_file.write_text(f"moved-skill:{origin_hash}\n", encoding="utf-8")
 
         # Upstream moved it to a NEW category and changed the content.
         self._skill(bundled, "newcat/moved-skill", body="# Updated upstream\n")
@@ -331,7 +331,7 @@ class TestRenamedBundledSkillRecovery:
         assert "moved-skill" in result["relocated"]
         # Having been relocated, it then takes the normal update path.
         assert "moved-skill" in result["updated"]
-        assert "Updated upstream" in (new / "SKILL.md").read_text()
+        assert "Updated upstream" in (new / "SKILL.md").read_text(encoding="utf-8")
         # Future syncs can now detect further upstream changes.
         assert recorded == _dir_hash(bundled / "newcat" / "moved-skill")
 
@@ -345,7 +345,7 @@ class TestRenamedBundledSkillRecovery:
         edited = self._skill(skills_dir, "oldcat/moved-skill")
         edited_hash = _dir_hash(edited)
         # User then edits their copy, so it no longer matches the origin hash.
-        (edited / "SKILL.md").write_text("---\nname: moved-skill\n---\n# MY EDITS\n")
+        (edited / "SKILL.md").write_text("---\nname: moved-skill\n---\n# MY EDITS\n", encoding="utf-8")
 
         hub = self._skill(skills_dir, "oldcat/hub-skill", name="hub-skill")
         hub_hash = _dir_hash(hub)
@@ -377,7 +377,7 @@ class TestRenamedBundledSkillRecovery:
             result = sync_skills(quiet=True)
 
         assert edited.exists(), "user's modified copy must not be moved"
-        assert "MY EDITS" in (edited / "SKILL.md").read_text()
+        assert "MY EDITS" in (edited / "SKILL.md").read_text(encoding="utf-8")
         assert hub.exists(), "hub-installed skill must not be relocated"
         assert "moved-skill" not in result.get("relocated", [])
         assert "hub-skill" not in result.get("relocated", [])
@@ -388,7 +388,7 @@ class TestRenamedBundledSkillRecovery:
         skills_dir = tmp_path / "user_skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
         manifest_file = skills_dir / ".bundled_manifest"
-        manifest_file.write_text("moved-skill:deadbeef\n")
+        manifest_file.write_text("moved-skill:deadbeef\n", encoding="utf-8")
 
         self._skill(bundled, "newcat/moved-skill")
 
@@ -405,11 +405,11 @@ class TestSyncSkills:
         """Create a fake bundled skills directory."""
         bundled = tmp_path / "bundled_skills"
         (bundled / "category" / "new-skill").mkdir(parents=True)
-        (bundled / "category" / "new-skill" / "SKILL.md").write_text("# New")
-        (bundled / "category" / "new-skill" / "main.py").write_text("print(1)")
-        (bundled / "category" / "DESCRIPTION.md").write_text("Category desc")
+        (bundled / "category" / "new-skill" / "SKILL.md").write_text("# New", encoding="utf-8")
+        (bundled / "category" / "new-skill" / "main.py").write_text("print(1)", encoding="utf-8")
+        (bundled / "category" / "DESCRIPTION.md").write_text("Category desc", encoding="utf-8")
         (bundled / "old-skill").mkdir()
-        (bundled / "old-skill" / "SKILL.md").write_text("# Old")
+        (bundled / "old-skill" / "SKILL.md").write_text("# Old", encoding="utf-8")
         return bundled
 
     def _patches(self, bundled, skills_dir, manifest_file):
@@ -471,7 +471,7 @@ class TestSyncSkills:
         manifest_file = skills_dir / ".bundled_manifest"
         skills_dir.mkdir(parents=True)
         old_hash = _dir_hash(bundled / "old-skill")
-        manifest_file.write_text(f"old-skill:{old_hash}\nremoved-skill:def456\n")
+        manifest_file.write_text(f"old-skill:{old_hash}\nremoved-skill:def456\n", encoding="utf-8")
 
         with self._patches(bundled, skills_dir, manifest_file):
             result = sync_skills(quiet=True)
@@ -496,8 +496,8 @@ class TestSyncSkills:
         # An already-synced, unmodified copy so the update path runs too.
         user_skill = skills_dir / "old-skill"
         user_skill.mkdir(parents=True)
-        (user_skill / "SKILL.md").write_text("# Old v1")
-        manifest_file.write_text(f"old-skill:{_dir_hash(user_skill)}\n")
+        (user_skill / "SKILL.md").write_text("# Old v1", encoding="utf-8")
+        manifest_file.write_text(f"old-skill:{_dir_hash(user_skill)}\n", encoding="utf-8")
 
         with self._patches(bundled, skills_dir, manifest_file):
             def failing_copytree(src, dst, *a, **kw):
@@ -567,11 +567,11 @@ class TestResetBundledSkill:
         # so manifest has an old origin hash that no longer matches anything on disk.
         dest = skills_dir / "productivity" / "google-workspace"
         dest.mkdir(parents=True)
-        (dest / "SKILL.md").write_text("---\nname: google-workspace\n---\n# GW v2 (upstream)\n")
+        (dest / "SKILL.md").write_text("---\nname: google-workspace\n---\n# GW v2 (upstream)\n", encoding="utf-8")
         # Stale origin_hash — from some prior bundled version. User "restored" by pasting
         # the current bundled contents, so user_hash == current bundled_hash, but manifest
         # still points at the stale hash → treated as user_modified forever.
-        manifest_file.write_text("google-workspace:STALEHASH000000000000000000000000\n")
+        manifest_file.write_text("google-workspace:STALEHASH000000000000000000000000\n", encoding="utf-8")
 
         with self._patches(bundled, skills_dir, manifest_file):
             # Sanity check: without reset, sync would flag it user_modified
@@ -590,7 +590,7 @@ class TestResetBundledSkill:
             assert manifest_after["google-workspace"] == expected
         # User's copy was preserved (we didn't delete)
         assert dest.exists()
-        assert "GW v2" in (dest / "SKILL.md").read_text()
+        assert "GW v2" in (dest / "SKILL.md").read_text(encoding="utf-8")
 
 
     def test_reset_errors_when_untracked_or_removed_upstream(self, tmp_path):
@@ -599,7 +599,7 @@ class TestResetBundledSkill:
         skills_dir = tmp_path / "user_skills"
         manifest_file = skills_dir / ".bundled_manifest"
         skills_dir.mkdir(parents=True)
-        manifest_file.write_text("")
+        manifest_file.write_text("", encoding="utf-8")
 
         with self._patches(bundled, skills_dir, manifest_file):
             untracked = reset_bundled_skill("some-hub-skill", restore=False)
@@ -611,8 +611,8 @@ class TestResetBundledSkill:
         # Tracked in the manifest, but no longer shipped upstream.
         ghost = skills_dir / "productivity" / "ghost-skill"
         ghost.mkdir(parents=True)
-        (ghost / "SKILL.md").write_text("---\nname: ghost-skill\n---\n# Ghost\n")
-        manifest_file.write_text("ghost-skill:OLDHASH00000000000000000000000000\n")
+        (ghost / "SKILL.md").write_text("---\nname: ghost-skill\n---\n# Ghost\n", encoding="utf-8")
+        manifest_file.write_text("ghost-skill:OLDHASH00000000000000000000000000\n", encoding="utf-8")
 
         with self._patches(bundled, skills_dir, manifest_file):
             removed = reset_bundled_skill("ghost-skill", restore=True)
@@ -634,8 +634,8 @@ class TestResetBundledSkill:
         dest = skills_dir / "productivity" / "google-workspace"
         sub = dest / "references"
         sub.mkdir(parents=True)
-        (dest / "SKILL.md").write_text("# user version\n")
-        (sub / "ref.md").write_text("# nested ref\n")
+        (dest / "SKILL.md").write_text("# user version\n", encoding="utf-8")
+        (sub / "ref.md").write_text("# nested ref\n", encoding="utf-8")
         manifest_file.write_text(
             "google-workspace:STALEHASH000000000000000000000000\n"
         )
@@ -657,7 +657,7 @@ class TestResetBundledSkill:
             assert result["ok"] is True
             assert result["action"] == "restored"
             # Bundled version was re-copied over the (deleted) user copy.
-            assert "upstream" in (dest / "SKILL.md").read_text()
+            assert "upstream" in (dest / "SKILL.md").read_text(encoding="utf-8")
             # The read-only nested user dir/file was fully removed, not left behind.
             assert not (sub / "ref.md").exists()
             # sync ran and re-copied the skill (not stuck in limbo).
@@ -678,7 +678,7 @@ class TestResetBundledSkill:
 
         dest = skills_dir / "productivity" / "google-workspace"
         dest.mkdir(parents=True)
-        (dest / "SKILL.md").write_text("# user version\n")
+        (dest / "SKILL.md").write_text("# user version\n", encoding="utf-8")
         manifest_file.write_text(
             "google-workspace:STALEHASH000000000000000000000000\n"
         )
@@ -697,7 +697,7 @@ class TestResetBundledSkill:
         assert result["ok"] is False
         assert result["action"] == "not_reset"
         assert "Manifest entry preserved" in result["message"]
-        manifest_after = manifest_file.read_text()
+        manifest_after = manifest_file.read_text(encoding="utf-8")
         assert "google-workspace" in manifest_after
         # User copy is still on disk (we changed nothing).
         assert (dest / "SKILL.md").exists()
@@ -715,14 +715,14 @@ class TestNoBundledSkillsOptOut:
         bundled = tmp_path / "bundled"
         skill = bundled / "category" / "new-skill"
         skill.mkdir(parents=True)
-        (skill / "SKILL.md").write_text("---\nname: new-skill\n---\nbody\n")
+        (skill / "SKILL.md").write_text("---\nname: new-skill\n---\nbody\n", encoding="utf-8")
 
         skills_dir = tmp_path / "user_skills"
         manifest_file = skills_dir / ".bundled_manifest"
         hermes_home = tmp_path / "home"
         hermes_home.mkdir()
         marker = hermes_home / ".no-bundled-skills"
-        marker.write_text("opted out\n")
+        marker.write_text("opted out\n", encoding="utf-8")
 
         from contextlib import ExitStack
 
@@ -761,7 +761,7 @@ class TestOptOutToggleAndRemove:
         for n in ("alpha", "beta"):
             d = bundled / n
             d.mkdir(parents=True)
-            (d / "SKILL.md").write_text(f"---\nname: {n}\n---\nbody {n}\n")
+            (d / "SKILL.md").write_text(f"---\nname: {n}\n---\nbody {n}\n", encoding="utf-8")
         return bundled
 
     def test_marker_toggle(self, tmp_path):
@@ -797,10 +797,10 @@ class TestOptOutToggleAndRemove:
              patch("tools.skills_sync.HERMES_HOME", home):
             sync_skills(quiet=True)
             # User edits 'beta'
-            (skills_dir / "beta" / "SKILL.md").write_text("---\nname: beta\n---\nEDITED\n")
+            (skills_dir / "beta" / "SKILL.md").write_text("---\nname: beta\n---\nEDITED\n", encoding="utf-8")
             # A hand-written, non-bundled skill must also survive.
             (skills_dir / "mine").mkdir()
-            (skills_dir / "mine" / "SKILL.md").write_text("---\nname: mine\n---\nlocal\n")
+            (skills_dir / "mine" / "SKILL.md").write_text("---\nname: mine\n---\nlocal\n", encoding="utf-8")
 
             preview = remove_pristine_bundled_skills(dry_run=True)
             assert "alpha" in preview["removed"]
@@ -811,7 +811,7 @@ class TestOptOutToggleAndRemove:
             assert not (skills_dir / "alpha").exists()
             # user-modified bundled skill kept
             assert (skills_dir / "beta" / "SKILL.md").exists()
-            assert "EDITED" in (skills_dir / "beta" / "SKILL.md").read_text()
+            assert "EDITED" in (skills_dir / "beta" / "SKILL.md").read_text(encoding="utf-8")
             # non-bundled local skill never considered
             assert (skills_dir / "mine" / "SKILL.md").exists()
 
@@ -829,7 +829,7 @@ class TestUpdateBackupRecovery:
         """Bundled dir with one flat skill, plus user dirs."""
         bundled = tmp_path / "bundled_skills"
         (bundled / "old-skill").mkdir(parents=True)
-        (bundled / "old-skill" / "SKILL.md").write_text(bundled_text)
+        (bundled / "old-skill" / "SKILL.md").write_text(bundled_text, encoding="utf-8")
         skills_dir = tmp_path / "user_skills"
         skills_dir.mkdir()
         manifest_file = skills_dir / ".bundled_manifest"
@@ -848,7 +848,7 @@ class TestUpdateBackupRecovery:
         """User copy of old-skill whose hash matches the manifest origin."""
         dest = skills_dir / "old-skill"
         dest.mkdir(parents=True)
-        (dest / "SKILL.md").write_text(text)
+        (dest / "SKILL.md").write_text(text, encoding="utf-8")
         with patch("tools.skills_sync.MANIFEST_FILE", manifest_file):
             _write_manifest({"old-skill": _dir_hash(dest)})
         return dest
@@ -866,7 +866,7 @@ class TestUpdateBackupRecovery:
 
         stale = skills_dir / "old-skill.bak"
         stale.mkdir()
-        (stale / "SKILL.md").write_text("# stale junk from an earlier failure")
+        (stale / "SKILL.md").write_text("# stale junk from an earlier failure", encoding="utf-8")
 
         def _boom(src, dst, **kwargs):
             raise OSError("simulated copy failure")
@@ -876,7 +876,7 @@ class TestUpdateBackupRecovery:
             sync_skills(quiet=True)
 
         # The live copy must survive the failed update untouched...
-        assert (dest / "SKILL.md").read_text() == "# Old v1"
+        assert (dest / "SKILL.md").read_text(encoding="utf-8") == "# Old v1"
         # ...not be nested inside recycled stale-backup content.
         assert not (dest / "old-skill").exists()
         # And no backup directory may linger.
@@ -900,7 +900,7 @@ class TestUpdateBackupRecovery:
 
         # Recovered and then updated to the new bundled version in one run.
         assert (dest / "SKILL.md").exists()
-        assert (dest / "SKILL.md").read_text() == "# Old v2 (updated)"
+        assert (dest / "SKILL.md").read_text(encoding="utf-8") == "# Old v2 (updated)"
         assert "old-skill" in result["updated"]
         assert not (skills_dir / "old-skill.bak").exists()
 
@@ -917,7 +917,7 @@ class TestUpdateBackupRecovery:
 
         def _partial_then_fail(src, dst, **kwargs):
             Path(dst).mkdir(parents=True, exist_ok=True)
-            (Path(dst) / "PARTIAL").write_text("half-written")
+            (Path(dst) / "PARTIAL").write_text("half-written", encoding="utf-8")
             raise OSError("simulated failure mid-copy")
 
         with self._patches(bundled, skills_dir, manifest_file), \
@@ -925,7 +925,7 @@ class TestUpdateBackupRecovery:
             sync_skills(quiet=True)
 
         # Original content restored, partial debris and backup gone.
-        assert (dest / "SKILL.md").read_text() == "# Old v1"
+        assert (dest / "SKILL.md").read_text(encoding="utf-8") == "# Old v1"
         assert not (dest / "PARTIAL").exists()
         assert not (skills_dir / "old-skill.bak").exists()
 

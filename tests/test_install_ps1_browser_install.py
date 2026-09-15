@@ -28,7 +28,7 @@ def _extract_function_body(source: str, name: str) -> str:
 
 
 def test_install_agent_browser_no_longer_npm_installs_agent_browser() -> None:
-    body = _extract_function_body(INSTALL_PS1.read_text(), "Install-AgentBrowser")
+    body = _extract_function_body(INSTALL_PS1.read_text(encoding="utf-8"), "Install-AgentBrowser")
 
     assert "agent-browser@" not in body
     assert "Installing Chromium via agent-browser install" not in body
@@ -44,12 +44,12 @@ def test_install_agent_browser_drops_unused_skip_chromium_param() -> None:
     branch; grep confirms it's never passed at the one real call site, so a
     lingering param would be dead code implying a control path that no
     longer exists."""
-    body = _extract_function_body(INSTALL_PS1.read_text(), "Install-AgentBrowser")
+    body = _extract_function_body(INSTALL_PS1.read_text(encoding="utf-8"), "Install-AgentBrowser")
 
     assert "SkipChromium" not in body
 
     # And the one real call site must not pass it either.
-    text = INSTALL_PS1.read_text()
+    text = INSTALL_PS1.read_text(encoding="utf-8")
     call_site = re.search(r"^\s*Install-AgentBrowser.*$", text, re.MULTILINE)
     assert call_site, "could not find Install-AgentBrowser call site"
     assert "SkipChromium" not in call_site.group(0)
@@ -59,7 +59,7 @@ def test_install_agent_browser_still_ignore_scripts_hardened() -> None:
     """The removal of agent-browser must not have also dropped the
     supply-chain hardening that still applies to the remaining camofox
     install."""
-    body = _extract_function_body(INSTALL_PS1.read_text(), "Install-AgentBrowser")
+    body = _extract_function_body(INSTALL_PS1.read_text(encoding="utf-8"), "Install-AgentBrowser")
 
     assert "--ignore-scripts" in body
 
@@ -67,6 +67,6 @@ def test_install_agent_browser_still_ignore_scripts_hardened() -> None:
 def test_install_agent_browser_no_longer_references_agent_browser_cmd_shim() -> None:
     """No dangling reference to the agent-browser.cmd shim should remain
     now that this function never installs it."""
-    body = _extract_function_body(INSTALL_PS1.read_text(), "Install-AgentBrowser")
+    body = _extract_function_body(INSTALL_PS1.read_text(encoding="utf-8"), "Install-AgentBrowser")
 
     assert "agent-browser.cmd" not in body

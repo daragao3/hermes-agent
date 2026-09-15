@@ -16,7 +16,7 @@ _CLI_MODULES = [
 
 def _subprocess_run_calls(filepath: str) -> list[dict]:
     """Parse a Python file and return info about subprocess.run() calls."""
-    source = Path(filepath).read_text()
+    source = Path(filepath).read_text(encoding="utf-8")
     tree = ast.parse(source, filename=filepath)
     calls = []
     for node in ast.walk(tree):
@@ -107,7 +107,7 @@ def test_run_text_capture_returns_when_only_the_grandchild_lingers():
     assert elapsed < 30, (
         f"run_text_capture took {elapsed:.1f}s to reap a child that exited "
         "immediately — it is waiting on a pipe the orphaned grandchild still "
-        "holds open (the ~119s stdlib drain is back)"
+        "holds open (the ~119s stdlib drain is back)"  # windows-footgun: ok -- prose in an assertion message, not a call
     )
 
 
@@ -133,6 +133,6 @@ def test_run_text_capture_bounds_a_wedged_child_that_leaked_a_grandchild():
 
     assert elapsed < 45, (
         f"run_text_capture took {elapsed:.1f}s against a {budget}s budget — a "
-        "leaked grandchild is holding the capture open (file-backed stdio "
+        "leaked grandchild is holding the capture open (file-backed stdio "  # windows-footgun: ok -- prose in an assertion message, not a call
         "and/or the tree-kill regressed)"
     )

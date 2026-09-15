@@ -24,7 +24,7 @@ def test_ten_thousand_message_conversion():
     output.mkdir()
     source, target = output / 'source.db', output / 'converted.db'
     with closing(sqlite3.connect(source)) as conn:
-        conn.executescript((Path(__file__).parent / 'fixtures/local33-schema.sql').read_text())
+        conn.executescript((Path(__file__).parent / 'fixtures/local33-schema.sql').read_text(encoding="utf-8"))
         conn.execute('INSERT INTO schema_version VALUES (33)')
         for i in range(40):
             kind = 'cron' if i % 10 == 0 else 'subagent' if i % 10 == 1 else 'cli'
@@ -54,5 +54,5 @@ def test_ten_thousand_message_conversion():
                   target_bytes=target.stat().st_size, source_sha256=original_digest,
                   target_sha256=digest(target), word_rows=word_count, trigram_rows=trigram_count,
                   scope='Synthetic scale acceptance, not production snapshot cutover')
-    (output / 'result.json').write_text(json.dumps(report, indent=2))
+    (output / 'result.json').write_text(json.dumps(report, indent=2), encoding="utf-8")
     print('Scale conversion evidence:', output, flush=True)

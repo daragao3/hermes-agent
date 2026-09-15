@@ -88,14 +88,14 @@ def _is_alive_like_dispatcher(pid: int) -> bool:
     if pid <= 0:
         return False
     try:
-        os.kill(pid, 0)
+        os.kill(pid, 0)  # windows-footgun: ok -- helper for tests skipped off POSIX
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
     if sys.platform == "linux":
         try:
-            with open(f"/proc/{pid}/status") as f:
+            with open(f"/proc/{pid}/status", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("State:"):
                         if "Z" in line.split(":", 1)[1]:
@@ -150,7 +150,7 @@ def _spawn_synthetic(env_overrides: dict, cwd) -> subprocess.Popen:
 
 def _cleanup(proc: subprocess.Popen) -> None:
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # windows-footgun: ok -- helper for tests skipped off POSIX
     except (ProcessLookupError, PermissionError):
         pass
     try:

@@ -173,7 +173,7 @@ def test_waiter_picks_up_reply_within_a_sub_second_cadence(root):
 
     threading.Thread(target=write_reply, daemon=True).start()
     started = time.monotonic()
-    proc = subprocess.run(shlex.split(bot_relay.waiter_command(root, env)), capture_output=True, text=True, timeout=10)
+    proc = subprocess.run(shlex.split(bot_relay.waiter_command(root, env)), capture_output=True, text=True, timeout=10, encoding="utf-8")
     elapsed = time.monotonic() - started
     assert proc.returncode == 0 and "pong" in proc.stdout
     assert elapsed < 1.5, f"waiter took {elapsed:.2f}s to notice a reply written at 0.3s"
@@ -199,7 +199,7 @@ def test_waiter_command_repr_encodes_hostile_connection_id(root):
     import ast
     import shlex
 
-    inj = "x'); open(r'/tmp/pwned','w').write('pwned'); print('x"
+    inj = "x'); open(r'/tmp/pwned','w').write('pwned'); print('x"  # windows-footgun: ok -- injection payload the relay must refuse, not a call
     env = {
         "id": "c" * 32,
         "target_handle": "researcher",

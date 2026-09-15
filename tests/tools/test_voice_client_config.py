@@ -27,7 +27,7 @@ def voice_home(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
     def write(config: dict) -> None:
-        (home / "config.yaml").write_text(yaml.safe_dump(config))
+        (home / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
         # Config caches are module-level; reload the readers so each test
         # sees ITS config, not the previous test's.
         for name in list(sys.modules):

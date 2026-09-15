@@ -288,7 +288,7 @@ def test_extract_cache_tampered_index_path_is_miss(_isolated_cache, tmp_path):
             "fetched_at": time.time(),
         }
     }
-    (_isolated_cache / wrc._INDEX_FILENAME).write_text(json.dumps(index))
+    (_isolated_cache / wrc._INDEX_FILENAME).write_text(json.dumps(index), encoding="utf-8")
     assert extract_cache_get("https://evil.com") is None
 
 
@@ -301,12 +301,12 @@ def test_extract_cache_missing_file_is_miss(_isolated_cache):
             "fetched_at": time.time(),
         }
     }
-    (_isolated_cache / wrc._INDEX_FILENAME).write_text(json.dumps(index))
+    (_isolated_cache / wrc._INDEX_FILENAME).write_text(json.dumps(index), encoding="utf-8")
     assert extract_cache_get("https://gone.com") is None
 
 
 def test_extract_cache_corrupt_index_is_empty(_isolated_cache):
-    (_isolated_cache / wrc._INDEX_FILENAME).write_text("{not json")
+    (_isolated_cache / wrc._INDEX_FILENAME).write_text("{not json", encoding="utf-8")
     assert extract_cache_get("https://any.com") is None
 
 
@@ -324,7 +324,7 @@ def test_index_eviction_keeps_newest(monkeypatch, _isolated_cache):
         for i in range(6)
     }
     wrc._save_index(index)
-    saved = json.loads((_isolated_cache / wrc._INDEX_FILENAME).read_text())
+    saved = json.loads((_isolated_cache / wrc._INDEX_FILENAME).read_text(encoding="utf-8"))
     assert len(saved) == 3
     assert set(saved) == {"digest3", "digest4", "digest5"}
 

@@ -126,7 +126,7 @@ def test_probe_sends_chatgpt_account_id_from_jwt(monkeypatch):
 
 def _write_auth_store(hermes_home, payload):
     hermes_home.mkdir(parents=True, exist_ok=True)
-    (hermes_home / "auth.json").write_text(json.dumps(payload, indent=2))
+    (hermes_home / "auth.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _exhausted_pool_store(now=None):
@@ -233,7 +233,7 @@ def test_resolver_recovers_when_probe_confirms_reset(tmp_path, monkeypatch):
     assert resolved["api_key"] == "tok-quota"
     assert resolved["source"] == "credential_pool"
 
-    store = json.loads((hermes_home / "auth.json").read_text())
+    store = json.loads((hermes_home / "auth.json").read_text(encoding="utf-8"))
     entry = store["credential_pool"]["openai-codex"][0]
     assert entry["last_status"] is None
     assert entry["last_error_reset_at"] is None

@@ -75,7 +75,7 @@ def test_attach_completes_while_agent_is_still_building(session, tmp_path, metho
 
     if method == "file.attach":
         target = tmp_path / "notes.txt"
-        target.write_text("hello")
+        target.write_text("hello", encoding="utf-8")
         extra = {**extra, "path": str(target)}
 
     response = call(method, {"session_id": sid, **extra})

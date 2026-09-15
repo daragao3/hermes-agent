@@ -33,7 +33,7 @@ class TestManifest:
         )
         path = save_manifest(tmp_path, recipe)
         assert path == manifest_path(tmp_path)
-        payload = json.loads(path.read_text())
+        payload = json.loads(path.read_text(encoding="utf-8"))
         assert payload["version"] == 1
         assert "updatedAt" in payload
         assert load_manifest(tmp_path) == recipe

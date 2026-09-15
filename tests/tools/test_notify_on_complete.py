@@ -142,7 +142,7 @@ class TestCheckpointNotify:
             registry._running[s.id] = s
             registry._write_checkpoint()
 
-            data = json.loads((tmp_path / "procs.json").read_text())
+            data = json.loads((tmp_path / "procs.json").read_text(encoding="utf-8"))
             assert len(data) == 1
             assert data[0]["notify_on_complete"] is True
 

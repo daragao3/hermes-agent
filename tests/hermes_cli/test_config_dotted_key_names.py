@@ -48,11 +48,11 @@ def _isolated_hermes_home(tmp_path):
 
 
 def _write_config(tmp_path, data: dict):
-    (tmp_path / "config.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
 def _read_config(tmp_path):
-    return yaml.safe_load((tmp_path / "config.yaml").read_text())
+    return yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
 
 
 PROVIDER_CONFIG = {
@@ -254,7 +254,7 @@ class TestAtomicRoundtripYamlUpdate:
         atomic_roundtrip_yaml_update(
             path, "model_overrides.zai.glm-5.3.supports_reasoning", True
         )
-        saved = yaml.safe_load(path.read_text())
+        saved = yaml.safe_load(path.read_text(encoding="utf-8"))
         overrides = saved["model_overrides"]["zai"]
         assert overrides["glm-5.3"]["supports_reasoning"] is True
         assert "glm-5" not in overrides
@@ -263,20 +263,20 @@ class TestAtomicRoundtripYamlUpdate:
         from utils import atomic_roundtrip_yaml_update
 
         path = tmp_path / "config.yaml"
-        path.write_text("model_overrides: {}\n")
+        path.write_text("model_overrides: {}\n", encoding="utf-8")
         atomic_roundtrip_yaml_update(
             path, "model_overrides.zai.glm-5\\.3.supports_reasoning", True
         )
-        saved = yaml.safe_load(path.read_text())
+        saved = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert saved["model_overrides"]["zai"]["glm-5.3"]["supports_reasoning"] is True
 
     def test_plain_paths_unchanged(self, tmp_path):
         from utils import atomic_roundtrip_yaml_update
 
         path = tmp_path / "config.yaml"
-        path.write_text("# keep this comment\ndisplay:\n  personality: default\n")
+        path.write_text("# keep this comment\ndisplay:\n  personality: default\n", encoding="utf-8")
         atomic_roundtrip_yaml_update(path, "display.personality", "hacker")
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "# keep this comment" in text
         saved = yaml.safe_load(text)
         assert saved["display"]["personality"] == "hacker"

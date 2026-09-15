@@ -119,7 +119,7 @@ class TestGenerateZsh:
             f.write(out)
             path = f.name
         try:
-            result = subprocess.run(["zsh", "-n", path], capture_output=True, text=True)
+            result = subprocess.run(["zsh", "-n", path], capture_output=True, text=True, encoding="utf-8")
             assert result.returncode == 0, result.stderr
         finally:
             os.unlink(path)

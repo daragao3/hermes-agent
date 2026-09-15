@@ -19,8 +19,8 @@ def _install(home, monkeypatch, *, label="first", enabled=True):
     )
     plugin = home / "plugins" / "dual"
     plugin.mkdir(parents=True)
-    (plugin / "plugin.yaml").write_text("name: dual\nversion: 1.0.0\nkind: standalone\n")
-    (plugin / "values.py").write_text(f"LABEL = {label!r}\n")
+    (plugin / "plugin.yaml").write_text("name: dual\nversion: 1.0.0\nkind: standalone\n", encoding="utf-8")
+    (plugin / "values.py").write_text(f"LABEL = {label!r}\n", encoding="utf-8")
     (plugin / "__init__.py").write_text(textwrap.dedent('''\
         from agent.memory_provider import MemoryProvider
         from .values import LABEL
@@ -82,7 +82,7 @@ def test_same_name_different_sources_are_not_suppressed(tmp_path, monkeypatch):
     project = tmp_path / "project"
     source = project / ".hermes" / "plugins" / "dual"
     shutil.copytree(home / "plugins" / "dual", source)
-    (source / "values.py").write_text('LABEL = "project"\n')
+    (source / "values.py").write_text('LABEL = "project"\n', encoding="utf-8")
     monkeypatch.chdir(project)
     monkeypatch.setenv("HERMES_ENABLE_PROJECT_PLUGINS", "1")
     try:
@@ -101,8 +101,8 @@ def test_reexported_register_uses_plugin_source(tmp_path, monkeypatch, order):
     manager = _install(tmp_path, monkeypatch)
     plugin = tmp_path / "plugins" / "dual"
     original = plugin / "__init__.py"
-    (plugin / "implementation.py").write_text(original.read_text())
-    original.write_text("from .implementation import register, Provider  # MemoryProvider\n")
+    (plugin / "implementation.py").write_text(original.read_text(), encoding="utf-8")
+    original.write_text("from .implementation import register, Provider  # MemoryProvider\n", encoding="utf-8")
     try:
         if order == "plugin-first":
             manager.discover_and_load()

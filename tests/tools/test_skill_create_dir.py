@@ -186,4 +186,4 @@ class TestCreateRouting:
             "old_string": "Body.", "new_string": "Patched.",
         }]))
         assert res.get("success"), res
-        assert "Patched." in (brain / "patchable-skill" / "SKILL.md").read_text()
+        assert "Patched." in (brain / "patchable-skill" / "SKILL.md").read_text(encoding="utf-8")

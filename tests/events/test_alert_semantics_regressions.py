@@ -34,7 +34,7 @@ def test_gateway_maintenance_context_requires_exact_scope_and_active_window(tmp_
               "opened_at": (now - timedelta(minutes=5)).isoformat(),
               "expires_at": (now + timedelta(minutes=5)).isoformat(),
               "suppressed_rows": ["Hermes gateway*"]}
-    path.write_text(json.dumps(marker))
+    path.write_text(json.dumps(marker), encoding="utf-8")
     context = gateway_maintenance_context(path=path, now=now)
     assert context["owner"] == "fixture-owner" and context["readiness"] == "unconfirmed"
     event = Event.create(event_type=EventType.GATEWAY_STOPPED, source="gateway",
@@ -44,14 +44,14 @@ def test_gateway_maintenance_context_requires_exact_scope_and_active_window(tmp_
     assert "Readiness remains unconfirmed" in gateway_stop_body(event.payload)
     for rows in (["*"], ["JobFlow*"], ["Hermes gateway*", "*"]):
         marker["suppressed_rows"] = rows
-        path.write_text(json.dumps(marker))
+        path.write_text(json.dumps(marker), encoding="utf-8")
         assert gateway_maintenance_context(path=path, now=now) is None
     marker["suppressed_rows"] = ["Hermes gateway*"]
-    path.write_text(json.dumps(marker))
+    path.write_text(json.dumps(marker), encoding="utf-8")
     assert gateway_maintenance_context(path=path, now=now + timedelta(minutes=6)) is None
     marker["opened_at"] = (now - timedelta(hours=9)).isoformat()
     marker["expires_at"] = (now + timedelta(hours=1)).isoformat()
-    path.write_text(json.dumps(marker))
+    path.write_text(json.dumps(marker), encoding="utf-8")
     assert gateway_maintenance_context(path=path, now=now) is None
 
 
@@ -120,7 +120,7 @@ def test_delayed_recovery_remains_historical_after_new_failure(tmp_path):
     from events.subscribers.telegram_notifier import TelegramNotifier
     bus = EventBus(db_path=tmp_path / "bus.db")
     topics = tmp_path / "topics.json"
-    topics.write_text(json.dumps({"group_chat_id": "-1", "topics": {"watchdog_alerts": {"thread_id": 100}}}))
+    topics.write_text(json.dumps({"group_chat_id": "-1", "topics": {"watchdog_alerts": {"thread_id": 100}}}), encoding="utf-8")
     sent = []
     def notifier():
         return TelegramNotifier(bus, topics_path=topics, verbosity_path=tmp_path / "verbosity.json",
@@ -177,7 +177,7 @@ def test_soft_deadline_is_pending_and_same_execution_alerts_coalesce(tmp_path):
     from events.subscribers.telegram_notifier import TelegramNotifier
     bus = EventBus(db_path=tmp_path / "bus.db")
     topics = tmp_path / "topics.json"
-    topics.write_text(json.dumps({"group_chat_id": "-1", "topics": {"watchdog_alerts": {"thread_id": 100}}}))
+    topics.write_text(json.dumps({"group_chat_id": "-1", "topics": {"watchdog_alerts": {"thread_id": 100}}}), encoding="utf-8")
     sent = []
     notifier = TelegramNotifier(bus, topics_path=topics, verbosity_path=tmp_path / "verbosity.json",
                                 send_fn=lambda chat, thread, message: sent.append(message))

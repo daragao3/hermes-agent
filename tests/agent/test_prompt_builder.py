@@ -247,7 +247,7 @@ class TestParseSkillFile:
     def test_long_description_truncated(self, tmp_path):
         skill_file = tmp_path / "SKILL.md"
         long_desc = "A" * 100
-        skill_file.write_text(f"---\ndescription: {long_desc}\n---\n")
+        skill_file.write_text(f"---\ndescription: {long_desc}\n---\n", encoding="utf-8")
         _, _, desc = _parse_skill_file(skill_file)
         assert len(desc) <= 60
         assert desc.endswith("...")
@@ -255,7 +255,7 @@ class TestParseSkillFile:
 
     def test_logs_parse_failures_and_returns_defaults(self, tmp_path, monkeypatch, caplog):
         skill_file = tmp_path / "SKILL.md"
-        skill_file.write_text("---\nname: broken\n---\n")
+        skill_file.write_text("---\nname: broken\n---\n", encoding="utf-8")
 
         def boom(*args, **kwargs):
             raise OSError("read exploded")
@@ -314,7 +314,7 @@ class TestBuildSkillsSystemPrompt:
         for subdir in ["search", "search"]:
             d = cat_dir / subdir
             d.mkdir(parents=True, exist_ok=True)
-            (d / "SKILL.md").write_text("---\ndescription: Search stuff\n---\n")
+            (d / "SKILL.md").write_text("---\ndescription: Search stuff\n---\n", encoding="utf-8")
         result = build_skills_system_prompt()
         # "search" should appear only once per category
         assert result.count("- search") == 1
@@ -407,7 +407,7 @@ class TestBuildContextFilesPrompt:
         assert "Hermes Agent" in result
 
     def test_loads_agents_md(self, tmp_path):
-        (tmp_path / "AGENTS.md").write_text("Use Ruff for linting.")
+        (tmp_path / "AGENTS.md").write_text("Use Ruff for linting.", encoding="utf-8")
         result = build_context_files_prompt(cwd=str(tmp_path))
         assert "Ruff for linting" in result
         assert "Project Context" in result
@@ -418,13 +418,13 @@ class TestBuildContextFilesPrompt:
         # git-root AGENTS.md + intermediate + cwd are all merged, root first
         # and cwd last so deeper guidance takes precedence.
         (tmp_path / ".git").mkdir()
-        (tmp_path / "AGENTS.md").write_text("Root: use Ruff.")
+        (tmp_path / "AGENTS.md").write_text("Root: use Ruff.", encoding="utf-8")
         pkg = tmp_path / "packages"
         pkg.mkdir()
-        (pkg / "AGENTS.md").write_text("Packages: pnpm workspace.")
+        (pkg / "AGENTS.md").write_text("Packages: pnpm workspace.", encoding="utf-8")
         app = pkg / "webapp"
         app.mkdir()
-        (app / "AGENTS.md").write_text("Webapp: React 19 only.")
+        (app / "AGENTS.md").write_text("Webapp: React 19 only.", encoding="utf-8")
         result = build_context_files_prompt(cwd=str(app), skip_soul=True)
         assert "Root: use Ruff." in result
         assert "Packages: pnpm workspace." in result
@@ -440,7 +440,7 @@ class TestBuildContextFilesPrompt:
     def test_agents_md_chain_skips_gaps(self, tmp_path):
         # Intermediate dirs without AGENTS.md contribute nothing.
         (tmp_path / ".git").mkdir()
-        (tmp_path / "AGENTS.md").write_text("Root rules.")
+        (tmp_path / "AGENTS.md").write_text("Root rules.", encoding="utf-8")
         deep = tmp_path / "a" / "b" / "c"
         deep.mkdir(parents=True)
         result = build_context_files_prompt(cwd=str(deep), skip_soul=True)
@@ -449,10 +449,10 @@ class TestBuildContextFilesPrompt:
 
     def test_agents_md_chain_dedupes_identical_content(self, tmp_path):
         (tmp_path / ".git").mkdir()
-        (tmp_path / "AGENTS.md").write_text("Same rules everywhere.")
+        (tmp_path / "AGENTS.md").write_text("Same rules everywhere.", encoding="utf-8")
         sub = tmp_path / "sub"
         sub.mkdir()
-        (sub / "AGENTS.md").write_text("Same rules everywhere.")
+        (sub / "AGENTS.md").write_text("Same rules everywhere.", encoding="utf-8")
         result = build_context_files_prompt(cwd=str(sub), skip_soul=True)
         assert result.count("Same rules everywhere.") == 1
 
@@ -464,13 +464,13 @@ class TestBuildContextFilesPrompt:
         (tmp_path / ".git").mkdir()
         sub = tmp_path / "sub"
         sub.mkdir()
-        (sub / "AGENTS.md").write_text("Only file.")
+        (sub / "AGENTS.md").write_text("Only file.", encoding="utf-8")
         assert _load_agents_md(sub) == "## AGENTS.md\n\nOnly file."
 
     def test_agents_md_no_git_root_stays_cwd_only(self, tmp_path):
         # Without a git root, parents are never consulted (no picking up an
         # AGENTS.md planted in /tmp or $HOME).
-        (tmp_path / "AGENTS.md").write_text("Planted in parent.")
+        (tmp_path / "AGENTS.md").write_text("Planted in parent.", encoding="utf-8")
         sub = tmp_path / "sub"
         sub.mkdir()
         from agent.prompt_builder import _load_agents_md
@@ -480,22 +480,22 @@ class TestBuildContextFilesPrompt:
     # --- AGENTS.override.md personal override (port of pi#7681) ---
 
     def test_agents_override_md_wins_over_agents_md(self, tmp_path):
-        (tmp_path / "AGENTS.md").write_text("Use Ruff for linting.")
-        (tmp_path / "AGENTS.override.md").write_text("Use Black instead.")
+        (tmp_path / "AGENTS.md").write_text("Use Ruff for linting.", encoding="utf-8")
+        (tmp_path / "AGENTS.override.md").write_text("Use Black instead.", encoding="utf-8")
         result = build_context_files_prompt(cwd=str(tmp_path))
         assert "Use Black instead" in result
         assert "Ruff for linting" not in result
         assert "AGENTS.override.md" in result
 
     def test_agents_override_md_loads_alone(self, tmp_path):
-        (tmp_path / "AGENTS.override.md").write_text("Override-only context.")
+        (tmp_path / "AGENTS.override.md").write_text("Override-only context.", encoding="utf-8")
         result = build_context_files_prompt(cwd=str(tmp_path))
         assert "Override-only context" in result
         assert "Project Context" in result
 
     def test_hermes_md_still_wins_over_agents_override(self, tmp_path):
-        (tmp_path / ".hermes.md").write_text("Hermes-first context.")
-        (tmp_path / "AGENTS.override.md").write_text("Override context.")
+        (tmp_path / ".hermes.md").write_text("Hermes-first context.", encoding="utf-8")
+        (tmp_path / "AGENTS.override.md").write_text("Override context.", encoding="utf-8")
         result = build_context_files_prompt(cwd=str(tmp_path))
         assert "Hermes-first context" in result
         assert "Override context" not in result
@@ -508,7 +508,7 @@ class TestBuildContextFilesPrompt:
         import agent.runtime_cwd as rt
 
         monkeypatch.setattr(rt, "_PACKAGE_ROOT", tmp_path.resolve())
-        (tmp_path / "AGENTS.md").write_text("Never give up on the right solution.")
+        (tmp_path / "AGENTS.md").write_text("Never give up on the right solution.", encoding="utf-8")
         monkeypatch.chdir(tmp_path)
         result = build_context_files_prompt(cwd=None, skip_soul=True)
         assert "Never give up" not in result
@@ -543,7 +543,7 @@ class TestBuildContextFilesPrompt:
 
 
     def test_loads_claude_md(self, tmp_path):
-        (tmp_path / "CLAUDE.md").write_text("Use type hints everywhere.")
+        (tmp_path / "CLAUDE.md").write_text("Use type hints everywhere.", encoding="utf-8")
         result = build_context_files_prompt(cwd=str(tmp_path))
         assert "type hints" in result
         assert "CLAUDE.md" in result
@@ -557,8 +557,8 @@ class TestBuildContextFilesPrompt:
     def test_claude_md_uppercase_takes_priority(self, tmp_path):
         uppercase = tmp_path / "CLAUDE.md"
         lowercase = tmp_path / "claude.md"
-        uppercase.write_text("From uppercase.")
-        lowercase.write_text("From lowercase.")
+        uppercase.write_text("From uppercase.", encoding="utf-8")
+        lowercase.write_text("From lowercase.", encoding="utf-8")
         if uppercase.samefile(lowercase):
             pytest.skip("filesystem is case-insensitive")
         result = build_context_files_prompt(cwd=str(tmp_path))
@@ -576,7 +576,7 @@ class TestBuildContextFilesPrompt:
 
 class TestFindHermesMd:
     def test_finds_in_cwd(self, tmp_path):
-        (tmp_path / ".hermes.md").write_text("rules")
+        (tmp_path / ".hermes.md").write_text("rules", encoding="utf-8")
         assert _find_hermes_md(tmp_path) == tmp_path / ".hermes.md"
 
 
@@ -597,7 +597,7 @@ class TestFindHermesMd:
 
     def test_walks_to_git_root(self, tmp_path):
         (tmp_path / ".git").mkdir()
-        (tmp_path / ".hermes.md").write_text("root rules")
+        (tmp_path / ".hermes.md").write_text("root rules", encoding="utf-8")
         sub = tmp_path / "a" / "b"
         sub.mkdir(parents=True)
         assert _find_hermes_md(sub) == tmp_path / ".hermes.md"
@@ -615,7 +615,7 @@ class TestFindHermesMd:
 
         parent = tmp_path / "parent"
         parent.mkdir()
-        (parent / ".hermes.md").write_text("planted by another user")
+        (parent / ".hermes.md").write_text("planted by another user", encoding="utf-8")
         cwd = parent / "work"
         cwd.mkdir()
         # No git root anywhere up the tree.
@@ -1197,8 +1197,8 @@ class TestParallelToolCallGuidance:
 class TestContextFileReadTimeout:
     def test_slow_hermes_md_is_skipped_and_agents_md_still_loads(self, tmp_path, monkeypatch, caplog):
         (tmp_path / ".git").mkdir()
-        (tmp_path / ".hermes.md").write_text("Hermes project rules.")
-        (tmp_path / "AGENTS.md").write_text("Agent fallback rules.")
+        (tmp_path / ".hermes.md").write_text("Hermes project rules.", encoding="utf-8")
+        (tmp_path / "AGENTS.md").write_text("Agent fallback rules.", encoding="utf-8")
         # Patch the module object build_context_files_prompt actually closes
         # over: an earlier test re-imports agent.prompt_builder, so the
         # sys.modules entry can be a different module object.

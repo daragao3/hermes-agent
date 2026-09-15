@@ -20,8 +20,8 @@ def mux_home(tmp_path, monkeypatch):
 
     home = tmp_path / "hh"
     (home / "profiles" / "secondary").mkdir(parents=True)
-    (home / ".env").write_text("")
-    (home / "profiles" / "secondary" / ".env").write_text("")
+    (home / ".env").write_text("", encoding="utf-8")
+    (home / "profiles" / "secondary" / ".env").write_text("", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
     for key in (
         "TELEGRAM_ALLOWED_USERS",
@@ -76,7 +76,7 @@ def test_routed_primary_callback_uses_routed_pairing_store_and_transport_allowli
     runner = _runner(mux_home)
     store = runner.pairing_stores["secondary"]
     store._save_json(store._approved_path("telegram"), {"777": {}})
-    (mux_home / ".env").write_text("TELEGRAM_ALLOWED_USERS=999\n")
+    (mux_home / ".env").write_text("TELEGRAM_ALLOWED_USERS=999\n", encoding="utf-8")
     tg = _telegram(runner)
 
     # Paired only in the routed profile → allowed in the routed chat only.
@@ -93,7 +93,7 @@ def test_bot_sender_reaches_allow_bots_policy_through_callback(mux_home):
     from gateway.run import _profile_runtime_scope
 
     runner = _runner(mux_home)
-    (mux_home / ".env").write_text("TELEGRAM_ALLOWED_USERS=999\nTELEGRAM_ALLOW_BOTS=all\n")
+    (mux_home / ".env").write_text("TELEGRAM_ALLOWED_USERS=999\nTELEGRAM_ALLOW_BOTS=all\n", encoding="utf-8")
     tg = _telegram(runner)
 
     def msg(uid, is_bot):
@@ -121,7 +121,7 @@ def test_slack_interactive_auth_prefers_wired_profile_check(mux_home, monkeypatc
     runner = _runner(mux_home)
     runner.adapters = {}
     sec_home = mux_home / "profiles" / "secondary"
-    (sec_home / ".env").write_text("SLACK_ALLOWED_USERS=U_SEC\n")
+    (sec_home / ".env").write_text("SLACK_ALLOWED_USERS=U_SEC\n", encoding="utf-8")
     monkeypatch.setenv("SLACK_ALLOW_ALL_USERS", "true")
 
     def slack(with_check):

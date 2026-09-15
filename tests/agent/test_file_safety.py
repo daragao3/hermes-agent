@@ -75,7 +75,7 @@ class TestCacheFileReadBlocking:
         hermes_home = tmp_path / ".hermes"
         cache = hermes_home / "skills" / ".hub" / "index-cache" / "data.json"
         cache.parent.mkdir(parents=True)
-        cache.write_text("{}")
+        cache.write_text("{}", encoding="utf-8")
 
         with patch("agent.file_safety._hermes_home_path", return_value=hermes_home):
             error = get_read_block_error(str(cache))
@@ -87,7 +87,7 @@ class TestCacheFileReadBlocking:
         hermes_home = tmp_path / ".hermes"
         hub = hermes_home / "skills" / ".hub" / "metadata.json"
         hub.parent.mkdir(parents=True)
-        hub.write_text("{}")
+        hub.write_text("{}", encoding="utf-8")
 
         with patch("agent.file_safety._hermes_home_path", return_value=hermes_home):
             error = get_read_block_error(str(hub))
@@ -121,7 +121,7 @@ class TestCombinedGuards:
         hermes_home = tmp_path / ".hermes"
         cache = hermes_home / "skills" / ".hub" / "index-cache" / "x"
         cache.parent.mkdir(parents=True)
-        cache.write_text("")
+        cache.write_text("", encoding="utf-8")
 
         with patch("agent.file_safety._hermes_home_path", return_value=hermes_home):
             error = get_read_block_error(str(cache))

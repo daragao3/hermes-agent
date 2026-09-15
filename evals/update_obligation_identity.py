@@ -45,7 +45,7 @@ try:
             ]
         },
     }
-    (d / "latest.json").write_text(json.dumps(receipt))
+    (d / "latest.json").write_text(json.dumps(receipt), encoding="utf-8")
 
     def observe(label):
         row = {
@@ -59,19 +59,19 @@ try:
     observe("current-successors")
     home = root / ".hermes/profiles/beta"
     state = home / "gateway_state.json"
-    payload = json.loads(state.read_text())
+    payload = json.loads(state.read_text(encoding="utf-8"))
     payload["code_sha"] = "old"
-    state.write_text(json.dumps(payload))
+    state.write_text(json.dumps(payload), encoding="utf-8")
     observe("stale-beta")
     payload["code_sha"] = None
-    state.write_text(json.dumps(payload))
+    state.write_text(json.dumps(payload), encoding="utf-8")
     observe("unknown-beta")
     children[1].terminate()
     children[1].wait(timeout=10)
     observe("missing-beta-with-current-alpha")
     assert rows[1]["pending"] and rows[2]["pending"] and rows[3]["pending"]
     print("VERDICT:", "FIXED" if not rows[0]["pending"] else "REPRODUCED")
-    assert json.loads((d / "latest.json").read_text()) == receipt
+    assert json.loads((d / "latest.json").read_text(encoding="utf-8")) == receipt
     assert not rows[0]["pending"], (
         "Current identity-matched successors must settle the warning"
     )

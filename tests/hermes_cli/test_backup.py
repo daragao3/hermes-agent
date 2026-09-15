@@ -66,8 +66,8 @@ def _advance_backup_clock(seconds: float = 1.1) -> None:
 
 def _make_hermes_tree(root: Path) -> None:
     """Create a realistic ~/.hermes directory structure for testing."""
-    (root / "config.yaml").write_text("model:\n  provider: openrouter\n")
-    (root / ".env").write_text("OPENROUTER_API_KEY=sk-test-123\n")
+    (root / "config.yaml").write_text("model:\n  provider: openrouter\n", encoding="utf-8")
+    (root / ".env").write_text("OPENROUTER_API_KEY=sk-test-123\n", encoding="utf-8")
     for db_name in ("memory_store.db", "hermes_state.db"):
         with sqlite3.connect(root / db_name) as conn:
             conn.execute("CREATE TABLE sample (value TEXT)")
@@ -75,36 +75,36 @@ def _make_hermes_tree(root: Path) -> None:
 
     # Sessions
     (root / "sessions").mkdir(exist_ok=True)
-    (root / "sessions" / "abc123.json").write_text("{}")
+    (root / "sessions" / "abc123.json").write_text("{}", encoding="utf-8")
 
     # Skills
     (root / "skills").mkdir(exist_ok=True)
     (root / "skills" / "my-skill").mkdir()
-    (root / "skills" / "my-skill" / "SKILL.md").write_text("# My Skill\n")
+    (root / "skills" / "my-skill" / "SKILL.md").write_text("# My Skill\n", encoding="utf-8")
 
     # Skins
     (root / "skins").mkdir(exist_ok=True)
-    (root / "skins" / "cyber.yaml").write_text("name: cyber\n")
+    (root / "skins" / "cyber.yaml").write_text("name: cyber\n", encoding="utf-8")
 
     # Cron
     (root / "cron").mkdir(exist_ok=True)
-    (root / "cron" / "jobs.json").write_text("[]")
+    (root / "cron" / "jobs.json").write_text("[]", encoding="utf-8")
 
     # Memories
     (root / "memories").mkdir(exist_ok=True)
-    (root / "memories" / "notes.json").write_text("{}")
+    (root / "memories" / "notes.json").write_text("{}", encoding="utf-8")
 
     # Profiles
     (root / "profiles").mkdir(exist_ok=True)
     (root / "profiles" / "coder").mkdir()
-    (root / "profiles" / "coder" / "config.yaml").write_text("model:\n  provider: anthropic\n")
-    (root / "profiles" / "coder" / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-123\n")
+    (root / "profiles" / "coder" / "config.yaml").write_text("model:\n  provider: anthropic\n", encoding="utf-8")
+    (root / "profiles" / "coder" / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-123\n", encoding="utf-8")
 
     # hermes-agent repo (should be EXCLUDED)
     (root / "hermes-agent").mkdir(exist_ok=True)
-    (root / "hermes-agent" / "run_agent.py").write_text("# big file\n")
+    (root / "hermes-agent" / "run_agent.py").write_text("# big file\n", encoding="utf-8")
     (root / "hermes-agent" / ".git").mkdir()
-    (root / "hermes-agent" / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (root / "hermes-agent" / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
 
     # __pycache__ (should be EXCLUDED)
     (root / "plugins").mkdir(exist_ok=True)
@@ -112,11 +112,11 @@ def _make_hermes_tree(root: Path) -> None:
     (root / "plugins" / "__pycache__" / "mod.cpython-312.pyc").write_bytes(b"\x00")
 
     # PID files (should be EXCLUDED)
-    (root / "gateway.pid").write_text("12345")
+    (root / "gateway.pid").write_text("12345", encoding="utf-8")
 
     # Logs (should be included)
     (root / "logs").mkdir(exist_ok=True)
-    (root / "logs" / "agent.log").write_text("log line\n")
+    (root / "logs" / "agent.log").write_text("log line\n", encoding="utf-8")
 
 
 def _symlink_file_or_skip(link: Path, target: Path) -> None:
@@ -227,7 +227,7 @@ class TestIterBackupFiles:
         # hermes-agent holding real skill content.
         nested = root / "skills" / "autonomous-ai-agents" / "hermes-agent"
         nested.mkdir(parents=True)
-        (nested / "SKILL.md").write_text("# nested skill\n")
+        (nested / "SKILL.md").write_text("# nested skill\n", encoding="utf-8")
 
         # A root-level managed runtime tree that both paths must prune.
         (root / "models").mkdir()
@@ -334,7 +334,7 @@ class TestBackup:
         hermes_home.mkdir()
         _make_hermes_tree(hermes_home)
         outside = tmp_path / "outside-secret.txt"
-        outside.write_text("outside secret\n")
+        outside.write_text("outside secret\n", encoding="utf-8")
         _symlink_file_or_skip(hermes_home / "skills" / "outside-link.txt", outside)
 
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
@@ -506,7 +506,7 @@ class TestImport:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         live_state = '{"gateway_state": "running"}'
-        (hermes_home / "profiles" / "coder" / "gateway_state.json").write_text(live_state)
+        (hermes_home / "profiles" / "coder" / "gateway_state.json").write_text(live_state, encoding="utf-8")
 
         zip_path = tmp_path / "backup.zip"
         self._make_backup_zip(zip_path, {
@@ -521,10 +521,10 @@ class TestImport:
         run_import(args)
 
         # Profile config is restored, but its live gateway state is preserved.
-        assert (hermes_home / "profiles" / "coder" / "config.yaml").read_text() == "model: anthropic\n"
+        assert (hermes_home / "profiles" / "coder" / "config.yaml").read_text(encoding="utf-8") == "model: anthropic\n"
         assert (
             hermes_home / "profiles" / "coder" / "gateway_state.json"
-        ).read_text() == live_state
+        ).read_text(encoding="utf-8") == live_state
 
     def test_preserves_runtime_pid_and_process_files(self, tmp_path, monkeypatch):
         """gateway.pid / cron.pid / gateway.lock / processes.json from a backup
@@ -536,8 +536,8 @@ class TestImport:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         # Live runtime files belonging to the target's own processes.
-        (hermes_home / "gateway.pid").write_text("4242")
-        (hermes_home / "processes.json").write_text('{"live": true}')
+        (hermes_home / "gateway.pid").write_text("4242", encoding="utf-8")
+        (hermes_home / "processes.json").write_text('{"live": true}', encoding="utf-8")
 
         zip_path = tmp_path / "backup.zip"
         self._make_backup_zip(zip_path, {
@@ -554,8 +554,8 @@ class TestImport:
         run_import(args)
 
         # Live runtime files are untouched; the backup's foreign ones never land.
-        assert (hermes_home / "gateway.pid").read_text() == "4242"
-        assert (hermes_home / "processes.json").read_text() == '{"live": true}'
+        assert (hermes_home / "gateway.pid").read_text(encoding="utf-8") == "4242"
+        assert (hermes_home / "processes.json").read_text(encoding="utf-8") == '{"live": true}'
         # cron.pid / gateway.lock had no live copy and were not seeded.
         assert not (hermes_home / "cron.pid").exists()
         assert not (hermes_home / "gateway.lock").exists()
@@ -620,8 +620,8 @@ class TestRoundTrip:
         run_import(Namespace(zipfile=str(out_zip), force=True))
 
         # Verify key files
-        assert (dst_home / "config.yaml").read_text() == "model:\n  provider: openrouter\n"
-        assert (dst_home / ".env").read_text() == "OPENROUTER_API_KEY=sk-test-123\n"
+        assert (dst_home / "config.yaml").read_text(encoding="utf-8") == "model:\n  provider: openrouter\n"
+        assert (dst_home / ".env").read_text(encoding="utf-8") == "OPENROUTER_API_KEY=sk-test-123\n"
         assert (dst_home / "skills" / "my-skill" / "SKILL.md").exists()
         assert (dst_home / "profiles" / "coder" / "config.yaml").exists()
         assert (dst_home / "sessions" / "abc123.json").exists()
@@ -716,11 +716,11 @@ class TestBackupEdgeCases:
         """Backup skips files with pre-1980 timestamps (ZIP limitation)."""
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
-        (hermes_home / "config.yaml").write_text("model: test\n")
+        (hermes_home / "config.yaml").write_text("model: test\n", encoding="utf-8")
 
         # Create a file with epoch timestamp (1970-01-01)
         old_file = hermes_home / "ancient.txt"
-        old_file.write_text("old data")
+        old_file.write_text("old data", encoding="utf-8")
         os.utime(old_file, (0, 0))
 
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
@@ -753,7 +753,7 @@ class TestImportEdgeCases:
         """Import handles EOFError during confirmation prompt."""
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
-        (hermes_home / "config.yaml").write_text("existing\n")
+        (hermes_home / "config.yaml").write_text("existing\n", encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
@@ -847,7 +847,7 @@ class TestImportAtomicWrites:
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         original = "model: original\napi_key: keep-me\n"
-        (hermes_home / "config.yaml").write_text(original)
+        (hermes_home / "config.yaml").write_text(original, encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
@@ -859,7 +859,7 @@ class TestImportAtomicWrites:
         run_import(Namespace(zipfile=str(zip_path), force=True))
 
         # Pre-fix this file is 0 bytes: the truncate landed, the write did not.
-        assert (hermes_home / "config.yaml").read_text() == original
+        assert (hermes_home / "config.yaml").read_text(encoding="utf-8") == original
         # And the aborted write must not litter the directory it staged in.
         assert list(hermes_home.glob(".config.yaml.*")) == []
 
@@ -872,7 +872,7 @@ class TestImportAtomicWrites:
         honcho = dst_home / ".honcho"
         honcho.mkdir()
         original = '{"peer":"original"}'
-        (honcho / "config.json").write_text(original)
+        (honcho / "config.json").write_text(original, encoding="utf-8")
 
         zip_path = tmp_path / "backup.zip"
         self._zip(zip_path, {
@@ -887,7 +887,7 @@ class TestImportAtomicWrites:
         from hermes_cli.backup import run_import
         run_import(Namespace(zipfile=str(zip_path), force=True))
 
-        assert (honcho / "config.json").read_text() == original
+        assert (honcho / "config.json").read_text(encoding="utf-8") == original
         assert list(honcho.glob(".config.json.*")) == []
 
     @pytest.mark.skipif(os.name != "posix", reason="POSIX symlinks")
@@ -903,7 +903,7 @@ class TestImportAtomicWrites:
         store = hermes_home / "store"
         store.mkdir()
         real = store / "config.yaml"
-        real.write_text("model: original\n")
+        real.write_text("model: original\n", encoding="utf-8")
         link = hermes_home / "config.yaml"
         link.symlink_to(real)
 
@@ -917,7 +917,7 @@ class TestImportAtomicWrites:
         run_import(Namespace(zipfile=str(zip_path), force=True))
 
         assert link.is_symlink(), "import replaced the symlink with a regular file"
-        assert real.read_text() == "model: restored\n"
+        assert real.read_text(encoding="utf-8") == "model: restored\n"
 
     @pytest.mark.skipif(os.name != "posix", reason="POSIX symlinks")
     def test_symlinked_external_target_keeps_its_symlink(self, tmp_path, monkeypatch):
@@ -929,7 +929,7 @@ class TestImportAtomicWrites:
         dotfiles = dst_home / "dotfiles"
         dotfiles.mkdir()
         real = dotfiles / "honcho.json"
-        real.write_text('{"peer":"original"}')
+        real.write_text('{"peer":"original"}', encoding="utf-8")
         honcho = dst_home / ".honcho"
         honcho.mkdir()
         link = honcho / "config.json"
@@ -948,7 +948,7 @@ class TestImportAtomicWrites:
         run_import(Namespace(zipfile=str(zip_path), force=True))
 
         assert link.is_symlink(), "import replaced the symlink with a regular file"
-        assert real.read_text() == '{"peer":"restored"}'
+        assert real.read_text(encoding="utf-8") == '{"peer":"restored"}'
 
     @pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
     def test_restore_preserves_existing_file_mode(self, tmp_path, monkeypatch):
@@ -961,7 +961,7 @@ class TestImportAtomicWrites:
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         target = hermes_home / "config.yaml"
-        target.write_text("model: original\n")
+        target.write_text("model: original\n", encoding="utf-8")
         os.chmod(target, 0o644)
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -972,7 +972,7 @@ class TestImportAtomicWrites:
         from hermes_cli.backup import run_import
         run_import(Namespace(zipfile=str(zip_path), force=True))
 
-        assert target.read_text() == "model: restored\n"
+        assert target.read_text(encoding="utf-8") == "model: restored\n"
         assert (target.stat().st_mode & 0o777) == 0o644
 
     @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership")
@@ -987,7 +987,7 @@ class TestImportAtomicWrites:
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         target = hermes_home / "config.yaml"
-        target.write_text("model: original\n")
+        target.write_text("model: original\n", encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
@@ -1007,7 +1007,7 @@ class TestImportAtomicWrites:
         from hermes_cli.backup import run_import
         run_import(Namespace(zipfile=str(zip_path), force=True))
 
-        assert target.read_text() == "model: restored\n"
+        assert target.read_text(encoding="utf-8") == "model: restored\n"
         # config.yaml pre-existed, so its owner is captured and re-applied;
         # state.db is newly created, so there is no prior owner to restore.
         assert chown_calls == [(target, 123, 456)]
@@ -1025,7 +1025,7 @@ class TestImportAtomicWrites:
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         target = hermes_home / "config.yaml"
-        target.write_text("model: original\n")
+        target.write_text("model: original\n", encoding="utf-8")
         os.chmod(target, 0o644)
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -1075,7 +1075,7 @@ class TestImportAtomicWrites:
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
         target = hermes_home / "helper.sh"
-        target.write_text("#!/bin/sh\necho original\n")
+        target.write_text("#!/bin/sh\necho original\n", encoding="utf-8")
         os.chmod(target, 0o6755)
         if stat.S_IMODE(target.stat().st_mode) != 0o6755:
             pytest.skip("filesystem refuses setuid/setgid on a user-owned file")
@@ -1104,7 +1104,7 @@ class TestImportAtomicWrites:
         run_import(Namespace(zipfile=str(zip_path), force=True))
 
         published = stat.S_IMODE(target.stat().st_mode)
-        assert target.read_text() == "#!/bin/sh\necho attacker\n"
+        assert target.read_text(encoding="utf-8") == "#!/bin/sh\necho attacker\n"
         assert not published & stat.S_ISUID, (
             f"archive content kept the target's setuid bit (mode 0o{published:o})"
         )
@@ -1295,14 +1295,14 @@ class TestQuickSnapshot:
         """Create a fake HERMES_HOME with critical state files."""
         home = tmp_path / ".hermes"
         home.mkdir()
-        (home / "config.yaml").write_text("model:\n  provider: openrouter\n")
-        (home / ".env").write_text("OPENROUTER_API_KEY=test-key-123\n")
-        (home / "auth.json").write_text('{"providers": {}}\n')
+        (home / "config.yaml").write_text("model:\n  provider: openrouter\n", encoding="utf-8")
+        (home / ".env").write_text("OPENROUTER_API_KEY=test-key-123\n", encoding="utf-8")
+        (home / "auth.json").write_text('{"providers": {}}\n', encoding="utf-8")
         (home / "channel_aliases.json").write_text(
             '{"whatsapp": {"120363408391911677@g.us": "general"}}\n'
         )
         (home / "cron").mkdir()
-        (home / "cron" / "jobs.json").write_text('{"jobs": []}\n')
+        (home / "cron" / "jobs.json").write_text('{"jobs": []}\n', encoding="utf-8")
 
         # Real SQLite database
         db_path = home / "state.db"
@@ -1365,7 +1365,7 @@ class TestQuickSnapshot:
         restore_quick_snapshot(snap_id, hermes_home=hermes_home)
 
         manifest = json.loads(
-            (backup_mod._quick_snapshot_root(hermes_home) / snap_id / "manifest.json").read_text()
+            (backup_mod._quick_snapshot_root(hermes_home) / snap_id / "manifest.json").read_text(encoding="utf-8")
         )
         non_db = [rel for rel in manifest.get("files", {}) if not rel.endswith(".db")]
         summary = [line for line in restored_log if line.startswith("Restored ")]
@@ -1453,7 +1453,7 @@ class TestQuickSnapshot:
         assert (snap_dir / "pairing" / "matrix-approved.json").exists()
         assert (snap_dir / "feishu_comment_pairing.json").exists()
 
-        with open(snap_dir / "manifest.json") as f:
+        with open(snap_dir / "manifest.json", encoding="utf-8") as f:
             meta = json.load(f)
         files = meta["files"]
         assert "platforms/pairing/telegram-approved.json" in files
@@ -1508,7 +1508,7 @@ class TestQuickSnapshot:
         assert not (second_dir / "state.db").exists()
 
         # Manifest must record the oversized skip
-        with open(second_dir / "manifest.json") as f:
+        with open(second_dir / "manifest.json", encoding="utf-8") as f:
             meta = json.load(f)
         assert "state.db" in meta.get("oversized_skipped", [])
 
@@ -1539,7 +1539,7 @@ class TestQuickSnapshotProjectsKanban:
         home = tmp_path / ".hermes"
         home.mkdir()
         # Minimal critical file so the snapshot is non-empty.
-        (home / "config.yaml").write_text("model:\n  provider: openrouter\n")
+        (home / "config.yaml").write_text("model:\n  provider: openrouter\n", encoding="utf-8")
 
         for name, table, row in (
             ("projects.db", "projects", ("p1", "demo")),
@@ -1714,7 +1714,7 @@ class TestPreUpdateBackup:
         from hermes_cli.backup import create_pre_update_backup
 
         outside = tmp_path / "outside-secret.txt"
-        outside.write_text("outside secret\n")
+        outside.write_text("outside secret\n", encoding="utf-8")
         _symlink_file_or_skip(hermes_home / "skills" / "outside-link.txt", outside)
 
         out = create_pre_update_backup(hermes_home=hermes_home)
@@ -1848,7 +1848,7 @@ class TestRestoreCronJobsIfEmptied:
     @staticmethod
     def _seed_jobs(path: Path, jobs):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"jobs": jobs}))
+        path.write_text(json.dumps({"jobs": jobs}), encoding="utf-8")
 
     def _make_snapshot(self, hermes_home: Path, label="pre-update"):
         from hermes_cli.backup import create_quick_snapshot
@@ -1864,7 +1864,7 @@ class TestRestoreCronJobsIfEmptied:
         assert snap_id
 
         # Migration silently empties the file (valid JSON, zero jobs).
-        jobs_path.write_text(json.dumps({"jobs": []}))
+        jobs_path.write_text(json.dumps({"jobs": []}), encoding="utf-8")
 
         result = restore_cron_jobs_if_emptied(snap_id, hermes_home=hermes_home)
         assert result is not None
@@ -1873,7 +1873,7 @@ class TestRestoreCronJobsIfEmptied:
         assert result["snapshot_id"] == snap_id
 
         # The live file now has the jobs back.
-        restored = json.loads(jobs_path.read_text())
+        restored = json.loads(jobs_path.read_text(encoding="utf-8"))
         assert len(restored["jobs"]) == 3
 
 
@@ -1892,7 +1892,7 @@ class TestRestoreCronJobsIfEmptied:
         assert snap_id
 
         # Desktop scheduler overwrites with only its own 1 job.
-        jobs_path.write_text(json.dumps({"jobs": [{"id": "desktop-watchdog"}]}))
+        jobs_path.write_text(json.dumps({"jobs": [{"id": "desktop-watchdog"}]}), encoding="utf-8")
 
         result = restore_cron_jobs_if_emptied(snap_id, hermes_home=hermes_home)
         assert result is not None
@@ -1900,7 +1900,7 @@ class TestRestoreCronJobsIfEmptied:
         assert result["job_count"] == 19
 
         # The live file now has all 19 jobs back.
-        restored = json.loads(jobs_path.read_text())
+        restored = json.loads(jobs_path.read_text(encoding="utf-8"))
         assert len(restored["jobs"]) == 19
 
 
@@ -2072,8 +2072,8 @@ class TestRestoreConfigModelSettingsIfRewritten:
 class TestMemoryProviderExternalPaths:
     def _make_min_tree(self, hermes_home: Path) -> None:
         hermes_home.mkdir(parents=True, exist_ok=True)
-        (hermes_home / "config.yaml").write_text("model:\n  provider: openrouter\n")
-        (hermes_home / ".env").write_text("OPENROUTER_API_KEY=sk-test\n")
+        (hermes_home / "config.yaml").write_text("model:\n  provider: openrouter\n", encoding="utf-8")
+        (hermes_home / ".env").write_text("OPENROUTER_API_KEY=sk-test\n", encoding="utf-8")
         (hermes_home / "state.db").write_bytes(b"x")
 
 
@@ -2084,7 +2084,7 @@ class TestMemoryProviderExternalPaths:
         self._make_min_tree(hermes_home)
         outside = tmp_path.parent / "outside-home-secret"
         outside.mkdir(exist_ok=True)
-        (outside / "leak.json").write_text('{"secret":1}')
+        (outside / "leak.json").write_text('{"secret":1}', encoding="utf-8")
 
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -2127,7 +2127,7 @@ class TestMemoryProviderExternalPaths:
 
         restored = dst_home / ".honcho" / "config.json"
         assert restored.exists()
-        assert restored.read_text() == '{"peer":"bob"}'
+        assert restored.read_text(encoding="utf-8") == '{"peer":"bob"}'
         # Credential-shaped file tightened. POSIX only: Windows' chmod maps just
         # the owner-write bit onto the read-only attribute, so 0o600 is not
         # expressible there and st_mode stays 0o666. The restore-location and
@@ -2157,8 +2157,8 @@ class TestImportHonorsHermesHomeOverride:
 
         src_root = tmp_path / "src-home"
         src_root.mkdir()
-        (src_root / "config.yaml").write_text("model:\n  provider: anthropic\n")
-        (src_root / ".env").write_text("ANTHROPIC_API_KEY=sk-test\n")
+        (src_root / "config.yaml").write_text("model:\n  provider: anthropic\n", encoding="utf-8")
+        (src_root / ".env").write_text("ANTHROPIC_API_KEY=sk-test\n", encoding="utf-8")
         zip_path = tmp_path / "backup.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.write(src_root / "config.yaml", "config.yaml")
@@ -2172,7 +2172,7 @@ class TestImportHonorsHermesHomeOverride:
         profile = root / "profiles" / "coder"
         profile.mkdir(parents=True)
         # Live root config that must survive untouched.
-        (root / "config.yaml").write_text("model:\n  provider: openai\n")
+        (root / "config.yaml").write_text("model:\n  provider: openai\n", encoding="utf-8")
 
         monkeypatch.setenv("HERMES_HOME", str(profile))
         from hermes_constants import get_hermes_home
@@ -2188,10 +2188,10 @@ class TestImportHonorsHermesHomeOverride:
         args = argparse.Namespace(zipfile=str(zip_path), force=True)
         run_import(args)
 
-        assert (profile / "config.yaml").read_text() == (
+        assert (profile / "config.yaml").read_text(encoding="utf-8") == (
             "model:\n  provider: anthropic\n"
         )
-        assert (root / "config.yaml").read_text() == "model:\n  provider: openai\n"
+        assert (root / "config.yaml").read_text(encoding="utf-8") == "model:\n  provider: openai\n"
 
     def test_import_skips_gateway_install_for_non_default_home(
         self, tmp_path, monkeypatch
@@ -2204,7 +2204,7 @@ class TestImportHonorsHermesHomeOverride:
         sandbox.mkdir(parents=True)
         # Live default install markers.
         native_default.mkdir()
-        (native_default / "config.yaml").write_text("model:\n  provider: openai\n")
+        (native_default / "config.yaml").write_text("model:\n  provider: openai\n", encoding="utf-8")
 
         monkeypatch.setenv("HERMES_HOME", str(sandbox))
 
@@ -2450,7 +2450,7 @@ def test_run_backup_prunes_older_default_named_zips_but_not_others(tmp_path, mon
 
     home = tmp_path / ".hermes"
     home.mkdir()
-    (home / "config.yaml").write_text("model: x\n")
+    (home / "config.yaml").write_text("model: x\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     for i in range(4):

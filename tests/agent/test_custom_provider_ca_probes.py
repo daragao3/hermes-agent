@@ -52,7 +52,7 @@ def clean_env(monkeypatch):
 @pytest.fixture
 def bundle_file(tmp_path):
     path = tmp_path / "provider-ca.pem"
-    path.write_text("-----BEGIN CERTIFICATE-----\nstub\n-----END CERTIFICATE-----\n")
+    path.write_text("-----BEGIN CERTIFICATE-----\nstub\n-----END CERTIFICATE-----\n", encoding="utf-8")
     return str(path)
 
 
@@ -86,7 +86,7 @@ class TestResolveRequestsVerifyProviderScoped:
 
     def test_provider_ca_overrides_env_ssl_cert_file(self, clean_env, tmp_path, bundle_file):
         env_bundle = tmp_path / "env-ca.pem"
-        env_bundle.write_text("stub")
+        env_bundle.write_text("stub", encoding="utf-8")
         clean_env.setenv("SSL_CERT_FILE", str(env_bundle))
         with patch(
             "hermes_cli.config.get_compatible_custom_providers",

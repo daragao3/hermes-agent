@@ -43,7 +43,7 @@ def _setup_home(tmp_path, monkeypatch, config_text):
     home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HERMES_HOME", str(home))
     cfg = home / "config.yaml"
-    cfg.write_text(config_text)
+    cfg.write_text(config_text, encoding="utf-8")
     return home, cfg
 
 
@@ -71,7 +71,7 @@ class TestParseFailureProbe:
         from hermes_cli.config import get_active_config_parse_failure
 
         assert get_active_config_parse_failure()
-        cfg.write_text(VALID_YAML)  # user fixes the YAML — different size/mtime
+        cfg.write_text(VALID_YAML, encoding="utf-8")  # user fixes the YAML — different size/mtime
         assert get_active_config_parse_failure() is None
 
     def test_probe_none_for_valid_config(self, tmp_path, monkeypatch):
@@ -150,7 +150,7 @@ class TestResolveProviderCorruptConfig:
         with pytest.raises(AuthError):
             resolve_provider("auto")
 
-        cfg.write_text(VALID_YAML)
+        cfg.write_text(VALID_YAML, encoding="utf-8")
         assert resolve_provider("auto") == "openrouter"
 
     def test_explicit_provider_request_untouched(self, tmp_path, monkeypatch):

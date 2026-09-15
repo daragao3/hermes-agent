@@ -68,9 +68,9 @@ try:
             activated=rpc(ws,'session.activate',{'session_id':resumed['session_id']})
             after=rpc(ws,'session.history',{'session_id':resumed['session_id']})
         results[sid]={'first':first,'history':history,'resumed':resumed,'activated':activated,'after':after}
-    receipt={'tag':tag,'sha':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,stdin=subprocess.DEVNULL,text=True).strip(),'command':cmd,'home':str(home),'results':results}
-    (out/(tag+'-rpc.json')).write_text(json.dumps(receipt,indent=2))
-    (out/(tag+'-frames.json')).write_text(json.dumps(frames,indent=2))
+    receipt={'tag':tag,'sha':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,stdin=subprocess.DEVNULL,text=True, encoding="utf-8").strip(),'command':cmd,'home':str(home),'results':results}
+    (out/(tag+'-rpc.json')).write_text(json.dumps(receipt,indent=2), encoding="utf-8")
+    (out/(tag+'-frames.json')).write_text(json.dumps(frames,indent=2), encoding="utf-8")
     for sid, responses in results.items():
         for method, value in responses.items():
             messages = value['messages']

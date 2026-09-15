@@ -22,7 +22,7 @@ def test_gateway_failure_writer_preserves_accepted_turn_identity(tmp_path):
         timeout=90,
     )
     assert receipt.exists(), result.stdout + result.stderr
-    data = json.loads(receipt.read_text())
+    data = json.loads(receipt.read_text(encoding="utf-8"))
     assert all(row["reached"] for row in data["observations"]), data
     assert data["passed"] == data["total"], data["observations"]
     assert result.returncode == 0, result.stdout + result.stderr

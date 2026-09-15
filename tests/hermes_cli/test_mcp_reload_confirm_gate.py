@@ -49,7 +49,7 @@ class TestUserConfigMerge:
         legacy = {
             "approvals": {"mode": "manual", "timeout": 60, "cron_mode": "deny"},
         }
-        cfg_path.write_text(yaml.safe_dump(legacy))
+        cfg_path.write_text(yaml.safe_dump(legacy), encoding="utf-8")
 
         monkeypatch.setenv("HERMES_HOME", str(home))
         # Force a fresh reimport of config.py so the HERMES_HOME is honored.

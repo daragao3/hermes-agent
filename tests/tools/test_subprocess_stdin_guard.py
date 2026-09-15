@@ -51,7 +51,7 @@ def test_oauth_setup_token_keeps_inherited_stdin():
         REPO_ROOT / "agent" / "anthropic_credentials.py",
         REPO_ROOT / "agent" / "anthropic_adapter.py",
     ]
-    sources = [p.read_text() for p in candidates if p.exists()]
+    sources = [p.read_text(encoding="utf-8") for p in candidates if p.exists()]
     owners = [
         src for src in sources
         if 'subprocess.run([claude_path, "setup-token"])' in src

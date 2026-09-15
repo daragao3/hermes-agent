@@ -15,7 +15,7 @@ def _temp_home(tmp_path, monkeypatch):
 
 
 def _write_config(home, body: str) -> None:
-    (home / "config.yaml").write_text(textwrap.dedent(body))
+    (home / "config.yaml").write_text(textwrap.dedent(body), encoding="utf-8")
 
 
 def test_dashboard_ws_defaults_present(_temp_home):

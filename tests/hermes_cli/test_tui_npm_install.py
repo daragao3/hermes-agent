@@ -19,13 +19,13 @@ def main_mod():
 def _touch_ink(root: Path) -> None:
     ink = root / "node_modules" / "@hermes" / "ink" / "package.json"
     ink.parent.mkdir(parents=True, exist_ok=True)
-    ink.write_text("{}")
+    ink.write_text("{}", encoding="utf-8")
 
 
 def _touch_tui_entry(root: Path) -> None:
     entry = root / "dist" / "entry.js"
     entry.parent.mkdir(parents=True, exist_ok=True)
-    entry.write_text("console.log('tui')")
+    entry.write_text("console.log('tui')", encoding="utf-8")
 
 
 def _assert_utf8_replace_capture(kwargs: dict) -> None:
@@ -87,8 +87,8 @@ def test_install_when_version_differs_even_with_peer_drop(tmp_path: Path, main_m
 
 def test_no_install_when_lock_older_than_marker(tmp_path: Path, main_mod) -> None:
     _touch_ink(tmp_path)
-    (tmp_path / "package-lock.json").write_text("{}")
-    (tmp_path / "node_modules" / ".package-lock.json").write_text("{}")
+    (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "node_modules" / ".package-lock.json").write_text("{}", encoding="utf-8")
     os.utime(tmp_path / "package-lock.json", (100, 100))
     os.utime(tmp_path / "node_modules" / ".package-lock.json", (200, 200))
     assert main_tui_launch._tui_need_npm_install(tmp_path) is False
@@ -96,7 +96,7 @@ def test_no_install_when_lock_older_than_marker(tmp_path: Path, main_mod) -> Non
 
 def test_need_install_when_marker_missing(tmp_path: Path, main_mod) -> None:
     _touch_ink(tmp_path)
-    (tmp_path / "package-lock.json").write_text("{}")
+    (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
     assert main_tui_launch._tui_need_npm_install(tmp_path) is True
 
 
@@ -120,14 +120,14 @@ def _write_ws(root: Path, ws_lock: str, hidden_lock: str) -> Path:
     ``ui-tui/`` has no lockfile of its own so ``_workspace_root`` treats the
     parent as the workspace root and the launch scopes to ``--workspace ui-tui``.
     """
-    (root / "package-lock.json").write_text(ws_lock)
+    (root / "package-lock.json").write_text(ws_lock, encoding="utf-8")
     _touch_ink(root)
-    (root / "node_modules" / ".package-lock.json").write_text(hidden_lock)
+    (root / "node_modules" / ".package-lock.json").write_text(hidden_lock, encoding="utf-8")
     tui_dir = root / "ui-tui"
     tui_dir.mkdir(parents=True, exist_ok=True)
     # package.json (and no own lockfile) is what makes _workspace_root treat the
     # parent as the workspace root and the launch scope to --workspace ui-tui.
-    (tui_dir / "package.json").write_text('{"name":"hermes-tui"}')
+    (tui_dir / "package.json").write_text('{"name":"hermes-tui"}', encoding="utf-8")
     return tui_dir
 
 
@@ -273,7 +273,7 @@ def test_termux_install_catches_missing_child_workspace_dev_dep(
     tui_dir = _write_ws(tmp_path, ws_lock, hidden_lock)
     child = tui_dir / "packages" / "hermes-ink"
     child.mkdir(parents=True, exist_ok=True)
-    (child / "package.json").write_text('{"name":"@hermes/ink"}')
+    (child / "package.json").write_text('{"name":"@hermes/ink"}', encoding="utf-8")
 
     monkeypatch.setattr(main_mod, "_is_termux_startup_environment", lambda: False)
     assert main_tui_launch._tui_need_npm_install(tui_dir) is False
@@ -290,7 +290,7 @@ def test_no_install_prebuilt_bundle_mode(tmp_path: Path, main_mod) -> None:
 
 def test_need_rebuild_when_tui_bundle_missing(tmp_path: Path, main_mod) -> None:
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "entry.tsx").write_text("console.log('src')")
+    (tmp_path / "src" / "entry.tsx").write_text("console.log('src')", encoding="utf-8")
 
     assert main_tui_launch._tui_need_rebuild(tmp_path) is True
 
@@ -299,7 +299,7 @@ def test_no_rebuild_when_tui_bundle_newer_than_inputs(tmp_path: Path, main_mod) 
     _touch_tui_entry(tmp_path)
     src = tmp_path / "src"
     src.mkdir()
-    (src / "entry.tsx").write_text("console.log('src')")
+    (src / "entry.tsx").write_text("console.log('src')", encoding="utf-8")
     os.utime(src / "entry.tsx", (100, 100))
     os.utime(tmp_path / "dist" / "entry.js", (200, 200))
 
@@ -310,7 +310,7 @@ def test_rebuild_when_tui_source_newer_than_bundle(tmp_path: Path, main_mod) -> 
     _touch_tui_entry(tmp_path)
     src = tmp_path / "src"
     src.mkdir()
-    (src / "entry.tsx").write_text("console.log('src')")
+    (src / "entry.tsx").write_text("console.log('src')", encoding="utf-8")
     os.utime(tmp_path / "dist" / "entry.js", (100, 100))
     os.utime(src / "entry.tsx", (200, 200))
 
@@ -362,11 +362,11 @@ def test_make_tui_argv_scopes_npm_install_on_termux_workspace(
 ) -> None:
     tui_dir = tmp_path / "ui-tui"
     tui_dir.mkdir()
-    (tui_dir / "package.json").write_text("{}")
+    (tui_dir / "package.json").write_text("{}", encoding="utf-8")
     ink_dir = tui_dir / "packages" / "hermes-ink"
     ink_dir.mkdir(parents=True)
-    (ink_dir / "package.json").write_text("{}")
-    (tmp_path / "package-lock.json").write_text("{}")
+    (ink_dir / "package.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
 
     monkeypatch.setenv("TERMUX_VERSION", "1")
     monkeypatch.setattr(main_tui_launch, "_tui_need_npm_install", lambda _root: True)
@@ -402,8 +402,8 @@ def test_make_tui_argv_keeps_desktop_workspace_install_behaviour(
 ) -> None:
     tui_dir = tmp_path / "ui-tui"
     tui_dir.mkdir()
-    (tui_dir / "package.json").write_text("{}")
-    (tmp_path / "package-lock.json").write_text("{}")
+    (tui_dir / "package.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
 
     monkeypatch.delenv("TERMUX_VERSION", raising=False)
     monkeypatch.setenv("PREFIX", "/usr")
@@ -445,8 +445,8 @@ def test_make_tui_argv_npm_install_forces_include_dev(
     breaking the TUI build with `tsc`/`esbuild: command not found."""
     tui_dir = tmp_path / "ui-tui"
     tui_dir.mkdir()
-    (tui_dir / "package.json").write_text("{}")
-    (tmp_path / "package-lock.json").write_text("{}")
+    (tui_dir / "package.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
 
     monkeypatch.delenv("TERMUX_VERSION", raising=False)
     monkeypatch.setenv("PREFIX", "/usr")
@@ -499,7 +499,7 @@ def test_make_tui_argv_decodes_dev_prebuild_with_utf8_replace(
     ink_dir.mkdir(parents=True)
     tsx = tmp_path / "node_modules" / ".bin" / "tsx"
     tsx.parent.mkdir(parents=True)
-    tsx.write_text("")
+    tsx.write_text("", encoding="utf-8")
 
     monkeypatch.setattr(main_tui_launch, "_tui_need_npm_install", lambda _root: False)
     monkeypatch.setattr(main_mod.shutil, "which", lambda name: f"/bin/{name}")
@@ -529,7 +529,7 @@ def test_make_tui_argv_exits_with_recovery_hint_when_workspace_unrecoverable(
 
     bundled_entry = tmp_path / "bundled" / "entry.js"
     bundled_entry.parent.mkdir(parents=True)
-    bundled_entry.write_text("// bundled TUI")
+    bundled_entry.write_text("// bundled TUI", encoding="utf-8")
     monkeypatch.setattr(main_tui_launch, "_find_bundled_tui", lambda: bundled_entry)
 
     def which(name: str) -> str | None:
@@ -577,7 +577,7 @@ def test_need_npm_install_false_with_reduced_npm11_hidden_lockfile(
     on every TUI launch (#84617). After the fix it must be stable."""
     ws = tmp_path / "ui-tui"
     ws.mkdir()
-    (ws / "package.json").write_text("{}")
+    (ws / "package.json").write_text("{}", encoding="utf-8")
     _touch_ink(tmp_path)
     (tmp_path / "package-lock.json").write_text(
         json.dumps(
@@ -622,7 +622,7 @@ def test_need_npm_install_true_when_resolved_drifts(tmp_path: Path, main_mod) ->
     fix must not paper over real skew (#84617)."""
     ws = tmp_path / "ui-tui"
     ws.mkdir()
-    (ws / "package.json").write_text("{}")
+    (ws / "package.json").write_text("{}", encoding="utf-8")
     _touch_ink(tmp_path)
     (tmp_path / "package-lock.json").write_text(
         json.dumps(
@@ -661,7 +661,7 @@ def test_need_npm_install_true_when_regular_pkg_missing(tmp_path: Path, main_mod
     are exempt (#84617)."""
     ws = tmp_path / "ui-tui"
     ws.mkdir()
-    (ws / "package.json").write_text("{}")
+    (ws / "package.json").write_text("{}", encoding="utf-8")
     _touch_ink(tmp_path)
     (tmp_path / "package-lock.json").write_text(
         json.dumps(
@@ -745,11 +745,11 @@ def test_make_tui_argv_omits_workspace_and_scrubs_esbuild_override(
     """
     tui_dir = tmp_path / "ui-tui"
     tui_dir.mkdir()
-    (tui_dir / "package.json").write_text("{}")
+    (tui_dir / "package.json").write_text("{}", encoding="utf-8")
     # Simulate curl-install layout: tui_dir has its own lockfile
-    (tui_dir / "package-lock.json").write_text("{}")
+    (tui_dir / "package-lock.json").write_text("{}", encoding="utf-8")
     # Parent also has lockfile (but _workspace_root prefers tui_dir's own)
-    (tmp_path / "package-lock.json").write_text("{}")
+    (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
 
     monkeypatch.delenv("TERMUX_VERSION", raising=False)
     monkeypatch.setenv("PREFIX", "/usr")

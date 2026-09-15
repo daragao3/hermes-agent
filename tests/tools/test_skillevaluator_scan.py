@@ -168,7 +168,7 @@ class TestRunTier1Scan:
 
         def fake_run(cmd, **kwargs):
             outdir = Path(cmd[cmd.index("-o") + 1])
-            (outdir / "skillevaluator-output-1.json").write_text(json.dumps(payload))
+            (outdir / "skillevaluator-output-1.json").write_text(json.dumps(payload), encoding="utf-8")
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
         with mock.patch("tools.skillevaluator_scan.shutil.which", return_value="/usr/bin/skillevaluator"), \

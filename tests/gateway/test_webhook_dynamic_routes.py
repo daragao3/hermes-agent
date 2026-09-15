@@ -33,7 +33,7 @@ class TestDynamicRouteLoading:
 
     def test_loads_dynamic_routes(self, tmp_path):
         subs = {"my-hook": {"secret": "dynamic-secret", "prompt": "test", "events": []}}
-        (tmp_path / _DYNAMIC_ROUTES_FILENAME).write_text(json.dumps(subs))
+        (tmp_path / _DYNAMIC_ROUTES_FILENAME).write_text(json.dumps(subs), encoding="utf-8")
 
         adapter = _make_adapter(routes={"static": {"secret": "s"}})
         adapter._reload_dynamic_routes()

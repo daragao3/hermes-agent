@@ -249,7 +249,7 @@ class TestPtyBridgeClose:
         reaped = False
         while time.monotonic() < deadline:
             try:
-                os.kill(pid, 0)
+                os.kill(pid, 0)  # windows-footgun: ok -- POSIX-only test (skip_on_windows)
                 time.sleep(0.05)
             except ProcessLookupError:
                 reaped = True
@@ -291,7 +291,7 @@ class TestPtyBridgeClose:
 
         bridge.close()
 
-        assert sent == [(67890, signal.SIGHUP)]
+        assert sent == [(67890, signal.SIGHUP)]  # windows-footgun: ok -- asserts recorded fake-call args; nothing is signalled
         assert bridge._closed is True
 
 

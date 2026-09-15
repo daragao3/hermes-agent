@@ -40,7 +40,7 @@ def topics_config(tmp_path):
     }
     path = tmp_path / "telegram" / "topics.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(config))
+    path.write_text(json.dumps(config), encoding="utf-8")
     return path
 
 
@@ -55,7 +55,7 @@ def verbosity_config(tmp_path):
     }
     path = tmp_path / "telegram" / "verbosity.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config))
+    path.write_text(json.dumps(config), encoding="utf-8")
     return path
 
 
@@ -1800,7 +1800,7 @@ class TestBatchAgeSurvivesRestart:
     def _write_batch_state(self, tmp_path, state):
         path = tmp_path / "notifications" / "notifier_batch.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state))
+        path.write_text(json.dumps(state), encoding="utf-8")
 
     def test_restored_batch_with_old_started_at_flushes_immediately(
         self, tmp_path, monkeypatch,
@@ -2569,7 +2569,7 @@ class TestCronLifecycleRouting:
         }
         path = tmp_path / "telegram" / "topics_cron.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(config))
+        path.write_text(json.dumps(config), encoding="utf-8")
         return path
 
     def test_cron_lifecycle_routes_to_cron_firehose(
@@ -2752,7 +2752,7 @@ class TestJobflowFailureRouting:
         }
         path = tmp_path / "telegram" / "topics_no_firehose.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(config))
+        path.write_text(json.dumps(config), encoding="utf-8")
         notifier = self._notifier(bus, path, verbosity_config)
         ev = Event.create(
             EventType.CRON_FAILED, "jobflow-applier",

@@ -30,7 +30,7 @@ from tools.skills_guard import SCANNER_VERSION, scan_skill
 def _scan(tmp_path: Path, content: str):
     skill_dir = tmp_path / "skill"
     skill_dir.mkdir(exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(content)
+    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
     return scan_skill(skill_dir, source="community/test")
 
 

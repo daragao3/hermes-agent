@@ -220,7 +220,7 @@ class TestFailureClusterDetector:
     def test_window_caps_at_window_size(self, detector):
         for _ in range(10):
             detector.record("scout", success=False, error_text="timeout")
-        with open(detector.state_path) as f:
+        with open(detector.state_path, encoding="utf-8") as f:
             state = json.load(f)
         assert len(state["scout"]) == detector.window_size
 
@@ -236,7 +236,7 @@ class TestFailureClusterDetector:
     def test_malformed_state_file_resets_silently(self, tmp_path):
         from events.cluster_detector import FailureClusterDetector
         path = tmp_path / "state.json"
-        path.write_text("not json")
+        path.write_text("not json", encoding="utf-8")
         d = FailureClusterDetector(state_path=path)
         # First record after reset should not crash and should behave like
         # a fresh state.

@@ -112,18 +112,18 @@ repos:
       # With no --all flag the checker scans the paths pre-commit hands it, so
       # this costs a handful of files, not the 1932-file tree scan.
       #
-      # SCOPE MATCHES THE CI GATE ON PURPOSE. `--all` excludes tests/ and
-      # evals/ (see ALL_SCAN_SKIP_TOP_LEVEL in the script: a measured 2996-
-      # finding backlog, 2771 of them a bare read_text/write_text). A hook
-      # that scanned them would block commits on findings no CI job rejects,
-      # which trains people to reach for --no-verify -- so the exclude below
-      # tracks that list and must move with it.
+      # SCOPE MATCHES THE CI GATE ON PURPOSE, and it now covers everything.
+      # This hook carried `exclude: ^(tests|evals)/` to track the same
+      # deferral `--all` had (a measured 2996-finding backlog); a hook that
+      # blocked on findings no CI job rejects would train people to reach for
+      # --no-verify. The backlog reached zero on 2026-09-15 and
+      # ALL_SCAN_SKIP_TOP_LEVEL is now empty and pinned empty, so the exclude
+      # is gone with it. If one ever comes back, both must move together.
       - id: windows-footguns
         name: Windows footguns (staged files)
         entry: python scripts/check-windows-footguns.py
         language: system
         files: \.(py|pyw|pyi)$
-        exclude: ^(tests|evals)/
       - id: no-sdd-scratch
         name: block .superpowers scratch from being committed
         language: fail

@@ -69,7 +69,7 @@ class TestDelayedCprLocalPtyLeak:
         master, slave = _openpty_or_skip()
         try:
             tty.setraw(slave)
-            slave_w = os.fdopen(os.dup(slave), "w", buffering=1)
+            slave_w = os.fdopen(os.dup(slave), "w", buffering=1, encoding="utf-8")
             stop = threading.Event()
             queries = 0
 
@@ -141,7 +141,7 @@ class TestDelayedCprLocalPtyLeak:
         """Hermes CPR-disabled builder must not emit ESC[6n."""
         master, slave = _openpty_or_skip()
         try:
-            slave_w = os.fdopen(slave, "w", buffering=1)
+            slave_w = os.fdopen(slave, "w", buffering=1, encoding="utf-8")
             out = _build_cpr_disabled_output(slave_w)
             assert out is not None
             assert out.enable_cpr is False

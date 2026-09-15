@@ -23,7 +23,7 @@ def _read_model_cfg() -> dict:
     path = get_config_path()
     if not path.exists():
         return {}
-    data = yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     model = data.get("model", {})
     return model if isinstance(model, dict) else {}
 

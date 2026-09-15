@@ -104,7 +104,7 @@ class TestUserSkins:
             "tool_prefix": "▸",
         }
         import yaml
-        skin_file.write_text(yaml.dump(skin_data))
+        skin_file.write_text(yaml.dump(skin_data), encoding="utf-8")
 
         # Patch skins dir
         monkeypatch.setattr("hermes_cli.skin_engine._skins_dir", lambda: skins_dir)

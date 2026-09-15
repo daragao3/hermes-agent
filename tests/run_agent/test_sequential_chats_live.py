@@ -43,7 +43,7 @@ def _load_user_env() -> None:
     env_file = Path.home() / ".hermes" / ".env"
     if not env_file.exists():
         return
-    for raw in env_file.read_text().splitlines():
+    for raw in env_file.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue

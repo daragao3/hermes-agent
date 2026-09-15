@@ -77,7 +77,7 @@ def test_create_job_no_agent_error_still_wins(hermes_env):
 def test_valid_shapes_are_accepted(hermes_env):
     from cron.jobs import create_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
 
     no_agent_job = create_job(
         prompt=None, schedule="every 5m", script="w.sh", no_agent=True, deliver="local"
@@ -133,7 +133,7 @@ def test_update_job_rejects_dropping_last_skill_from_promptless_job(hermes_env):
 def test_update_job_rejects_clearing_script_from_promptless_job(hermes_env):
     from cron.jobs import create_job, update_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     job = create_job(prompt=None, schedule="every 5m", script="w.sh", deliver="local")
 
     with pytest.raises(ValueError, match="nothing to run"):
@@ -156,7 +156,7 @@ def test_update_job_rejects_toggling_no_agent_on_without_a_script(hermes_env):
 def test_update_job_rejects_removing_script_from_a_no_agent_job(hermes_env, blank):
     from cron.jobs import create_job, get_job, update_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     job = create_job(
         prompt=None, schedule="every 5m", script="w.sh", no_agent=True, deliver="local"
     )
@@ -171,7 +171,7 @@ def test_update_job_rejects_swapping_script_for_prompt_on_a_no_agent_job(hermes_
     """A prompt does not rescue no_agent — there is no agent to read it."""
     from cron.jobs import create_job, update_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     job = create_job(
         prompt=None, schedule="every 5m", script="w.sh", no_agent=True, deliver="local"
     )
@@ -184,7 +184,7 @@ def test_update_job_allows_dropping_script_when_no_agent_is_turned_off(hermes_en
     """Both fields in one update: the merged record is a valid prompt job."""
     from cron.jobs import create_job, get_job, update_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     job = create_job(
         prompt=None, schedule="every 5m", script="w.sh", no_agent=True, deliver="local"
     )
@@ -199,7 +199,7 @@ def test_update_job_allows_dropping_script_when_no_agent_is_turned_off(hermes_en
 def test_update_job_allows_swapping_the_script_of_a_no_agent_job(hermes_env):
     from cron.jobs import create_job, get_job, update_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     job = create_job(
         prompt=None, schedule="every 5m", script="w.sh", no_agent=True, deliver="local"
     )
@@ -212,7 +212,7 @@ def test_update_job_allows_clearing_prompt_when_script_remains(hermes_env):
     """The merged record still has a script — that is a valid agent job."""
     from cron.jobs import create_job, get_job, update_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     job = create_job(
         prompt="summarize this", schedule="every 5m", script="w.sh", deliver="local"
     )
@@ -325,7 +325,7 @@ def _legacy_no_agent_scriptless_job(hermes_env, script_value=None):
     """Plant a no_agent job whose script went missing after creation."""
     from cron.jobs import create_job, load_jobs, save_jobs
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     job = create_job(
         prompt=None, schedule="every 5m", script="w.sh", no_agent=True, deliver="local"
     )
@@ -378,7 +378,7 @@ def test_run_job_does_not_block_a_valid_no_agent_job(hermes_env):
     import cron.scheduler as scheduler
 
     script = hermes_env / "scripts" / "w.sh"
-    script.write_text("echo hello\n")
+    script.write_text("echo hello\n", encoding="utf-8")
 
     job = dict(_legacy_empty_job(hermes_env), script="w.sh", no_agent=True)
     success, doc, final, error = scheduler.run_job(job)
@@ -457,7 +457,7 @@ def test_tool_update_rejects_the_destructive_shape_on_a_script_job(hermes_env):
     """script:"" + prompt:"" + skills:[] empties an agent script job too."""
     from cron.jobs import create_job, get_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     job = create_job(
         prompt=None, schedule="0 2 * * *", script="w.sh",
         name="Daily Wiki Backup", deliver="local",
@@ -476,7 +476,7 @@ def test_tool_update_rejects_the_destructive_shape_on_a_no_agent_job(hermes_env)
     """no_agent job: the more specific no_agent diagnosis reports first."""
     from cron.jobs import create_job, get_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     job = create_job(
         prompt=None, schedule="0 8 * * *", script="w.sh", no_agent=True,
         name="Lil'Log RSS ingest watchdog", deliver="local",
@@ -501,7 +501,7 @@ def test_tool_update_blank_name_is_a_no_op(hermes_env):
     """
     from cron.jobs import create_job, get_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     job = create_job(
         prompt=None, schedule="0 2 * * *", script="w.sh",
         name="Daily Wiki Backup", deliver="local",
@@ -537,7 +537,7 @@ def test_tool_update_blank_scalars_still_clear_workdir_and_context_from(hermes_e
     """
     from cron.jobs import create_job, get_job
 
-    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n")
+    (hermes_env / "scripts" / "w.sh").write_text("echo hi\n", encoding="utf-8")
     (hermes_env / "wd").mkdir()
     job = create_job(
         prompt=None, schedule="0 2 * * *", script="w.sh", name="keeper",

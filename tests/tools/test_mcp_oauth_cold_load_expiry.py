@@ -71,7 +71,7 @@ class TestSetTokensAbsoluteExpiry:
         after = time.time()
 
         on_disk = json.loads(
-            (tmp_path / "mcp-tokens" / "srv.json").read_text()
+            (tmp_path / "mcp-tokens" / "srv.json").read_text(encoding="utf-8")
         )
         assert "expires_at" in on_disk, (
             "Fix A: set_tokens must record an absolute expires_at wall-clock "
@@ -101,7 +101,7 @@ class TestSetTokensAbsoluteExpiry:
         )
 
         on_disk = json.loads(
-            (tmp_path / "mcp-tokens" / "srv.json").read_text()
+            (tmp_path / "mcp-tokens" / "srv.json").read_text(encoding="utf-8")
         )
         assert "expires_at" not in on_disk
 

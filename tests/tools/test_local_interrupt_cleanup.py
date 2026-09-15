@@ -27,7 +27,7 @@ from tools.environments.local import LocalEnvironment
 # past SIGTERM — does not exist on Windows.
 pytestmark = pytest.mark.skipif(
     os.name == "nt",
-    reason="POSIX process-group semantics under test; os.getpgid/os.killpg "
+    reason="POSIX process-group semantics under test; os.getpgid/os.killpg "  # windows-footgun: ok -- prose in a skip reason, not a call
     "do not exist on Windows",
 )
 
@@ -41,7 +41,7 @@ def _isolate_hermes_home(tmp_path, monkeypatch):
 def _pgid_still_alive(pgid: int) -> bool:
     """Return True if any process in the given process group is still alive."""
     try:
-        os.killpg(pgid, 0)  # signal 0 = existence check
+        os.killpg(pgid, 0)  # signal 0 = existence check  # windows-footgun: ok -- POSIX-only test (module-level skip off POSIX)
         return True
     except ProcessLookupError:
         return False

@@ -16,7 +16,7 @@ def _patch_info(tmp_path, config_yaml, model, runtime):
     """Return a context-manager stack that patches _format_session_info deps."""
     cfg_path = tmp_path / "config.yaml"
     if config_yaml is not None:
-        cfg_path.write_text(config_yaml)
+        cfg_path.write_text(config_yaml, encoding="utf-8")
     return (
         patch("gateway.run._hermes_home", tmp_path),
         patch("gateway.run._resolve_gateway_model", return_value=model),

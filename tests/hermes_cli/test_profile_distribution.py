@@ -58,16 +58,16 @@ def _make_staging_dir(root: Path, name: str = "src", *, manifest: DistributionMa
     """
     staged = root / f"staging_{name}"
     staged.mkdir(parents=True, exist_ok=True)
-    (staged / "SOUL.md").write_text("I am Source.\n")
-    (staged / "config.yaml").write_text("model:\n  model: gpt-4\n")
-    (staged / "mcp.json").write_text('{"servers": {}}\n')
+    (staged / "SOUL.md").write_text("I am Source.\n", encoding="utf-8")
+    (staged / "config.yaml").write_text("model:\n  model: gpt-4\n", encoding="utf-8")
+    (staged / "mcp.json").write_text('{"servers": {}}\n', encoding="utf-8")
     (staged / "skills").mkdir(exist_ok=True)
     (staged / "skills" / "demo").mkdir(exist_ok=True)
     (staged / "skills" / "demo" / "SKILL.md").write_text(
         "---\nname: demo\ndescription: test\n---\n# Demo skill\n"
     )
     (staged / "cron").mkdir(exist_ok=True)
-    (staged / "cron" / "daily.json").write_text('{"schedule": "0 9 * * *"}')
+    (staged / "cron" / "daily.json").write_text('{"schedule": "0 9 * * *"}', encoding="utf-8")
 
     mf = manifest or DistributionManifest(name=name, version="0.1.0")
     write_manifest(staged, mf)
@@ -222,7 +222,7 @@ class TestInstall:
         staged = _make_staging_dir(profile_env, "src")
         plan = install_distribution(str(staged), name="installed")
         assert plan.target_dir.is_dir()
-        assert (plan.target_dir / "SOUL.md").read_text() == "I am Source.\n"
+        assert (plan.target_dir / "SOUL.md").read_text(encoding="utf-8") == "I am Source.\n"
         assert (plan.target_dir / "skills" / "demo" / "SKILL.md").exists()
         assert (plan.target_dir / "mcp.json").exists()
         # Manifest on disk records canonical name + provenance
@@ -244,7 +244,7 @@ class TestInstall:
 
         plan = install_distribution(str(staged), name="restricted")
         # Owned paths must be present
-        assert (plan.target_dir / "SOUL.md").read_text() == "I am Source.\n"
+        assert (plan.target_dir / "SOUL.md").read_text(encoding="utf-8") == "I am Source.\n"
         assert (plan.target_dir / "skills").is_dir()
         assert (plan.target_dir / "skills" / "demo" / "SKILL.md").exists()
         # NOT-owned paths must NOT be copied from staging
@@ -274,12 +274,12 @@ class TestInstall:
         silently narrow to DEFAULT_DIST_OWNED."""
         staged = _make_staging_dir(profile_env, "legacy_all")
         # Extra top-level payload not covered by DEFAULT_DIST_OWNED
-        (staged / "extra.txt").write_text("bonus\n")
+        (staged / "extra.txt").write_text("bonus\n", encoding="utf-8")
         (staged / "tools").mkdir()
-        (staged / "tools" / "helper.py").write_text("# helper\n")
+        (staged / "tools" / "helper.py").write_text("# helper\n", encoding="utf-8")
 
         plan = install_distribution(str(staged), name="legacy_all")
-        assert (plan.target_dir / "extra.txt").read_text() == "bonus\n", \
+        assert (plan.target_dir / "extra.txt").read_text(encoding="utf-8") == "bonus\n", \
             "omitted distribution_owned must keep copying undeclared files"
         assert (plan.target_dir / "tools" / "helper.py").exists(), \
             "omitted distribution_owned must keep copying undeclared dirs"
@@ -297,7 +297,7 @@ class TestInstall:
         (staged / "skills" / "research" / "SKILL.md").write_text(
             "---\nname: research\ndescription: r\n---\n# R\n"
         )
-        (staged / "cron" / "digest.json").write_text('{"schedule": "0 8 * * *"}')
+        (staged / "cron" / "digest.json").write_text('{"schedule": "0 8 * * *"}', encoding="utf-8")
 
         plan = install_distribution(str(staged), name="nested")
         # Nested allowlisted paths are installed
@@ -326,7 +326,7 @@ class TestInstall:
         )
         write_manifest(staged, restricted_mf)
         # Also add a NEW file in the staged dir that is NOT in distribution_owned
-        (staged / "new_config.toml").write_text("[extra]\n")
+        (staged / "new_config.toml").write_text("[extra]\n", encoding="utf-8")
         # The manifest on disk needs the new source to match
         from hermes_cli.profile_distribution import read_manifest as _read
         m_on_disk = _read(plan.target_dir)
@@ -337,7 +337,7 @@ class TestInstall:
         update_distribution("up_restricted", force_config=True)
 
         # 4. Owned paths should be updated
-        assert (plan.target_dir / "SOUL.md").read_text() == "I am Source.\n"
+        assert (plan.target_dir / "SOUL.md").read_text(encoding="utf-8") == "I am Source.\n"
         assert (plan.target_dir / "skills").is_dir()
         # 5. Formerly-owned paths (mcp.json, cron/) should NOT be copied on update
         #    Note: mcp.json existed before so it stays (not removed). The guard is
@@ -348,7 +348,7 @@ class TestInstall:
     def test_install_rejects_non_distribution_directory(self, profile_env, tmp_path):
         bogus = tmp_path / "bogus_dir"
         bogus.mkdir()
-        (bogus / "some_file").write_text("hi")
+        (bogus / "some_file").write_text("hi", encoding="utf-8")
         with pytest.raises(DistributionError, match="No distribution.yaml"):
             plan_install(str(bogus), tmp_path / "work", override_name="x")
 
@@ -382,25 +382,25 @@ class TestUpdate:
 
         # 2. Add user-owned data to the installed profile
         (plan.target_dir / "memories").mkdir(exist_ok=True)
-        (plan.target_dir / "memories" / "MEMORY.md").write_text("# USER MEMORY\n")
-        (plan.target_dir / ".env").write_text("OPENAI_API_KEY=sk-user\n")
-        (plan.target_dir / "auth.json").write_text('{"user": "auth"}')
+        (plan.target_dir / "memories" / "MEMORY.md").write_text("# USER MEMORY\n", encoding="utf-8")
+        (plan.target_dir / ".env").write_text("OPENAI_API_KEY=sk-user\n", encoding="utf-8")
+        (plan.target_dir / "auth.json").write_text('{"user": "auth"}', encoding="utf-8")
         (plan.target_dir / "sessions").mkdir(exist_ok=True)
-        (plan.target_dir / "sessions" / "chat.json").write_text('{"s": 1}')
+        (plan.target_dir / "sessions" / "chat.json").write_text('{"s": 1}', encoding="utf-8")
 
         # 3. Bump source in the staging dir
-        (staged / "SOUL.md").write_text("I am Source v2.\n")
+        (staged / "SOUL.md").write_text("I am Source v2.\n", encoding="utf-8")
 
         # 4. Update
         update_distribution("telem", force_config=False)
 
         # 5. Dist-owned changed
-        assert (plan.target_dir / "SOUL.md").read_text() == "I am Source v2.\n"
+        assert (plan.target_dir / "SOUL.md").read_text(encoding="utf-8") == "I am Source v2.\n"
         # 6. User-owned preserved
-        assert (plan.target_dir / "memories" / "MEMORY.md").read_text() == "# USER MEMORY\n"
-        assert (plan.target_dir / ".env").read_text() == "OPENAI_API_KEY=sk-user\n"
-        assert (plan.target_dir / "auth.json").read_text() == '{"user": "auth"}'
-        assert (plan.target_dir / "sessions" / "chat.json").read_text() == '{"s": 1}'
+        assert (plan.target_dir / "memories" / "MEMORY.md").read_text(encoding="utf-8") == "# USER MEMORY\n"
+        assert (plan.target_dir / ".env").read_text(encoding="utf-8") == "OPENAI_API_KEY=sk-user\n"
+        assert (plan.target_dir / "auth.json").read_text(encoding="utf-8") == '{"user": "auth"}'
+        assert (plan.target_dir / "sessions" / "chat.json").read_text(encoding="utf-8") == '{"s": 1}'
 
     def test_update_preserves_config_by_default(self, profile_env):
         staged = _make_staging_dir(profile_env, "src")
@@ -412,11 +412,11 @@ class TestUpdate:
         )
 
         # Bump source config
-        (staged / "config.yaml").write_text("model:\n  model: claude\n")
+        (staged / "config.yaml").write_text("model:\n  model: claude\n", encoding="utf-8")
 
         update_distribution("t2", force_config=False)
-        assert "gpt-5" in (plan.target_dir / "config.yaml").read_text()
-        assert "user override" in (plan.target_dir / "config.yaml").read_text()
+        assert "gpt-5" in (plan.target_dir / "config.yaml").read_text(encoding="utf-8")
+        assert "user override" in (plan.target_dir / "config.yaml").read_text(encoding="utf-8")
 
 
     def test_update_missing_manifest_errors(self, profile_env):
@@ -473,21 +473,21 @@ class TestSecurity:
         staging dir, the installer must NOT copy them to the target profile."""
         staged = _make_staging_dir(profile_env, "src")
         # Author leaks credentials into the staging tree (shouldn't happen, but...)
-        (staged / "auth.json").write_text('{"leaked": true}')
-        (staged / ".env").write_text("LEAKED=1")
+        (staged / "auth.json").write_text('{"leaked": true}', encoding="utf-8")
+        (staged / ".env").write_text("LEAKED=1", encoding="utf-8")
 
         plan = install_distribution(str(staged), name="clean")
         assert not (plan.target_dir / "auth.json").exists(), "auth.json leaked"
         # Fresh profile may have its own .env via the bootstrap; what we care
         # about is that the leaked content didn't land in the target.
         if (plan.target_dir / ".env").exists():
-            assert "LEAKED" not in (plan.target_dir / ".env").read_text()
+            assert "LEAKED" not in (plan.target_dir / ".env").read_text(encoding="utf-8")
 
     def test_install_rejects_symlinked_distribution_files(self, profile_env, tmp_path):
         """Distribution install must not follow symlinks to local files."""
         staged = _make_staging_dir(profile_env, "src")
         local_secret = tmp_path / "local-secret.txt"
-        local_secret.write_text("outside secret\n")
+        local_secret.write_text("outside secret\n", encoding="utf-8")
         _symlink_file_or_skip(
             staged / "skills" / "demo" / "leak.txt",
             local_secret,
@@ -518,7 +518,7 @@ class TestNestedUserOwnedExcludeNotFiltered:
         )
         staged = _make_staging_dir(profile_env, "src", manifest=mf)
         (staged / "tools" / "bin").mkdir(parents=True)
-        (staged / "tools" / "bin" / "tool.py").write_text("# tool\n")
+        (staged / "tools" / "bin" / "tool.py").write_text("# tool\n", encoding="utf-8")
 
         plan = install_distribution(str(staged), name="nested_bin")
         assert (plan.target_dir / "tools" / "bin").is_dir(), "nested bin/ was dropped"
@@ -532,10 +532,10 @@ class TestNestedUserOwnedExcludeNotFiltered:
         )
         staged = _make_staging_dir(profile_env, "src", manifest=mf)
         (staged / "scripts" / "logs").mkdir(parents=True)
-        (staged / "scripts" / "logs" / "run.log").write_text("ok\n")
+        (staged / "scripts" / "logs" / "run.log").write_text("ok\n", encoding="utf-8")
         plan = install_distribution(str(staged), name="nested_logs")
         assert (plan.target_dir / "scripts" / "logs").is_dir()
-        assert (plan.target_dir / "scripts" / "logs" / "run.log").read_text() == "ok\n"
+        assert (plan.target_dir / "scripts" / "logs" / "run.log").read_text(encoding="utf-8") == "ok\n"
 
     def test_top_level_user_owned_still_skipped(self, profile_env):
         """Top-level entries in USER_OWNED_EXCLUDE must still be skipped —
@@ -547,9 +547,9 @@ class TestNestedUserOwnedExcludeNotFiltered:
         staged = _make_staging_dir(profile_env, "src")
         # Add top-level excluded entries alongside the legit ones
         (staged / "bin").mkdir(exist_ok=True)
-        (staged / "bin" / "shipped_binary").write_text("x")
+        (staged / "bin" / "shipped_binary").write_text("x", encoding="utf-8")
         (staged / "logs").mkdir(exist_ok=True)
-        (staged / "logs" / "shipped.log").write_text("y\n")
+        (staged / "logs" / "shipped.log").write_text("y\n", encoding="utf-8")
 
         plan = install_distribution(str(staged), name="top_filter")
         # bin/ is not created by _bootstrap_user_dirs so absence means filtered
@@ -568,9 +568,9 @@ class TestNestedUserOwnedExcludeNotFiltered:
         )
         staged = _make_staging_dir(profile_env, "src", manifest=mf)
         (staged / "bin").mkdir(exist_ok=True)
-        (staged / "bin" / "top.sh").write_text("# top\n")
+        (staged / "bin" / "top.sh").write_text("# top\n", encoding="utf-8")
         (staged / "tools" / "bin").mkdir(parents=True)
-        (staged / "tools" / "bin" / "helper.py").write_text("# helper\n")
+        (staged / "tools" / "bin" / "helper.py").write_text("# helper\n", encoding="utf-8")
 
         plan = install_distribution(str(staged), name="coexist")
         assert not (plan.target_dir / "bin").exists()

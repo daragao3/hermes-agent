@@ -17,7 +17,7 @@ from tools.file_tools import _special_file_kind, read_file_tool
 class TestSpecialFileKind:
     def test_regular_file(self, tmp_path):
         p = tmp_path / "a.txt"
-        p.write_text("hi")
+        p.write_text("hi", encoding="utf-8")
         assert _special_file_kind(p) is None
 
     def test_directory(self, tmp_path):
@@ -70,7 +70,7 @@ class TestReadFileToolFifoGuard:
     def test_regular_file_unaffected(self, tmp_path, monkeypatch):
         monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
         f = tmp_path / "ok.txt"
-        f.write_text("alpha\nbeta\n")
+        f.write_text("alpha\nbeta\n", encoding="utf-8")
         result = json.loads(read_file_tool(str(f)))
         assert result.get("success", True) is not False
         assert "alpha" in result.get("content", "")

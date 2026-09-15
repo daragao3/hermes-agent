@@ -55,7 +55,7 @@ def test_load_heals_legacy_row_and_exposes_it_to_resolver(tmp_path, monkeypatch)
     from agent.credential_pool import load_pool
 
     entry = load_pool("anthropic").entries()[0]
-    persisted = json.loads(auth_file.read_text())
+    persisted = json.loads(auth_file.read_text(encoding="utf-8"))
     assert entry.auth_type == AUTH_TYPE_OAUTH
     assert persisted["credential_pool"]["anthropic"][0]["auth_type"] == AUTH_TYPE_OAUTH
     assert resolve_anthropic_token() == token

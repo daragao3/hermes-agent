@@ -18,7 +18,7 @@ assert 'cron.jobs' not in sys.modules
 assert 'cron.scheduler' not in sys.modules
 """
     env = dict(os.environ, HERMES_HOME=str(tmp_path))
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20, env=env)
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=20, env=env, encoding="utf-8")
     assert result.returncode == 0, result.stderr
 
 

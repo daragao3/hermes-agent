@@ -191,7 +191,7 @@ class TestMemoryManager:
         assert "external memory prefetch output truncated" in result
         spill_files = list((tmp_path / "session-1").glob("*.txt"))
         assert len(spill_files) == 1
-        assert spill_files[0].read_text() == provider._prefetch_result + "\n"
+        assert spill_files[0].read_text(encoding="utf-8") == provider._prefetch_result + "\n"
 
     def test_builtin_prefetch_is_not_spilled(self, tmp_path, monkeypatch):
         self._set_spill_config(monkeypatch, tmp_path, max_chars=10)

@@ -25,7 +25,7 @@ def _write_plugin(hermes_home: Path) -> None:
             }
         )
     )
-    (plugin_dir / "SKILL.md").write_text("# Ledger probe\n")
+    (plugin_dir / "SKILL.md").write_text("# Ledger probe\n", encoding="utf-8")
     (plugin_dir / "__init__.py").write_text(
         "from pathlib import Path\n"
         "\n"

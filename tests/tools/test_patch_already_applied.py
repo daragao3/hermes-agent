@@ -56,19 +56,19 @@ def _patch_tool(**kwargs):
 class TestPatchReplaceAlreadyApplied:
     def test_identical_old_new_present_is_success_noop(self, workdir):
         f = workdir / "a.py"
-        f.write_text("value = compute_total(items)\n")
+        f.write_text("value = compute_total(items)\n", encoding="utf-8")
         r = _patch_tool(path=str(f), old_string="value = compute_total(items)",
                         new_string="value = compute_total(items)", task_id="t-applied")
         assert r["success"] is True
         assert r.get("no_change") is True
         assert "already" in r["note"]
-        assert f.read_text() == "value = compute_total(items)\n"
+        assert f.read_text(encoding="utf-8") == "value = compute_total(items)\n"
 
     def test_replay_of_landed_edit_is_success_noop(self, workdir):
         # old_string is entirely gone (no approximate remnant for the fuzzy
         # chain to latch onto) while new_string is present verbatim.
         f = workdir / "b.py"
-        f.write_text("import os\n\nRETRY_LIMIT_SECONDS = 30\n")
+        f.write_text("import os\n\nRETRY_LIMIT_SECONDS = 30\n", encoding="utf-8")
         r = _patch_tool(path=str(f), old_string="TIMEOUT_WINDOW_MS = 9000",
                         new_string="RETRY_LIMIT_SECONDS = 30", task_id="t-applied")
         assert r["success"] is True
@@ -76,14 +76,14 @@ class TestPatchReplaceAlreadyApplied:
 
     def test_genuine_no_match_still_errors(self, workdir):
         f = workdir / "c.py"
-        f.write_text("something_else = 1\n")
+        f.write_text("something_else = 1\n", encoding="utf-8")
         r = _patch_tool(path=str(f), old_string="def missing_function():",
                         new_string="def replacement_function():", task_id="t-applied")
         assert "error" in r
 
     def test_identical_but_absent_still_errors(self, workdir):
         f = workdir / "d.py"
-        f.write_text("unrelated = True\n")
+        f.write_text("unrelated = True\n", encoding="utf-8")
         r = _patch_tool(path=str(f), old_string="def not_here_function():",
                         new_string="def not_here_function():", task_id="t-applied")
         assert "error" in r
@@ -93,9 +93,9 @@ class TestPatchReplaceAlreadyApplied:
         # old/new strings short-circuit before any fuzzy matching, and the
         # old text still being present must block the no-op path.
         f = workdir / "e.py"
-        f.write_text("def old_fn_name():\n    pass\n\ndef new_fn_variant():\n    pass\n")
+        f.write_text("def old_fn_name():\n    pass\n\ndef new_fn_variant():\n    pass\n", encoding="utf-8")
         from tools.fuzzy_match import is_already_applied
-        assert not is_already_applied(f.read_text(), "def old_fn_name():", "def new_fn_variant():")
+        assert not is_already_applied(f.read_text(encoding="utf-8"), "def old_fn_name():", "def new_fn_variant():")
 
 
 class TestV4AAlreadyApplied:
@@ -121,13 +121,13 @@ class TestV4AAlreadyApplied:
         )
         r = _patch_tool(mode="patch", patch=patch_content, task_id="t-v4a")
         assert r["success"] is True, r
-        text = f.read_text()
+        text = f.read_text(encoding="utf-8")
         assert "return y + 2" in text            # live hunk applied
         assert "already_renamed_helper" in text  # no-op hunk left intact
 
     def test_fully_applied_patch_is_noop_success(self, workdir):
         f = workdir / "done.py"
-        f.write_text("STATUS = 'migrated_to_v2_schema'\n")
+        f.write_text("STATUS = 'migrated_to_v2_schema'\n", encoding="utf-8")
         patch_content = (
             "*** Begin Patch\n"
             f"*** Update File: {f}\n"
@@ -137,7 +137,7 @@ class TestV4AAlreadyApplied:
         )
         r = _patch_tool(mode="patch", patch=patch_content, task_id="t-v4a")
         assert r["success"] is True, r
-        assert f.read_text() == "STATUS = 'migrated_to_v2_schema'\n"
+        assert f.read_text(encoding="utf-8") == "STATUS = 'migrated_to_v2_schema'\n"
 
     def test_degenerate_identical_hunk_skipped_in_validation(self, workdir):
         """A hunk whose -/+ lines are identical is a no-op: the apply phase
@@ -146,7 +146,7 @@ class TestV4AAlreadyApplied:
         old_string/new_string — parameters that don't exist in patch mode).
         The short text also dodges is_already_applied's >=8-char rescue."""
         f = workdir / "degen.py"
-        f.write_text("A = 1\nB = 2\n")
+        f.write_text("A = 1\nB = 2\n", encoding="utf-8")
         patch_content = (
             "*** Begin Patch\n"
             f"*** Update File: {f}\n"
@@ -159,6 +159,6 @@ class TestV4AAlreadyApplied:
         )
         r = _patch_tool(mode="patch", patch=patch_content, task_id="t-v4a")
         assert r["success"] is True, r
-        text = f.read_text()
+        text = f.read_text(encoding="utf-8")
         assert "A = 1" in text  # degenerate hunk left intact
         assert "B = 3" in text  # live hunk applied

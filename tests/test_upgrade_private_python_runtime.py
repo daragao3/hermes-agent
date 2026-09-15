@@ -6,12 +6,12 @@ def test_rejected_generation_cleanup_stays_inside_runtime_root(tmp_path):
     root = tmp_path / 'private-runtime'
     rejected = root / 'rejected-generation'
     rejected.mkdir(parents=True)
-    (rejected / 'artifact').write_text('owned rejected download')
+    (rejected / 'artifact').write_text('owned rejected download', encoding="utf-8")
     outside = tmp_path / 'unrelated'
     outside.mkdir()
-    (outside / 'keep').write_text('preserve')
+    (outside / 'keep').write_text('preserve', encoding="utf-8")
     _remove_tree(outside, boundary=root)
-    assert (outside / 'keep').read_text() == 'preserve'
+    assert (outside / 'keep').read_text(encoding="utf-8") == 'preserve'
     _remove_tree(rejected, boundary=root)
     assert not rejected.exists()
     assert root.exists()
@@ -23,7 +23,7 @@ def test_private_python_runs_existing_dependencies_and_real_wal(tmp_path):
     from hermes_cli._subprocess_compat import run_text_capture
     root = Path(__file__).resolve().parents[1]
     evidence = Path('C:/Users/diego/architecture-map/wave-execution/2026-09-08')
-    provision = json.loads((evidence / 'provision-private-python.json').read_text())
+    provision = json.loads((evidence / 'provision-private-python.json').read_text(encoding="utf-8"))
     code = r'''
 import json, site, sys
 from pathlib import Path
@@ -45,7 +45,7 @@ with SessionDB(db_path) as writer:
 print(json.dumps({'python':sys.executable,'base_prefix':sys.base_prefix,'sqlite':sqlite3.sqlite_version,'wal':True}))
 '''
     result = run_text_capture([provision['python'], '-I', '-c', code, str(root), str(tmp_path / 'state.db')], timeout=60)
-    (evidence / 'private-python-abi-wal-probe.log').write_text(result.stdout + result.stderr)
+    (evidence / 'private-python-abi-wal-probe.log').write_text(result.stdout + result.stderr, encoding="utf-8")
     assert result.returncode == 0, result.stdout + result.stderr
     receipt = json.loads(result.stdout.strip().splitlines()[-1])
     assert receipt['sqlite'] == provision['after']['sqlite_version_string']
@@ -60,7 +60,7 @@ def test_candidate_runtime_uses_private_sqlite_and_wal(tmp_path):
     from hermes_state import SessionDB
     from hermes_cli.sqlite_runtime import is_sqlite_wal_reset_vulnerable
     evidence = Path('C:/Users/diego/architecture-map/wave-execution/2026-09-08')
-    provision = json.loads((evidence / 'provision-private-python.json').read_text())
+    provision = json.loads((evidence / 'provision-private-python.json').read_text(encoding="utf-8"))
     assert Path(sys.base_prefix).resolve() == Path(provision['after']['base_prefix']).resolve()
     assert not is_sqlite_wal_reset_vulnerable(sqlite3.sqlite_version_info)
     with SessionDB(tmp_path / 'state.db') as db:

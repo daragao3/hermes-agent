@@ -31,7 +31,7 @@ KEY_LINE_RE = re.compile(r"^API_SERVER_KEY=[0-9a-f]{64}$", re.MULTILINE)
 def stage2_text() -> str:
     if not STAGE2_HOOK.exists():
         pytest.skip("docker/stage2-hook.sh not present in this checkout")
-    return STAGE2_HOOK.read_text()
+    return STAGE2_HOOK.read_text(encoding="utf-8")
 
 
 def _keygen_block(text: str) -> str:
@@ -85,7 +85,7 @@ def test_keygen_creates_env_when_missing(stage2_text: str, tmp_path: Path) -> No
     assert result.returncode == 0, result.stderr
     env_path = home / ".env"
     assert env_path.is_file(), "keygen must create .env when it is missing"
-    assert KEY_LINE_RE.search(env_path.read_text()), "generated key missing/malformed"
+    assert KEY_LINE_RE.search(env_path.read_text(encoding="utf-8")), "generated key missing/malformed"
     # The 0600 comes from `(umask 077 && touch)` in the hook, and the
     # production target is a Linux container. NTFS carries no POSIX mode
     # bits, so Git Bash reports 0o666 here no matter what the hook did --
@@ -103,10 +103,10 @@ def test_keygen_appends_to_existing_env_without_key(
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
-    (home / ".env").write_text("OTHER=1\nAPI_SERVER_KEY=\n")
+    (home / ".env").write_text("OTHER=1\nAPI_SERVER_KEY=\n", encoding="utf-8")
     result = _run_keygen(stage2_text, home)
     assert result.returncode == 0, result.stderr
-    content = (home / ".env").read_text()
+    content = (home / ".env").read_text(encoding="utf-8")
     assert "OTHER=1" in content
     assert KEY_LINE_RE.search(content)
     # Exactly one real key assignment. (The stale empty `API_SERVER_KEY=` line
@@ -120,10 +120,10 @@ def test_keygen_never_overwrites_operator_key(
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
-    (home / ".env").write_text("API_SERVER_KEY=operator-provided-key-123\n")
+    (home / ".env").write_text("API_SERVER_KEY=operator-provided-key-123\n", encoding="utf-8")
     result = _run_keygen(stage2_text, home)
     assert result.returncode == 0, result.stderr
-    content = (home / ".env").read_text()
+    content = (home / ".env").read_text(encoding="utf-8")
     assert content == "API_SERVER_KEY=operator-provided-key-123\n"
 
 
@@ -131,7 +131,7 @@ def test_keygen_refuses_symlinked_env(stage2_text: str, tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
     outside = tmp_path / "outside.env"
-    outside.write_text("HIJACK=1\n")
+    outside.write_text("HIJACK=1\n", encoding="utf-8")
     try:
         (home / ".env").symlink_to(outside)
     except OSError:
@@ -146,7 +146,7 @@ def test_keygen_refuses_symlinked_env(stage2_text: str, tmp_path: Path) -> None:
     result = _run_keygen(stage2_text, home)
     assert result.returncode == 0, result.stderr
     assert "refusing append" in (result.stdout + result.stderr)
-    assert outside.read_text() == "HIJACK=1\n", "must not write through symlink"
+    assert outside.read_text(encoding="utf-8") == "HIJACK=1\n", "must not write through symlink"
 
 
 @requires_dir_links
@@ -191,7 +191,7 @@ def test_keygen_skips_when_container_env_provides_key(
     assert "skipping generation" in (result.stdout + result.stderr)
     env_path = home / ".env"
     if env_path.exists():
-        assert "API_SERVER_KEY=" not in env_path.read_text()
+        assert "API_SERVER_KEY=" not in env_path.read_text(encoding="utf-8")
 
 
 def test_keygen_env_key_with_existing_env_file_key_warns_not_clobbers(
@@ -200,11 +200,11 @@ def test_keygen_env_key_with_existing_env_file_key_warns_not_clobbers(
     """Both container env AND .env carry keys: warn, touch nothing."""
     home = tmp_path / "home"
     home.mkdir()
-    (home / ".env").write_text("API_SERVER_KEY=file-key-abcdef0123456789\n")
+    (home / ".env").write_text("API_SERVER_KEY=file-key-abcdef0123456789\n", encoding="utf-8")
     result = _run_keygen(stage2_text, home, env_key="env-key-9876543210fedcba")
     assert result.returncode == 0, result.stderr
     assert "the .env value wins" in (result.stdout + result.stderr)
-    content = (home / ".env").read_text()
+    content = (home / ".env").read_text(encoding="utf-8")
     assert content == "API_SERVER_KEY=file-key-abcdef0123456789\n"
 
 
@@ -220,11 +220,11 @@ def test_keygen_env_key_drops_stale_empty_assignment(
     """
     home = tmp_path / "home"
     home.mkdir()
-    (home / ".env").write_text("OTHER=1\nAPI_SERVER_KEY=\n")
+    (home / ".env").write_text("OTHER=1\nAPI_SERVER_KEY=\n", encoding="utf-8")
     result = _run_keygen(stage2_text, home, env_key="operator-env-key-0123456789")
     assert result.returncode == 0, result.stderr
     assert "skipping generation" in (result.stdout + result.stderr)
-    content = (home / ".env").read_text()
+    content = (home / ".env").read_text(encoding="utf-8")
     assert "OTHER=1" in content
     # No generated (non-empty) key may appear — the operator's env key wins.
     assert not re.search(r"^API_SERVER_KEY=..+$", content, re.MULTILINE)
@@ -258,12 +258,12 @@ def test_keygen_readonly_env_degrades_to_warning_not_boot_abort(
 
     if os.name == "nt":
         pytest.skip("POSIX permission semantics: chmod does not enforce write bits on Windows")
-    if os.geteuid() == 0:
+    if os.geteuid() == 0:  # windows-footgun: ok -- the POSIX-permissions skip on the line above already returned
         pytest.skip("running as root — file write perms are not enforced")
     home = tmp_path / "home"
     home.mkdir()
     env_path = home / ".env"
-    env_path.write_text("OTHER=1\n")
+    env_path.write_text("OTHER=1\n", encoding="utf-8")
     env_path.chmod(0o444)
     try:
         result = _run_keygen(stage2_text, home)
@@ -272,7 +272,7 @@ def test_keygen_readonly_env_degrades_to_warning_not_boot_abort(
             f"{result.stderr}"
         )
         assert "could not write API_SERVER_KEY" in (result.stdout + result.stderr)
-        assert env_path.read_text() == "OTHER=1\n"
+        assert env_path.read_text(encoding="utf-8") == "OTHER=1\n"
     finally:
         env_path.chmod(0o644)
 
@@ -299,7 +299,7 @@ def test_keygen_weak_env_key_warning_suppressed_when_env_file_key_wins(
     warning would be false and must not fire. The both-keys warning must."""
     home = tmp_path / "home"
     home.mkdir()
-    (home / ".env").write_text("API_SERVER_KEY=strong-file-key-abcdef0123456789\n")
+    (home / ".env").write_text("API_SERVER_KEY=strong-file-key-abcdef0123456789\n", encoding="utf-8")
     result = _run_keygen(stage2_text, home, env_key="short-key")
     assert result.returncode == 0, result.stderr
     out = result.stdout + result.stderr
@@ -316,7 +316,7 @@ def test_dockerignore_keeps_env_example_template() -> None:
     """
     if not DOCKERIGNORE.exists():
         pytest.skip(".dockerignore not present in this checkout")
-    lines = [ln.strip() for ln in DOCKERIGNORE.read_text().splitlines()]
+    lines = [ln.strip() for ln in DOCKERIGNORE.read_text(encoding="utf-8").splitlines()]
     rules = [ln for ln in lines if ln and not ln.startswith("#")]
     verdict = "excluded"  # default: not matched -> included
     for rule in rules:

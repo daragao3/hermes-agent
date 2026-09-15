@@ -245,7 +245,7 @@ def test_all_connectable_adapters_wire_plugin_handlers():
     ]
     missing = []
     for f in adapter_files:
-        src = Path(f).read_text()
+        src = Path(f).read_text(encoding="utf-8")
         if "async def connect(" not in src:
             continue
         if "_wire_plugin_handlers" not in src:

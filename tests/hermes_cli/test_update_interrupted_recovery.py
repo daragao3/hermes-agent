@@ -22,7 +22,7 @@ def test_marker_round_trip(tmp_path, monkeypatch):
 
     m._write_update_incomplete_marker()
     assert marker.exists()
-    body = marker.read_text()
+    body = marker.read_text(encoding="utf-8")
     assert "started=" in body
     assert "pid=" in body
 
@@ -63,13 +63,13 @@ def test_recovery_self_lock_does_not_clear_core_marker_via_import_probes(
     # reinstall — a missing dep outside the 7-probe set would look healthy
     # (#58004 review blocker).
     monkeypatch.setattr(m, "PROJECT_ROOT", tmp_path)
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
     m._write_update_incomplete_marker()
 
     scripts_dir = tmp_path / "venv" / "Scripts"
     scripts_dir.mkdir(parents=True)
     shim = scripts_dir / "hermes.exe"
-    shim.write_text("")
+    shim.write_text("", encoding="utf-8")
 
     monkeypatch.setattr(m, "_is_windows", lambda: True)
     monkeypatch.setattr(hermes_cli_main_install_repair, "_is_windows", lambda: True)

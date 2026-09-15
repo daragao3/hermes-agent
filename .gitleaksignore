@@ -113,3 +113,13 @@ website/docusaurus.config.ts:generic-api-key:105
 # argument already fingerprinted above across the fork test suite. Not credentials.
 tests/agent/test_length_continuation_window_headroom.py:generic-api-key:29
 tests/run_agent/test_export_current_turn_boundary.py:generic-api-key:74
+
+# 2026-09-15 windows-footgun backlog sweep: these four lines are UNCHANGED
+# fixtures that only gained `encoding="utf-8"`. gitleaks scans the staged diff,
+# so touching the line is what first put them in front of it -- each value is
+# synthetic (sk-proj-abc123..., sk-or-test-key-12345, operator-provided-key-123)
+# and was verified against `git show HEAD:<file>` to predate this change.
+tests/agent/test_copilot_acp_client.py:generic-api-key:78
+tests/hermes_cli/test_auth_commands.py:generic-api-key:1178
+tests/hermes_cli/test_auth_commands.py:generic-api-key:1228
+tests/tools/test_stage2_hook_api_server_keygen.py:generic-api-key:123

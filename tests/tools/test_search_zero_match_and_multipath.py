@@ -12,11 +12,11 @@ def proj(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     d = tmp_path / "proj"
     d.mkdir()
-    (d / "a.py").write_text("TOKEN_ALPHA = 'find_me_value'\nother = 1\n")
-    (d / "b.py").write_text("x = compute(TOKEN_ALPHA)\n")
+    (d / "a.py").write_text("TOKEN_ALPHA = 'find_me_value'\nother = 1\n", encoding="utf-8")
+    (d / "b.py").write_text("x = compute(TOKEN_ALPHA)\n", encoding="utf-8")
     e = tmp_path / "extra"
     e.mkdir()
-    (e / "c.txt").write_text("TOKEN_ALPHA appears here too\n")
+    (e / "c.txt").write_text("TOKEN_ALPHA appears here too\n", encoding="utf-8")
     return tmp_path
 
 
@@ -36,7 +36,7 @@ class TestZeroMatchProbe:
 
     def test_regex_metachar_literal_hint(self, proj):
         d = proj / "proj"
-        (d / "meta.py").write_text("result = lookup[key+1]\n")
+        (d / "meta.py").write_text("result = lookup[key+1]\n", encoding="utf-8")
         r = json.loads(search_tool("lookup[key+1]", path=str(d), task_id="t-zm"))
         assert r["total_count"] == 0
         assert "literal match" in r.get("warning", "")
@@ -50,7 +50,7 @@ class TestZeroMatchProbe:
     def test_hidden_only_match_gets_hint(self, proj):
         d = proj / "proj"
         (d / ".secretdir").mkdir()
-        (d / ".secretdir" / "conf.cfg").write_text("HIDDEN_ONLY_TOKEN = true\n")
+        (d / ".secretdir" / "conf.cfg").write_text("HIDDEN_ONLY_TOKEN = true\n", encoding="utf-8")
         r = json.loads(search_tool("HIDDEN_ONLY_TOKEN", path=str(d), task_id="t-zm"))
         assert r["total_count"] == 0
         assert "hidden or gitignored" in r.get("warning", "")
@@ -62,12 +62,12 @@ class TestZeroMatchProbe:
         dependency = d / "node_modules" / "package" / ".hidden"
         dependency.mkdir(parents=True)
         dependency_file = dependency / "dependency.js"
-        dependency_file.write_text("BOUNDED_HIDDEN_TOKEN = true\n")
+        dependency_file.write_text("BOUNDED_HIDDEN_TOKEN = true\n", encoding="utf-8")
         local = d / ".project-local"
         local.mkdir()
         local_file = local / "settings.cfg"
-        local_file.write_text("BOUNDED_HIDDEN_TOKEN = true\n")
-        (d / ".gitignore").write_text("node_modules/\n.project-local/\n")
+        local_file.write_text("BOUNDED_HIDDEN_TOKEN = true\n", encoding="utf-8")
+        (d / ".gitignore").write_text("node_modules/\n.project-local/\n", encoding="utf-8")
 
         # Drive the public search seam while recording the commands that the
         # zero-match probe actually executes. The real rg calls still run. This
@@ -108,8 +108,8 @@ class TestZeroMatchProbe:
         d = proj / "proj"
         dependency = d / "node_modules" / "package" / ".hidden"
         dependency.mkdir(parents=True)
-        (dependency / "dependency.js").write_text("EXPLICIT_ROOT_TOKEN = true\n")
-        (d / ".gitignore").write_text("node_modules/\n")
+        (dependency / "dependency.js").write_text("EXPLICIT_ROOT_TOKEN = true\n", encoding="utf-8")
+        (d / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
 
         monkeypatch.setenv("HERMES_NATIVE_FILE_READ", "0")  # shell-observer test
         from tools.file_tools import _get_file_ops
@@ -144,7 +144,7 @@ class TestZeroMatchProbe:
     def test_probe_path_list_is_capped(self, proj):
         d = proj / "proj"
         for i in range(8):
-            (d / f"cap{i}.txt").write_text("capped_case_token = 1\n")
+            (d / f"cap{i}.txt").write_text("capped_case_token = 1\n", encoding="utf-8")
         r = json.loads(search_tool("CAPPED_CASE_TOKEN", path=str(d), task_id="t-zm"))
         w = r.get("warning", "")
         assert "case-insensitive" in w

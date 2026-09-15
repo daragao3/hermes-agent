@@ -68,7 +68,7 @@ def owned_child(tmp_path):
         if not pid_file.exists():
             return False
         try:
-            process = psutil.Process(int(pid_file.read_text()))
+            process = psutil.Process(int(pid_file.read_text(encoding="utf-8")))
             argv = [arg.replace("\\", "/") for arg in process.cmdline()]
             return script.as_posix() in argv and process.status() != psutil.STATUS_ZOMBIE
         except psutil.NoSuchProcess:

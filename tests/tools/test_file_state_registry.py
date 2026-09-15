@@ -33,7 +33,7 @@ from tools.file_tools import (
 
 def _tmp_file(content: str = "initial\n") -> str:
     fd, path = tempfile.mkstemp(prefix="hermes_file_state_test_", suffix=".txt")
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(content)
     return path
 
@@ -206,7 +206,7 @@ class FileToolsIntegrationTests(unittest.TestCase):
 
     def _write_seed(self, name: str, content: str = "seed\n") -> str:
         p = os.path.join(self._tmpdir, name)
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(content)
         return p
 

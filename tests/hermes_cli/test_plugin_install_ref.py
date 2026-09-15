@@ -43,7 +43,7 @@ def _plugin_repo(root: Path, name: str = "demo") -> tuple[Path, str, str]:
 
 
 def _metadata(home: Path) -> dict:
-    return json.loads((home / "plugins" / ".install-metadata.json").read_text())
+    return json.loads((home / "plugins" / ".install-metadata.json").read_text(encoding="utf-8"))
 
 
 def test_parser_accepts_only_explicit_install_ref_option():
@@ -127,7 +127,7 @@ def test_exact_ref_installs_old_commit_and_normalizes_uppercase(monkeypatch, tmp
     assert name == "demo"
     assert _git(target, "rev-parse", "HEAD") == old_sha
     assert old_sha != new_sha
-    assert (target / "marker.txt").read_text() == "old"
+    assert (target / "marker.txt").read_text(encoding="utf-8") == "old"
     assert _metadata(home) == {
         "demo": {"pinned": True, "revision": old_sha, "source": repo.as_uri()}
     }
@@ -174,7 +174,7 @@ def test_subdir_pin_records_source_identity_and_installs_requested_tree(
         identifier, force=False, ref=old_sha
     )
 
-    assert (target / "value.txt").read_text() == "old"
+    assert (target / "value.txt").read_text(encoding="utf-8") == "old"
     assert _metadata(home)["nested-demo"] == {
         "pinned": True,
         "revision": old_sha,

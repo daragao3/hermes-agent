@@ -172,7 +172,7 @@ def _pid_alive(pid: int) -> bool:
         # test is skipped on Windows so the path is unreachable.
         raise RuntimeError("_pid_alive POSIX-only")
     try:
-        os.kill(pid, 0)
+        os.kill(pid, 0)  # windows-footgun: ok -- the platform early-return above keeps this off Windows
     except ProcessLookupError:
         return False
     except PermissionError:
@@ -280,7 +280,7 @@ def test_grandchild_leak_is_killed_by_runner(tmp_path: Path) -> None:
             }}))
             assert child.pid > 0
     """).strip()
-    probe.write_text(probe_src + "\n")
+    probe.write_text(probe_src + "\n", encoding="utf-8")
 
     # Run the parallel runner against just the probe file. The runner
     # discovers under ``tests/`` by default, so we override via --paths.
@@ -309,7 +309,7 @@ def test_grandchild_leak_is_killed_by_runner(tmp_path: Path) -> None:
     assert handoff.exists(), (
         f"probe never wrote handoff file; runner output:\n{proc.stdout}"
     )
-    handoff_data = json.loads(handoff.read_text())
+    handoff_data = json.loads(handoff.read_text(encoding="utf-8"))
     grandchild_pid = handoff_data["pid"]
     diag = handoff_data.get("diag", "(no diag)")
     test_pid = handoff_data.get("test_pid")
@@ -516,7 +516,7 @@ def test_basetemp_is_wired_into_the_pytest_subprocess(tmp_path: Path) -> None:
 
     assert proc.returncode == 0, proc.stdout
     assert handoff.exists(), f"probe never reported tmp_path:\n{proc.stdout}"
-    reported = handoff.read_text().strip()
+    reported = handoff.read_text(encoding="utf-8").strip()
     # tmp_path == <basetemp>/test_reports_its_tmp_path0, and <basetemp> is our
     # per-run, per-file dir — so the marker appears in the path.
     assert "hermes-parallel" in reported, reported

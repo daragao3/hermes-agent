@@ -35,7 +35,7 @@ class TestLateNativePathCarry:
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         token = tmp_path / "service" / "token.json"
         token.parent.mkdir()
-        token.write_text("{}")
+        token.write_text("{}", encoding="utf-8")
         monkeypatch.setattr("hermes_cli.config.read_raw_config", lambda: {
             "terminal": {"credential_files": [r"service\token.json"]}
         })
@@ -54,7 +54,7 @@ class TestLateNativePathCarry:
         monkeypatch.setattr("agent.skill_utils.get_project_skills_dirs", lambda: [])
         item = tmp_path / kind / "nested" / "file.txt"
         item.parent.mkdir(parents=True)
-        item.write_text("fixture")
+        item.write_text("fixture", encoding="utf-8")
         entries = iter_skills_files() if kind == "skills" else iter_cache_files()
         matches = [entry for entry in entries if Path(entry["host_path"]) == item]
         assert matches == [{
@@ -67,7 +67,7 @@ class TestRegisterCredentialFiles:
     def test_dict_with_path_key(self, tmp_path):
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
-        (hermes_home / "token.json").write_text("{}")
+        (hermes_home / "token.json").write_text("{}", encoding="utf-8")
 
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
             missing = register_credential_files([{"path": "token.json"}])
@@ -83,7 +83,7 @@ class TestRegisterCredentialFiles:
         """When both path and name are present, path wins."""
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()
-        (hermes_home / "real.json").write_text("{}")
+        (hermes_home / "real.json").write_text("{}", encoding="utf-8")
 
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
             missing = register_credential_files([
@@ -101,7 +101,7 @@ class TestSkillsDirectoryMount:
         skills_dir = hermes_home / "skills"
         skills_dir.mkdir(parents=True)
         (skills_dir / "test-skill").mkdir()
-        (skills_dir / "test-skill" / "SKILL.md").write_text("# test")
+        (skills_dir / "test-skill" / "SKILL.md").write_text("# test", encoding="utf-8")
 
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
             mounts = get_skills_directory_mount()
@@ -125,10 +125,10 @@ class TestSkillsDirectoryMount:
         hermes_home = tmp_path / ".hermes"
         skills_dir = hermes_home / "skills"
         skills_dir.mkdir(parents=True)
-        (skills_dir / "legit.md").write_text("# real skill")
+        (skills_dir / "legit.md").write_text("# real skill", encoding="utf-8")
         # Create a symlink pointing outside the skills tree
         secret = tmp_path / "secret.txt"
-        secret.write_text("TOP SECRET")
+        secret.write_text("TOP SECRET", encoding="utf-8")
         (skills_dir / "evil_link").symlink_to(secret)
 
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
@@ -141,7 +141,7 @@ class TestSkillsDirectoryMount:
         assert safe_path != skills_dir
         # Legitimate file should be present
         assert (safe_path / "legit.md").exists()
-        assert (safe_path / "legit.md").read_text() == "# real skill"
+        assert (safe_path / "legit.md").read_text(encoding="utf-8") == "# real skill"
         # Symlink should NOT be present
         assert not (safe_path / "evil_link").exists()
 
@@ -151,15 +151,15 @@ class TestSkillsDirectoryMount:
         hermes_home = tmp_path / ".hermes"
         skills_dir = hermes_home / "skills"
         (skills_dir / "cat" / "myskill" / "references").mkdir(parents=True)
-        (skills_dir / "cat" / "myskill" / "SKILL.md").write_text("# skill")
-        (skills_dir / "cat" / "myskill" / "references" / "api.md").write_text("ref")
+        (skills_dir / "cat" / "myskill" / "SKILL.md").write_text("# skill", encoding="utf-8")
+        (skills_dir / "cat" / "myskill" / "references" / "api.md").write_text("ref", encoding="utf-8")
         for excluded in (".hub", ".curator_backups", "node_modules"):
             junk = skills_dir / excluded / "vendored"
             junk.mkdir(parents=True)
             (junk / "blob.bin").write_bytes(b"\0" * 64)
         # Force the sanitizing copy path.
         secret = tmp_path / "secret.txt"
-        secret.write_text("TOP SECRET")
+        secret.write_text("TOP SECRET", encoding="utf-8")
         (skills_dir / "evil_link").symlink_to(secret)
 
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
@@ -178,7 +178,7 @@ class TestSkillsDirectoryMount:
         hermes_home = tmp_path / ".hermes"
         skills_dir = hermes_home / "skills"
         skills_dir.mkdir(parents=True)
-        (skills_dir / "skill.md").write_text("ok")
+        (skills_dir / "skill.md").write_text("ok", encoding="utf-8")
 
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
             mounts = get_skills_directory_mount()
@@ -191,12 +191,12 @@ class TestIterSkillsFiles:
         hermes_home = tmp_path / ".hermes"
         skills_dir = hermes_home / "skills"
         (skills_dir / "cat" / "myskill").mkdir(parents=True)
-        (skills_dir / "cat" / "myskill" / "SKILL.md").write_text("# skill")
+        (skills_dir / "cat" / "myskill" / "SKILL.md").write_text("# skill", encoding="utf-8")
         (skills_dir / "cat" / "myskill" / "scripts").mkdir()
-        (skills_dir / "cat" / "myskill" / "scripts" / "run.sh").write_text("#!/bin/bash")
+        (skills_dir / "cat" / "myskill" / "scripts" / "run.sh").write_text("#!/bin/bash", encoding="utf-8")
         # Add a symlink that should be filtered
         secret = tmp_path / "secret"
-        secret.write_text("nope")
+        secret.write_text("nope", encoding="utf-8")
         (skills_dir / "cat" / "myskill" / "evil").symlink_to(secret)
 
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
@@ -219,19 +219,19 @@ class TestIterSkillsFiles:
         hermes_home = tmp_path / ".hermes"
         skills_dir = hermes_home / "skills"
         (skills_dir / "cat" / "myskill").mkdir(parents=True)
-        (skills_dir / "cat" / "myskill" / "SKILL.md").write_text("# skill")
+        (skills_dir / "cat" / "myskill" / "SKILL.md").write_text("# skill", encoding="utf-8")
         # Progressive-disclosure support files must still be synced.
         (skills_dir / "cat" / "myskill" / "references").mkdir()
-        (skills_dir / "cat" / "myskill" / "references" / "api.md").write_text("ref")
+        (skills_dir / "cat" / "myskill" / "references" / "api.md").write_text("ref", encoding="utf-8")
 
         for excluded in (".hub", ".archive", ".curator_backups", "node_modules"):
             junk = skills_dir / excluded / "vendored"
             junk.mkdir(parents=True)
-            (junk / "SKILL.md").write_text("# stale copy")
+            (junk / "SKILL.md").write_text("# stale copy", encoding="utf-8")
         # Also nested inside an otherwise-valid skill package.
         cache = skills_dir / "cat" / "myskill" / "__pycache__"
         cache.mkdir()
-        (cache / "helper.cpython-311.pyc").write_text("bytecode")
+        (cache / "helper.cpython-311.pyc").write_text("bytecode", encoding="utf-8")
 
         with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
             files = iter_skills_files()
@@ -274,7 +274,7 @@ class TestPathTraversalSecurity:
 
         # Create a sensitive file one level above hermes_home
         sensitive = tmp_path / "sensitive.json"
-        sensitive.write_text('{"secret": "value"}')
+        sensitive.write_text('{"secret": "value"}', encoding="utf-8")
 
         result = register_credential_file("../sensitive.json")
 
@@ -290,7 +290,7 @@ class TestPathTraversalSecurity:
         # Create a fake sensitive file outside hermes_home
         ssh_dir = tmp_path / ".ssh"
         ssh_dir.mkdir()
-        (ssh_dir / "id_rsa").write_text("PRIVATE KEY")
+        (ssh_dir / "id_rsa").write_text("PRIVATE KEY", encoding="utf-8")
 
         result = register_credential_file("../../.ssh/id_rsa")
 
@@ -305,7 +305,7 @@ class TestPathTraversalSecurity:
 
         # Create a file at an absolute path
         sensitive = tmp_path / "absolute.json"
-        sensitive.write_text("{}")
+        sensitive.write_text("{}", encoding="utf-8")
 
         result = register_credential_file(str(sensitive))
 
@@ -319,7 +319,7 @@ class TestPathTraversalSecurity:
         hermes_home.mkdir()
         subdir = hermes_home / "creds"
         subdir.mkdir()
-        (subdir / "oauth.json").write_text("{}")
+        (subdir / "oauth.json").write_text("{}", encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         result = register_credential_file("creds/oauth.json")
@@ -334,7 +334,7 @@ class TestPathTraversalSecurity:
 
         # Create a sensitive file outside hermes_home
         sensitive = tmp_path / "sensitive.json"
-        sensitive.write_text('{"secret": "value"}')
+        sensitive.write_text('{"secret": "value"}', encoding="utf-8")
 
         # Create a symlink inside hermes_home pointing outside
         symlink = hermes_home / "evil_link.json"
@@ -360,7 +360,7 @@ class TestConfigPathTraversal:
     def _write_config(self, hermes_home: Path, cred_files: list):
         import yaml
         config_path = hermes_home / "config.yaml"
-        config_path.write_text(yaml.dump({"terminal": {"credential_files": cred_files}}))
+        config_path.write_text(yaml.dump({"terminal": {"credential_files": cred_files}}), encoding="utf-8")
 
     def test_config_traversal_rejected(self, tmp_path, monkeypatch):
         """'../secret' in config.yaml must not escape HERMES_HOME."""
@@ -369,7 +369,7 @@ class TestConfigPathTraversal:
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         sensitive = tmp_path / "secret.json"
-        sensitive.write_text("{}")
+        sensitive.write_text("{}", encoding="utf-8")
         self._write_config(hermes_home, ["../secret.json"])
 
         mounts = get_credential_file_mounts()
@@ -384,7 +384,7 @@ class TestConfigPathTraversal:
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
         sensitive = tmp_path / "abs.json"
-        sensitive.write_text("{}")
+        sensitive.write_text("{}", encoding="utf-8")
         self._write_config(hermes_home, [str(sensitive)])
 
         mounts = get_credential_file_mounts()
@@ -396,7 +396,7 @@ class TestConfigPathTraversal:
         hermes_home.mkdir()
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
-        (hermes_home / "oauth.json").write_text("{}")
+        (hermes_home / "oauth.json").write_text("{}", encoding="utf-8")
         self._write_config(hermes_home, ["oauth.json"])
 
         mounts = get_credential_file_mounts()
@@ -597,7 +597,7 @@ class TestIterCacheFiles:
         doc_dir = hermes_home / "cache" / "documents"
         doc_dir.mkdir(parents=True)
         real_file = doc_dir / "real.txt"
-        real_file.write_text("content")
+        real_file.write_text("content", encoding="utf-8")
         (doc_dir / "link.txt").symlink_to(real_file)
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
@@ -636,15 +636,15 @@ class TestMasterCredentialStoresAreNeverMountable:
     def _home(tmp_path):
         home = tmp_path / ".hermes"
         home.mkdir()
-        (home / ".env").write_text("OPENAI_API_KEY=sk-proj-REAL\n")
-        (home / "auth.json").write_text('{"providers":{}}')
-        (home / ".anthropic_oauth.json").write_text('{"refresh_token":"rt"}')
-        (home / "webhook_subscriptions.json").write_text("{}")
+        (home / ".env").write_text("OPENAI_API_KEY=sk-proj-REAL\n", encoding="utf-8")
+        (home / "auth.json").write_text('{"providers":{}}', encoding="utf-8")
+        (home / ".anthropic_oauth.json").write_text('{"refresh_token":"rt"}', encoding="utf-8")
+        (home / "webhook_subscriptions.json").write_text("{}", encoding="utf-8")
         (home / "cache").mkdir()
-        (home / "cache" / "bws_cache.json").write_text("{}")
+        (home / "cache" / "bws_cache.json").write_text("{}", encoding="utf-8")
         (home / "mcp-tokens").mkdir()
-        (home / "mcp-tokens" / "srv.json").write_text('{"access_token":"t"}')
-        (home / "google_token.json").write_text("{}")
+        (home / "mcp-tokens" / "srv.json").write_text('{"access_token":"t"}', encoding="utf-8")
+        (home / "google_token.json").write_text("{}", encoding="utf-8")
         return home
 
     @pytest.mark.parametrize(

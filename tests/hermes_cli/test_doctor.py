@@ -592,7 +592,7 @@ class TestDoctorMemoryProviderSection:
         if provider:
             config["provider"] = provider
         config = {"memory": config}
-        (home / "config.yaml").write_text(yaml.dump(config))
+        (home / "config.yaml").write_text(yaml.dump(config), encoding="utf-8")
         return home
 
     def _run_doctor_and_capture(
@@ -2150,7 +2150,7 @@ class TestNpmAuditBudget:
                 if not receipt.exists():
                     continue
                 try:
-                    proc = psutil.Process(int(receipt.read_text()))
+                    proc = psutil.Process(int(receipt.read_text(encoding="utf-8")))
                     if str(script) in proc.cmdline():
                         proc.kill()
                         proc.wait(timeout=5)

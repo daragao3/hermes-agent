@@ -55,7 +55,7 @@ def fake_venv_python(tmp_path):
     scripts = venv_root / "Scripts"
     scripts.mkdir(parents=True)
     py = scripts / "python.exe"
-    py.write_text("#!/bin/sh\necho fake python")
+    py.write_text("#!/bin/sh\necho fake python", encoding="utf-8")
     return py, venv_root
 
 
@@ -134,7 +134,7 @@ class TestResolveInstallTargetPython:
         scripts = venv_root / "Scripts"
         scripts.mkdir(parents=True)
         py = scripts / "python.exe"
-        py.write_text("fake")
+        py.write_text("fake", encoding="utf-8")
 
         with patch("hermes_cli.main_install_repair._is_windows", return_value=True):
             from hermes_cli.main_install_repair import _resolve_install_target_python

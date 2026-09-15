@@ -8,7 +8,7 @@ def test_dry_run_prints_plan_without_mutating(monkeypatch, tmp_path, capsys):
     hermes_home = tmp_path / ".hermes"
     project_root.mkdir()
     hermes_home.mkdir()
-    (hermes_home / "config.yaml").write_text("model: {}\n")
+    (hermes_home / "config.yaml").write_text("model: {}\n", encoding="utf-8")
 
     called = False
 

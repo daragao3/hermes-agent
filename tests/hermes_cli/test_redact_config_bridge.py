@@ -36,7 +36,7 @@ def test_redact_secrets_false_in_config_yaml_is_honored(tmp_path):
         )
     )
     # Empty .env so nothing else sets the env var
-    (hermes_home / ".env").write_text("")
+    (hermes_home / ".env").write_text("", encoding="utf-8")
 
     # Spawn a fresh Python process that imports hermes_cli.main and checks
     # _REDACT_ENABLED. Must be a subprocess — we need a clean module state.
@@ -82,8 +82,8 @@ def test_redact_secrets_default_true_when_unset(tmp_path):
     """
     hermes_home = tmp_path / ".hermes"
     hermes_home.mkdir()
-    (hermes_home / "config.yaml").write_text("{}\n")  # empty config
-    (hermes_home / ".env").write_text("")
+    (hermes_home / "config.yaml").write_text("{}\n", encoding="utf-8")  # empty config
+    (hermes_home / ".env").write_text("", encoding="utf-8")
 
     probe = textwrap.dedent(
         """\
@@ -127,7 +127,7 @@ def test_dotenv_redact_secrets_beats_config_yaml(tmp_path):
         )
     )
     # .env force-enables redaction
-    (hermes_home / ".env").write_text("HERMES_REDACT_SECRETS=true\n")
+    (hermes_home / ".env").write_text("HERMES_REDACT_SECRETS=true\n", encoding="utf-8")
 
     probe = textwrap.dedent(
         """\

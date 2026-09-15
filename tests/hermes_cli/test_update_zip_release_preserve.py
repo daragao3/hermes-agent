@@ -24,13 +24,13 @@ def test_staged_apps_swap_preserves_live_release_dir(tmp_path, monkeypatch):
     (live_apps / "release" / "win-unpacked").mkdir(parents=True)
     (live_apps / "release" / "win-unpacked" / "Hermes.exe").write_bytes(b"MZbuilt")
     (live_apps / "electron").mkdir()
-    (live_apps / "electron" / "main.ts").write_text("old source")
+    (live_apps / "electron" / "main.ts").write_text("old source", encoding="utf-8")
 
     # extracted ZIP: new source, NO release dir (GitHub source archive shape)
     extracted = tmp_path / "extracted"
     zip_apps = extracted / "apps" / "desktop"
     (zip_apps / "electron").mkdir(parents=True)
-    (zip_apps / "electron" / "main.ts").write_text("new source")
+    (zip_apps / "electron" / "main.ts").write_text("new source", encoding="utf-8")
 
     monkeypatch.setattr(hermes_main, "PROJECT_ROOT", root)
 
@@ -48,7 +48,7 @@ def test_staged_apps_swap_preserves_live_release_dir(tmp_path, monkeypatch):
     _commit_staged_replacements([(staged_path, dst)])
 
     # New source landed AND the built desktop app survived.
-    assert (root / "apps" / "desktop" / "electron" / "main.ts").read_text() == (
+    assert (root / "apps" / "desktop" / "electron" / "main.ts").read_text(encoding="utf-8") == (
         "new source"
     )
     exe = root / "apps" / "desktop" / "release" / "win-unpacked" / "Hermes.exe"

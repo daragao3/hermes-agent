@@ -455,7 +455,7 @@ class TestNotebookExtraction(unittest.TestCase):
              "outputs": [{"output_type": "stream",
                           "text": "x" * (_MAX_OUTPUT_CHARS + 5000)}]},
         ]}], "nbformat": 3}
-        with open(p, "w") as fh:
+        with open(p, "w", encoding="utf-8") as fh:
             json.dump(nb, fh)
         text = extract_document_text(p)
         self.assertIn("output chars truncated", text)
@@ -470,7 +470,7 @@ class TestNotebookExtraction(unittest.TestCase):
             {"cell_type": "code", "source": "1+1",
              "outputs": [{"output_type": "pyout", "text": ["2"]}]},
         ]}], "nbformat": 3}
-        with open(p, "w") as fh:
+        with open(p, "w", encoding="utf-8") as fh:
             json.dump(nb, fh)
         text = extract_document_text(p)
         self.assertIn("Output (cell 1)", text)

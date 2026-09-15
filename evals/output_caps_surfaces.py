@@ -29,7 +29,7 @@ def exercise_surfaces(agent, captures, url, home, config):
     }}}
     config["auxiliary"] = {"compression": {"provider": "fixture-local", "model": "fixture", "reasoning_effort": "none", "max_output_tokens": 47}}
     config["_setup_done"] = True
-    (home / "config.yaml").write_text(json.dumps(config))
+    (home / "config.yaml").write_text(json.dumps(config), encoding="utf-8")
     from agent.moa_loop import MoAClient
     start = len(captures)
     response = MoAClient("fixture").chat.completions.create(model="fixture", messages=[{"role": "user", "content": "Return fixture"}])

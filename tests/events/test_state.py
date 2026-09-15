@@ -35,7 +35,7 @@ def test_save_state_is_atomic(tmp_path):
     path = tmp_path / "state.json"
     save_state(path, {"count": 1})
     save_state(path, {"count": 2})
-    assert json.loads(path.read_text()) == {"count": 2}
+    assert json.loads(path.read_text(encoding="utf-8")) == {"count": 2}
     # No leftover .tmp files
     leftovers = list(tmp_path.glob("*.tmp"))
     assert leftovers == []

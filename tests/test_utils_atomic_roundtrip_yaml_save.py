@@ -24,7 +24,7 @@ class TestAtomicRoundtripYamlSave:
         atomic_roundtrip_yaml_save(config_path, {"model": {"default": "test-model"}})
 
         assert config_path.exists()
-        assert yaml.safe_load(config_path.read_text())["model"]["default"] == "test-model"
+        assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["model"]["default"] == "test-model"
 
     def test_preserves_top_level_key_order(self, config_path):
         """Existing top-level keys keep their author-intended ordering."""

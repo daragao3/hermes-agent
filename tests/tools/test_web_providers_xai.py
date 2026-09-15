@@ -79,7 +79,7 @@ class TestXAIProviderIsAvailable:
         """A malformed auth.json must not crash availability scans."""
         monkeypatch.delenv("XAI_API_KEY", raising=False)
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-        (tmp_path / "auth.json").write_text("not json at all }{")
+        (tmp_path / "auth.json").write_text("not json at all }{", encoding="utf-8")
 
         from plugins.web.xai.provider import XAIWebSearchProvider
         assert XAIWebSearchProvider().is_available() is False
@@ -567,7 +567,7 @@ class TestXAIProviderOAuthPath:
         assert refreshed["api_key"] == "fresh-access"
         assert refresh_calls == [("rejected-access", "one-time-refresh")]
 
-        stored = json.loads(auth_path.read_text())
+        stored = json.loads(auth_path.read_text(encoding="utf-8"))
         entries = {
             item["id"]: item
             for item in stored["credential_pool"]["xai-oauth"]

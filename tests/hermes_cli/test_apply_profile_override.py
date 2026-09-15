@@ -32,7 +32,7 @@ def _run_apply_profile_override(
     hermes_root.mkdir(parents=True, exist_ok=True)
 
     if active_profile is not None:
-        (hermes_root / "active_profile").write_text(active_profile)
+        (hermes_root / "active_profile").write_text(active_profile, encoding="utf-8")
 
     if active_profile and active_profile != "default":
         (hermes_root / "profiles" / active_profile).mkdir(parents=True, exist_ok=True)
@@ -165,7 +165,7 @@ class TestSupervisedChildIgnoresStickyProfile:
         active_profile fallback, never an explicit flag)."""
         hermes_root = tmp_path / ".hermes"
         hermes_root.mkdir(parents=True, exist_ok=True)
-        (hermes_root / "active_profile").write_text("briefer")
+        (hermes_root / "active_profile").write_text("briefer", encoding="utf-8")
         (hermes_root / "profiles" / "briefer").mkdir(parents=True, exist_ok=True)
         (hermes_root / "profiles" / "coder").mkdir(parents=True, exist_ok=True)
 

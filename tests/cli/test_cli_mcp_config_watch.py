@@ -15,7 +15,7 @@ def _make_cli(tmp_path, mcp_servers=None, extra_config=None):
     obj._config_mcp_servers = mcp_servers or {}
 
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text("mcp_servers: {}\n")
+    cfg_file.write_text("mcp_servers: {}\n", encoding="utf-8")
     obj._config_mtime = cfg_file.stat().st_mtime
 
     obj._reload_mcp = MagicMock()
@@ -37,7 +37,7 @@ class TestMCPConfigWatch:
         obj, cfg_file = _make_cli(tmp_path, mcp_servers={})
 
         # Simulate user adding a new MCP server to config.yaml
-        cfg_file.write_text(yaml.dump({"mcp_servers": {"github": {"url": "https://mcp.github.com"}}}))
+        cfg_file.write_text(yaml.dump({"mcp_servers": {"github": {"url": "https://mcp.github.com"}}}), encoding="utf-8")
         obj._config_mtime = 0.0  # force stale mtime
 
         with patch("hermes_cli.config.get_config_path", return_value=cfg_file):
@@ -51,7 +51,7 @@ class TestMCPConfigWatch:
         obj, cfg_file = _make_cli(tmp_path, mcp_servers={"github": {"url": "https://mcp.github.com"}})
 
         # Simulate user removing the server
-        cfg_file.write_text(yaml.dump({"mcp_servers": {}}))
+        cfg_file.write_text(yaml.dump({"mcp_servers": {}}), encoding="utf-8")
         obj._config_mtime = 0.0
 
         with patch("hermes_cli.config.get_config_path", return_value=cfg_file):

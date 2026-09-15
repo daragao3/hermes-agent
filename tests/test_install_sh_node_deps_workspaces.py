@@ -42,11 +42,11 @@ def workspace_args(install_dir: Path) -> list[str]:
 
 def make_checkout(root: Path, workspaces: tuple[str, ...]) -> Path:
     """Lay out a checkout with a root package and the given workspace dirs."""
-    (root / "package.json").write_text('{"workspaces": ["apps/*", "ui-tui", "web"]}')
+    (root / "package.json").write_text('{"workspaces": ["apps/*", "ui-tui", "web"]}', encoding="utf-8")
     for workspace in ("apps/desktop", *workspaces):
         directory = root / workspace
         directory.mkdir(parents=True)
-        (directory / "package.json").write_text("{}")
+        (directory / "package.json").write_text("{}", encoding="utf-8")
     return root
 
 

@@ -214,7 +214,7 @@ def main():
     }
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"{args.label}.navigability.json").write_text(json.dumps({"summary": summary, "rows": rows}, indent=1))
+    (out / f"{args.label}.navigability.json").write_text(json.dumps({"summary": summary, "rows": rows}, indent=1), encoding="utf-8")
     print(json.dumps(summary, indent=1))
 
 

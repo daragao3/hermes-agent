@@ -20,7 +20,7 @@ class TestSplitCommandLine:
     @pytest.mark.windows_only
     def test_windows_path_backslashes_preserved(self):
         argv = split_command_line(r"sessions export C:\Users\me\Desktop\out.jsonl")
-        assert argv == ["sessions", "export", r"C:\Users\me\Desktop\out.jsonl"]
+        assert argv == ["sessions", "export", r"C:\Users\me\Desktop\out.jsonl"]  # windows-footgun: ok -- expected argv for the Desktop-path test itself, not a real path
 
     @pytest.mark.windows_only
     def test_quoted_path_with_spaces(self):

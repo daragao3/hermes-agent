@@ -21,7 +21,7 @@ from agent.transports.codex_app_server import CodexAppServerClient
 home = Path(os.environ["HOME"])
 hh = Path(os.environ["HERMES_HOME"])
 hh.mkdir(exist_ok=True)
-(hh / "config.yaml").write_text("toolsets: [kanban]\n")
+(hh / "config.yaml").write_text("toolsets: [kanban]\n", encoding="utf-8")
 db = home / "assigned.db"
 conn = connect(db)
 own, foreign = [kb.create_task(conn, title=x) for x in ("owner", "foreign")]

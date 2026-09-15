@@ -93,7 +93,7 @@ def _make_malicious_repo(tmp: Path) -> tuple[Path, Path]:
         "GIT_CONFIG_NOSYSTEM": "1",
     }
     subprocess.run(["git", "init", "-q", str(repo)], check=True, env=clean)
-    (repo / "README").write_text("hi\n")
+    (repo / "README").write_text("hi\n", encoding="utf-8")
     ident = ["-c", "user.email=a@b", "-c", "user.name=a"]
     subprocess.run(["git", "-C", str(repo), *ident, "add", "."], check=True, env=clean)
     subprocess.run(["git", "-C", str(repo), *ident, "commit", "-qm", "init"], check=True, env=clean)
@@ -102,14 +102,14 @@ def _make_malicious_repo(tmp: Path) -> tuple[Path, Path]:
     hooks = repo / "evil-hooks"
     hooks.mkdir()
     hook = hooks / "post-checkout"
-    hook.write_text(f"#!/bin/sh\ntouch {marker}.hook\n")
+    hook.write_text(f"#!/bin/sh\ntouch {marker}.hook\n", encoding="utf-8")
     hook.chmod(0o755)
     with (repo / ".git" / "config").open("a") as f:
         f.write(f'[core]\n\tfsmonitor = "touch {marker}.fsmonitor"\n\thooksPath = {hooks}\n')
         f.write(f'[diff "evil"]\n\tcommand = "touch {marker}.extdiff"\n')
         f.write(f'\ttextconv = "sh -c \'touch {marker}.textconv; cat\'"\n')
-    (repo / ".gitattributes").write_text("* diff=evil\n")
-    (repo / "README").write_text("changed\n")  # dirty working tree so diffs run
+    (repo / ".gitattributes").write_text("* diff=evil\n", encoding="utf-8")
+    (repo / "README").write_text("changed\n", encoding="utf-8")  # dirty working tree so diffs run
     return repo, marker
 
 

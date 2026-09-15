@@ -37,7 +37,7 @@ _STORE_STUB = r"C:\Users\u\AppData\Local\Microsoft\WindowsApps\bash.exe"
 def _mk_bash(path: Path) -> str:
     """Create an empty stand-in bash.exe and return its str path."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("")
+    path.write_text("", encoding="utf-8")
     return str(path)
 
 

@@ -515,9 +515,9 @@ class TestCheckForSkillUpdates:
         )
         skill_dir = tmp_path / "demo-skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text("same content")
+        (skill_dir / "SKILL.md").write_text("same content", encoding="utf-8")
         (skill_dir / "references").mkdir()
-        (skill_dir / "references" / "checklist.md").write_text("- [ ] security\n")
+        (skill_dir / "references" / "checklist.md").write_text("- [ ] security\n", encoding="utf-8")
 
         assert bundle_content_hash(bundle) == content_hash(skill_dir)
 
@@ -561,7 +561,7 @@ class TestCheckForSkillUpdates:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
         if path_kind == "regular_file":
-            (skills_dir / "demo-skill").write_text("not an installed directory")
+            (skills_dir / "demo-skill").write_text("not an installed directory", encoding="utf-8")
         monkeypatch.setattr(hub, "SKILLS_DIR", skills_dir)
 
         lock = MagicMock()
@@ -603,7 +603,7 @@ class TestHubLockFile:
 
     def test_load_corrupt_json(self, tmp_path):
         lock_file = tmp_path / "lock.json"
-        lock_file.write_text("not json{{{")
+        lock_file.write_text("not json{{{", encoding="utf-8")
         lock = HubLockFile(path=lock_file)
         data = lock.load()
         assert data == {"version": 1, "installed": {}}
@@ -636,7 +636,7 @@ class TestTapsManager:
 
     def test_load_corrupt_json(self, tmp_path):
         taps_file = tmp_path / "taps.json"
-        taps_file.write_text("bad json")
+        taps_file.write_text("bad json", encoding="utf-8")
         mgr = TapsManager(path=taps_file)
         assert mgr.load() == []
 
@@ -824,7 +824,7 @@ class TestAppendAuditLog:
         log_file = tmp_path / "audit.log"
         with patch("tools.skills_hub.AUDIT_LOG", log_file):
             append_audit_log("INSTALL", "test-skill", "github", "trusted", "pass")
-        content = log_file.read_text()
+        content = log_file.read_text(encoding="utf-8")
         assert "INSTALL" in content
         assert "test-skill" in content
         assert "github:trusted" in content
@@ -1266,7 +1266,7 @@ class TestInstallPathSafety:
         lock_path = tmp_path / "lock.json"
         target = tmp_path / "victim"
         target.mkdir()
-        (target / "file.txt").write_text("important")
+        (target / "file.txt").write_text("important", encoding="utf-8")
 
         # Bypass record_install's validator to simulate a poisoned lock file.
         lock_path.write_text(json.dumps({
@@ -1291,7 +1291,7 @@ class TestInstallPathSafety:
         assert ok is False
         assert "Unsafe" in msg or "Refusing" in msg
         assert target.exists()
-        assert (target / "file.txt").read_text() == "important"
+        assert (target / "file.txt").read_text(encoding="utf-8") == "important"
 
     def test_uninstall_rejects_traversal(self, tmp_path, isolated_skills_dir, patch_lock_file):
         from tools.skills_hub_install import uninstall_skill
@@ -1299,7 +1299,7 @@ class TestInstallPathSafety:
         lock_path = tmp_path / "lock.json"
         sibling = tmp_path / "sibling"
         sibling.mkdir()
-        (sibling / "data").write_text("nope")
+        (sibling / "data").write_text("nope", encoding="utf-8")
 
         lock_path.write_text(json.dumps({
             "installed": {
@@ -1318,7 +1318,7 @@ class TestInstallPathSafety:
         ok, msg = uninstall_skill("evil")
         assert ok is False
         assert sibling.exists()
-        assert (sibling / "data").read_text() == "nope"
+        assert (sibling / "data").read_text(encoding="utf-8") == "nope"
 
     def test_uninstall_rejects_empty_install_path(self, tmp_path, isolated_skills_dir, patch_lock_file):
         """Empty install_path resolves to SKILLS_DIR itself — must be refused."""
@@ -1326,7 +1326,7 @@ class TestInstallPathSafety:
 
         # Put a sibling skill alongside to prove rmtree doesn't fire.
         (isolated_skills_dir / "bystander").mkdir()
-        (isolated_skills_dir / "bystander" / "SKILL.md").write_text("safe")
+        (isolated_skills_dir / "bystander" / "SKILL.md").write_text("safe", encoding="utf-8")
 
         lock_path = tmp_path / "lock.json"
         lock_path.write_text(json.dumps({
@@ -1345,7 +1345,7 @@ class TestInstallPathSafety:
         patch_lock_file(lock_path)
         ok, msg = uninstall_skill("evil")
         assert ok is False
-        assert (isolated_skills_dir / "bystander" / "SKILL.md").read_text() == "safe"
+        assert (isolated_skills_dir / "bystander" / "SKILL.md").read_text(encoding="utf-8") == "safe"
 
 
     def test_install_from_quarantine_rejects_symlinks(self, tmp_path):
@@ -1360,10 +1360,10 @@ class TestInstallPathSafety:
 
         q_dir = quarantine_root / "pending"
         q_dir.mkdir()
-        (q_dir / "SKILL.md").write_text("---\nname: bad-skill\n---\n")
+        (q_dir / "SKILL.md").write_text("---\nname: bad-skill\n---\n", encoding="utf-8")
 
         secret = tmp_path / "secret.txt"
-        secret.write_text("data exfiltration payload\n")
+        secret.write_text("data exfiltration payload\n", encoding="utf-8")
 
         leak = q_dir / "leak.txt"
         try:
@@ -1395,7 +1395,7 @@ class TestInstallPathSafety:
 
         record_installed.assert_not_called()
         assert not (skills_dir / "bad-skill" / "leak.txt").exists()
-        assert secret.read_text() == "data exfiltration payload\n"
+        assert secret.read_text(encoding="utf-8") == "data exfiltration payload\n"
 
     def test_install_from_quarantine_rejects_category_bucket_overwrite(self, tmp_path):
         """Installing a skill whose name matches an existing category directory
@@ -1416,14 +1416,14 @@ class TestInstallPathSafety:
         category.mkdir()
         for skill in ("alpha", "bravo", "charlie"):
             (category / skill).mkdir()
-            (category / skill / "SKILL.md").write_text(f"name: {skill}")
+            (category / skill / "SKILL.md").write_text(f"name: {skill}", encoding="utf-8")
 
         quarantine_root = skills_dir / ".hub" / "quarantine"
         quarantine_root.mkdir(parents=True)
 
         q_dir = quarantine_root / "pending"
         q_dir.mkdir()
-        (q_dir / "SKILL.md").write_text("---\nname: research\n---\n")
+        (q_dir / "SKILL.md").write_text("---\nname: research\n---\n", encoding="utf-8")
 
         bundle = SkillBundle(
             name="research",
@@ -1464,18 +1464,18 @@ class TestInstallPathSafety:
         # Existing skill directory with SKILL.md.
         existing = skills_dir / "my-skill"
         existing.mkdir()
-        (existing / "SKILL.md").write_text("old content")
+        (existing / "SKILL.md").write_text("old content", encoding="utf-8")
         (existing / "refs").mkdir()
-        (existing / "refs" / "guide.md").write_text("old guide")
+        (existing / "refs" / "guide.md").write_text("old guide", encoding="utf-8")
 
         quarantine_root = skills_dir / ".hub" / "quarantine"
         quarantine_root.mkdir(parents=True)
 
         q_dir = quarantine_root / "pending"
         q_dir.mkdir()
-        (q_dir / "SKILL.md").write_text("---\nname: my-skill\n---\nnew")
+        (q_dir / "SKILL.md").write_text("---\nname: my-skill\n---\nnew", encoding="utf-8")
         (q_dir / "refs").mkdir()
-        (q_dir / "refs" / "guide.md").write_text("new guide")
+        (q_dir / "refs" / "guide.md").write_text("new guide", encoding="utf-8")
 
         bundle = SkillBundle(
             name="my-skill",
@@ -1499,7 +1499,7 @@ class TestInstallPathSafety:
 
         # The old directory was replaced by the new one.
         assert installed.exists()
-        assert (installed / "SKILL.md").read_text().strip() == "---\nname: my-skill\n---\nnew"
+        assert (installed / "SKILL.md").read_text(encoding="utf-8").strip() == "---\nname: my-skill\n---\nnew"
 
     def test_install_from_quarantine_allows_empty_category_dir(self, tmp_path):
         """Installing into an existing but empty category directory is allowed
@@ -1519,7 +1519,7 @@ class TestInstallPathSafety:
 
         q_dir = quarantine_root / "pending"
         q_dir.mkdir()
-        (q_dir / "SKILL.md").write_text("---\nname: research\n---\n")
+        (q_dir / "SKILL.md").write_text("---\nname: research\n---\n", encoding="utf-8")
 
         bundle = SkillBundle(
             name="research",
@@ -1559,11 +1559,11 @@ class TestInstallPathSafety:
         for sub, name in (("training", "trl"), ("inference", "vllm")):
             skill = skills_dir / "mlops" / sub / name
             skill.mkdir(parents=True)
-            (skill / "SKILL.md").write_text(f"---\nname: {name}\n---\n")
+            (skill / "SKILL.md").write_text(f"---\nname: {name}\n---\n", encoding="utf-8")
 
         q_dir = quarantine_root / "pending"
         q_dir.mkdir()
-        (q_dir / "SKILL.md").write_text("---\nname: mlops\n---\n")
+        (q_dir / "SKILL.md").write_text("---\nname: mlops\n---\n", encoding="utf-8")
 
         bundle = SkillBundle(
             name="mlops",
@@ -1604,11 +1604,11 @@ class TestInstallPathSafety:
         # Existing normal skill directory.
         outer = skills_dir / "devops"
         outer.mkdir(parents=True)
-        (outer / "SKILL.md").write_text("---\nname: devops\n---\n")
+        (outer / "SKILL.md").write_text("---\nname: devops\n---\n", encoding="utf-8")
 
         q_dir = quarantine_root / "pending"
         q_dir.mkdir()
-        (q_dir / "SKILL.md").write_text("---\nname: docker\n---\n")
+        (q_dir / "SKILL.md").write_text("---\nname: docker\n---\n", encoding="utf-8")
 
         bundle = SkillBundle(
             name="docker",
@@ -1645,11 +1645,11 @@ class TestInstallPathSafety:
         quarantine_root = skills_dir / ".hub" / "quarantine"
         quarantine_root.mkdir(parents=True)
 
-        (skills_dir / "notes").write_text("not a directory")
+        (skills_dir / "notes").write_text("not a directory", encoding="utf-8")
 
         q_dir = quarantine_root / "pending"
         q_dir.mkdir()
-        (q_dir / "SKILL.md").write_text("---\nname: notes\n---\n")
+        (q_dir / "SKILL.md").write_text("---\nname: notes\n---\n", encoding="utf-8")
 
         bundle = SkillBundle(
             name="notes",
@@ -1672,7 +1672,7 @@ class TestInstallPathSafety:
                     q_dir, "notes", "", bundle, scan_result,
                 )
 
-        assert (skills_dir / "notes").read_text() == "not a directory"
+        assert (skills_dir / "notes").read_text(encoding="utf-8") == "not a directory"
 
     def test_install_from_quarantine_records_successful_install(self, tmp_path):
         import tools.skills_hub as hub
@@ -1846,7 +1846,7 @@ class TestLoadHermesIndex:
         import tools.skills_hub_search as hub_search
 
         cache_file = self._isolate_cache(monkeypatch, tmp_path)
-        cache_file.write_text(json.dumps({"skills": [{"name": "stale"}]}))
+        cache_file.write_text(json.dumps({"skills": [{"name": "stale"}]}), encoding="utf-8")
         # Force the cache to look expired so the network path runs.
         old = time.time() - (HERMES_INDEX_TTL + 100)
         import os

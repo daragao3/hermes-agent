@@ -219,7 +219,7 @@ def test_launch_external_worker_uses_restart_safe_scope_and_acknowledges(
     def popen(command, **kwargs):
         spawned.append((command, kwargs))
         payload_index = command.index("--external-worker-file") + 1
-        payloads.append(json.loads(Path(command[payload_index]).read_text()))
+        payloads.append(json.loads(Path(command[payload_index]).read_text(encoding="utf-8")))
         ack_index = command.index("--ack-file") + 1
         Path(command[ack_index]).write_text(
             json.dumps({"pid": 4321, "execution_id": "exec-1"}),
@@ -606,4 +606,4 @@ def test_managed_gateway_restart_preserves_active_worker_and_single_side_effect(
             parent.terminate()
             parent.wait(timeout=5)
         if worker_pid is not None and _pid_exists(worker_pid):
-            os.kill(worker_pid, signal.SIGKILL)
+            os.kill(worker_pid, signal.SIGKILL)  # windows-footgun: ok -- POSIX-only test (skipped without systemd-run --user --scope)

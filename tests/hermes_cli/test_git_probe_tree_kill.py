@@ -46,7 +46,7 @@ def _write_forking_script(tmp_path, marker_name="child.pid"):
 
 def _pid_alive(pid: int) -> bool:
     try:
-        os.kill(pid, 0)
+        os.kill(pid, 0)  # windows-footgun: ok -- POSIX-only module (module-level skip off POSIX)
     except ProcessLookupError:
         return False
     return True
@@ -55,8 +55,8 @@ def _pid_alive(pid: int) -> bool:
 def _wait_marker(marker, timeout=5.0) -> int:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if marker.exists() and marker.read_text().strip():
-            return int(marker.read_text().strip())
+        if marker.exists() and marker.read_text(encoding="utf-8").strip():
+            return int(marker.read_text(encoding="utf-8").strip())
         time.sleep(0.05)
     raise AssertionError("forking script never wrote its descendant pid")
 
@@ -83,7 +83,7 @@ def test_timeout_kills_descendants(tmp_path):
 def test_posix_spawn_uses_own_process_group(tmp_path):
     """The probe child must lead its own process group (killpg precondition)."""
     script = tmp_path / "pgid.sh"
-    script.write_text("#!/bin/bash\necho \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"\n")
+    script.write_text("#!/bin/bash\necho \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"\n", encoding="utf-8")
     script.chmod(0o755)
 
     out = bounded_git_probe([str(script)], timeout=5.0)

@@ -29,9 +29,9 @@ def client(monkeypatch):
 def test_fs_list_sorts_and_hides_noise(client, tmp_path):
     root = tmp_path / "project"
     root.mkdir()
-    (root / "b.txt").write_text("b")
+    (root / "b.txt").write_text("b", encoding="utf-8")
     (root / "a_dir").mkdir()
-    (root / "a.txt").write_text("a")
+    (root / "a.txt").write_text("a", encoding="utf-8")
     (root / "node_modules").mkdir()
     (root / ".git").mkdir()
 
@@ -69,7 +69,7 @@ def test_fs_download_streams_file_without_data_url_cap(client, tmp_path, monkeyp
 
 def test_fs_download_rejects_sensitive_files(client, tmp_path):
     target = tmp_path / ".env"
-    target.write_text("SECRET=1")
+    target.write_text("SECRET=1", encoding="utf-8")
 
     response = client.get("/api/fs/download", params={"path": str(target)})
 
@@ -79,7 +79,7 @@ def test_fs_download_rejects_sensitive_files(client, tmp_path):
 def test_fs_endpoints_require_auth(tmp_path):
     client = TestClient(web_server.app)
     target = tmp_path / "secret.txt"
-    target.write_text("secret")
+    target.write_text("secret", encoding="utf-8")
 
     list_response = client.get("/api/fs/list", params={"path": str(tmp_path)})
     read_response = client.get("/api/fs/read-text", params={"path": str(target)})

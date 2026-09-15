@@ -28,7 +28,7 @@ from hermes_constants import (
 
 def _write_terminal_config(home, text: str) -> None:
     home.mkdir(parents=True, exist_ok=True)
-    (home / "config.yaml").write_text(text)
+    (home / "config.yaml").write_text(text, encoding="utf-8")
 
 
 @pytest.fixture(autouse=True)

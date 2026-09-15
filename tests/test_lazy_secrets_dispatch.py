@@ -217,7 +217,7 @@ sys.exit(0)
 """
         repo_root = Path(__file__).parent.parent
         probe = repo_root / "_test_main_update_crypto_probe.py"
-        probe.write_text(script)
+        probe.write_text(script, encoding="utf-8")
         try:
             result = subprocess.run(
                 [sys.executable, probe.name],

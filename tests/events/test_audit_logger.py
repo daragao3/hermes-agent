@@ -41,7 +41,7 @@ class TestAuditLogger:
 
         logger.poll()
 
-        lines = audit_path.read_text().strip().split("\n")
+        lines = audit_path.read_text(encoding="utf-8").strip().split("\n")
         assert len(lines) == 2
 
         entry1 = json.loads(lines[0])
@@ -62,7 +62,7 @@ class TestAuditLogger:
         bus.emit(EventType.CRON_COMPLETED, "scout", {})
         logger.poll()
 
-        lines = audit_path.read_text().strip().split("\n")
+        lines = audit_path.read_text(encoding="utf-8").strip().split("\n")
         assert len(lines) == 2
 
     def test_creates_parent_dirs(self, bus, tmp_path):
@@ -140,13 +140,13 @@ class TestRotation:
         archive_dir.mkdir(parents=True, exist_ok=True)
 
         old_file = archive_dir / "audit-2025-01-01.jsonl"
-        old_file.write_text('{"event_type":"cron_completed"}\n')
+        old_file.write_text('{"event_type":"cron_completed"}\n', encoding="utf-8")
         # Set mtime to 100 days ago (beyond 90-day retention)
         old_mtime = _time.time() - (100 * 86400)
         os.utime(str(old_file), (old_mtime, old_mtime))
 
         recent_file = archive_dir / "audit-2026-04-10.jsonl"
-        recent_file.write_text('{"event_type":"cron_completed"}\n')
+        recent_file.write_text('{"event_type":"cron_completed"}\n', encoding="utf-8")
 
         # Run cleanup
         logger_inst._cleanup_old_archives()
@@ -171,7 +171,7 @@ class TestRotation:
 
         # Fresh audit.jsonl should exist with the new event
         assert audit_path.exists()
-        lines = audit_path.read_text().strip().split("\n")
+        lines = audit_path.read_text(encoding="utf-8").strip().split("\n")
         assert len(lines) == 1
         entry = json.loads(lines[0])
         assert entry["event_type"] == "job_high_score"
@@ -278,7 +278,7 @@ class TestStartupCursorSeed:
         logger_inst.poll()
 
         assert audit_path.exists()
-        lines = audit_path.read_text().strip().split("\n")
+        lines = audit_path.read_text(encoding="utf-8").strip().split("\n")
         assert len(lines) == 2
         assert json.loads(lines[0])["event_type"] == "cron_started"
         assert json.loads(lines[1])["event_type"] == "cron_completed"

@@ -66,7 +66,7 @@ class TestMailboxWatcher:
         watcher = MailboxWatcher(bus, mailbox_root=mailbox_root)
 
         # Write a file that doesn't match the naming convention
-        (mailbox_root / "main" / "inbox" / "random.txt").write_text("not a message")
+        (mailbox_root / "main" / "inbox" / "random.txt").write_text("not a message", encoding="utf-8")
 
         assert watcher.scan() == 0
 
@@ -184,7 +184,7 @@ def test_mailbox_watcher_forwards_inner_payload(tmp_path):
         "correlation_id": "abc",
         "payload": {"score": 8.8, "company": "X"},
     }
-    (inbox / "20260416T1_SCORE_RESULT_matcher.json").write_text(json.dumps(msg))
+    (inbox / "20260416T1_SCORE_RESULT_matcher.json").write_text(json.dumps(msg), encoding="utf-8")
     bus = EventBus(db_path=tmp_path / "db.sqlite")
     MailboxWatcher(bus, mailbox_root=tmp_path / "mailbox").scan()
     events = bus.query()

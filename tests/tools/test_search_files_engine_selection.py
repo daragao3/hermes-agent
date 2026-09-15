@@ -371,7 +371,7 @@ def test_off_path_windows_rg_miss_is_reprobed_then_success_is_cached(
 
     assert ops._resolve_command("rg") is None
     candidate.parent.mkdir(parents=True)
-    candidate.write_text("")
+    candidate.write_text("", encoding="utf-8")
     expected = str(candidate).replace("\\", "/")
     assert ops._resolve_command("rg") == expected
     assert ops._resolve_command("rg") == expected

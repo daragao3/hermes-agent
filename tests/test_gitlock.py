@@ -38,10 +38,10 @@ def repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
-    (root / "a.txt").write_text("one\n")
+    (root / "a.txt").write_text("one\n", encoding="utf-8")
     subprocess.run(["git", "add", "a.txt"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "first"], cwd=root, check=True)
-    (root / "b.txt").write_text("two\n")
+    (root / "b.txt").write_text("two\n", encoding="utf-8")
     subprocess.run(["git", "add", "b.txt"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "second"], cwd=root, check=True)
     return root

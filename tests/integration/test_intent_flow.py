@@ -131,7 +131,7 @@ class TestIntentFlowE2E:
         outcome = applier.apply_one(f)
         assert outcome == "applied"
         # pipeline.json updated
-        data = json.loads(pipeline_path.read_text())
+        data = json.loads(pipeline_path.read_text(encoding="utf-8"))
         job = next(j for j in data["jobs"] if j["job_id"] == "linkedin-1")
         assert job["stage"] == "approved"
         assert job["history"][-1]["source"] == "tracker_mailbox"
@@ -150,7 +150,7 @@ class TestIntentFlowE2E:
         assert outcome == "partial"
         assert (applier.partial_dir / "intent.json").exists()
         # pipeline.json still updated (canonical-first)
-        data = json.loads(pipeline_path.read_text())
+        data = json.loads(pipeline_path.read_text(encoding="utf-8"))
         job = next(j for j in data["jobs"] if j["job_id"] == "linkedin-1")
         assert job["stage"] == "approved"
 

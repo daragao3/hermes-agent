@@ -36,7 +36,7 @@ def test_source_validation_timing_diagnostic():
             item["seconds"] = round(time.monotonic() - started, 3)
             conn.close()
             rows.append(item)
-            output.write_text(json.dumps(rows, indent=2))
+            output.write_text(json.dumps(rows, indent=2), encoding="utf-8")
     assert len(rows) == 4  # Diagnostic completed; this is not recovery acceptance.
 
 
@@ -63,7 +63,7 @@ def test_source_cache_timing_diagnostic(order):
             row["seconds"] = round(time.monotonic() - started, 3)
             conn.close()
             rows.append(row)
-            output.write_text(json.dumps(rows, indent=2))
+            output.write_text(json.dumps(rows, indent=2), encoding="utf-8")
     assert len(rows) == 2
 
 
@@ -74,25 +74,25 @@ def test_source_identity_before_readonly_preflight():
     if output.exists() or not (ROOT / "source-capture.json").exists():
         pytest.skip("one-shot identity-first source inspection")
     source = ROOT / "source" / "state.db"
-    expected = json.loads((ROOT / "source-capture.json").read_text())["snapshot_sha256"]
+    expected = json.loads((ROOT / "source-capture.json").read_text(encoding="utf-8"))["snapshot_sha256"]
     started = time.monotonic()
     report = {"phase": "source_sha256", "scope": "read-only source inspection, not conversion/recovery"}
-    output.write_text(json.dumps(report, indent=2))
+    output.write_text(json.dumps(report, indent=2), encoding="utf-8")
     with source.open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").hexdigest() == expected
     report.update(phase="source_inspection", hash_seconds=round(time.monotonic() - started, 3))
-    output.write_text(json.dumps(report, indent=2))
+    output.write_text(json.dumps(report, indent=2), encoding="utf-8")
     from hermes_state_conversion import inspect_local_snapshot
     report["inspection"] = inspect_local_snapshot(source, timeout_seconds=1200)
     report.update(phase="PASS", seconds=round(time.monotonic() - started, 3), source_sha256=expected)
-    output.write_text(json.dumps(report, indent=2))
+    output.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
 
 @pytest.mark.timeout(1500)
 def test_full_size_candidate_conversion_and_recovery():
     if not PERMIT.is_file():
         pytest.skip("full-size offline drill requires its explicit one-shot permit")
-    permit = json.loads(PERMIT.read_text())
+    permit = json.loads(PERMIT.read_text(encoding="utf-8"))
     PERMIT.rename(ROOT / "recovery-permit-consumed-identity-first.json")
     source = ROOT / "source" / "state.db"
     assert permit["source_sha256"] == "dd1d2228f8ff50a088647448825af46fcf4e1d826a8f1e84d62ac17a6b626bee"
@@ -101,10 +101,10 @@ def test_full_size_candidate_conversion_and_recovery():
 
     started = time.monotonic()
     progress = ROOT / "recovery-progress.json"
-    progress.write_text(json.dumps({"phase": "source_identity"}))
+    progress.write_text(json.dumps({"phase": "source_identity"}), encoding="utf-8")
     with source.open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").hexdigest() == permit["source_sha256"]
-    progress.write_text(json.dumps({"phase": "conversion", "identity_seconds": round(time.monotonic() - started, 3)}))
+    progress.write_text(json.dumps({"phase": "conversion", "identity_seconds": round(time.monotonic() - started, 3)}), encoding="utf-8")
     candidate = ROOT / "candidate.db"
     report = convert_local_snapshot(source, candidate, timeout_seconds=1200)
     # The production converter has already compared all preserved source rows,
@@ -113,8 +113,8 @@ def test_full_size_candidate_conversion_and_recovery():
     with source.open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").hexdigest() == permit["source_sha256"]
     report.update(conversion_seconds=round(time.monotonic() - started, 3))
-    (ROOT / "conversion-result.json").write_text(json.dumps(report, indent=2))
-    progress.write_text(json.dumps({"phase": "recovery", "conversion_seconds": report["conversion_seconds"]}))
+    (ROOT / "conversion-result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    progress.write_text(json.dumps({"phase": "recovery", "conversion_seconds": report["conversion_seconds"]}), encoding="utf-8")
     _verify_candidate_recovery(candidate, report, started, progress)
 
 
@@ -123,11 +123,11 @@ def test_resume_owned_full_size_conversion_and_recovery():
     permit_path = ROOT / "run-owned-resume-once.json"
     if not permit_path.is_file():
         pytest.skip("owned full-size resume requires its one-shot permit")
-    permit = json.loads(permit_path.read_text())
+    permit = json.loads(permit_path.read_text(encoding="utf-8"))
     permit_path.rename(ROOT / "owned-resume-permit-consumed-user-restart.json")
     from hermes_state_conversion import _finish_local_snapshot_conversion
 
-    accepted = json.loads((ROOT / "source-identity-preflight.json").read_text())
+    accepted = json.loads((ROOT / "source-identity-preflight.json").read_text(encoding="utf-8"))
     assert accepted["phase"] == "PASS"
     assert permit["source_sha256"] == accepted["source_sha256"]
     assert sqlite3.sqlite_version_info >= (3, 53, 1)
@@ -143,18 +143,18 @@ def test_resume_owned_full_size_conversion_and_recovery():
     candidate = ROOT / "candidate.db"
     progress = ROOT / "recovery-progress.json"
     started = time.monotonic()
-    progress.write_text(json.dumps({"phase": "resume_source_identity"}))
+    progress.write_text(json.dumps({"phase": "resume_source_identity"}), encoding="utf-8")
     with source.open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").hexdigest() == accepted["source_sha256"]
-    progress.write_text(json.dumps({"phase": "resume_fts_migration_verification"}))
+    progress.write_text(json.dumps({"phase": "resume_fts_migration_verification"}), encoding="utf-8")
     report = _finish_local_snapshot_conversion(
         source, candidate, staged, accepted["inspection"], time.monotonic() + 3600,
     )
     report.update(conversion_seconds=round(time.monotonic() - started, 3), resumed_owned_copy=True)
-    (ROOT / "conversion-result.json").write_text(json.dumps(report, indent=2))
+    (ROOT / "conversion-result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     with source.open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").hexdigest() == accepted["source_sha256"]
-    progress.write_text(json.dumps({"phase": "recovery", "conversion_seconds": report["conversion_seconds"]}))
+    progress.write_text(json.dumps({"phase": "recovery", "conversion_seconds": report["conversion_seconds"]}), encoding="utf-8")
     _verify_candidate_recovery(candidate, report, started, progress)
 
 
@@ -183,5 +183,5 @@ def _verify_candidate_recovery(candidate, report, started, progress):
         assert db._conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == report["sessions"]
         assert db._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == report["messages"]
     report.update(recovery="PASS", seconds=round(time.monotonic() - started, 3), source_unchanged=True)
-    (ROOT / "recovery-result.json").write_text(json.dumps(report, indent=2))
-    progress.write_text(json.dumps({"phase": "PASS", "seconds": report["seconds"]}))
+    (ROOT / "recovery-result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    progress.write_text(json.dumps({"phase": "PASS", "seconds": report["seconds"]}), encoding="utf-8")

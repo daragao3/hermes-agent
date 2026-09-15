@@ -204,7 +204,7 @@ def test_update_step_survives_pipe_leak_flood_and_live_child_stall(
 
     assert "PIPE-DRAIN SELF-TEST: PASS" in result.stdout, (
         "The Windows update hand-off's step drain regressed: it either waited "
-        "on a descendant holding the pipe open (the Desktop parks on 'Updating "
+        "on a descendant holding the pipe open (the Desktop parks on 'Updating "  # windows-footgun: ok -- prose in an assertion message, not a call
         "Hermes' forever) or metered a chatty step (backpressure on the running "
         f"update). Fixture diagnosis follows.\n--- stdout ---\n{result.stdout}\n"
         f"--- stderr ---\n{result.stderr}"

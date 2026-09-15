@@ -47,7 +47,7 @@ def fake_cli(tmp_path, monkeypatch):
     bindir.mkdir()
     for name in ("acme-cli", "copilot", "custom-acme"):
         exe = bindir / name
-        exe.write_text("#!/bin/sh\nexit 0\n")
+        exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
     return bindir

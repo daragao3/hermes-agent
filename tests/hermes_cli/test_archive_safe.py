@@ -25,7 +25,7 @@ from hermes_cli.archive_safe import make_targz
 def _stage_source(tmp_path: Path) -> None:
     payload = tmp_path / "src" / "inner"
     payload.mkdir(parents=True)
-    (payload / "file.txt").write_text("hello")
+    (payload / "file.txt").write_text("hello", encoding="utf-8")
 
 
 def test_make_targz_preserves_existing_file_on_mid_write_failure(tmp_path, monkeypatch):

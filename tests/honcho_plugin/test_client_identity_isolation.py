@@ -50,7 +50,7 @@ def _make_profile(tmp_path, name: str, workspace: str, api_key: str,
     block: dict = {"apiKey": api_key, "workspace": workspace}
     if oauth:
         block["oauth"] = oauth
-    (home / "honcho.json").write_text(json.dumps({"hosts": {host: block}}))
+    (home / "honcho.json").write_text(json.dumps({"hosts": {host: block}}), encoding="utf-8")
     return home
 
 
@@ -276,9 +276,9 @@ class TestCredentialIdentity:
             cfg1 = HonchoClientConfig.from_global_config()
             c1 = get_honcho_client(cfg1)
 
-            raw = json.loads((home / "honcho.json").read_text())
+            raw = json.loads((home / "honcho.json").read_text(encoding="utf-8"))
             raw["hosts"]["hermes"]["timeout"] = 77
-            (home / "honcho.json").write_text(json.dumps(raw))
+            (home / "honcho.json").write_text(json.dumps(raw), encoding="utf-8")
             cfg2 = HonchoClientConfig.from_global_config()
             c2 = get_honcho_client(cfg2)
         finally:

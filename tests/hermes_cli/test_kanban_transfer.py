@@ -321,7 +321,7 @@ def test_traversal_members_are_rejected(member):
 def test_extract_refuses_a_symlink_member(tmp_path):
     payload = tmp_path / "payload"
     payload.mkdir()
-    (payload / "real.txt").write_text("fine")
+    (payload / "real.txt").write_text("fine", encoding="utf-8")
     link = payload / "link"
     link.symlink_to("/etc/passwd")
 
@@ -336,7 +336,7 @@ def test_extract_refuses_a_symlink_member(tmp_path):
 def test_import_rejects_a_non_kanban_archive(kanban_root, tmp_path):
     payload = tmp_path / "notaboard"
     payload.mkdir()
-    (payload / "readme.txt").write_text("hi")
+    (payload / "readme.txt").write_text("hi", encoding="utf-8")
     archive = tmp_path / "other.tar.gz"
     with tarfile.open(archive, "w:gz") as tf:
         tf.add(payload, arcname="notaboard")
@@ -352,9 +352,9 @@ def test_import_rejects_a_future_format_version(kanban_root, tmp_path):
     staged = tmp_path / "restage"
     safe_extract_targz(archive, staged)
     manifest_path = staged / "alpha" / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["format_version"] = kt.ARCHIVE_FORMAT_VERSION + 1
-    manifest_path.write_text(json.dumps(manifest))
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     bumped = tmp_path / "bumped.tar.gz"
     with tarfile.open(bumped, "w:gz") as tf:

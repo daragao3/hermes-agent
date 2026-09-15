@@ -37,7 +37,7 @@ def _write_bundle(bundles_dir, slug, skills):
     bundles_dir.mkdir(parents=True, exist_ok=True)
     lines = [f"name: {slug}", "skills:"]
     lines.extend(f"  - {skill}" for skill in skills)
-    (bundles_dir / f"{slug}.yaml").write_text("\n".join(lines) + "\n")
+    (bundles_dir / f"{slug}.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 @pytest.fixture()
@@ -109,7 +109,7 @@ class TestExcerptedScaffolding:
         # A long body pushes the head window into the middle of the skill text;
         # the instruction is only present on the tail side.
         skill_md = skills / "work" / "SKILL.md"
-        skill_md.write_text(skill_md.read_text().replace(SKILL_BODY, "filler line.\n" * 200))
+        skill_md.write_text(skill_md.read_text().replace(SKILL_BODY, "filler line.\n" * 200), encoding="utf-8")
         skill_commands._skill_commands = {}
         skill_commands._skill_commands_platform = None
         skill_commands.scan_skill_commands()

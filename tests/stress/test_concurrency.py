@@ -115,7 +115,7 @@ def worker_loop(worker_id: int, hermes_home: str, result_file: str) -> None:
         finally:
             conn.close()
 
-    with open(result_file, "w") as f:
+    with open(result_file, "w", encoding="utf-8") as f:
         json.dump(events, f)
 
 
@@ -178,7 +178,7 @@ def _run_concurrency(home):
         if not os.path.isfile(f):
             print(f"  WORKER {i} produced no result file — died?")
             continue
-        with open(f) as fh:
+        with open(f, encoding="utf-8") as fh:
             events = json.load(fh)
         all_events.extend(events)
 

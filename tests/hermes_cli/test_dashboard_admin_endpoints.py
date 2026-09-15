@@ -70,8 +70,8 @@ class TestMcpEndpoints:
         assert "bearer_token" not in response.json()
 
         hermes_home = get_hermes_home()
-        config_text = (hermes_home / "config.yaml").read_text()
-        env_text = (hermes_home / ".env").read_text()
+        config_text = (hermes_home / "config.yaml").read_text(encoding="utf-8")
+        env_text = (hermes_home / ".env").read_text(encoding="utf-8")
         assert secret not in config_text
         assert "Bearer ${MCP_BEARER_SERVER_API_KEY}" in config_text
         assert f"MCP_BEARER_SERVER_API_KEY={secret}" in env_text
@@ -239,8 +239,8 @@ class TestMemoryEndpoints:
         from hermes_constants import get_hermes_home
 
         mem = get_hermes_home() / "memories"
-        (mem / "MEMORY.md").write_text("notes")
-        (mem / "USER.md").write_text("user")
+        (mem / "MEMORY.md").write_text("notes", encoding="utf-8")
+        (mem / "USER.md").write_text("user", encoding="utf-8")
 
         r = self.client.post("/api/memory/reset", json={"target": "user"})
         assert r.status_code == 200 and "USER.md" in r.json()["deleted"]
@@ -899,9 +899,9 @@ class TestDebugShareEndpoint:
 
         logs = get_hermes_home() / "logs"
         logs.mkdir(parents=True, exist_ok=True)
-        (logs / "agent.log").write_text("agent line\n")
-        (logs / "errors.log").write_text("err line\n")
-        (logs / "gateway.log").write_text("gw line\n")
+        (logs / "agent.log").write_text("agent line\n", encoding="utf-8")
+        (logs / "errors.log").write_text("err line\n", encoding="utf-8")
+        (logs / "gateway.log").write_text("gw line\n", encoding="utf-8")
 
 
     def test_redact_false_is_honored(self, monkeypatch):

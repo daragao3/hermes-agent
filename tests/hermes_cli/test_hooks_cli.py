@@ -26,7 +26,7 @@ def _isolated_home(tmp_path, monkeypatch):
 
 def _hook_script(tmp_path: Path, body: str, name: str = "hook.sh") -> Path:
     p = tmp_path / name
-    p.write_text(body)
+    p.write_text(body, encoding="utf-8")
     p.chmod(0o755)
     return p
 
@@ -98,7 +98,7 @@ class TestHooksTest:
                 for_tool=None, payload_file=None,
             ))
 
-        seen = json.loads(capture.read_text())
+        seen = json.loads(capture.read_text(encoding="utf-8"))
         # Same top-level keys _serialize_payload produces at runtime
         assert set(seen.keys()) == {
             "hook_event_name", "tool_name", "tool_input",

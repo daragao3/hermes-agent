@@ -19,6 +19,14 @@ import pytest
 
 from tools.environments.local import LocalEnvironment
 
+# POSIX-only by construction, and it was never marked as such: the harness
+# forks and calls setsid in its child script, and the psutil-failure test
+# monkeypatches os.getpgid / os.killpg, neither of which exists on Windows.
+pytestmark = pytest.mark.skipif(
+    os.name != "posix",
+    reason="POSIX process-group semantics under test (fork/setsid/killpg)",
+)
+
 
 @pytest.fixture(autouse=True)
 def _isolate_hermes_home(tmp_path, monkeypatch):
@@ -28,7 +36,7 @@ def _isolate_hermes_home(tmp_path, monkeypatch):
 
 def _pid_alive(pid: int) -> bool:
     try:
-        os.kill(pid, 0)
+        os.kill(pid, 0)  # windows-footgun: ok -- POSIX-only module (module-level skip off POSIX)
         return True
     except ProcessLookupError:
         return False
@@ -83,7 +91,7 @@ def test_timeout_kill_reaps_setsid_grandchild(tmp_path):
         while time.monotonic() < deadline and not pid_file.exists():
             time.sleep(0.05)
         assert pid_file.exists(), "grandchild never wrote its pid file"
-        grandchild_pid = int(pid_file.read_text().strip())
+        grandchild_pid = int(pid_file.read_text(encoding="utf-8").strip())
 
         assert _wait_for_pid_exit(grandchild_pid), (
             f"setsid grandchild {grandchild_pid} SURVIVED the timeout "
@@ -95,7 +103,7 @@ def test_timeout_kill_reaps_setsid_grandchild(tmp_path):
         # Belt and braces: never leak the sleeper into the test host.
         try:
             if pid_file.exists():
-                os.kill(int(pid_file.read_text().strip()), signal.SIGKILL)
+                os.kill(int(pid_file.read_text(encoding="utf-8").strip()), signal.SIGKILL)  # windows-footgun: ok -- POSIX-only module (module-level skip off POSIX)
         except (OSError, ValueError):
             pass
         try:

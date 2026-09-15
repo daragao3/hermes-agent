@@ -33,7 +33,7 @@ def _write_config(home, providers):
         "model": {"provider": "openrouter", "default": "some/model"},
         "providers": providers,
     }
-    (home / "config.yaml").write_text(yaml.safe_dump(cfg))
+    (home / "config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
 
 def _apply(provider, model="local/model"):
@@ -42,7 +42,7 @@ def _apply(provider, model="local/model"):
 
 
 def _raw_model_cfg(home):
-    return (yaml.safe_load((home / "config.yaml").read_text()) or {}).get("model", {})
+    return (yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8")) or {}).get("model", {})
 
 
 def test_env_ref_key_carries_template_not_plaintext(_hermes_home, monkeypatch):
@@ -66,7 +66,7 @@ def test_key_env_entry_carries_pointer(_hermes_home, monkeypatch):
         {"mylocal": {"base_url": "http://localhost:1234/v1", "key_env": "MYLOCAL_API_KEY"}},
     )
     _apply("mylocal")
-    raw = (_hermes_home / "config.yaml").read_text()
+    raw = (_hermes_home / "config.yaml").read_text(encoding="utf-8")
     assert "sk-keyenv-secret" not in raw
     assert _raw_model_cfg(_hermes_home).get("key_env") == "MYLOCAL_API_KEY"
 

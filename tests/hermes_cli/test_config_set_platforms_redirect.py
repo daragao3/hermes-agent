@@ -16,7 +16,7 @@ import yaml
 def _write_config(hermes_home: Path, data: dict) -> Path:
     hermes_home.mkdir(parents=True, exist_ok=True)
     config_path = hermes_home / "config.yaml"
-    config_path.write_text(yaml.dump(data))
+    config_path.write_text(yaml.dump(data), encoding="utf-8")
     return config_path
 
 
@@ -54,7 +54,7 @@ class TestPerPlatformDisplayRedirect:
         """platforms.telegram.streaming must land under display.platforms."""
         _set(monkeypatch, hermes_home, "platforms.telegram.streaming", "false")
 
-        result = yaml.safe_load((hermes_home / "config.yaml").read_text())
+        result = yaml.safe_load((hermes_home / "config.yaml").read_text(encoding="utf-8"))
         # Redirected target exists and is correct
         assert result["display"]["platforms"]["telegram"]["streaming"] is False
         # Top-level platforms.telegram must NOT gain a streaming key
@@ -64,7 +64,7 @@ class TestPerPlatformDisplayRedirect:
 
     def test_show_reasoning_redirects(self, hermes_home, monkeypatch):
         _set(monkeypatch, hermes_home, "platforms.telegram.show_reasoning", "false")
-        result = yaml.safe_load((hermes_home / "config.yaml").read_text())
+        result = yaml.safe_load((hermes_home / "config.yaml").read_text(encoding="utf-8"))
         assert result["display"]["platforms"]["telegram"]["show_reasoning"] is False
 
     def test_tool_progress_redirects(self, hermes_home, monkeypatch):
@@ -73,13 +73,13 @@ class TestPerPlatformDisplayRedirect:
         # into the canonical "off" string at read time, so the persisted value
         # is the bool.
         _set(monkeypatch, hermes_home, "platforms.discord.tool_progress", "off")
-        result = yaml.safe_load((hermes_home / "config.yaml").read_text())
+        result = yaml.safe_load((hermes_home / "config.yaml").read_text(encoding="utf-8"))
         assert result["display"]["platforms"]["discord"]["tool_progress"] is False
 
     def test_connection_key_not_redirected(self, hermes_home, monkeypatch):
         """A real connection key (token) stays in top-level platforms.<name>."""
         _set(monkeypatch, hermes_home, "platforms.telegram.token", "new-token")
-        result = yaml.safe_load((hermes_home / "config.yaml").read_text())
+        result = yaml.safe_load((hermes_home / "config.yaml").read_text(encoding="utf-8"))
         assert result["platforms"]["telegram"]["token"] == "new-token"
         # Nothing leaked into display.platforms.telegram.token
         assert "token" not in result["display"]["platforms"]["telegram"]
@@ -90,7 +90,7 @@ class TestPerPlatformDisplayRedirect:
         home = tmp_path / ".hermes"
         _write_config(home, {"model": {"default": "m"}})
         _set(monkeypatch, home, "platforms.telegram.streaming", "true")
-        result = yaml.safe_load((home / "config.yaml").read_text())
+        result = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
         assert result["display"]["platforms"]["telegram"]["streaming"] is True
         assert "platforms" not in result  # no stray top-level platforms block
 
@@ -110,7 +110,7 @@ class TestRedirectSiblingSurfaces:
         get_config_value("platforms.telegram.streaming")
         assert capsys.readouterr().out.strip() == "false"
 
-        raw = yaml.safe_load((hermes_home / "config.yaml").read_text())
+        raw = yaml.safe_load((hermes_home / "config.yaml").read_text(encoding="utf-8"))
         assert resolve_display_setting(raw, "telegram", "streaming") is False
 
     def test_unset_removes_the_redirected_leaf(self, hermes_home, monkeypatch):
@@ -118,7 +118,7 @@ class TestRedirectSiblingSurfaces:
 
         _set(monkeypatch, hermes_home, "platforms.telegram.streaming", "false")
         unset_config_value("platforms.telegram.streaming")
-        result = yaml.safe_load((hermes_home / "config.yaml").read_text())
+        result = yaml.safe_load((hermes_home / "config.yaml").read_text(encoding="utf-8"))
         assert "streaming" not in result["display"]["platforms"]["telegram"]
         # Sibling display override and connection block untouched.
         assert result["display"]["platforms"]["telegram"]["show_reasoning"] is True

@@ -17,7 +17,7 @@ class TestResolveHermesBin:
 
     def test_resolves_relative_argv0(self, monkeypatch, tmp_path):
         fake = tmp_path / "hermes"
-        fake.write_text("#!/bin/sh\n")
+        fake.write_text("#!/bin/sh\n", encoding="utf-8")
         fake.chmod(0o755)
         monkeypatch.setattr(sys, "argv", [str(fake.name)])
         monkeypatch.chdir(tmp_path)
@@ -202,7 +202,7 @@ class TestResolveHermesBinWindowsPyGuard:
         argv[0] fast-path and fall through to PATH / python -m."""
         # Build a fake .py script that "passes" the isfile + X_OK checks.
         script = tmp_path / "main.py"
-        script.write_text("# stub")
+        script.write_text("# stub", encoding="utf-8")
 
         monkeypatch.setattr(relaunch_mod.sys, "argv", [str(script), "chat"])
         # Force PATH lookup to return a hermes.exe so the test doesn't
@@ -222,7 +222,7 @@ class TestResolveHermesBinWindowsPyGuard:
         script (including .py with a shebang + chmod +x) is fine to return
         because POSIX exec can route through the shebang line."""
         script = tmp_path / "hermes"
-        script.write_text("#!/usr/bin/env python3\n")
+        script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
         script.chmod(0o755)
         monkeypatch.setattr(relaunch_mod.sys, "argv", [str(script), "chat"])
         assert relaunch_mod.resolve_hermes_bin() == str(script)
@@ -233,7 +233,7 @@ class TestResolveHermesBinWindowsPyGuard:
         isn't on PATH, return None so the caller falls back to
         python -m hermes_cli.main."""
         script = tmp_path / "main.py"
-        script.write_text("# stub")
+        script.write_text("# stub", encoding="utf-8")
 
         monkeypatch.setattr(relaunch_mod.sys, "argv", [str(script), "chat"])
         monkeypatch.setattr(relaunch_mod.shutil, "which", lambda name: None)

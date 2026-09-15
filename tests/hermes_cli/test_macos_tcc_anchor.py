@@ -74,13 +74,13 @@ def _build_checkout(
         brew_py = brew / "python3.14"
         brew_py.write_bytes(b"#!homebrew")
         brew_py.chmod(0o755)
-        (venv / "pyvenv.cfg").write_text(f"home = {brew}\n")
+        (venv / "pyvenv.cfg").write_text(f"home = {brew}\n", encoding="utf-8")
         os.symlink(brew_py, venv_bin / "python")
         os.symlink(brew_py, venv_bin / "python3")
         return root
     if store_bin is None:
         store_bin = _build_store(tmp_path, version, with_libpython=with_libpython)
-    (venv / "pyvenv.cfg").write_text(f"home = {store_bin}\n")
+    (venv / "pyvenv.cfg").write_text(f"home = {store_bin}\n", encoding="utf-8")
     store_py = store_bin / "python3.11"
     if anchored:
         venv_py = venv_bin / "python"
@@ -238,7 +238,7 @@ class TestEnsureTccAnchor:
         new_py = new_bin / "python3.11"
         venv_py.unlink()
         os.symlink(new_py, venv_py)
-        (root / ".venv" / "pyvenv.cfg").write_text(f"home = {new_bin}\n")
+        (root / ".venv" / "pyvenv.cfg").write_text(f"home = {new_bin}\n", encoding="utf-8")
 
         anchored = tcc.ensure_tcc_anchor(root)
 
@@ -469,7 +469,7 @@ class TestTccAnchorState:
         root = tmp_path / "checkout"
         venv_bin = root / ".venv" / "bin"
         venv_bin.mkdir(parents=True)
-        (root / ".venv" / "pyvenv.cfg").write_text(f"home = {home}\n")
+        (root / ".venv" / "pyvenv.cfg").write_text(f"home = {home}\n", encoding="utf-8")
         os.symlink(home / "python3.11", venv_bin / "python")
 
         tcc.ensure_tcc_anchor(root)
@@ -511,7 +511,7 @@ class TestTccAnchorState:
         old_bin = _build_store(tmp_path, version="3.11.15")
         root = _build_checkout(tmp_path, store_bin=old_bin, anchored=True)
         new_bin = _build_store(tmp_path, version="3.11.16")
-        (root / ".venv" / "pyvenv.cfg").write_text(f"home = {new_bin}\n")
+        (root / ".venv" / "pyvenv.cfg").write_text(f"home = {new_bin}\n", encoding="utf-8")
         status, _ = tcc.tcc_anchor_state(root)
         assert status == "stale"
         anchored = tcc.ensure_tcc_anchor(root)

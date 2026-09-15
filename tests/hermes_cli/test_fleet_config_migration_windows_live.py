@@ -42,10 +42,10 @@ def test_fleet_config_migration_live_windows(tmp_path, monkeypatch):
     assert by_name["research"][1] == 12 and by_name["research"][2] == latest
 
     for name in ("research", "work"):
-        on_disk = yaml.safe_load((profiles / name / "config.yaml").read_text())
+        on_disk = yaml.safe_load((profiles / name / "config.yaml").read_text(encoding="utf-8"))
         assert on_disk["_config_version"] == latest
         assert on_disk["model"]["provider"] == "nous"
 
     # active untouched; idempotent second run
-    assert yaml.safe_load((active / "config.yaml").read_text())["_config_version"] == 12
+    assert yaml.safe_load((active / "config.yaml").read_text(encoding="utf-8"))["_config_version"] == 12
     assert update_cmd._migrate_sibling_profile_configs() == []

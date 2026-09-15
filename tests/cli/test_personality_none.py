@@ -114,14 +114,14 @@ class TestGatewayPersonalityNone:
             "display": {"personality": "helpful"},
         }
         config_file = tmp_path / "config.yaml"
-        config_file.write_text(yaml.dump(config_data))
+        config_file.write_text(yaml.dump(config_data), encoding="utf-8")
 
         p1, p2 = self._gateway_env(tmp_path)
         with p1, p2:
             event = self._make_event("default")
             await runner._handle_personality_command(event)
 
-        saved = yaml.safe_load(config_file.read_text())
+        saved = yaml.safe_load(config_file.read_text(encoding="utf-8"))
         assert saved["agent"]["system_prompt"] == "manual forever"
         assert saved.get("display", {}).get("personality", None) == ""
         # The next turn re-resolves from config (no in-memory snapshot).
@@ -138,14 +138,14 @@ class TestGatewayPersonalityNone:
             }
         }
         config_file = tmp_path / "config.yaml"
-        config_file.write_text(yaml.dump(config_data))
+        config_file.write_text(yaml.dump(config_data), encoding="utf-8")
 
         p1, p2 = self._gateway_env(tmp_path)
         with p1, p2:
             event = self._make_event("helpful")
             result = await runner._handle_personality_command(event)
 
-        saved = yaml.safe_load(config_file.read_text())
+        saved = yaml.safe_load(config_file.read_text(encoding="utf-8"))
         assert saved["agent"]["system_prompt"] == "manual forever"
         assert saved["display"]["personality"] == "helpful"
         with p1, p2:
@@ -157,7 +157,7 @@ class TestGatewayPersonalityNone:
         runner = self._make_runner()
         config_data = {"agent": {"personalities": {"helpful": "You are helpful."}}}
         config_file = tmp_path / "config.yaml"
-        config_file.write_text(yaml.dump(config_data))
+        config_file.write_text(yaml.dump(config_data), encoding="utf-8")
 
         p1, p2 = self._gateway_env(tmp_path)
         with p1, p2:
@@ -171,7 +171,7 @@ class TestGatewayPersonalityNone:
         # Built-ins are always available — an empty agent.personalities no
         # longer means "no personalities configured".
         runner = self._make_runner(personalities={})
-        (tmp_path / "config.yaml").write_text(yaml.dump({"agent": {"personalities": {}}}))
+        (tmp_path / "config.yaml").write_text(yaml.dump({"agent": {"personalities": {}}}), encoding="utf-8")
 
         p1, p2 = self._gateway_env(tmp_path)
         with p1, p2:

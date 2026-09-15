@@ -34,7 +34,7 @@ _VICTIM = [sys.executable, "-c", "import time; time.sleep(300)"]
 
 def _alive(pid: int) -> bool:
     try:
-        os.kill(pid, 0)
+        os.kill(pid, 0)  # windows-footgun: ok -- POSIX-only module (module-level skip off POSIX)
     except (ProcessLookupError, OSError):
         return False
     return True
@@ -65,7 +65,7 @@ def _wait_exited(proc: subprocess.Popen, timeout: float = 15.0) -> bool:
 
 def _kill(pid: int) -> None:
     try:
-        os.kill(pid, signal.SIGKILL)
+        os.kill(pid, signal.SIGKILL)  # windows-footgun: ok -- POSIX-only module (module-level skip off POSIX)
     except (ProcessLookupError, OSError):
         pass
 
@@ -267,7 +267,7 @@ time.sleep(300)
 @pytest.mark.live_system_guard_bypass
 def test_reaps_the_server_when_the_registering_parent_is_sigkilled(tmp_path):
     script = tmp_path / "fake_parent.py"
-    script.write_text(_FAKE_PARENT)
+    script.write_text(_FAKE_PARENT, encoding="utf-8")
 
     parent = subprocess.Popen(
         [sys.executable, str(script), SUPERVISOR],

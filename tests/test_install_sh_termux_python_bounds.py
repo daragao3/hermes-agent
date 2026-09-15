@@ -16,7 +16,7 @@ SETUP_HERMES_SH = REPO_ROOT / "setup-hermes.sh"
 
 
 def _write_executable(path: Path, content: str) -> Path:
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return path
 

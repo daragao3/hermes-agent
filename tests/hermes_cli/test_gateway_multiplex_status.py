@@ -24,7 +24,7 @@ def _fake_multiplexer(monkeypatch, tmp_path, *, multiplex: bool):
     (tmp_path / "config.yaml").write_text(
         f"gateway:\n  multiplex_profiles: {'true' if multiplex else 'false'}\n"
     )
-    (tmp_path / "gateway.pid").write_text(str(os.getpid()))
+    (tmp_path / "gateway.pid").write_text(str(os.getpid()), encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "profiles" / "beta"))
     monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
     monkeypatch.setattr(status, "_pid_exists", lambda pid: True)

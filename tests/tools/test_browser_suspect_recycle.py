@@ -201,7 +201,7 @@ class TestWedgedDaemonTreeKill:
         daemon_pid = 5150
         socket_dir = tmp_path / "agent-browser-wedged-session"
         socket_dir.mkdir()
-        (socket_dir / "wedged-session.pid").write_text(str(daemon_pid))
+        (socket_dir / "wedged-session.pid").write_text(str(daemon_pid), encoding="utf-8")
 
         process = Mock()
         process.returncode = -9

@@ -196,7 +196,7 @@ proof["checks"] = {"alignment": True, "default_unchanged": True, "single_flight"
                    "empty_omitted": True, "cadence_gap_empty": True, "no_duplicate_end_turn": True}
 proof["events"] = events
 args.out.parent.mkdir(parents=True, exist_ok=True)
-args.out.write_text(json.dumps(proof, indent=2))
+args.out.write_text(json.dumps(proof, indent=2), encoding="utf-8")
 print(json.dumps({"checks": proof["checks"], "out": str(args.out),
                   "current_elapsed": [row["elapsed"] for row in rows],
                   "timeout_elapsed": blocked["elapsed"]}, indent=2))

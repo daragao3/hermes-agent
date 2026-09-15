@@ -69,5 +69,5 @@ class TestWriteVerification:
         with mock_patch.object(fo.ShellFileOperations, "_exec", flaky_exec):
             r = json.loads(write_file_tool(str(f), "content lands anyway\n", task_id="t-wv2"))
         assert "error" not in r
-        assert f.read_text() == "content lands anyway\n"
+        assert f.read_text(encoding="utf-8") == "content lands anyway\n"
         assert "verified" not in r or r.get("verified") is None
