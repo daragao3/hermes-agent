@@ -64,6 +64,8 @@ _READ_FILE_META_KEYS = ("total_lines", "file_size", "truncated", "is_binary", "i
 # Langfuse-issued keys always carry these prefixes. Anything else is a leftover
 # template value: the SDK accepts it at construction time but silently drops
 # every trace at flush time (#23823).
+_DEFAULT_TIMEOUT_SECONDS = 20
+
 _LANGFUSE_KEY_PREFIXES: Dict[str, str] = {
     "HERMES_LANGFUSE_PUBLIC_KEY": "pk-lf-",
     "HERMES_LANGFUSE_SECRET_KEY": "sk-lf-",
@@ -237,6 +239,17 @@ def _build_client() -> Optional[Langfuse]:
         value = _env(f"HERMES_LANGFUSE_{name}") or _env(f"LANGFUSE_{name}") or default
         if value:
             kwargs[key] = value
+    # HTTP timeout for span export. The SDK default (5s) plus the OTLP exporter's
+    # 10s retry budget produced ~110 "Read timed out" export failures a day on
+    # 2026-09-15 against a local Langfuse whose worker sits at its memory cap;
+    # a slow local collector should cost a longer wait, not a dropped batch.
+    timeout_raw = _env("HERMES_LANGFUSE_TIMEOUT") or _env("LANGFUSE_TIMEOUT")
+    kwargs["timeout"] = _DEFAULT_TIMEOUT_SECONDS
+    if timeout_raw:
+        try:
+            kwargs["timeout"] = max(1, int(float(timeout_raw)))
+        except ValueError:
+            logger.warning("Invalid HERMES_LANGFUSE_TIMEOUT=%r, using %ss", timeout_raw, _DEFAULT_TIMEOUT_SECONDS)
     sample_rate = _env("HERMES_LANGFUSE_SAMPLE_RATE")
     if sample_rate:
         try:
@@ -523,9 +536,19 @@ def _start_root_trace(task_key: str, *, task_id: str, session_id: str, platform:
     trace_ctx: Dict[str, Any] = {"trace_id": trace_id, **({"session_id": session_id} if session_id else {})}
 
     def open_root():
-        ctx = client.start_as_current_observation(trace_context=trace_ctx, name="Hermes turn", as_type="chain",
-                                                  input=trace_input, metadata=metadata, end_on_exit=False)
-        return ctx, ctx.__enter__()
+        # NOT start_as_current_observation. That variant wraps the span in
+        # opentelemetry's use_span(), which context.attach()es on __enter__ and
+        # context.detach()es the token on __exit__. The plugin enters here, in the
+        # pre_api_request hook, and exits in _end_root from a LATER hook call,
+        # which the executor may run in a different contextvars Context; OTel
+        # then logs "Failed to detach context" with a full traceback at ERROR
+        # (ValueError: <Token ...> was created in a different Context). Measured
+        # 198 such tracebacks in 24h on 2026-09-15 (profiles/main/logs/errors.log).
+        # Nothing here needs the root to be the *current* span: every child is
+        # created from root_span.start_observation(...) with an explicit parent.
+        span = client.start_observation(trace_context=trace_ctx, name="Hermes turn", as_type="chain",
+                                        input=trace_input, metadata=metadata)
+        return None, span
 
     root_ctx = root_span = None
     if propagate_attributes is not None:
@@ -534,8 +557,8 @@ def _start_root_trace(task_key: str, *, task_id: str, session_id: str, platform:
                                       tags=["hermes", "langfuse"]):
                 root_ctx, root_span = open_root()
         except Exception:
-            root_ctx = None
-    if root_ctx is None:
+            root_span = None
+    if root_span is None:  # keyed on the span: root_ctx is always None now
         root_ctx, root_span = open_root()
 
     with _failsafe("update_trace(input)"):  # SDK v3 uses update_trace()
@@ -573,12 +596,12 @@ def _end_children(state: TraceState, *, include_subagents: bool = False) -> None
 
 
 def _end_root(state: TraceState, label: str) -> None:
-    """End the root span then unwind its context; never raises."""
+    """End the root span; never raises. ``root_ctx`` is always None since the
+    root stopped being a use_span() context manager (see open_root), but a
+    non-None one is still unwound here so a fake or an older state cannot leave
+    a suspended generator for the GC to close at interpreter teardown."""
     with _failsafe(label):
         state.root_span.end()
-        # Unwind the root context manager now, while opentelemetry.trace.Span is
-        # still a real type; GC-driven close at interpreter teardown raises
-        # TypeError inside use_span's isinstance check.
         if state.root_ctx is not None:
             state.root_ctx.__exit__(None, None, None)
 

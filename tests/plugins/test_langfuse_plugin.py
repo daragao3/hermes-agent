@@ -245,9 +245,9 @@ class TestTurnTraceIsolation:
         """A minimal Langfuse stand-in that records each root trace opened.
 
         ``_start_root_trace`` calls ``create_trace_id`` then opens a root via
-        ``start_as_current_observation(...)`` (a context manager whose
-        ``__enter__`` returns the root span).  We record one entry per root
-        actually opened so the test can count distinct traces.
+        ``start_observation(...)`` (a plain span -- NOT the as-current context
+        manager, see test_root_trace_never_attaches_otel_context).  We record
+        one entry per root actually opened so the test can count distinct traces.
         """
 
         class _Span:
@@ -274,9 +274,9 @@ class TestTurnTraceIsolation:
             def create_trace_id(self, seed=None):
                 return f"trace::{seed}"
 
-            def start_as_current_observation(self, **kw):
+            def start_observation(self, **kw):
                 started.append(kw.get("trace_context", {}).get("trace_id"))
-                return _RootCM()
+                return _RootCM().__enter__()  # plain span, no context attach
 
             def flush(self):
                 pass
@@ -379,59 +379,81 @@ class TestTurnTraceIsolation:
         surviving = sorted(int(k.rsplit("turn", 1)[1]) for k in mod._TRACE_STATE)
         assert surviving == list(range(42, 50))
 
-    def test_finish_trace_exits_root_context_manager(self, monkeypatch):
-        """_finish_trace must call root_ctx.__exit__(), not just root_span.end().
+    def test_root_trace_never_attaches_otel_context(self, monkeypatch):
+        """The root span must be opened with ``start_observation``, never with
+        ``start_as_current_observation``.
 
-        Regression for the "Exception ignored in: <generator>" traceback
-        on CLI exit.  The plugin enters the root observation's context
-        manager (start_as_current_observation(...).__enter__()) but must
-        also exit it; otherwise the generator is left suspended and is
-        only unwound when the GC collects it during interpreter teardown.
-        By then opentelemetry.trace.Span has been set to None, and the
-        generator's close() -> use_span.__exit__ -> isinstance(span, Span)
-        raises TypeError: isinstance() arg 2 must be a type.  Exiting the
-        context manager here unwinds the generator while modules are intact.
+        The as-current variant wraps the span in opentelemetry's ``use_span()``,
+        which ``context.attach()``es on ``__enter__`` and ``context.detach()``es
+        on ``__exit__``. The plugin enters in one hook call and exits in a later
+        one, and the hook executor may run them in different contextvars
+        Contexts; OTel then logs ``Failed to detach context`` with a traceback
+        at ERROR level (ValueError: <Token ...> was created in a different
+        Context) -- 198 of them in 24h on 2026-09-15. Nothing needs the root to
+        be current: children are created with an explicit parent. This also
+        retires the suspended-generator-at-teardown hazard the old
+        ``root_ctx.__exit__`` regression guarded, since there is no generator.
         """
         mod = self._fresh_plugin()
-        started: list = []
         monkeypatch.setattr(mod, "_end_observation", lambda *a, **k: None)
         mod._TRACE_STATE.clear()
 
-        exited: list = []
+        ended: list = []
+        roots: list = []
 
         class _S:
             def update(self, **kw): pass
-            def end(self, **kw): pass
+            def update_trace(self, **kw): pass
             def set_trace_io(self, **kw): pass
             def start_observation(self, **kw): return _S()
+            def end(self, **kw): ended.append(self)
 
-        class _TrackingRootCM:
-            def __enter__(self):
-                return _S()
-            def __exit__(self, *exc):
-                exited.append(exc)
-                return False
-
-        class _TrackingClient:
+        class _StrictClient:
             def create_trace_id(self, seed=None):
                 return f"trace::{seed}"
+            def start_observation(self, **kw):
+                assert "end_on_exit" not in kw, "end_on_exit belongs to the context-manager API only"
+                span = _S(); roots.append(span); return span
             def start_as_current_observation(self, **kw):
-                started.append(kw.get("trace_context", {}).get("trace_id"))
-                return _TrackingRootCM()
+                raise AssertionError("root span must not attach the OTel context (use start_observation)")
             def flush(self):
                 pass
 
-        monkeypatch.setattr(mod, "_get_langfuse", lambda: _TrackingClient())
+        monkeypatch.setattr(mod, "_get_langfuse", lambda: _StrictClient())
 
-        self._run_turn(mod, session="sess-exit", turn_n=1, finalize=True)
+        self._run_turn(mod, session="sess-no-attach", turn_n=1, finalize=True)
 
-        assert exited, (
-            "_finish_trace did not call root_ctx.__exit__; the generator is "
-            "left suspended and will raise TypeError on GC at interpreter "
-            "teardown when opentelemetry.trace.Span is None"
-        )
-        assert len(exited) == 1
-        assert exited[0] == (None, None, None)
+        assert len(roots) == 1, "exactly one root span per turn"
+        assert ended == roots, "the root span is ended exactly once at finalize"
+        assert all(st.root_ctx is None for st in mod._TRACE_STATE.values()), "no context manager is ever held"
+
+    def test_build_client_passes_export_timeout(self, monkeypatch):
+        """``Langfuse(**kwargs)`` receives ``timeout`` -- 20s by default, or
+        ``HERMES_LANGFUSE_TIMEOUT`` -- so a slow local collector waits instead
+        of dropping the batch (SDK default 5s produced ~110 "Read timed out"
+        export failures a day on 2026-09-15)."""
+        mod = self._fresh_plugin()
+        seen: list = []
+
+        class _Ctor:
+            def __init__(self, **kw):
+                seen.append(kw)
+
+        monkeypatch.setattr(mod, "Langfuse", _Ctor)
+        monkeypatch.setenv("HERMES_LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+        monkeypatch.setenv("HERMES_LANGFUSE_SECRET_KEY", "sk-lf-test")
+        monkeypatch.delenv("HERMES_LANGFUSE_TIMEOUT", raising=False)
+        monkeypatch.delenv("LANGFUSE_TIMEOUT", raising=False)
+        assert mod._build_client() is not None
+        assert seen[-1]["timeout"] == mod._DEFAULT_TIMEOUT_SECONDS == 20
+
+        monkeypatch.setenv("HERMES_LANGFUSE_TIMEOUT", "45")
+        mod._build_client()
+        assert seen[-1]["timeout"] == 45
+
+        monkeypatch.setenv("HERMES_LANGFUSE_TIMEOUT", "not-a-number")
+        mod._build_client()
+        assert seen[-1]["timeout"] == 20, "an unparseable override falls back to the default, not to the SDK's 5s"
 
 
 # ---------------------------------------------------------------------------
@@ -964,7 +986,7 @@ class TestModelAttribution:
 
         class _Client:
             def create_trace_id(self, seed=None): return "t"
-            def start_as_current_observation(self, **kw): return _RootCM()
+            def start_observation(self, **kw): return _RootCM().__enter__()  # plain span, no context attach
             def flush(self): pass
 
         return _Client()
@@ -1235,9 +1257,9 @@ class TestCaptureModes:
 
         class _Client:
             def create_trace_id(self, seed=None): return "t1"
-            def start_as_current_observation(self, **kw):
+            def start_observation(self, **kw):
                 seen.update(kw)
-                return _RootCM()
+                return _RootCM().__enter__()  # plain span, no context attach
 
         state = mod._start_root_trace(
             "k", task_id="t", session_id="s", platform="cli", provider="p",
@@ -2043,8 +2065,8 @@ class TestFinishTraceUsesUpdateTrace:
             def create_trace_id(self, seed=None):
                 return f"trace::{seed}"
 
-            def start_as_current_observation(self, **kw):
-                return _RootCM()
+            def start_observation(self, **kw):
+                return _RootCM().__enter__()  # plain span, no context attach
 
             def flush(self):
                 pass
@@ -2120,8 +2142,8 @@ class TestFinishTraceUsesUpdateTrace:
             def create_trace_id(self, seed=None):
                 return f"trace::{seed}"
 
-            def start_as_current_observation(self, **kw):
-                return _RootCM()
+            def start_observation(self, **kw):
+                return _RootCM().__enter__()  # plain span, no context attach
 
             def flush(self):
                 pass
