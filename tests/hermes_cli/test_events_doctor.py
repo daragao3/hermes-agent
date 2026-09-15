@@ -331,7 +331,7 @@ class TestCodeDrift:
         issues = check_code_drift(repo_path=tmp_path / "does-not-exist")
         out = capsys.readouterr().out
         assert issues == 0
-        assert "skip" in out.lower()
+        assert "code drift -- skipped" in out.lower()
 
     def test_missing_configured_trunk_ref_is_loud_not_a_silent_pass(
         self, tmp_path, capsys

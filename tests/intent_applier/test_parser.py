@@ -84,37 +84,37 @@ class TestParseErrors:
     def test_missing_message_id_raises(self, tmp_path, valid_intent_dict):
         del valid_intent_dict["message_id"]
         path = write_intent(tmp_path, "intent.json", valid_intent_dict)
-        with pytest.raises(IntentParseError, match="message_id"):
+        with pytest.raises(IntentParseError, match=r"missing required field 'message_id'"):
             parse_intent_file(path)
 
     def test_missing_idempotency_key_raises(self, tmp_path, valid_intent_dict):
         del valid_intent_dict["idempotency_key"]
         path = write_intent(tmp_path, "intent.json", valid_intent_dict)
-        with pytest.raises(IntentParseError, match="idempotency_key"):
+        with pytest.raises(IntentParseError, match=r"missing required field 'idempotency_key'"):
             parse_intent_file(path)
 
     def test_unknown_intent_type_raises(self, tmp_path, valid_intent_dict):
         valid_intent_dict["type"] = "SOMETHING_ELSE"
         path = write_intent(tmp_path, "intent.json", valid_intent_dict)
-        with pytest.raises(IntentParseError, match="intent_type"):
+        with pytest.raises(IntentParseError, match=r"has unknown intent_type"):
             parse_intent_file(path)
 
     def test_missing_payload_raises(self, tmp_path, valid_intent_dict):
         del valid_intent_dict["payload"]
         path = write_intent(tmp_path, "intent.json", valid_intent_dict)
-        with pytest.raises(IntentParseError, match="payload"):
+        with pytest.raises(IntentParseError, match=r"missing required field 'payload'"):
             parse_intent_file(path)
 
     def test_missing_requested_stage_raises(self, tmp_path, valid_intent_dict):
         del valid_intent_dict["payload"]["requested_stage"]
         path = write_intent(tmp_path, "intent.json", valid_intent_dict)
-        with pytest.raises(IntentParseError, match="requested_stage"):
+        with pytest.raises(IntentParseError, match=r"missing required field 'requested_stage' in payload"):
             parse_intent_file(path)
 
     def test_missing_job_id_raises(self, tmp_path, valid_intent_dict):
         del valid_intent_dict["job_id"]
         path = write_intent(tmp_path, "intent.json", valid_intent_dict)
-        with pytest.raises(IntentParseError, match="job_id"):
+        with pytest.raises(IntentParseError, match=r"missing required field 'job_id'"):
             parse_intent_file(path)
 
     def test_malformed_json_raises(self, tmp_path):

@@ -116,7 +116,7 @@ class TestWriteFileSurrogates:
     def test_unencodable_surrogate_rejected_before_write(self, ops, tmp_path, bad):
         p = tmp_path / "reject.bin"
         res = ops.write_file(str(p), bad)
-        assert res.error and "surrogate" in res.error
+        assert res.error and "lone surrogate character" in res.error
         assert "NOT created or modified" in res.error
         assert "timed out" not in res.error
         # Pins the EARLY rejection (char repr in the message) rather than the

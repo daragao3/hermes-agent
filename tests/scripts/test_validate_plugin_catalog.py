@@ -160,7 +160,7 @@ def test_entry_not_a_mapping_fails(tmp_path):
     path.write_text("- just\n- a\n- list\n", encoding="utf-8")
     result = run_validator(str(path))
     assert result.returncode == 1
-    assert "mapping" in (result.stdout + result.stderr)
+    assert "must be a YAML mapping" in (result.stdout + result.stderr)
 
 
 # ── unknown top-level keys warn but do not fail ────────────────────────
@@ -205,7 +205,7 @@ def test_removed_yaml_not_a_list_fails(tmp_path):
     path.write_text(yaml.safe_dump({"removed": "nope"}), encoding="utf-8")
     result = run_validator(str(path))
     assert result.returncode == 1
-    assert "removed" in (result.stdout + result.stderr)
+    assert "removed must be a list" in (result.stdout + result.stderr)
 
 
 def test_removed_item_missing_name_fails(tmp_path):
@@ -216,7 +216,7 @@ def test_removed_item_missing_name_fails(tmp_path):
     )
     result = run_validator(str(path))
     assert result.returncode == 1
-    assert "name" in (result.stdout + result.stderr)
+    assert "missing non-empty 'name'" in (result.stdout + result.stderr)
 
 
 # ── --json machine output ──────────────────────────────────────────────
