@@ -631,9 +631,51 @@ def list_boards(*, include_archived: bool = True) -> list[dict]:
     return entries
 
 
+class BoardInUseError(ValueError):
+    """``remove_board`` refused because another process holds the board's
+    ``kanban.db`` open (Windows only: POSIX unlinks open files). A ``ValueError``
+    so the existing ``except ValueError`` seams -- ``boards rm`` and the
+    dashboard's ``DELETE /boards/<slug>`` -- render it as a message instead of
+    a traceback. ``path`` is the board directory that stayed in place."""
+
+    def __init__(self, path: Path, action: str, cause: OSError) -> None:
+        self.path = path
+        self.cause = cause
+        super().__init__(
+            f"cannot {action} board directory {path}: another process has its kanban.db "
+            f"open (WinError {cause.winerror}). The usual holders are a running gateway "
+            f"(kanban dispatcher polling this board) and the kanban dashboard; stop them "
+            f"or wait for them to release the board, then retry. Nothing was removed."
+        )
+
+
+def _is_windows_sharing_violation(exc: OSError) -> bool:
+    """WinError 5 (rename of a dir holding an open file) / 32 (unlink of an open
+    file) are how NTFS reports a foreign handle; on POSIX ``winerror`` is absent."""
+    return sys.platform == "win32" and getattr(exc, "winerror", None) in (5, 32)
+
+
+def _uniquify(target: Path) -> Path:
+    """Append ``-1``, ``-2``, ... while ``target`` exists (rapid double-archive)."""
+    base, suffix = target, 1
+    while target.exists():
+        target = base.with_name(f"{base.name}-{suffix}")
+        suffix += 1
+    return target
+
+
 def remove_board(slug: str, *, archive: bool = True) -> dict:
     """Archive (to ``boards/_archived/<slug>-<ts>/``) or delete a board;
-    ``default`` cannot be removed. Returns ``{"slug", "action", "new_path"}``."""
+    ``default`` cannot be removed. Returns ``{"slug", "action", "new_path"}``.
+
+    Both actions start with ONE ``rename`` of the board directory, because on
+    Windows that is the atomic probe for a foreign handle: it refuses whole
+    (WinError 5) while ``shutil.rmtree`` on the live directory deletes
+    ``board.json`` and then fails on ``kanban.db`` (WinError 32), leaving a
+    half-removed board. A refusal raises :class:`BoardInUseError` with the
+    board untouched -- no retry loop; the holder is another process and only
+    the user can stop it.
+    """
     _assert_not_delegated_child_mutation()
     normed = _require_slug(slug)
     if normed == DEFAULT_BOARD:
@@ -642,30 +684,40 @@ def remove_board(slug: str, *, archive: bool = True) -> dict:
     if not d.exists():
         raise ValueError(f"board {normed!r} does not exist")
 
-    # If the user removed the currently-active board, revert to default.
-    if get_current_board() == normed:
-        clear_current_board()
-
     # A concurrent connect() after the rename recreates an empty DB file; drop
     # the init cache first so the schema pass re-runs on it.
     _INITIALIZED_PATHS.discard(str((d / "kanban.db").resolve()))
+    # Read BEFORE the move: get_current_board() only reports boards that exist.
+    was_current = get_current_board() == normed
 
+    ts = int(time.time())
     if archive:
         archive_root = boards_root() / "_archived"
         archive_root.mkdir(parents=True, exist_ok=True)
-        ts = int(time.time())
-        target = archive_root / f"{normed}-{ts}"
-        suffix = 1
-        while target.exists():  # rapid double-archive
-            target = archive_root / f"{normed}-{ts}-{suffix}"
-            suffix += 1
+        target = _uniquify(archive_root / f"{normed}-{ts}")
+    else:
+        # Leading '_' fails the slug regex, so list_boards() never shows a
+        # half-deleted leftover if rmtree dies for some other reason.
+        target = _uniquify(d.with_name(f"_deleting-{normed}-{ts}"))
+    try:
         d.rename(target)
+    except PermissionError as exc:
+        if _is_windows_sharing_violation(exc):
+            raise BoardInUseError(d, "archive" if archive else "delete", exc) from exc
+        raise
+
+    # Only now that the board is gone from its slot: if it was the active board,
+    # revert to default (a refused removal must leave the pointer alone).
+    if was_current:
+        clear_current_board()
+
+    if archive:
         return {"slug": normed, "action": "archived", "new_path": str(target)}
     # noqa: F811 — the module-level `import shutil` ruff sees this shadowing lives inside the
     # revert-scheduled PLUGIN-COMPAT block at the end of this file. This local import is the one
     # that survives that revert, so it stays; silencing the lint is the right way round.
     import shutil  # noqa: F811
-    shutil.rmtree(d)
+    shutil.rmtree(target)
     return {"slug": normed, "action": "deleted", "new_path": ""}
 
 

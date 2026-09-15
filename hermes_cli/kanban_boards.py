@@ -99,6 +99,8 @@ def _cmd_boards_rm(args: argparse.Namespace) -> int:
     try:
         res = kb.remove_board(args.slug, archive=not force_delete)
     except ValueError as exc:
+        # Includes kb.BoardInUseError (Windows: another process holds this board's
+        # kanban.db); its message names the path, the usual holders and the fix.
         return _err(f"kanban boards rm: {exc}")
     if res["action"] == "archived":
         print(f"Board {res['slug']!r} archived → {res['new_path']}\n"
