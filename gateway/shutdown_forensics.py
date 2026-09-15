@@ -96,7 +96,7 @@ def snapshot_shutdown_context(received_signal: Any = None) -> Dict[str, Any]:
     ctx["under_systemd"] = bool(os.environ.get("INVOCATION_ID")) or ppid == 1
     # High load points at "something crushing the box" rather than an external killer.
     with contextlib.suppress(OSError, AttributeError):
-        ctx["loadavg_1m"] = os.getloadavg()[0]
+        ctx["loadavg_1m"] = os.getloadavg()[0]  # windows-footgun: ok -- AttributeError is in the suppress list; loadavg is simply omitted on Windows
     # Nonzero TracerPid means a debugger/strace is attached.
     with contextlib.suppress(TypeError, ValueError):
         if (tracer := _read_proc_field(pid, "TracerPid")) is not None and tracer != "0":

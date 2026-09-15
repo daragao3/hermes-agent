@@ -29,7 +29,7 @@ from cli import _heal_cooked_mode_drift
 
 @pytest.fixture()
 def pty_fd():
-    master, slave = os.openpty()
+    master, slave = os.openpty()  # windows-footgun: ok -- module is skipped on win32 at import (allow_module_level)
     try:
         yield slave
     finally:

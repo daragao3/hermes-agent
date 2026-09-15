@@ -90,7 +90,7 @@ _VISION_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 def _detect_host_cpus() -> int:
     """Usable CPU count (``sched_getaffinity`` honors cpuset pinning), at least 1."""
     try:
-        return max(1, len(os.sched_getaffinity(0)))  # type: ignore[attr-defined]
+        return max(1, len(os.sched_getaffinity(0)))  # type: ignore[attr-defined]  # windows-footgun: ok -- AttributeError caught below; falls back to os.cpu_count()
     except (AttributeError, OSError):
         return max(1, os.cpu_count() or 1)
 

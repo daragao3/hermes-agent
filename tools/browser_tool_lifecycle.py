@@ -485,7 +485,7 @@ def _legacy_kill_process_tree(proc: "subprocess.Popen") -> None:
             pass
         return
     try:
-        pgid = os.getpgid(proc.pid)
+        pgid = os.getpgid(proc.pid)  # windows-footgun: ok -- POSIX-only below the os.name == nt early return
     except (ProcessLookupError, OSError):
         return
     for sig in (signal.SIGTERM, getattr(signal, "SIGKILL", signal.SIGTERM)):

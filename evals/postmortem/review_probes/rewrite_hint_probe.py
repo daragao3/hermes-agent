@@ -41,8 +41,8 @@ with tempfile.TemporaryDirectory(dir=root) as d:
   raise TimeoutError('host FIFO read blocked')
  signal.signal(signal.SIGALRM,alarm)  # windows-footgun: ok — POSIX-only FIFO hazard probe
  with patch.object(f,'_get_file_ops',return_value=ops):
-  start=time.monotonic();signal.alarm(2)
+  start=time.monotonic();signal.alarm(2)  # windows-footgun: ok -- POSIX-only FIFO hazard probe, same as the SIGALRM handler above
   try: print('remote_fifo',f.write_file_tool(str(fifo),'x'*20000,task_id='remote-fifo'), 'seconds',time.monotonic()-start,'read_alarm_fired',bool(alarms))
-  finally:signal.alarm(0)
+  finally:signal.alarm(0)  # windows-footgun: ok -- POSIX-only FIFO hazard probe, same as the SIGALRM handler above
   with patch.object(f,'_whole_file_rewrite_hint',return_value=None):
    start=time.monotonic();print('remote_fifo_base_no_hint',f.write_file_tool(str(fifo),'x'*20000,task_id='remote-fifo'), 'seconds',time.monotonic()-start)

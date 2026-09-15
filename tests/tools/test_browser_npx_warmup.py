@@ -244,7 +244,7 @@ class TestLegacyKillProcessTree:
         proc = MagicMock()
         proc.pid = 999
         monkeypatch.setattr("os.name", "posix")
-        monkeypatch.setattr("os.getpgid", lambda pid: 999)
+        monkeypatch.setattr("os.getpgid", lambda pid: 999)  # windows-footgun: ok -- test carries posix_semantics_only; a monkeypatch target name, never resolved on Windows
         killpg_calls = []
         monkeypatch.setattr(
             "os.killpg", lambda pgid, sig: killpg_calls.append((pgid, sig))  # windows-footgun: ok -- patch target name, never invoked on Windows
@@ -263,7 +263,7 @@ class TestLegacyKillProcessTree:
         def _raise(pid):
             raise ProcessLookupError()
 
-        monkeypatch.setattr("os.getpgid", _raise)
+        monkeypatch.setattr("os.getpgid", _raise)  # windows-footgun: ok -- test carries posix_semantics_only; a monkeypatch target name, never resolved on Windows
 
         _legacy_kill_process_tree(proc)  # must not raise
 
@@ -307,7 +307,7 @@ class TestLegacyKillProcessTree:
         proc = MagicMock()
         proc.pid = 999
         monkeypatch.setattr("os.name", "posix")
-        monkeypatch.setattr("os.getpgid", lambda pid: 999)
+        monkeypatch.setattr("os.getpgid", lambda pid: 999)  # windows-footgun: ok -- test carries posix_semantics_only; a monkeypatch target name, never resolved on Windows
         killpg_calls = []
 
         def fake_killpg(pgid, sig):

@@ -189,7 +189,7 @@ def main(argv=None) -> int:
     # The parent may be torn down with killpg on its own group. We are spawned
     # with start_new_session=True precisely so that sweep cannot take us with
     # it before we have reaped -- assert that here rather than trust the caller.
-    own_pgid = os.getpgid(0)
+    own_pgid = os.getpgid(0)  # windows-footgun: ok -- POSIX-only process, never spawned on Windows (see _reap)
     if own_pgid == args.parent_pgid:
         print(
             "mcp_death_supervisor: refusing to run inside the parent's process "

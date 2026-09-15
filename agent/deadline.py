@@ -442,7 +442,7 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
         try:
             # getpgid→killpg has an inherent TOCTOU shared by every killpg site; the psutil
             # sweep below is identity-aware (PID + create time) and does not.
-            pgid = os.getpgid(pid)
+            pgid = os.getpgid(pid)  # windows-footgun: ok -- POSIX-only branch (the win32 early return above)
         except (ProcessLookupError, PermissionError, OSError):
             pgid = None
         try:

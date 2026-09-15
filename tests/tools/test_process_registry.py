@@ -1102,11 +1102,13 @@ class TestPopenLeakOnSetupFailure:
         # and a real risk of SIGKILLing an innocent process group. Force the
         # ProcessLookupError fallback so the test deterministically exercises
         # proc.kill() and never issues a real killpg.
-        with patch("tools.process_registry._find_shell", return_value="/bin/bash"), \
-             patch("subprocess.Popen", return_value=proc), \
-             patch("threading.Thread", side_effect=boom), \
-             patch("os.getpgid", side_effect=ProcessLookupError, create=True), \
-             patch.object(registry, "_write_checkpoint"):
+        with (
+            patch("tools.process_registry._find_shell", return_value="/bin/bash"),
+            patch("subprocess.Popen", return_value=proc),
+            patch("threading.Thread", side_effect=boom),
+            patch("os.getpgid", side_effect=ProcessLookupError, create=True),  # windows-footgun: ok -- patch target with create=True, so it is platform-safe and never invoked
+            patch.object(registry, "_write_checkpoint"),
+        ):
             with pytest.raises(RuntimeError, match="Thread creation failed"):
                 registry.spawn_local("echo hello", cwd="/tmp")
 
@@ -2277,6 +2279,52 @@ class TestReaderLoopOrphanedPipe:
 # =========================================================================
 # systemd cgroup isolation for gateway-spawned local executors (#70716)
 # =========================================================================
+def test_worker_memory_limit_survives_missing_sysconf(monkeypatch):
+    """Regression for the 2026-09-15 windows-footgun finding: ``_worker_memory_max_bytes``
+    wrapped ``os.sysconf`` in ``suppress(OSError, ValueError, TypeError)``, which cannot catch
+    the ``AttributeError`` a platform without sysconf raises, so the function crashed on
+    Windows instead of falling back to the default bound.
+
+    Deliberately NOT a Windows skip (unlike the systemd class below): ``monkeypatch.delattr``
+    removes the attribute everywhere, so POSIX CI pins the guard. A scan-based test cannot --
+    the call line carries a ``# windows-footgun: ok`` marker and stays clean with the guard
+    deleted.
+    """
+    import tools.process_registry as pr
+
+    monkeypatch.delenv("TERMINAL_LOCAL_MEMORY_MAX_MB", raising=False)
+    monkeypatch.delattr(pr.os, "sysconf", raising=False)
+    monkeypatch.setattr(
+        pr.Path,
+        "read_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("no cgroup")),
+    )
+
+    assert pr._worker_memory_max_bytes() == pr._DEFAULT_WORKER_MEMORY_MAX_BYTES
+
+
+def test_worker_memory_limit_still_uses_sysconf_when_present(monkeypatch):
+    """Positive control for the guard above: with sysconf PRESENT its answer must still be
+    consulted, so the attribute guard cannot have silently disabled the physical-RAM bound."""
+    import tools.process_registry as pr
+
+    monkeypatch.delenv("TERMINAL_LOCAL_MEMORY_MAX_MB", raising=False)
+    monkeypatch.setattr(
+        pr.Path,
+        "read_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("no cgroup")),
+    )
+    page = 4096
+    pages = (pr._MIN_WORKER_MEMORY_MAX_BYTES * 4) // page  # half of it is 2x the floor, under the cap
+    monkeypatch.setattr(
+        pr.os, "sysconf",
+        lambda name: {"SC_PHYS_PAGES": pages, "SC_PAGE_SIZE": page}[name],
+        raising=False,
+    )
+
+    assert pr._worker_memory_max_bytes() == pr._MIN_WORKER_MEMORY_MAX_BYTES * 2
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only: systemd scopes")
 class TestSystemdCgroupIsolation:
     """Verify spawn_local wraps the worker in ``systemd-run --user --scope``

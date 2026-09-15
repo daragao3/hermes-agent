@@ -753,7 +753,7 @@ def _extract_member_atomically(
                 # Apply the mode BEFORE the replace so the target never transits through mkstemp's
                 # 0600 and the EXDEV/EBUSY ``copystat`` fallback copies the intended bits.
                 if hasattr(os, "fchmod"):  # Unix-only; Windows takes the path-based chmod
-                    os.fchmod(dst.fileno(), mode)
+                    os.fchmod(dst.fileno(), mode)  # windows-footgun: ok -- guarded by the attribute check on the previous line; Windows takes the path chmod branch
                 else:
                     os.chmod(tmp_name, mode)
             # Stream: a multi-gigabyte state.db member must not be held in memory in one piece.

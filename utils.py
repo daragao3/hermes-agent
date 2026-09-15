@@ -188,7 +188,7 @@ def _atomic_write(path: Path, write, *, prefix: str, encoding: str = "utf-8", mo
     try:
         with os.fdopen(fd, "w", encoding=encoding) as f:
             if mode is not None and hasattr(os, "fchmod"):
-                os.fchmod(f.fileno(), mode)
+                os.fchmod(f.fileno(), mode)  # windows-footgun: ok -- guarded by the attribute check in the condition above; Windows takes the post-replace chmod
             write(f)
             f.flush()
             os.fsync(f.fileno())
