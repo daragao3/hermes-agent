@@ -57,10 +57,20 @@ _GROUP_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 
 # All fields observed in the three enrolled Desktop stores on 2026-08-30, plus the
 # keys the desktop app has started writing since (2026-09-06: promptAppendSnapshot,
-# scheduledRunContinued).  Keys not listed here are preserved in place but quarantined
-# from convergence until their semantics are classified.  Adding a field to a
-# correlated group changes conflict semantics and therefore requires a
-# grouping-version bump; adding an INDEPENDENT field does not.
+# scheduledRunContinued; 2026-09-14: bypassChosenInApp, cliBinaryPin, indexedAt,
+# keptDirtyAt, titleTurn, toolSurfaceSnapshot).  Keys not listed here are preserved
+# in place but quarantined from convergence until their semantics are classified.
+# Adding a field to a correlated group changes conflict semantics and therefore
+# requires a grouping-version bump; adding an INDEPENDENT field does not.
+#
+# The six added 2026-09-14 all land INDEPENDENT, which is why this change carries no
+# grouping-version bump.  Two of them are arguably correlated and were still left
+# independent deliberately: keptDirtyAt reads as the timestamp for the "worktree"
+# group's keptDirtyWorktree, and bypassChosenInApp reads as a "permissions" sibling of
+# permissionMode.  Grouping them would change how a divergence on either is resolved,
+# which needs its own baseline and a version bump; the precedent for leaving an obvious
+# correlation independent is title/titleSource, which are independent today.  Revisit
+# only with evidence of a real mismatched-pair divergence, not on the naming alone.
 #
 # An unclassified key must never strand a session.  Measured 2026-09-06: the app
 # began writing promptAppendSnapshot on every new session record, and because
@@ -79,9 +89,11 @@ _OBSERVED_FIELDS = frozenset(
         "backgroundTaskSuggestions",
         "branch",
         "bridgeSessionIds",
+        "bypassChosenInApp",
         "chromePermissionMode",
         "chromeTabGroupId",
         "classifierSummaryEnabled",
+        "cliBinaryPin",
         "cliSessionId",
         "completedTurns",
         "contextExceededCount",
@@ -98,8 +110,10 @@ _OBSERVED_FIELDS = frozenset(
         "errorAt",
         "errorCategory",
         "forkedFromSessionId",
+        "indexedAt",
         "isArchived",
         "isStarred",
+        "keptDirtyAt",
         "keptDirtyWorktree",
         "lastActivityAt",
         "lastFocusedAt",
@@ -132,6 +146,8 @@ _OBSERVED_FIELDS = frozenset(
         "spawnedFromEndNotified",
         "title",
         "titleSource",
+        "titleTurn",
+        "toolSurfaceSnapshot",
         "transcriptUnavailable",
         "worktreeName",
         "worktreePath",
