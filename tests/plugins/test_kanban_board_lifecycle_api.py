@@ -85,3 +85,43 @@ def test_delete_default_board_is_refused(client):
     r = client.delete("/api/plugins/kanban/boards/default")
     assert r.status_code == 400
     assert "default" in r.json()["detail"]
+
+
+class _SharingViolation(PermissionError):
+    """``BoardInUseError`` reads ``cause.winerror``; a class attribute shadows
+    OSError's descriptor on Windows and supplies it on POSIX."""
+
+    winerror = 32
+
+
+def test_delete_board_in_use_is_409_with_friendly_detail(client, monkeypatch):
+    client.post("/api/plugins/kanban/boards", json={"slug": "widget"})
+    path = kb.board_dir("widget")
+
+    def _busy(slug, archive=True):
+        raise kb.BoardInUseError(path, "delete", _SharingViolation(13, "simulated"))
+
+    monkeypatch.setattr(kb, "remove_board", _busy)
+
+    r = client.delete("/api/plugins/kanban/boards/widget?delete=true")
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "another process has its kanban.db open" in detail
+    assert "WinError 32" in detail
+    assert str(path) in detail
+    assert path.exists()
+
+
+def test_delete_board_plain_value_error_stays_400(client, monkeypatch):
+    """Control: only the busy-board refusal is a conflict; every other
+    domain-layer ValueError still maps to 400."""
+    client.post("/api/plugins/kanban/boards", json={"slug": "widget"})
+
+    def _refuse(slug, archive=True):
+        raise ValueError("simulated validation refusal")
+
+    monkeypatch.setattr(kb, "remove_board", _refuse)
+
+    r = client.delete("/api/plugins/kanban/boards/widget")
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "simulated validation refusal"
