@@ -115,10 +115,32 @@ def test_real_child_detached_turn_activity(tmp_path, monkeypatch, mode):
             while not (tmp_path / "provider-started").exists() and time.monotonic() < deadline:
                 time.sleep(0.02)
             assert (tmp_path / "provider-started").exists()
-            # Also replay a delayed sample from the previous dispatch.
+            # Replay a delayed sample from the PREVIOUS dispatch. It is fenced and
+            # must change nothing: _relay_compute_host_rpc only records when
+            # session["_compute_host_turn_id"] == params["turn_id"], and this one
+            # carries old_token while the session now holds new_token.
             server._relay_compute_host_rpc({"method": "compute_host.activity", "params": {
                 "session_id": sid, "turn_id": old_token, "activity_ns": time.perf_counter_ns()}})
-            deadline = time.monotonic() + 3
+            # So the wait below is NOT waiting for that replay -- it is a
+            # cross-process wait for the CHILD's first sample of the NEW turn, which
+            # reports activity_ns=None because the reused agent has not stamped its
+            # activity clock yet. That None is what makes the key present while
+            # leaving the turn NOT fresh on the next line (the gate requires
+            # isinstance(stamp, int)). Measured 2026-09-14 by logging every relay
+            # decision to a file: accepted samples arrive ~1.0-1.5s apart, and the
+            # first one after this dispatch landed 2.0-2.8s after the replay -- against
+            # the old budget of 3s. That ~0.2s of headroom was the whole flake; the
+            # node was red roughly 1 run in 4 and only inside a fuller run.
+            # 12s matches the other cross-process settle budgets in this test and is a
+            # SYNCHRONISATION wait, not an assertion about speed.
+            # Two ceilings this must stay under, both of which would make it pass
+            # VACUOUSLY -- do not raise it further:
+            #   * _WS_ORPHAN_ACTIVITY_STALE_S is monkeypatched to 30.0 above; wait
+            #     longer than that and even a real int stamp ages out, so the
+            #     "not fresh" assertion below would hold no matter what arrived.
+            #   * the child's own run_conversation deadline is 20s, past which it
+            #     self-terminates the turn (the trap recorded on the 5s -> 12s change).
+            deadline = time.monotonic() + 12
             while "_compute_host_activity_ns" not in session and time.monotonic() < deadline:
                 time.sleep(0.02)
             assert "_compute_host_activity_ns" in session
