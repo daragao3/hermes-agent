@@ -69,7 +69,7 @@ hermes skills uninstall <skill-name>
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**inference-sh-cli**](/user-guide/skills/optional/devops/devops-cli) | 通过 inference.sh CLI（infsh）运行 150+ AI 应用 — 图像生成、视频创作、LLM、搜索、3D、社交自动化。使用终端工具。触发词：inference.sh、infsh、ai apps、flux、veo、图像生成、视频生成、seedrea 等。 |
+| [**inference-sh-cli**](/user-guide/skills/optional/devops/devops-inference-sh-cli) | 通过 inference.sh CLI（infsh）运行 150+ AI 应用 — 图像生成、视频创作、LLM、搜索、3D、社交自动化。使用终端工具。触发词：inference.sh、infsh、ai apps、flux、veo、图像生成、视频生成、seedrea 等。 |
 | [**docker-management**](/user-guide/skills/optional/devops/devops-docker-management) | 管理 Docker 容器、镜像、卷、网络及 Compose 栈 — 生命周期操作、调试、清理及 Dockerfile 优化。 |
 | [**pinggy-tunnel**](/user-guide/skills/optional/devops/devops-pinggy-tunnel) | 通过 Pinggy 经 SSH 实现零安装本地隧道。 |
 | [**watchers**](/user-guide/skills/optional/devops/devops-watchers) | 轮询 RSS、JSON API 和 GitHub，并使用水印去重。 |
