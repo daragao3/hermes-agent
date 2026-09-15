@@ -992,7 +992,7 @@ def _lock_holder_provably_dead(record) -> bool:
     if pid <= 0:
         return False
     try:
-        os.kill(pid, 0)
+        os.kill(pid, 0)  # windows-footgun: ok - POSIX-only: _acquire_db_flock is the sole caller
     except ProcessLookupError:
         return True
     except OSError:

@@ -849,6 +849,82 @@ def get_diff_files(ref: str) -> list[Path]:
     return [REPO_ROOT / f for f in out.splitlines() if f.strip()]
 
 
+# Top-level trees `--all` leaves out. This is a DENYLIST on purpose: the list it
+# replaced was an allowlist of eight package names that never grew a
+# `tui_gateway/` entry, so a bare `os.kill(pid, 0)` sat in
+# tui_gateway/host_supervisor.py indefinitely while CONTRIBUTING.md:696 banned
+# the pattern and lint.yml ran this script as a BLOCKING gate. `--all` reported
+# "No Windows footguns found" the whole time, and that clean result was not
+# evidence of anything: the same checkout, pointed at that one file explicitly,
+# exited 1. An allowlist fails toward a false green every time a package is
+# added; a denylist fails toward noise, which someone actually notices.
+#
+# The two entries below are a MEASURED backlog, not an exemption on principle:
+# 2996 findings on 2026-09-14 (tests/ 2888, evals/ 108), 2771 of them a bare
+# Path.read_text()/write_text() without encoding=. That is a triage job, not
+# something to land inside a coverage fix, so it is deferred EXPLICITLY here
+# rather than deferred invisibly by an allowlist that forgot about it.
+#
+# Nothing gates it today: lint.yml runs this script ONLY as `--all`, so test
+# code has never been covered by the blocking job (checked 2026-09-14). The
+# `--diff` and staged-file modes do scan tests when pointed at them. Pass
+# --include-tests to see the whole backlog.
+ALL_SCAN_SKIP_TOP_LEVEL = {"tests", "evals"}
+
+
+def get_all_scan_files(include_tests: bool = False) -> list[Path]:
+    """Return every tracked Python file for `--all`, minus ALL_SCAN_SKIP_TOP_LEVEL.
+
+    Derived from `git ls-files` rather than from a hand-maintained package list,
+    so a new first-party package is covered the day it lands instead of whenever
+    someone remembers this file exists.
+
+    Using the tracked-file list also preserves the property the old named-root
+    walk had by accident: `.claude/worktrees/` (one checkout per agent session)
+    and the stale `.venv`s are untracked or ignored, so they are never reached.
+    Verified rather than assumed -- `git ls-files` returns zero paths under
+    `.claude/worktrees/`, `.venv/` or `site-packages/` on this repo, and
+    `.claude/` has no tracked files at all.
+
+    The tradeoff is that a brand-new file that has not been `git add`ed yet is
+    invisible to `--all`. That gap is covered by the no-argument default, which
+    scans staged files, and by `--diff`.
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files", "-z", "--", "*.py", "*.pyw", "*.pyi"],
+            cwd=REPO_ROOT,
+            stderr=subprocess.DEVNULL,
+            text=True, encoding='utf-8', errors='replace',
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        # No git (release tarball, CI without .git): fall back to walking the
+        # first-party package dirs that exist. Narrower than the git list, but
+        # a narrow scan beats no scan -- and it is loud about being narrow.
+        print(
+            "warning: `git ls-files` unavailable — --all is falling back to a "
+            "directory walk and may miss first-party code.",
+            file=sys.stderr,
+        )
+        fallback = [p for p in sorted(REPO_ROOT.iterdir()) if p.is_dir()]
+        return [
+            p for p in fallback
+            if p.name not in EXCLUDED_DIRS
+            and not p.name.startswith(".")
+            and (include_tests or p.name not in ALL_SCAN_SKIP_TOP_LEVEL)
+        ]
+
+    files = []
+    for rel in out.split("\0"):
+        rel = rel.strip()
+        if not rel:
+            continue
+        if not include_tests and rel.split("/", 1)[0] in ALL_SCAN_SKIP_TOP_LEVEL:
+            continue
+        files.append(REPO_ROOT / rel)
+    return files
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Flag Windows cross-platform footguns in Python code."
@@ -862,7 +938,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument(
         "--all",
         action="store_true",
-        help="Scan the full repository (hermes_cli/, gateway/, tools/, cron/, etc.).",
+        help="Scan every tracked Python file (excluding tests/ and evals/ — "
+             "see --include-tests).",
+    )
+    p.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="With --all, also scan tests/ and evals/ (a large known backlog).",
     )
     p.add_argument(
         "--diff",
@@ -902,18 +984,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     if args.all:
-        # Scan main Python packages + scripts
-        roots = [
-            REPO_ROOT / "hermes_cli",
-            REPO_ROOT / "gateway",
-            REPO_ROOT / "tools",
-            REPO_ROOT / "cron",
-            REPO_ROOT / "agent",
-            REPO_ROOT / "plugins",
-            REPO_ROOT / "scripts",
-            REPO_ROOT / "acp_adapter",
-        ]
-        roots = [r for r in roots if r.exists()]
+        roots = get_all_scan_files(include_tests=args.include_tests)
     elif args.diff:
         roots = get_diff_files(args.diff)
     elif args.paths:
