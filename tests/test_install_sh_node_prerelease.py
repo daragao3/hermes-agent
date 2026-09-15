@@ -54,13 +54,20 @@ def test_prerelease_node_never_satisfies_the_build_floor() -> None:
 
 def test_final_releases_still_satisfy_the_build_floor() -> None:
     """The guard must not cost us any version that actually works."""
-    assert _node_satisfies_build("v22.22.0")  # the floor itself
+    assert _node_satisfies_build("v22.22.2")  # the floor itself (jsdom 30)
+    assert _node_satisfies_build("v22.23.0")  # a later 22 minor clears the patch gate
+    assert _node_satisfies_build("v24.15.0")  # the 24 floor itself
     assert _node_satisfies_build("v24.20.0")
     assert _node_satisfies_build("v26.8.0")  # a real 26 release, once one ships
 
 
 def test_versions_below_the_floor_are_still_rejected() -> None:
     assert not _node_satisfies_build("v22.21.0")
+    # jsdom 30 requires ^22.22.2 || ^24.15.0: these clear a minor-only gate
+    # and then die at `npm ci` with EBADENGINE.
+    assert not _node_satisfies_build("v22.22.0")
+    assert not _node_satisfies_build("v22.22.1")
+    assert not _node_satisfies_build("v24.14.0")
     assert not _node_satisfies_build("v20.19.0")
     assert not _node_satisfies_build("not-a-version")
 
