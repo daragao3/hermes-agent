@@ -100,6 +100,69 @@ def test_separator_rule_scans_past_a_first_non_path_occurrence(plugin_mod):
     assert plugin_mod._preceded_by_separator(expl, "test_foo_bar") is True
 
 
+#: (explanation first line, literal, expected recovered value, why)
+HAYSTACK_VALUE_CASES = [
+    ("'x' in 'plain string'", "x", "plain string",
+     "the ordinary case"),
+    ("'exclusive' in (('exclusive plugin -- activate via config'))", "exclusive",
+     "exclusive plugin -- activate via config",
+     "pytest WRAPS a parenthesised source expression -- a first-character quote "
+     "test reads this as a non-string and silently loses a real finding"),
+    ("'event' in {'event': 'c:\\\\t\\\\test_x0\\\\f'}", "event", None,
+     "dict: membership, not substring -- the measured test_weixin false positive"),
+    ("'a' in ('a', 'b')", "a", None,
+     "tuple: membership. Naive paren-stripping leaves \"'a', 'b'\", which STARTS "
+     "with a quote and would be misread as a string"),
+    ("'x' in ['x', 'y']", "x", None, "list: membership"),
+    ("'x' in <SomeObject path='/tmp/test_x0'>", "x", None,
+     "an object repr is not a literal at all"),
+    ("True\n +  where True = any(...)", "x", None,
+     "no ' in ' comparison on the first line -- unparseable, claim nothing"),
+]
+
+
+@pytest.mark.parametrize(
+    "expl,literal,expected,why",
+    HAYSTACK_VALUE_CASES,
+    ids=[c[3][:45] for c in HAYSTACK_VALUE_CASES],
+)
+def test_haystack_value_recovers_only_real_strings(
+    plugin_mod, expl, literal, expected, why
+):
+    """Killed by: returning the raw rhs text instead of literal_eval'ing it
+    (the paren case then mismatches); by testing the first character for a
+    quote (paren case -> None, a false negative; tuple case -> a string, a
+    false positive); by dropping the isinstance check (dict/list/tuple all
+    come back non-None)."""
+    assert plugin_mod.haystack_value(expl, literal) == expected, why
+
+
+def test_condition_two_ignores_pytest_where_provenance(plugin_mod):
+    """The path must be in the OPERAND, not merely somewhere in the explanation.
+
+    Reproduces the measured false positive at
+    tests/hermes_cli/test_plugin_scanner_recursion.py:217, where the haystack is
+    a plain message and only pytest's ``+ where`` line carries a tmp_path.
+
+    Killed by: searching the whole ``expl`` for the basename instead of the
+    recovered operand -- which is what the tool shipped with.
+    """
+    expl = (
+        "'exclusive' in (('exclusive plugin -- activate via config'))\n"
+        " +  where 'exclusive plugin -- activate via config' = "
+        "LoadedPlugin(path='c:\\\\t\\\\test_exclusive_kind_skipped0\\\\p')"
+    )
+    basename = "test_exclusive_kind_skipped"
+    assert plugin_mod._preceded_by_separator(expl, basename) is True, (
+        "precondition: the basename IS in the raw explanation"
+    )
+    value = plugin_mod.haystack_value(expl, "exclusive")
+    assert value == "exclusive plugin -- activate via config"
+    assert plugin_mod._preceded_by_separator(value, basename) is False, (
+        "but it is NOT in the operand, so the assertion is load-bearing"
+    )
+
+
 def test_truncation_model_matches_the_static_scanner(plugin_mod):
     """The plugin and the scanner must model pytest's naming identically.
 
@@ -147,7 +210,7 @@ SAMPLE = SAMPLE_DIR / "test_vacuity_sample_cases.py"
 SAMPLE_SOURCE = '''\
 """Generated fixture for the vacuity prover's end-to-end control.
 
-All five tests PASS.  That is the entire point of the defect class: a vacuous
+All seven tests PASS.  That is the entire point of the defect class: a vacuous
 assertion is invisible precisely because it is green.
 """
 
@@ -187,6 +250,42 @@ def test_dirty_marker_reported(tmp_path):
     """
     out = f"scan of {tmp_path} complete: DIRTY"
     assert "DIRTY" in out
+
+
+def test_provenance_only_path_is_not_in_the_haystack(tmp_path):
+    """MUST be cleared: the path is in pytest's ``+ where`` line, not the
+    haystack.
+
+    The haystack is a clean message with no path in it. Only the INTERMEDIATE
+    object's repr carries tmp_path, and pytest prints that as provenance below
+    the comparison. A prover that searches the whole explanation calls this
+    vacuous; one that searches the operand does not. Reproduces the real false
+    positive on tests/hermes_cli/test_plugin_scanner_recursion.py:217.
+    """
+    class Holder:
+        def __init__(self, p):
+            self.p = p
+            self.msg = "provenance marker only"
+
+        def __repr__(self):
+            return f"Holder(path={self.p})"
+
+    holder = Holder(tmp_path)
+    assert "provenance" in holder.msg
+
+
+def test_capture_dict_membership_is_not_substring(tmp_path):
+    """MUST be cleared: ``in`` on a dict is KEY membership, not substring.
+
+    Everything a naive prover looks at says vacuous -- the literal is in the
+    test's name, and the tmp_path really is in the explanation, because it sits
+    in a VALUE. But the assertion tests a KEY, so the path is irrelevant and the
+    assertion is load-bearing. Reproduces the real false positive this tool
+    produced on tests/gateway/test_weixin.py:897.
+    """
+    captured = {}
+    captured["capture"] = f"payload written to {tmp_path}/out.bin"
+    assert "capture" in captured
 
 
 def test_long_message_still_carries_the_path(tmp_path):
@@ -251,7 +350,7 @@ def test_sample_cases_all_pass_as_ordinary_tests(sample):
         stdin=subprocess.DEVNULL,
     )
     assert proc.returncode == 0, f"fixture suite is not green:\n{proc.stdout}"
-    assert "5 passed" in proc.stdout
+    assert "7 passed" in proc.stdout
 
 
 def test_sample_file_is_outside_the_collected_testpaths(sample):
@@ -302,6 +401,41 @@ def test_driver_clears_the_phrase_fix_shape(driver_run):
     assert "test_phrase_is_immune_vacuous" not in "".join(proven_block[1:]), (
         driver_run.stdout
     )
+
+
+@pytest.mark.timeout(120)
+def test_driver_clears_a_provenance_only_path(driver_run):
+    """MUST NOT FLAG: tmp_path appears only in pytest's ``+ where`` provenance.
+
+    This is the END-TO-END pair for the operand-scoping rule, and it exists
+    because the unit test alone did NOT discriminate: mutating the hook to
+    search the whole explanation again (M11) left the suite fully green until
+    this case was added. A unit test of the helper does not cover the wiring
+    that uses it.
+
+    Killed by: passing ``expl`` instead of the recovered operand to
+    _preceded_by_separator -- which is what the tool shipped with, and what
+    produced its false positive on a real site.
+    """
+    proven_block = driver_run.stdout.split("PROVEN UNFALSIFIABLE")
+    assert "test_provenance_only_path_is_not_in_the_haystack" not in "".join(
+        proven_block[1:]
+    ), driver_run.stdout
+
+
+@pytest.mark.timeout(120)
+def test_driver_clears_a_dict_membership_assertion(driver_run):
+    """MUST NOT FLAG: ``in`` on a dict is membership, not substring.
+
+    Killed by: dropping the haystack_is_str check in the plugin, which is what
+    the tool shipped with -- it reported this shape as PROVEN on a real site
+    (tests/gateway/test_weixin.py:897) that the 2026-09-14 audit had correctly
+    rejected by hand.
+    """
+    proven_block = driver_run.stdout.split("PROVEN UNFALSIFIABLE")
+    assert "test_capture_dict_membership_is_not_substring" not in "".join(
+        proven_block[1:]
+    ), driver_run.stdout
 
 
 @pytest.mark.timeout(120)
