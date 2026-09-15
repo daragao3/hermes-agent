@@ -426,7 +426,7 @@ def _kill_process_tree(pid: int) -> bool:
                 check=False,
             )
             return completed.returncode == 0
-        os.killpg(os.getpgid(pid), 9)  # pragma: no cover - posix path
+        os.killpg(os.getpgid(pid), 9)  # pragma: no cover - posix path  # windows-footgun: ok - the nt branch above returns first
         return True  # pragma: no cover - posix path
     except Exception:
         return False

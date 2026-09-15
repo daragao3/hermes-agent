@@ -102,6 +102,28 @@ repos:
       # pass. That is load-bearing: it is how a re-tracked file gets removed.
       # Escape hatch is the NAMED skip, never --no-verify:
       #   SKIP=no-sdd-scratch git commit ...
+      # Windows-footgun checker, on staged files only.
+      #
+      # lint.yml runs `check-windows-footguns.py --all` as a BLOCKING job, but
+      # the hook set did not run it at all, so a commit that trips that gate
+      # lands clean locally and fails minutes later in CI. That is exactly how
+      # c21ddb166f got in. Local and CI now refuse the same commit.
+      #
+      # With no --all flag the checker scans the paths pre-commit hands it, so
+      # this costs a handful of files, not the 1932-file tree scan.
+      #
+      # SCOPE MATCHES THE CI GATE ON PURPOSE. `--all` excludes tests/ and
+      # evals/ (see ALL_SCAN_SKIP_TOP_LEVEL in the script: a measured 2996-
+      # finding backlog, 2771 of them a bare read_text/write_text). A hook
+      # that scanned them would block commits on findings no CI job rejects,
+      # which trains people to reach for --no-verify -- so the exclude below
+      # tracks that list and must move with it.
+      - id: windows-footguns
+        name: Windows footguns (staged files)
+        entry: python scripts/check-windows-footguns.py
+        language: system
+        files: \.(py|pyw|pyi)$
+        exclude: ^(tests|evals)/
       - id: no-sdd-scratch
         name: block .superpowers scratch from being committed
         language: fail

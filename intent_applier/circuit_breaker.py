@@ -45,7 +45,7 @@ class SimpleCircuitBreaker:
         """Raise CircuitBreakerOpen if calls are currently rejected."""
         if self.is_open():
             raise CircuitBreakerOpen(
-                f"circuit breaker open ({self._consecutive_failures} consecutive failures, "
+                f"circuit breaker open ({self._consecutive_failures} consecutive failures, "  # windows-footgun: ok - prose, not a call to the builtin
                 f"will half-open in {self.reset_timeout_seconds}s)"
             )
 
