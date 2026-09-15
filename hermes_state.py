@@ -60,6 +60,10 @@ import hermes_state_holders as _state_holders
 from hermes_state_dbfile import (
     _canonical_sqlite_path, _connect_tracked_db, _read_sqlite_application_id, _stat_sqlite_sidecar_identity,
     _watched_sqlite_sidecar_paths, has_invalid_sqlite_header_preopen, quarantine_cross_process_lock,
+    # Re-export, not used here: tests/test_zeroed_state_db.py reaches it as
+    # hermes_state.is_zeroed_state_db. It is not in _PLUGIN_COMPAT_LAZY, so this import IS the
+    # only thing publishing the name on this module.
+    is_zeroed_state_db,  # noqa: F401 — re-export for hermes_state.is_zeroed_state_db
     quarantine_invalid_state_db,
     refuse_deleted_wal_generation,
 )
