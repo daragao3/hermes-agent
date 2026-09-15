@@ -825,7 +825,7 @@ class TestTerminalToolGatewayLifecycleGuard:
 
     @pytest.mark.skipif(
         not hasattr(os, "mkfifo"),
-        reason="os.mkfifo is POSIX-only. The contract is NOT skipped on Windows: "
+        reason="FIFO creation is POSIX-only. The contract is NOT skipped on Windows: "
         "test_non_regular_referenced_script_fails_closed_windows_device pins the "
         "same fail-closed branch with the non-regular file this platform has.",
     )
@@ -833,7 +833,7 @@ class TestTerminalToolGatewayLifecycleGuard:
         import tools.terminal_tool as tt
 
         fifo = tmp_path / "script.fifo"
-        os.mkfifo(fifo)
+        os.mkfifo(fifo)  # windows-footgun: ok -- the test carries its own skipif for this symbol
         self._patch_env(monkeypatch, self._make_fake_env(), inside_gateway=True)
 
         result = json.loads(tt.terminal_tool(command=f"/bin/bash {fifo.as_posix()}"))

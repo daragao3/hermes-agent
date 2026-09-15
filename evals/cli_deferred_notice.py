@@ -37,7 +37,7 @@ def run_case(root, output, name, behind, early=False, cancel=False):
         if early:
             cache.write_bytes(payload)
         else:
-            os.mkfifo(cache)
+            os.mkfifo(cache)  # windows-footgun: ok -- POSIX-only probe: the same function drives a pty
         env = {"PATH": os.environ["PATH"], "HOME": home, "HERMES_HOME": str(hh),
                "PYTHONPATH": str(root), "PYTHONUNBUFFERED": "1",
                "TERM": "xterm-256color", "LANG": "C.UTF-8",

@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(dir=root) as d:
   print('remote_backend_is_host',f._file_ops_uses_host_paths(ops))
   r=json.loads(f.write_file_tool(str(p),new,task_id='remote-review'))
  print('remote_empty_target_hint_from_host',r.get('hint'), 'host_unchanged',p.read_text(encoding='utf-8')==old,flush=True)
- fifo=pathlib.Path(d)/'pipe.txt';os.mkfifo(fifo)
+ fifo=pathlib.Path(d)/'pipe.txt';os.mkfifo(fifo)  # windows-footgun: ok -- POSIX-only probe, same as the SIGALRM handler below
  alarms=[]
  def alarm(sig,frame):
   alarms.append(time.monotonic())

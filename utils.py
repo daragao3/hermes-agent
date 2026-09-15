@@ -62,7 +62,7 @@ def _restore_file_metadata(path: Path, owner: "tuple[int, int] | None", mode: "i
     """
     if owner is not None and hasattr(os, "chown"):
         with suppress(OSError):
-            os.chown(path, owner[0], owner[1])
+            os.chown(path, owner[0], owner[1])  # windows-footgun: ok -- the attribute guard in the enclosing if
     if mode is not None:
         with suppress(OSError):
             os.chmod(path, mode)

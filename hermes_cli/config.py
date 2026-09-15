@@ -844,7 +844,7 @@ def _chown_to_hermes_uid(path) -> None:
     if uid is None and gid is None:
         return
     try:
-        os.chown(path, uid if uid is not None else -1, gid if gid is not None else -1)
+        os.chown(path, uid if uid is not None else -1, gid if gid is not None else -1)  # windows-footgun: ok -- _resolve_hermes_uid_gid returns (None, None) off POSIX and the caller returns; AttributeError is caught below regardless
     except (OSError, AttributeError, NotImplementedError):
         pass
 

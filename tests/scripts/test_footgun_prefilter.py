@@ -59,6 +59,10 @@ EXAMPLES = {
     "bare os.killpg": '    patch("os.killpg") as killpg,',  # windows-footgun: ok -- sample line for the rule under test, not a call
     "bare os.getuid / os.geteuid / os.getgid": "    if os.geteuid() == 0:",  # windows-footgun: ok -- sample line for the rule under test, not a call
     "bare os.fork": "    pid = os.fork()",  # windows-footgun: ok -- sample line for the rule under test, not a call
+    "bare os.chown / os.lchown / os.fchown / os.chroot": (  # windows-footgun: ok -- sample line for the rule under test, not a call
+        "    os.chown(path, _HERMES_UID, _HERMES_GID)"  # windows-footgun: ok -- sample line for the rule under test, not a call
+    ),
+    "bare os.mkfifo": "        os.mkfifo(control, 0o660)",  # windows-footgun: ok -- sample line for the rule under test, not a call
     "bare signal.SIGKILL": "    if sig == signal.SIGKILL:",  # windows-footgun: ok -- sample line for the rule under test, not a call
     "bare signal.SIGHUP / SIGUSR1 / SIGUSR2 / SIGALRM / SIGCHLD / SIGPIPE / SIGQUIT": (  # windows-footgun: ok -- sample line for the rule under test, not a call
         "    assert sent == [(67890, signal.SIGHUP)]"  # windows-footgun: ok -- sample line for the rule under test, not a call
