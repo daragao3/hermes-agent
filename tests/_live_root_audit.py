@@ -75,7 +75,7 @@ _PATH_EVENTS: dict[str, tuple[int, ...]] = {
     "os.symlink": (0, 1),
     "os.truncate": (0,),
     "os.chmod": (0,),
-    "os.chown": (0,),
+    "os.chown": (0,),  # windows-footgun: ok -- a dict key naming the symbol, not a call
     "os.utime": (0,),
     "shutil.copyfile": (0, 1),
     "shutil.copymode": (1,),

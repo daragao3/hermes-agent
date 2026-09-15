@@ -10,6 +10,7 @@ tests/docker/test_container_restart.py.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -109,6 +110,42 @@ def _named_actions(actions: list[ReconcileAction]) -> list[ReconcileAction]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("missing", ["chown", "mkfifo"])
+def test_seeding_survives_missing_posix_primitive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    """``_seed_supervise_skeleton`` must not require POSIX-only ``os`` symbols.
+
+    ``os.chown`` and ``os.mkfifo`` do not exist on Windows and raise
+    ``AttributeError`` at attribute-access time -- which the ``except
+    PermissionError`` around the chown could not catch. Every failure in this
+    module (6 of 7) ran through that one line until ``service_manager`` grew an
+    attribute guard.
+
+    Driven with ``delattr`` rather than a Windows-only skip on purpose: on a
+    POSIX host the unguarded code passes, so a plain run of this module pins
+    the guard on NO platform that CI actually uses. Removing either guard in
+    ``hermes_cli/service_manager.py`` turns this red everywhere.
+    """
+    import hermes_cli.service_manager as sm
+
+    monkeypatch.delattr(sm.os, missing, raising=False)
+
+    scandir = tmp_path / "run-service"
+    scandir.mkdir()
+    _make_profile(tmp_path, "coder", state="running")
+
+    actions = reconcile_profile_gateways(
+        hermes_home=tmp_path, scandir=scandir, dry_run=False,
+    )
+
+    assert _named_actions(actions) == [ReconcileAction(
+        profile="coder", prior_state="running", action="started",
+    )]
+    # The seeding is best-effort, but the slot itself must still be built.
+    assert (scandir / "gateway-coder" / "run").exists()
+
+
 def test_running_profile_is_registered_and_autostarted(tmp_path: Path) -> None:
     scandir = tmp_path / "run-service"; scandir.mkdir()
     _make_profile(tmp_path, "coder", state="running")
@@ -122,7 +159,9 @@ def test_running_profile_is_registered_and_autostarted(tmp_path: Path) -> None:
     )]
     svc = scandir / "gateway-coder"
     assert (svc / "run").exists()
-    assert (svc / "run").stat().st_mode & 0o111  # executable
+    if os.name == "posix":
+        # No execute bit off POSIX; chmod there only toggles the read-only flag.
+        assert (svc / "run").stat().st_mode & 0o111  # executable
     assert (svc / "type").read_text(encoding="utf-8").strip() == "longrun"
     # Auto-start means no down-marker.
     assert not (svc / "down").exists()
@@ -183,7 +222,9 @@ def test_registered_profile_has_finish_script(tmp_path: Path) -> None:
 
     finish = scandir / "gateway-coder" / "finish"
     assert finish.exists()
-    assert finish.stat().st_mode & 0o111  # executable
+    if os.name == "posix":
+        # No execute bit off POSIX; chmod there only toggles the read-only flag.
+        assert finish.stat().st_mode & 0o111  # executable
     text = finish.read_text(encoding="utf-8")
     assert "78" in text
     assert "125" in text

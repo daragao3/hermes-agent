@@ -264,6 +264,41 @@ FOOTGUNS: list[Footgun] = [
         ),
     ),
     Footgun(
+        name="bare os.chown / os.lchown / os.fchown / os.chroot",
+        pattern=re.compile(r"\bos\.(?:chown|lchown|fchown|chroot)\b"),
+        message=(
+            "os.chown / os.lchown / os.fchown / os.chroot do not exist on "
+            "Windows and raise AttributeError at ATTRIBUTE-ACCESS time. "
+            "try/except PermissionError -- or even OSError -- does NOT "
+            "catch that, since AttributeError is not an OSError subclass, "
+            "so the usual best-effort-chown idiom still crashes. "
+            "Container-only code counts: its unit tests run on dev/CI hosts."
+        ),
+        fix=(
+            "Guard the attribute, not the errno:\n"
+            "    if hasattr(os, 'chown'):\n"
+            "        os.chown(path, uid, gid)\n"
+            "or return early off POSIX (if os.name != 'posix': return).\n"
+            "Adding AttributeError to the except clause also works but "
+            "swallows real typos; prefer the explicit guard."
+        ),
+    ),
+    Footgun(
+        name="bare os.mkfifo",
+        pattern=re.compile(r"\bos\.mkfifo\b"),
+        message=(
+            "os.mkfifo does not exist on Windows and raises AttributeError. "
+            "Windows has no POSIX FIFOs (named pipes are a different API), "
+            "so there is no drop-in replacement -- the call site has to be "
+            "skipped or branched on Windows."
+        ),
+        fix=(
+            "Gate with hasattr(os, 'mkfifo'), or return early off POSIX. "
+            "For a test that inherently needs a FIFO, skip the module on "
+            "Windows: pytestmark = pytest.mark.skipif(os.name != 'posix', ...)"
+        ),
+    ),
+    Footgun(
         name="bare signal.SIGKILL",
         pattern=re.compile(r"\bsignal\.SIGKILL\b"),
         message=(

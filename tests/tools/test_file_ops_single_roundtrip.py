@@ -198,7 +198,7 @@ class TestReadFileNonTextPaths:
             pytest.skip("no mkfifo")
         ops, calls = shell
         fifo = tmp_path / "pipe"
-        os.mkfifo(fifo)
+        os.mkfifo(fifo)  # windows-footgun: ok -- module-level skip off POSIX, plus a local attribute check
         box = {}
 
         def run():
@@ -329,7 +329,7 @@ class TestNativeRead:
             pytest.skip("no mkfifo")
         ops, calls = native
         fifo = tmp_path / "pipe"
-        os.mkfifo(fifo)
+        os.mkfifo(fifo)  # windows-footgun: ok -- module-level skip off POSIX, plus a local attribute check
         box = {}
 
         def run():

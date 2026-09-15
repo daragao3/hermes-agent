@@ -1000,7 +1000,7 @@ class TestImportAtomicWrites:
             lambda p: (123, 456) if Path(p).exists() else None,
         )
         monkeypatch.setattr(
-            "utils.os.chown",
+            "utils.os.chown",  # windows-footgun: ok -- the enclosing test is skipped off POSIX
             lambda path, uid, gid: chown_calls.append((Path(path), uid, gid)),
         )
 

@@ -216,7 +216,7 @@ def _write_fake_txt_png(root: Path, rng: random.Random) -> None:
 def _make_fifo(root: Path) -> None:
     fifo = root / "logs" / "live.pipe"
     if not fifo.exists():
-        os.mkfifo(fifo)
+        os.mkfifo(fifo)  # windows-footgun: ok -- POSIX-only fixture builder
 
 
 if __name__ == "__main__":

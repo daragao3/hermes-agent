@@ -13,6 +13,12 @@ import pytest
 
 from tools.file_tools import _special_file_kind, read_file_tool
 
+# FIFOs (os.mkfifo) and AF_UNIX sockets are POSIX-only, and every class below
+# builds one to exercise the guard, so the module cannot run off POSIX at all.
+pytestmark = pytest.mark.skipif(
+    os.name != "posix", reason="POSIX-only: builds FIFOs and AF_UNIX sockets"
+)
+
 
 class TestSpecialFileKind:
     def test_regular_file(self, tmp_path):
@@ -28,7 +34,7 @@ class TestSpecialFileKind:
 
     def test_fifo(self, tmp_path):
         fifo = tmp_path / "p.pipe"
-        os.mkfifo(fifo)
+        os.mkfifo(fifo)  # windows-footgun: ok -- module-level skip off POSIX
         assert "FIFO" in (_special_file_kind(fifo) or "")
 
     def test_socket(self, tmp_path):
@@ -42,7 +48,7 @@ class TestSpecialFileKind:
 
     def test_symlink_to_fifo_followed(self, tmp_path):
         fifo = tmp_path / "p.pipe"
-        os.mkfifo(fifo)
+        os.mkfifo(fifo)  # windows-footgun: ok -- module-level skip off POSIX
         link = tmp_path / "innocent.txt"
         link.symlink_to(fifo)
         assert "FIFO" in (_special_file_kind(link) or "")
@@ -59,7 +65,7 @@ class TestReadFileToolFifoGuard:
 
         monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
         fifo = tmp_path / "live.pipe"
-        os.mkfifo(fifo)
+        os.mkfifo(fifo)  # windows-footgun: ok -- module-level skip off POSIX
         t0 = time.monotonic()
         result = json.loads(read_file_tool(str(fifo)))
         assert time.monotonic() - t0 < 5, "guard must not block on the FIFO"
