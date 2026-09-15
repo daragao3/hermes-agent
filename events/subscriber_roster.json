@@ -92,6 +92,11 @@
       "status": "live"
     },
     {
+      "id": "cron-stale-responder",
+      "status": "live",
+      "note": "Consumes what cron-stale-monitor emits. Until 2026-09-14 NOTHING did: a CRON_STALE sat at status='pending' while the wedged run kept going -- jobflow-notifier was flagged stale at 1213s and ran another 7.8h (29,288s total), stalling every financier-profile job for 7.75h behind its read lock. Escalates immediately; REQUESTS A STOP only past a second, much larger bound (remediate_after_seconds, default 7200s) via cron.inflight.request_stop, the same path 'hermes cron stop' uses. It can terminate work, so the same-execution_id interlock in _execution_still_running is load-bearing: without it a slow alert could stop a LATER healthy run of the same job."
+    },
+    {
       "id": "telegram-mirror",
       "status": "retired",
       "since": "2026-04-28",

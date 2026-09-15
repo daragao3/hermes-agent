@@ -40,6 +40,7 @@ from events.subscribers.memory_writer import MemoryWriter
 from events.subscribers.jobflow_dispatcher import JobFlowDispatcher
 from events.subscribers.mailbox_translator import MailboxTranslator
 from events.subscribers.cron_stale_monitor import CronStaleMonitor
+from events.subscribers.cron_stale_responder import CronStaleResponder
 from events.subscribers.tracker_intent_applier import (
     TrackerIntentApplierSubscriber,
     tracker_partial_dir,
@@ -297,6 +298,9 @@ def startup(adapters: Optional[Dict] = None) -> None:
     # (never crash the gateway over a config typo).
     _stale_default: Optional[int] = None
     _stale_overrides: Dict[str, int] = {}
+    # Hoisted so the responder block below reads {} rather than NameError-ing
+    # on a box where the file is absent or the load raised.
+    _stale_cfg: Dict[str, Any] = {}
     try:
         _stale_cfg_path = cron_stale_thresholds_path()
         if _stale_cfg_path.exists():
@@ -315,6 +319,28 @@ def startup(adapters: Optional[Dict] = None) -> None:
         _bus,
         default_threshold_seconds=_stale_default,
         per_job_thresholds=_stale_overrides,
+    ))
+    # The CONSUMER of what CronStaleMonitor emits. Reads its second, much
+    # larger bound from the same file (see CronStaleResponder's docstring for
+    # why it is not a small multiple of the stale threshold).
+    _remediate_default: Optional[int] = None
+    _remediate_overrides: Dict[str, int] = {}
+    try:
+        if _stale_cfg:
+            if isinstance(_stale_cfg.get("remediate_after_seconds"), int):
+                _remediate_default = _stale_cfg["remediate_after_seconds"]
+            if isinstance(_stale_cfg.get("per_job_remediate"), dict):
+                _remediate_overrides = {
+                    str(k): int(v) for k, v in _stale_cfg["per_job_remediate"].items()
+                    if isinstance(v, int) or (isinstance(v, str) and v.isdigit())
+                }
+    except Exception:
+        logger.exception(
+            "Failed to load cron-stale remediation config - using defaults")
+    _registry.register(CronStaleResponder(
+        _bus,
+        remediate_after_seconds=_remediate_default,
+        per_job_remediate=_remediate_overrides,
     ))
 
     _registry.startup_all()
