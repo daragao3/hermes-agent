@@ -65,6 +65,14 @@ def _session(sid):
                 attached_images=[], cols=80, source="desktop", inflight_turn=None)
 
 
+# The repo default is --timeout=30 (pyproject addopts), which is BELOW _SETTLE_S and
+# would fire the watchdog before any budget here could be spent -- making the budgets
+# unreachable in exactly the default-addopts path the parallel sweep uses. A mark
+# overrides the addopts cap (it does NOT merely raise a floor), so size it above the
+# worst failing node: one blown 60s budget plus the rest of the turn is ~90s, and
+# 240 also clears _CHILD_HANG_NET_S so a wedged child still produces this test's own
+# assertion rather than an opaque timeout. Healthy nodes cost 9.6-11.9s quiet.
+@pytest.mark.timeout(240)
 @pytest.mark.parametrize("mode", ["fresh", "stale", "missing", "previous"])
 def test_real_child_detached_turn_activity(tmp_path, monkeypatch, mode):
     """Real supervisor pipes, child admission/turn thread, bridge and orphan timer.
