@@ -643,6 +643,11 @@ class TestFixturePluginObservationPath:
 # TelegramAdapter._register_handlers single registration site (#64176)
 # ---------------------------------------------------------------------------
 
+# Handlers _register_handlers adds in the default group. Bump this when a handler
+# is added there (and say which); the observer in group 99 is counted separately.
+_CORE_HANDLER_COUNT = 9
+
+
 class TestRegisterHandlers:
     """_register_handlers is the sole PTB handler registration site, so a
     handler added there is registered on every (re)build that calls it. The
@@ -672,14 +677,16 @@ class TestRegisterHandlers:
         app = MagicMock()
         a._register_handlers(app)
 
-        # Six core handlers (default group, no group kwarg — incl. the
-        # inline command picker) plus the gateway_platform_event observer
-        # alone in group 99, so it observes alongside rather than
-        # displacing the core handlers.
+        # Nine core handlers (default group, no group kwarg): text, the three
+        # /approve /reject /archive reply commands (0.21.1 integration
+        # 8586e305a2), generic command, location, media, callback query and the
+        # inline command picker -- plus the gateway_platform_event observer
+        # alone in group 99, so it observes alongside rather than displacing
+        # the core handlers.
         calls = app.add_handler.call_args_list
-        assert len(calls) == 7
+        assert len(calls) == _CORE_HANDLER_COUNT + 1
         assert len([c for c in calls if c.kwargs.get("group") == 99]) == 1
-        assert len([c for c in calls if not c.kwargs]) == 6
+        assert len([c for c in calls if not c.kwargs]) == _CORE_HANDLER_COUNT
 
     def test_rebuild_re_registers_observer(self):
         """A second call on a fresh app (e.g. a future rebuild) re-registers
@@ -691,7 +698,7 @@ class TestRegisterHandlers:
         a._register_handlers(first_app)
         a._register_handlers(rebuilt_app)  # the rebuild path
 
-        assert rebuilt_app.add_handler.call_count == 7
+        assert rebuilt_app.add_handler.call_count == _CORE_HANDLER_COUNT + 1
         assert len(self._observer_calls(rebuilt_app)) == 1
 
     def test_transient_init_rebuild_uses_shared_registration(self, monkeypatch):
@@ -722,9 +729,12 @@ class TestRegisterHandlers:
             lambda: _async_value([]),
         )
         monkeypatch.setattr("asyncio.sleep", MagicMock(return_value=_async_value(None)))
+        # **kwargs: _acquire_platform_lock also passes pid_recheck_after_seconds
+        # (gateway/platforms/base.py); a positional-only stub raised TypeError
+        # inside connect()'s try, which returned False before registering.
         monkeypatch.setattr(
             "gateway.status.acquire_scoped_lock",
-            lambda scope, identity, metadata=None: (True, None),
+            lambda scope, identity, metadata=None, **kwargs: (True, None),
         )
         a._register_handlers = MagicMock()
 

@@ -237,13 +237,21 @@ def test_leading_slash_prefers_a_real_absolute_path(tmp_path, monkeypatch):
     absolute path in a repo that happens to mirror those names breaks.
     """
     monkeypatch.chdir(tmp_path)
+    # A rooted directory that really exists on this box: `/etc` on POSIX; on
+    # Windows `/etc` does not exist, so the slash was legitimately stripped and
+    # the decoy won (nightly-test-gate RED 2026-09-15). `/Windows` is the
+    # drive-relative absolute reading there (resolves against tmp_path's drive,
+    # which the chdir makes current).
+    rooted = "etc" if os.name != "nt" else "Windows"
+    if not os.path.isdir("/" + rooted):
+        pytest.skip(f"/{rooted} does not exist on this host; absolute reading cannot resolve")
     # A decoy that would win if the slash were stripped unconditionally.
-    (tmp_path / "etc").mkdir()
-    (tmp_path / "etc" / "decoy.conf").write_text("x", encoding="utf-8")
+    (tmp_path / rooted).mkdir()
+    (tmp_path / rooted / "decoy.conf").write_text("x", encoding="utf-8")
 
-    texts = [t for t, _, _ in _items("@/etc/")]
+    texts = [t for t, _, _ in _items(f"@/{rooted}/")]
 
-    # `/etc` exists on any POSIX box, so the absolute reading must hold.
+    # The rooted directory exists, so the absolute reading must hold.
     assert not any("decoy.conf" in t for t in texts), texts
 
 
