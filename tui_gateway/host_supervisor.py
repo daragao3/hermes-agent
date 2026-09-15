@@ -113,11 +113,10 @@ def _pid_alive(pid: int) -> bool:
     with contextlib.suppress(Exception):
         from gateway.status import _pid_exists
         return bool(_pid_exists(pid))
-    try:  # only when gateway.status is unimportable; POSIX-correct, Windows-unsafe
-        os.kill(pid, 0)
-        return True
-    except Exception as exc:
-        return isinstance(exc, PermissionError)
+    with contextlib.suppress(Exception):  # psutil is a core dependency; still never signals
+        import psutil
+        return bool(psutil.pid_exists(pid))
+    return False
 
 
 def _signal_pid(pid: int, sig: int, label: str) -> bool:
@@ -183,7 +182,7 @@ def _force_kill_pid(pid: int) -> bool:
         except Exception:
             logger.debug("failed to taskkill compute host pid=%s", pid, exc_info=True)
             return False
-    return _signal_pid(pid, signal.SIGKILL, "SIGKILL")
+    return _signal_pid(pid, signal.SIGKILL, "SIGKILL")  # windows-footgun: ok -- win32 exits above
 
 
 class HostSupervisor:
