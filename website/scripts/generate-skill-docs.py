@@ -61,6 +61,31 @@ _FENCE_RE = re.compile(r"^(?P<indent>\s*)(?P<fence>```+|~~~+)", re.MULTILINE)
 _BOX_DRAWING_CHARS = frozenset("┌┐└┘─│═║╔╗╚╝╠╣╦╩╬├┤┬┴┼╭╮╯╰▶◀▲▼")
 
 
+def write_lf(path: Path, text: str) -> None:
+    """Write text with LF endings on every platform.
+
+    EVERY generated file this script writes is TRACKED and covered by a
+    ``.gitattributes`` ``text eol=lf`` rule, so LF is not a preference here --
+    it is what the repository requires the working tree to contain.
+
+    ``Path.write_text`` opens in text mode with ``newline=None``, which
+    translates ``\\n`` to ``\\r\\n`` ON WINDOWS ONLY. The result is a tree that
+    is byte-identical in content yet reported MODIFIED by git on every single
+    run, with "CRLF will be replaced by LF the next time Git touches it" on each
+    file -- and nothing upstream notices, because CI runs on Linux where the
+    translation never happens.
+
+    That is what made the dirty-tree gate in ~/.hermes/ops/run_docs_i18n_gates.py
+    unconditionally red on this box: it asks whether regeneration changes the
+    committed pages, and the answer was always yes, for line endings alone
+    (``git diff --ignore-cr-at-eol`` over website/ was empty). A gate that can
+    never pass teaches its readers to ignore it, which costs more than the
+    defect it was built to catch.
+    """
+    with path.open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
 def _wrap_ascii_art_code_blocks(code_segment: str) -> str:
     """Wrap a fenced code segment in ascii-guard-ignore markers if it contains
     box-drawing characters. No-op otherwise, so plain bash/python code blocks
@@ -834,7 +859,7 @@ def write_sidebar(entries):
         raise RuntimeError("Could not find end of Skills sidebar block")
 
     new_text = text[:i] + skills_subtree + text[end:]
-    sidebar_path.write_text(new_text, encoding="utf-8")
+    write_lf(sidebar_path, new_text)
     print(f"Updated sidebar: {sidebar_path}")
 
 
@@ -858,7 +883,7 @@ def main():
         content = render_skill_page(
             meta, parsed["frontmatter"], parsed["body"], skill_index=skill_index
         )
-        out_path.write_text(content, encoding="utf-8")
+        write_lf(out_path, content)
         written += 1
     print(f"Wrote {written} per-skill pages under {SKILLS_PAGES}")
 
@@ -873,11 +898,11 @@ def main():
 
     # Regenerate catalogs
     bundled_catalog = build_catalog_md_bundled(entries)
-    (DOCS / "reference" / "skills-catalog.md").write_text(bundled_catalog, encoding="utf-8")
+    write_lf(DOCS / "reference" / "skills-catalog.md", bundled_catalog)
     print("Updated reference/skills-catalog.md")
 
     optional_catalog = build_catalog_md_optional(entries)
-    (DOCS / "reference" / "optional-skills-catalog.md").write_text(optional_catalog, encoding="utf-8")
+    write_lf(DOCS / "reference" / "optional-skills-catalog.md", optional_catalog)
     print("Updated reference/optional-skills-catalog.md")
 
     # Update sidebar
