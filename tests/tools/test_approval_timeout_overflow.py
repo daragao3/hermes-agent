@@ -78,7 +78,9 @@ class TestApprovalTimeoutOverflowClamp:
         monkeypatch.setattr(builtins, "__import__", _blocked)
         with _with_configured_timeout(10**18):
             value = _get_approval_timeout()
-        assert value == 365 * 24 * 3600
+        # The fallback mirrors the constant it could not import: a year, or the platform
+        # wait ceiling when lower (Windows: threading.TIMEOUT_MAX, ~49.7 days).
+        assert value == int(min(365 * 24 * 3600, threading.TIMEOUT_MAX))
         # Still platform-safe for the crashing primitive.
         lock = threading.Lock()
         assert lock.acquire(timeout=value)
@@ -112,7 +114,8 @@ class TestApprovalTimeoutOverflowClamp:
 
         with _with_configured_timeout(10**18):
             ceiling = human_wait_ceiling()
-        assert ceiling == float(int(MAX_SAFE_TIMEOUT_S)) + HUMAN_WAIT_MARGIN_S
+        # margin added, then capped at the platform wait ceiling (a no-op on POSIX)
+        assert ceiling == min(float(int(MAX_SAFE_TIMEOUT_S)) + HUMAN_WAIT_MARGIN_S, threading.TIMEOUT_MAX)
         lock = threading.Lock()
         assert lock.acquire(timeout=ceiling)
         lock.release()

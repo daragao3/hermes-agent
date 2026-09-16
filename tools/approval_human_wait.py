@@ -54,9 +54,12 @@ def human_wait_ceiling() -> float:
     acquire in agent/tool_executor.py, so the two cannot drift. Never call while
     holding ``_human_wait_lock`` — it reads the config cache.
     ``_get_approval_timeout`` caps at ``agent.deadline.MAX_SAFE_TIMEOUT_S`` so the
-    value is always safe for ``Lock.acquire(timeout=...)`` / ``Thread.join(timeout=...)``."""
+    value is always safe for ``Lock.acquire(timeout=...)`` / ``Thread.join(timeout=...)``
+    -- and the margin is added UNDER that same ceiling: on Windows the cap already sits
+    at ``threading.TIMEOUT_MAX`` (~49.7 days), so cap + 60 s overflowed every gate acquire
+    (measured 2026-09-16)."""
     from tools import approval_context
-    return float(approval_context._get_approval_timeout()) + HUMAN_WAIT_MARGIN_S
+    return min(float(approval_context._get_approval_timeout()) + HUMAN_WAIT_MARGIN_S, threading.TIMEOUT_MAX)
 
 
 def _clamped_window_seconds(started: float, now: float, ceiling: float) -> float:

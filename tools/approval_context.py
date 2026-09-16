@@ -5,6 +5,7 @@ unattended predicates, and the ``approvals.*`` config readers used by every
 gate in :mod:`tools.approval`.
 """
 
+import threading
 import contextvars
 import logging
 import os
@@ -239,7 +240,8 @@ def _get_approval_mode() -> str:
 def _get_approval_timeout() -> int:
     """Read ``approvals.timeout`` (default 300s: gateway push notifications may
     not be seen for minutes; 60s failed closed before Telegram taps landed).
-    Clamped to ``agent.deadline.MAX_SAFE_TIMEOUT_S`` (~1 year): a larger value
+    Clamped to ``agent.deadline.MAX_SAFE_TIMEOUT_S`` (~1 year, or the platform wait ceiling
+    when lower -- ~49.7 days on Windows): a larger value
     overflows ``time_t`` inside ``Thread.join`` / ``Lock.acquire`` on macOS and
     crashed every parallel tool batch; clamping at the single config-read site
     keeps every consumer platform-safe at once."""
@@ -251,7 +253,9 @@ def _get_approval_timeout() -> int:
         from agent.deadline import MAX_SAFE_TIMEOUT_S
         safe_cap = int(MAX_SAFE_TIMEOUT_S)
     except Exception:
-        safe_cap = 365 * 24 * 3600  # fail CLOSED: the raw value would re-open the overflow
+        # fail CLOSED: the raw value would re-open the overflow. Same rule as the constant
+        # we could not import: a year, or the platform wait ceiling when lower (Windows).
+        safe_cap = int(min(365 * 24 * 3600, threading.TIMEOUT_MAX))
     if raw > safe_cap:
         logger.warning("approvals.timeout=%s exceeds the platform-safe maximum; clamping to %ss", raw, safe_cap)
     return min(raw, safe_cap)
