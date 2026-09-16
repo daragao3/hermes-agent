@@ -155,7 +155,41 @@ def check_codex_conformance(client: Any, model: str) -> ProbeResult:
         # A TypeError even WITH the guard applied = a NEW unhandled shape, not R57.
         return ProbeResult(False, f"Codex parse failed despite output=None guard (new shape?): {str(exc)[:140]}")
     except Exception as exc:
+        quota = describe_codex_quota_error(exc, client)
+        if quota:
+            return ProbeResult(None, quota)
         return ProbeResult(None, f"Codex probe inconclusive: {type(exc).__name__}: {str(exc)[:140]}")
+
+
+def describe_codex_quota_error(exc: Any, client: Any = None) -> Optional[str]:
+    """A ChatGPT ``usage_limit_reached`` 429 rendered as an operator sentence, or None.
+
+    The raw SDK message truncated to 140 chars used to cut off exactly before
+    ``resets_at`` (measured 2026-09-16), so the tray said "inconclusive: 429 ..." and
+    nobody could tell whether the account came back in five minutes or four days.
+    Still ``unknown`` -- a quota is not contract drift -- but now it names the plan,
+    the ChatGPT account the probe used and the reset instant, which is the whole
+    decision: wait, or add a second pooled account.
+    """
+    body = getattr(exc, "body", None)
+    err = body.get("error", body) if isinstance(body, dict) else None
+    if not isinstance(err, dict) or err.get("type") != "usage_limit_reached":
+        return None
+    resets_at = err.get("resets_at")
+    when = "unknown reset"
+    if isinstance(resets_at, (int, float)):
+        when = "until " + datetime.fromtimestamp(resets_at, tz=timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    plan = err.get("plan_type") or "?"
+    account = ""
+    try:
+        headers = dict(getattr(client, "default_headers", {}) or {})
+        acct = headers.get("ChatGPT-Account-ID") or headers.get("chatgpt-account-id")
+        if isinstance(acct, str) and acct:
+            account = f" on ChatGPT account {acct[:8]}"
+    except Exception:  # pragma: no cover - never let the message builder fail the probe
+        pass
+    return (f"Codex quota exhausted ({plan} plan){account} {when}; conformance cannot be judged "
+            f"until it resets or a second pooled openai-codex account is added")
 
 
 def check_anthropic_conformance(client: Any, model: str) -> ProbeResult:

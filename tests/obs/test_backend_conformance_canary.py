@@ -114,6 +114,49 @@ def test_network_error_is_inconclusive_not_drift():
     assert res.healthy is None  # inconclusive, NOT down
 
 
+def test_usage_limit_429_is_inconclusive_and_names_plan_account_and_reset():
+    """A ChatGPT usage_limit_reached 429 is a quota, not drift: still unknown, but the
+    detail must carry what the truncated SDK message dropped (plan, account, reset)."""
+    from obs.backend_conformance_canary import check_codex_conformance
+
+    class _Quota429(Exception):
+        body = {"error": {"type": "usage_limit_reached", "message": "The usage limit has been reached",
+                          "plan_type": "pro", "resets_at": 1789873210, "resets_in_seconds": 291668}}
+
+    class _Client:
+        default_headers = {"ChatGPT-Account-ID": "ccd7649e-f91b-4a79-ac84-d5516dfec3c2"}
+
+        class responses:
+            @staticmethod
+            def stream(**kw):
+                raise _Quota429("Error code: 429 - {'error': {'type': 'usage_limit_reached', 'message': 'The usage limit has been reached', 'plan_type': 'pro', 'resets_at': 1789873210}}")
+
+    res = check_codex_conformance(_Client(), "gpt-5.5")
+    assert res.healthy is None
+    assert res.state == "unknown"
+    assert "quota exhausted (pro plan)" in res.detail
+    assert "ccd7649e" in res.detail
+    assert "until 2026-09-20T03:00Z" in res.detail
+    assert "second pooled openai-codex account" in res.detail
+
+
+def test_non_quota_429_keeps_the_generic_inconclusive_message():
+    from obs.backend_conformance_canary import check_codex_conformance
+
+    class _Other429(Exception):
+        body = {"error": {"type": "rate_limit_exceeded", "message": "slow down"}}
+
+    class _Client:
+        class responses:
+            @staticmethod
+            def stream(**kw):
+                raise _Other429("Error code: 429 - slow down")
+
+    res = check_codex_conformance(_Client(), "gpt-5.5")
+    assert res.healthy is None
+    assert res.detail.startswith("Codex probe inconclusive: _Other429")
+
+
 def test_edge_trigger_emits_once_for_consecutive_drift(tmp_path, monkeypatch):
     import obs.backend_conformance_canary as canary
 
