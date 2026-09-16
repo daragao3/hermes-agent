@@ -30,10 +30,23 @@ def test_profile_local_mcp_tool_is_visible_in_slash_worker(tmp_path):
     profile_home = tmp_path / "profile-home"
     profile_home.mkdir()
     marker = "profile-local-61922"
+    # Long enough that the default 1.5s discovery bound reliably misses the probe
+    # (measured: the un-raised bound answers ~10s before a 6s-delayed server
+    # finishes connecting), short enough not to dominate the test.
+    PROBE_START_DELAY_S = 5
     server = tmp_path / "mcp_probe.py"
     server.write_text(
         textwrap.dedent(
             f"""
+            import time
+
+            # Deliberately SLOW to start (PROBE_START_DELAY_S above): the
+            # worker only joins background discovery for ``mcp_discovery_timeout``
+            # before it snapshots tools, so a server that is still connecting when
+            # ``/tools`` runs is simply absent from the reply. Without this delay a
+            # fast box discovers the probe inside the default 1.5s bound and the
+            # config key below is never exercised -- a vacuous green.
+            time.sleep({PROBE_START_DELAY_S})
             from mcp.server import MCPServer
 
             mcp = MCPServer("profileprobe")
@@ -51,6 +64,22 @@ def test_profile_local_mcp_tool_is_visible_in_slash_worker(tmp_path):
     (profile_home / "config.yaml").write_text(
         yaml.safe_dump(
             {
+                # The slash worker's discovery wait is BOUNDED by this key (default
+                # 1.5s, hermes_cli/config_defaults.py): ``wait_for_mcp_discovery``
+                # joins the discovery thread for at most that long, then HermesCLI
+                # is built and ``/tools`` answers from whatever has registered so
+                # far. A cold MCP server child (fresh interpreter + ``mcp`` import)
+                # routinely needs longer than that on a loaded box, and the reply
+                # then lists every built-in tool but not the probe -- measured
+                # 2026-09-15 in 2 of 3 twelve-worker tests/tui_gateway sweeps as
+                # "37 tools, probe absent". That is the product's deliberate
+                # bounded-startup design (tui_gateway/entry.py, server.py
+                # late-refresh), not a discovery defect: a later ``/tools`` reads
+                # the live registry and shows the tool. This test asserts
+                # profile-local DISCOVERY, so it raises the bound; ``join``
+                # returns the instant discovery completes, so this is a readiness
+                # gate, not a sleep.
+                "mcp_discovery_timeout": 120,
                 "mcp_servers": {
                     "profileprobe": {
                         "enabled": True,
@@ -125,8 +154,14 @@ def test_profile_local_mcp_tool_is_visible_in_slash_worker(tmp_path):
                 + chr(10) + ("".join(errors[-40:]) or "(empty)")
             )
         response = json.loads(line)
-        assert response["ok"] is True
-        assert "mcp__profileprobe__hermes_61922_profile_probe" in response["output"]
+        assert response["ok"] is True, response
+        # Include the child's stderr on THIS failure too: the 2026-09-15 sweep
+        # reds fell through here with nothing but the tool list to go on.
+        assert "mcp__profileprobe__hermes_61922_profile_probe" in response["output"], (
+            "profile-local MCP tool absent from /tools reply (rc="
+            f"{proc.poll()}); child stderr:" + chr(10)
+            + ("".join(errors[-40:]) or "(empty)")
+        )
     finally:
         proc.terminate()
         try:
