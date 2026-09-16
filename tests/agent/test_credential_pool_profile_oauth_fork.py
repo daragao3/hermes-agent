@@ -17,6 +17,7 @@ import urllib.request
 
 import pytest
 
+from tests._home_isolation import redirect_home
 from tests.symlink_support import requires_symlinks
 
 
@@ -26,8 +27,13 @@ def fleet(tmp_path, monkeypatch):
     root = tmp_path / "hermes-root"
     root.mkdir()
     (tmp_path / "fakehome").mkdir()
-    # Keep host ~/.claude and host auth.json out of the picture.
-    monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+    # Keep host ~/.claude and host auth.json out of the picture. HOME alone
+    # is not enough: ``claude_code_credentials_path()`` is ``Path.home() /
+    # ".claude" / ".credentials.json"`` and on Windows ``Path.home()`` reads
+    # USERPROFILE, so a box logged into Claude Code leaked its real grant into
+    # this pool as a ``claude_code`` row (2026-09-16). redirect_home pins every
+    # home-resolution mechanism at the fake home on every platform.
+    redirect_home(monkeypatch, tmp_path / "fakehome")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "fakehome"))
     for var in ("ANTHROPIC_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
         monkeypatch.delenv(var, raising=False)
@@ -160,6 +166,23 @@ def test_strip_helper_drops_device_code_blocks_and_reports(tmp_path):
 def test_strip_helper_is_a_noop_without_credentials(tmp_path):
     from hermes_cli.auth import strip_cloned_single_use_oauth_grants
     assert strip_cloned_single_use_oauth_grants(tmp_path) == {"pool": [], "providers": [], "files": []}
+
+
+def test_fleet_fixture_hides_host_claude_code_credentials(fleet, tmp_path):
+    """The fixture must isolate the host's ~/.claude on every platform.
+
+    ``claude_code_credentials_path()`` is ``Path.home() / ".claude" / ...``;
+    on Windows ``Path.home()`` reads USERPROFILE and ignores HOME, so a fixture
+    that only pins HOME still points at the developer's real file. On a box
+    logged into Claude Code that grant then appears in the pool as a borrowed
+    ``claude_code`` row and the borrowing/prune/auth-add tests fail on an
+    extra id. Red on this host before the fixture used redirect_home.
+    """
+    from agent.anthropic_credentials import claude_code_credentials_path
+
+    resolved = claude_code_credentials_path().resolve()
+    assert resolved.is_relative_to((tmp_path / "fakehome").resolve()), resolved
+    assert not resolved.exists()
 
 
 @pytest.mark.parametrize(
