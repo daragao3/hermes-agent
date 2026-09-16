@@ -211,5 +211,12 @@ def test_contended_ownership_probe_fails_quickly_without_blocking_socket(
         blocker.rollback()
         blocker.close()
 
-    assert time.monotonic() - started < 0.5
+    # The probe's designed bound is ``sqlite3.connect(timeout=0.05)`` in ``hosted_rooms._probe``,
+    # but SQLite's default busy handler realises that 50ms as six sleeps (1,2,5,10,15,17ms) and
+    # Windows quantises each to >=15.6ms, so the probe alone measures 0.3-0.5s here and the whole
+    # ``prompt.submit`` 0.5-0.9s even on a quiet box (measured 2026-09-15). The purpose of this
+    # bound is that a contended probe never holds the WebSocket reader for the store's normal
+    # ``timeout=10`` (``hosted_rooms_common.connect``) -- 2s is well under that ceiling and is
+    # the AGENTS.md floor for wall-clock bounds.
+    assert time.monotonic() - started < 2.0
     assert result["error"]["code"] == 5122
