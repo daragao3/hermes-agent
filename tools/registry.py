@@ -332,8 +332,12 @@ def _check_fn_cached(fn: Callable) -> bool:
             return True
 
         # No recent success (or grace expired) — honor the failure; logged so silent tool
-        # loss in quiet mode (subagents) is diagnosable.
-        logger.warning(
+        # loss in quiet mode (subagents) is diagnosable. A probe that RAISED is the
+        # diagnosable failure and warns; one that returned False is an unconfigured
+        # integration (browser, discord, spotify, ...) — 22 of those on every gateway
+        # boot were pure noise at WARNING (2026-09-15), so that outcome is INFO.
+        logger.log(
+            logging.WARNING if outcome == "raised" else logging.INFO,
             "check_fn %s %s; dependent tools will be unavailable this turn", _fn_label(fn), outcome)
         _check_fn_cache[cache_key] = (now, False)
         return False

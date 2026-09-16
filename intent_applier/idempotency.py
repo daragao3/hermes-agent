@@ -64,19 +64,30 @@ class IdempotencyTracker:
         count = 0
         if not processed_dir.exists():
             return 0
-        for path in sorted(processed_dir.glob("*.json")):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                logger.warning("idempotency rehydrate: skipping %s (%s)", path.name, exc)
-                continue
-            key = data.get("idempotency_key")
-            mid = data.get("message_id") or "unknown"
-            if not key:
-                continue
-            if not self.is_applied(key):
-                self.mark_applied(key, message_id=mid)
-                count += 1
+        # One transaction for the whole replay. The connection is autocommit
+        # (isolation_level=None), so without this every mark_applied is its own
+        # fsync'd write -- ~1k of them on a cold post-boot disk is what made a
+        # gateway boot spend ~2 min here (2026-09-15). Callers run this before
+        # the tracker has any other writer, so nothing else can be folded in.
+        self._conn.execute("BEGIN")
+        try:
+            for path in sorted(processed_dir.glob("*.json")):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    logger.warning("idempotency rehydrate: skipping %s (%s)", path.name, exc)
+                    continue
+                key = data.get("idempotency_key")
+                mid = data.get("message_id") or "unknown"
+                if not key:
+                    continue
+                if not self.is_applied(key):
+                    self.mark_applied(key, message_id=mid)
+                    count += 1
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+        self._conn.execute("COMMIT")
         logger.info("idempotency rehydrate: added %d keys from %s", count, processed_dir)
         return count
 
