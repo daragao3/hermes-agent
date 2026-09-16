@@ -2108,3 +2108,56 @@ def test_stop_is_bounded_and_does_not_interrupt_active_turn(db: Path):
     assert time.monotonic() - started < 0.5
     assert state.get_task(db, identity)["status"] == "running"
     assert not [call for call in rpc.calls if call[0] == "interrupt"]
+
+
+def test_stop_never_joins_a_room_thread_before_it_is_started(db: Path, monkeypatch):
+    """A stop() whose supervisor join timed out must not join an unstarted worker.
+
+    ``_run_cycle`` publishes each room thread into ``_room_threads`` and then
+    calls ``start()``; ``stop()`` snapshots that dict after joining the
+    supervisor. When the supervisor join times out (a loaded box, a long
+    ``_rooms_provider()`` call) while the supervisor sits between publication
+    and ``start()``, the old code raised ``RuntimeError: cannot join thread
+    before it is started`` out of ``stop()`` (seen in a 12-worker
+    tests/tui_gateway sweep on 2026-09-15). Publication and ``start()`` must be
+    one step from ``stop()``'s point of view.
+    """
+
+    about_to_start = threading.Event()
+    proceed = threading.Event()
+    owner: list[HostedRoomRuntime] = []
+
+    class GatedThread(threading.Thread):
+        def start(self) -> None:
+            # Gate only THIS runtime's room threads: a sibling test that failed
+            # before its own stop() leaves a supervisor alive in this process,
+            # and it would otherwise trip the gate (seen in a 12-worker sweep).
+            target = getattr(self, "_target", None)
+            mine = getattr(target, "__self__", None) is (owner[0] if owner else None)
+            if mine and self.name.startswith("hosted-room-room"):
+                about_to_start.set()
+                # Hold the supervisor between publication and start() until the
+                # test's stop() has had its chance to observe the handle.
+                assert proceed.wait(10.0)
+            super().start()
+
+    runtime = _runtime(db, FakeSessionRPC(), poll_interval_seconds=0.01)
+    owner.append(runtime)
+    runtime._process_room = lambda binding: None  # nothing to run; only the handoff matters
+    monkeypatch.setattr("tui_gateway.hosted_room_driver.threading.Thread", GatedThread)
+    releaser = threading.Timer(1.0, proceed.set)
+    releaser.daemon = True
+
+    runtime.start()
+    try:
+        assert about_to_start.wait(5.0)
+        releaser.start()
+        # Supervisor join expires at 0.5s while the worker is still unstarted
+        # (proceed fires at 1.0s): the pre-fix code raised here. Its truth value is
+        # load-dependent and irrelevant; the final bounded stop below is the assertion.
+        runtime.stop(timeout=0.5)
+    finally:
+        proceed.set()
+        releaser.cancel()
+    assert runtime.stop(timeout=5.0) is True
+    assert runtime.status()["running"] is False

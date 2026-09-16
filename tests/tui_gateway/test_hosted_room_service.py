@@ -295,7 +295,9 @@ class _BlockingFirstRPC(_PromptRecordingRPC):
         self.prompts.append((kwargs["profile"], kwargs["prompt"]))
         if len(self.prompts) == 1:
             self.first_started.set()
-            assert self.release_first.wait(timeout=2)
+            # Worker-side gate: must outlast the MAIN thread's whole path to
+            # release_first.set() (first_started.wait + a send() SQLite write).
+            assert self.release_first.wait(timeout=5.0)
         kwargs["on_terminal"](
             {"status": "settled", "text": f"reply from {kwargs['profile']}"}
         )
@@ -306,7 +308,14 @@ def _server():
     return SimpleNamespace(_methods={}, _sessions={}, _sessions_lock=threading.Lock())
 
 
-def _wait_for(predicate, timeout=2.0):
+# Wall-clock bounds in this file are 5s (AGENTS.md flake policy: >= 2s). Measured
+# on a quiet box, 2026-09-15: send() alone is 0.3-0.6s of SQLite and the first
+# room.activity lands 0.3-1.1s after it, so the old 2.0s default had <1s of
+# headroom and went red in every loaded 12-worker tests/tui_gateway sweep.
+# stop() is bounded the same way: its supervisor join competes with one
+# _rooms_provider() SQLite read plus the room thread's own exit. All of it sits
+# well under the 30s addopts watchdog.
+def _wait_for(predicate, timeout=5.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -382,7 +391,7 @@ def test_create_send_drive_publish_and_replay_without_client_transport(tmp_path:
             event["kind"] == "message.member" for event in service._events("room-1")
         )
     )
-    assert service.stop(timeout=1.0)
+    assert service.stop(timeout=5.0)
 
     events = service._events("room-1")
     assert [event["kind"] for event in events][:3] == [
@@ -604,7 +613,7 @@ def test_same_thread_followup_migrates_and_delivers_committed_peer_reply(
         payload={"text": "@hermes continue", "thread_id": "thread-1"},
     )
     _wait_for(lambda: len(service.rpc.prompts) == 2)
-    assert service.stop(timeout=1.0)
+    assert service.stop(timeout=5.0)
 
     profile, prompt = service.rpc.prompts[1]
     assert profile == "default"
@@ -633,7 +642,7 @@ def test_active_same_thread_followup_waits_for_current_task(tmp_path: Path):
         event_id="user-1",
         payload={"text": "@ops start", "thread_id": "thread-1"},
     )
-    assert service.rpc.first_started.wait(timeout=2)
+    assert service.rpc.first_started.wait(timeout=5.0)
     service.send(
         room_id="room-1",
         event_id="user-2",
@@ -649,7 +658,7 @@ def test_active_same_thread_followup_waits_for_current_task(tmp_path: Path):
             for event in service._events("room-1")
         )
     )
-    assert service.stop(timeout=1.0)
+    assert service.stop(timeout=5.0)
     assert "User (user): @hermes follow up" in service.rpc.prompts[1][1]
 
 
@@ -681,7 +690,7 @@ def test_thread_transcript_prunes_committed_message_and_settlement_together(
             for event in service._events("room-1")
         )
     )
-    assert service.stop(timeout=1.0)
+    assert service.stop(timeout=5.0)
     for index in range(24):
         _append_room_event(
             db,
@@ -1046,7 +1055,7 @@ def test_headless_room_publishes_peer_member_reply_without_desktop_transport(
             event["kind"] == "message.member" for event in service._events("room-1")
         )
     )
-    assert service.stop(timeout=1.0)
+    assert service.stop(timeout=5.0)
 
     events = service._events("room-1")
     reply = next(event for event in events if event["kind"] == "message.member")
@@ -1112,7 +1121,7 @@ def test_unadmitted_peer_failure_does_not_block_next_healthy_member(
             for event in service._events("room-1")
         )
     )
-    assert service.stop(timeout=1.0)
+    assert service.stop(timeout=5.0)
 
     events = service._events("room-1")
     assert any(
