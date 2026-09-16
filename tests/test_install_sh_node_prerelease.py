@@ -18,6 +18,7 @@ asserting on a copy, so the guard cannot drift away from the test.
 import re
 import subprocess
 from pathlib import Path
+from tests.bash_support import BASH
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
@@ -41,7 +42,7 @@ def _node_satisfies_build(version: str) -> bool:
         _extract_function(INSTALL_SH.read_text(encoding="utf-8"), "node_satisfies_build")
         + f'\nnode_satisfies_build "{version}"\n'
     )
-    return subprocess.run(["bash", "-c", script]).returncode == 0
+    return subprocess.run([BASH, "-c", script]).returncode == 0
 
 
 def test_prerelease_node_never_satisfies_the_build_floor() -> None:
@@ -95,7 +96,7 @@ install_node
 """
     tried = tmp_path / "tried"
     result = subprocess.run(
-        ["bash", "-c", script],
+        [BASH, "-c", script],
         capture_output=True,
         text=True,
         encoding="utf-8",

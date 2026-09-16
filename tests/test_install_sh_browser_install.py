@@ -6,6 +6,7 @@ unsupported distribution.
 """
 
 from pathlib import Path
+from tests.bash_support import BASH
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -161,7 +162,7 @@ echo "FINAL_RC=$?"
         # to its CWD lands in the shared checkout root. Safe to repoint -- the
         # harness is passed inline via -c and RUNLOG is an absolute path.
         with tempfile.TemporaryDirectory(prefix="install_sh_cwd_") as cwd:
-            proc = subprocess.run(["bash", "-c", harness], capture_output=True,
+            proc = subprocess.run([BASH, "-c", harness], capture_output=True,
                                   text=True, env=env, cwd=cwd)
         runs = Path(runlog).read_text(encoding="utf-8").strip().splitlines()
         final_rc = None

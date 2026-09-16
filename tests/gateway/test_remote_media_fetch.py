@@ -13,6 +13,7 @@ import pytest
 import gateway.media_fetch as media_fetch
 from gateway.platforms.base import BasePlatformAdapter
 from tools.environments.base import BaseEnvironment, FileFetchError
+from tests.bash_support import BASH
 
 
 class _FakeRemoteEnv:
@@ -78,7 +79,7 @@ class _ScriptedEnv(BaseEnvironment):
 
     def execute(self, command, cwd="", **kwargs):
         import subprocess
-        proc = subprocess.run(["bash", "-c", command], capture_output=True, text=True, encoding="utf-8")
+        proc = subprocess.run([BASH, "-c", command], capture_output=True, text=True, encoding="utf-8")
         return {"output": "echo login-noise\n" + proc.stdout + proc.stderr, "returncode": proc.returncode}
 
 

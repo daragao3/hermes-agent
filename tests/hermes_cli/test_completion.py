@@ -9,6 +9,7 @@ import tempfile
 import pytest
 
 from hermes_cli.completion import _walk, generate_bash, generate_zsh, generate_fish
+from tests.bash_support import BASH
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +91,7 @@ class TestGenerateBash:
             f.write(out)
             path = f.name
         try:
-            result = subprocess.run(["bash", "-n", path], capture_output=True)
+            result = subprocess.run([BASH, "-n", path], capture_output=True)
             assert result.returncode == 0, result.stderr.decode()
         finally:
             os.unlink(path)
