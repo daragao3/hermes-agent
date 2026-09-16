@@ -2,7 +2,11 @@
 Probing runs where the gateway runs (covers remote backends). Roots go through a thread-safe
 single-flight cache so concurrent identical probes share one ``git`` spawn: positives live for the
 process, negatives (not a repo / deleted dir) for ``_NEG_TTL`` — hundreds of non-git session cwds
-would otherwise re-spawn ``git`` on every sidebar open, while the TTL keeps ``git init`` re-probable."""
+would otherwise re-spawn ``git`` on every sidebar open, while the TTL keeps ``git init`` re-probable.
+A probe that STALLED (killed at ``_GIT_TIMEOUT``) is not a negative: it says nothing about the cwd,
+only about the box's load, so it is remembered for ``_STALL_TTL`` — enough to absorb a burst of
+callers, not a whole turn (a stalled spawn cached as "not a repo" for 30s made the settle-follow
+refuse a worktree and blanked the session's branch label until the TTL lapsed)."""
 
 from __future__ import annotations
 
@@ -12,11 +16,27 @@ import time
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 
-from hermes_cli._subprocess_compat import bounded_git_probe
+from hermes_cli._subprocess_compat import bounded_git_probe_outcome
 
 _GIT_TIMEOUT = 1.5
 _WARM_WORKERS = 8
 _NEG_TTL = 30.0  # "not a git repo" TTL: a fresh `git init` shows within seconds
+# TTL for a probe that stalled at _GIT_TIMEOUT. Re-probing costs the timeout plus the tree-kill drain
+# (~1.2s quiet, 8-12s under CPU saturation on a 12-core box), and the single-flight gate already holds
+# concurrent callers for that whole span, so a short TTL bounds the re-spawn rate without pinning a
+# load artefact to the cwd for the full negative TTL.
+_STALL_TTL = 3.0
+
+
+class _StalledProbe(str):
+    """The empty answer ``run_git`` gives when git was KILLED at ``_GIT_TIMEOUT`` rather than answering.
+    Equal to and as falsy as ``""`` so every ``== ""`` / ``or`` consumer is unchanged; only
+    ``_RootCache`` looks at the type, to cache it for ``_STALL_TTL`` instead of ``_NEG_TTL``."""
+
+    __slots__ = ()
+
+
+_STALLED = _StalledProbe("")
 
 
 def run_git(cwd: str, *args: str) -> str:
@@ -31,16 +51,22 @@ def run_git(cwd: str, *args: str) -> str:
     # session history's cwds, so the stat pays off.
     if not cwd or not os.path.isdir(cwd):
         return ""
-    return bounded_git_probe(["git", "-C", cwd, *args], timeout=_GIT_TIMEOUT)
+    out, stalled = bounded_git_probe_outcome(["git", "-C", cwd, *args], timeout=_GIT_TIMEOUT)
+    return _STALLED if stalled else out
 
 
 def branch(cwd: str) -> str:
-    return run_git(cwd, "branch", "--show-current") or run_git(cwd, "rev-parse", "--short", "HEAD")
+    head = run_git(cwd, "branch", "--show-current")
+    if head or isinstance(head, _StalledProbe):
+        # A stalled first probe would only stall again (and pay a second kill/drain): give up now.
+        return str(head)
+    return run_git(cwd, "rev-parse", "--short", "HEAD")
 
 
 class _RootCache:
     """Thread-safe, single-flight cache of git-root probes: positives live for
-    the process, negatives for ``_NEG_TTL``; followers wait on the leader."""
+    the process, negatives for ``_NEG_TTL`` (stalled probes for ``_STALL_TTL``);
+    followers wait on the leader."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -79,7 +105,8 @@ class _RootCache:
                     if value:
                         self._roots[key] = value
                     else:
-                        self._neg[key] = time.monotonic() + _NEG_TTL
+                        ttl = _STALL_TTL if isinstance(value, _StalledProbe) else _NEG_TTL
+                        self._neg[key] = time.monotonic() + ttl
                     self._inflight.pop(key, None)
                 gate.set()
             return value
@@ -114,6 +141,10 @@ def common_repo_root(cwd: str) -> str:
             gitdir = os.path.realpath(gitdir)
             if os.path.basename(gitdir) == ".git":
                 return os.path.dirname(gitdir).replace(os.sep, "/")
+        if isinstance(gitdir, _StalledProbe):
+            # Falling back to the toplevel here would cache a linked worktree's OWN root as its common
+            # root for the whole process; a stall is a load artefact, so let it expire and re-probe.
+            return gitdir
         return repo_root(cwd)
 
     return _cache.resolve(f"common:{cwd}", _probe)

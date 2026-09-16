@@ -159,7 +159,7 @@ def test_missing_directory_costs_no_subprocess(monkeypatch):
     def boom(*_a, **_kw):
         raise AssertionError("spawned git for a directory that does not exist")
 
-    monkeypatch.setattr(git_probe, "bounded_git_probe", boom)
+    monkeypatch.setattr(git_probe, "bounded_git_probe_outcome", boom)
 
     assert git_probe.run_git("/gone/worktree", "rev-parse", "--show-toplevel") == ""
 
