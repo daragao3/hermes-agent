@@ -162,16 +162,29 @@ class TrackerIntentApplierSubscriber(BaseSubscriber):
             "HERMES_JOBOPS_URL", "http://127.0.0.1:4100"
         )
         self._applier: IntentApplier | None = None
+        # Idempotency replay is deferred from startup() to the first tick of the
+        # applier's own poll thread -- see _ensure_rehydrated.
+        self._idempotency: IdempotencyTracker | None = None
+        self._rehydrate_pending = False
         self._redrive_enabled = _redrive_enabled_from_env()
         self._redrive_config = _redrive_config_from_env()
         self._reap_enabled = _reap_enabled_from_env()
 
     def startup(self) -> None:
-        """Build the applier with rehydrated idempotency state."""
+        """Build the applier; the idempotency replay happens on first poll.
+
+        startup() runs on the gateway EVENT LOOP thread (run_startup ->
+        eventbus_startup -> startup_all). Replaying processed/ there --
+        ~1k files read, parsed and inserted -- blocked the loop for ~2 min
+        on the 2026-09-15 21:08 boot: the 30s telegram-init deadline could
+        not be delivered, telegram's 45s connect timed out, env_probe
+        starved. The applier is driven by its OWN single-writer thread
+        (gateway_integration._applier_poll_loop), so the replay runs there,
+        before the first scan, via _ensure_rehydrated.
+        """
         idempotency = IdempotencyTracker(self._state_db)
-        # Replay processed/ into the idempotency DB so a fresh DB after a
-        # gateway restart doesn't re-apply intents we already handled.
-        idempotency.rehydrate_from_processed(self._mailbox["processed"])
+        self._idempotency = idempotency
+        self._rehydrate_pending = True
 
         # ``resume_full`` is optional — graphs.jobflow may not be present in
         # every deployment (e.g. minimal CI installs) — and it is expensive:
@@ -227,6 +240,32 @@ class TrackerIntentApplierSubscriber(BaseSubscriber):
             self._redrive_config.get("redrive_give_up_attempts"),
         )
 
+    def _ensure_rehydrated(self) -> bool:
+        """Replay processed/ into the idempotency DB once, on the calling
+        (applier poll) thread, so a fresh DB after a gateway restart doesn't
+        re-apply intents we already handled. Returns True when the applier
+        may run.
+
+        Fails CLOSED exactly as the old in-startup() replay did: a raise
+        there aborted startup (startup_all logs it, _applier stays None and
+        nothing is ever applied). Here the applier is dropped instead, so no
+        scan can ever run against an un-replayed DB.
+        """
+        if not self._rehydrate_pending:
+            return self._applier is not None
+        self._rehydrate_pending = False
+        try:
+            assert self._idempotency is not None
+            self._idempotency.rehydrate_from_processed(self._mailbox["processed"])
+        except Exception:
+            logger.exception(
+                "tracker-intent-applier: idempotency rehydrate failed; "
+                "applier disabled (fail closed) until the next gateway restart"
+            )
+            self._applier = None
+            return False
+        return self._applier is not None
+
     def handle(self, event: Event) -> None:
         """No-op: this subscriber is filesystem-driven, not event-bus-driven.
 
@@ -246,8 +285,8 @@ class TrackerIntentApplierSubscriber(BaseSubscriber):
         the base-class ``int`` contract so the subscriber remains a
         drop-in replacement for any future caller that does inspect it.
         """
-        if self._applier is None:
-            # startup() not yet called — defensive no-op.
+        if not self._ensure_rehydrated() or self._applier is None:
+            # startup() not yet called, or the replay failed — defensive no-op.
             return 0
 
         outcomes = self._applier.scan_inbox()
@@ -274,7 +313,7 @@ class TrackerIntentApplierSubscriber(BaseSubscriber):
         pure/always-acts; THIS method is the feature flag — it must stay OFF until
         :4100 runs 8d7b5f5's dist (idempotent no-op guard live).
         """
-        if not self._redrive_enabled or self._applier is None:
+        if not self._redrive_enabled or not self._ensure_rehydrated() or self._applier is None:
             return 0
         results = self._applier.redrive_partials()
         redriven = sum(1 for v in results.values() if v == "redriven")
@@ -289,7 +328,7 @@ class TrackerIntentApplierSubscriber(BaseSubscriber):
         converged). IntentApplier.reap_converged_partials() is pure/always-acts;
         THIS method is the feature flag.
         """
-        if not self._reap_enabled or self._applier is None:
+        if not self._reap_enabled or not self._ensure_rehydrated() or self._applier is None:
             return 0
         results = self._applier.reap_converged_partials()
         reaped = sum(1 for v in results.values() if v == "reaped")

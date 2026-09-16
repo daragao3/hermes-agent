@@ -156,3 +156,76 @@ class TestCanonicalPipelinePathIsHermetic:
         assert not str(_default_canonical_path()).startswith(
             str(Path.home() / ".hermes")
         )
+
+
+class TestRehydrateIsDeferredOffStartup:
+    """startup() runs on the gateway EVENT LOOP thread (run_startup ->
+    eventbus_startup -> startup_all). On 2026-09-15 21:08 the synchronous
+    rehydrate of ~1k processed/ files blocked that loop for ~2 min: the
+    30s telegram-init deadline could not fire, telegram's 45s connect timed
+    out, env_probe starved. The applier has its OWN single-writer poll
+    thread, so the replay belongs there -- before the first scan, never on
+    the loop."""
+
+    @pytest.fixture
+    def rehydrate_calls(self, monkeypatch):
+        from intent_applier.idempotency import IdempotencyTracker
+        calls = []
+        monkeypatch.setattr(
+            IdempotencyTracker, "rehydrate_from_processed",
+            lambda self, d: calls.append(d) or 0,
+        )
+        return calls
+
+    def test_startup_does_not_rehydrate(self, subscriber, rehydrate_calls):
+        subscriber.startup()
+        assert rehydrate_calls == []
+        assert subscriber._applier is not None
+
+    def test_first_poll_rehydrates_once_before_scanning(self, subscriber, rehydrate_calls):
+        subscriber.startup()
+        order = []
+        subscriber._applier.scan_inbox = lambda: order.append("scan") or {}
+        # Interpose on the recorded rehydrate so we can see ordering.
+        real = subscriber._ensure_rehydrated
+
+        def spy():
+            ok = real()
+            if rehydrate_calls and "rehydrate" not in order:
+                order.append("rehydrate")
+            return ok
+        subscriber._ensure_rehydrated = spy
+
+        subscriber.poll()
+        subscriber.poll()
+        assert len(rehydrate_calls) == 1
+        assert order == ["rehydrate", "scan", "scan"]
+
+    def test_redrive_and_reap_also_rehydrate_first(self, subscriber, rehydrate_calls, monkeypatch):
+        monkeypatch.setenv("TRACKER_APPLIER_REDRIVE_ENABLED", "1")
+        monkeypatch.setenv("TRACKER_APPLIER_REAP_ENABLED", "1")
+        sub = type(subscriber)(subscriber.bus)
+        sub.startup()
+        sub._applier.redrive_partials = lambda: {}
+        sub._applier.reap_converged_partials = lambda: {}
+        sub.redrive_partials()
+        sub.reap_converged_partials()
+        assert len(rehydrate_calls) == 1
+
+    def test_rehydrate_failure_fails_closed(self, subscriber, monkeypatch):
+        """Same contract as before the change: a rehydrate that raises used
+        to abort startup() (startup_all logs it, _applier stays None, nothing
+        is ever applied). Deferred, it must still never scan the inbox."""
+        from intent_applier.idempotency import IdempotencyTracker
+
+        def boom(self, d):
+            raise RuntimeError("disk gone")
+        monkeypatch.setattr(IdempotencyTracker, "rehydrate_from_processed", boom)
+        subscriber.startup()
+        scanned = []
+        subscriber._applier.scan_inbox = lambda: scanned.append(1) or {}
+
+        assert subscriber.poll() == 0
+        assert subscriber.poll() == 0
+        assert scanned == []
+        assert subscriber._applier is None

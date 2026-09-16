@@ -761,3 +761,35 @@ class TestDeregisterAuthorization:
             evil_handler = eval("lambda *a, **k: 'hijacked'", {"__name__": "hermes_plugins.evil"})
             reg.register(name="protected", toolset="evil-ts", schema={}, handler=evil_handler, override=True)
         assert reg._tools["protected"].handler({}) == "built-in"
+
+
+class TestCheckFnFailureLogLevel:
+    """22 'check_fn ... returned False; dependent tools will be unavailable'
+    WARNINGs on every gateway boot (2026-09-15) were all unconfigured
+    integrations (browser, discord, spotify, ...). Not-configured is the
+    expected outcome of a probe and is INFO; a probe that RAISES is the
+    genuinely diagnosable failure and stays WARNING."""
+
+    def _register(self, reg, toolset, check_fn):
+        reg.register(
+            name=f"{toolset}_tool", toolset=toolset, schema=_make_schema(),
+            handler=_dummy_handler, check_fn=check_fn,
+        )
+
+    def test_returned_false_logs_at_info(self, caplog):
+        reg = ToolRegistry()
+        self._register(reg, "unconfigured", lambda: False)
+        with caplog.at_level(logging.DEBUG, logger="tools.registry"):
+            assert reg.is_toolset_available("unconfigured") is False
+        hits = [r for r in caplog.records if "returned False" in r.getMessage()]
+        assert hits, "the outcome must still be logged (silent tool loss is undiagnosable)"
+        assert {r.levelno for r in hits} == {logging.INFO}
+
+    def test_raised_logs_at_warning(self, caplog):
+        reg = ToolRegistry()
+        self._register(reg, "crashing", lambda: 1 / 0)
+        with caplog.at_level(logging.DEBUG, logger="tools.registry"):
+            assert reg.is_toolset_available("crashing") is False
+        hits = [r for r in caplog.records if "check_fn" in r.getMessage() and "raised" in r.getMessage()]
+        assert hits
+        assert {r.levelno for r in hits} == {logging.WARNING}

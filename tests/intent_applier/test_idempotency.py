@@ -97,3 +97,51 @@ class TestIdempotencyTracker:
 
         assert not errors, f"Cross-thread access failed: {errors}"
         assert results == [True, True]
+
+
+class TestRehydrateTransaction:
+    def test_rehydrate_is_durable_across_reopen(self, tmp_path, db_path):
+        """Rehydrate runs as ONE transaction (2026-09-15): ~1k autocommitted
+        INSERTs each fsynced on a cold post-boot disk blocked the gateway
+        event loop for ~2 min. The batch must still be committed, so a fresh
+        tracker on the same DB sees every key."""
+        import json
+        processed = tmp_path / "processed"
+        processed.mkdir()
+        for i in range(50):
+            (processed / f"m{i}.json").write_text(
+                json.dumps({"idempotency_key": f"k{i}", "message_id": f"m{i}"}),
+                encoding="utf-8",
+            )
+        tracker = IdempotencyTracker(db_path)
+        assert tracker.rehydrate_from_processed(processed) == 50
+        tracker.close()
+
+        reopened = IdempotencyTracker(db_path)
+        assert all(reopened.is_applied(f"k{i}") for i in range(50))
+        assert not reopened.is_applied("k50")
+        reopened.close()
+
+    def test_rehydrate_uses_a_single_transaction(self, tmp_path, db_path, monkeypatch):
+        """Pin the mechanism, not just the outcome: no per-row autocommit."""
+        import json
+        processed = tmp_path / "processed"
+        processed.mkdir()
+        for i in range(5):
+            (processed / f"m{i}.json").write_text(
+                json.dumps({"idempotency_key": f"k{i}", "message_id": f"m{i}"}),
+                encoding="utf-8",
+            )
+        tracker = IdempotencyTracker(db_path)
+        in_txn_during_inserts = []
+        real_mark = tracker.mark_applied
+
+        def spy_mark(key, *, message_id):
+            in_txn_during_inserts.append(tracker._conn.in_transaction)
+            real_mark(key, message_id=message_id)
+
+        monkeypatch.setattr(tracker, "mark_applied", spy_mark)
+        tracker.rehydrate_from_processed(processed)
+        assert in_txn_during_inserts == [True] * 5
+        assert tracker._conn.in_transaction is False  # committed on exit
+        tracker.close()
