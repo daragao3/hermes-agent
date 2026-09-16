@@ -1103,6 +1103,20 @@ class StaleExternalProjection(ValueError):
     """
 
 
+def decode_state_json(key: str, raw: str) -> dict[str, Any]:
+    """Decode a ``session_bridge_state`` row's text exactly as ``get_state`` does.
+
+    Split out so a caller holding the raw text from :meth:`get_state_json`
+    decodes it through the same check, and so the memo that skips this decode
+    can be tested against the real thing rather than a re-implementation.
+    """
+
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError(f"bridge state {key!r} is not a JSON object")
+    return value
+
+
 class SessionBridgeStore:
     """Transactional persistence for the cross-harness session bridge."""
 
@@ -12567,7 +12581,17 @@ class SessionBridgeStore:
         row = self.db._execute_read(_read)
         return dict(row) if row else None
 
-    def set_state(self, key: str, value: Mapping[str, Any]) -> None:
+    def set_state(self, key: str, value: Mapping[str, Any]) -> str:
+        """Persist ``value`` under ``key`` and return the exact text written.
+
+        The return value is the canonical JSON the row now holds, so a caller
+        that keeps a decoded copy can key it on the same text
+        :meth:`get_state_json` will hand back later (see the coordinator's
+        Claude scan state memo). ``json.dumps`` of a ``dict`` is always a JSON
+        object, so the text is not re-parsed to prove it -- on the scan state
+        rows that reload cost as much as the write itself.
+        """
+
         if not isinstance(value, Mapping):
             raise TypeError("bridge state must be a mapping")
         value_json = json.dumps(
@@ -12577,9 +12601,6 @@ class SessionBridgeStore:
             ensure_ascii=False,
             allow_nan=False,
         )
-        snapshot = json.loads(value_json)
-        if not isinstance(snapshot, dict):
-            raise TypeError("bridge state must encode as a JSON object")
         now = float(self._clock())
 
         def _write(conn):
@@ -12593,8 +12614,18 @@ class SessionBridgeStore:
             )
 
         self.db._execute_write(_write)
+        return value_json
 
-    def get_state(self, key: str) -> dict[str, Any] | None:
+    def get_state_json(self, key: str) -> str | None:
+        """Return the raw JSON text stored under ``key`` without decoding it.
+
+        Two reads of the same row that return equal text decode to equal
+        values, which is what lets a caller skip the decode when it already
+        holds the result for that exact text. Comparing text is a memcmp; the
+        decode it replaces is O(entries), and the Claude scan rows carry
+        thousands of them.
+        """
+
         with self.db._lock:
             conn = self.db._conn
             assert conn is not None
@@ -12603,10 +12634,13 @@ class SessionBridgeStore:
             ).fetchone()
         if row is None:
             return None
-        value = json.loads(row["value_json"])
-        if not isinstance(value, dict):
-            raise ValueError(f"bridge state {key!r} is not a JSON object")
-        return value
+        return str(row["value_json"])
+
+    def get_state(self, key: str) -> dict[str, Any] | None:
+        raw = self.get_state_json(key)
+        if raw is None:
+            return None
+        return decode_state_json(key, raw)
 
     def get_continuation_snapshot(self, bridge_id: str) -> dict[str, Any] | None:
         normalized_bridge_id = _nonempty_text(bridge_id, "bridge ID")
