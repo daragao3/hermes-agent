@@ -69,7 +69,7 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "stt.faster_whisper": (
         "faster-whisper==1.2.1",
         "sounddevice==0.5.6",
-        "numpy==2.4.3",
+        "numpy==2.4.6",
     ),
     # SILK voice-note decoding (WeChat/QQ); silk-v3 codec binding.
     "stt.silk": ("pilk==0.2.4",),
@@ -83,9 +83,9 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     ),
     "wake.openwakeword": (
         "openwakeword==0.6.0",
-        "onnxruntime==1.27.0",
+        "onnxruntime==1.29.0",
         "sounddevice==0.5.6",
-        "numpy==2.4.3",
+        "numpy==2.4.6",
     ),
     # Open-vocabulary keyword spotting. sentencepiece is needed by
     # sherpa_onnx.text2token but undeclared by sherpa-onnx.
@@ -93,12 +93,12 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
         "sherpa-onnx==1.13.4",
         "sentencepiece==0.2.2",
         "sounddevice==0.5.6",
-        "numpy==2.4.3",
+        "numpy==2.4.6",
     ),
     "wake.porcupine": (
         "pvporcupine==4.0.3",
         "sounddevice==0.5.6",
-        "numpy==2.4.3",
+        "numpy==2.4.6",
     ),
 
     # ─── Image generation backends ─────────────────────────────────────────
