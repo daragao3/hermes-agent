@@ -96,6 +96,7 @@ from .store import (
     SIDEBAR_EXCLUSION_REASONS,
     LocalSessionOwnsCanonicalId,
     SessionBridgeStore,
+    decode_state_json,
     SidebarSource,
     SidebarSourcePage,
     StaleExternalProjection,
@@ -1381,6 +1382,7 @@ class SessionBridgeCoordinator:
         self._claude_projects_root = claude_projects_root
         self._claude_stat_cache = _ClaudeStatCache(monotonic=monotonic)
         self._claude_sort_memo = _ClaudeSortMemo()
+        self._claude_state_memo = _ClaudeStateMemo()
         self._watch_debounce_seconds = float(watch_debounce_seconds)
         self._refresh_timeout = float(refresh_timeout)
         self._sidebar_verifier = sidebar_verifier
@@ -5710,55 +5712,121 @@ class SessionBridgeCoordinator:
             return False
         return _parse_accepts_cursor(adapter)
 
-    async def _load_claude_cursors(self) -> dict[str, ClaudeCursor]:
-        state = await asyncio.to_thread(
-            _call, self._store, "get_state", _CLAUDE_CURSOR_KEY
+    async def _load_claude_state(
+        self,
+        key: str,
+        decode: Callable[[object], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Load and decode one Claude scan state row, through the memo.
+
+        A store that exposes ``get_state_json`` is read as text; when that text
+        is what the memo already decoded, the decode is skipped (see
+        ``_ClaudeStateMemo``). Any other store takes the plain ``get_state``
+        path exactly as before, so the fakes in the test suite -- and any
+        third-party store -- observe no difference.
+        """
+
+        reader = getattr(self._store, "get_state_json", None)
+        if not callable(reader):
+            state = await asyncio.to_thread(_call, self._store, "get_state", key)
+            return decode(state)
+        raw = await asyncio.to_thread(reader, key)
+        cached = self._claude_state_memo.lookup(key, raw)
+        if cached is not None:
+            return cached
+        if raw is None:
+            return decode(None)
+        decoded = decode(decode_state_json(key, raw))
+        self._claude_state_memo.store(key, raw, decoded)
+        return decoded
+
+    async def _save_claude_state(
+        self,
+        key: str,
+        payload: Mapping[str, Any],
+        decoded: Mapping[str, Any] | None,
+    ) -> None:
+        """Persist ``payload`` and seed the memo with what it decodes to.
+
+        ``decoded`` is what an uncached load of ``payload`` would return; the
+        caller proves that (see the two savers below) or passes None to leave
+        the next load to decode the row for real. A store whose ``set_state``
+        does not report the written text cannot be seeded and is forgotten.
+        """
+
+        raw = await asyncio.to_thread(
+            _call, self._store, "set_state", key, payload
         )
-        return _decode_claude_cursors(state)
+        if decoded is None:
+            self._claude_state_memo.forget(key)
+        else:
+            self._claude_state_memo.store(key, raw, decoded)
+
+    async def _load_claude_cursors(self) -> dict[str, ClaudeCursor]:
+        return await self._load_claude_state(
+            _CLAUDE_CURSOR_KEY, _decode_claude_cursors
+        )
 
     async def _save_claude_cursors(
         self,
         cursors: Mapping[str, ClaudeCursor],
     ) -> None:
-        encoded = {}
+        encoded: dict[str, dict[str, object]] = {}
+        # What ``_decode_claude_cursors`` returns for ``encoded``: every entry
+        # whose encoding succeeded, as the cursor object itself.
+        # ``decode_claude_cursor`` accepts exactly what ``encode_claude_cursor``
+        # produces and rebuilds an equal frozen dataclass, and the decoder
+        # strips ids -- so an id that is not already stripped, or is empty, is
+        # left for a real decode rather than mirrored here.
+        seed: dict[str, ClaudeCursor] | None = {}
         for native_id, cursor in sorted(cursors.items()):
             payload = encode_claude_cursor(cursor)
-            if payload is not None:
-                encoded[native_id] = payload
-        await asyncio.to_thread(
-            _call,
-            self._store,
-            "set_state",
+            if payload is None:
+                continue
+            encoded[native_id] = payload
+            if seed is not None:
+                stripped = native_id.strip() if isinstance(native_id, str) else ""
+                if stripped != native_id or not stripped:
+                    seed = None
+                else:
+                    seed[native_id] = cursor
+        await self._save_claude_state(
             _CLAUDE_CURSOR_KEY,
             {"version": 1, "sessions": encoded},
+            seed,
         )
 
     async def _load_claude_fingerprints(
         self,
         key: str,
     ) -> dict[str, dict[str, int]]:
-        state = await asyncio.to_thread(_call, self._store, "get_state", key)
-        return _decode_claude_fingerprints(state)
+        return await self._load_claude_state(key, _decode_claude_fingerprints)
 
     async def _save_claude_fingerprints(
         self,
         key: str,
         fingerprints: Mapping[str, Mapping[str, int]],
     ) -> None:
-        await asyncio.to_thread(
-            _call,
-            self._store,
-            "set_state",
-            key,
-            {
-                "version": 1,
-                "sessions": {
-                    native_id: dict(fingerprint)
-                    for native_id, fingerprint in sorted(fingerprints.items())
-                    if fingerprint
-                },
+        payload = {
+            "version": 1,
+            "sessions": {
+                native_id: dict(fingerprint)
+                for native_id, fingerprint in sorted(fingerprints.items())
+                if fingerprint
             },
-        )
+        }
+        # Seed with the real decoder's view of the payload, not a mirror of
+        # it: the decoder is strict about shape, and an entry it would reject
+        # must be rejected on the next load exactly as if it had been read
+        # from disk. Running it here costs one O(n) pass on the save side and
+        # buys the json.loads plus decode on every load that follows.
+        try:
+            seed: dict[str, dict[str, int]] | None = _decode_claude_fingerprints(
+                payload
+            )
+        except RuntimeError:
+            seed = None
+        await self._save_claude_state(key, payload, seed)
 
     async def _commit_success_progress(
         self,
@@ -6966,6 +7034,70 @@ def _stat_claude_paths(
             continue
         stats[str(path)] = (int(stat.st_mtime_ns), int(stat.st_size))
     return stats, unavailable
+
+
+class _ClaudeStateMemo:
+    """Keep the decoded Claude scan state rows across scans.
+
+    2026-09-15: with ``_ClaudeSortMemo`` deployed (below), the next py-spy of the
+    live :7484 worker put the largest remaining share of its ~0.76 GIL-held
+    cores in the state rows the persistent scan reads and rewrites EVERY cycle:
+    ``scan:claude:cursors`` (693 KB, 4,617 sessions) and
+    ``scan:claude:fingerprints`` (568 KB, 7,173 sessions). Per scan, against
+    the real rows: ``json.loads`` 8.4 + 11.3 ms, ``_decode_claude_cursors``
+    27.5 ms, ``_decode_claude_fingerprints`` 14.7 ms, ``json.dumps`` 7.7 + 9.9
+    ms, plus the store's own re-parse of what it had just serialised -- about
+    80 ms of serialisation at ~1.1 scans/s to learn that one or two sessions
+    moved. That is the same non-incremental shape the sort memo removed from
+    the path list, one row over.
+
+    This memo holds the decoded mapping for each state key alongside the raw
+    row text it was decoded from (or the text ``set_state`` reports it wrote).
+    A load reads only the text and, when it is byte-identical to the memoised
+    text, hands back a copy of the decoded mapping without parsing anything.
+
+    STALENESS GUARANTEE. The key is the row's exact text, never a clock or a
+    counter, so an entry can only ever be served for the text it was built
+    from. Any writer -- this process or another -- that changes the row
+    changes the text and forces a real decode; a row that vanishes forces the
+    same empty result an uncached load would produce. The decoders are pure
+    functions of that text, which is what makes "same text" mean "same
+    result". A store that cannot hand back the raw text (the fakes in the test
+    suite implement only ``get_state``/``set_state``) gets the uncached path
+    unchanged.
+
+    Entries are handed out and stored as shallow copies: the scan mutates the
+    mapping it is given while it works and only persists it at the end, so a
+    cycle that fails midway must not leave its half-applied changes in the
+    memo. The values (frozen ``ClaudeCursor`` objects, two-int fingerprint
+    dicts nothing mutates) are shared.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[str, tuple[str, dict[str, Any]]] = {}
+
+    def lookup(self, key: str, raw: str | None) -> dict[str, Any] | None:
+        """The decoded mapping for ``raw`` under ``key``, or None on a miss."""
+        if raw is None:
+            self._entries.pop(key, None)
+            return None
+        entry = self._entries.get(key)
+        if entry is None or entry[0] != raw:
+            return None
+        return dict(entry[1])
+
+    def store(self, key: str, raw: object, decoded: Mapping[str, Any]) -> None:
+        """Remember that ``raw`` decodes to ``decoded``; anything else forgets."""
+        if not isinstance(raw, str):
+            self._entries.pop(key, None)
+            return
+        self._entries[key] = (raw, dict(decoded))
+
+    def forget(self, key: str) -> None:
+        self._entries.pop(key, None)
+
+    def __len__(self) -> int:
+        return len(self._entries)
 
 
 class _ClaudeSortMemo:
