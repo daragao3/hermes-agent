@@ -3234,3 +3234,114 @@ class TestKnownDebtPartialRepeats:
         notifier.handle(plain)
         assert len(sent) == 1
         assert notifier._known_debt_guard.suppressed_count == 0
+
+
+class TestAgentLoopFaultQuotaCollapse:
+    """A provider quota fault costs one page per provider per window
+    (2026-09-15).
+
+    ``agent.turn_api_error`` reports the API-boundary exception BEFORE the
+    retry/fallback chain runs, so with Codex's weekly window exhausted every
+    cron on the box raised the same ``429 usage_limit_reached`` fault each
+    fire -- 54 pages in 4.5h while every turn completed on deepseek. Each page
+    was unique to RepeatGuard only because the generic ``key: value`` body
+    printed the correlation UUID and the traceback tail.
+    """
+
+    def _notifier(self, bus, topics_config, verbosity_config, sent):
+        return TelegramNotifier(
+            bus, topics_path=topics_config, verbosity_path=verbosity_config,
+            send_fn=lambda chat_id, thread_id, msg: sent.append(msg),
+        )
+
+    @staticmethod
+    def _quota_fault(source, correlation_id, *, resets_in=360553):
+        message = (
+            "Error code: 429 - {'error': {'type': 'usage_limit_reached', "
+            "'message': 'The usage limit has been reached', 'plan_type': 'pro', "
+            f"'resets_at': 1789873211, 'eligible_promo': None, 'resets_in_seconds': {resets_in}}}}}"
+        )
+        return Event.create(
+            EventType.AGENT_LOOP_FAULT, source,
+            {"exception_type": "RateLimitError", "error_class": "RateLimitError",
+             "message": message, "phase": "stream_accumulation",
+             "provider": "openai-codex", "model": "gpt-5.6-sol", "status_code": 429,
+             "backend": {"provider": "openai-codex", "model": "gpt-5.6-sol", "status_code": 429},
+             "correlation_id": correlation_id,
+             "traceback_tail": f"Traceback (most recent call last):\n  File x.py, line 1\nRateLimitError: {correlation_id}"},
+            priority=Priority.HIGH,
+        )
+
+    @staticmethod
+    def _code_fault(source, correlation_id, text):
+        return Event.create(
+            EventType.AGENT_LOOP_FAULT, source,
+            {"exception_type": "TypeError", "error_class": "TypeError",
+             "message": text, "phase": "stream_accumulation",
+             "provider": "openai-codex", "model": "gpt-5.6-sol", "status_code": None,
+             "correlation_id": correlation_id, "traceback_tail": "tb"},
+            priority=Priority.HIGH,
+        )
+
+    def test_same_provider_quota_fault_from_different_crons_pages_once(
+        self, bus, topics_config, verbosity_config,
+    ):
+        sent = []
+        notifier = self._notifier(bus, topics_config, verbosity_config, sent)
+        notifier.handle(self._quota_fault("jaum-inbox-sweeper", "7408d603-aaaa"))
+        notifier.handle(self._quota_fault("jobflow-matcher-shadow", "065f779b-bbbb", resets_in=359000))
+        notifier.handle(self._quota_fault("devflow-execute-approved", "416617c6-cccc", resets_in=358000))
+
+        assert len(sent) == 1, sent
+        suppressed = bus.query(event_type=EventType.NOTIFICATION_SUPPRESSED)
+        assert len(suppressed) == 2
+        assert {s.payload["guard"] for s in suppressed} == {"repeat_guard"}
+        # Non-sliding: a sustained outage costs one page per window, not one ever.
+        assert all(s.payload["sliding"] is False for s in suppressed)
+
+    def test_the_page_names_the_fault_without_uuid_or_traceback(
+        self, bus, topics_config, verbosity_config,
+    ):
+        sent = []
+        notifier = self._notifier(bus, topics_config, verbosity_config, sent)
+        notifier.handle(self._quota_fault("jaum-inbox-sweeper", "7408d603-aaaa"))
+        page = sent[0]
+        assert "RateLimitError (HTTP 429) from openai-codex/gpt-5.6-sol" in page
+        assert "usage_limit_reached" in page
+        assert "MODEL_RATE_LIMITED" in page          # points at the outage page
+        assert "7408d603-aaaa" not in page           # no correlation UUID
+        assert "Traceback" not in page               # no traceback tail
+        assert "AGENT_LOOP_FAULT" in page            # header survives
+
+    def test_a_different_provider_still_pages(
+        self, bus, topics_config, verbosity_config,
+    ):
+        sent = []
+        notifier = self._notifier(bus, topics_config, verbosity_config, sent)
+        notifier.handle(self._quota_fault("jaum-inbox-sweeper", "aaaa"))
+        kimi = Event.create(
+            EventType.AGENT_LOOP_FAULT, "jaum-inbox-sweeper",
+            {"exception_type": "PermissionDeniedError", "message":
+                "Error code: 403 - {'error': {'type': 'permission_error', 'message': "
+                "\"You've reached your monthly usage limit for this billing cycle.\"}}",
+             "phase": "stream_accumulation", "provider": "kimi-coding",
+             "model": "kimi-for-coding", "status_code": 403, "correlation_id": "bbbb",
+             "traceback_tail": "tb"},
+            priority=Priority.HIGH,
+        )
+        notifier.handle(kimi)
+        assert len(sent) == 2
+        assert "PermissionDeniedError (HTTP 403) from kimi-coding/kimi-for-coding" in sent[1]
+
+    def test_non_quota_faults_keep_the_rendered_fingerprint(
+        self, bus, topics_config, verbosity_config,
+    ):
+        """Two genuinely different code faults both land; a verbatim repeat
+        of one is still collapsed by the ordinary rendered-text guard."""
+        sent = []
+        notifier = self._notifier(bus, topics_config, verbosity_config, sent)
+        notifier.handle(self._code_fault("scout", "c1", "'NoneType' object is not iterable"))
+        notifier.handle(self._code_fault("scout", "c2", "unsupported operand type(s) for +"))
+        notifier.handle(self._code_fault("scout", "c3", "'NoneType' object is not iterable"))
+        assert len(sent) == 2
+        assert "c1" not in sent[0] and "c2" not in sent[1]
