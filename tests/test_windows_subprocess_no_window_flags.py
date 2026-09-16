@@ -500,7 +500,7 @@ def test_inline_skill_shell_hides_bash_window(monkeypatch):
     monkeypatch.setattr(skill_preprocessing, "run_text_capture", fake_capture)
 
     assert skill_preprocessing.run_inline_shell("echo ok", cwd=None, timeout=5) == "ok"
-    assert captured[0][0] == ["bash", "-c", "echo ok"]
+    assert captured[0][0] == [skill_preprocessing._host_bash(), "-c", "echo ok"]
     # No creationflags here by design: the helper owns CREATE_NO_WINDOW.
     # tests/test_gbrain_cli_timeout.py covers the helper's own behaviour.
     assert "creationflags" not in captured[0][1]

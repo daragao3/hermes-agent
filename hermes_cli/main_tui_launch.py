@@ -325,32 +325,39 @@ def _tui_need_rebuild(root: Path) -> bool:
 
 
 def _ensure_tui_node() -> None:
-    """Ensure `node` + `npm` are on PATH: else run node-bootstrap.sh `ensure_node` and prepend
-    the resolved node dir to PATH. ``HERMES_SKIP_NODE_BOOTSTRAP=1`` disables auto-install."""
+    """Ensure `node` + `npm` are on PATH: else bootstrap a Hermes-managed node and prepend
+    its dir to PATH. ``HERMES_SKIP_NODE_BOOTSTRAP=1`` disables auto-install.
+
+    POSIX runs node-bootstrap.sh's `ensure_node`; Windows takes the same portable-zip
+    path as ``hermes_constants`` (the .sh helper is POSIX-only, and a bare ``bash`` on
+    Windows is System32's WSL launcher, not Git Bash — it would boot a Linux distro)."""
     from hermes_cli.main import PROJECT_ROOT
     if shutil.which("node") and shutil.which("npm"):
         return
     if os.environ.get("HERMES_SKIP_NODE_BOOTSTRAP"):
         return
 
-    helper = PROJECT_ROOT / "scripts" / "lib" / "node-bootstrap.sh"
-    if not helper.is_file():
-        return
-
     from hermes_constants import get_hermes_home
     hermes_home = str(get_hermes_home())
-    try:
-        # Helper logs to stderr; stdout carries `command -v node` — subshell PATH
-        # edits don't leak back into Python, so the capture is the bridge.
-        result = subprocess.run(
-            ["bash", "-c", f'source "{helper}" >&2 && ensure_node >&2 && command -v node'],
-            env={**os.environ, "HERMES_HOME": hermes_home},
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-    except (OSError, subprocess.SubprocessError):
-        return
+    if sys.platform == "win32":
+        from hermes_constants import bootstrap_hermes_managed_node
+        resolved = bootstrap_hermes_managed_node() or ""
+    else:
+        helper = PROJECT_ROOT / "scripts" / "lib" / "node-bootstrap.sh"
+        if not helper.is_file():
+            return
+        try:
+            # Helper logs to stderr; stdout carries `command -v node` — subshell PATH
+            # edits don't leak back into Python, so the capture is the bridge.
+            result = subprocess.run(
+                ["bash", "-c", f'source "{helper}" >&2 && ensure_node >&2 && command -v node'],
+                env={**os.environ, "HERMES_HOME": hermes_home},
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        except (OSError, subprocess.SubprocessError):
+            return
+        resolved = (result.stdout or "").strip()
 
     parts = os.environ.get("PATH", "").split(os.pathsep)
-    resolved = (result.stdout or "").strip()
     extras = [Path(resolved).resolve().parent] if resolved else []
     extras += [Path(hermes_home) / "node" / "bin", Path.home() / ".local" / "bin"]
     for extra in extras:

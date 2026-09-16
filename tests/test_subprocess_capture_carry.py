@@ -36,4 +36,4 @@ def test_inline_shell_carries_delegated_environment(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(argv, 0, "captured", "")
     monkeypatch.setattr(skill_preprocessing, "run_text_capture", capture)
     assert skill_preprocessing.run_inline_shell("example", tmp_path, 3) == "captured"
-    assert calls == [(["bash", "-c", "example"], {"cwd": str(tmp_path), "timeout": 3, "env": {"HERMES_CARRY_TEST": "scoped"}})]
+    assert calls == [([skill_preprocessing._host_bash(), "-c", "example"], {"cwd": str(tmp_path), "timeout": 3, "env": {"HERMES_CARRY_TEST": "scoped"}})]

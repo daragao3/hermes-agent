@@ -4,9 +4,10 @@ inline ``!`cmd``` shell expansion."""
 import logging
 import re
 import subprocess
+import sys
 from pathlib import Path
 
-from hermes_cli._subprocess_compat import run_text_capture
+from hermes_cli._subprocess_compat import resolve_windows_git_bash, run_text_capture
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +43,30 @@ def substitute_template_vars(content: str, skill_dir: Path | None, session_id: s
     return _SKILL_TEMPLATE_RE.sub(lambda m: values[m.group(1)] or m.group(0), content)
 
 
+def _host_bash() -> str | None:
+    """The bash that runs an inline snippet on the host.
+
+    Bare ``bash`` is right on POSIX.  On Windows it is not: ``CreateProcess``
+    searches ``System32`` before ``PATH``, and ``System32\bash.exe`` is the WSL
+    launcher, so ``["bash", "-c", ...]`` would boot the default distro and run
+    the snippet inside Linux (``shutil.which("bash")`` still reports Git Bash
+    -- it only consults ``PATH``).  Resolve Git Bash explicitly there; ``None``
+    means no usable bash exists.
+    """
+    if sys.platform != "win32":
+        return "bash"
+    return resolve_windows_git_bash()
+
+
 def run_inline_shell(command: str, cwd: Path | None, timeout: int) -> str:
     """Execute a single inline-shell snippet and return its stdout (trimmed).
 
     Failures return a short ``[inline-shell error: ...]`` marker instead of
     raising, so one bad snippet can't wreck the whole skill message.
     """
+    bash = _host_bash()
+    if bash is None:
+        return "[inline-shell error: bash not found]"
     # run_text_capture, not capture_output=True: ``command`` is an arbitrary
     # snippet, so anything it launches is a grandchild that inherits the
     # capture pipes and keeps their write end open after bash itself is
@@ -60,7 +79,7 @@ def run_inline_shell(command: str, cwd: Path | None, timeout: int) -> str:
 
     try:
         completed = run_text_capture(
-            ["bash", "-c", command],
+            [bash, "-c", command],
             cwd=str(cwd) if cwd else None,
             timeout=max(1, int(timeout)),
             env=delegated_child_subprocess_env(),
