@@ -5,6 +5,7 @@ the new list-based ``fallback_providers`` config format and chain
 advancement through multiple providers.
 """
 
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -132,6 +133,36 @@ class TestFallbackChainAdvancement:
         )
         assert agent._pending_fallback_notice == [expected]
         assert agent._retry_status_buffer[-1] == ("status", expected)
+
+    def test_notice_names_the_recorded_quota_reset_instead_of_the_60s_step(self, monkeypatch, tmp_path):
+        """With the cross-session quota guard holding the primary off until its recorded
+        reset, the switch notice must not promise a retry in ~60 s, and the per-agent
+        cooldown must cover the whole window (2026-09-15: a four-day Codex wall was
+        announced as "retry eligible in ~60 s" on every cron fire)."""
+        from agent import provider_quota_guard as pqg
+
+        monkeypatch.setattr(pqg, "_state_path", lambda: str(tmp_path / "providers.json"))
+
+        class _Wall(Exception):
+            body = {"error": {"type": "usage_limit_reached", "resets_in_seconds": 345600}}
+            message = "429"
+
+        assert pqg.record_provider_exhaustion("openai-codex", "gpt-5.6-sol", api_error=_Wall()) is not None
+
+        agent = _make_agent(fallback_model={"provider": "zai", "model": "glm-5.2"})
+        agent.model = "gpt-5.6-sol"
+        agent.provider = "openai-codex"
+        with patch(
+            "agent.auxiliary_client.resolve_provider_client",
+            return_value=(_mock_client(base_url="https://api.z.ai/v1"), "glm-5.2"),
+        ):
+            assert agent._try_activate_fallback(FailoverReason.rate_limit) is True
+
+        notice = agent._pending_fallback_notice[-1]
+        assert "Primary retry eligible in ~60 s" not in notice
+        assert "openai-codex usage limit is recorded as exhausted" in notice
+        assert "primary retry in 4.0d" in notice
+        assert agent._rate_limited_until - time.monotonic() > 345000
 
     @patch("time.monotonic", return_value=1000.0)
     def test_records_sequential_switches_in_order(self, _clock):

@@ -1842,6 +1842,16 @@ def _record_fallback_rate_limit(reason, provider, model, outcome, **details):
         pass
 
 
+def _quota_guard_remaining(provider) -> Optional[float]:
+    """Seconds until ``provider``'s recorded quota reset, or None (never raises)."""
+    try:
+        from agent.provider_quota_guard import provider_exhaustion_remaining
+        remaining = provider_exhaustion_remaining(provider)
+        return remaining if remaining and remaining > 0 else None
+    except Exception:
+        return None
+
+
 def _fallback_has_open_episode(provider, model):
     """Dynamic episodes skip a candidate without permanently quarantining it."""
     try:
@@ -1943,7 +1953,19 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None, *,
             notice = (
                 f"⚠️ Model fallback: {old_model} via {old_provider} unavailable "
                 f"({_fallback_reason_text(reason)}); using {fb_model} via {fb_provider}.")
-            if cooldown_seconds is not None:
+            # A provider whose quota wall named its reset (agent.provider_quota_guard, shared
+            # across sessions) is held off for that whole window, not the 60s exponential step:
+            # extend the cooldown here so the notice, restore_primary_runtime and the pre-call
+            # guard all agree. Before 2026-09-15 the notice promised "retry eligible in ~60 s"
+            # for a Codex wall that the memo knew would last four days.
+            quota_remaining = _quota_guard_remaining(old_provider)
+            if quota_remaining is not None:
+                agent._rate_limited_until = max(
+                    getattr(agent, "_rate_limited_until", 0) or 0, time.monotonic() + quota_remaining)
+                from agent.provider_quota_guard import format_remaining as _fmt_quota
+                notice += (f" {old_provider} usage limit is recorded as exhausted; primary retry "
+                           f"in {_fmt_quota(quota_remaining)}, at its reset.")
+            elif cooldown_seconds is not None:
                 remaining = max(0, math.ceil(agent._rate_limited_until - time.monotonic()))
                 notice += f" Primary retry eligible in ~{remaining} s; recovery is not guaranteed."
             _buffer_fallback_notice(agent, notice)
