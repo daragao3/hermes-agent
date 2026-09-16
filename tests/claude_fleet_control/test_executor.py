@@ -21,8 +21,9 @@ def _target(root, members):
 
 
 def _executor(live_ref, kills, fail=None):
-    def terminate(pid, *, force, reason):
+    def terminate(pid, *, force, expected_start_time, reason):
         assert force is True and reason.startswith("claude_fleet:")
+        assert expected_start_time is not None
         if fail is not None:
             raise fail
         kills.append(pid)
@@ -83,7 +84,7 @@ def test_survivor_is_reported_not_retried():
     stubborn = rec(-241, ppid=-240)
     live = {"records": [root, stubborn]}
 
-    def terminate(pid, *, force, reason):
+    def terminate(pid, *, force, expected_start_time, reason):
         live["records"] = [stubborn]  # root died, child survived
 
     executor = WindowsTreeExecutor(
@@ -95,3 +96,61 @@ def test_survivor_is_reported_not_retried():
     assert not report.ok and not report.cancelled
     assert report.surviving_identities == (stubborn.identity,)
     assert report.exited_identities == (root.identity,)
+
+
+def test_terminate_receives_the_planned_root_start_time_fingerprint():
+    """2026-09-15: every enforce pass since 08-31 ended in ``terminate failed:
+    refusing to force-kill PID <n> without a process start-time guard`` --
+    the Windows guard in gateway.status.terminate_pid REQUIRES
+    ``expected_start_time`` on a force kill and the executor never passed it.
+    The planned root's create_time is the fingerprint the guard wants."""
+    from claude_fleet_control.executor import start_time_fingerprint
+
+    root = cli_rec(-250)
+    child = rec(-251, ppid=-250)
+    seen = []
+    live = {"records": [root, child]}
+
+    def terminate(pid, *, force, expected_start_time, reason):
+        seen.append((pid, force, expected_start_time, reason))
+        live["records"] = []
+
+    executor = WindowsTreeExecutor(
+        terminate_fn=terminate, snapshot_fn=lambda: list(live["records"]),
+        sleep_fn=lambda _s: None,
+    )
+    report = executor.hard_terminate_tree(_target(root, (root, child)), plan_id="p9")
+    assert report.ok
+    assert seen == [(-250, True, start_time_fingerprint(root.create_time), "claude_fleet:p9")]
+    assert isinstance(seen[0][2], int)
+
+
+def test_fingerprint_units_agree_with_the_live_windows_guard(monkeypatch):
+    """The executor's fingerprint must be the SAME unit terminate_pid derives
+    from psutil (centiseconds), or the guard refuses with "process identity
+    changed" instead -- a second way to never kill anything. Drive the real
+    terminate_pid with a fake psutil reading and a fake taskkill."""
+    import gateway.status as status
+    from claude_fleet_control.executor import start_time_fingerprint
+
+    create_time = 1789487080.37  # what psutil.Process(pid).create_time() returns
+    monkeypatch.setattr(status, "_IS_WINDOWS", True)
+    monkeypatch.setattr(status, "_get_process_start_time",
+                        lambda pid: int(round(create_time * 100)))
+    monkeypatch.setattr(status, "write_diag", lambda *a, **k: None)
+    calls = []
+
+    class _Done:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(status.subprocess, "run",
+                        lambda *args, **kwargs: (calls.append(args[0]), _Done())[1])
+    monkeypatch.setattr(status, "_wait_for_pid_death", lambda pid, timeout: True)
+
+    status.terminate_pid(
+        -260, force=True, expected_start_time=start_time_fingerprint(create_time),
+        reason="claude_fleet:p10",
+    )
+    assert calls == [["taskkill", "/PID", "-260", "/T", "/F"]]

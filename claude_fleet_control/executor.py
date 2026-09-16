@@ -3,7 +3,8 @@
 One class, one method, one action. The executor receives exactly one fully
 revalidated target, revalidates identity ONE more time against a snapshot it
 takes itself, and only then calls the injected terminate function (production
-wiring: ``gateway.status.terminate_pid(..., force=True, reason=<plan_id>)``,
+wiring: ``gateway.status.terminate_pid(..., force=True,
+expected_start_time=<root fingerprint>, reason=<plan_id>)``,
 the box's attributed kill chokepoint — Windows ``taskkill /PID <root> /T /F``
 takes the whole tree in one call, so there are never concurrent kill waves).
 
@@ -26,7 +27,23 @@ from claude_fleet_control.models import (
 )
 
 SnapshotFn = Callable[[], Sequence[ProcessRecord]]
-TerminateFn = Callable[..., None]  # terminate_pid(pid, *, force, reason)
+TerminateFn = Callable[..., None]  # terminate_pid(pid, *, force, expected_start_time, reason)
+
+
+def start_time_fingerprint(create_time_seconds: float) -> int:
+    """psutil ``create_time()`` seconds -> the centisecond fingerprint
+    ``gateway.status.terminate_pid`` compares against ``_get_process_start_time``
+    (which is ``int(round(psutil.Process(pid).create_time() * 100))`` off
+    Linux). One place owns the unit so the executor and the guard cannot
+    drift apart again: they did on 2026-08-31, when upstream ``ed6d5fc803``
+    made a Windows force-kill REFUSE without ``expected_start_time`` on the
+    same day this controller landed (``3e4cf61ee2``) calling
+    ``terminate_pid(pid, force=True, reason=...)`` -- so every enforce pass
+    since then ended in ``terminate failed: refusing to force-kill PID <n>
+    without a process start-time guard`` (audit.jsonl 2026-09-15T20:40:53Z,
+    commit 95%). The controller could arm, plan and cancel, but never kill.
+    """
+    return int(round(float(create_time_seconds) * 100))
 
 
 @dataclass(frozen=True)
@@ -88,7 +105,13 @@ class WindowsTreeExecutor:
                 )
 
         try:
-            self._terminate(target.root_pid, force=True, reason=f"claude_fleet:{plan_id}")
+            # The planned root's create_time IS the identity the guard wants:
+            # a recycled PID has a different fingerprint and is refused.
+            self._terminate(
+                target.root_pid, force=True,
+                expected_start_time=start_time_fingerprint(target.root_create_time),
+                reason=f"claude_fleet:{plan_id}",
+            )
         except Exception as exc:
             survivors = tuple(sorted(
                 identity for identity in self._live_identities().values()
