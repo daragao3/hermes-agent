@@ -4,6 +4,7 @@ These exercise the parsers with real command output shapes instead of
 patching the detectors themselves, so a change in what macOS / xdg report is
 caught here rather than in a user's browser session.
 """
+import posixpath
 from unittest.mock import patch
 
 import pytest
@@ -147,32 +148,41 @@ class TestDetectDefaultLinux:
 
 
 class TestLinuxProfileDir:
+    """``real_profile_data_dir(..., "Linux")`` takes the platform as data and spells the
+    result with ``posixpath`` under ``os.path.expanduser("~")`` -- so on a Windows host the
+    home half carries backslashes and the Linux half forward slashes, which is what
+    ``os.path.isdir`` probes. Expectations are built the same way, not with ``Path``."""
+
     def _env(self, monkeypatch, home):
         redirect_home(monkeypatch, str(home))
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
 
+    @staticmethod
+    def _linux(home, *parts):
+        return posixpath.join(str(home), *parts)
+
     def test_native_path_when_nothing_exists(self, tmp_path, monkeypatch):
         self._env(monkeypatch, tmp_path)
-        assert bc.real_profile_data_dir("chromium", "Linux") == str(tmp_path / ".config" / "chromium")
+        assert bc.real_profile_data_dir("chromium", "Linux") == self._linux(tmp_path, ".config", "chromium")
 
     def test_snap_chromium_profile_is_found(self, tmp_path, monkeypatch):
         self._env(monkeypatch, tmp_path)
         snap = tmp_path / "snap" / "chromium" / "common" / "chromium"
         snap.mkdir(parents=True)
-        assert bc.real_profile_data_dir("chromium", "Linux") == str(snap)
+        assert bc.real_profile_data_dir("chromium", "Linux") == self._linux(tmp_path, "snap", "chromium", "common", "chromium")
 
     def test_flatpak_chrome_profile_is_found(self, tmp_path, monkeypatch):
         self._env(monkeypatch, tmp_path)
         flatpak = tmp_path / ".var" / "app" / "com.google.Chrome" / "config" / "google-chrome"
         flatpak.mkdir(parents=True)
-        assert bc.real_profile_data_dir("chrome", "Linux") == str(flatpak)
+        assert bc.real_profile_data_dir("chrome", "Linux") == self._linux(tmp_path, ".var", "app", "com.google.Chrome", "config", "google-chrome")
 
     def test_native_profile_wins_when_present(self, tmp_path, monkeypatch):
         self._env(monkeypatch, tmp_path)
         native = tmp_path / ".config" / "BraveSoftware" / "Brave-Browser"
         native.mkdir(parents=True)
         (tmp_path / ".var" / "app" / "com.brave.Browser" / "config" / "BraveSoftware" / "Brave-Browser").mkdir(parents=True)
-        assert bc.real_profile_data_dir("brave", "Linux") == str(native)
+        assert bc.real_profile_data_dir("brave", "Linux") == self._linux(tmp_path, ".config", "BraveSoftware", "Brave-Browser")
 
     def test_xdg_config_home_is_honoured(self, tmp_path, monkeypatch):
         redirect_home(monkeypatch, str(tmp_path))
