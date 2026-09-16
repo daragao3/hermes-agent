@@ -104,6 +104,18 @@ class ApiErrorVerdict:
     result: Optional[Dict[str, Any]] = None
 
 
+def _fallback_recovered_turn(agent: Any, verdict: "ApiErrorVerdict", fallback_index_before: Any) -> bool:
+    """True when the handler left the loop with a fallback freshly activated (``"break"`` and
+    ``_fallback_index`` advanced): the turn continues on another backend, so the error was
+    recovered, not a fault of the agent loop."""
+    if verdict.action != "break":
+        return False
+    try:
+        return int(getattr(agent, "_fallback_index", 0) or 0) > int(fallback_index_before or 0)
+    except (TypeError, ValueError):
+        return False
+
+
 def handle_api_error(
     agent: Any, *, api_error: Any, _retry: Any, thinking_spinner: Any, messages: Any,
     api_messages: Any, api_kwargs: Any, system_message: Any, active_system_prompt: Any,
@@ -113,12 +125,50 @@ def handle_api_error(
 ) -> ApiErrorVerdict:
     """Recover from ``api_error`` in the original order. Every fallback activation must leave
     the retry loop with ``restart_with_rebuilt_messages`` armed (``"break"``) so the pre-API
-    preflight re-runs against the fallback's context window (#84733)."""
-    _report_agent_loop_fault(
-        agent,
-        api_error,
-        correlation_id=(effective_task_id or turn_id or getattr(agent, "session_id", "") or ""),
-    )
+    preflight re-runs against the fallback's context window (#84733).
+
+    The SR-471 ``agent_loop_fault`` is emitted exactly once per error at this boundary, but
+    AFTER the recovery decision (2026-09-15): an error the fallback chain recovers -- the turn
+    continues on another backend -- is logged and not emitted. Before this, every cron fire on
+    an exhausted primary paged once even though DeepSeek answered the turn. A handler that
+    raises still emits (the ``except`` below), so the once-per-error guarantee holds."""
+    correlation_id = effective_task_id or turn_id or getattr(agent, "session_id", "") or ""
+    fallback_index_before = getattr(agent, "_fallback_index", 0)
+    try:
+        verdict = _handle_api_error_inner(
+            agent, api_error=api_error, _retry=_retry, thinking_spinner=thinking_spinner,
+            messages=messages, api_messages=api_messages, api_kwargs=api_kwargs,
+            system_message=system_message, active_system_prompt=active_system_prompt,
+            conversation_history=conversation_history, approx_tokens=approx_tokens,
+            retry_count=retry_count, max_retries=max_retries,
+            compression_attempts=compression_attempts,
+            max_compression_attempts=max_compression_attempts, api_call_count=api_call_count,
+            api_request_id=api_request_id, api_start_time=api_start_time,
+            effective_task_id=effective_task_id, turn_id=turn_id,
+        )
+    except BaseException:
+        _report_agent_loop_fault(agent, api_error, correlation_id=correlation_id)
+        raise
+    if _fallback_recovered_turn(agent, verdict, fallback_index_before):
+        logger.info(
+            "%sAPI error %s recovered by fallback (now %s/%s); agent_loop_fault not emitted "
+            "correlation_id=%s",
+            getattr(agent, "log_prefix", "") or "", type(api_error).__name__,
+            getattr(agent, "provider", "") or "unknown", getattr(agent, "model", "") or "unknown",
+            correlation_id,
+        )
+    else:
+        _report_agent_loop_fault(agent, api_error, correlation_id=correlation_id)
+    return verdict
+
+
+def _handle_api_error_inner(
+    agent: Any, *, api_error: Any, _retry: Any, thinking_spinner: Any, messages: Any,
+    api_messages: Any, api_kwargs: Any, system_message: Any, active_system_prompt: Any,
+    conversation_history: Any, approx_tokens: Any, retry_count: Any, max_retries: Any,
+    compression_attempts: Any, max_compression_attempts: Any, api_call_count: Any,
+    api_request_id: Any, api_start_time: Any, effective_task_id: Any, turn_id: Any,
+) -> ApiErrorVerdict:
     _provider_overflow_recovery_pending = False
 
     def _verdict(action: str, result: Optional[Dict[str, Any]] = None) -> ApiErrorVerdict:
@@ -178,6 +228,14 @@ def handle_api_error(
         classified.retryable, classified.should_compress,
         classified.should_rotate_credential, classified.should_fallback,
     )
+    if classified.reason in _QUOTA_WALL_REASONS:
+        # Cross-session memo (agent.provider_quota_guard): records only when the error names a
+        # reset >= 60s away, so the next fresh agent skips this provider instead of re-taking it.
+        from agent.provider_quota_guard import record_provider_exhaustion
+        record_provider_exhaustion(
+            getattr(agent, "provider", "") or "", getattr(agent, "model", "") or "",
+            api_error=api_error, reason=classified.reason.value,
+        )
     agent._invoke_api_request_error_hook(
         task_id=effective_task_id, turn_id=turn_id, api_request_id=api_request_id,
         api_call_count=api_call_count, api_start_time=api_start_time, api_kwargs=api_kwargs,
@@ -289,6 +347,13 @@ def _is_local_validation_error(api_error: Any) -> bool:
     _text = str(api_error).lower()
     return not (isinstance(api_error, TypeError) and "nonetype" in _text and "not iterable" in _text)
 
+
+# Quota walls worth remembering across sessions (see agent.provider_quota_guard). ``billing``
+# covers the 429/402 usage-limit shapes the classifier files there when no transient signal
+# is present; the guard still records nothing unless the error names a reset time.
+_QUOTA_WALL_REASONS = frozenset({
+    FailoverReason.rate_limit, FailoverReason.billing, FailoverReason.upstream_rate_limit,
+})
 
 # Non-retryable per the classifier, yet handled by the overflow/backoff paths instead.
 _RETRYABLE_CLIENT_REASONS = frozenset({

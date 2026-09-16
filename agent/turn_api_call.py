@@ -209,7 +209,14 @@ def nous_rate_limit_guard(
     active_system_prompt: Any, retry_count: Any, compression_attempts: Any, api_call_count: Any,
 ) -> NousRateGuardVerdict:
     """Skip the call if another session recorded a Nous Portal rate limit: every attempt (incl.
-    SDK retries) counts against RPH. Never lets the guard itself break the agent loop."""
+    SDK retries) counts against RPH. Never lets the guard itself break the agent loop.
+
+    Since 2026-09-15 the same phase also runs the provider-agnostic quota guard
+    (``agent.provider_quota_guard``): a provider whose quota wall named a reset time
+    is skipped by every session until that reset, straight to the fallback chain,
+    instead of each fresh agent (every cron fire) re-taking the 429 and emitting an
+    ``agent_loop_fault`` first. Only diverts when a fallback entry remains -- with
+    nothing to divert to, the call proceeds and fails on its own terms."""
     from agent.conversation_loop import _arm_fallback_restart
 
     def _verdict(action: str, result: Optional[Dict[str, Any]] = None) -> NousRateGuardVerdict:
@@ -217,6 +224,40 @@ def nous_rate_limit_guard(
             action=action, active_system_prompt=active_system_prompt, retry_count=retry_count,
             compression_attempts=compression_attempts, result=result,
         )
+
+    if agent.provider != "nous":
+        try:
+            from agent.provider_quota_guard import format_remaining, provider_exhaustion_remaining
+            _remaining = provider_exhaustion_remaining(agent.provider)
+            if (
+                _remaining is not None and _remaining > 0
+                and getattr(agent, "_fallback_index", 0) < len(getattr(agent, "_fallback_chain", ()) or ())
+            ):
+                from agent.error_classifier import FailoverReason
+                _quota_msg = (
+                    f"{agent.provider} usage limit reached (recorded by an earlier session) — "
+                    f"resets in {format_remaining(_remaining)}."
+                )
+                agent._buffer_vprint(f"⏳ {_quota_msg} Using fallback without calling it...")
+                agent._buffer_status(f"⏳ {_quota_msg}")
+                _skipped_provider = agent.provider
+                if agent._try_activate_fallback(reason=FailoverReason.rate_limit):
+                    # Keep restore_primary_runtime gated for the whole reset window, not just the
+                    # 60s exponential step _arm_rate_limit_cooldown armed; otherwise the next turn
+                    # restores the primary, this guard diverts again, and the notice repeats.
+                    agent._rate_limited_until = max(
+                        getattr(agent, "_rate_limited_until", 0) or 0, time.monotonic() + _remaining)
+                    logger.info(
+                        "Provider quota guard: skipped %s (resets in %.0fs), now on %s/%s",
+                        _skipped_provider, _remaining, agent.provider, agent.model,
+                    )
+                    active_system_prompt = _arm_fallback_restart(
+                        agent, api_messages, active_system_prompt, _retry)
+                    retry_count = 0
+                    compression_attempts = 0
+                    return _verdict("break")
+        except Exception:
+            logger.debug("Provider quota guard failed open", exc_info=True)
 
     if agent.provider == "nous":
         try:
