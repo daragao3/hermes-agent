@@ -34,8 +34,13 @@ __all__ = [
     "run_bounded_async", "run_bounded_sync", "kill_process_tree",
 ]
 
-# One year: semantically "unbounded" yet far below any platform time_t limit (#83220).
-MAX_SAFE_TIMEOUT_S = 31_536_000.0
+# Semantically "unbounded" yet safe to hand to every wait primitive: one year, or the
+# platform's own ceiling when that is lower. ``time_t`` is not the only limit (#83220 was
+# macOS ``time_t``): Windows waits take a DWORD of milliseconds, so ``threading.TIMEOUT_MAX``
+# is 4,294,967 s (~49.7 days) there and ``Lock.acquire`` / ``Thread.join`` raise
+# ``OverflowError: timeout value is too large`` above it -- a one-year cap still overflowed
+# every approval wait on Windows (measured 2026-09-16). POSIX keeps the year.
+MAX_SAFE_TIMEOUT_S = float(min(31_536_000.0, threading.TIMEOUT_MAX))
 
 # Grace after a deadline fires before concluding the loop thread is blocked and dumping stacks.
 _LOOP_BLOCKED_DUMP_GRACE_S = 5.0
