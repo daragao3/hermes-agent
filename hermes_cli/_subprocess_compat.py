@@ -27,6 +27,7 @@ __all__ = [
     "windows_hide_flags",
     "windows_detach_popen_kwargs",
     "bounded_git_probe",
+    "bounded_git_probe_outcome",
     "bounded_probe_run",
     "noninteractive_git_env",
     "NO_DRIVER_DIFF_FLAGS",
@@ -420,6 +421,17 @@ def bounded_probe_run(
     ``Get-CimInstance Win32_Process`` gateway scan hit exactly this during ``hermes update`` on slow-WMI
     machines (#87134); the git probes hit it first (#68609 / #66037).
     """
+    return _bounded_probe_run_outcome(argv, timeout=timeout, errors=errors, env=env)[0]
+
+
+def _bounded_probe_run_outcome(
+    argv: Sequence[str], *, timeout: float, errors: str = "replace",
+    env: "Mapping[str, str] | None" = None,
+) -> "tuple[subprocess.CompletedProcess[str] | None, bool]":
+    """:func:`bounded_probe_run` plus a ``stalled`` flag: ``(result, False)`` when the child answered or
+    never spawned, ``(None, True)`` when it was killed for overrunning *timeout* (or for a torn pipe mid-
+    read). Callers that cache a ``None`` need the distinction — a stall is a fact about the box's load,
+    not about the target — while keeping the public ``None`` contract untouched."""
     _popen_kwargs: dict = {"creationflags": windows_hide_flags()} if IS_WINDOWS else {"process_group": 0}
     try:
         proc = subprocess.Popen(
@@ -427,7 +439,7 @@ def bounded_probe_run(
             text=True, encoding="utf-8", errors=errors,
             env=dict(env) if env is not None else None, **_popen_kwargs)
     except Exception:
-        return None
+        return None, False
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except Exception:
@@ -438,8 +450,8 @@ def bounded_probe_run(
             proc.communicate(timeout=1)
         except Exception:
             pass
-        return None
-    return subprocess.CompletedProcess(list(argv), proc.returncode, stdout, stderr)
+        return None, True
+    return subprocess.CompletedProcess(list(argv), proc.returncode, stdout, stderr), False
 
 
 def bounded_git_probe(argv: Sequence[str], *, timeout: float) -> str:
@@ -468,10 +480,19 @@ def bounded_git_probe(argv: Sequence[str], *, timeout: float) -> str:
     openai/codex#36793). ``process_group`` only changes which group the child belongs to; it does not detach
     the terminal or alter the fast path.
     """
-    result = bounded_probe_run(argv, timeout=timeout, env=noninteractive_git_env())
+    return bounded_git_probe_outcome(argv, timeout=timeout)[0]
+
+
+def bounded_git_probe_outcome(argv: Sequence[str], *, timeout: float) -> "tuple[str, bool]":
+    """:func:`bounded_git_probe` that also reports whether the probe STALLED: ``(stdout, False)`` on an
+    answer, ``("", False)`` when git answered rc!=0 or could not be spawned (a fact about the target,
+    safe to remember), ``("", True)`` when it was killed at *timeout* (a fact about the box's load —
+    ``git_probe._RootCache`` remembers that only briefly, else one saturated spawn reads as "not a
+    repo" for its whole negative TTL)."""
+    result, stalled = _bounded_probe_run_outcome(argv, timeout=timeout, env=noninteractive_git_env())
     if result is None or result.returncode != 0:
-        return ""
-    return (result.stdout or "").strip()
+        return "", stalled
+    return (result.stdout or "").strip(), False
 
 
 
