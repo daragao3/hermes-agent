@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from tests._home_isolation import redirect_home
+from tests.symlink_support import requires_symlinks
 
 from hermes_cli import linux_desktop_entry as lde
 
@@ -23,7 +24,9 @@ def xdg_home(tmp_path, monkeypatch) -> Path:
     # Isolate the known-wrapper probe too: tests must never see the real
     # ~/.local/bin/hermes on the dev machine.
     redirect_home(monkeypatch, str(tmp_path))
-    monkeypatch.setattr(lde.sys, "platform", "linux")
+    # No ``sys.platform`` fake here: every test that takes this fixture is
+    # ``linux_only`` (the XDG install path, shebang probing and exec bits are
+    # Linux behaviour), so it runs on the host it describes and nowhere else.
     return data_home
 
 
@@ -64,6 +67,7 @@ def _parse(entry_text: str) -> dict:
     return values
 
 
+@pytest.mark.linux_only
 def test_install_writes_entry_with_absolute_exec_and_icon(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -95,6 +99,7 @@ def test_install_writes_entry_with_absolute_exec_and_icon(
     assert icon_path == lde.icon_path(root)
 
 
+@pytest.mark.linux_only
 def test_install_prefers_themed_icon_from_hicolor(tmp_path, xdg_home, monkeypatch):
     """When the icon installs into hicolor, the entry uses the themed name.
 
@@ -124,6 +129,7 @@ def test_install_prefers_themed_icon_from_hicolor(tmp_path, xdg_home, monkeypatc
     assert dest.read_bytes() == lde.icon_path(root).read_bytes()
 
 
+@pytest.mark.linux_only
 def test_install_icon_copy_failure_falls_back_to_absolute(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -153,6 +159,7 @@ def test_install_icon_copy_failure_falls_back_to_absolute(
     assert values["Terminal"] == "false"
 
 
+@pytest.mark.linux_only
 def test_installed_entry_is_executable(tmp_path, xdg_home, monkeypatch):
     root = _make_project(tmp_path)
     monkeypatch.setattr(
@@ -165,6 +172,7 @@ def test_installed_entry_is_executable(tmp_path, xdg_home, monkeypatch):
     assert entry.stat().st_mode & stat.S_IXUSR
 
 
+@pytest.mark.linux_only
 def test_exec_falls_back_to_interpreter_module(tmp_path, xdg_home, monkeypatch):
     root = _make_project(tmp_path)
     monkeypatch.setattr("hermes_cli.relaunch.resolve_hermes_bin", lambda: None)
@@ -182,6 +190,7 @@ def test_exec_falls_back_to_interpreter_module(tmp_path, xdg_home, monkeypatch):
 # interpreter when the DE spawns the .desktop entry → ModuleNotFoundError,
 # silent (Terminal=false). The Exec line must prefix sys.executable for any
 # resolved bin that is a python script escaping the running venv.
+@pytest.mark.linux_only
 def test_exec_prefixes_interpreter_for_env_shebang_python_script(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -208,6 +217,7 @@ def test_exec_prefixes_interpreter_for_env_shebang_python_script(
     assert exec_line.endswith("desktop")
 
 
+@pytest.mark.linux_only
 def test_exec_leaves_shell_wrapper_launchers_alone(tmp_path, xdg_home, monkeypatch):
     root = _make_project(tmp_path)
     hermes_bin = tmp_path / "bin" / "hermes"
@@ -228,6 +238,7 @@ def test_exec_leaves_shell_wrapper_launchers_alone(tmp_path, xdg_home, monkeypat
     assert exec_line == f"{hermes_bin} desktop"
 
 
+@pytest.mark.linux_only
 def test_exec_leaves_venv_shebang_scripts_alone(tmp_path, xdg_home, monkeypatch):
     import sys
 
@@ -261,6 +272,7 @@ def _argv0_context(monkeypatch, argv0: str) -> None:
     monkeypatch.setattr(sys, "argv", [argv0, "desktop"])
 
 
+@pytest.mark.linux_only
 def test_exec_converges_from_repo_script_argv0_to_installed_wrapper(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -298,6 +310,7 @@ def test_exec_converges_from_repo_script_argv0_to_installed_wrapper(
     assert exec_line == f"{wrapper} desktop"
 
 
+@pytest.mark.linux_only
 def test_exec_never_persists_a_bare_interpreter_command(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -334,6 +347,7 @@ def test_exec_never_persists_a_bare_interpreter_command(
     assert exec_line == f"{wrapper} desktop"
 
 
+@pytest.mark.linux_only
 def test_exec_keeps_resolver_fallback_when_no_wrapper_on_path(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -374,6 +388,7 @@ def test_exec_keeps_resolver_fallback_when_no_wrapper_on_path(
     assert str(repo_script) not in exec_line
 
 
+@pytest.mark.linux_only
 def test_exec_uses_known_wrapper_when_path_lookup_misses(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -422,6 +437,7 @@ def test_exec_uses_known_wrapper_when_path_lookup_misses(
     assert exec_line == f"{known_wrapper} desktop"
 
 
+@pytest.mark.linux_only
 def test_exec_rejects_known_wrapper_from_another_checkout(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -501,6 +517,7 @@ def test_exec_rejects_known_wrapper_from_another_checkout(
         ),
     ],
 )
+@pytest.mark.linux_only
 def test_known_wrapper_candidates_cover_installer_layouts(
     layout, env_overrides, expected, monkeypatch
 ):
@@ -537,6 +554,7 @@ def test_known_wrapper_candidates_cover_installer_layouts(
         assert "/usr/local/bin/hermes" not in candidates
 
 
+@pytest.mark.linux_only
 def test_install_is_idempotent_and_skips_cache_refresh(tmp_path, xdg_home, monkeypatch):
     root = _make_project(tmp_path)
     monkeypatch.setattr(
@@ -555,6 +573,7 @@ def test_install_is_idempotent_and_skips_cache_refresh(tmp_path, xdg_home, monke
     assert len(calls) == 1
 
 
+@pytest.mark.linux_only
 def test_install_without_source_icon_uses_themed_name(tmp_path, xdg_home, monkeypatch):
     root = tmp_path / "hermes-agent"
     root.mkdir()
@@ -648,6 +667,7 @@ def test_run_quiet_swallows_missing_binary(tmp_path):
     assert lde._run_quiet([str(tmp_path / "definitely-not-a-binary")]) is False
 
 
+@pytest.mark.linux_only
 def test_exec_arg_quoting_handles_spaces(tmp_path, xdg_home, monkeypatch):
     root = _make_project(tmp_path)
     spaced = tmp_path / "my apps" / "hermes"
@@ -662,9 +682,7 @@ def test_exec_arg_quoting_handles_spaces(tmp_path, xdg_home, monkeypatch):
     assert exec_line == f'"{spaced}" desktop'
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="Symlinks require elevated privileges on Windows"
-)
+@requires_symlinks
 def test_running_interpreter_keeps_venv_semantic_path(tmp_path, monkeypatch):
     """Lexical preserved only when pyvenv.cfg marks the path as a venv."""
     # venv layout: bin/python symlink -> base, pyvenv.cfg at venv root
@@ -725,6 +743,7 @@ def test_can_import_probe_runs_and_caches(tmp_path):
         lde._probe_cache.pop(str(real), None)
 
 
+@pytest.mark.linux_only
 def test_exec_falls_back_to_running_interpreter_when_probe_fails(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -788,9 +807,7 @@ def test_wrapper_ownership_rejects_sibling_extensions(suffix, tmp_path):
     assert lde._wrapper_targets_checkout(evil, checkout) is False
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="Symlinks require elevated privileges on Windows"
-)
+@requires_symlinks
 def test_wrapper_ownership_accepts_shim_via_symlinked_home(tmp_path, monkeypatch):
     """Installer writes $INSTALL_DIR lexically; the root stays lexical too.
 
@@ -909,6 +926,7 @@ def test_needs_interpreter_env_shebang_always_escapes(tmp_path, monkeypatch):
     assert lde._needs_interpreter(env_abs) is False
 
 
+@pytest.mark.linux_only
 def test_probe_skips_wrapper_with_escaping_python_shebang(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -952,6 +970,7 @@ def test_probe_skips_wrapper_with_escaping_python_shebang(
     assert exec_line.endswith("-m hermes_cli.main desktop")
 
 
+@pytest.mark.linux_only
 def test_probe_accepts_shell_launcher_wrapper(tmp_path, xdg_home, monkeypatch):
     """A bash launcher is safe by construction and still wins the probe."""
     root = _make_project(tmp_path)
@@ -984,6 +1003,7 @@ def test_probe_accepts_shell_launcher_wrapper(tmp_path, xdg_home, monkeypatch):
     assert exec_line == f"{good_wrapper} desktop"
 
 
+@pytest.mark.linux_only
 def test_install_icon_handles_truncated_png_header(tmp_path, xdg_home, monkeypatch):
     """A truncated PNG (valid signature + IHDR tag, <24 bytes) must not
     raise struct.error out of the fail-safe: it lands in 256x256/ like
@@ -1020,6 +1040,7 @@ def test_hicolor_subdir_puts_rasters_in_indexed_dirs_never_scalable():
     assert lde._hicolor_subdir((64, 32)) == "256x256"
 
 
+@pytest.mark.linux_only
 def test_install_places_1024_png_in_256x256_not_scalable(
     tmp_path, xdg_home, monkeypatch
 ):
@@ -1040,6 +1061,7 @@ def test_install_places_1024_png_in_256x256_not_scalable(
     assert not stale.exists()
 
 
+@pytest.mark.linux_only
 def test_install_removes_stale_scalable_png(tmp_path, xdg_home, monkeypatch):
     """v2026.8.31 wrote the PNG into scalable/. A later hermes desktop
     must delete that leftover so Cinnamon does not keep using it."""
@@ -1058,6 +1080,7 @@ def test_install_removes_stale_scalable_png(tmp_path, xdg_home, monkeypatch):
     assert not stale.exists()
 
 
+@pytest.mark.linux_only
 def test_install_exact_48_png_uses_48x48_dir(tmp_path, xdg_home, monkeypatch):
     root = _make_project(tmp_path)
     lde.icon_path(root).write_bytes(_png_ihdr(48, 48))
@@ -1072,6 +1095,7 @@ def test_install_exact_48_png_uses_48x48_dir(tmp_path, xdg_home, monkeypatch):
     ).exists()
 
 
+@pytest.mark.linux_only
 def test_install_resizes_decodable_png_to_panel_sizes(
     tmp_path, xdg_home, monkeypatch
 ):
