@@ -471,10 +471,15 @@ class HostedRoomRuntime:
                 target=self._run_room_once, args=(binding,),
                 name=f"hosted-room-{binding.room_id[:24]}", daemon=True)
             with self._status_lock:
+                # Publish and start under one lock hold: stop() snapshots this dict
+                # under the same lock and joins every entry, and join() on a thread
+                # whose start() has not run yet raises RuntimeError. start() returns
+                # once the OS thread exists, before the target runs any code that
+                # takes this lock, so holding it across start() cannot deadlock.
+                room_thread.start()
                 self._room_threads[binding.room_id] = room_thread
             active_rooms.add(binding.room_id)
             available -= 1
-            room_thread.start()
 
     def _run_room_once(self, binding: HostedRoomBinding) -> None:
         try:
