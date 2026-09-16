@@ -290,13 +290,42 @@ def remove_path_from_windows_registry(hermes_home: Path, *, include_managed_bin:
     return _edit_user_environment(edit, warn_label="Could not edit User PATH in registry")
 
 
-def remove_hermes_env_vars_windows() -> list[str]:
-    """Delete HERMES_HOME and HERMES_GIT_BASH_PATH from User-scope env vars."""
+def _normalize_registry_path(value) -> str:
+    """Comparable form of a path stored in HKCU\\Environment: %VAR%s expanded (REG_EXPAND_SZ),
+    slashes/case folded, trailing separator dropped. Not ``resolve()``: the stored path may no
+    longer exist, and a symlink must not make a different home read as this one."""
+    return os.path.normcase(os.path.normpath(os.path.expandvars(str(value)))).rstrip("\\/")
+
+
+def _is_under(path: str, root: str) -> bool:
+    """``path`` == ``root`` or lies inside it (both already ``_normalize_registry_path``-ed)."""
+    return path == root or path.startswith(root + os.sep)
+
+
+def remove_hermes_env_vars_windows(hermes_home: Path) -> list[str]:
+    """Delete HERMES_HOME / HERMES_GIT_BASH_PATH from User-scope env vars -- but only the values
+    that belong to ``hermes_home``. HKCU HERMES_HOME is the desktop app's home anchor for the REAL
+    install; this box also uninstalls sandbox / upgrade-candidate / temp homes, and an unconditional
+    delete here wiped that anchor (survivor pattern: HERMES_DESKTOP_HERMES_ROOT kept, both times --
+    loops ``hkcu-hermes-home-wipe-attribution-20260915``). HERMES_HOME goes only when it equals
+    this home; HERMES_GIT_BASH_PATH goes when it points inside this home (portable Git) or when
+    HERMES_HOME matched (install.ps1 set both for this install, even a system-Git bash)."""
+    home = _normalize_registry_path(hermes_home)
+
     def edit(winreg, key, removed):
+        anchored_here = False
         for name in ("HERMES_HOME", "HERMES_GIT_BASH_PATH"):
             try:
-                winreg.QueryValueEx(key, name)
+                value, _ = winreg.QueryValueEx(key, name)
             except FileNotFoundError:
+                continue
+            stored = _normalize_registry_path(value)
+            if name == "HERMES_HOME":
+                ours = anchored_here = stored == home
+            else:
+                ours = anchored_here or _is_under(stored, home)
+            if not ours:
+                log_info(f"Kept User env var {name}={value} (points outside {hermes_home})")
                 continue
             try:
                 winreg.DeleteValue(key, name)
@@ -653,7 +682,8 @@ def _perform_uninstall(
              Path(os.path.expandvars(str(hermes_home))), include_managed_bin=sweep_managed_bin),
          "Removed from User PATH: {}", "No Hermes-owned PATH entries in User environment"),
         (windows, "Removing HERMES_HOME / HERMES_GIT_BASH_PATH User env vars...",
-         remove_hermes_env_vars_windows, "Removed User env var: {}", "No Hermes-set User env vars to remove"),
+         lambda: remove_hermes_env_vars_windows(Path(os.path.expandvars(str(hermes_home)))),
+         "Removed User env var: {}", "No Hermes-set User env vars to remove"),
         (True, "Removing hermes command...", remove_wrapper_script, "Removed {}", "No wrapper script found"),
         (windows, "Removing Windows hermes launchers...",
          remove_windows_bin_launchers, "Removed {}", "No Windows hermes launchers found"),
