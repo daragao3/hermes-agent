@@ -37,6 +37,7 @@ from events.noise_guards import (
 from events.outcomes import agent_iteration_backlog
 from events.paths import notifier_batch_path
 from events.batch_observations import queued_message, remember_observation, render_batch, repeated_cron_stale
+from events.formatting import agent_loop_fault_repeat_key
 from events.routing_policy import (
     Attention,
     Route,
@@ -467,12 +468,29 @@ class TelegramNotifier(BaseSubscriber):
         sustained_critical = (route.attention is Attention.WARN
                               and route.priority is Priority.CRITICAL)
         ladder_rung = event.event_type == EventType.CRON_FAILED_CONSECUTIVE
+        #   * an AGENT_LOOP_FAULT that is a provider quota/rate-limit refusal
+        #     (2026-09-15) dedups on provider|model|status instead of the
+        #     rendered text, and NON-sliding: the loop reports the fault on
+        #     every turn BEFORE the fallback chain runs, so with one primary
+        #     exhausted for days every cron on the box raises the same fault
+        #     each fire (54 pages on 09-15 while every turn completed on
+        #     deepseek). The outage itself is paged by MODEL_RATE_LIMITED;
+        #     this keeps the fault visible at one page per provider per
+        #     window rather than one per turn. Other faults keep the
+        #     rendered-message fingerprint.
+        repeat_text = message
+        repeat_sliding = not sustained_critical
+        if event.event_type == EventType.AGENT_LOOP_FAULT:
+            quota_key = agent_loop_fault_repeat_key(payload)
+            if quota_key is not None:
+                repeat_text = quota_key
+                repeat_sliding = False
         if (route.wa_tier != WA_IMMEDIATE
                 and not ladder_rung
                 and not keyed_stale  # already guarded by exact execution identity
                 and not known_debt_decided  # the debt guard owned this decision
                 and self._repeat_guard.is_repeat(
-                    thread_id, message, sliding=not sustained_critical)):
+                    thread_id, repeat_text, sliding=repeat_sliding)):
             # Until 2026-09-13 this drop was invisible: no bus row, no log
             # line. The audit record is what lets "5 of 57 reached Telegram"
             # be measured from the bus instead of reconstructed by hand.
@@ -480,7 +498,7 @@ class TelegramNotifier(BaseSubscriber):
                 event, route, thread_id, topic_key,
                 guard="repeat_guard",
                 window_seconds=self._repeat_guard.window_seconds,
-                sliding=not sustained_critical,
+                sliding=repeat_sliding,
             )
             return
 
@@ -898,6 +916,13 @@ class TelegramNotifier(BaseSubscriber):
             # the generic fallback it always had.
             from events.formatting import rate_limit_batch_body
             return rate_limit_batch_body(p)
+
+        if et == EventType.AGENT_LOOP_FAULT:
+            # 2026-09-15: the generic fallback printed the correlation UUID
+            # and the traceback tail, so 54 identical Codex-429 faults in a
+            # day each rendered unique and every one reached the topic.
+            from events.formatting import agent_loop_fault_body
+            return agent_loop_fault_body(p)
 
         # Generic fallback
         lines = [f"{k}: {v}" for k, v in p.items() if v]

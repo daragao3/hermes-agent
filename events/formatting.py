@@ -613,6 +613,84 @@ def _short_reset(raw: object) -> str:
         return str(raw)
 
 
+# Provider-quota faults (2026-09-15). ``agent.turn_api_error`` reports EVERY
+# API-boundary exception as an AGENT_LOOP_FAULT before the retry/fallback chain
+# runs (SR-471: silence is the bug), so a primary whose quota is exhausted
+# raises one fault per turn even when the turn then completes on the fallback.
+# Measured 2026-09-15 with Codex's weekly window at 100%: 54 faults / 54 Telegram
+# pages in 4.5h while every cron completed on deepseek-v4-pro -- the same
+# ``429 usage_limit_reached ... resets_in_seconds`` body each time, unique to
+# RepeatGuard only because the generic ``key: value`` fallback printed the
+# correlation UUID and a traceback tail. MODEL_RATE_LIMITED already pages the
+# quota outage itself (with the reset time), so these faults carry no news.
+_QUOTA_STATUS_CODES = frozenset({402, 429})
+_QUOTA_MESSAGE_MARKERS = (
+    "usage limit", "usage_limit", "rate limit", "rate_limit", "quota",
+    "billing cycle", "too many requests", "insufficient_quota", "credit",
+)
+
+
+def is_provider_quota_fault(payload: dict) -> bool:
+    """True when an AGENT_LOOP_FAULT payload describes a provider quota /
+    rate-limit refusal rather than a code fault: HTTP 429/402, a
+    ``RateLimitError``, or a 403 whose message names a usage limit (Kimi's
+    monthly-quota 403 is a ``PermissionDeniedError``)."""
+    p = payload or {}
+    status = p.get("status_code")
+    if status is None:
+        status = (p.get("backend") or {}).get("status_code") if isinstance(p.get("backend"), dict) else None
+    if isinstance(status, int) and not isinstance(status, bool) and status in _QUOTA_STATUS_CODES:
+        return True
+    exc = str(p.get("exception_type") or p.get("error_class") or "").lower()
+    if "ratelimit" in exc:
+        return True
+    text = str(p.get("message") or "").lower()
+    if status == 403 or "permissiondenied" in exc:
+        return any(marker in text for marker in _QUOTA_MESSAGE_MARKERS)
+    return False
+
+
+def agent_loop_fault_body(payload: dict) -> str:
+    """Body for an AGENT_LOOP_FAULT page: what failed, where, and the provider
+    message -- never the correlation UUID or the traceback tail. Both stay on
+    the bus for the Critic; in chat they only made every page unique, which is
+    what let a single exhausted provider defeat RepeatGuard 54 times in a day.
+    """
+    p = payload or {}
+    exc = str(p.get("exception_type") or p.get("error_class") or "Exception")
+    status = p.get("status_code")
+    provider = str(p.get("provider") or "?")
+    model = str(p.get("model") or "?")
+    phase = str(p.get("phase") or "")
+    head = exc + (f" (HTTP {status})" if status else "")
+    where = f"{provider}/{model}" + (f" during {phase}" if phase else "")
+    lines = [f"{head} from {where}"]
+    message = " ".join(str(p.get("message") or "").split())
+    if message:
+        clamped = message[:300] + ("…" if len(message) > 300 else "")
+        lines.append(clamped)
+    if is_provider_quota_fault(p):
+        lines.append(
+            "Provider quota/rate limit — the turn retries or falls back on its own; "
+            "see MODEL_RATE_LIMITED for the reset time."
+        )
+    return "\n".join(lines)
+
+
+def agent_loop_fault_repeat_key(payload: dict) -> str | None:
+    """RepeatGuard text for a quota fault: one key per provider/model/status,
+    independent of which cron raised it, so an exhausted primary costs one page
+    per window instead of one per turn. ``None`` for every other fault -- those
+    keep the rendered-message fingerprint, so a genuinely new failure still
+    lands."""
+    p = payload or {}
+    if not is_provider_quota_fault(p):
+        return None
+    status = p.get("status_code")
+    return (f"agent_loop_fault|quota|{str(p.get('provider') or '?').lower()}"
+            f"|{str(p.get('model') or '?').lower()}|{status if status is not None else 'na'}")
+
+
 def rate_limit_batch_body(payload: dict) -> str:
     """One page for a whole provider-quota snapshot (2026-09-13).
 

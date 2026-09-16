@@ -1499,3 +1499,55 @@ class TestRateLimitBatchBody:
         assert body.startswith("2 provider quota(s) exhausted")
         assert "DeepSeek" in body
         assert "provider: usage-poller" not in body, "not the generic key:value dump"
+
+
+class TestAgentLoopFaultBody:
+    """Provider-quota faults (2026-09-15): the body drops the correlation
+    UUID and traceback tail, and quota faults get a provider-level repeat
+    key so one exhausted primary cannot page once per turn."""
+
+    def test_quota_classification(self):
+        from events.formatting import is_provider_quota_fault
+        assert is_provider_quota_fault({"status_code": 429, "exception_type": "RateLimitError"})
+        assert is_provider_quota_fault({"exception_type": "RateLimitError"})
+        assert is_provider_quota_fault({"status_code": 402, "exception_type": "APIStatusError"})
+        assert is_provider_quota_fault({
+            "status_code": 403, "exception_type": "PermissionDeniedError",
+            "message": "You've reached your monthly usage limit for this billing cycle."})
+        # A 403 that is not about quota is an auth/code problem: keep paging it.
+        assert not is_provider_quota_fault({
+            "status_code": 403, "exception_type": "PermissionDeniedError",
+            "message": "This organization has been disabled."})
+        assert not is_provider_quota_fault({"status_code": 500, "exception_type": "InternalServerError"})
+        assert not is_provider_quota_fault({"exception_type": "TypeError", "message": "'NoneType' object is not iterable"})
+        assert not is_provider_quota_fault({})
+
+    def test_repeat_key_is_per_provider_model_status(self):
+        from events.formatting import agent_loop_fault_repeat_key
+        a = agent_loop_fault_repeat_key({"provider": "openai-codex", "model": "gpt-5.6-sol",
+                                         "status_code": 429, "correlation_id": "x"})
+        b = agent_loop_fault_repeat_key({"provider": "OpenAI-Codex", "model": "gpt-5.6-sol",
+                                         "status_code": 429, "correlation_id": "y"})
+        assert a == b == "agent_loop_fault|quota|openai-codex|gpt-5.6-sol|429"
+        assert agent_loop_fault_repeat_key({"provider": "kimi-coding", "model": "k",
+                                            "status_code": 403, "message": "monthly usage limit"}) != a
+        assert agent_loop_fault_repeat_key({"exception_type": "TypeError", "message": "x"}) is None
+
+    def test_body_drops_uuid_and_traceback_and_clamps_message(self):
+        from events.formatting import agent_loop_fault_body
+        body = agent_loop_fault_body({
+            "exception_type": "RateLimitError", "status_code": 429,
+            "provider": "openai-codex", "model": "gpt-5.6-sol", "phase": "stream_accumulation",
+            "message": "Error code: 429 - " + "x" * 400,
+            "correlation_id": "7408d603-d0ed-4ef1", "traceback_tail": "Traceback ... boom",
+        })
+        assert body.startswith("RateLimitError (HTTP 429) from openai-codex/gpt-5.6-sol during stream_accumulation")
+        assert "7408d603" not in body and "Traceback" not in body
+        assert "MODEL_RATE_LIMITED" in body
+        assert len(body.splitlines()[1]) == 301  # 300 chars + ellipsis
+
+    def test_body_for_a_code_fault_has_no_quota_hint(self):
+        from events.formatting import agent_loop_fault_body
+        body = agent_loop_fault_body({"exception_type": "TypeError", "provider": "p", "model": "m",
+                                      "message": "'NoneType' object is not iterable"})
+        assert body == "TypeError from p/m\n'NoneType' object is not iterable"
