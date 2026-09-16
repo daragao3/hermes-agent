@@ -209,6 +209,14 @@ def check_api_response(
             clear_nous_rate_limit()
         except Exception:
             pass
+    else:
+        # Same proof for the provider-agnostic quota guard: a served call means the wall is
+        # down (or its recorded reset was wrong), so stop routing other sessions around it.
+        try:
+            from agent.provider_quota_guard import clear_provider_exhaustion
+            clear_provider_exhaustion(agent.provider)
+        except Exception:
+            pass
     from agent import relay_llm
 
     relay_llm.complete_logical_call(api_request_id, outcome="success")

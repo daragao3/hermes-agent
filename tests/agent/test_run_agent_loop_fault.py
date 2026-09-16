@@ -45,7 +45,10 @@ def _handle_kwargs(api_error):
     }
 
 
-def test_api_boundary_reports_exception_once_before_classification():
+def test_api_boundary_reports_exception_once_even_when_classification_raises():
+    """The fault is emitted exactly once per error. Since 2026-09-15 it is emitted AFTER the
+    recovery decision (so a fallback-recovered turn can withhold it), which means a handler
+    that crashes mid-classification must still emit on its way out."""
     api_error = ValueError("non-retryable local validation failure")
     agent, kwargs = _handle_kwargs(api_error)
     order = []
@@ -54,11 +57,10 @@ def test_api_boundary_reports_exception_once_before_classification():
         order.append("emit")
         assert args == (agent, api_error)
         assert call_kwargs == {"correlation_id": "task-471"}
-        raise RuntimeError("stop after boundary")
 
     def classify(*args, **call_kwargs):
         order.append("classify")
-        raise AssertionError("classification ran before boundary")
+        raise AssertionError("classification blew up")
 
     with (
         patch.object(turn_api_error, "_report_agent_loop_fault", side_effect=report),
@@ -68,10 +70,64 @@ def test_api_boundary_reports_exception_once_before_classification():
     ):
         try:
             turn_api_error.handle_api_error(agent, **kwargs)
-        except RuntimeError as exc:
-            assert str(exc) == "stop after boundary"
+        except AssertionError as exc:
+            assert str(exc) == "classification blew up"
 
-    assert order == ["emit"]
+    assert order == ["classify", "emit"]
+
+
+def _verdict(action):
+    return turn_api_error.ApiErrorVerdict(
+        action=action, thinking_spinner=None, messages=[], active_system_prompt="system",
+        conversation_history=[], approx_tokens=0, retry_count=0, max_retries=1,
+        compression_attempts=0, _provider_overflow_recovery_pending=False, result=None,
+    )
+
+
+def test_fault_not_emitted_when_a_fallback_recovers_the_turn():
+    """A ``"break"`` verdict with ``_fallback_index`` advanced = the turn continues on another
+    backend. That was the 2026-09-15 storm: every cron fire on the exhausted Codex primary
+    paged once although DeepSeek answered the turn."""
+    api_error = RuntimeError("429 usage_limit_reached")
+    agent, kwargs = _handle_kwargs(api_error)
+    agent._fallback_index = 0
+    reports = []
+
+    def inner(agent_, **_kw):
+        agent_._fallback_index = 1  # try_activate_fallback advanced the chain
+        return _verdict("break")
+
+    with (
+        patch.object(turn_api_error, "_report_agent_loop_fault", side_effect=lambda *a, **k: reports.append(k)),
+        patch.object(turn_api_error, "_handle_api_error_inner", side_effect=inner),
+    ):
+        verdict = turn_api_error.handle_api_error(agent, **kwargs)
+
+    assert verdict.action == "break"
+    assert reports == [], "a fallback-recovered error must not emit agent_loop_fault"
+
+
+def test_fault_still_emitted_when_break_is_not_a_fallback_or_the_turn_retries():
+    api_error = RuntimeError("500 upstream")
+    agent, kwargs = _handle_kwargs(api_error)
+    agent._fallback_index = 0
+    reports = []
+
+    # "break" without the chain advancing: a redirect/rebuild, not a fallback -> emit.
+    with (
+        patch.object(turn_api_error, "_report_agent_loop_fault", side_effect=lambda *a, **k: reports.append(k)),
+        patch.object(turn_api_error, "_handle_api_error_inner", return_value=_verdict("break")),
+    ):
+        turn_api_error.handle_api_error(agent, **kwargs)
+    # "continue" (plain retry) with the chain advanced elsewhere earlier this turn -> emit.
+    agent._fallback_index = 2
+    with (
+        patch.object(turn_api_error, "_report_agent_loop_fault", side_effect=lambda *a, **k: reports.append(k)),
+        patch.object(turn_api_error, "_handle_api_error_inner", return_value=_verdict("continue")),
+    ):
+        turn_api_error.handle_api_error(agent, **kwargs)
+
+    assert [r["correlation_id"] for r in reports] == ["task-471", "task-471"]
 
 
 def test_boundary_log_redacts_exception_without_losing_original_frames(caplog):
