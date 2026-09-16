@@ -214,18 +214,44 @@ def test_dual_backend_drift_preserves_each_emit_meta(tmp_path, monkeypatch):
 # with a FAKE client (no openai import) so they stay fast and hermetic.
 
 
-def test_manifest_harness_model_is_pinned_not_auto():
-    # A canary must be deterministic. model:"auto" is a SERVER-side routing
-    # policy that flaps: on 2026-08-23 it resolved to opencode-go/deepseek-v4-flash
-    # (upstream rate-limited) with an exhausted fallback chain (gemini -> 403 dead
-    # auth, anthropic -> 429), so this arm read "unknown" every 10 minutes while
-    # Manifest itself was healthy. Pin tracks the same route hindsight-app's
-    # startup gate and laptop-monitor's harness probe use; repoint ALL THREE
-    # together if the pinned model ever dies upstream.
+def test_manifest_harness_model_is_auto_on_a_configured_chain():
+    # 2026-09-15 REVERSAL (Diego, b233b0a22f). The 2026-08-23 pin fixed a flap
+    # (model:"auto" resolved server-side to an exhausted route) and created the
+    # next failure: an explicit model carries NO fallbacks in Manifest, so when
+    # gpt-5.5 died upstream (ChatGPT Pro usage_limit_reached, 4-day reset) all
+    # four pinned sites went down with nothing behind them. "auto" now resolves
+    # to the laptop-monitor agent's CONFIGURED default tier (gpt-5.5 Gmail ->
+    # gpt-5.5 Gatech -> opencode-go deepseek-v4-pro) and Manifest benches a 429
+    # route for its Retry-After, so traffic returns to OpenAI at the reset.
+    # Re-pinning a bare "<provider>/<model>" here re-creates the 09-15 outage
+    # shape; the 08-23 defence lives in the chain's configuration, not in a pin.
     import obs.backend_conformance_canary as canary
 
-    assert canary._MANIFEST_HARNESS_MODEL != "auto"
-    assert canary._MANIFEST_HARNESS_MODEL == "openai/gpt-5.5-subscription"
+    assert canary._MANIFEST_HARNESS_MODEL == "auto"
+    # Positive control: a re-pin is a provider-qualified model id, never "auto".
+    assert "/" not in canary._MANIFEST_HARNESS_MODEL
+    assert canary._MANIFEST_HARNESS_MODEL != "openai/gpt-5.5-subscription"
+
+
+def test_manifest_harness_client_build_returns_configured_client(monkeypatch, tmp_path):
+    # The helper hands the caller a client bound to the Manifest harness
+    # (localhost:2099/v1, the key from the key file) together with the "auto"
+    # model, so check_manifest_harness_conformance() issues its one request
+    # against the configured fallback chain rather than a bare pin.
+    import obs.backend_conformance_canary as canary
+
+    key_file = tmp_path / "harness-key"
+    key_file.write_text("mnfst-test-key\n", encoding="utf-8")
+    monkeypatch.setattr(canary, "_MANIFEST_HARNESS_KEY_FILE", key_file)
+
+    built = canary.build_manifest_harness_probe_client()
+    assert built is not None
+    client, model = built
+    assert model == "auto"
+    assert model == canary._MANIFEST_HARNESS_MODEL
+    assert client.api_key == "mnfst-test-key"
+    assert str(client.base_url).rstrip("/") == canary._MANIFEST_HARNESS_BASE_URL
+    assert hasattr(client.responses, "create")
 
 
 class _FakeHarnessResponses:
