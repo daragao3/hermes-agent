@@ -15,6 +15,7 @@ import pytest
 
 import tools.terminal_tool as terminal_tool
 import tui_gateway.server as server
+from tui_gateway import git_probe
 
 
 def _git(cwd, *args):
@@ -22,7 +23,7 @@ def _git(cwd, *args):
 
 
 @pytest.fixture
-def repo_with_worktree(tmp_path):
+def repo_with_worktree(tmp_path, _probe_budget):
     """A real repo on ``main`` plus a linked worktree on ``feature``."""
     repo = tmp_path / "proj"
     repo.mkdir()
@@ -36,11 +37,34 @@ def repo_with_worktree(tmp_path):
     worktree = tmp_path / "proj-feature"
     _git(repo, "worktree", "add", "-b", "feature", str(worktree))
 
-    from tui_gateway import git_probe
-
-    git_probe.invalidate()
+    _warm_probe_cache(str(repo), str(worktree))
     yield repo, worktree
     git_probe.invalidate()
+
+
+# The gateway's per-probe bound is a Desktop-readiness fail-open (#68609): a probe that overruns it returns ""
+# and _RootCache remembers that as NOT-A-REPO for _NEG_TTL, so the follow refuses. Measured on the 12-core dev
+# box: `git rev-parse` p50 0.33s quiet, p50 1.27s with 6/30 samples over 1.5s under CPU saturation, and every
+# timed-out probe then costs 8-12s of tree-kill cleanup. That is what made these tests FLAKY in 12-worker
+# sweeps (the settled cwd came back as the main checkout). The follow decision is what this file tests, not
+# the readiness bound, so the probes get a budget that spans the measured stall.
+_PROBE_BUDGET_S = 10.0
+
+
+@pytest.fixture(autouse=True)
+def _probe_budget(monkeypatch):
+    monkeypatch.setattr(git_probe, "_GIT_TIMEOUT", _PROBE_BUDGET_S)
+
+
+def _warm_probe_cache(*cwds: str) -> None:
+    """Positive control: git can answer for every checkout the tests compare. Resolves the exact keys the follow
+    reads (repo_root + common_repo_root of each cwd) so a straggling spawn lands here, named, rather than as a
+    refused follow; a "" (timed out) answer is retried after dropping the poisoned negative."""
+    for attempt in range(3):
+        git_probe.invalidate()
+        if all(git_probe.repo_root(cwd) and git_probe.common_repo_root(cwd) for cwd in cwds):
+            return
+    pytest.fail(f"git probe could not resolve {cwds} in {attempt + 1} attempts (probe timed out under load?)")
 
 
 @pytest.fixture
