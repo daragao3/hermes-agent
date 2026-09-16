@@ -17,6 +17,8 @@ import urllib.request
 
 import pytest
 
+from tests.symlink_support import requires_symlinks
+
 
 @pytest.fixture
 def fleet(tmp_path, monkeypatch):
@@ -163,10 +165,11 @@ def test_strip_helper_is_a_noop_without_credentials(tmp_path):
 @pytest.mark.parametrize(
     "link",
     [
-        lambda target, alias: alias.symlink_to(target),
-        lambda target, alias: os.link(target, alias),
+        pytest.param(
+            lambda target, alias: alias.symlink_to(target),
+            id="symlink", marks=requires_symlinks),
+        pytest.param(lambda target, alias: os.link(target, alias), id="hardlink"),
     ],
-    ids=["symlink", "hardlink"],
 )
 def test_strip_helper_leaves_shared_root_auth_store_unchanged(fleet, link):
     """A shared auth store is one grant, not a cloned credential copy."""
@@ -183,6 +186,7 @@ def test_strip_helper_leaves_shared_root_auth_store_unchanged(fleet, link):
     assert (root / "auth.json").read_text(encoding="utf-8") == before
 
 
+@requires_symlinks
 def test_strip_helper_fails_closed_when_root_store_cannot_be_resolved(fleet, monkeypatch):
     """Credential hygiene must not mutate auth when store identity is unknown."""
     from hermes_cli.auth import strip_cloned_single_use_oauth_grants
@@ -616,6 +620,7 @@ def _shared_profile(fleet, name, *, link):
     return pdir
 
 
+@requires_symlinks
 def test_heal_skips_profile_auth_json_symlinked_to_the_root_store(fleet):
     """#101356: `ln -s ~/.hermes/auth.json <profile>/auth.json` shares ONE store.
     Both sides of the consolidation read the same file, so every row looks like
@@ -655,6 +660,7 @@ def test_heal_skips_profile_auth_json_hardlinked_to_the_root_store(fleet):
     assert (shared / "auth.json").samefile(root / "auth.json")
 
 
+@requires_symlinks
 def test_heal_leaves_an_aliased_anthropic_singleton_alone(fleet):
     """Separate auth.jsons but a profile `.anthropic_oauth.json` symlinked to
     root's: one shared grant, not a fork. The heal must not self-compare it
@@ -678,6 +684,7 @@ def test_heal_leaves_an_aliased_anthropic_singleton_alone(fleet):
     assert (root / ".anthropic_oauth.json").read_text(encoding="utf-8") == before
 
 
+@requires_symlinks
 def test_heal_same_store_skip_is_memoized_off_the_hot_path(fleet, monkeypatch):
     """The shared-store skip must record the clean mark so load_pool()'s
     per-call heal does not re-stat/resolve both paths every model call."""
