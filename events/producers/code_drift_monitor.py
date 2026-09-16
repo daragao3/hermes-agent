@@ -265,8 +265,20 @@ class DriftSample:
     @property
     def shape(self) -> List:
         """The identity of a drift episode: a change here re-alerts
-        immediately (list, not tuple, so it round-trips through JSON)."""
-        return [self.state, self.dirty, self.deployment_state]
+        immediately (list, not tuple, so it round-trips through JSON).
+
+        ``dirty`` is deliberately NOT part of the identity (2026-09-15). On
+        the shared agent-src checkout the working tree flips dirty/clean as
+        sibling sessions touch and clear files, and each flip re-paged the
+        same unaccepted-deployment episode: 4 of the 11 agent-src drift
+        pages on 2026-09-15 differed from the previous one only in
+        ``dirty``. A dirty path that matters for deployment already shows
+        up as ``deployment_state == "unaccepted"`` (the receipt names the
+        unaccepted paths), and ``alerts`` never consults ``dirty`` -- so
+        the flag is a measurement carried on the payload, not an incident
+        boundary. The 6 h re-ping still carries the current value.
+        """
+        return [self.state, self.deployment_state]
 
     @property
     def alerts(self) -> bool:
