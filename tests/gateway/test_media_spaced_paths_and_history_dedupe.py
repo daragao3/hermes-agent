@@ -1,3 +1,4 @@
+from tests._home_isolation import redirect_home
 """Regression tests: spaced paths, GIS extensions, cross-turn dedupe plumbing,
 and code-block-safe streaming display strip.
 
@@ -85,7 +86,7 @@ class TestHistoryMediaDedupe:
         tmp_path,
         monkeypatch,
     ):
-        monkeypatch.setenv("HOME", str(tmp_path))
+        redirect_home(monkeypatch, str(tmp_path))
         history = [
             {
                 "role": "assistant",

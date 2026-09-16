@@ -1,3 +1,4 @@
+from tests._home_isolation import redirect_home
 """Behavior-contract compatibility tests for native Hermes plugins."""
 
 from pathlib import Path
@@ -27,7 +28,7 @@ def test_legacy_plugin_loads_and_ignores_additive_hook_and_manifest_fields(
     )
     empty_bundled = tmp_path / "bundled-plugins"
     empty_bundled.mkdir()
-    monkeypatch.setenv("HOME", str(tmp_path / "os-home"))
+    redirect_home(monkeypatch, str(tmp_path / "os-home"))
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("HERMES_BUNDLED_PLUGINS", str(empty_bundled))
 

@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 from tools.environments.local import (
     LocalEnvironment,
     _prepend_shell_init,
@@ -27,7 +29,7 @@ class TestResolveShellInitFiles:
     def test_auto_sources_bashrc_when_present(self, tmp_path, monkeypatch):
         bashrc = tmp_path / ".bashrc"
         bashrc.write_text('export MARKER=seen\n', encoding="utf-8")
-        monkeypatch.setenv("HOME", str(tmp_path))
+        redirect_home(monkeypatch, str(tmp_path))
 
         # Default config: auto_source_bashrc on, no explicit list.
         with patch(
@@ -50,7 +52,7 @@ class TestResolveShellInitFiles:
         """
         profile = tmp_path / ".profile"
         profile.write_text('export PATH="$HOME/n/bin:$PATH"\n', encoding="utf-8")
-        monkeypatch.setenv("HOME", str(tmp_path))
+        redirect_home(monkeypatch, str(tmp_path))
 
         with patch(
             "tools.environments.local._read_terminal_shell_init_config",
@@ -77,7 +79,7 @@ class TestResolveShellInitFiles:
         bash_profile.write_text('export FROM_BASH_PROFILE=1\n', encoding="utf-8")
         bashrc = tmp_path / ".bashrc"
         bashrc.write_text('export FROM_BASHRC=1\n', encoding="utf-8")
-        monkeypatch.setenv("HOME", str(tmp_path))
+        redirect_home(monkeypatch, str(tmp_path))
 
         with patch(
             "tools.environments.local._read_terminal_shell_init_config",
@@ -89,7 +91,7 @@ class TestResolveShellInitFiles:
 
     def test_skips_bashrc_when_missing(self, tmp_path, monkeypatch):
         # No rc files written.
-        monkeypatch.setenv("HOME", str(tmp_path))
+        redirect_home(monkeypatch, str(tmp_path))
 
         with patch(
             "tools.environments.local._read_terminal_shell_init_config",
@@ -101,7 +103,7 @@ class TestResolveShellInitFiles:
 
 
     def test_missing_explicit_files_are_skipped_silently(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("HOME", str(tmp_path))
+        redirect_home(monkeypatch, str(tmp_path))
         with patch(
             "tools.environments.local._read_terminal_shell_init_config",
             return_value=([str(tmp_path / "does-not-exist.sh")], False),
@@ -218,7 +220,7 @@ class TestSnapshotEndToEnd:
             'export FROM_BASHRC=bashrc-should-not-appear\n'
         , encoding="utf-8")
 
-        monkeypatch.setenv("HOME", str(tmp_path))
+        redirect_home(monkeypatch, str(tmp_path))
 
         with patch(
             "tools.environments.local._read_terminal_shell_init_config",

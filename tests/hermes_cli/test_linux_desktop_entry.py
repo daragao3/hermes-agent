@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 from hermes_cli import linux_desktop_entry as lde
 
 
@@ -20,7 +22,7 @@ def xdg_home(tmp_path, monkeypatch) -> Path:
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
     # Isolate the known-wrapper probe too: tests must never see the real
     # ~/.local/bin/hermes on the dev machine.
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     monkeypatch.setattr(lde.sys, "platform", "linux")
     return data_home
 
@@ -402,7 +404,7 @@ def test_exec_uses_known_wrapper_when_path_lookup_misses(
         encoding="utf-8",
     )
     known_wrapper.chmod(0o755)
-    monkeypatch.setenv("HOME", str(tmp_path / "known-home"))
+    redirect_home(monkeypatch, str(tmp_path / "known-home"))
 
     _argv0_context(monkeypatch, str(repo_script))
     monkeypatch.setattr("shutil.which", lambda name: None)
@@ -451,7 +453,7 @@ def test_exec_rejects_known_wrapper_from_another_checkout(
         encoding="utf-8",
     )
     foreign_wrapper.chmod(0o755)
-    monkeypatch.setenv("HOME", str(tmp_path / "known-home"))
+    redirect_home(monkeypatch, str(tmp_path / "known-home"))
 
     _argv0_context(monkeypatch, str(repo_script))
     monkeypatch.setattr("shutil.which", lambda name: None)
@@ -511,7 +513,7 @@ def test_known_wrapper_candidates_cover_installer_layouts(
     """
 
     sentinel_home = "/home/__sentinel_home__"
-    monkeypatch.setenv("HOME", sentinel_home)
+    redirect_home(monkeypatch, sentinel_home)
     for key, value in env_overrides.items():
         if key == "__EUID0__":
             monkeypatch.setattr(lde.os, "geteuid", lambda: 0 if value == "1" else 1000)
@@ -817,7 +819,7 @@ def test_wrapper_ownership_accepts_shim_via_symlinked_home(tmp_path, monkeypatch
     # resolver a checkout-internal primary (the repo script) so the
     # probe leg actually engages.
     shim.chmod(0o755)
-    monkeypatch.setenv("HOME", str(home_link))
+    redirect_home(monkeypatch, str(home_link))
     monkeypatch.setattr("shutil.which", lambda name: None)
     repo_script = lexical_checkout / "hermes"
     repo_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
@@ -933,7 +935,7 @@ def test_probe_skips_wrapper_with_escaping_python_shebang(
         encoding="utf-8",
     )
     broken_wrapper.chmod(0o755)
-    monkeypatch.setenv("HOME", str(xdg_home))
+    redirect_home(monkeypatch, str(xdg_home))
     _argv0_context(monkeypatch, str(repo_script))
     monkeypatch.setattr("shutil.which", lambda name: None)
 
@@ -967,7 +969,7 @@ def test_probe_accepts_shell_launcher_wrapper(tmp_path, xdg_home, monkeypatch):
         encoding="utf-8",
     )
     good_wrapper.chmod(0o755)
-    monkeypatch.setenv("HOME", str(xdg_home))
+    redirect_home(monkeypatch, str(xdg_home))
     _argv0_context(monkeypatch, str(repo_script))
     monkeypatch.setattr("shutil.which", lambda name: None)
 

@@ -26,6 +26,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 
 pytestmark = pytest.mark.skipif(
     sys.platform.startswith("win"),
@@ -78,7 +80,7 @@ def test_save_qwen_cli_tokens_writes_0o600_with_0o700_parent(tmp_path, monkeypat
     """``_save_qwen_cli_tokens`` must land the token file at 0o600 and parent at 0o700."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     # The Qwen CLI auth path lives under $HOME/.qwen by default — isolate it.
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     old_umask = os.umask(0o022)
     try:
         from hermes_cli import auth as auth_mod

@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 from hermes_cli import worktree_gc
 
 
@@ -42,7 +44,7 @@ def _git(args, cwd, env=None):
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
     """origin (bare) + clone with .worktrees/, HOME redirected for archives."""
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    redirect_home(monkeypatch, str(tmp_path / "home"))
     (tmp_path / "home").mkdir()
 
     origin = tmp_path / "origin.git"

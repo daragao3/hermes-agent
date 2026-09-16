@@ -22,6 +22,8 @@ import time
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 from agent import credential_pool as CP
 from agent.credential_pool import (
     AUTH_TYPE_OAUTH,
@@ -69,7 +71,7 @@ def profile_and_root(tmp_path, monkeypatch):
 
     monkeypatch.setattr(A, "_auth_file_path", lambda: profile_path)
     monkeypatch.setattr(A, "_global_auth_file_path", lambda: root_path)
-    monkeypatch.setenv("HOME", str(tmp_path / "not-the-root"))
+    redirect_home(monkeypatch, str(tmp_path / "not-the-root"))
     return profile_path, root_path
 
 
@@ -187,7 +189,7 @@ def test_codex_pool_refresh_holds_auth_store_lock_across_post(monkeypatch, tmp_p
     profile_path = tmp_path / "auth.json"
     monkeypatch.setattr(A, "_auth_file_path", lambda: profile_path)
     monkeypatch.setattr(A, "_global_auth_file_path", lambda: None)
-    monkeypatch.setenv("HOME", str(tmp_path / "not-the-root"))
+    redirect_home(monkeypatch, str(tmp_path / "not-the-root"))
 
     lock_held: dict = {"during_post": None}
     real_lock = A._auth_store_lock

@@ -1,3 +1,4 @@
+from tests._home_isolation import redirect_home
 """Tests for subprocess HOME handling in profile mode.
 
 Hermes state stays profile-scoped through HERMES_HOME. Host subprocesses should
@@ -42,7 +43,7 @@ class TestGetSubprocessHome:
         hermes_home = real_home / ".hermes" / "profiles" / "coder"
         profile_home = hermes_home / "home"
         profile_home.mkdir(parents=True)
-        monkeypatch.setenv("HOME", str(real_home))
+        redirect_home(monkeypatch, str(real_home))
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         from hermes_constants import get_subprocess_home
         assert get_subprocess_home() is None
@@ -77,7 +78,7 @@ class TestGetSubprocessHome:
         real_home.mkdir()
         monkeypatch.setenv("TERMINAL_HOME_MODE", "real")
         monkeypatch.setenv("HERMES_HOME", str(profile_dir))
-        monkeypatch.setenv("HOME", str(profile_home))
+        redirect_home(monkeypatch, str(profile_home))
         monkeypatch.setenv("HERMES_REAL_HOME", str(real_home))
 
         from hermes_constants import get_subprocess_home, get_real_home
@@ -125,7 +126,7 @@ class TestMakeRunEnvHomeInjection:
         real_home.mkdir()
         monkeypatch.setattr(hermes_constants, "is_container", lambda: False)
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-        monkeypatch.setenv("HOME", str(real_home))
+        redirect_home(monkeypatch, str(real_home))
         monkeypatch.setenv("PATH", "/usr/bin:/bin")
 
         from tools.environments.local import _make_run_env
@@ -143,7 +144,7 @@ class TestMakeRunEnvHomeInjection:
         monkeypatch.setattr(hermes_constants, "is_container", lambda: False)
         monkeypatch.setenv("TERMINAL_HOME_MODE", "profile")
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-        monkeypatch.setenv("HOME", str(real_home))
+        redirect_home(monkeypatch, str(real_home))
         monkeypatch.setenv("PATH", "/usr/bin:/bin")
 
         from tools.environments.local import _make_run_env

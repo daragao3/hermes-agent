@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 import hermes_cli.browser_connect as bc
 
 
@@ -146,7 +148,7 @@ class TestDetectDefaultLinux:
 
 class TestLinuxProfileDir:
     def _env(self, monkeypatch, home):
-        monkeypatch.setenv("HOME", str(home))
+        redirect_home(monkeypatch, str(home))
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
 
     def test_native_path_when_nothing_exists(self, tmp_path, monkeypatch):
@@ -173,6 +175,6 @@ class TestLinuxProfileDir:
         assert bc.real_profile_data_dir("brave", "Linux") == str(native)
 
     def test_xdg_config_home_is_honoured(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("HOME", str(tmp_path))
+        redirect_home(monkeypatch, str(tmp_path))
         monkeypatch.setenv("XDG_CONFIG_HOME", "/home/t/.config")
         assert bc.real_profile_data_dir("edge", "Linux") == "/home/t/.config/microsoft-edge"

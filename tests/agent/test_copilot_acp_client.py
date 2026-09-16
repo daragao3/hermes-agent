@@ -170,6 +170,8 @@ if __name__ == "__main__":
 from unittest.mock import patch as _patch
 import pytest
 
+from tests._home_isolation import redirect_home
+
 
 def _make_home_client(tmp_path):
     return CopilotACPClient(
@@ -195,7 +197,7 @@ def test_run_prompt_preserves_real_home_when_profile_home_available(monkeypatch,
     real_home = tmp_path / "real-home"
     real_home.mkdir()
 
-    monkeypatch.setenv("HOME", str(real_home))
+    redirect_home(monkeypatch, str(real_home))
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     # Hermeticity: an ambient HERMES_REAL_HOME (exported by Hermes' own
     # terminal contract on dev boxes) outranks HOME in the candidate ladder,

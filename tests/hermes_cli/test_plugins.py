@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from tests._home_isolation import redirect_home
 import yaml
 
 from hermes_cli.plugins import (
@@ -194,7 +196,7 @@ class TestPluginDiscovery:
         , encoding="utf-8")
         empty_bundled = tmp_path / "bundled"
         empty_bundled.mkdir()
-        monkeypatch.setenv("HOME", str(tmp_path / "os-home"))
+        redirect_home(monkeypatch, str(tmp_path / "os-home"))
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setattr(plugins_mod, "get_bundled_plugins_dir", lambda: empty_bundled)
 
@@ -232,7 +234,7 @@ class TestPluginDiscovery:
         , encoding="utf-8")
         empty_bundled = tmp_path / "bundled"
         empty_bundled.mkdir()
-        monkeypatch.setenv("HOME", str(tmp_path / "os-home"))
+        redirect_home(monkeypatch, str(tmp_path / "os-home"))
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setattr(plugins_mod, "get_bundled_plugins_dir", lambda: empty_bundled)
 
