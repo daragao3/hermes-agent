@@ -561,28 +561,39 @@ def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT
     timeout = _clamp_timeout(timeout_s)
     started = time.time()
     try:
-        proc = subprocess.run(
-            cmd, input=code, capture_output=True, text=True, timeout=timeout, env=env,
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
             **_windows_popen_kwargs(),
         )
+    except OSError as e:
+        return tool_error(f"Failed to launch browser-use CLI: {e}")
+    try:
+        stdout, stderr_text = proc.communicate(code, timeout=timeout)
     except subprocess.TimeoutExpired:
+        # Not ``subprocess.run(timeout=...)``: after killing the CLI it calls ``communicate()``
+        # again and blocks until every holder of the pipes exits -- and the daemon the CLI
+        # forks inherits them, so on Windows that wait outlived the timeout by the daemon's
+        # whole lifetime (measured 2026-09-16 with a fake CLI that spawned a 30s child: a 1s
+        # timeout returned after 30s). Kill the CLI and report without touching the pipes:
+        # closing a reader from here deadlocks on the buffer lock the communicate() thread
+        # holds, and those threads are daemons that unwind on their own once the daemon
+        # process exits. The daemon is expected to keep working, as the message says.
+        proc.kill()
         return tool_error(f"browser-use exec timed out after {timeout}s. The daemon may still be working; retry "
                           f"with a larger timeout_s (max {_MAX_TIMEOUT_S}), or split the work into several calls that "
                           "append to workspace files — anything already written to the workspace is preserved.")
-    except OSError as e:
-        return tool_error(f"Failed to launch browser-use CLI: {e}")
 
-    result = {"success": proc.returncode == 0, "exit_code": proc.returncode, "output": proc.stdout}
+    result = {"success": proc.returncode == 0, "exit_code": proc.returncode, "output": stdout}
     if workspace:
         result["workspace"] = workspace
     if session:
         result["session"] = session
-    stderr = (proc.stderr or "").strip()
+    stderr = (stderr_text or "").strip()
     if len(stderr) > _STDERR_CAP_CHARS:
         stderr = stderr[:_STDERR_CAP_CHARS] + "\n… (stderr truncated)"
     if stderr:
         result["stderr"] = stderr
-    screenshot = _find_screenshot(proc.stdout, started)
+    screenshot = _find_screenshot(stdout, started)
     if screenshot:
         result["screenshot_path"] = screenshot
         native = _native_screenshot_result(result, screenshot)
