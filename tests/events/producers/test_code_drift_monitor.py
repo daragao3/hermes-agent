@@ -587,6 +587,20 @@ class TestSustainedEpisode:
         assert m.evaluate(behind(3), now=6 * 3600.0) is not None
         assert len(_drift_events(bus)) == 2
 
+    def test_dirty_flip_respects_cooldown(self, bus, tmp_path):
+        """2026-09-15: sibling sessions dirtying and clearing the shared
+        checkout flipped ``dirty`` between probes and each flip re-paged the
+        same episode (4 of 11 agent-src pages that day). The flag is a
+        measurement, not incident identity."""
+        m = make_monitor(bus, tmp_path)
+        m.evaluate(behind(3, dirty=False), now=0.0)
+        assert m.evaluate(behind(3, dirty=True), now=900.0) is None
+        assert m.evaluate(behind(3, dirty=False), now=1800.0) is None
+        assert len(_drift_events(bus)) == 1
+        # The re-ping after the cooldown carries the current measurement.
+        assert m.evaluate(behind(3, dirty=True), now=6 * 3600.0) is not None
+        assert _drift_events(bus)[-1].payload["dirty"] is True
+
     def test_count_change_respects_cooldown(self, bus, tmp_path):
         m = make_monitor(bus, tmp_path)
         m.evaluate(behind(3), now=0.0)

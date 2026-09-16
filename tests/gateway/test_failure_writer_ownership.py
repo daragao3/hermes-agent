@@ -5,7 +5,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
+# The probe boots a gateway in a fresh interpreter and drives 20 observations;
+# measured 62 s wall on the loaded box (2026-09-15, 28 concurrent sessions),
+# so the file-level 30 s pytest-timeout cap fired before the probe's own 90 s
+# bound could -- the nightly-test-gate slice-3 red that survived 5fcabf5ffd.
+# Same shape as tests/gateway/test_matrix.py: the per-test cap must exceed
+# the subprocess bound it wraps, or the cap is the thing being measured.
+_PROBE_TIMEOUT_S = 90
+
+
+@pytest.mark.timeout(_PROBE_TIMEOUT_S + 30)
 def test_gateway_failure_writer_preserves_accepted_turn_identity(tmp_path):
     root = Path(__file__).resolve().parents[2]
     receipt = tmp_path / "receipt.json"
@@ -19,7 +30,7 @@ def test_gateway_failure_writer_preserves_accepted_turn_identity(tmp_path):
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
-        timeout=90,
+        timeout=_PROBE_TIMEOUT_S,
     )
     assert receipt.exists(), result.stdout + result.stderr
     data = json.loads(receipt.read_text(encoding="utf-8"))
