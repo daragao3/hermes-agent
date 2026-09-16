@@ -242,11 +242,9 @@ def nous_rate_limit_guard(
                 agent._buffer_status(f"⏳ {_quota_msg}")
                 _skipped_provider = agent.provider
                 if agent._try_activate_fallback(reason=FailoverReason.rate_limit):
-                    # Keep restore_primary_runtime gated for the whole reset window, not just the
-                    # 60s exponential step _arm_rate_limit_cooldown armed; otherwise the next turn
-                    # restores the primary, this guard diverts again, and the notice repeats.
-                    agent._rate_limited_until = max(
-                        getattr(agent, "_rate_limited_until", 0) or 0, time.monotonic() + _remaining)
+                    # try_activate_fallback itself extends _rate_limited_until to the recorded
+                    # reset (and words the notice accordingly), so restore_primary_runtime stays
+                    # gated for the whole window instead of the 60s exponential step.
                     logger.info(
                         "Provider quota guard: skipped %s (resets in %.0fs), now on %s/%s",
                         _skipped_provider, _remaining, agent.provider, agent.model,

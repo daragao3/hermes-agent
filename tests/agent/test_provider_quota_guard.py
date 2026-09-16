@@ -159,8 +159,11 @@ def test_guard_diverts_an_exhausted_primary_before_calling_it(guard_env, monkeyp
     assert verdict.retry_count == 0 and verdict.compression_attempts == 0
     assert agent._try_activate_fallback.call_count == 1
     assert agent.provider == "opencode-go"
-    # restore_primary_runtime stays gated for the whole window, not the 60s backoff step.
-    assert agent._rate_limited_until - time.monotonic() > 377000
+    # The rate_limit reason is what makes the real try_activate_fallback consult the memo,
+    # extend _rate_limited_until to the recorded reset and word the notice accordingly
+    # (covered in tests/run_agent/test_provider_fallback.py).
+    from agent.error_classifier import FailoverReason
+    assert agent._try_activate_fallback.call_args.kwargs == {"reason": FailoverReason.rate_limit}
     assert "usage limit reached" in agent._buffer_status.call_args[0][0]
 
 
