@@ -94,6 +94,27 @@ def _executable_name(value: str) -> str:
     return Path(value.replace("\\", "/")).name.removesuffix(".exe").lower()
 
 
+_WINDOWS_PATH_WORD_RE = re.compile(
+    r"^(?:[A-Za-z_][A-Za-z0-9_]*=|--?[A-Za-z][A-Za-z0-9-]*=)?['\"]?(?:[A-Za-z]:[\\/]|\\\\)")
+
+
+def _literal_windows_path_word(raw_word: str) -> str:
+    """Keep a Windows path word's backslashes away from the shell-escape stripper.
+
+    The deobfuscator reads ``\\`` as a POSIX escape, so ``git -C C:\\Users\\x\\hermes-agent
+    checkout main`` reached the comparison as ``C:Usersxhermes-agent`` and the guard let it
+    through -- measured 2026-09-16 on Windows: the live checkout could be checked out,
+    rebased or ``worktree remove``d from outside whenever the path used backslashes, while
+    forward slashes and an in-repo cwd were caught. A drive-letter or UNC prefix, bare or
+    behind ``--work-tree=`` / ``GIT_DIR=``, is a path in every shell an agent drives here
+    (PowerShell, cmd, Git bash all hand it to git literally), so it is normalised to ``/``
+    -- a spelling ``_resolve`` already handles -- before the shell-syntax pass. A POSIX
+    shell that would have eaten the backslashes now sees that one word over-blocked, which
+    is the right failure direction for a guard on the running source checkout.
+    """
+    return raw_word.replace("\\", "/") if _WINDOWS_PATH_WORD_RE.match(raw_word) else raw_word
+
+
 def _shell_words_at(command: str, start: int) -> list[str]:
     """Deobfuscated words of the simple command at ``start`` (stops at a newline; max 64)."""
     words: list[str] = []
@@ -102,7 +123,7 @@ def _shell_words_at(command: str, start: int) -> list[str]:
         word_start, word_end, raw_word = _read_shell_word(command, cursor)
         if word_start == word_end or (words and "\n" in command[cursor:word_start]):
             break
-        words.append(_deobfuscate_shell_word_for_detection(raw_word))
+        words.append(_deobfuscate_shell_word_for_detection(_literal_windows_path_word(raw_word)))
         cursor = word_end
     return words
 

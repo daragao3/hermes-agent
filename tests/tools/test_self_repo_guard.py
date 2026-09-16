@@ -1,6 +1,7 @@
 """Tests for tools/self_repo_guard.py — the running-source-checkout git guard."""
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -379,4 +380,49 @@ class TestBlockMessageGuidance:
         monkeypatch.setenv("HERMES_HOME", "/custom/hermes-home")
         hit, msg = _detect("git rebase origin/main", repo, repo)
         assert hit is True
-        assert "/custom/hermes-home/scratch" in msg
+        # The hint is rendered from a Path, so it carries the host's separator.
+        assert str(Path("/custom/hermes-home") / "scratch") in msg
+
+
+@pytest.mark.windows_only
+class TestWindowsPathSpellings:
+    """Backslash paths are the native spelling on Windows and must be seen as the repo.
+
+    Before ``_literal_windows_path_word`` the shell-escape stripper turned
+    ``C:\\Users\\x\\hermes-agent`` into ``C:Usersxhermes-agent``, so every one of
+    these targeted mutations passed the guard (2026-09-16). The forward-slash and
+    in-repo-cwd spellings were always caught; the cases below pin the backslash ones.
+    """
+
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "git -C {repo} checkout main",
+            'git -C "{repo}" checkout main',
+            "git worktree remove {repo}",
+            "git worktree move {repo} {other}",
+            "cd {repo} && git rebase origin/main",
+            "git --git-dir={repo}\\.git --work-tree={repo} checkout main",
+            "GIT_DIR={repo}\\.git GIT_WORK_TREE={repo} git checkout main",
+        ],
+    )
+    def test_backslash_paths_targeting_repo_are_blocked(self, repo, tmp_path, template):
+        assert "\\" in str(repo), "this host does not spell paths with backslashes"
+        command = template.format(repo=repo, other=tmp_path / "moved")
+        hit, msg = _detect(command, tmp_path, repo)
+        assert hit is True, command
+        assert str(repo) in msg
+
+    def test_backslash_path_to_other_repo_is_not_blocked(self, repo, tmp_path):
+        other = tmp_path / "other-project"
+        other.mkdir()
+        hit, _ = _detect(f"git -C {other} checkout main", repo, repo)
+        assert hit is False
+
+    def test_unc_prefix_is_treated_as_a_path_not_an_escape(self, repo, tmp_path):
+        from tools.self_repo_guard import _literal_windows_path_word
+
+        assert _literal_windows_path_word("\\\\server\\share\\repo") == "//server/share/repo"
+        assert _literal_windows_path_word("origin/main") == "origin/main"
+        assert _literal_windows_path_word("a\\b") == "a\\b"   # not a path prefix: left to the shell rules
+
