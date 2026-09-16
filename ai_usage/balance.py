@@ -10,11 +10,10 @@ def balance_provider(key: str, label: str, snapshot: Optional[Any]) -> dict:
 
     Unlike ``budget_provider`` (rolling %-windows) and ``tokensum_provider``
     (log-summed token counts), balance mode carries a single outstanding-$
-    figure — the money left on a prepaid, direct-billed key. (DeepSeek was
-    the only such provider until 2026-09-13; its row was retired from
-    ai_usage.contract.PROVIDERS because DeepSeek is now served via OpenCode
-    Go. No provider in the grid uses this mode today; it stays for the next
-    prepaid key.) The tray colors the row by how low the balance has run; the
+    figure — the money left on a prepaid, direct-billed key (DeepSeek direct:
+    retired from ai_usage.contract.PROVIDERS 2026-09-13 while it was served
+    only via OpenCode Go, restored 2026-09-16 as the live fallback hop after
+    opencode-go). The tray colors the row by how low the balance has run; the
     numeric value is the whole story, so there are no per-window bars.
     """
     base = {"key": key, "label": label, "mode": "balance"}

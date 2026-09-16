@@ -130,7 +130,7 @@ def test_record_raising_does_not_break_collect(tmp_path, monkeypatch):
     by = {p["key"]: p for p in data["providers"]}
     assert by["anthropic"]["state"] == "ok"
     assert by["anthropic"]["windows"][0]["used_pct"] == 100.0
-    assert len(data["providers"]) == 7  # deepseek row retired 2026-09-13
+    assert len(data["providers"]) == 8  # deepseek row restored 2026-09-16
     assert "diagnostics" in data
 
 

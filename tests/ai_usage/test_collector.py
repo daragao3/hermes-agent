@@ -84,13 +84,13 @@ def test_collect_builds_all_providers(tmp_path):
     assert data["generated_at"] == "2026-08-04T15:00:00Z"
     by = {p["key"]: p for p in data["providers"]}
     assert list(by.keys()) == [
-        "anthropic", "anthropic2", "openai-codex", "kimi", "gemini",
-        "xai", "opencode-go",
+        "anthropic", "anthropic2", "openai-codex", "kimi", "deepseek",
+        "gemini", "xai", "opencode-go",
     ]
-    # Retired 2026-09-13: the direct DeepSeek balance row must not be emitted
-    # or fetched -- the tray builds its label map from the rows it receives, so
-    # a missing key is simply a missing row, not a broken panel.
-    assert "deepseek" not in by
+    # DeepSeek direct restored 2026-09-16 (live fallback hop again); the tray
+    # builds its label map from the rows it receives, so the row simply
+    # reappears on the first post-deploy poll.
+    assert by["deepseek"]["mode"] == "balance"
     # anthropic2 mirrors anthropic's budget mode (2nd subscription, own token)
     assert by["anthropic2"]["mode"] == "budget"
     assert by["anthropic2"]["state"] == "unconfigured"
@@ -277,15 +277,15 @@ def test_collect_propagates_remaining_budget_and_reports_sanitized_attempts(tmp_
     )
 
     assert [provider for provider, _ in calls] == [
-        "anthropic", "anthropic2", "openai-codex", "kimi",
+        "anthropic", "anthropic2", "openai-codex", "kimi", "deepseek",
         "gemini", "xai", "opencode-go",
     ]
     # Provider #1 gets an equal SHARE of the pot, not the whole pot. Before the
     # 2026-08-25 fair-share change this asserted `== 5.0` -- the drain-in-order
     # contract that let anthropic spend 87s of a 90s budget and starve the
-    # others into deadline_exhausted. Seven budgeted providers (deepseek
-    # retired 2026-09-13) => 5.0/7.
-    assert calls[0][1] == pytest.approx(5.0 / 7)
+    # others into deadline_exhausted. Eight budgeted providers (deepseek
+    # restored 2026-09-16) => 5.0/8.
+    assert calls[0][1] == pytest.approx(5.0 / 8)
     assert calls[0][1] < 5.0
     diagnostics = data["diagnostics"]
     assert diagnostics["deadline_seconds"] == 5.0
@@ -400,8 +400,8 @@ def test_collect_keeps_one_argument_fetcher_compatibility(tmp_path):
 
     data = collect(db_path=str(db), prev=None, fetch_usage=legacy_fetch, now=NOW)
 
-    assert calls == ["anthropic", "anthropic2", "openai-codex", "kimi", "gemini", "xai", "opencode-go"]
-    assert len(data["providers"]) == 7
+    assert calls == ["anthropic", "anthropic2", "openai-codex", "kimi", "deepseek", "gemini", "xai", "opencode-go"]
+    assert len(data["providers"]) == 8
 
 
 def test_carried_forward_pre_provenance_row_gets_hermes_source(tmp_path):
@@ -601,7 +601,7 @@ def test_a_hog_in_first_position_no_longer_starves_the_rest(tmp_path):
 
     reached = [p for p, _b in calls]
     assert reached == [
-        "anthropic", "anthropic2", "openai-codex", "kimi",
+        "anthropic", "anthropic2", "openai-codex", "kimi", "deepseek",
         "gemini", "xai", "opencode-go",
     ]
     outcomes = {i["key"]: i["outcome"] for i in data["diagnostics"]["providers"]}
