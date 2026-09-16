@@ -20,6 +20,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.bash_support import BASH
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
@@ -60,7 +61,7 @@ def _run_guard(install_dir: Path) -> None:
         f"INSTALL_DIR={shlex.quote(str(install_dir))}\n"
         f"{block}\n"
     )
-    res = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8")
+    res = subprocess.run([BASH, "-c", script], capture_output=True, text=True, encoding="utf-8")
     assert res.returncode == 0, res.stderr
 
 
