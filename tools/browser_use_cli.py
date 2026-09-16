@@ -211,6 +211,10 @@ def is_browser_use_cli_mode() -> bool:
     return backend == _BACKEND_KEY if backend else (is_legacy_browser_use_cloud_config(_read_browser_cfg()) or _find_cli() is not None)
 
 
+# Seconds a rate-limit stamp may sit ahead of time.time() and still count as just touched.
+_STAMP_CLOCK_SKEW_S = 60.0
+
+
 def default_downgrade_notice() -> Optional[str]:
     """One-line notice when ``browser.backend`` is unset but the CLI is not runnable, so
     the session fell back to the built-in tools. Rate-limited to once per 24h via a stamp file."""
@@ -219,7 +223,12 @@ def default_downgrade_notice() -> Optional[str]:
             return None  # explicit choice / Camofox / CLI present — nothing downgraded
         stamp = Path(get_hermes_home()) / "cache" / ".browser_use_default_notice"
         with contextlib.suppress(OSError):
-            if 0 <= time.time() - stamp.stat().st_mtime < 24 * 3600:
+            # A stamp slightly AHEAD of the clock is one we just touched, not a future one:
+            # on Windows st_mtime comes from the coarse system tick while time.time() is the
+            # precise clock, and touch-then-stat read negative ~11% of the time (2026-09-16),
+            # which repeated the notice. Only a stamp well into the future (clock skew) is
+            # ignored, so it can never silence the notice for good.
+            if -_STAMP_CLOCK_SKEW_S <= time.time() - stamp.stat().st_mtime < 24 * 3600:
                 return None
         with contextlib.suppress(OSError):
             stamp.parent.mkdir(parents=True, exist_ok=True)

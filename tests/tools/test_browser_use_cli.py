@@ -1142,6 +1142,29 @@ class TestDefaultDowngradeNotice:
         assert notice is not None
         assert "hermes tools" in notice
 
+    def test_stamp_a_hair_ahead_of_the_clock_still_rate_limits(self, tmp_path, monkeypatch):
+        """Windows: st_mtime is stamped from the coarse system tick, time.time() from the
+        precise clock, so a stamp touched a moment ago can read as microseconds in the
+        future. That must still count as just-touched (was: notice repeated, ~11% of runs)."""
+        self._isolate(tmp_path, monkeypatch)
+        monkeypatch.setattr(bu_cli, "_find_cli", lambda: None)
+        assert bu_cli.default_downgrade_notice() is not None
+        stamp = tmp_path / "home" / "cache" / ".browser_use_default_notice"
+        ahead = time.time() + 0.002
+        os.utime(stamp, (ahead, ahead))
+        assert bu_cli.default_downgrade_notice() is None
+
+    def test_far_future_stamp_does_not_silence_the_notice(self, tmp_path, monkeypatch):
+        """The tolerance is small on purpose: real clock skew must not mute it for good."""
+        self._isolate(tmp_path, monkeypatch)
+        monkeypatch.setattr(bu_cli, "_find_cli", lambda: None)
+        stamp = tmp_path / "home" / "cache" / ".browser_use_default_notice"
+        stamp.parent.mkdir(parents=True)
+        stamp.touch()
+        future = time.time() + 3600
+        os.utime(stamp, (future, future))
+        assert bu_cli.default_downgrade_notice() is not None
+
     def test_rate_limited_within_24h(self, tmp_path, monkeypatch):
         self._isolate(tmp_path, monkeypatch)
         monkeypatch.setattr(bu_cli, "_find_cli", lambda: None)
