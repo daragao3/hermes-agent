@@ -11,15 +11,15 @@ def modes_of_grid(grid):
 def test_providers_grid_order_and_modes():
     keys = [p[0] for p in PROVIDERS]
     assert keys == [
-        "anthropic", "anthropic2", "openai-codex", "kimi", "gemini",
-        "xai", "opencode-go",
+        "anthropic", "anthropic2", "openai-codex", "kimi", "deepseek",
+        "gemini", "xai", "opencode-go",
     ]
-    # DeepSeek retired 2026-09-13: served via OpenCode Go, the direct prepaid
-    # account is not a path -- watching it paged "balance chain_exhausted"
-    # every poll. Balance mode itself stays available for a future provider.
-    assert "deepseek" not in keys
-    assert "balance" not in modes_of_grid(PROVIDERS).values()
+    # DeepSeek direct: retired 2026-09-13 (served only via OpenCode Go, $0
+    # balance paged every poll), restored 2026-09-16 as the balance-mode hop
+    # after opencode-go in every fallback chain -- a live path again.
     modes = modes_of_grid(PROVIDERS)
+    assert modes["deepseek"] == "balance"
+    assert [k for k, m in modes.items() if m == "balance"] == ["deepseek"]
     assert modes["anthropic"] == "budget" and modes["kimi"] == "budget"
     # Second, separate Anthropic subscription via its own
     # ANTHROPIC2_OAUTH_TOKEN; same oauth usage endpoint, same window labels.

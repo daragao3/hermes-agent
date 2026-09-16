@@ -9,12 +9,11 @@ from typing import Optional
 WARN_PCT = 90.0
 
 # Sized for a finite prepaid top-up, historically funded around $10 at a
-# time (the direct DeepSeek key, until its row was retired from PROVIDERS on
-# 2026-09-13 -- DeepSeek is served via OpenCode Go now, so no grid provider
-# is balance-mode today). $2.00 gives roughly one to a few days of runway at
-# typical burn before the balance actually hits $0 and requests start
-# failing -- enough lead time to switch models, not so early that a $9.98
-# balance nags on every poll.
+# time (the direct DeepSeek key -- retired from PROVIDERS 2026-09-13, restored
+# 2026-09-16 as the fallback hop after opencode-go; ~$9.7 on restore day).
+# $2.00 gives roughly one to a few days of runway at typical burn before the
+# balance actually hits $0 and requests start failing -- enough lead time to
+# switch models, not so early that a $9.98 balance nags on every poll.
 BALANCE_WARN_USD = 2.0
 
 
