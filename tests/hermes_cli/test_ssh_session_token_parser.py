@@ -135,7 +135,10 @@ def test_token_file_rejects_parent_escape(tmp_path, monkeypatch):
     escaped.chmod(0o600)
     override = set_hermes_home_override(home / ".hermes")
     try:
-        with pytest.raises(SystemExit, match="invalid runtime path"):
+        # Both branches reject the escape: POSIX keeps the ".." lexically and trips the
+        # runtime-path shape check; Windows resolves it first and trips the containment
+        # check. Either message is the contract -- the token file must not be read.
+        with pytest.raises(SystemExit, match="invalid runtime path|must be under the desktop-ssh directory"):
             _read_ssh_session_token_file(str(token_root / ".." / escaped.name))
         assert escaped.exists()
     finally:

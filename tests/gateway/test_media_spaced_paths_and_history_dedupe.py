@@ -96,7 +96,10 @@ class TestHistoryMediaDedupe:
 
         paths = _collect_history_media_paths(history)
 
-        assert str(tmp_path / "audio cache" / "old.ogg") in paths
+        # "Delivery form" is what extract_media delivers: os.path.expanduser of the tag's
+        # path, verbatim -- on Windows that is a backslashed home + the tag's forward
+        # slashes, not a Path re-spelling. Compare through the same call.
+        assert os.path.expanduser("~/audio cache/old.ogg") in paths
 
     def test_empty_history_empty_set(self):
         assert _collect_history_media_paths([]) == set()
