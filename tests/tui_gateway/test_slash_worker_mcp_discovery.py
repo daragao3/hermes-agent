@@ -26,6 +26,13 @@ if not hasattr(_mcp_server_mod, "MCPServer"):
     )
 
 
+# The repo's default addopts pin a 30s per-test watchdog (--timeout=30). This
+# node spends ~13-20s on a cold slash-worker child alone, plus the deliberate
+# probe start delay and the discovery wait below, so under sweep load the
+# watchdog fired before the assertion could (2026-09-15 twelve-worker sweep,
+# run 1). Lift it above RESPONSE_BUDGET_S, the same way
+# test_isolated_orphan_activity.py / test_compute_host_turn_protocol.py do.
+@pytest.mark.timeout(150)
 def test_profile_local_mcp_tool_is_visible_in_slash_worker(tmp_path):
     profile_home = tmp_path / "profile-home"
     profile_home.mkdir()
