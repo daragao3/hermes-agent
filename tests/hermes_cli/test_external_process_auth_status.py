@@ -17,6 +17,8 @@ import os
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 from hermes_cli.auth import (
     get_auth_status,
     get_external_process_provider_status,
@@ -45,7 +47,7 @@ def test_get_auth_status_dispatches_external_process_by_auth_type(
     fake.chmod(0o755)
     monkeypatch.setenv("HERMES_COPILOT_ACP_COMMAND", str(fake))
     # Point HOME somewhere empty so on-disk credential stores don't leak in.
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
 
     status = get_auth_status("copilot-acp")
 
@@ -68,14 +70,14 @@ def test_external_process_status_rejects_wrong_auth_type():
 
 
 def test_auth_verified_false_without_evidence(tmp_path, monkeypatch, _clean_copilot_env):
-    monkeypatch.setenv("HOME", str(tmp_path))  # no ~/.config/github-copilot
+    redirect_home(monkeypatch, str(tmp_path))  # no ~/.config/github-copilot
     status = get_external_process_provider_status("copilot-acp")
     assert status["auth_verified"] is False
     assert status["auth_source"] is None
 
 
 def test_auth_verified_from_supported_env_token(tmp_path, monkeypatch, _clean_copilot_env):
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     monkeypatch.setenv("GH_TOKEN", "gho_" + "x" * 36)  # supported OAuth prefix
 
     status = get_external_process_provider_status("copilot-acp")
@@ -87,7 +89,7 @@ def test_auth_verified_from_supported_env_token(tmp_path, monkeypatch, _clean_co
 def test_classic_pat_is_not_login_evidence(tmp_path, monkeypatch, _clean_copilot_env):
     # ghp_* classic PATs are rejected by the Copilot API — presence of one
     # must not be presented as a working login.
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
 
     status = get_external_process_provider_status("copilot-acp")
@@ -96,7 +98,7 @@ def test_classic_pat_is_not_login_evidence(tmp_path, monkeypatch, _clean_copilot
 
 
 def test_auth_verified_from_on_disk_credential_store(tmp_path, monkeypatch, _clean_copilot_env):
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     store = tmp_path / ".config" / "github-copilot"
     store.mkdir(parents=True)
     (store / "hosts.json").write_text(
@@ -110,7 +112,7 @@ def test_auth_verified_from_on_disk_credential_store(tmp_path, monkeypatch, _cle
 
 
 def test_empty_credential_store_is_not_evidence(tmp_path, monkeypatch, _clean_copilot_env):
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     store = tmp_path / ".config" / "github-copilot"
     store.mkdir(parents=True)
     (store / "hosts.json").write_text("{}", encoding="utf-8")  # logged out
@@ -123,7 +125,7 @@ def test_empty_credential_store_is_not_evidence(tmp_path, monkeypatch, _clean_co
 def test_auth_verified_from_copilot_cli_plaintext_store(tmp_path, monkeypatch, _clean_copilot_env):
     # `copilot login` without an OS keychain writes the token into
     # ~/.copilot/config.json (JSONC, with //-comment header lines).
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     cfg_dir = tmp_path / ".copilot"
     cfg_dir.mkdir()
     (cfg_dir / "config.json").write_text(
@@ -145,7 +147,7 @@ def test_auth_verified_from_copilot_cli_plaintext_store(tmp_path, monkeypatch, _
 def test_copilot_cli_store_without_tokens_is_not_evidence(tmp_path, monkeypatch, _clean_copilot_env):
     # A config.json exists after first launch even before any login —
     # its presence alone must not read as signed-in.
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     cfg_dir = tmp_path / ".copilot"
     cfg_dir.mkdir()
     (cfg_dir / "config.json").write_text(
@@ -167,7 +169,7 @@ def test_explicit_filter_keeps_signed_in_external_process_row(tmp_path, monkeypa
     # carve-out and keep the row.
     from hermes_cli.inventory import _filter_explicit_provider_rows
 
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     cfg_dir = tmp_path / ".copilot"
     cfg_dir.mkdir()
     (cfg_dir / "config.json").write_text(
@@ -189,7 +191,7 @@ def test_explicit_filter_drops_unverified_external_process_row(tmp_path, monkeyp
     # explicit configuration — the desktop filter keeps its narrower contract.
     from hermes_cli.inventory import _filter_explicit_provider_rows
 
-    monkeypatch.setenv("HOME", str(tmp_path))  # no credential stores
+    redirect_home(monkeypatch, str(tmp_path))  # no credential stores
 
     class _Ctx:
         current_provider = "nous"
@@ -249,7 +251,7 @@ def test_catalog_key_resolves_from_copilot_cli_store(tmp_path, monkeypatch, _cle
 
     from hermes_cli import models as models_mod
 
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     cfg_dir = tmp_path / ".copilot"
     cfg_dir.mkdir()
     (cfg_dir / "config.json").write_text(
@@ -279,7 +281,7 @@ def test_catalog_key_empty_when_cli_store_absent(tmp_path, monkeypatch, _clean_c
 
     from hermes_cli import models as models_mod
 
-    monkeypatch.setenv("HOME", str(tmp_path))  # no ~/.copilot at all
+    redirect_home(monkeypatch, str(tmp_path))  # no ~/.copilot at all
 
     with mock_patch(
         "hermes_cli.auth.resolve_api_key_provider_credentials",

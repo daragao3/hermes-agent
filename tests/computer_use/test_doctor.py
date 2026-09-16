@@ -26,6 +26,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -314,7 +316,7 @@ class TestDriverCmdResolution:
         driver.chmod(0o755)
 
         monkeypatch.delenv("HERMES_CUA_DRIVER_CMD", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
+        redirect_home(monkeypatch, str(tmp_path))
         monkeypatch.setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
 
         with patch("tools.computer_use.doctor._drive_health_report", return_value=_ok_report()) as health, \

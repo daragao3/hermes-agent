@@ -11,6 +11,8 @@ from argparse import Namespace
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 
 def _args(**overrides):
     base = {
@@ -220,7 +222,7 @@ def test_in_dir_expands_user_home(main_mod, launched, monkeypatch, tmp_path):
 
     home = tmp_path / "home"
     (home / "proj").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(home))
+    redirect_home(monkeypatch, str(home))
     start = os.getcwd()
 
     try:

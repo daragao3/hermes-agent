@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX user-local path regression")
 def test_status_finds_user_local_driver_when_path_omits_it(tmp_path, monkeypatch):
@@ -19,7 +21,7 @@ def test_status_finds_user_local_driver_when_path_omits_it(tmp_path, monkeypatch
     driver.chmod(0o755)
 
     monkeypatch.delenv("HERMES_CUA_DRIVER_CMD", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     monkeypatch.setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
 
     # No platform faking: ``~/.local/bin/cua-driver`` is a POSIX resolution

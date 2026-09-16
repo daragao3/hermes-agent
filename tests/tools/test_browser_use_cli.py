@@ -18,6 +18,8 @@ import time
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 import tools.browser_use_cli as bu_cli
 from tools import browser_tool_install as bt_install
 from tools import browser_tool_cloud as bt_cloud
@@ -927,7 +929,7 @@ class TestFindCliManagedBin:
     def _hermetic_home(self, tmp_path, monkeypatch):
         """Pin HOME so the ~/.local/bin probe can't leak the host's real
         user-level installs into these real-PATH-probing tests."""
-        monkeypatch.setenv("HOME", str(tmp_path / "userhome"))
+        redirect_home(monkeypatch, str(tmp_path / "userhome"))
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
         monkeypatch.setenv("PATH", str(tmp_path / "empty"))
 

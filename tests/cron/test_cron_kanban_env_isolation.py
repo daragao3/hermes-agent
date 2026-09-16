@@ -33,6 +33,8 @@ import threading
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 
 @pytest.fixture(autouse=True)
 def _clear_kanban_detect_cache():
@@ -383,7 +385,7 @@ def test_dispatcher_grants_only_the_assigned_worker_scope(tmp_path, monkeypatch)
     from hermes_cli.kanban_db_connect import connect
     from hermes_cli.kanban_db_dispatch import _default_spawn
 
-    monkeypatch.setenv("HOME", str(tmp_path))
+    redirect_home(monkeypatch, str(tmp_path))
     db = tmp_path / "board.db"
     monkeypatch.setenv("HERMES_KANBAN_DB", str(db))
     conn = connect(db)

@@ -2,6 +2,8 @@ import argparse
 import os
 
 import pytest
+
+from tests._home_isolation import redirect_home
 from hermes_constants import set_hermes_home_override, reset_hermes_home_override
 
 from hermes_cli.main_dashboard import _read_ssh_session_token_file
@@ -38,7 +40,7 @@ def test_serve_help_advertises_secure_ssh_bootstrap_flags(capsys):
 )
 def test_token_file_is_read_and_unlinked_through_private_directory(tmp_path, monkeypatch):
     home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
+    redirect_home(monkeypatch, str(home))
     hermes_home = home / ".hermes"
     token_dir = hermes_home / "desktop-ssh" / ("a" * 32)
     token_dir.mkdir(parents=True, mode=0o700)
@@ -63,7 +65,7 @@ def test_token_anchor_is_os_home_not_active_profile(tmp_path, monkeypatch):
     elsewhere entirely — neither must move the validator off
     ``$HOME/.hermes/desktop-ssh``, or the token is wrongly rejected."""
     home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
+    redirect_home(monkeypatch, str(home))
     token_dir = home / ".hermes" / "desktop-ssh" / ("a" * 32)
     token_dir.mkdir(parents=True, mode=0o700)
     token_path = token_dir / "0123456789abcdef.token"
@@ -87,7 +89,7 @@ def test_token_under_profile_desktop_ssh_is_rejected(tmp_path, monkeypatch):
     placed there must be rejected even while that profile is active — proving the
     anchor is the OS home, not the active profile (#69551)."""
     home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
+    redirect_home(monkeypatch, str(home))
     profile_home = home / ".hermes" / "profiles" / "coder"
     token_dir = profile_home / "desktop-ssh" / ("a" * 32)
     token_dir.mkdir(parents=True, mode=0o700)
@@ -105,7 +107,7 @@ def test_token_under_profile_desktop_ssh_is_rejected(tmp_path, monkeypatch):
 @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink contract")
 def test_token_file_rejects_symlink(tmp_path, monkeypatch):
     home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
+    redirect_home(monkeypatch, str(home))
     token_dir = home / ".hermes" / "desktop-ssh" / ("a" * 32)
     token_dir.mkdir(parents=True, mode=0o700)
     target = tmp_path / "token"
@@ -125,7 +127,7 @@ def test_token_file_rejects_symlink(tmp_path, monkeypatch):
 
 def test_token_file_rejects_parent_escape(tmp_path, monkeypatch):
     home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
+    redirect_home(monkeypatch, str(home))
     token_root = home / ".hermes" / "desktop-ssh"
     token_root.mkdir(parents=True, mode=0o700)
     escaped = token_root.parent / "0123456789abcdef.token"

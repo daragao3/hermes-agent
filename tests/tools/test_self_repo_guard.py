@@ -4,6 +4,8 @@ import subprocess
 
 import pytest
 
+from tests._home_isolation import redirect_home
+
 from tools.self_repo_guard import (
     detect_self_repo_git_mutation,
     get_running_source_root,
@@ -147,7 +149,7 @@ class TestBlocksMutationsInSourceRepo:
         assert hit is True
 
     def test_tilde_dash_c_path(self, repo, monkeypatch, tmp_path):
-        monkeypatch.setenv("HOME", str(repo.parent))
+        redirect_home(monkeypatch, str(repo.parent))
         hit, _ = _detect("git -C ~/hermes-agent checkout main", tmp_path, repo)
         assert hit is True
 
