@@ -1231,6 +1231,10 @@ class TestPruneParallelEquivalence:
 
 
 
+# Backstop only (see test_ten_concurrent_worktrees): these clone --depth 1, fetch --deepen
+# and push against a bare origin on disk; two of them tripped the suite-wide --timeout=30
+# inside subprocess.run().communicate() with the file at 1023 s under a shared box.
+@pytest.mark.timeout(scaled(300))
 class TestShallowCloneDeepening:
     """Shallow installer clones (`git clone --depth 1`) break the unpushed
     guard: the shallow boundary disconnects an older worktree HEAD from
