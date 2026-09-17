@@ -2159,13 +2159,19 @@ def test_hard_stop_waits_for_commit_already_admitted(tmp_path: Path) -> None:
     messages = [{"role": "user", "content": f"m{i}"} for i in range(20)]
     commit_started = threading.Event()
     allow_commit = threading.Event()
+    commit_finished = threading.Event()
+    stop_entered = threading.Event()
     stop_returned = threading.Event()
+    returned_after_commit = []
     original_archive = db.archive_and_compact
 
     def _blocked_archive(*args, **kwargs):
         commit_started.set()
-        assert allow_commit.wait(timeout=5)
-        return original_archive(*args, **kwargs)
+        assert allow_commit.wait(timeout=30)
+        try:
+            return original_archive(*args, **kwargs)
+        finally:
+            commit_finished.set()
 
     db.archive_and_compact = _blocked_archive
     agent.context_compressor.compress.side_effect = lambda *_a, **_kw: [
@@ -2180,24 +2186,33 @@ def test_hard_stop_waits_for_commit_already_admitted(tmp_path: Path) -> None:
         daemon=True,
     )
     compression.start()
-    assert commit_started.wait(timeout=2)
+    # The first compress in a test process pays the compression worker's lazy imports
+    # (agent.conversation_loop via _is_synthetic_compression_user_turn, the skills prompt via
+    # build_system_prompt: ~5 s quiet, well past 10 s under a loaded -j 12 runner), so the
+    # bound is generous; the Event returns the moment the commit is admitted.
+    assert commit_started.wait(timeout=20)
 
-    stop = threading.Thread(
-        target=lambda: (
-            agent.hard_interrupt("stop after commit admission"),
-            stop_returned.set(),
-        ),
-        daemon=True,
-    )
+    def _stop():
+        stop_entered.set()
+        agent.hard_interrupt("stop after commit admission")
+        returned_after_commit.append(commit_finished.is_set())
+        stop_returned.set()
+
+    stop = threading.Thread(target=_stop, daemon=True)
     stop.start()
-    assert not stop_returned.wait(timeout=0.1)
+    assert stop_entered.wait(timeout=5)
+    # The admitted commit holds the fence lock until finish_commit, and we hold the commit
+    # in _blocked_archive: a stop that returns in this window did not wait for it. A real
+    # bug signal, never a false one -- the commit provably cannot finish before allow_commit.
+    assert not stop_returned.wait(timeout=2.0)
     allow_commit.set()
-    compression.join(timeout=5)
-    stop.join(timeout=5)
+    compression.join(timeout=30)
+    stop.join(timeout=30)
 
     assert not compression.is_alive()
     assert not stop.is_alive()
     assert stop_returned.is_set()
+    assert returned_after_commit == [True], "hard_interrupt returned before the admitted commit finished"
     assert compression_result["value"][0][0]["content"] == (
         "[CONTEXT COMPACTION] summary"
     )
