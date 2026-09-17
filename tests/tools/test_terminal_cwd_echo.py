@@ -8,10 +8,18 @@ diagnostics after directory changes.
 
 import json
 import os
+import shlex
+from pathlib import Path
 
 import pytest
 
 from tools.terminal_tool import terminal_tool
+
+
+def _sh(path: Path) -> str:
+    """Spell *path* for the bash the local backend runs: an unquoted Windows
+    path loses its backslashes (``cd C:UsersdiegoAppData...``)."""
+    return shlex.quote(path.as_posix())
 
 
 @pytest.fixture
@@ -24,7 +32,7 @@ class TestCwdEcho:
     def test_cd_reports_new_cwd(self, isolated_home, tmp_path):
         target = tmp_path / "projdir"
         target.mkdir()
-        r = json.loads(terminal_tool(f"cd {target}", task_id="t-cwd-1"))
+        r = json.loads(terminal_tool(f"cd {_sh(target)}", task_id="t-cwd-1"))
         assert r["exit_code"] == 0
         assert "cwd" in r
         assert os.path.realpath(r["cwd"]) == os.path.realpath(str(target))
@@ -37,7 +45,7 @@ class TestCwdEcho:
     def test_cwd_persists_and_stops_reporting_when_stable(self, isolated_home, tmp_path):
         target = tmp_path / "stable"
         target.mkdir()
-        r1 = json.loads(terminal_tool(f"cd {target}", task_id="t-cwd-3"))
+        r1 = json.loads(terminal_tool(f"cd {_sh(target)}", task_id="t-cwd-3"))
         assert "cwd" in r1
         # Next command runs IN the new cwd without changing it: no echo.
         r2 = json.loads(terminal_tool("pwd", task_id="t-cwd-3"))
@@ -48,7 +56,7 @@ class TestCwdEcho:
         a = tmp_path / "a"
         b = tmp_path / "b"
         a.mkdir(); b.mkdir()
-        r = json.loads(terminal_tool(f"cd {a} && cd {b} && echo done", task_id="t-cwd-4"))
+        r = json.loads(terminal_tool(f"cd {_sh(a)} && cd {_sh(b)} && echo done", task_id="t-cwd-4"))
         assert r["exit_code"] == 0
         assert os.path.realpath(r.get("cwd", "")) == os.path.realpath(str(b))
 

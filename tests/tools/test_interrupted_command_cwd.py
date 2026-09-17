@@ -13,11 +13,19 @@ never opened.
 """
 
 import os
+import shlex
+from pathlib import Path
 
 import pytest
 
 import tools.terminal_tool as tt
 from tools.environments.local import LocalEnvironment
+
+
+def _sh(path: Path) -> str:
+    """Spell *path* for the bash the local backend runs: an unquoted Windows
+    path loses its backslashes (``cd C:UsersdiegoAppData...``)."""
+    return shlex.quote(path.as_posix())
 
 
 @pytest.fixture(autouse=True)
@@ -54,13 +62,13 @@ class TestCwdObservedFlag:
     def test_completed_command_reports_its_cwd(self, env, tmp_path):
         target = tmp_path / "done"
         target.mkdir()
-        result, _ = _run(env, "sess", f"cd {target} && pwd")
+        result, _ = _run(env, "sess", f"cd {_sh(target)} && pwd")
         assert result["cwd_observed"] is True
 
     def test_interrupted_command_reports_no_cwd(self, env, tmp_path):
         target = tmp_path / "slow"
         target.mkdir()
-        result, _ = _run(env, "sess", f"cd {target} && sleep 20", timeout=2)
+        result, _ = _run(env, "sess", f"cd {_sh(target)} && sleep 20", timeout=2)
         # Killed before the wrapper could print the marker.
         assert not result.get("cwd_observed")
 
@@ -72,15 +80,15 @@ class TestInterruptDoesNotStealAnotherSessionsCwd:
         mine.mkdir()
         theirs.mkdir()
 
-        _run(env, "mine", f"cd {mine} && pwd")
+        _run(env, "mine", f"cd {_sh(mine)} && pwd")
         assert tt.get_session_cwd("mine") == str(mine)
 
         # Another chat finishes a command; the shared env now points at it.
-        _run(env, "theirs", f"cd {theirs} && pwd")
+        _run(env, "theirs", f"cd {_sh(theirs)} && pwd")
         assert os.path.realpath(env.cwd) == os.path.realpath(str(theirs))
 
         # My command is interrupted. My record must not adopt their directory.
-        _run(env, "mine", f"cd {mine} && sleep 20", timeout=2)
+        _run(env, "mine", f"cd {_sh(mine)} && sleep 20", timeout=2)
         assert tt.get_session_cwd("mine") == str(mine)
 
     def test_next_command_still_runs_in_my_directory(self, env, tmp_path):
@@ -89,9 +97,9 @@ class TestInterruptDoesNotStealAnotherSessionsCwd:
         mine.mkdir()
         theirs.mkdir()
 
-        _run(env, "mine", f"cd {mine} && pwd")
-        _run(env, "theirs", f"cd {theirs} && pwd")
-        _run(env, "mine", f"cd {mine} && sleep 20", timeout=2)
+        _run(env, "mine", f"cd {_sh(mine)} && pwd")
+        _run(env, "theirs", f"cd {_sh(theirs)} && pwd")
+        _run(env, "mine", f"cd {_sh(mine)} && sleep 20", timeout=2)
 
         result, _ = _run(env, "mine", "pwd")
         assert os.path.realpath(result["output"].strip()) == os.path.realpath(str(mine))
@@ -103,11 +111,11 @@ class TestInterruptDoesNotStealAnotherSessionsCwd:
         first.mkdir()
         second.mkdir()
 
-        _run(env, "solo", f"cd {first} && pwd")
+        _run(env, "solo", f"cd {_sh(first)} && pwd")
         # Move the shared env elsewhere the way any other consumer would.
-        env.execute(f"cd {second} && pwd", cwd=str(second))
+        env.execute(f"cd {_sh(second)} && pwd", cwd=str(second))
 
-        _run(env, "solo", f"cd {first} && sleep 20", timeout=2)
+        _run(env, "solo", f"cd {_sh(first)} && sleep 20", timeout=2)
         assert tt.get_session_cwd("solo") == str(first)
 
 
@@ -119,10 +127,10 @@ class TestEchoIsGatedToo:
         mine.mkdir()
         theirs.mkdir()
 
-        _run(env, "mine", f"cd {mine} && pwd")
-        _run(env, "theirs", f"cd {theirs} && pwd")
+        _run(env, "mine", f"cd {_sh(mine)} && pwd")
+        _run(env, "theirs", f"cd {_sh(theirs)} && pwd")
 
-        result, command_cwd = _run(env, "mine", f"cd {mine} && sleep 20", timeout=2)
+        result, command_cwd = _run(env, "mine", f"cd {_sh(mine)} && sleep 20", timeout=2)
 
         # The echo block in terminal_tool reads env.cwd only when observed.
         post_cwd = getattr(env, "cwd", None) if result.get("cwd_observed") else None
@@ -173,19 +181,19 @@ class TestTerminalToolReadsTheFlag:
         theirs.mkdir()
 
         # My session establishes its directory through the real tool.
-        result = self._tool(monkeypatch, env, f"cd {mine} && pwd", "mine")
+        result = self._tool(monkeypatch, env, f"cd {_sh(mine)} && pwd", "mine")
         assert result["exit_code"] == 0
         assert tt.get_session_cwd("mine") == str(mine)
 
         # Another session finishes a command; the shared env moves to it.
-        result = self._tool(monkeypatch, env, f"cd {theirs} && pwd", "theirs")
+        result = self._tool(monkeypatch, env, f"cd {_sh(theirs)} && pwd", "theirs")
         assert result["exit_code"] == 0
         assert os.path.realpath(env.cwd) == os.path.realpath(str(theirs))
 
         # My command is interrupted. The tool must not write the record
         # (terminal_tool.py record write) ...
         result = self._tool(
-            monkeypatch, env, f"cd {mine} && sleep 20", "mine", timeout=2
+            monkeypatch, env, f"cd {_sh(mine)} && sleep 20", "mine", timeout=2
         )
         assert tt.get_session_cwd("mine") == str(mine)
         # ... and must not echo the foreign directory to the model
@@ -198,7 +206,7 @@ class TestTerminalToolReadsTheFlag:
         target = tmp_path / "target"
         target.mkdir()
 
-        result = self._tool(monkeypatch, env, f"cd {target} && pwd", "sess")
+        result = self._tool(monkeypatch, env, f"cd {_sh(target)} && pwd", "sess")
         assert result["exit_code"] == 0
         assert tt.get_session_cwd("sess") == str(target)
         assert os.path.realpath(result["cwd"]) == os.path.realpath(str(target))

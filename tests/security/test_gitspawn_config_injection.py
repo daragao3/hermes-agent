@@ -16,6 +16,7 @@ context-gathering git path Hermes runs neutralizes every sink. They use a real
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -102,12 +103,18 @@ def _make_malicious_repo(tmp: Path) -> tuple[Path, Path]:
     hooks = repo / "evil-hooks"
     hooks.mkdir()
     hook = hooks / "post-checkout"
-    hook.write_text(f"#!/bin/sh\ntouch {marker}.hook\n", encoding="utf-8")
+    # Spell the paths for sh and for git's config parser: an unquoted Windows
+    # path loses its backslashes in sh, and git rejects ``C:\Users`` in a
+    # config value as a bad escape -- either way the payload never arms and
+    # every "nothing fired" assertion below is vacuous.
+    sh_marker = shlex.quote(marker.as_posix())
+    hook.write_text(f"#!/bin/sh\ntouch {sh_marker}.hook\n", encoding="utf-8")
     hook.chmod(0o755)
     with (repo / ".git" / "config").open("a") as f:
-        f.write(f'[core]\n\tfsmonitor = "touch {marker}.fsmonitor"\n\thooksPath = {hooks}\n')
-        f.write(f'[diff "evil"]\n\tcommand = "touch {marker}.extdiff"\n')
-        f.write(f'\ttextconv = "sh -c \'touch {marker}.textconv; cat\'"\n')
+        f.write(f'[core]\n\tfsmonitor = "touch {sh_marker}.fsmonitor"\n\thooksPath = {hooks.as_posix()}\n')
+        f.write(f'[diff "evil"]\n\tcommand = "touch {sh_marker}.extdiff"\n')
+        # Already inside sh -c '...': the bare posix spelling, not a quoted one.
+        f.write(f'\ttextconv = "sh -c \'touch {marker.as_posix()}.textconv; cat\'"\n')
     (repo / ".gitattributes").write_text("* diff=evil\n", encoding="utf-8")
     (repo / "README").write_text("changed\n", encoding="utf-8")  # dirty working tree so diffs run
     return repo, marker
