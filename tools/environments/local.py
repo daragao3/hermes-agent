@@ -18,7 +18,7 @@ from pathlib import Path
 from hermes_constants import get_process_hermes_home
 from tools.environments.base import BaseEnvironment
 from tools.environments.base_output import _pipe_stdin
-from hermes_cli._subprocess_compat import windows_hide_flags
+from hermes_cli._subprocess_compat import is_wsl_bash_launcher, windows_hide_flags
 from tools.environments.local_env_policy import (
     _ALWAYS_STRIP_KEYS, _HERMES_PROVIDER_ENV_BLOCKLIST, _HERMES_PROVIDER_ENV_FORCE_PREFIX,
     _is_hermes_internal_secret, _is_terminal_first_party_env,
@@ -391,7 +391,10 @@ def _windows_bash_candidates(custom: "str | None") -> list[str]:
     raw = [custom or "", *(os.path.join(r, "bash.exe") for r in roots if r)]
     candidates = list(dict.fromkeys(c for c in raw if c and os.path.isfile(c)))
     found = shutil.which("bash")
-    if found and found not in candidates:
+    # Refuse the WSL launcher / Store stub outright rather than letting ``_bash_starts``
+    # decide: that probe *executes* the candidate, and executing System32\bash.exe boots
+    # the Ubuntu VM -- which then answered the probe and won (2026-09-16 acceptance run).
+    if found and found not in candidates and not is_wsl_bash_launcher(found):
         candidates.append(found)
     return candidates
 
