@@ -506,6 +506,32 @@ class TestReinstallCommandIsDetectedNotHardcoded:
             "-e '.[all]'"
         )
 
+    def test_managed_uv_wins_over_path_and_silences_the_not_on_path_note(
+        self, monkeypatch
+    ):
+        """$HERMES_HOME/bin is not on an arbitrary shell's PATH, so the printed
+        remedy must name the managed uv by path — a bare `uv` (and the
+        "uv is not on PATH, install it" note) would be wrong on exactly the
+        installs that own one.
+        """
+        from hermes_cli import install_doctor
+
+        monkeypatch.setattr(install_doctor, "_pip_is_importable", lambda: False)
+        monkeypatch.setattr(install_doctor.shutil, "which", lambda name: None)
+        monkeypatch.setattr(install_doctor.sys, "executable", "/agent-src/.venv/bin/python")
+        monkeypatch.setattr(
+            "hermes_cli.managed_uv.resolve_uv", lambda: "/home/u/.hermes/bin/uv"
+        )
+
+        cmd = install_doctor.reinstall_command()
+        notes = "\n".join(install_doctor._reinstall_notes())
+
+        assert cmd == (
+            "/home/u/.hermes/bin/uv pip install -e . --no-deps "
+            "--python /agent-src/.venv/bin/python"
+        )
+        assert "uv is not on PATH here" not in notes
+
     def test_never_falls_back_to_a_bare_pip_on_path(self, monkeypatch):
         """A bare `pip` is the scoop/MSIX interpreter's pip on Windows.
 

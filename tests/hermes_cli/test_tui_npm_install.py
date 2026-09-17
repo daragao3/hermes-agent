@@ -6,6 +6,7 @@ import types
 from pathlib import Path
 
 import pytest
+import hermes_constants
 from hermes_cli import main_tui_launch
 
 
@@ -14,6 +15,20 @@ def main_mod():
     import hermes_cli.main as m
 
     return m
+
+
+def _patch_node_lookup(monkeypatch, main_mod, which) -> None:
+    """Route every node/npm lookup ``_make_tui_argv`` makes through *which*.
+
+    ``_ensure_tui_node`` asks ``shutil.which``; ``_tui_node_bin`` asks
+    ``hermes_constants.find_node_executable``, which on POSIX reduces to the same
+    ``shutil.which`` but on Windows walks PATH by hand to prefer ``node.exe`` /
+    ``npm.cmd`` — so a bare ``shutil.which`` patch leaks the box's real Node into
+    the argv there. Stubbing the PATH walk too keeps the assertions about the
+    ``/bin/node`` placeholders platform-independent.
+    """
+    monkeypatch.setattr(main_mod.shutil, "which", which)
+    monkeypatch.setattr(hermes_constants, "find_node_executable_on_path", which)
 
 
 def _touch_ink(root: Path) -> None:
@@ -324,7 +339,7 @@ def test_make_tui_argv_skips_build_only_on_termux_when_fresh(
     monkeypatch.setenv("TERMUX_VERSION", "1")
     monkeypatch.setattr(main_tui_launch, "_tui_need_npm_install", lambda _root: False)
     monkeypatch.setattr(main_tui_launch, "_tui_need_rebuild", lambda _root: False)
-    monkeypatch.setattr(main_mod.shutil, "which", lambda name: f"/bin/{name}")
+    _patch_node_lookup(monkeypatch, main_mod, lambda name: f"/bin/{name}")
 
     def fail_run(*_args, **_kwargs):
         raise AssertionError("fresh Termux TUI launch must not rebuild")
@@ -344,7 +359,7 @@ def test_make_tui_argv_skips_install_on_termux_when_bundle_fresh(
     monkeypatch.setenv("TERMUX_VERSION", "1")
     monkeypatch.setattr(main_tui_launch, "_tui_need_npm_install", lambda _root: True)
     monkeypatch.setattr(main_tui_launch, "_tui_need_rebuild", lambda _root: False)
-    monkeypatch.setattr(main_mod.shutil, "which", lambda name: f"/bin/{name}")
+    _patch_node_lookup(monkeypatch, main_mod, lambda name: f"/bin/{name}")
 
     def fail_run(*_args, **_kwargs):
         raise AssertionError("fresh Termux TUI launch must not run npm")
@@ -371,7 +386,7 @@ def test_make_tui_argv_scopes_npm_install_on_termux_workspace(
     monkeypatch.setenv("TERMUX_VERSION", "1")
     monkeypatch.setattr(main_tui_launch, "_tui_need_npm_install", lambda _root: True)
     monkeypatch.setattr(main_tui_launch, "_tui_need_rebuild", lambda _root: True)
-    monkeypatch.setattr(main_mod.shutil, "which", lambda name: f"/bin/{name}")
+    _patch_node_lookup(monkeypatch, main_mod, lambda name: f"/bin/{name}")
     calls = []
 
     def fake_run(*args, **kwargs):
@@ -408,7 +423,7 @@ def test_make_tui_argv_keeps_desktop_workspace_install_behaviour(
     monkeypatch.delenv("TERMUX_VERSION", raising=False)
     monkeypatch.setenv("PREFIX", "/usr")
     monkeypatch.setattr(main_tui_launch, "_tui_need_npm_install", lambda _root: True)
-    monkeypatch.setattr(main_mod.shutil, "which", lambda name: f"/bin/{name}")
+    _patch_node_lookup(monkeypatch, main_mod, lambda name: f"/bin/{name}")
     calls = []
 
     def fake_run(*args, **kwargs):
@@ -452,7 +467,7 @@ def test_make_tui_argv_npm_install_forces_include_dev(
     monkeypatch.setenv("PREFIX", "/usr")
     monkeypatch.setenv("NODE_ENV", "production")
     monkeypatch.setattr(main_tui_launch, "_tui_need_npm_install", lambda _root: True)
-    monkeypatch.setattr(main_mod.shutil, "which", lambda name: f"/bin/{name}")
+    _patch_node_lookup(monkeypatch, main_mod, lambda name: f"/bin/{name}")
     calls = []
 
     def fake_run(*args, **kwargs):
@@ -476,7 +491,7 @@ def test_make_tui_argv_keeps_desktop_always_build_behaviour(
     monkeypatch.setenv("PREFIX", "/usr")
     monkeypatch.setattr(main_tui_launch, "_tui_need_npm_install", lambda _root: False)
     monkeypatch.setattr(main_tui_launch, "_tui_need_rebuild", lambda _root: False)
-    monkeypatch.setattr(main_mod.shutil, "which", lambda name: f"/bin/{name}")
+    _patch_node_lookup(monkeypatch, main_mod, lambda name: f"/bin/{name}")
     calls = []
 
     def fake_run(*args, **kwargs):
@@ -502,7 +517,7 @@ def test_make_tui_argv_decodes_dev_prebuild_with_utf8_replace(
     tsx.write_text("", encoding="utf-8")
 
     monkeypatch.setattr(main_tui_launch, "_tui_need_npm_install", lambda _root: False)
-    monkeypatch.setattr(main_mod.shutil, "which", lambda name: f"/bin/{name}")
+    _patch_node_lookup(monkeypatch, main_mod, lambda name: f"/bin/{name}")
     calls = []
 
     def fake_run(*args, **kwargs):
@@ -537,7 +552,7 @@ def test_make_tui_argv_exits_with_recovery_hint_when_workspace_unrecoverable(
             return "/usr/bin/node"
         raise AssertionError(f"unexpected shutil.which({name!r}) call — bundled path must not need npm/git")
 
-    monkeypatch.setattr(main_mod.shutil, "which", which)
+    _patch_node_lookup(monkeypatch, main_mod, which)
 
     def fail_run(*_args, **_kwargs):
         raise AssertionError("bundled TUI path must not spawn any subprocess (no npm install/build, no git restore)")
@@ -755,7 +770,7 @@ def test_make_tui_argv_omits_workspace_and_scrubs_esbuild_override(
     monkeypatch.setenv("PREFIX", "/usr")
     monkeypatch.setenv("ESBUILD_BINARY_PATH", "/opt/esbuild-0.28.2")
     monkeypatch.setattr(main_tui_launch, "_tui_need_npm_install", lambda _root: True)
-    monkeypatch.setattr(main_mod.shutil, "which", lambda name: f"/bin/{name}")
+    _patch_node_lookup(monkeypatch, main_mod, lambda name: f"/bin/{name}")
     calls = []
 
     def fake_run(*args, **kwargs):
