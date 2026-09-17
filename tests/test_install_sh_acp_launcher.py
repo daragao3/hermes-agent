@@ -10,12 +10,14 @@ These tests drive the real block out of `scripts/install.sh` rather than
 asserting on a copy of it, so the shim cannot drift away from the test.
 """
 
+import os
 import re
 import stat
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
-from tests.bash_support import BASH
+from tests.bash_support import BASH, bash_path
+from tests.symlink_support import requires_symlinks
 
 INSTALL_SH = Path(__file__).resolve().parent.parent / "scripts" / "install.sh"
 
@@ -35,6 +37,16 @@ def _extract_acp_shim_block() -> str:
     return match.group(1)
 
 
+def _assert_user_executable(shim: Path) -> None:
+    """The block's ``chmod +x`` must have landed. Windows keeps no exec bit for an
+    extensionless file (os.stat reports 0o666 regardless), so there the executable
+    property cannot be observed through st_mode; the shebang is what Git bash honours."""
+    if os.name == "nt":
+        assert shim.read_text(encoding="utf-8").startswith("#!"), "launcher must start with a shebang"
+        return
+    assert shim.stat().st_mode & stat.S_IXUSR, "launcher must be user-executable"
+
+
 def _run_block(tmp_path: Path, use_venv: str) -> Path:
     """Execute the extracted block with the env vars setup_path() sets."""
     command_link_dir = tmp_path / "local_bin"
@@ -47,10 +59,10 @@ def _run_block(tmp_path: Path, use_venv: str) -> Path:
 
     script = (
         "set -e\n"
-        f"HERMES_BIN={hermes_bin}\n"
-        f"HERMES_ENTRYPOINT={entrypoint}\n"
-        f"command_link_dir={command_link_dir}\n"
-        f"command_link_display_dir={command_link_dir}\n"
+        f"HERMES_BIN={bash_path(hermes_bin)}\n"
+        f"HERMES_ENTRYPOINT={bash_path(entrypoint)}\n"
+        f"command_link_dir={bash_path(command_link_dir)}\n"
+        f"command_link_display_dir={bash_path(command_link_dir)}\n"
         f"USE_VENV={use_venv}\n"
         "log_success(){ :; }\n" + _extract_acp_shim_block()
     )
@@ -69,7 +81,7 @@ def _run_block(tmp_path: Path, use_venv: str) -> Path:
 def test_venv_install_writes_executable_acp_launcher(tmp_path):
     shim = _run_block(tmp_path, "true")
     assert shim.is_file()
-    assert shim.stat().st_mode & stat.S_IXUSR, "launcher must be user-executable"
+    _assert_user_executable(shim)
 
     text = shim.read_text(encoding="utf-8")
     assert "unset PYTHONPATH" in text
@@ -85,6 +97,7 @@ def test_non_venv_install_writes_acp_launcher(tmp_path):
     assert re.search(r'exec .*\bacp\b', text), text
 
 
+@requires_symlinks
 def test_acp_launcher_does_not_follow_a_symlink_into_the_venv(tmp_path):
     """Guards the #21454 failure mode for the new launcher.
 
@@ -110,10 +123,10 @@ def test_acp_launcher_does_not_follow_a_symlink_into_the_venv(tmp_path):
 
     script = (
         "set -e\n"
-        f"HERMES_BIN={hermes_bin}\n"
-        f"HERMES_ENTRYPOINT={entrypoint}\n"
-        f"command_link_dir={command_link_dir}\n"
-        f"command_link_display_dir={command_link_dir}\n"
+        f"HERMES_BIN={bash_path(hermes_bin)}\n"
+        f"HERMES_ENTRYPOINT={bash_path(entrypoint)}\n"
+        f"command_link_dir={bash_path(command_link_dir)}\n"
+        f"command_link_display_dir={bash_path(command_link_dir)}\n"
         "USE_VENV=true\n"
         "log_success(){ :; }\n" + _extract_acp_shim_block()
     )
@@ -167,10 +180,10 @@ def _run_hermes_agent_block(tmp_path: Path, use_venv: str) -> Path | None:
 
     script = (
         "set -e\n"
-        f"HERMES_BIN={hermes_bin}\n"
-        f"INSTALL_DIR={install_dir}\n"
-        f"command_link_dir={command_link_dir}\n"
-        f"command_link_display_dir={command_link_dir}\n"
+        f"HERMES_BIN={bash_path(hermes_bin)}\n"
+        f"INSTALL_DIR={bash_path(install_dir)}\n"
+        f"command_link_dir={bash_path(command_link_dir)}\n"
+        f"command_link_display_dir={bash_path(command_link_dir)}\n"
         f"USE_VENV={use_venv}\n"
         "log_success(){ :; }\n" + _extract_hermes_agent_shim_block()
     )
@@ -191,7 +204,7 @@ def test_venv_install_writes_executable_hermes_agent_launcher(tmp_path):
     shim = _run_hermes_agent_block(tmp_path, "true")
     assert shim is not None
     assert shim.is_file()
-    assert shim.stat().st_mode & stat.S_IXUSR, "launcher must be user-executable"
+    _assert_user_executable(shim)
 
     text = shim.read_text(encoding="utf-8")
     assert "unset PYTHONPATH" in text

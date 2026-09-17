@@ -72,4 +72,20 @@ def resolve_bash() -> str:
     return "bash"
 
 
+def bash_path(path: "str | Path") -> str:
+    """Spell *path* the way ``BASH`` expects it inside a script or argv.
+
+    On Windows ``BASH`` is Git's MSYS bash, which mounts drives as ``/c/...``; a raw
+    ``C:\\Users\\...`` interpolated into ``bash -c`` loses its backslashes as escapes
+    (``C:UsersdiegoAppData...: No such file or directory``). Elsewhere the path is
+    returned unchanged. The WSL launcher's ``/mnt/c/...`` form is never produced.
+    """
+    path = Path(path)
+    if os.name != "nt":
+        return str(path)
+    drive = path.drive.rstrip(":").lower()
+    tail = path.as_posix().split(":", 1)[1].lstrip("/")
+    return f"/{drive}/{tail}"
+
+
 BASH = resolve_bash()

@@ -663,12 +663,14 @@ def test_persistent_bind_mounts_survive_a_session_key_task_id(monkeypatch, tmp_p
     assert len(mounts) == 2, f"expected /root and /workspace binds; got {specs}"
     for spec in mounts:
         source, _, target = spec.rpartition(":")
-        assert ":" not in source, (
+        # A Windows drive letter carries its own colon (C:\...); docker parses that
+        # correctly. The invariant is that the SESSION KEY's colons are gone.
+        assert ":" not in os.path.splitdrive(source)[1], (
             f"bind source still contains a colon, docker run would fail with "
             f"'too many colons': {spec}"
         )
         # Docker splits on ':' — a sane spec has exactly source:target.
-        assert spec.count(":") == 1, f"spec is not a two-field bind: {spec}"
+        assert os.path.splitdrive(spec)[1].count(":") == 1, f"spec is not a two-field bind: {spec}"
         assert target in {"/root", "/workspace"}
 
 

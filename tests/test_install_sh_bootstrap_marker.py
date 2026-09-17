@@ -13,7 +13,7 @@ asserting on the text of install.sh.
 import json
 import subprocess
 from pathlib import Path
-from tests.bash_support import BASH
+from tests.bash_support import BASH, bash_path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -29,11 +29,11 @@ def run_write_marker(install_dir, *, commit="", branch="main"):
     """
     script = f"""
 set -e
-INSTALL_DIR={install_dir!s}
+INSTALL_DIR={bash_path(install_dir)}
 INSTALL_COMMIT={commit!r}
 BRANCH={branch!r}
 # Pull in the function definitions without triggering an install.
-eval "$(sed -n '/^write_bootstrap_marker()/,/^}}/p' {INSTALL_SH!s})"
+eval "$(sed -n '/^write_bootstrap_marker()/,/^}}/p' {bash_path(INSTALL_SH)})"
 log_warn() {{ echo "WARN: $*" >&2; }}
 write_bootstrap_marker
 """
