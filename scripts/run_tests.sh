@@ -218,7 +218,14 @@ fi
 # SYSTEMDRIVE and nothing else makes it stop. Mirrors WINDOWS_OS_PATH_ENV_VARS
 # in agent/secret_sources/base.py, which fixes the same failure mode in the
 # secret-helper allowlists. No-ops on POSIX, where none of these are set.
-for _var in SYSTEMDRIVE PROGRAMDATA ALLUSERSPROFILE WINDIR COMSPEC PATHEXT; do
+#
+# PROCESSOR_ARCHITECTURE / PROCESSOR_ARCHITEW6432: platform.machine() reads them once
+# WMI is off the table (suppress_platform_wmi_queries, 2026-09-17, CPython < 3.13.4 on
+# this box); without them it answers '' and every stdlib-sourced identity field
+# (/api/system/stats "arch", the Windows SSH runtime probe) comes back empty ONLY
+# under this runner. A real shell always carries them.
+for _var in SYSTEMDRIVE PROGRAMDATA ALLUSERSPROFILE WINDIR COMSPEC PATHEXT \
+            PROCESSOR_ARCHITECTURE PROCESSOR_ARCHITEW6432; do
   eval "_val=\${$_var:-}"
   if [ -n "$_val" ]; then
     CLEAN_ENV+=("$_var=$_val")
