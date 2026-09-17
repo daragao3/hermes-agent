@@ -32,6 +32,20 @@ from agent.conversation_compression import (
     run_compress_context_with_progress_timeout,
 )
 
+# Wait budgets (AGENTS.md flake policy: wall-clock bounds >= 2 s, event-based sync).
+#   _HANDOFF_S -- a signal between two threads that are both already running: the floor.
+#   _PICKUP_S  -- a signal that first needs a thread or pool worker to be SCHEDULED; a
+#                 loaded -j 12 runner left pool workers unstarted past 0.1 s (2026-09-17).
+#   _START_WINDOW_S -- idle/ceiling windows a test's worker must START inside: the idle
+#                 clock runs from fence creation and a pickup slower than the window is
+#                 fence-cancelled at the pre-start gate, so the worker never runs and the
+#                 test fails as if the product had (the F6 BrokenBarrierError sighting).
+#   _HANG_NET_S -- a worker-side cap on an event the test releases only after asserting.
+_HANDOFF_S = 2.0
+_PICKUP_S = 5.0
+_START_WINDOW_S = 2.0
+_HANG_NET_S = 30.0
+
 
 def _drain_admission_slots():
     """Best-effort wait for pool admission slots to free between tests."""
@@ -41,6 +55,24 @@ def _drain_admission_slots():
             if cc._compress_admitted_count == 0:
                 return
         time.sleep(0.02)
+
+
+def _warm_pool_threads():
+    """Create the shared executor's worker threads up front.
+
+    The pool spawns a thread per submit until it holds max_workers idle ones, so
+    a test that needs several workers picked up inside one window would otherwise
+    pay thread creation (plus the executor's own cold import) inside that window.
+    After this, each pickup is a wake of an idle thread. Bypasses admission
+    accounting on purpose: raw submits never touch _compress_admitted_count.
+    """
+    executor = cc._get_compress_timeout_executor()
+    workers = cc._COMPRESS_EXECUTOR_MAX_WORKERS
+    all_running = threading.Barrier(workers + 1, timeout=_HANG_NET_S)
+    futures = [executor.submit(all_running.wait) for _ in range(workers)]
+    all_running.wait()
+    for future in futures:
+        future.result(timeout=_HANG_NET_S)
 
 
 class TestF1CommitOverrunWhileHung:
@@ -66,7 +98,7 @@ class TestF1CommitOverrunWhileHung:
             try:
                 # Hung commit: blocked until the TEST releases it, which
                 # happens only after asserting the overrun surfaced.
-                assert release.wait(timeout=10)
+                assert release.wait(timeout=_HANG_NET_S)
                 return (compressed, "committed-late")
             finally:
                 fence.finish_commit()
@@ -88,8 +120,10 @@ class TestF1CommitOverrunWhileHung:
                 worker=worker,
                 messages=original,
                 system_prompt_fallback="fallback",
-                idle_timeout_seconds=1.0,
-                total_ceiling_seconds=1.0,
+                # The worker must begin its commit inside this window; the
+                # overrun then fires once the ceiling passes with it in flight.
+                idle_timeout_seconds=_START_WINDOW_S,
+                total_ceiling_seconds=_START_WINDOW_S,
                 on_commit_overrun=on_overrun,
             )
 
@@ -100,9 +134,9 @@ class TestF1CommitOverrunWhileHung:
             t = threading.Thread(target=run, name="f1-hung-commit-host")
             t.start()
             try:
-                assert entered.wait(timeout=2)
+                assert entered.wait(timeout=_PICKUP_S)
                 # ── Assert WHILE the commit worker is still blocked ──────
-                assert overrun_fired.wait(timeout=5), (
+                assert overrun_fired.wait(timeout=_START_WINDOW_S + _PICKUP_S), (
                     "on_commit_overrun must fire while the commit is hung"
                 )
                 assert not release.is_set()  # worker provably still blocked
@@ -126,10 +160,10 @@ class TestF1CommitOverrunWhileHung:
                     "expected the overrun WARNING while the commit was "
                     f"still blocked; got: {[r.getMessage() for r in records]}"
                 )
-                assert overruns and overruns[0][1] == pytest.approx(1.0)
+                assert overruns and overruns[0][1] == pytest.approx(_START_WINDOW_S)
             finally:
                 release.set()
-            t.join(timeout=5)
+            t.join(timeout=_PICKUP_S)
             assert not t.is_alive()
         finally:
             comp_logger.removeHandler(handler)
@@ -204,7 +238,7 @@ class TestF2HostUnwindRevokesAdmission:
         def worker(fence: CompressionCommitFence):
             fence_box["fence"] = fence
             started.set()
-            assert release.wait(timeout=10)
+            assert release.wait(timeout=_HANG_NET_S)
             commit_admitted["value"] = fence.begin_commit()
             if commit_admitted["value"]:
                 fence.finish_commit()
@@ -227,7 +261,9 @@ class TestF2HostUnwindRevokesAdmission:
             )
 
         # ── Host has unwound; worker is STILL blocked pre-commit ─────────
-        assert started.wait(timeout=2)
+        # (the injected future waited for `started` before raising, so this
+        # is a handoff between running threads, already satisfied)
+        assert started.wait(timeout=_HANDOFF_S)
         fence = fence_box["fence"]
         assert not release.is_set()
         assert fence.is_cancelled, (
@@ -280,12 +316,19 @@ class TestF6ExecutorSaturation:
         """4 blocked summaries + 5th submission fails fast; recovery does not
         run the refused job."""
         _drain_admission_slots()
+        _warm_pool_threads()
         release = threading.Event()
-        started = threading.Barrier(5, timeout=10)  # 4 workers + main
+        # 4 workers + main. Every worker must START inside the hosts' ceiling
+        # below or its host cancels the never-started future and the barrier
+        # can never fill (BrokenBarrierError under a loaded -j 12 runner with
+        # the old 0.1 s ceiling, 2026-09-17: 6/6 red with only 2-3 arrivals;
+        # the barrier still took up to 0.9 s to fill at a 2 s window before the
+        # pool threads were pre-created above).
+        started = threading.Barrier(5, timeout=_HANG_NET_S)
 
         def blocked_worker(fence: CompressionCommitFence):
             started.wait()
-            assert release.wait(timeout=30)
+            assert release.wait(timeout=_HANG_NET_S)
             return ([], "done")
 
         hosts = []
@@ -296,8 +339,11 @@ class TestF6ExecutorSaturation:
                 worker=blocked_worker,
                 messages=[{"role": "user", "content": f"m{i}"}],
                 system_prompt_fallback=f"fb{i}",
-                idle_timeout_seconds=0.05,
-                total_ceiling_seconds=0.1,
+                # The window all four pool workers must be scheduled inside; the
+                # hosts then time out (ceiling + cancelled-worker grace) and the
+                # workers stay wedged on `release`.
+                idle_timeout_seconds=_START_WINDOW_S,
+                total_ceiling_seconds=_START_WINDOW_S,
             )
 
         try:
@@ -307,7 +353,9 @@ class TestF6ExecutorSaturation:
                 hosts.append(t)
             started.wait()  # all 4 workers occupy the pool
             for t in hosts:
-                t.join(timeout=5)  # hosts time out; workers stay wedged
+                # ceiling + grace + the stall-fallback/telemetry tail (0.85 s
+                # quiet on top of a 0.1 s ceiling, several x that loaded).
+                t.join(timeout=_HANG_NET_S)  # hosts time out; workers stay wedged
                 assert not t.is_alive()
 
             # All 4 slots still admitted (workers blocked).
@@ -367,7 +415,10 @@ class TestF6ExecutorSaturation:
             elapsed = time.monotonic() - t0
             # ── Assert while the 4 workers are STILL wedged ───────────────
             assert not release.is_set()
-            assert elapsed < 1.0, (
+            # Fail-fast means it did not queue and wait out the 5 s idle budget
+            # above; the mechanism itself is pinned by the pool_saturated
+            # telemetry below, this clock only bounds the latency (policy floor).
+            assert elapsed < _HANDOFF_S, (
                 f"saturated submission must fail fast, took {elapsed:.2f}s"
             )
             assert msgs is fifth_msgs
@@ -397,8 +448,8 @@ class TestF6ExecutorSaturation:
             worker=lambda fence: ([{"role": "user", "content": "ok"}], "ok"),
             messages=[{"role": "user", "content": "after"}],
             system_prompt_fallback="fb",
-            idle_timeout_seconds=1.0,
-            total_ceiling_seconds=2.0,
+            idle_timeout_seconds=_START_WINDOW_S,
+            total_ceiling_seconds=_START_WINDOW_S,
         )
         assert prompt == "ok"
         _drain_admission_slots()
@@ -464,13 +515,15 @@ class TestS3IdleChargedFromLastProgress:
     def test_silence_cannot_approach_double_idle_timeout(self):
         """Progress early in an interval must not extend silence to ~2x idle."""
         _drain_admission_slots()
-        idle = 0.4
+        # The idle window doubles as the worker's start window and as the base
+        # of the wall-clock bound below, so it sits at the policy floor.
+        idle = _START_WINDOW_S
         release = threading.Event()
 
         def worker(fence: CompressionCommitFence):
             time.sleep(0.05)
             fence.touch_progress()  # early progress, then total silence
-            assert release.wait(timeout=10)
+            assert release.wait(timeout=_HANG_NET_S)
             return ([], "late")
 
         t0 = time.monotonic()
@@ -487,9 +540,9 @@ class TestS3IdleChargedFromLastProgress:
             elapsed = time.monotonic() - t0
             release.set()
         assert prompt == "fb"
-        # Old behavior waited a full interval from the CHECK (~2x idle ≈
-        # 0.85s+). New behavior times out ~idle after the last progress
-        # (~0.45s). Allow generous slack while still excluding ~2x.
+        # Old behavior waited a full interval from the CHECK (~2x idle).
+        # New behavior times out ~idle after the last progress (idle + 0.05s
+        # + the return path). Allow generous slack while still excluding ~2x.
         assert elapsed < idle * 1.8, (
             f"silence exceeded ~2x idle budget shape: {elapsed:.2f}s"
         )

@@ -26,6 +26,27 @@ from agent.conversation_compression import (
     run_compress_context_with_progress_timeout,
 )
 
+# Wait budgets (AGENTS.md flake policy: wall-clock bounds >= 2 s, event-based sync). Every
+# positive wait returns the instant its Event is set, so a generous bound costs nothing green.
+#   _HANDOFF_S  -- a signal between two threads that are BOTH already running: the floor.
+#   _PICKUP_S   -- a signal that first needs a thread or pool worker to be SCHEDULED
+#                  (Thread.start / executor.submit). A loaded -j 12 runner has left such
+#                  threads unstarted past 0.1 s (2026-09-17, F6 BrokenBarrierError), so the
+#                  budget is well above the floor.
+#   _START_WINDOW_S -- idle/ceiling windows a test's worker must START inside. The idle
+#                  clock runs from fence creation, so a pickup slower than the window makes
+#                  the host cancel pre-commit and the pre-start gate skips the worker: the
+#                  test then fails exactly as a product bug would. Never below the floor.
+#   _HANG_NET_S -- a worker-side cap on an event the TEST releases only after the host has
+#                  returned. It must outlast the host's whole timeout path under load (1.4 s
+#                  measured loaded against the old 2 s cap), not race it; pytest-timeout is
+#                  the real backstop, and a host that never times out still fails the test
+#                  once the net expires and the worker's late result reaches the assertions.
+_HANDOFF_S = 2.0
+_PICKUP_S = 5.0
+_START_WINDOW_S = 2.0
+_HANG_NET_S = 30.0
+
 
 class TestContextCompressionTimeoutState:
     """Thread-safe typed timeout state (#98741, on top of #98424's flag)."""
@@ -47,7 +68,8 @@ class TestContextCompressionTimeoutState:
                 state = super().__new__(cls)
                 if threading.current_thread().name == "timeout-resetter":
                     reset_constructor_entered.set()
-                    assert release_reset_constructor.wait(timeout=2)
+                    # Released only after the main thread has STARTED mark_thread.
+                    assert release_reset_constructor.wait(timeout=_PICKUP_S)
                 else:
                     marker_constructor_finished.set()
                 return state
@@ -57,30 +79,30 @@ class TestContextCompressionTimeoutState:
         def resetter():
             reset_context_compression_timeout_outcome(agent)
             reset_finished.set()
-            assert marker_finished.wait(timeout=2)
+            assert marker_finished.wait(timeout=_HANDOFF_S)
             seen["resetter"] = context_compression_timed_out(agent)
 
         def marker():
             mark_context_compression_timed_out(agent)
             marker_finished.set()
-            assert reset_finished.wait(timeout=2)
+            assert reset_finished.wait(timeout=_HANDOFF_S)
             seen["marker"] = context_compression_timed_out(agent)
 
         reset_thread = threading.Thread(target=resetter, name="timeout-resetter")
         mark_thread = threading.Thread(target=marker, name="timeout-marker")
         reset_thread.start()
-        assert reset_constructor_entered.wait(timeout=2)
+        assert reset_constructor_entered.wait(timeout=_PICKUP_S)
         mark_thread.start()
 
         # A fixed implementation publishes the initialization lock before
         # constructing the state. The old implementation lets the marker
         # publish a competing state while the resetter is paused here.
         if "_context_compression_timeout_state_lock" not in vars(agent):
-            assert marker_constructor_finished.wait(timeout=2)
+            assert marker_constructor_finished.wait(timeout=_PICKUP_S)
         release_reset_constructor.set()
 
-        reset_thread.join(timeout=2)
-        mark_thread.join(timeout=2)
+        reset_thread.join(timeout=_PICKUP_S)
+        mark_thread.join(timeout=_PICKUP_S)
 
         assert not reset_thread.is_alive()
         assert not mark_thread.is_alive()
@@ -98,17 +120,17 @@ class TestContextCompressionTimeoutState:
             reset_context_compression_timeout_outcome(agent)
             mark_context_compression_timed_out(agent)
             worker_marked.set()
-            assert main_reset.wait(timeout=2)
+            assert main_reset.wait(timeout=_HANDOFF_S)
             seen["worker"] = context_compression_timed_out(agent)
 
         thread = threading.Thread(target=worker)
         thread.start()
-        assert worker_marked.wait(timeout=2)
+        assert worker_marked.wait(timeout=_PICKUP_S)
 
         reset_context_compression_timeout_outcome(agent)
         seen["main"] = context_compression_timed_out(agent)
         main_reset.set()
-        thread.join(timeout=2)
+        thread.join(timeout=_PICKUP_S)
 
         assert not thread.is_alive()
         assert seen == {"main": False, "worker": True}
@@ -197,7 +219,10 @@ class TestRunCompressContextWithProgressTimeout:
 
         def worker(fence: CompressionCommitFence):
             started.set()
-            assert release.wait(timeout=2)
+            # Released by the test only after the host has returned; under load the
+            # old 2 s cap expired first (2026-09-17), which let the worker race the
+            # host's cancel instead of provably following it.
+            assert release.wait(timeout=_HANG_NET_S)
             if not fence.begin_commit():
                 return ([{"role": "assistant", "content": "should-not-land"}], "x")
             try:
@@ -212,17 +237,18 @@ class TestRunCompressContextWithProgressTimeout:
             worker=worker,
             messages=original,
             system_prompt_fallback="fallback-prompt",
-            idle_timeout_seconds=0.05,
-            # Leave enough total budget for a busy Windows runner to start the
-            # daemon worker; this case exercises inactivity cancellation, not
-            # the separate total-ceiling path.
-            total_ceiling_seconds=2.0,
+            # The worker must START inside the idle window (the idle clock runs
+            # from fence creation) or the pre-start gate skips it and `started`
+            # is never set; the ceiling stays well above idle so this case keeps
+            # exercising inactivity cancellation, not the total-ceiling path.
+            idle_timeout_seconds=_START_WINDOW_S,
+            total_ceiling_seconds=5 * _START_WINDOW_S,
             on_timeout=lambda idle, waited, since: warnings.append(
                 (idle, waited, since)
             ),
         )
 
-        assert started.wait(timeout=1)
+        assert started.wait(timeout=_PICKUP_S)
         # Give the waiter time to cancel before releasing the worker.
         time.sleep(0.15)
         release.set()
@@ -248,10 +274,11 @@ class TestRunCompressContextWithProgressTimeout:
             # Keep ticking within each idle window so the waiter extends.
             # Round-2 #8 (FLAKY policy): the old 0.1s-idle/0.04s-tick shape
             # left only ~60ms of slack per tick — one slow scheduler pass on
-            # a loaded CI box let the idle budget lapse mid-loop. >=0.5s
-            # idle with 0.1s ticks keeps a 5x margin per tick while the
-            # total runtime stays under a second.
-            for _ in range(6):
+            # a loaded CI box let the idle budget lapse mid-loop. The idle
+            # window is now the policy floor (20x margin per 0.1s tick, and
+            # the window the worker must START inside), so the loop runs
+            # past one full window to keep exercising the extension.
+            for _ in range(int(1.5 * _START_WINDOW_S / 0.1)):
                 time.sleep(0.1)
                 fence.touch_progress()
             if not fence.begin_commit():
@@ -265,8 +292,8 @@ class TestRunCompressContextWithProgressTimeout:
             worker=worker,
             messages=original,
             system_prompt_fallback="fallback",
-            idle_timeout_seconds=0.5,
-            total_ceiling_seconds=5.0,
+            idle_timeout_seconds=_START_WINDOW_S,
+            total_ceiling_seconds=5 * _START_WINDOW_S,
         )
 
         assert result_msgs == compressed
@@ -282,7 +309,11 @@ class TestRunCompressContextWithProgressTimeout:
             assert fence.begin_commit()
             entered.set()
             try:
-                time.sleep(0.2)
+                # Hold the commit until the ceiling has provably passed (the
+                # deadline is shared with the host), instead of a fixed sleep
+                # racing a sub-floor ceiling.
+                while not fence.deadline_exceeded:
+                    time.sleep(0.01)
                 return (compressed, "committed")
             finally:
                 fence.finish_commit()
@@ -291,11 +322,11 @@ class TestRunCompressContextWithProgressTimeout:
             worker=worker,
             messages=original,
             system_prompt_fallback="fallback",
-            idle_timeout_seconds=0.05,
-            total_ceiling_seconds=0.05,
+            idle_timeout_seconds=_START_WINDOW_S,
+            total_ceiling_seconds=_START_WINDOW_S,
         )
 
-        assert entered.wait(timeout=1)
+        assert entered.wait(timeout=_PICKUP_S)
         assert result_msgs == compressed
         assert result_prompt == "committed"
 
@@ -317,20 +348,27 @@ class TestRunCompressContextWithProgressTimeout:
         compressed = [{"role": "assistant", "content": "late-commit"}]
         entered = threading.Event()
         release = threading.Event()
+        overrun_fired = threading.Event()
 
         def worker(fence: CompressionCommitFence):
             assert fence.begin_commit()
             entered.set()
             try:
-                assert release.wait(timeout=5)
+                assert release.wait(timeout=_HANG_NET_S)
                 return (compressed, "committed-late")
             finally:
                 fence.finish_commit()
 
-        ceiling = 0.05
+        # The worker must begin its commit INSIDE the ceiling (a pickup slower
+        # than the ceiling is fence-cancelled pre-commit and never enters).
+        ceiling = _START_WINDOW_S
         started = time.monotonic()
         done = {}
         overruns = []
+
+        def on_overrun(waited, ceil):
+            overruns.append((waited, ceil))
+            overrun_fired.set()
 
         def run():
             done["result"] = run_compress_context_with_progress_timeout(
@@ -339,9 +377,7 @@ class TestRunCompressContextWithProgressTimeout:
                 system_prompt_fallback="fallback",
                 idle_timeout_seconds=ceiling,
                 total_ceiling_seconds=ceiling,
-                on_commit_overrun=lambda waited, ceil: overruns.append(
-                    (waited, ceil)
-                ),
+                on_commit_overrun=on_overrun,
             )
 
         records = []
@@ -356,21 +392,26 @@ class TestRunCompressContextWithProgressTimeout:
         try:
             t = threading.Thread(target=run, name="commit-hang-waiter")
             t.start()
-            assert entered.wait(timeout=1)
+            assert entered.wait(timeout=_PICKUP_S)
             # Still blocked past the pre-commit ceiling while commit holds
-            # the fence.
-            time.sleep(ceiling + 0.25)
+            # the fence: the overrun callback fires only once the ceiling has
+            # passed with the commit in flight, so waiting for it (instead of
+            # sleeping past the ceiling) is the event this assertion needs.
+            assert overrun_fired.wait(timeout=ceiling + _PICKUP_S)
             assert t.is_alive(), (
                 "waiter must block on an in-flight commit past ceiling"
             )
             release.set()
-            t.join(timeout=5)
+            t.join(timeout=_PICKUP_S)
             assert not t.is_alive()
         finally:
             comp_logger.removeHandler(handler)
 
         waited = time.monotonic() - started
-        assert waited >= ceiling + 0.1
+        # Blocking PAST the ceiling is pinned by the overrun callback having fired
+        # with the waiter still alive (above); the clock only confirms the host
+        # did not return early.
+        assert waited >= ceiling
         assert done["result"][0] == compressed
         assert done["result"][1] == "committed-late"
         # The over-ceiling commit wait must NOT be silent: the overrun
@@ -396,15 +437,18 @@ class TestRunCompressContextWithProgressTimeout:
         compressed = [{"role": "assistant", "content": "ok"}]
         release = threading.Event()
 
+        overrun_reported = threading.Event()
+
         def worker(fence: CompressionCommitFence):
             assert fence.begin_commit()
             try:
-                assert release.wait(timeout=5)
+                assert release.wait(timeout=_HANG_NET_S)
                 return (compressed, "done")
             finally:
                 fence.finish_commit()
 
         def boom(waited, ceiling):
+            overrun_reported.set()
             raise RuntimeError("callback exploded")
 
         done = {}
@@ -414,16 +458,19 @@ class TestRunCompressContextWithProgressTimeout:
                 worker=worker,
                 messages=original,
                 system_prompt_fallback="fallback",
-                idle_timeout_seconds=0.05,
-                total_ceiling_seconds=0.05,
+                idle_timeout_seconds=_START_WINDOW_S,
+                total_ceiling_seconds=_START_WINDOW_S,
                 on_commit_overrun=boom,
             )
 
         t = threading.Thread(target=run)
         t.start()
-        time.sleep(0.3)
+        # Release only once the raising callback has provably run (a fixed
+        # sleep shorter than the ceiling would release first and never
+        # exercise the callback at all).
+        assert overrun_reported.wait(timeout=_START_WINDOW_S + _PICKUP_S)
         release.set()
-        t.join(timeout=5)
+        t.join(timeout=_PICKUP_S)
         assert not t.is_alive()
         assert done["result"] == (compressed, "done")
 
@@ -461,8 +508,8 @@ class TestRunCompressContextWithProgressTimeout:
                 worker=worker,
                 messages=[{"role": "user", "content": "x"}],
                 system_prompt_fallback="fallback",
-                idle_timeout_seconds=1.0,
-                total_ceiling_seconds=2.0,
+                idle_timeout_seconds=_START_WINDOW_S,
+                total_ceiling_seconds=_START_WINDOW_S,
             )
         finally:
             reset_conversation_context(token)
@@ -489,8 +536,8 @@ class TestRunCompressContextWithProgressTimeout:
             worker=worker,
             messages=[],
             system_prompt_fallback="",
-            idle_timeout_seconds=1.0,
-            total_ceiling_seconds=1.0,
+            idle_timeout_seconds=_START_WINDOW_S,
+            total_ceiling_seconds=_START_WINDOW_S,
         )
         assert seen.get("worker") is not None
         assert seen["worker"] != caller
@@ -620,7 +667,7 @@ class TestCompressContextForwarderOwnsTimeout:
             calls["n"] += 1
             fence = kwargs.get("commit_fence")
             assert fence is not None
-            hang.wait(timeout=2)
+            hang.wait(timeout=_HANG_NET_S)
             if not fence.begin_commit():
                 return messages, "sys"
             try:
@@ -632,9 +679,12 @@ class TestCompressContextForwarderOwnsTimeout:
             "agent.conversation_compression.compress_context",
             fake_compress,
         )
+        # (idle, ceiling): the fake compress must START inside the idle window
+        # (calls["n"] == 1 below), and idle stays well under the ceiling so the
+        # host still takes the inactivity path this test pins.
         monkeypatch.setattr(
             "agent.conversation_compression.resolve_context_compression_timeouts",
-            lambda compression_cfg=None: (0.05, 0.2),
+            lambda compression_cfg=None: (_START_WINDOW_S, 4 * _START_WINDOW_S),
         )
         monkeypatch.setattr(
             "agent.portal_tags.get_conversation_context",
@@ -693,16 +743,18 @@ class TestCompressContextForwarderOwnsTimeout:
             while not fence.deadline_exceeded:
                 fence.touch_progress()
                 time.sleep(0.005)
-            release.wait(timeout=2)
+            release.wait(timeout=_HANG_NET_S)
             return messages, "sys"
 
         monkeypatch.setattr(
             "agent.conversation_compression.compress_context",
             streaming_compress,
         )
+        # The streaming worker must START inside the idle window; once running its
+        # progress touches keep idle from firing, so the ceiling is the path taken.
         monkeypatch.setattr(
             "agent.conversation_compression.resolve_context_compression_timeouts",
-            lambda compression_cfg=None: (0.05, 0.15),
+            lambda compression_cfg=None: (_START_WINDOW_S, _START_WINDOW_S),
         )
         monkeypatch.setattr(
             "agent.conversation_compression.resolve_compression_fallback_route",
@@ -757,7 +809,7 @@ class TestCompressContextForwarderOwnsTimeout:
         hang = threading.Event()
 
         def fake_compress(agent_obj, messages, system_message, **kwargs):
-            hang.wait(timeout=2)
+            hang.wait(timeout=_HANG_NET_S)
             fence = kwargs.get("commit_fence")
             if fence is not None and not fence.begin_commit():
                 return messages, "sys"
@@ -769,7 +821,7 @@ class TestCompressContextForwarderOwnsTimeout:
         )
         monkeypatch.setattr(
             "agent.conversation_compression.resolve_context_compression_timeouts",
-            lambda compression_cfg=None: (0.05, 0.2),
+            lambda compression_cfg=None: (_START_WINDOW_S, 4 * _START_WINDOW_S),
         )
         monkeypatch.setattr(
             "agent.portal_tags.get_conversation_context",
