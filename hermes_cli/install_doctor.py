@@ -491,8 +491,21 @@ def reinstall_command(python: str | None = None, spec: str = "-e . --no-deps") -
     python = python or sys.executable
     if _pip_is_importable():
         return f"{_quote(python)} -m pip install {spec}"
-    uv = shutil.which("uv") or "uv"
+    uv = _uv_for_remedy() or "uv"
     return f"{_quote(uv)} pip install {spec} --python {_quote(python)}"
+
+
+def _uv_for_remedy() -> str | None:
+    """The uv a printed remedy should name: Hermes' managed copy first, then PATH.
+
+    ``$HERMES_HOME/bin`` is not on an arbitrary shell's PATH, so a bare ``uv``
+    in the printed command — or a "uv is not on PATH, install it" note — would
+    be wrong on exactly the installs that own a managed uv. PATH stays as the
+    fallback rung for a user-installed uv (Termux pkg, system package).
+    """
+    from hermes_cli.managed_uv import resolve_uv
+
+    return resolve_uv() or shutil.which("uv")
 
 
 def _reinstall_notes(python: str | None = None) -> list[str]:
@@ -508,7 +521,7 @@ def _reinstall_notes(python: str | None = None) -> list[str]:
         "different interpreter (scoop/MSIX Python on Windows) and would",
         "install into the wrong environment entirely.",
     ]
-    if shutil.which("uv") is None:
+    if _uv_for_remedy() is None:
         notes.extend([
             "",
             "uv is not on PATH here. Install it (https://astral.sh/uv), or",

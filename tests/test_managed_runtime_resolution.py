@@ -76,6 +76,11 @@ _ALLOWED: dict[tuple[str, str], str] = {
         "Fallback after resolve_uv(), plus the except-branch for the "
         "hermes_cli import guard."
     ),
+    ("hermes_cli/install_doctor.py", "uv"): (
+        "_uv_for_remedy()'s fallback after resolve_uv() misses: the printed "
+        "reinstall command names the managed uv when one exists, and a "
+        "user-installed uv on PATH is the last rung before the bare `uv` text."
+    ),
     ("tools/browser_use_cli.py", "uv"): (
         "install_cli()'s fallback after ensure_uv() misses — a user-installed "
         "uv on PATH is a legitimate last rung before giving up with install "
