@@ -364,3 +364,97 @@ class TestSuppressPlatformVerConsole:
             if original is not None:
                 platform._syscmd_ver = original
 
+
+
+class TestSuppressPlatformWmiQueries:
+    """suppress_platform_wmi_queries: WMI stub on affected Windows interpreters only.
+
+    Why it exists: on CPython < 3.13.4 the ``_wmi`` helper thread that
+    ``platform.uname()`` abandons after its 100 ms connect timeout (gh-130727)
+    keeps a pointer to the caller's dead stack struct and ends by closing whatever
+    handle value that memory holds. Under load on 2026-09-17 that closed bcrypt's
+    system-RNG handle (a threadpool wait is registered on it) and every affected
+    SessionDB child exited 0xC000070A / STATUS_THREADPOOL_HANDLE_EXCEPTION with an
+    empty stderr. The stub makes ``uname()`` take the exact fallback it already
+    takes when WMI times out, minus the thread.
+    """
+
+    def test_noop_on_posix(self, monkeypatch):
+        import platform
+        hb = _fresh_import()
+        monkeypatch.setattr(hb, "_IS_WINDOWS", False)
+        original = platform._wmi_query
+        hb.suppress_platform_wmi_queries()
+        assert platform._wmi_query is original
+
+    def test_noop_on_fixed_interpreter(self, monkeypatch):
+        import platform
+        hb = _fresh_import()
+        monkeypatch.setattr(hb, "_IS_WINDOWS", True)
+        monkeypatch.setattr(sys, "version_info", (3, 13, 4, "final", 0))
+        original = platform._wmi_query
+        hb.suppress_platform_wmi_queries()
+        assert platform._wmi_query is original
+
+    @pytest.mark.parametrize("version", [(3, 12, 13, "final", 0), (3, 13, 3, "final", 0)])
+    def test_stub_applied_on_affected_versions(self, monkeypatch, version):
+        # _IS_WINDOWS is faked so the gate itself is covered on every host;
+        # the stub only rewrites Python-level attributes, so that is safe here.
+        import platform
+        hb = _fresh_import()
+        monkeypatch.setattr(hb, "_IS_WINDOWS", True)
+        monkeypatch.setattr(sys, "version_info", version)
+        monkeypatch.setattr(platform, "_wmi_query", platform._wmi_query)
+        monkeypatch.setitem(sys.modules, "_wmi", sys.modules.get("_wmi", None))
+
+        hb.suppress_platform_wmi_queries()
+
+        # A not-yet-imported ``platform`` takes its ImportError branch ...
+        assert sys.modules["_wmi"] is None
+        with pytest.raises(ImportError):
+            import _wmi  # noqa: F401
+        # ... and an already-imported one raises the OSError the stdlib's own
+        # fallback paths (`_get_machine_win32`, `win32_ver`) catch.
+        with pytest.raises(OSError):
+            platform._wmi_query("CPU", "Architecture")
+        # Idempotent.
+        hb.suppress_platform_wmi_queries()
+        with pytest.raises(OSError):
+            platform._wmi_query("OS", "Version")
+
+    @pytest.mark.windows_only
+    def test_uname_still_answers_without_wmi(self, monkeypatch):
+        """The fallback values are the ones a timed-out WMI already produces."""
+        import platform
+        hb = _fresh_import()
+        monkeypatch.setattr(platform, "_wmi_query", platform._wmi_query)
+        monkeypatch.setitem(sys.modules, "_wmi", sys.modules.get("_wmi", None))
+        monkeypatch.setattr(platform, "_uname_cache", None)
+
+        hb.suppress_platform_wmi_queries()
+        if sys.version_info >= (3, 13, 4):
+            pytest.skip("interpreter carries the gh-130727 fix; stub is a no-op by design")
+
+        info = platform.uname()
+        assert info.system == "Windows"
+        assert info.machine == (
+            os.environ.get("PROCESSOR_ARCHITEW6432", "") or os.environ.get("PROCESSOR_ARCHITECTURE", "")
+        )
+        assert info.release  # from sys.getwindowsversion(), not WMI
+        assert platform.system() == "Windows"
+
+    def test_applied_on_import(self):
+        """Entry points only ``import hermes_bootstrap``; the stub must ride that."""
+        import ast
+        from pathlib import Path
+
+        src = Path(_fresh_import().__file__).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        module_level_calls = {
+            node.value.func.id
+            for node in tree.body
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+        }
+        assert "suppress_platform_wmi_queries" in module_level_calls

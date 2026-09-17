@@ -204,13 +204,19 @@ def has_invalid_sqlite_header_preopen(path: Path, *, probe_bytes: int = 100, for
 @contextlib.contextmanager
 def quarantine_cross_process_lock(path: Path, timeout: float = 5.0):
     """Acquire the cross-process lock for path.quarantine.lock."""
-    import platform
     lock_path = path.with_name(path.name + ".quarantine.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open("a+b")
     acquired = False
     try:
-        if platform.system() == "Windows":
+        # sys.platform, not platform.system(): on Windows the latter runs two WMI
+        # queries on first use, and CPython < 3.13.4 abandons the query thread
+        # after a 100 ms connect timeout (gh-130727). That stray thread later
+        # closes a stale handle, which under load has killed every SessionDB
+        # child spawned by the persistence cells with 0xC000070A
+        # (STATUS_THREADPOOL_HANDLE_EXCEPTION). This runs on every open; it
+        # must never touch WMI.
+        if sys.platform == "win32":
             import msvcrt
             def _lock(mode):  # msvcrt locks a byte range from the current position
                 handle.seek(0)

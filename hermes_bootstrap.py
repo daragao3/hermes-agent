@@ -74,6 +74,46 @@ def suppress_platform_ver_console() -> None:
         pass  # hardening only — never break an entry point
 
 
+def suppress_platform_wmi_queries() -> None:
+    """Keep ``platform.uname()`` off WMI on interpreters that abandon the query thread.
+
+    On Windows, CPython's ``platform.uname()`` (so ``system()``, ``machine()``,
+    ``release()``, ``version()``, ``node()``, ``platform()``) runs two WMI queries on
+    first use through the ``_wmi`` extension, which does the COM work on a helper
+    thread and gives up after 1000 ms (CoInitialize) / 100 ms (ConnectServer). Before
+    gh-130727 (fixed in 3.13.4 / 3.14.0b2, never backported to 3.12) the abandoned
+    thread kept a pointer to the caller's *stack* struct and later ran
+    ``SetEvent``/``WriteFile``/``CloseHandle`` on whatever that memory held by then —
+    i.e. on a random live handle of the process. When that handle is one with a
+    threadpool wait registered (bcrypt's system-RNG handle, taken on the next
+    ``os.urandom``/``random.seed``), ntdll raises STATUS_THREADPOOL_HANDLE_EXCEPTION
+    and the process dies with exit code 0xC000070A, no traceback, no WER entry.
+    Measured 2026-09-17 on this box under a 2x CPU-oversubscribed load: the WMI
+    connect timed out in 14 of 24 queries and 2 of 12 SessionDB children died that
+    way; with this stub, 0 of 18.
+
+    Setting ``_wmi`` to ``None`` in ``sys.modules`` makes a not-yet-imported
+    ``platform`` take its ``ImportError`` branch; stubbing ``_wmi_query`` covers a
+    ``platform`` that was imported before us. Either way ``uname()`` takes exactly
+    the fallbacks it already takes when WMI times out (``sys.getwindowsversion()``,
+    ``PROCESSOR_ARCHITECTURE``) — the values are unchanged, only the thread is gone.
+    Fixed interpreters are left alone. Mirrors
+    ``hermes_cli._subprocess_compat.suppress_platform_wmi_queries``.
+    """
+    if not _IS_WINDOWS or sys.version_info >= (3, 13, 4):
+        return
+    try:
+        sys.modules["_wmi"] = None  # type: ignore[assignment]
+        import platform
+
+        def _no_wmi_query(*args, **kwargs):
+            raise OSError("not supported")
+
+        platform._wmi_query = _no_wmi_query
+    except Exception:
+        pass  # hardening only — never break an entry point
+
+
 def harden_import_path(src_root: str | None = None) -> None:
     """Stop a package in the current directory from shadowing Hermes modules.
 
@@ -116,4 +156,5 @@ def activate_durable_lazy_target() -> None:
 # Apply on import — entry points only need ``import hermes_bootstrap`` first.
 apply_windows_utf8_bootstrap()
 suppress_platform_ver_console()
+suppress_platform_wmi_queries()
 activate_durable_lazy_target()

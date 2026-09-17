@@ -71,6 +71,27 @@ import pytest
 # export for the suite.
 os.environ["HERMES_OTEL_DISABLE"] = "1"
 
+# Windows, CPython < 3.13.4: keep ``platform.uname()`` off WMI in the pytest
+# process itself. The ``_wmi`` query thread is abandoned after a 100 ms connect
+# timeout (gh-130727) and then closes a random live handle of the process; when
+# that is a handle with a threadpool wait on it the process dies with exit code
+# 0xC000070A and no traceback — the "faulthandler dump headed 0x8007000e,
+# no summary line" mid-collection deaths seen under host load. Same stub as
+# ``hermes_bootstrap.suppress_platform_wmi_queries`` (kept inline: importing
+# hermes_bootstrap here would also reconfigure this process's stdio). This does
+# not reach the children tests spawn: entry points get it from hermes_bootstrap,
+# and a bare ``python -c "from hermes_state import SessionDB"`` child no longer
+# touches ``platform`` at all (hermes_state_dbfile.quarantine_cross_process_lock).
+if sys.platform == "win32" and sys.version_info < (3, 13, 4):
+    sys.modules["_wmi"] = None  # type: ignore[assignment]
+    import platform as _platform
+
+    def _no_wmi_query(*args, **kwargs):
+        raise OSError("not supported")
+
+    _platform._wmi_query = _no_wmi_query
+    del _platform
+
 # Ensure project root is importable
 PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
