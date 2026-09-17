@@ -22,17 +22,21 @@ import pytest
 from agent.auxiliary_client import _CodexCompletionsAdapter
 
 
-def _adapter_with_recording_client(stream):
+def _adapter_with_recording_client(stream, shutdown_seen=None):
     """Build an adapter whose client records (action, thread) events.
 
     The nested ``_client._transport._pool._connections`` shape is what
-    ``force_close_tcp_sockets`` traverses.
+    ``force_close_tcp_sockets`` traverses. ``shutdown_seen`` (a
+    ``threading.Event``) is set when the socket is shut down, so a stream can
+    block until the watchdog has provably fired.
     """
     events = []
 
     class _Sock:
         def shutdown(self, how):
             events.append(("shutdown", threading.get_ident()))
+            if shutdown_seen is not None:
+                shutdown_seen.set()
 
         def close(self):
             events.append(("sock.close", threading.get_ident()))
@@ -70,14 +74,21 @@ class TestCodexAuxiliaryTimeoutFdOwnership:
         """The watchdog Timer fires on a stalled stream: it may only
         shutdown(); the real close() must land on the owning thread in the
         adapter's ``finally``."""
+        watchdog_fired = threading.Event()
 
         def _stalled():
-            deadline = time.monotonic() + 30.0
-            while time.monotonic() < deadline:
-                time.sleep(0.02)
-                yield SimpleNamespace(type="response.in_progress")
+            # One keepalive, then BLOCK between events until the stranger-thread
+            # watchdog has shut the socket down. A stream that keeps yielding
+            # every 20 ms lets the owner's per-event deadline check race the
+            # Timer -- and on a coarse monotonic clock (15.6 ms ticks on
+            # Windows) the owner wins, closes directly, and the Timer path this
+            # test exists to pin is never exercised. The blocked stream is the
+            # real scenario anyway: a per-event check cannot stop it.
+            yield SimpleNamespace(type="response.in_progress")
+            assert watchdog_fired.wait(10.0), "watchdog never fired"
+            yield SimpleNamespace(type="response.in_progress")
 
-        adapter, events = _adapter_with_recording_client(_stalled())
+        adapter, events = _adapter_with_recording_client(_stalled(), watchdog_fired)
         owner_tid = threading.get_ident()
 
         def _consume(stream, *, model, on_event):

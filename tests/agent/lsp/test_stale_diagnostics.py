@@ -20,7 +20,6 @@ The contract under test:
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -28,7 +27,7 @@ import pytest
 from agent.lsp.client import LSPClient
 
 
-MOCK_SERVER = str(Path(__file__).parent / "_mock_lsp_server.py")
+from tests.agent.lsp.mock_server_support import mock_server_command
 
 
 def _client(workspace: Path, script: str, **env_extra: str) -> LSPClient:
@@ -40,7 +39,7 @@ def _client(workspace: Path, script: str, **env_extra: str) -> LSPClient:
     return LSPClient(
         server_id=f"mock-{script}",
         workspace_root=str(workspace),
-        command=[sys.executable, MOCK_SERVER],
+        command=mock_server_command(),
         env=env,
         cwd=str(workspace),
     )
@@ -95,7 +94,7 @@ def _install_mock_server(script: str, server_id: str = "pyright"):
 
     def _spawn(root: str, ctx: ServerContext) -> SpawnSpec:
         return SpawnSpec(
-            command=[sys.executable, MOCK_SERVER],
+            command=mock_server_command(),
             workspace_root=root,
             cwd=root,
             env={"MOCK_LSP_SCRIPT": script},

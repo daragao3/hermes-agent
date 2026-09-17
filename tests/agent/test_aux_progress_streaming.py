@@ -473,6 +473,7 @@ class TestContentBearingProgress:
         through _ChatStreamAccumulator ticked the fence, so a stalled
         summary stream never hit the inactivity timeout."""
         fence = CompressionCommitFence()
+        armed_at = fence._last_progress
         accumulator = _ChatStreamAccumulator()
         keepalive = SimpleNamespace(id=None, model=None, choices=[], usage=None)
         empty_role_chunk = _chunk(content="", reasoning="")
@@ -481,11 +482,16 @@ class TestContentBearingProgress:
             for _ in range(5):
                 accumulator.feed(keepalive)
                 accumulator.feed(empty_role_chunk)
-        # No substantive payload arrived: the fence must have stayed stale.
-        assert fence.seconds_since_progress() > 0.0
+        # No substantive payload arrived: the fence must not have been touched.
+        # Compare the stamp itself, not seconds_since_progress() > 0 -- ten
+        # feeds finish inside one tick of a coarse monotonic clock (15.6 ms
+        # GetTickCount64 on Windows), where an untouched fence also reads 0.0.
+        assert fence._last_progress == armed_at
+        assert fence.progress_observed is False
 
         with aux_progress_hook(fence.touch_progress):
             accumulator.feed(_chunk(content="token"))
+        assert fence.progress_observed is True
         assert fence.seconds_since_progress() < 0.05
 
     def test_content_free_frames_still_record_ttfp_timing(self):

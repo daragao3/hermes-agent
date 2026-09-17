@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -18,7 +17,7 @@ from agent.lsp.client import LSPClient
 from agent.lsp.protocol import LSPProtocolError
 
 
-MOCK_SERVER = str(Path(__file__).parent / "_mock_lsp_server.py")
+from tests.agent.lsp.mock_server_support import mock_server_command
 
 
 def _client(workspace: Path, script: str = "clean") -> LSPClient:
@@ -26,7 +25,7 @@ def _client(workspace: Path, script: str = "clean") -> LSPClient:
     return LSPClient(
         server_id=f"mock-{script}",
         workspace_root=str(workspace),
-        command=[sys.executable, MOCK_SERVER],
+        command=mock_server_command(),
         env=env,
         cwd=str(workspace),
     )

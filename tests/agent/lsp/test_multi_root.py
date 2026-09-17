@@ -9,7 +9,6 @@ servers keep the one-client-per-root behaviour.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -18,7 +17,7 @@ from agent.lsp.manager import LSPService
 from agent.lsp.servers import SERVERS, ServerContext, ServerDef, SpawnSpec
 from agent.lsp.workspace import clear_cache
 
-MOCK_SERVER = str(Path(__file__).parent / "_mock_lsp_server.py")
+from tests.agent.lsp.mock_server_support import mock_server_command
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +52,7 @@ def mock_pyright(monkeypatch, tmp_path):
     def _spawn(root: str, ctx: ServerContext) -> SpawnSpec:
         spawns["value"] += 1
         return SpawnSpec(
-            command=[sys.executable, MOCK_SERVER],
+            command=mock_server_command(),
             workspace_root=root,
             cwd=root,
             env={"MOCK_LSP_SCRIPT": "errors", "MOCK_LSP_FOLDERS_LOG": str(folders_log)},

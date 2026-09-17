@@ -225,7 +225,16 @@ class TestAuxAzureFoundryEntra:
                 self.api_key = kwargs.get("api_key", "")
                 self.base_url = kwargs.get("base_url", "")
 
+        import httpx
+
         class _FakeAnthropicSDK:
+            # The bearer path builds its hook client through the SDK's own
+            # transport factory (``sdk.DefaultHttpxClient``, since the SDK
+            # transport migration); a stand-in SDK without it is silently
+            # demoted to the OpenAI-wire fallback and the assertions below
+            # never see an Anthropic constructor call.
+            DefaultHttpxClient = httpx.Client
+
             class Anthropic:
                 def __init__(self, **kwargs):
                     received["anthropic"] = kwargs
