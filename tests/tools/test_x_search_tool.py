@@ -432,3 +432,69 @@ def test_x_search_bearer_requests_prefer_api_key_from_shared_resolver(monkeypatc
     assert captured.get("prefer_api_key") is True
     assert source == "xai"
 
+
+
+def test_x_search_names_the_billing_wall_without_a_traceback(monkeypatch, caplog):
+    """403 permission-denied "used all available credits / monthly spending limit" is the xAI
+    TEAM's account state, not a key or model problem (2026-09-17: GET /v1/api-key 200 with full
+    ACLs, every other endpoint 403 with this body). The tool says so and where to fix it, at
+    WARNING, with no traceback; any other 403 keeps the ERROR path and the upstream message."""
+    import logging
+    from tools import x_search_tool as mod
+
+    body = {
+        "code": "permission-denied",
+        "error": ("Your team 2293c590-ca21-4f5c-a9fc-debfc83abeaa has either used all available credits "
+                  "or reached its monthly spending limit. To continue making API requests, please "
+                  "purchase more credits or raise your spending limit."),
+    }
+
+    class _Wall:
+        status_code = 403
+        text = json.dumps(body)
+
+        def json(self):
+            return body
+
+        def raise_for_status(self):
+            err = requests.HTTPError("403 Client Error: Forbidden for url: https://api.x.ai/v1/responses")
+            err.response = self
+            raise err
+
+    monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
+    monkeypatch.setattr("requests.post", lambda *a, **k: _Wall())
+    with caplog.at_level(logging.WARNING, logger="tools.x_search_tool"):
+        result = json.loads(mod.x_search_tool(query="latest xai discussion"))
+
+    assert result["success"] is False and result["error_type"] == "HTTPError"
+    assert "monthly spending limit" in result["error"]
+    assert "the key is valid" in result["error"] and mod.XAI_CONSOLE_BILLING_URL in result["error"]
+    wall_records = [r for r in caplog.records if "x_search unavailable" in r.getMessage()]
+    assert len(wall_records) == 1 and wall_records[0].levelno == logging.WARNING
+    assert wall_records[0].exc_info is None, "an account state is not a traceback"
+    assert not [r for r in caplog.records if r.levelno == logging.ERROR]
+
+
+def test_other_403s_keep_the_error_path_and_carry_the_upstream_message(monkeypatch, caplog):
+    import logging
+    from tools import x_search_tool as mod
+
+    class _Forbidden:
+        status_code = 403
+        text = '{"code":"forbidden","error":"x_search is not enabled for this model"}'
+
+        def json(self):
+            return {"code": "forbidden", "error": "x_search is not enabled for this model"}
+
+        def raise_for_status(self):
+            err = requests.HTTPError("403 Client Error: Forbidden")
+            err.response = self
+            raise err
+
+    monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
+    monkeypatch.setattr("requests.post", lambda *a, **k: _Forbidden())
+    with caplog.at_level(logging.ERROR, logger="tools.x_search_tool"):
+        result = json.loads(mod.x_search_tool(query="q"))
+    assert result["error"] == "forbidden: x_search is not enabled for this model"
+    errs = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errs) == 1 and "x_search is not enabled for this model" in errs[0].getMessage()
