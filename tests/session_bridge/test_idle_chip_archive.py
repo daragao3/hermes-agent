@@ -73,9 +73,49 @@ def _worker(*roots: Path, **overrides) -> IdleChipArchiveWorker:
         "run_min_interval_seconds": 3600.0,
         "monotonic": iter(range(0, 10_000_000, 100_000)).__next__,
         "wall_clock": lambda: NOW,
+        # A sibling of the first registry root, so no test ever globs the real
+        # ~/.claude/projects for its fake cliSessionIds.
+        "projects_root": roots[0].parent / "projects" if roots else None,
     }
     options.update(overrides)
     return IdleChipArchiveWorker(**options)
+
+
+def _stamp(epoch: float) -> str:
+    from datetime import datetime
+
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S."
+    ) + "%03dZ" % (int(epoch * 1000) % 1000)
+
+
+def _write_transcript(
+    projects_root: Path,
+    cwd: str,
+    cli_session_id: str,
+    *,
+    last_event: float | None,
+    extra_lines: tuple[str, ...] = (),
+    mtime: float | None = None,
+) -> Path:
+    """A CLI transcript whose newest stamped event is ``last_event`` (None for a
+    transcript with no stamped line at all), then ``extra_lines`` -- the
+    timestamp-less metadata shape -- and an mtime that may disagree with both."""
+    from session_bridge.mirror_float import _project_slug
+
+    path = projects_root / _project_slug(cwd) / f"{cli_session_id}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    if last_event is not None:
+        lines.append(
+            '{"type":"user","timestamp":"%s","message":{"content":"hi"}}'
+            % _stamp(last_event)
+        )
+    lines.extend(extra_lines)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    stamp = mtime if mtime is not None else (last_event or NOW)
+    os.utime(path, (stamp, stamp))
+    return path
 
 
 def _load(path: Path) -> dict:
@@ -684,3 +724,173 @@ def test_serve_runtime_omits_idle_chip_archiver_when_disabled(
 ) -> None:
     coordinator = _serve_runtime_coordinator(db, monkeypatch, archive_idle_chips=False)
     assert coordinator._idle_chip_archiver is None
+
+
+# --- the transcript is a second witness against a frozen store stamp -----------
+# Measured 2026-09-15/17: the desktop app froze a live session's lastActivityAt at
+# the second it hit the weekly usage limit and left it there through ten further
+# turns; 13 of 337 records since 09-13 carried such a stamp, two of them
+# chip-shaped and spared only by their error mark. loops.py check called one of
+# them GONE while it was writing files. The CLI transcript is the CLI's own
+# append path and cannot share the freeze -- but its MTIME moves on timestamp-less
+# metadata appends (custom-title, mode) hours after the last turn (26 of 337), so
+# the clock is the transcript's newest "timestamp", never its mtime.
+
+
+def _projects(tmp_path: Path) -> Path:
+    return tmp_path / "projects"
+
+
+def test_frozen_store_stamp_is_overruled_by_a_recent_transcript_turn(tmp_path) -> None:
+    """The 09-15 shape: store says 2 days idle, the transcript had a turn an hour
+    ago. The session is live and the record must stay visible."""
+    path = _write_record(tmp_path / "a", "chip1", cwd="C:\\Users\\diego\\.hermes")
+    _write_transcript(
+        _projects(tmp_path), "C:\\Users\\diego\\.hermes", "cli-chip1",
+        last_event=NOW - 3600,
+    )
+
+    result = _worker(tmp_path / "a").run_once()
+
+    assert result["examined"] == 1
+    assert result["archived"] == 0
+    assert _load(path)["isArchived"] is False
+
+
+def test_stale_transcript_does_not_spare_an_idle_record(tmp_path) -> None:
+    """Both witnesses idle: the archive this worker exists for still happens."""
+    path = _write_record(tmp_path / "a", "chip1", cwd="C:\\Users\\diego\\.hermes")
+    _write_transcript(
+        _projects(tmp_path), "C:\\Users\\diego\\.hermes", "cli-chip1",
+        last_event=NOW - 3 * DAY,
+    )
+
+    result = _worker(tmp_path / "a").run_once()
+
+    assert result["archived"] == 1
+    assert _load(path)["isArchived"] is True
+
+
+def test_metadata_append_mtime_does_not_spare_an_idle_record(tmp_path) -> None:
+    """A custom-title/mode pair appended this minute moves the mtime; the newest
+    STAMP is still 3 days old. Judging on mtime would keep every renamed record
+    unarchived forever -- the a6c1333f shape."""
+    path = _write_record(tmp_path / "a", "chip1", cwd="C:\\Users\\diego\\.hermes")
+    _write_transcript(
+        _projects(tmp_path), "C:\\Users\\diego\\.hermes", "cli-chip1",
+        last_event=NOW - 3 * DAY,
+        extra_lines=(
+            '{"type":"custom-title","title":"renamed"}',
+            '{"type":"mode","mode":"bypassPermissions"}',
+        ),
+        mtime=NOW - 60,
+    )
+
+    result = _worker(tmp_path / "a").run_once()
+
+    assert result["archived"] == 1
+    assert _load(path)["isArchived"] is True
+
+
+def test_missing_transcript_is_silence_not_idleness(tmp_path) -> None:
+    """No transcript on disk says nothing; the store verdict stands, as before."""
+    path = _write_record(tmp_path / "a", "chip1", cwd="C:\\Users\\diego\\.hermes")
+
+    result = _worker(tmp_path / "a").run_once()
+
+    assert result["archived"] == 1
+    assert _load(path)["isArchived"] is True
+
+
+def test_transcript_without_a_stamp_is_silence_not_idleness(tmp_path) -> None:
+    """A transcript holding only metadata lines has no clock. Its mtime is not
+    consulted in either direction: the store verdict stands."""
+    path = _write_record(tmp_path / "a", "chip1", cwd="C:\\Users\\diego\\.hermes")
+    _write_transcript(
+        _projects(tmp_path), "C:\\Users\\diego\\.hermes", "cli-chip1",
+        last_event=None,
+        extra_lines=('{"type":"custom-title","title":"renamed"}',),
+        mtime=NOW - 60,
+    )
+
+    result = _worker(tmp_path / "a").run_once()
+
+    assert result["archived"] == 1
+    assert _load(path)["isArchived"] is True
+
+
+def test_transcript_under_another_project_slug_is_still_found(tmp_path) -> None:
+    """Real records name a cwd whose transcript sits under a DIFFERENT worktree
+    slug (both frozen chip-shaped records on 09-16 did); transcript_path_for's
+    glob fallback is what makes the witness reachable."""
+    path = _write_record(tmp_path / "a", "chip1", cwd="C:\\Users\\diego\\.hermes")
+    _write_transcript(
+        _projects(tmp_path), "C:\\somewhere\\else", "cli-chip1",
+        last_event=NOW - 3600,
+    )
+
+    result = _worker(tmp_path / "a").run_once()
+
+    assert result["archived"] == 0
+    assert _load(path)["isArchived"] is False
+
+
+def test_stamp_echoed_inside_a_tool_result_is_not_the_clock(tmp_path) -> None:
+    """Tool results quote other transcripts; inside a JSON string the quotes are
+    escaped and must not match, or a pasted future stamp spares a dead record."""
+    path = _write_record(tmp_path / "a", "chip1", cwd="C:\\Users\\diego\\.hermes")
+    echoed = _stamp(NOW + 3600)
+    _write_transcript(
+        _projects(tmp_path), "C:\\Users\\diego\\.hermes", "cli-chip1",
+        last_event=NOW - 3 * DAY,
+        extra_lines=(
+            '{"type":"user","message":{"content":"saw \\"timestamp\\":\\"%s\\" in a file"}}'
+            % echoed,
+        ),
+    )
+
+    result = _worker(tmp_path / "a").run_once()
+
+    assert result["archived"] == 1
+    assert _load(path)["isArchived"] is True
+
+
+def test_transcript_witness_spares_a_task_record_too(tmp_path) -> None:
+    """The guard sits before the axis split, so a scheduled-task record whose
+    store stamp froze mid-run is spared on the same evidence."""
+    path = _write_record(
+        tmp_path / "a", "task1", cwd="C:\\Users\\diego\\.hermes",
+        last_activity_at_ms=int((NOW - 5 * 3600) * 1000),
+    )
+    record = _load(path)
+    record["scheduledTaskId"] = "task-xyz"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    _write_transcript(
+        _projects(tmp_path), "C:\\Users\\diego\\.hermes", "cli-task1",
+        last_event=NOW - 600,
+    )
+
+    result = _worker(tmp_path / "a", task_idle_seconds=4 * 3600.0).run_once()
+
+    assert result["archived"] == 0
+    assert _load(path)["isArchived"] is False
+
+
+def test_transcript_last_event_at_reads_the_newest_stamp_from_the_tail(tmp_path) -> None:
+    from session_bridge.mirror_float import transcript_last_event_at
+
+    filler = tuple(
+        '{"type":"user","timestamp":"%s","message":{"content":"%s"}}'
+        % (_stamp(NOW - 2 * DAY), "x" * 900)
+        for _ in range(200)
+    )
+    path = _write_transcript(
+        _projects(tmp_path), "C:\\Users\\diego", "cli-long",
+        last_event=NOW - 3 * DAY,
+        extra_lines=filler + (
+            '{"type":"assistant","timestamp":"%s","message":{}}' % _stamp(NOW - 90),
+        ),
+    )
+
+    assert transcript_last_event_at(path) == pytest.approx(NOW - 90, abs=0.001)
+    assert transcript_last_event_at(tmp_path / "absent.jsonl") is None

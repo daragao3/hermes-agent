@@ -7,6 +7,7 @@ import os
 import re
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, MutableMapping
 
@@ -1040,6 +1041,44 @@ def transcript_path_for(
     return None
 
 
+_TRANSCRIPT_TAIL_BYTES = 64 * 1024
+_TRANSCRIPT_STAMP = re.compile(
+    rb'"timestamp":"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z)"'
+)
+
+
+def transcript_last_event_at(path: Path) -> float | None:
+    """Epoch seconds of the newest timestamped event in a transcript, or None.
+
+    Every turn, tool call and tool result the CLI appends carries
+    ``"timestamp":"<iso>Z"`` and the newest sits within the last few lines, so
+    one bounded tail read finds it. The file's MTIME is deliberately not used:
+    the CLI also appends timestamp-less metadata records (``custom-title``,
+    ``mode``, ``bridge-session``, ``last-prompt``) hours after the last turn
+    -- measured 2026-09-17, 26 of 337 records had an mtime more than an hour
+    past their last stamped event -- so mtime would read a renamed session as
+    active. Quotes inside a JSON string are escaped, so a stamp echoed in a
+    tool result does not match. A tail with no stamp is ``None``: no evidence.
+    """
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - _TRANSCRIPT_TAIL_BYTES))
+            tail = handle.read()
+    except OSError:
+        return None
+    stamps = _TRANSCRIPT_STAMP.findall(tail)
+    if not stamps:
+        return None
+    newest = max(stamps).decode("ascii")
+    try:
+        parsed = datetime.fromisoformat(newest.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.timestamp()
+
+
 def transcript_wrote_capture(path: Path) -> bool | None:
     """Did this transcript contain a durable memory write?
 
@@ -1181,7 +1220,17 @@ class IdleChipArchiveWorker:
       the current-account store updates live, and a union-synced copy's
       stale ``lastActivityAt`` lies about a running session (that exact
       mistake archived 16 live sessions during the 2026-08-24 one-off sweep
-      before its corrective pass).
+      before its corrective pass);
+    - AND its CLI transcript (``~/.claude/projects/<slug>/<cliSessionId>.jsonl``)
+      carries no stamped event newer than the idle floor. Added 2026-09-17:
+      the store's ``lastActivityAt`` is not a reliable clock even in the live
+      account -- the desktop app froze it on a running session at the second
+      it hit the weekly usage limit (2026-09-15T15:10:29Z) and it stayed
+      frozen through ten further turns; 13 of 337 records since 09-13 carried
+      such a stamp. The transcript is the CLI's own append path and cannot
+      share that freeze. Its NEWEST STAMP is the clock, not its mtime (see
+      ``transcript_last_event_at``); no transcript or no stamp is silence, and
+      the store verdict stands.
 
     The scan is bounded by file mtime (``lookback_seconds``): any record
     still unarchived was written recently — by the app at activity or by
@@ -1239,11 +1288,15 @@ class IdleChipArchiveWorker:
         run_min_interval_seconds: float = 3600.0,
         monotonic: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
+        projects_root: Path | None = None,
     ) -> None:
         roots = tuple(registry_roots)
         for root in roots:
             if not isinstance(root, Path):
                 raise TypeError("registry_roots must contain Path entries")
+        self._projects_root = (
+            default_claude_projects_root() if projects_root is None else projects_root
+        )
         idle = float(idle_seconds)
         if not math.isfinite(idle) or idle <= 0:
             raise ValueError("idle_seconds must be finite and positive")
@@ -1391,6 +1444,19 @@ class IdleChipArchiveWorker:
             fresh_activity = self._fresh_group_activity(group_paths[key])
             if fresh_activity is None or fresh_activity >= idle_floor_ms:
                 continue
+            # SECOND WITNESS, consulted only for a record every store copy already
+            # calls idle. The store's lastActivityAt is not a reliable clock: on
+            # 2026-09-15 the desktop app froze it on a live session at the second
+            # that session hit the weekly usage limit, and it stayed frozen through
+            # ten further turns (13 of 337 records since 09-13 carried such a
+            # stamp; two were chip-shaped, spared only by their error mark). The
+            # CLI transcript is appended on every turn through its own path, so a
+            # stamped event in it newer than the floor is positive evidence the
+            # session is not idle. Absent evidence (no transcript, no stamp) says
+            # nothing and the store verdict stands, exactly as before this guard.
+            transcript_activity = self._transcript_activity_ms(data)
+            if transcript_activity is not None and transcript_activity >= idle_floor_ms:
+                continue
 
             def archive_if_still_eligible(
                 current: MutableMapping[str, Any],
@@ -1462,6 +1528,22 @@ class IdleChipArchiveWorker:
         if isinstance(session_id, str) and session_id:
             return ("sessionId", session_id)
         return ("filename", filename)
+
+    def _transcript_activity_ms(self, data: Mapping[str, Any]) -> float | None:
+        """Newest stamped event in the record's CLI transcript, in ms, or None.
+
+        None is "no evidence" -- no cliSessionId, no transcript on disk, no
+        stamped line in its tail, or an unreadable file -- and the caller must
+        treat it as silence, never as idleness. Any failure degrades to None.
+        """
+        try:
+            transcript = transcript_path_for(data, projects_root=self._projects_root)
+            if transcript is None:
+                return None
+            stamp = transcript_last_event_at(transcript)
+        except Exception:
+            return None
+        return None if stamp is None else stamp * 1000.0
 
     @staticmethod
     def _activity_ms(data: Mapping[str, Any]) -> float | None:
