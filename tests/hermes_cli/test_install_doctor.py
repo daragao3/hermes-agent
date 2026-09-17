@@ -58,6 +58,60 @@ def test_declared_names_covers_packages_and_py_modules(tmp_path):
     }
 
 
+def _setup_py_root_py_modules(root: Path):
+    """setup.py's ``_root_py_modules`` bound to ``root``, WITHOUT running ``setup()``.
+
+    Importing setup.py executes its module-level ``setup(...)`` call, so the
+    helper is lifted out of the AST and compiled on its own, with ``_ROOT``
+    and ``os`` supplied in place of the module globals it closes over.
+    """
+    import ast
+    import os
+
+    tree = ast.parse((REPO_ROOT / "setup.py").read_text(encoding="utf-8"))
+    fn = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_root_py_modules"
+    )
+    namespace = {"os": os, "_ROOT": str(root)}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "setup.py", "exec"), namespace)
+    return namespace["_root_py_modules"]
+
+
+def test_root_py_modules_agrees_with_setup_py_on_a_synthetic_tree(tmp_path):
+    """install_doctor.root_py_modules mirrors setup.py's rule; pin the two together.
+
+    setup.py cannot be imported for its helper, so the doctor carries a copy.
+    The real-pyproject anchor only proves the copy covers today's root files;
+    this proves both helpers apply the SAME rule to every edge in one tree,
+    so a change to either (a new exclusion, a new prefix) fails here.
+    """
+    from hermes_cli.install_doctor import root_py_modules
+
+    for name in ("a.py", "b.py", "setup.py", "README.md", "not_py.pyc", ".py"):
+        (tmp_path / name).write_text("", encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "dir.py").mkdir()
+
+    from_setup = _setup_py_root_py_modules(tmp_path)()
+
+    assert sorted(set(from_setup)) == sorted(root_py_modules(tmp_path))
+    # The rule is purely name-based on both sides: a bare ".py" and a
+    # "dir.py" directory are quirks the two helpers must share, not fix
+    # independently -- that is what would make them drift.
+    assert set(from_setup) == {"a", "b", "", "dir"}
+    assert "setup" not in from_setup
+
+
+def test_root_py_modules_agrees_with_setup_py_when_the_root_is_unreadable(tmp_path):
+    from hermes_cli.install_doctor import root_py_modules
+
+    missing = tmp_path / "nope"
+    assert _setup_py_root_py_modules(missing)() == []
+    assert root_py_modules(missing) == set()
+
+
 def test_declared_names_without_a_static_list_derives_py_modules_from_the_tree(tmp_path):
     """No ``py-modules`` key -> the tree beside the pyproject is the source.
 
