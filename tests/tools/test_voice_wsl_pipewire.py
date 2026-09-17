@@ -52,6 +52,10 @@ def test_wsl_with_pulse_server_still_allows_voice(monkeypatch):
 def test_wsl_without_forwarding_still_blocks(monkeypatch):
     _base(monkeypatch)
     _force_wsl(monkeypatch)  # no PULSE_SERVER, no PIPEWIRE_REMOTE
+    # The PowerShell/Media.SoundPlayer fallback downgrades the block to a notice;
+    # it probes for a real powershell.exe, which a Windows host HAS even with
+    # /proc/version faked. That branch is its own case; this one is "no bridge".
+    monkeypatch.setattr("tools.voice_mode._wsl_powershell_tts_available", lambda: False)
     from tools.voice_mode import detect_audio_environment
     res = detect_audio_environment()
     assert res["available"] is False

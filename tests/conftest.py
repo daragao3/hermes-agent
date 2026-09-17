@@ -3322,7 +3322,19 @@ def _live_system_guard(request, monkeypatch):
         absolute entrypoint (``C:\\...\\hermes.exe gateway run``) is caught as
         readily as the bare ``hermes gateway run``.
         """
-        cmd_str = _cmd_to_string(cmd)
+        if isinstance(cmd, (list, tuple)):
+            # An inline ``-c`` script body is SOURCE TEXT, not a launch argument:
+            # ``python -c "import gateway.run"`` (a test asserting import side
+            # effects) is not ``python -m gateway.run``. Drop the body before
+            # tokenizing; the product never launches a gateway through ``-c``.
+            argv = [str(t) for t in cmd]
+            for idx, tok in enumerate(argv):
+                if tok == "-c" and idx + 1 < len(argv):
+                    del argv[idx + 1]
+                    break
+            cmd_str = " ".join(argv)
+        else:
+            cmd_str = _cmd_to_string(cmd)
         if not cmd_str:
             return False
         low = cmd_str.lower()
