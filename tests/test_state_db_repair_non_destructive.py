@@ -738,8 +738,13 @@ def test_interrupted_snapshot_rolls_back_destination(tmp_path, monkeypatch):
         conn.execute("INSERT INTO marker VALUES ('original')")
         conn.commit()
 
-    ticks = iter((0.0, hermes_state._REPAIR_LOCK_TIMEOUT_SECONDS + 1.0))
-    monkeypatch.setattr(hermes_state.time, "monotonic", lambda: next(ticks))
+    # ``hermes_state.time`` is the global module: the stub also serves every
+    # other monotonic reader for the rest of the test (the conftest event-loop
+    # teardown reads it on Windows), so it must hold its last tick, not raise.
+    ticks = [0.0, hermes_state._REPAIR_LOCK_TIMEOUT_SECONDS + 1.0]
+    monkeypatch.setattr(
+        hermes_state.time, "monotonic", lambda: ticks.pop(0) if len(ticks) > 1 else ticks[0]
+    )
 
     with pytest.raises(TimeoutError):
         hermes_state_repair._copy_database_snapshot(source, destination)

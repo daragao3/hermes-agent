@@ -41,12 +41,15 @@ def no_terminal_env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
+# ``os.ttyname`` does not exist on Windows (get_terminal_id catches the
+# AttributeError and falls through to the env-var identity); ``raising=False``
+# lets the fake be installed there so the tty branch is exercised on every host.
 def _fake_no_tty(monkeypatch):
-    monkeypatch.setattr(tb.os, "ttyname", lambda fd: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(tb.os, "ttyname", lambda fd: (_ for _ in ()).throw(OSError()), raising=False)
 
 
 def _fake_tty(monkeypatch, name="/dev/pts/7"):
-    monkeypatch.setattr(tb.os, "ttyname", lambda fd: name)
+    monkeypatch.setattr(tb.os, "ttyname", lambda fd: name, raising=False)
 
 
 # ---------------------------------------------------------------- identity

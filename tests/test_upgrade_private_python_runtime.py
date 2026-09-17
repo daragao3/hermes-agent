@@ -1,5 +1,23 @@
 """Private runtime provisioning boundaries, using only owned filesystem fixtures."""
+import json
+from pathlib import Path
+
+import pytest
+
 from hermes_cli.managed_uv import _remove_tree
+
+# The two runtime probes below replay the 2026-09-08 wave's provisioning receipt
+# (written by that ceremony, not by this suite). Without it there is no
+# provisioned interpreter to probe, so they skip rather than fail on a host
+# whose evidence tree was pruned.
+_EVIDENCE = Path('C:/Users/diego/architecture-map/wave-execution/2026-09-08')
+_PROVISION_RECEIPT = _EVIDENCE / 'provision-private-python.json'
+
+
+def _provision() -> dict:
+    if not _PROVISION_RECEIPT.is_file():
+        pytest.skip(f"provisioning receipt absent: {_PROVISION_RECEIPT}")
+    return json.loads(_PROVISION_RECEIPT.read_text(encoding="utf-8"))
 
 
 def test_rejected_generation_cleanup_stays_inside_runtime_root(tmp_path):
@@ -18,12 +36,10 @@ def test_rejected_generation_cleanup_stays_inside_runtime_root(tmp_path):
 
 
 def test_private_python_runs_existing_dependencies_and_real_wal(tmp_path):
-    import json
-    from pathlib import Path
     from hermes_cli._subprocess_compat import run_text_capture
     root = Path(__file__).resolve().parents[1]
-    evidence = Path('C:/Users/diego/architecture-map/wave-execution/2026-09-08')
-    provision = json.loads((evidence / 'provision-private-python.json').read_text(encoding="utf-8"))
+    evidence = _EVIDENCE
+    provision = _provision()
     code = r'''
 import json, site, sys
 from pathlib import Path
@@ -53,14 +69,12 @@ print(json.dumps({'python':sys.executable,'base_prefix':sys.base_prefix,'sqlite'
 
 
 def test_candidate_runtime_uses_private_sqlite_and_wal(tmp_path):
-    import json
     import sqlite3
     import sys
-    from pathlib import Path
     from hermes_state import SessionDB
     from hermes_cli.sqlite_runtime import is_sqlite_wal_reset_vulnerable
-    evidence = Path('C:/Users/diego/architecture-map/wave-execution/2026-09-08')
-    provision = json.loads((evidence / 'provision-private-python.json').read_text(encoding="utf-8"))
+    evidence = _EVIDENCE
+    provision = _provision()
     assert Path(sys.base_prefix).resolve() == Path(provision['after']['base_prefix']).resolve()
     assert not is_sqlite_wal_reset_vulnerable(sqlite3.sqlite_version_info)
     with SessionDB(tmp_path / 'state.db') as db:
