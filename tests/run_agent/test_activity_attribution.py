@@ -22,7 +22,7 @@ def _agent(recorder=None):
     with (
         patch("model_tools.get_tool_definitions", return_value=_tool_defs("web_search")),
         patch("model_tools.check_toolset_requirements", return_value={}),
-        patch("run_agent.OpenAI"),
+        patch("agent.process_bootstrap.OpenAI"),
     ):
         agent = AIAgent(
             api_key="test-key",
