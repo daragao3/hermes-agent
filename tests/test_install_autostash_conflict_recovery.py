@@ -79,11 +79,12 @@ def _assert_conflict_was_recovered(repo: Path, output: str) -> None:
     assert "<<<<<<<" not in content and ">>>>>>>" not in content
 
 
+# install.sh runs the whole stage, and its detect_os() refuses Windows outright
+# ("Please use the PowerShell installer", exit 1) -- the stage can only be exercised
+# on a POSIX host; CI runs the installer suite on the Linux job.
+@pytest.mark.linux_only
 @pytest.mark.live_system_guard_bypass
-@pytest.mark.skipif(
-    shutil.which("git") is None or shutil.which("bash") is None,
-    reason="needs git and bash",
-)
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 def test_install_sh_repository_stage_recovers_from_autostash_conflict(
     tmp_path: Path,
 ) -> None:
@@ -137,11 +138,9 @@ def test_install_ps1_repository_stage_recovers_from_autostash_conflict(
     _assert_conflict_was_recovered(managed, result.stdout)
 
 
+@pytest.mark.linux_only
 @pytest.mark.live_system_guard_bypass
-@pytest.mark.skipif(
-    shutil.which("git") is None or shutil.which("bash") is None,
-    reason="needs git and bash",
-)
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 def test_install_sh_repository_stage_clean_apply_drops_stash(
     tmp_path: Path,
 ) -> None:

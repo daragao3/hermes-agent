@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from tests.bash_support import BASH
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
@@ -93,6 +95,10 @@ def _stage_result(proc: subprocess.CompletedProcess[str]) -> dict[str, object]:
     return json.loads(proc.stdout.splitlines()[-1])
 
 
+# install.sh runs the whole stage, and its detect_os() refuses Windows outright
+# ("Please use the PowerShell installer", exit 1) -- the stage can only be exercised
+# on a POSIX host; CI runs the installer suite on the Linux job.
+@pytest.mark.linux_only
 def test_root_node_dependency_failure_is_fatal(tmp_path: Path) -> None:
     install_dir = tmp_path / "install"
     proc, actual_install_dir, calls = _run_node_deps_stage(
@@ -114,6 +120,7 @@ def test_root_node_dependency_failure_is_fatal(tmp_path: Path) -> None:
     assert not (install_dir / "node_modules").exists()
 
 
+@pytest.mark.linux_only
 def test_tui_node_dependency_failure_is_fatal(tmp_path: Path) -> None:
     install_dir = tmp_path / "install"
     tui_dir = install_dir / "ui-tui"
@@ -129,6 +136,7 @@ def test_tui_node_dependency_failure_is_fatal(tmp_path: Path) -> None:
     assert "TUI dependencies installed" not in proc.stdout
 
 
+@pytest.mark.linux_only
 def test_node_dependency_success_remains_successful(tmp_path: Path) -> None:
     proc, install_dir, calls = _run_node_deps_stage(
         tmp_path,

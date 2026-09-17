@@ -45,3 +45,22 @@ def test_spawned_bash_runs_on_the_host_not_in_wsl() -> None:
     distro, kernel = proc.stdout.split("|", 1)
     assert distro == "", f"bash ran inside WSL distro {distro!r}"
     assert "microsoft" not in kernel.lower(), f"bash ran on a WSL kernel: {kernel!r}"
+
+
+@pytest.mark.windows_only
+def test_bash_path_spells_a_windows_path_the_way_git_bash_resolves_it(tmp_path) -> None:
+    """``bash_path`` is what a test must interpolate into ``bash -c``: the raw
+    ``C:\...`` form loses its backslashes as escapes, the ``/c/...`` form round-trips."""
+    from tests.bash_support import bash_path
+
+    target = tmp_path / "probe dir" / "file.txt"
+    target.parent.mkdir()
+    target.write_text("ok", encoding="utf-8")
+    spelled = bash_path(target)
+    assert spelled.startswith("/") and ":" not in spelled and "\\" not in spelled
+    assert not spelled.startswith("/mnt/"), "the WSL launcher's mount form must never be produced"
+    proc = subprocess.run(
+        [BASH, "-c", f'cat "{spelled}"'], capture_output=True, text=True, encoding="utf-8", timeout=60
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "ok"
