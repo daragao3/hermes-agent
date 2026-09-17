@@ -1,5 +1,13 @@
 """Completion backlogs preserve results without multiplying autonomous turns."""
+import pytest
+
 from evals.completion_backlog_probe import probe
+from tests.timeout_budget import scaled
+
+# Backstop only: each test drives the probe across 3 surfaces x several scenarios, spawning
+# ~100 real interpreter children in total (24 s alone here; well past the suite-wide 30 s
+# cap under the parallel runner's load). Same shape as the other real-process tests.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 def test_ready_completions_share_one_turn_across_interactive_routes(tmp_path):

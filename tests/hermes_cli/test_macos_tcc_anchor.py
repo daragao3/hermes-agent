@@ -27,6 +27,22 @@ from hermes_constants import venv_python_path
 from hermes_cli import doctor_platform
 
 
+def _symlink(src, dst):
+    """``os.symlink`` that skips the test where links cannot be created.
+
+    Every fixture here models a macOS/uv venv whose ``bin/python`` IS a symlink,
+    so there is no link-free arm to fall back to. Skip by attempt rather than by
+    an admin check: Developer Mode grants the privilege to a plain user on
+    Windows, and an attempt is the only test that reflects that.
+    """
+    try:
+        os.symlink(src, dst)
+    except OSError as exc:  # WinError 1314: privilege not held
+        if getattr(exc, "winerror", None) == 1314 or exc.errno in (errno.EPERM, errno.EACCES):
+            pytest.skip(f"symbolic links cannot be created here: {exc}")
+        raise
+
+
 def _darwin(monkeypatch):
     monkeypatch.setattr(tcc.platform, "system", lambda: "Darwin")
 
@@ -75,8 +91,8 @@ def _build_checkout(
         brew_py.write_bytes(b"#!homebrew")
         brew_py.chmod(0o755)
         (venv / "pyvenv.cfg").write_text(f"home = {brew}\n", encoding="utf-8")
-        os.symlink(brew_py, venv_bin / "python")
-        os.symlink(brew_py, venv_bin / "python3")
+        _symlink(brew_py, venv_bin / "python")
+        _symlink(brew_py, venv_bin / "python3")
         return root
     if store_bin is None:
         store_bin = _build_store(tmp_path, version, with_libpython=with_libpython)
@@ -87,10 +103,10 @@ def _build_checkout(
         venv_py.write_bytes(store_py.read_bytes())
         venv_py.chmod(0o755)
         (venv_bin / ".tcc-anchor-source").write_text(str(store_py), encoding="utf-8")
-        os.symlink(venv_py, venv_bin / "python3")
+        _symlink(venv_py, venv_bin / "python3")
     else:
-        os.symlink(store_py, venv_bin / "python")
-        os.symlink(store_py, venv_bin / "python3")
+        _symlink(store_py, venv_bin / "python")
+        _symlink(store_py, venv_bin / "python3")
     return root
 
 
@@ -237,7 +253,7 @@ class TestEnsureTccAnchor:
         new_bin = _build_store(tmp_path, version="3.11.16")
         new_py = new_bin / "python3.11"
         venv_py.unlink()
-        os.symlink(new_py, venv_py)
+        _symlink(new_py, venv_py)
         (root / ".venv" / "pyvenv.cfg").write_text(f"home = {new_bin}\n", encoding="utf-8")
 
         anchored = tcc.ensure_tcc_anchor(root)
@@ -463,14 +479,14 @@ class TestTccAnchorState:
         _darwin(monkeypatch)
         patched = _build_store(tmp_path, version="3.11.15")
         versionless = patched.parent.parent / "cpython-3.11-macos-aarch64-none"
-        os.symlink(patched.parent, versionless)
+        _symlink(patched.parent, versionless)
         home = versionless / "bin"
 
         root = tmp_path / "checkout"
         venv_bin = root / ".venv" / "bin"
         venv_bin.mkdir(parents=True)
         (root / ".venv" / "pyvenv.cfg").write_text(f"home = {home}\n", encoding="utf-8")
-        os.symlink(home / "python3.11", venv_bin / "python")
+        _symlink(home / "python3.11", venv_bin / "python")
 
         tcc.ensure_tcc_anchor(root)
 
@@ -599,7 +615,7 @@ class TestAnchoredAliasesBootE2E:
         store_bin = store / "bin"
         store_bin.mkdir(parents=True)
         shutil.copy2(real_py, store_bin / minor)
-        os.symlink(base / "lib", store / "lib")
+        _symlink(base / "lib", store / "lib")
 
         root = tmp_path / "checkout"
         venv = root / ".venv"
@@ -610,9 +626,9 @@ class TestAnchoredAliasesBootE2E:
             f"home = {store_bin}\nversion = {platform.python_version()}\n",
             encoding="utf-8",
         )
-        os.symlink(store_bin / minor, venv_bin / "python")
-        os.symlink("python", venv_bin / "python3")
-        os.symlink("python", venv_bin / minor)
+        _symlink(store_bin / minor, venv_bin / "python")
+        _symlink("python", venv_bin / "python3")
+        _symlink("python", venv_bin / minor)
 
         anchored = tcc.ensure_tcc_anchor(root)
         assert anchored is not None

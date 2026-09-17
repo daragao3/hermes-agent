@@ -69,7 +69,13 @@ class TestProviderPersistsAfterModelSave:
             assert kwargs["sort_keys"] is False
             raise OSError("simulated atomic write failure")
 
-        with patch("utils.atomic_yaml_write", side_effect=_boom) as mock_write:
+        # Both serializers must fail: atomic_config_write first tries the ruamel
+        # comment-preserving path (utils.atomic_roundtrip_yaml_dump, 6393dd5e28), which
+        # swallows its own failure and falls through to utils.atomic_yaml_write. Same
+        # shape as tests/hermes_cli/test_auth_commands.py and tests/gateway/test_dm_topics.py.
+        with patch("utils.atomic_roundtrip_yaml_dump",
+                   side_effect=OSError("simulated round-trip write failure")) as mock_roundtrip, \
+             patch("utils.atomic_yaml_write", side_effect=_boom) as mock_write:
             with pytest.raises(OSError, match="simulated atomic write failure"):
                 _update_config_for_provider(
                     "nous",
@@ -77,6 +83,7 @@ class TestProviderPersistsAfterModelSave:
                     default_model="llama-3.3",
                 )
 
+        assert mock_roundtrip.call_count == 1
         assert mock_write.call_count == 1
         assert config_path.read_text(encoding="utf-8") == original_text
 

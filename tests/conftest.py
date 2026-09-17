@@ -3370,7 +3370,10 @@ def _live_system_guard(request, monkeypatch):
         return False
 
     def _check_subprocess_cmd(name, cmd):
-        if _is_gateway_lifecycle_cmd(cmd):
+        # ``spawns_gateway_lookalike`` (upstream ca16cafee4) declares a test that spawns and reaps
+        # its own stub child whose argv merely LOOKS like a gateway launch; the direct-spawn guard
+        # below predates the marker and must honour it too, or the runtime guard's opt-out is dead.
+        if not lookalike_ok and _is_gateway_lifecycle_cmd(cmd):
             raise RuntimeError(
                 f"tests/conftest.py live-system guard: blocked "
                 f"subprocess.{name}({cmd!r}) — this would start or stop a "

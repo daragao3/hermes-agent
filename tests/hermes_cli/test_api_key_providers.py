@@ -742,6 +742,9 @@ class TestZaiEndpointAutoDetect:
         assert creds["api_key"] == ""
 
 
+# Drives detect_zai_endpoint itself with requests.post mocked; opt out of the root conftest's
+# autouse stub that replaces the probe wholesale (it calls z.ai on a real run).
+@pytest.mark.real_provider_auth_probe
 class TestZaiParallelProbe:
     """detect_zai_endpoint probes endpoints in parallel workers.
 

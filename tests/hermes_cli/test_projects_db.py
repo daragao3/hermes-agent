@@ -45,8 +45,9 @@ def test_create_get_list(conn):
     assert proj.slug == "hermes-agent"
     assert proj.name == "Hermes Agent"
     # First folder becomes primary.
-    assert proj.primary_path == "/tmp/hermes"
-    assert [f.path for f in proj.folders] == ["/tmp/hermes"]
+    # stored paths are _normalize_path()ed (abspath): "/tmp/hermes" is C:	mp\hermes on Windows
+    assert proj.primary_path == pdb._normalize_path("/tmp/hermes")
+    assert [f.path for f in proj.folders] == [pdb._normalize_path("/tmp/hermes")]
     assert proj.folders[0].is_primary is True
 
     # Lookup by slug too.
@@ -135,7 +136,7 @@ def test_per_profile_isolation(tmp_path):
         assert [p.slug for p in pdb.list_projects(a)] == ["only-in-a"]
         assert pdb.list_projects(b) == []
         assert [row["root"] for row in pdb.list_discovered_repos(a)] == [
-            "/a/scanned"
+            pdb._normalize_path("/a/scanned")
         ]
         assert pdb.list_discovered_repos(b) == []
     finally:

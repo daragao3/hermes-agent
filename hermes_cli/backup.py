@@ -455,6 +455,7 @@ def _safe_restore_db(src: Path, dst: Path) -> bool:
     (replacing the inode under a live holder is the #90950 split-brain); otherwise it fails closed
     (``False``) and the caller reports the file as skipped.
     """
+    dst_conn = None
     try:
         dst_conn = sqlite3.connect(str(dst))
         # Checkpoint first so the backup starts clean rather than writing on top of a deep WAL.
@@ -463,12 +464,23 @@ def _safe_restore_db(src: Path, dst: Path) -> bool:
         with closing(sqlite3.connect(f"file:{src}?mode=ro", uri=True)) as src_conn:
             src_conn.backup(dst_conn)
         dst_conn.close()
+        dst_conn = None
         with suppress(Exception):
             dst.chmod(src.stat().st_mode)
         return True
     except Exception as exc:
         logger.warning("SQLite safe restore failed for %s -> %s: %s", src, dst, exc)
+        # Our own handle on a corrupt dst must go BEFORE the fallback: it would otherwise hold the
+        # file open across the unlink (WinError 32 on Windows) and count as an in-process holder.
+        if dst_conn is not None:
+            with suppress(Exception):
+                dst_conn.close()
+            dst_conn = None
         return _unlink_move_restore_db(src, dst)
+    finally:
+        if dst_conn is not None:
+            with suppress(Exception):
+                dst_conn.close()
 
 
 def _unlink_move_restore_db(src: Path, dst: Path) -> bool:

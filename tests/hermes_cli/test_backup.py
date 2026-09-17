@@ -1,5 +1,6 @@
 """Tests for hermes backup and import commands."""
 
+import itertools
 import json
 import os
 import sqlite3
@@ -1193,7 +1194,10 @@ class TestSafeCopyDb:
         src.touch()
         dst.write_bytes(b"partial")
 
-        clock = iter((100.0, 100.5, 101.1))
+        # Three ticks for the copy under test, then hold the last value: the patch is on the
+        # time MODULE, and pytest/conftest teardown reads monotonic() too (a fourth read raised
+        # StopIteration out of the lambda and errored the teardown on Windows).
+        clock = itertools.chain((100.0, 100.5), itertools.repeat(101.1))
 
         class FakeSourceConnection:
             def backup(self, _destination, *, pages, progress, sleep):

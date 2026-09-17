@@ -42,7 +42,9 @@ def test_importing_main_does_not_import_command_modules():
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.real_concurrent_gate  # conftest autouse stub would shadow one frozen name
+@pytest.mark.real_concurrent_gate  # conftest autouse stubs would shadow frozen names
+@pytest.mark.real_venv_holder_gate  # (_detect_venv_python_processes, stubbed since 979767977e)
+@pytest.mark.real_lazy_feature_refresh  # (_refresh_active_lazy_features)
 def test_frozen_updater_surface_resolves_to_real_objects():
     for module, names in hermes_cli.main._FROZEN_UPDATER_SURFACE.items():
         mod = sys.modules[module] if module in sys.modules else __import__(module, fromlist=["_"])

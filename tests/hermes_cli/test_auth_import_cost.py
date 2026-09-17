@@ -24,19 +24,22 @@ and nine bundled backend plugins
 
 Why the fix is shaped the way it is
 -----------------------------------
-The 38 ``httpx`` references split cleanly: 16 functions touch it at runtime and
-open with ``httpx = _ensure_httpx()``; 7 only name it in a ``client:
-httpx.Client`` parameter annotation, which ``from __future__ import
-annotations`` already makes a string, so a TYPE_CHECKING import covers them.
+The original fix (61704e7397) split the 38 ``httpx`` references: runtime users
+opened with ``httpx = _ensure_httpx()``, a helper that read the module GLOBAL;
+annotation-only users were covered by a TYPE_CHECKING import. Upstream's
+0.21.1 lineage then replaced the helper with ``hermes_cli.auth_constants._LazyHttpx``
+(87e7f41c09): the module global ``httpx`` is a proxy that imports the real
+module on first attribute access and forwards get/set/del to it, so call sites
+use the bare global again and the helper was retired.
 
-``_ensure_httpx()`` reads the module GLOBAL rather than doing a plain local
-``import httpx``, and that distinction is load-bearing. Eight tests in
+What stays load-bearing is that call sites read the module GLOBAL rather than
+doing a plain local ``import httpx``. Eight tests in
 tests/hermes_cli/test_auth_qwen_provider.py use ``patch("hermes_cli.auth.httpx")``
 -- whole-attribute replacement with a MagicMock. A local import would fetch the
 real httpx and sail straight past the patch, turning a mocked test into a live
 network call against a token endpoint. Eight further references patch through
-the attribute (``patch("hermes_cli.auth.httpx.Client")``), which the PEP 562
-``__getattr__`` serves by importing the real module and caching it.
+the attribute (``patch("hermes_cli.auth.httpx.Client")``), which the proxy
+serves by forwarding to the real module.
 
 Both patch styles are asserted below, because "the import got cheaper" is worth
 nothing if it also quietly disarmed the test suite's mocking.
@@ -115,9 +118,9 @@ def test_importing_auth_does_not_import_httpx():
     assert "OFFENDERS=[]" in proc.stdout, (
         f"hermes_cli.auth imported {proc.stdout.strip()} at module scope.\n"
         "load_gateway_config() imports this module for has_usable_secret, so "
-        "every `hermes send` pays for it. Use `httpx = _ensure_httpx()` inside "
-        "the function that needs it -- not a module-scope import, and not a "
-        "bare function-local `import httpx` either (see the module docstring)."
+        "every `hermes send` pays for it. Use the lazy `httpx` proxy global "
+        "(hermes_cli.auth_constants._LazyHttpx) -- not a real module-scope import, "
+        "and not a bare function-local `import httpx` either (see the module docstring)."
     )
 
 
@@ -164,18 +167,23 @@ def test_auth_import_cost_stays_near_the_floor():
 
 @pytest.mark.timeout(900)
 def test_httpx_attribute_still_resolves_to_the_real_module():
-    """``hermes_cli.auth.httpx`` must still BE httpx, lazily.
+    """``hermes_cli.auth.httpx`` must still resolve to the real httpx, lazily.
 
-    ``patch("hermes_cli.auth.httpx.Client")`` resolves the attribute off the
-    module and then patches the real class; if this identity broke, those
-    patches would silently target something else.
+    Since 87e7f41c09 the module global is ``hermes_cli.auth_constants._LazyHttpx``,
+    a proxy that imports httpx on first attribute access and forwards get/set/del
+    to the real module. ``patch("hermes_cli.auth.httpx.Client")`` resolves the
+    attribute off the proxy and then patches the real class; if that forwarding
+    broke, those patches would silently target something else.
     """
     proc = _run(
         "import sys\n"
         "import hermes_cli.auth as auth\n"
         "assert 'httpx' not in sys.modules, 'httpx was imported eagerly'\n"
+        "client = auth.httpx.Client\n"
+        "assert 'httpx' in sys.modules, 'attribute access did not import httpx'\n"
         "import httpx\n"
-        "assert auth.httpx is httpx, 'auth.httpx is not the httpx module'\n"
+        "assert client is httpx.Client, 'auth.httpx does not forward to the httpx module'\n"
+        "assert auth.httpx.Timeout is httpx.Timeout\n"
         "print('SAME')\n"
     )
     assert proc.returncode == 0 and "SAME" in proc.stdout, (
@@ -188,19 +196,23 @@ def test_whole_module_patch_of_auth_httpx_is_honoured():
     """``patch("hermes_cli.auth.httpx")`` must reach the call sites.
 
     This is the one that a naive fix breaks. Eight tests in
-    test_auth_qwen_provider.py mock httpx this way; if ``_ensure_httpx()``
-    imported directly instead of reading the module global, those tests would
+    test_auth_qwen_provider.py mock httpx this way; if a call site did a local
+    ``import httpx`` instead of reading the module global, those tests would
     keep passing their assertions while the code underneath made real HTTP
-    calls to a token endpoint.
+    calls to a token endpoint. So the global must be replaceable, and no
+    function body in hermes_cli/auth.py may import httpx for itself (the
+    retired ``_ensure_httpx()`` helper used to be the one sanctioned reader).
     """
     proc = _run(
+        "import inspect, re\n"
         "from unittest.mock import patch\n"
         "import hermes_cli.auth as auth\n"
         "with patch('hermes_cli.auth.httpx') as fake:\n"
-        "    got = auth._ensure_httpx()\n"
-        "    assert got is fake, 'whole-module patch was ignored: %r' % (got,)\n"
-        "import httpx\n"
-        "assert auth._ensure_httpx() is httpx, 'patch was not undone'\n"
+        "    assert auth.httpx is fake, 'whole-module patch was ignored'\n"
+        "assert auth.httpx is not fake, 'patch was not undone'\n"
+        "src = inspect.getsource(auth)\n"
+        "local = re.findall(r'^[ \\t]+(?:import httpx|from httpx import)', src, re.M)\n"
+        "assert not local, 'function-local httpx import bypasses the patchable global: %r' % (local,)\n"
         "print('HONOURED')\n"
     )
     assert proc.returncode == 0 and "HONOURED" in proc.stdout, (
@@ -217,7 +229,7 @@ def test_attribute_patch_of_auth_httpx_is_honoured():
         "import httpx\n"
         "sentinel = object()\n"
         "with patch('hermes_cli.auth.httpx.Client', sentinel):\n"
-        "    assert auth._ensure_httpx().Client is sentinel\n"
+        "    assert auth.httpx.Client is sentinel\n"
         "assert httpx.Client is not sentinel, 'patch was not undone'\n"
         "print('HONOURED')\n"
     )

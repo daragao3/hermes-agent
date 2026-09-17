@@ -1353,6 +1353,9 @@ class TestLocalOllamaModelDiscovery:
             assert models_local.probe_ollama_local_models("http://127.0.0.1:19999") is None
         request.assert_called_once()
 
+    # Drives cached_provider_model_ids itself with its collaborators patched; opt out of the
+    # hermes_cli conftest stub that defaults it to [] (which made the empty-catalog sibling vacuous).
+    @pytest.mark.real_provider_model_fetch
     def test_empty_ollama_catalog_does_not_resurrect_stale_disk_models(self):
         import hermes_cli.models as models
         from hermes_cli import models_local
@@ -1374,6 +1377,9 @@ class TestLocalOllamaModelDiscovery:
         finally:
             models._OLLAMA_LOCAL_PROBE_REACHABLE.pop(probe_key, None)
 
+    # Drives cached_provider_model_ids itself with its collaborators patched; opt out of the
+    # hermes_cli conftest stub that defaults it to [] (which made the empty-catalog sibling vacuous).
+    @pytest.mark.real_provider_model_fetch
     def test_failed_ollama_catalog_preserves_stale_disk_models(self):
         import hermes_cli.models as models
         from hermes_cli import models_local

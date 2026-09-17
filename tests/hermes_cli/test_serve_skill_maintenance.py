@@ -32,7 +32,10 @@ async def test_removed_sessions_keep_profile_idle_watermark(tmp_path, monkeypatc
                 gateway._sessions["watermark"] = {
                     "last_active": recent, "running": False, "profile_home": str(tmp_path)}
             assert gateway._close_session_by_id("watermark", end_reason=reason)
-            assert _skill_maintenance_idle_for(recent - 3600) < 2
+            # The close moment (seconds ago) vs the hour-old fallback watermark: 60 s keeps that
+            # discrimination without charging _close_session_by_id's wall time (2.3 s here
+            # under load) against a 2 s bound.
+            assert _skill_maintenance_idle_for(recent - 3600) < 60
         # An active sibling profile must not hold this profile's idle clock.
         with gateway._sessions_lock:
             gateway._sessions["other-profile"] = {
@@ -68,11 +71,13 @@ async def test_serve_timer_runs_due_curator_once_and_honors_pause(tmp_path, monk
     try:
         await asyncio.sleep(.15)
         assert load_state()["run_count"] == 0
-        set_paused(False)
-        # Active turns must suppress maintenance even with a zero idle threshold.
+        # Active turns must suppress maintenance even with a zero idle threshold. Register
+        # the active session BEFORE unpausing: the 20 ms ticker can fire between the two
+        # statements and run the curator once against an empty session table.
         import tui_gateway.server as gateway
         with gateway._sessions_lock:
             gateway._sessions['maintenance-test'] = {"running": True}
+        set_paused(False)
         try:
             await asyncio.sleep(.15)
             assert load_state()["run_count"] == 0
@@ -82,7 +87,11 @@ async def test_serve_timer_runs_due_curator_once_and_honors_pause(tmp_path, monk
         async with asyncio.timeout(8):
             while load_state()["run_count"] == 0:
                 await asyncio.sleep(.02)
-        await asyncio.sleep(.15)
+        # The prune-only summary is written by the curator-review THREAD after run_count
+        # bumps; poll for it like the timer test above rather than sleeping a fixed 150 ms.
+        async with asyncio.timeout(12):
+            while "consolidation off" not in (load_state().get("last_run_summary") or ""):
+                await asyncio.sleep(.05)
         state = json.loads((tmp_path / "skills" / ".curator_state").read_text(encoding="utf-8"))
         assert state["run_count"] == 1
         assert "consolidation off" in state["last_run_summary"]

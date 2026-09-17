@@ -2250,19 +2250,6 @@ def __getattr__(name):  # PEP 562 — lazy so no import cycles
 # ---- END PLUGIN-COMPAT ----
 
 
-def _ensure_httpx():
-    """Return the module-global ``httpx``, importing it on first use.
-
-    Reads ``globals()`` rather than importing directly, so a test that has
-    replaced ``hermes_cli.auth.httpx`` wholesale gets its replacement back.
-    """
-    module = globals().get("httpx")
-    if module is None:
-        import httpx as module
-
-        globals()["httpx"] = module
-    return module
-
 def _codex_refresh_failure_marker_path() -> Path:
     return get_hermes_home() / ".codex_refresh_failed"
 

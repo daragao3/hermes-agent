@@ -1,5 +1,6 @@
 """Tests for Nous subscription feature detection."""
 
+import os
 import shutil
 import sys
 
@@ -549,8 +550,10 @@ def test_has_agent_browser_import_failure_falls_back_to_hermes_managed_node_path
     monkeypatch.setitem(sys.modules, "tools.browser_tool_install", None)
     managed_dir = tmp_path / "node"
     managed_dir.mkdir()
-    managed_bin = managed_dir / "agent-browser"
-    managed_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    # shutil.which is PATHEXT-aware on Windows: a bare "agent-browser" is never a hit there;
+    # the managed Node dir carries the .cmd shim the fallback rung is written for.
+    managed_bin = managed_dir / ("agent-browser.cmd" if os.name == "nt" else "agent-browser")
+    managed_bin.write_text("@echo off\r\n" if os.name == "nt" else "#!/bin/sh\nexit 0\n", encoding="utf-8")
     managed_bin.chmod(0o755)
 
     real_which = shutil.which
@@ -568,7 +571,8 @@ def test_has_agent_browser_import_failure_falls_back_to_hermes_managed_node_path
     )
     monkeypatch.setattr(
         "hermes_constants.agent_browser_runnable",
-        lambda p: bool(p) and str(p) == str(managed_bin),
+        # normcase: shutil.which spells the PATHEXT hit as agent-browser.CMD on Windows
+        lambda p: bool(p) and os.path.normcase(str(p)) == os.path.normcase(str(managed_bin)),
     )
 
     assert ns._has_agent_browser() is True

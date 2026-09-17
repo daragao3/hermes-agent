@@ -75,7 +75,10 @@ def test_refresh_uses_target_grant_and_preserves_sibling(monkeypatch, status):
         else:
             # Manual grants remain in the pool on terminal failure; only
             # singleton-seeded grants are removed by the existing quarantine.
-            assert target["last_status"] == "exhausted"
+            # A 401 (dead refresh token) is persisted as STATUS_DEAD since
+            # 522e114109 so the 24h prune can reclaim it instead of the entry
+            # re-driving a doomed refresh forever; a 503 is transient -> exhausted.
+            assert target["last_status"] == ("dead" if status == 401 else "exhausted")
             assert target["access_token"] == before[1]["access_token"]
     finally:
         server.shutdown()

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from typing import Any, Callable, Dict, Optional
 
 # httpx is imported lazily (~30ms) because hermes_cli.auth is on the interactive-CLI startup path
@@ -88,7 +89,19 @@ try:  # Version tag for the Codex token-endpoint User-Agent; fall back if unavai
 except Exception:  # pragma: no cover - version import should always succeed
     _HERMES_CLI_VERSION = "unknown"
 CODEX_OAUTH_USER_AGENT = f"hermes-cli/{_HERMES_CLI_VERSION}"
-CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120
+# Proactive refresh window (TASK 2, 2026-05-28): widened 120s -> 1h so the lazy
+# refresh fires WELL before hard expiry, giving many cron-driven retry attempts
+# instead of a single ~2-minute window. Tokens last ~10 days, so a wider skew
+# still rotates only ~once per token, just earlier. Override via
+# HERMES_CODEX_REFRESH_SKEW_SECONDS (floored at 120). Upstream's 120 came back
+# with the 0.21.1 integration; tests/hermes_cli/test_codex_refresh_hardening.py
+# pins the hour.
+try:
+    CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = max(
+        120, int(os.getenv("HERMES_CODEX_REFRESH_SKEW_SECONDS", "3600"))
+    )
+except ValueError:
+    CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 3600
 XAI_OAUTH_ISSUER = "https://auth.x.ai"
 XAI_OAUTH_DISCOVERY_URL = f"{XAI_OAUTH_ISSUER}/.well-known/openid-configuration"
 XAI_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"

@@ -1016,10 +1016,20 @@ def test_reset_config_provider_uses_atomic_config_transaction(tmp_path, monkeypa
         assert kwargs["sort_keys"] is False
         raise OSError("simulated atomic write failure")
 
-    with patch("utils.atomic_yaml_write", side_effect=_boom) as mock_write:
+    # atomic_config_write has TWO serializers since 6393dd5e28 (2026-08-17):
+    # an existing config.yaml is first rewritten through the ruamel
+    # comment-preserving path (utils.atomic_roundtrip_yaml_dump), which
+    # swallows its own failure and falls through to the plain
+    # utils.atomic_yaml_write. Failing only the plain writer therefore
+    # never fired -- the round-trip write succeeded and the file really
+    # was rewritten. Same shape as tests/gateway/test_dm_topics.py.
+    with patch("utils.atomic_roundtrip_yaml_dump",
+               side_effect=OSError("simulated round-trip write failure")) as mock_roundtrip, \
+         patch("utils.atomic_yaml_write", side_effect=_boom) as mock_write:
         with pytest.raises(OSError, match="simulated atomic write failure"):
             _reset_config_provider()
 
+    assert mock_roundtrip.call_count == 1
     assert mock_write.call_count == 1
     assert config_path.read_text(encoding="utf-8") == original_text
 
@@ -1035,6 +1045,9 @@ def test_auth_list_does_not_call_mutating_select(monkeypatch, capsys):
         last_status = None
         last_error_code = None
         last_status_at = None
+        priority = 0  # rendered by auth list since af212103b0
+        last_error_reset_at = None  # read by _exhausted_until since 522e114109
+        failure_reason = None  # PooledCredential.__getattr__ extra; a bare stub has no fallback
 
     class _Pool:
         def entries(self):
@@ -1072,6 +1085,9 @@ def test_auth_list_shows_exhausted_cooldown(monkeypatch, capsys):
         last_status = "exhausted"
         last_error_code = 429
         last_status_at = 1000.0
+        priority = 0  # rendered by auth list since af212103b0
+        last_error_reset_at = None  # read by _exhausted_until since 522e114109
+        failure_reason = None  # PooledCredential.__getattr__ extra; a bare stub has no fallback
 
     class _Pool:
         def entries(self):
@@ -1106,6 +1122,9 @@ def test_auth_list_shows_auth_failure_when_exhausted_entry_is_unauthorized(monke
         last_error_reason = "invalid_token"
         last_error_message = "Access token expired or revoked."
         last_status_at = 1000.0
+        priority = 0  # rendered by auth list since af212103b0
+        last_error_reset_at = None  # read by _exhausted_until since 522e114109
+        failure_reason = None  # PooledCredential.__getattr__ extra; a bare stub has no fallback
 
     class _Pool:
         def entries(self):
@@ -1142,6 +1161,8 @@ def test_auth_list_prefers_explicit_reset_time(monkeypatch, capsys):
         last_error_message = "Weekly credits exhausted."
         last_error_reset_at = "2026-04-12T10:30:00Z"
         last_status_at = 1000.0
+        priority = 0  # rendered by auth list since af212103b0
+        failure_reason = None  # PooledCredential.__getattr__ extra; a bare stub has no fallback
 
     class _Pool:
         def entries(self):

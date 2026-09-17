@@ -27,6 +27,7 @@ import hermes_cli.main_install_repair as main_install_repair
 from hermes_cli import update_cmd
 import hermes_cli.update_cmd_fleet as update_cmd_fleet
 import hermes_cli.update_cmd_deps as update_cmd_deps
+import hermes_cli.update_receipt as update_receipt
 from hermes_cli.update_receipt import COMMAND_BOUNDARY_STOP_REASON
 from hermes_constants import get_hermes_home
 
@@ -142,6 +143,15 @@ def _patch_update_deps(monkeypatch, tmp_path, run_side_effect):
     monkeypatch.setattr(
         "hermes_cli.update_receipt.collect_fleet_versions",
         lambda **k: [],
+    )
+    # _collect_fleet_snapshot polls collect_fleet_versions over a 30 s settle window whenever
+    # runtimes are expected (b3e477f304); with the collector stubbed to [] that is 30 s of
+    # sleeping per test -- the suite-wide cap. Collapse the window: the snapshot is the
+    # stubbed answer either way.
+    monkeypatch.setattr(
+        update_cmd_fleet, "_collect_fleet_snapshot",
+        lambda restart, rows_expected: update_receipt.collect_fleet_versions(
+            pre_restart_pids=restart.pre_restart_gateway_pids),
     )
     monkeypatch.setattr(
         "hermes_cli.update_inventory.collect_runtime_inventory",

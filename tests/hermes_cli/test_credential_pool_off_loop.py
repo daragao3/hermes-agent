@@ -67,6 +67,9 @@ class TestUrlopenBounded:
 # ---------------------------------------------------------------------------
 
 
+# These drive exchange_copilot_token itself with _urlopen_bounded stubbed (no api.github.com
+# call); opt out of the root conftest's autouse stub that replaces the function wholesale.
+@pytest.mark.real_provider_auth_probe
 class TestExchangeSingleFlight:
     @pytest.fixture(autouse=True)
     def _clean_caches(self, monkeypatch, tmp_path):

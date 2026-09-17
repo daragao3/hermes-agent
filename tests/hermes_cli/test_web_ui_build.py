@@ -215,7 +215,11 @@ class TestBuildWebUISkipsWhenFresh:
 
         install_cp = __import__("subprocess").CompletedProcess([], 0, stdout="", stderr="")
         build_cp = __import__("subprocess").CompletedProcess([], 0, stdout="", stderr="")
+        # npm resolves via hermes_constants.find_node_executable, which is shutil.which on POSIX
+        # but a hand-rolled PATH walk on Windows (prefers npm.cmd) -- stub that seam too, or the
+        # box's real nodejs\npm.cmd leaks into the argv (same shape as test_tui_npm_install).
         with patch("hermes_cli.main.shutil.which", return_value="/usr/bin/npm"), \
+             patch("hermes_constants.find_node_executable_on_path", return_value="/usr/bin/npm"), \
              patch("hermes_cli.main.subprocess.run", return_value=install_cp), \
              patch("hermes_cli.main_web_build._run_with_idle_timeout", return_value=build_cp) as mock_idle:
             result = _build_web_ui(web_dir)
@@ -286,6 +290,7 @@ class TestBuildWebUIFlock:
 
 
 
+    @pytest.mark.skipif(os.name == "nt", reason="drives the POSIX flock branch (fcntl); win32 builds unserialized")
     def test_contended_lock_without_dist_waits_then_skips_fresh_build(self, tmp_path):
         """First-ever build race: the waiter blocks, and once it acquires the
         lock the callee's own staleness check (running under the lock) sees

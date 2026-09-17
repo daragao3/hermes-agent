@@ -83,6 +83,12 @@ class _StubHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length)) if length else {}
             type(self).unloaded.append(body.get("model"))
+            # Report the model gone like the real router does: unload_model polls /models for
+            # up to 15 s per model until the status leaves "loaded", so a stub that keeps saying
+            # "loaded" charges 15 s per unload to the test (two models sat exactly on the 30 s cap).
+            for entry in ((type(self).models or {}).get("data") or []):
+                if entry.get("id") == body.get("model"):
+                    entry["status"] = {"value": "unloaded"}
             self._send(200, {"success": True})
         else:
             self._send(404, {})

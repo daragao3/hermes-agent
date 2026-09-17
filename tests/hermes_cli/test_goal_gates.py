@@ -1,6 +1,9 @@
 """Tests for /goal quality gates (GoalGate, run_gate, GoalManager gate flow)."""
 
 import json
+import os
+import shlex
+import subprocess
 import sys
 from unittest.mock import patch
 
@@ -14,6 +17,13 @@ from hermes_cli.goals import (
     GoalState,
     run_gate,
 )
+
+
+def _shell_command(*args: str) -> str:
+    """A command string for the platform shell (run_gate uses shell=True)."""
+    if os.name == "nt":
+        return subprocess.list2cmdline(list(args))
+    return " ".join(shlex.quote(str(arg)) for arg in args)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -62,7 +72,11 @@ def test_run_gate_pass():
 
 
 def test_run_gate_fail_captures_output():
-    passed, code, out = run_gate(GoalGate(command="echo broken >&2; exit 3"))
+    # run_gate hands the string to the PLATFORM shell (cmd.exe on Windows, where
+    # ";" and ">&2" are not what sh makes of them), so the failing gate is an
+    # interpreter invocation -- the same shape tests/agent/test_command_token_source uses.
+    passed, code, out = run_gate(GoalGate(command=_shell_command(
+        sys.executable, "-c", "import sys; sys.stderr.write('broken'); sys.exit(3)")))
     assert passed is False
     assert code == 3
     assert "broken" in out

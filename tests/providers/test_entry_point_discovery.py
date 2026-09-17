@@ -67,10 +67,10 @@ def _enable(monkeypatch, *names, disabled=()):
     ``plugins.enabled`` opt-in allow-list, so tests must enable their fake
     entry points explicitly.
     """
-    import hermes_cli.plugins as hp
+    import hermes_cli.plugin_gate as gate
 
-    monkeypatch.setattr(hp, "_get_enabled_plugins", lambda: set(names))
-    monkeypatch.setattr(hp, "_get_disabled_plugins", lambda: set(disabled))
+    monkeypatch.setattr(gate, "_get_enabled_plugins", lambda: set(names))
+    monkeypatch.setattr(gate, "_get_disabled_plugins", lambda: set(disabled))
 
 
 class _FakeEntryPoints:

@@ -8,6 +8,9 @@ byte-identical because it never becomes a turn.
 import copy
 import json
 import os
+import shlex
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -88,17 +91,32 @@ class TestBangContextGating:
 
 # ── execution ──────────────────────────────────────────────────────────────
 
+def _shell_command(*args: str) -> str:
+    """A command string for the PLATFORM shell: run_bang_command runs shell=True by design
+    (the human typed it), which is cmd.exe on Windows -- where `;`, `>&2` and `pwd` are not
+    what sh makes of them. Same shape as tests/agent/test_command_token_source."""
+    if os.name == "nt":
+        return subprocess.list2cmdline(list(args))
+    return " ".join(shlex.quote(str(arg)) for arg in args)
+
+
 class TestBangExecution:
     def test_output_is_streamed_to_writer(self):
         lines = []
-        code = run_bang_command("echo bang-one; echo bang-two", writer=lines.append)
+        code = run_bang_command(
+            _shell_command(sys.executable, "-c", "print('bang-one'); print('bang-two')"),
+            writer=lines.append,
+        )
         assert code == 0
         assert "bang-one" in lines
         assert "bang-two" in lines
 
     def test_stderr_is_merged_into_output(self):
         lines = []
-        run_bang_command("echo to-stderr >&2", writer=lines.append)
+        run_bang_command(
+            _shell_command(sys.executable, "-c", "import sys; print('to-stderr', file=sys.stderr)"),
+            writer=lines.append,
+        )
         assert "to-stderr" in lines
 
     def test_nonzero_exit_code_is_returned(self):
@@ -108,7 +126,10 @@ class TestBangExecution:
 
     def test_runs_in_requested_cwd(self, tmp_path):
         lines = []
-        code = run_bang_command("pwd", cwd=str(tmp_path), writer=lines.append)
+        code = run_bang_command(
+            _shell_command(sys.executable, "-c", "import os; print(os.getcwd())"),
+            cwd=str(tmp_path), writer=lines.append,
+        )
         assert code == 0
         # macOS resolves /tmp through /private, so compare realpaths.
         assert os.path.realpath(lines[-1].strip()) == os.path.realpath(str(tmp_path))

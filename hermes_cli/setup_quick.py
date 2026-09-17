@@ -164,10 +164,17 @@ def _blank_slate_minimal_toolsets(config: dict):
     keep = {"file", "terminal", "vision", "skills"}
     config.setdefault("platform_toolsets", {})["cli"] = sorted(keep)
     try:
-        from toolsets import TOOLSETS
+        from toolsets import TOOLSETS, resolve_toolset
         from hermes_cli.tools_config import CONFIGURABLE_TOOLSETS, _get_plugin_toolset_keys
         all_keys = {k for k, _, _ in CONFIGURABLE_TOOLSETS}
         all_keys.update(_get_plugin_toolset_keys())
+        # disabled_toolsets subtracts at TOOL granularity, so a toolset that shares a tool with
+        # the kept set (``file_read`` = read_file + search_files, a subset of ``file``) must not be
+        # listed: disabling it by name would strip those tools from the minimal surface (#57315,
+        # #58281; tests/hermes_cli/test_setup_blank_slate.py pins the invariant).
+        kept_tools = set()
+        for k in keep:
+            kept_tools.update(resolve_toolset(k))
         # Plain TOOLSETS entries catch recovered toolsets like ``kanban``. Skip "hermes-*" platform
         # composites, "includes" groupings, and posture toolsets (session-level picks by
         # agent/coding_context.py — disabling them would subtract terminal/read_file).
@@ -178,7 +185,9 @@ def _blank_slate_minimal_toolsets(config: dict):
             # here causes model_tools to subtract their tools (terminal, read_file, …) from the minimal
             # Blank Slate surface (#57315).
             all_keys.add(k)
-        disabled = sorted(all_keys - keep)
+        disabled = sorted(
+            k for k in all_keys - keep if not (set(resolve_toolset(k)) & kept_tools)
+        )
         if disabled:
             config.setdefault("agent", {})["disabled_toolsets"] = disabled
     except Exception as exc:

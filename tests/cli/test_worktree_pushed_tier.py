@@ -16,6 +16,7 @@ import time
 import pytest
 
 from hermes_cli import worktree_ops
+from tests.timeout_budget import scaled
 
 
 def _run(args, cwd):
@@ -136,6 +137,11 @@ class TestBranchPushedExact:
         assert worktree_ops._worktree_branch_pushed_exact(str(wt), {}) is False
 
 
+# Backstop only, same reason as test_worktree.py::test_ten_concurrent_worktrees: every test here
+# drives real `git worktree add/remove`, fetch and push against a bare origin on disk (process
+# spawn + per-file antivirus inspection dominate on Windows); the suite-wide --timeout=30 tripped
+# four of them inside subprocess.run().communicate() while other suites shared the box.
+@pytest.mark.timeout(scaled(300))
 class TestStartupPrunerPushedTier:
     """cli._prune_stale_worktrees against the real repo fixture."""
 
@@ -200,6 +206,7 @@ class TestStartupPrunerPushedTier:
         assert wt.exists(), "unverifiable push state must fail toward preserve"
 
 
+@pytest.mark.timeout(scaled(300))
 class TestAttendedGcPushedTier:
     """worktree_gc audit/reclaim behavior for the pushed tier."""
 
@@ -234,6 +241,7 @@ class TestAttendedGcPushedTier:
         assert wt.exists()
 
 
+@pytest.mark.timeout(scaled(300))
 class TestCronWorktreeMaintenance:
     def test_throttle_dispatches_once_per_interval(self, monkeypatch):
         import cron.scheduler as sched
@@ -261,13 +269,18 @@ class TestCronWorktreeMaintenance:
             "cron.jobs.load_jobs",
             lambda: [{"workdir": str(repo)}],
         )
+        # git rev-parse --show-toplevel answers with forward slashes on Windows; compare
+        # normalized spellings, not str(Path).
+        def _norm(paths):
+            return {os.path.normcase(os.path.normpath(r)) for r in paths}
+
         repos = sched._worktree_maintenance_repos()
-        assert str(repo) not in repos
+        assert _norm([str(repo)]) & _norm(repos) == set()
 
         # Adding .worktrees/ makes it eligible.
         (repo / ".worktrees").mkdir()
         repos = sched._worktree_maintenance_repos()
-        assert str(repo) in repos
+        assert _norm([str(repo)]) <= _norm(repos)
 
     def test_maintenance_prunes_via_real_pruner(self, repo_with_bare_origin, monkeypatch):
         import cron.scheduler as sched

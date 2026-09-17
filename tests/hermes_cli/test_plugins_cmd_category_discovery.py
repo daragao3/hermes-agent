@@ -24,9 +24,13 @@ def _no_entrypoint_plugins(monkeypatch):
     registers ``plur`` -> ``plur_hermes``) every count assertion here was off
     by one. No test in this file asserts on entry-point discovery, so stubbing
     it completes the isolation the file already intends.
+
+    ``_discover_all_plugins`` imports ``discover_entrypoint_manifests`` from
+    ``hermes_cli.plugins`` at call time (its ``_discover_entrypoint_plugins``
+    wrapper was inlined away in d127749b23), so the seam is the source module.
     """
     monkeypatch.setattr(
-        "hermes_cli.plugins_cmd._discover_entrypoint_plugins", lambda: []
+        "hermes_cli.plugins.discover_entrypoint_manifests", lambda: []
     )
 
 

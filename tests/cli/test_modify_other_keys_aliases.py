@@ -451,6 +451,7 @@ def test_buffer_level_shift_space_no_raw_csi():
     from prompt_toolkit.buffer import Buffer
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.layout import HSplit, Layout, Window, BufferControl
+    from prompt_toolkit.output import DummyOutput
 
     from hermes_cli.pt_input_extras import install_keypress_data_normalization
 
@@ -460,7 +461,10 @@ def test_buffer_level_shift_space_no_raw_csi():
         buf = Buffer()
         with create_pipe_input() as inp:
             app = Application(
-                layout=Layout(HSplit([Window(BufferControl(buf))])), input=inp
+                layout=Layout(HSplit([Window(BufferControl(buf))])), input=inp,
+                # the probe only reads the buffer; a DummyOutput keeps it off the host
+                # console (Windows: NoConsoleScreenBufferError under a non-console TERM)
+                output=DummyOutput(),
             )
             run_task = asyncio.ensure_future(app.run_async())
             await asyncio.sleep(0.05)
@@ -503,6 +507,7 @@ def test_buffer_level_shift_letter_no_raw_csi():
     from prompt_toolkit.buffer import Buffer
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.layout import HSplit, Layout, Window, BufferControl
+    from prompt_toolkit.output import DummyOutput
 
     from hermes_cli.pt_input_extras import install_keypress_data_normalization
 
@@ -512,7 +517,10 @@ def test_buffer_level_shift_letter_no_raw_csi():
         buf = Buffer()
         with create_pipe_input() as inp:
             app = Application(
-                layout=Layout(HSplit([Window(BufferControl(buf))])), input=inp
+                layout=Layout(HSplit([Window(BufferControl(buf))])), input=inp,
+                # the probe only reads the buffer; a DummyOutput keeps it off the host
+                # console (Windows: NoConsoleScreenBufferError under a non-console TERM)
+                output=DummyOutput(),
             )
             run_task = asyncio.ensure_future(app.run_async())
             await asyncio.sleep(0.05)
