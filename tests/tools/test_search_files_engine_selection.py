@@ -221,17 +221,42 @@ def test_modified_capability_failure_is_actionable_and_not_downgraded():
     assert "ripgrep" in result.error
 
 
-@pytest.mark.parametrize("order", ["discovery", "modified"])
-def test_rg_partial_output_with_error_exit_fails_closed(order):
+def test_rg_partial_output_with_error_exit_fails_closed_for_modified_order():
+    """Exit 2 under ``--sortr=modified`` means an rg too old for the flag."""
     env = RecordingEnvironment(rg_output="/repo/partial.py\n", rg_code=2)
 
     result = ShellFileOperations(env).search(
-        "*.py", path="/repo", target="files", order=order
+        "*.py", path="/repo", target="files", order="modified"
     )
 
     assert result.error is not None
     assert result.files == []
     assert len(env.rg_commands) == 1
+
+
+def test_rg_partial_output_with_error_exit_is_a_listing_in_discovery_order():
+    """rg also exits 2 on a PARTIAL failure (one unreadable directory in a tree
+    that otherwise listed fine); in discovery order those files are real."""
+    env = RecordingEnvironment(rg_output="/repo/partial.py\n", rg_code=2)
+
+    result = ShellFileOperations(env).search(
+        "*.py", path="/repo", target="files", order="discovery"
+    )
+
+    assert result.error is None
+    assert result.files == ["/repo/partial.py"]
+    assert len(env.rg_commands) == 1
+
+
+def test_rg_error_exit_without_output_fails_closed_in_discovery_order():
+    env = RecordingEnvironment(rg_output="", rg_code=2)
+
+    result = ShellFileOperations(env).search(
+        "*.py", path="/repo", target="files", order="discovery"
+    )
+
+    assert result.error is not None
+    assert result.files == []
 
 
 @pytest.mark.parametrize("order", ["discovery", "modified"])

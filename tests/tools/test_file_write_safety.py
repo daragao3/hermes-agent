@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from agent.file_safety import is_write_denied as _is_write_denied
+from tests.symlink_support import requires_symlinks
 
 
 class TestStaticDenyList:
@@ -229,6 +230,11 @@ class TestSafeRootDenialMessageIntegration:
         assert inside.read_text(encoding="utf-8") == "content"
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="the sensitive-prefix table is POSIX (/etc, /boot, /private); on Windows "
+           "normpath renders those drive-relative and no Windows table exists",
+)
 class TestCheckSensitivePathMacOSBypass:
     """Verify _check_sensitive_path blocks /private/etc paths (issue #8734)."""
 
@@ -298,7 +304,8 @@ class TestAtomicWrite:
         res = ops.patch_replace(str(target), "b = 2", "b = 22")
         assert res.success, res.error
         assert target.read_text(encoding="utf-8") == "a = 1\nb = 22\nc = 3\n"
-        assert (os.stat(target).st_mode & 0o777) == 0o600
+        if os.name != "nt":  # NTFS carries no POSIX mode bits; stat reads 0o666
+            assert (os.stat(target).st_mode & 0o777) == 0o600
 
 
 class TestBomHandling:
@@ -508,6 +515,7 @@ class TestProtectedInstructionFiles:
 
     # ---- adversarial path shapes ----------------------------------------
 
+    @requires_symlinks
     def test_symlink_to_protected_file_is_gated(self, tmp_path, approvals):
         """#41351 lesson: realpath first — innocent name, protected target."""
         real = tmp_path / "AGENTS.md"

@@ -12,6 +12,15 @@ import pytest
 
 from tools.environments.local import LocalEnvironment
 
+# ``get_temp_dir`` on Windows ALWAYS answers the HERMES_HOME cache dir with forward
+# slashes (%TEMP% often has spaces that break unquoted bash) and ignores the
+# TERMINAL_TEMP_DIR / TMPDIR precedence chain; those precedence tests are POSIX.
+_posix_precedence = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="get_temp_dir on Windows always uses HERMES_HOME/cache/terminal; "
+           "TERMINAL_TEMP_DIR/TMPDIR precedence is POSIX-only by design",
+)
+
 
 def _make_local_env(env: dict) -> LocalEnvironment:
     """Construct a LocalEnvironment without running init_session (no bash)."""
@@ -20,12 +29,14 @@ def _make_local_env(env: dict) -> LocalEnvironment:
     return obj
 
 
+@_posix_precedence
 def test_temp_dir_override_honored(tmp_path):
     target = str(tmp_path)
     env = _make_local_env({"TERMINAL_TEMP_DIR": target})
     assert env.get_temp_dir() == target
 
 
+@_posix_precedence
 def test_temp_dir_from_process_env(tmp_path):
     target = str(tmp_path)
     env = _make_local_env({})
@@ -49,6 +60,7 @@ def test_temp_dir_non_existent_falls_through(tmp_path):
     assert env.get_temp_dir() != missing
 
 
+@_posix_precedence
 def test_temp_dir_empty_falls_through(tmp_path, monkeypatch):
     """An empty/relative terminal.temp_dir must not redirect."""
     monkeypatch.setenv("TMPDIR", str(tmp_path))
@@ -66,10 +78,12 @@ def test_default_is_hermes_cache_not_tmp(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     env = _make_local_env({})
     result = env.get_temp_dir()
-    assert result == str(tmp_path / ".hermes" / "cache" / "terminal")
+    # normpath: the Windows form is the same directory spelled with "/".
+    assert os.path.normpath(result) == str(tmp_path / ".hermes" / "cache" / "terminal")
     assert os.path.isdir(result)
 
 
+@_posix_precedence
 def test_tmpdir_still_beats_default(tmp_path, monkeypatch):
     """An explicit TMPDIR keeps winning over the managed default."""
     monkeypatch.delenv("TERMINAL_TEMP_DIR", raising=False)

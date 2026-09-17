@@ -104,3 +104,40 @@ class TestUtf16Read:
         assert result.error is None
         assert "just utf-8" in result.content
         assert "Transcoded" not in (result.hint or "")
+
+
+class TestPythonSnippetTransport:
+    """``_run_python_snippet`` carries Python SOURCE, so it must not go through the
+    path escaper (Windows rewrites every backslash to ``/``) nor through a native
+    ``python.exe`` argv (MSYS collapses a ``repr()``'d path's doubled backslashes).
+    Both broke the UTF-16 lane above; this pins the transport directly."""
+
+    def test_escapes_and_repr_path_survive_the_transport(self, fops, tmp_path):
+        target = tmp_path / "exists.txt"
+        target.write_bytes(b"x")
+        snippet = (
+            "import os\n"
+            f"p = {str(target)!r}\n"
+            "print(repr('\\ufeff'), repr(b'\\xff\\xfe'), repr('\\r\\n'), len('a\\nb'.split('\\n')))\n"
+            "print(os.path.exists(p))\n")
+        result = fops._run_python_snippet(snippet)
+        assert result.exit_code == 0, result.stdout
+        lines = result.stdout.replace("\r\n", "\n").strip().split("\n")
+        assert lines[0] == "'\\ufeff' b'\\xff\\xfe' '\\r\\n' 2"
+        assert lines[1] == "True"
+
+    def test_snippet_is_not_quoted_into_the_command_line(self, tmp_path, monkeypatch):
+        """The source travels on stdin: nothing about it lands in the shell command
+        (no quoting to mangle, no ARG_MAX), matching how _atomic_write ships a body."""
+        env = LocalEnvironment(cwd=str(tmp_path))
+        fops = ShellFileOperations(env, cwd=str(tmp_path))
+        seen = {}
+
+        def fake_execute(command, cwd=None, **kwargs):
+            seen["command"], seen["stdin"] = command, kwargs.get("stdin_data")
+            return {"output": "ok\n", "returncode": 0}
+
+        monkeypatch.setattr(env, "execute", fake_execute)
+        fops._run_python_snippet("print('\\ufeff')")
+        assert seen["command"] == "python3 -"
+        assert seen["stdin"] == "print('\\ufeff')"

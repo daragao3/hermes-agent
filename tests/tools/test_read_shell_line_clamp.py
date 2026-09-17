@@ -20,6 +20,9 @@ import sys
 
 import pytest
 
+# Fixtures are written with newline="\n": a text-mode write on Windows turns
+# every "\n" into CRLF and the shell read then carries "\r" into the assertions.
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from tools.environments.local import LocalEnvironment
@@ -36,7 +39,7 @@ def test_monster_line_clamped_in_shell(tmp_path, ops):
     """A single multi-MB line comes back clamped, with the truncated suffix."""
     max_len = get_max_line_length()
     monster = tmp_path / "monster.txt"
-    with open(monster, "w", encoding="utf-8") as f:
+    with open(monster, "w", encoding="utf-8", newline="\n") as f:
         f.write("x" * 5_000_000)
         f.write("\n")
         f.write("after\n")
@@ -52,7 +55,7 @@ def test_monster_line_clamped_in_shell(tmp_path, ops):
 
 def test_offset_past_monster_returns_normal_lines(tmp_path, ops):
     monster = tmp_path / "monster.txt"
-    with open(monster, "w", encoding="utf-8") as f:
+    with open(monster, "w", encoding="utf-8", newline="\n") as f:
         f.write("y" * 1_000_000 + "\n")
         for i in range(5):
             f.write(f"normal line {i}\n")
@@ -66,7 +69,7 @@ def test_offset_past_monster_returns_normal_lines(tmp_path, ops):
 
 def test_normal_multiline_read_unchanged(tmp_path, ops):
     p = tmp_path / "plain.txt"
-    p.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
+    p.write_text("alpha\nbeta\ngamma\n", encoding="utf-8", newline="\n")
     result = ops.read_file(str(p))
     assert result.error is None
     assert result.content.startswith("1|alpha\n2|beta\n3|gamma")
@@ -75,7 +78,7 @@ def test_normal_multiline_read_unchanged(tmp_path, ops):
 def test_no_trailing_newline_preserved(tmp_path, ops):
     """cut newline-terminates its output; read_file must strip the artifact."""
     p = tmp_path / "nonl.txt"
-    p.write_text("a\nb", encoding="utf-8")
+    p.write_text("a\nb", encoding="utf-8", newline="\n")
     result = ops.read_file(str(p))
     assert result.content == "1|a\n2|b"
 
@@ -84,7 +87,7 @@ def test_utf8_multibyte_boundary_no_mojibake(tmp_path, ops):
     """Byte clamp may split a codepoint; no U+FFFD may reach the result."""
     max_len = get_max_line_length()
     p = tmp_path / "mb.txt"
-    with open(p, "w", encoding="utf-8") as f:
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
         # 2-byte chars sized so the byte clamp (4*max_len+1) lands mid-char.
         f.write("é" * (2 * max_len + 1) + "\n")
         f.write("second\n")
@@ -106,7 +109,7 @@ def test_multibyte_line_over_limit_still_marked_truncated(tmp_path, ops):
     """
     max_len = get_max_line_length()
     p = tmp_path / "just_over.txt"
-    with open(p, "w", encoding="utf-8") as f:
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
         f.write("é" * (max_len + 1) + "\n")
 
     result = ops.read_file(str(p))
@@ -120,7 +123,7 @@ def test_read_file_raw_not_clamped(tmp_path, ops):
     max_len = get_max_line_length()
     p = tmp_path / "long_raw.txt"
     long_line = "z" * (10 * max_len)
-    p.write_text(long_line + "\n", encoding="utf-8")
+    p.write_text(long_line + "\n", encoding="utf-8", newline="\n")
     result = ops.read_file_raw(str(p))
     assert result.error is None
     assert result.content == long_line + "\n"

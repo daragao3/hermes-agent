@@ -293,7 +293,14 @@ def test_named_profile_reroute_defers_limit_to_final_process(monkeypatch, tmp_pa
         exec_call.update(executable=executable, argv=argv, env=env)
         raise _ExecCalled
 
+    def stop_at_popen(argv, env=None, **_kw):
+        # Windows re-execs via Popen + wait (execvpe can crash there under
+        # 3.14+); stubbing only execvpe would spawn a REAL dashboard child.
+        exec_call.update(executable=argv[0], argv=list(argv), env=env)
+        raise _ExecCalled
+
     monkeypatch.setattr(cli_main.os, "execvpe", stop_at_exec)
+    monkeypatch.setattr(main_dashboard.subprocess, "Popen", stop_at_popen)
 
     args = SimpleNamespace(
         status=False,
