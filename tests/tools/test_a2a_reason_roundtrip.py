@@ -16,6 +16,7 @@ import pytest
 
 from tools import bot_failure_reasons as bfr
 from tools import bot_relay
+from tests.bash_support import BASH
 
 
 @pytest.fixture
@@ -58,7 +59,7 @@ def test_write_reply_classifies_when_reason_omitted(home):
 def _run_waiter(home, envelope):
     cmd = bot_relay.waiter_command(home, envelope)
     return subprocess.run(
-        ["bash", "-c", cmd], capture_output=True, text=True, timeout=30
+        [BASH, "-c", cmd], capture_output=True, text=True, timeout=30
     )
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from tests.bash_support import BASH
 
 SKILL_DIR = (
     Path(__file__).resolve().parents[2]
@@ -42,7 +43,7 @@ class TestTemplate:
 
     def test_bash_syntax(self):
         proc = subprocess.run(
-            ["bash", "-n", str(TEMPLATE)], capture_output=True, text=True
+            [BASH, "-n", str(TEMPLATE)], capture_output=True, text=True
         )
         assert proc.returncode == 0, proc.stderr
 

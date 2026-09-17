@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from tests.bash_support import BASH
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -70,7 +71,7 @@ exit 0
     )
     proc = subprocess.run(
         [
-            "bash",
+            BASH,
             str(INSTALL_SH),
             "--stage",
             "node-deps",

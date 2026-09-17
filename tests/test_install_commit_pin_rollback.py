@@ -27,6 +27,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.bash_support import BASH
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
@@ -88,7 +89,7 @@ def _run_pin_block(repo_dir: Path, commit: str, *, force: bool = False) -> str:
         ]
     )
     return subprocess.run(
-        ["bash", "-c", script],
+        [BASH, "-c", script],
         capture_output=True,
         text=True,
         check=True,

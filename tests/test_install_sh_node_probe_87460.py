@@ -17,6 +17,7 @@ import re
 import subprocess
 import tarfile
 from pathlib import Path
+from tests.bash_support import BASH
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -141,7 +142,7 @@ def _run_install_node(tmp_path: Path, node_body: str) -> tuple[int, str, str, li
     )
 
     proc = subprocess.run(
-        ["bash", str(driver)],
+        [BASH, str(driver)],
         env=env,
         capture_output=True,
         text=True,

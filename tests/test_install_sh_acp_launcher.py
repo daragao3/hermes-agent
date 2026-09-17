@@ -15,6 +15,7 @@ import stat
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
+from tests.bash_support import BASH
 
 INSTALL_SH = Path(__file__).resolve().parent.parent / "scripts" / "install.sh"
 
@@ -54,7 +55,7 @@ def _run_block(tmp_path: Path, use_venv: str) -> Path:
         "log_success(){ :; }\n" + _extract_acp_shim_block()
     )
     result = subprocess.run(
-        ["bash", "-c", script],
+        [BASH, "-c", script],
         capture_output=True,
         text=True,
         cwd=tmp_path,
@@ -117,7 +118,7 @@ def test_acp_launcher_does_not_follow_a_symlink_into_the_venv(tmp_path):
         "log_success(){ :; }\n" + _extract_acp_shim_block()
     )
     result = subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True, cwd=tmp_path
+        [BASH, "-c", script], capture_output=True, text=True, cwd=tmp_path
     )
     assert result.returncode == 0, result.stderr
 
@@ -174,7 +175,7 @@ def _run_hermes_agent_block(tmp_path: Path, use_venv: str) -> Path | None:
         "log_success(){ :; }\n" + _extract_hermes_agent_shim_block()
     )
     result = subprocess.run(
-        ["bash", "-c", script],
+        [BASH, "-c", script],
         capture_output=True,
         text=True,
         cwd=tmp_path,

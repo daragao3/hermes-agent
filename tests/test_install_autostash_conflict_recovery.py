@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.bash_support import BASH
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
@@ -93,7 +94,7 @@ def test_install_sh_repository_stage_recovers_from_autostash_conflict(
     }
 
     result = subprocess.run(
-        ["bash", str(INSTALL_SH), "--stage", "repository", "--non-interactive"],
+        [BASH, str(INSTALL_SH), "--stage", "repository", "--non-interactive"],
         cwd=tmp_path,
         env=env,
         capture_output=True,
@@ -179,7 +180,7 @@ def test_install_sh_repository_stage_clean_apply_drops_stash(
         "HERMES_INSTALL_DIR": str(managed),
     }
     result = subprocess.run(
-        ["bash", str(INSTALL_SH), "--stage", "repository", "--non-interactive"],
+        [BASH, str(INSTALL_SH), "--stage", "repository", "--non-interactive"],
         cwd=tmp_path,
         env=env,
         capture_output=True,

@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from tests.bash_support import BASH
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -96,7 +97,7 @@ def _run_install_prerequisites(tmp_path: Path) -> subprocess.CompletedProcess[st
     bin_dir.mkdir(exist_ok=True)
     _write_termux_command_stubs(bin_dir)
     env = _termux_env(tmp_path, bin_dir)
-    bash = shutil.which("bash") or "/bin/bash"
+    bash = BASH
     return subprocess.run(
         [bash, str(INSTALL_SH), "--stage", "prerequisites", "--non-interactive"],
         env=env,
@@ -120,7 +121,7 @@ def _run_setup(tmp_path: Path) -> subprocess.CompletedProcess[str]:
     _write_termux_command_stubs(bin_dir)
     env = _termux_env(tmp_path, bin_dir)
     checkout = _copy_setup_checkout(tmp_path)
-    bash = shutil.which("bash") or "/bin/bash"
+    bash = BASH
     return subprocess.run(
         [bash, str(checkout / "setup-hermes.sh")],
         env=env,

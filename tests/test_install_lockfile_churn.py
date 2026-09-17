@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.bash_support import BASH
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
@@ -82,7 +83,7 @@ def test_install_sh_discards_runtime_lockfile_churn_before_stash(
         "run\n"
     )
     res = subprocess.run(
-        ["bash", "-c", script], cwd=repo, capture_output=True, text=True
+        [BASH, "-c", script], cwd=repo, capture_output=True, text=True
     )
 
     assert res.returncode == 0, res.stderr
