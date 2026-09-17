@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -17,6 +18,7 @@ from gateway.hosted_room_peer import (
     HostedRoomGrantError,
     HostedRoomPeerError,
     PROTOCOL_VERSION,
+    _gateway_room_grant_secret_for_home,
     catalog_mapping,
     derive_room_grant_secret,
     gateway_room_grant_secret,
@@ -49,7 +51,8 @@ def test_gateway_room_grant_secret_is_private_persistent_and_not_an_api_key(
     secret_path = home / ".room-link-grant-secret"
     assert first == second
     assert len(first) == 32
-    assert stat.S_IMODE(secret_path.stat().st_mode) == 0o600
+    if os.name != "nt":  # POSIX modes are not enforced on Windows (S_IMODE reads 0o666)
+        assert stat.S_IMODE(secret_path.stat().st_mode) == 0o600
     assert secret_path.read_bytes() != first
     assert first != derive_room_grant_secret("gateway-api-key-1234567890")
 
@@ -59,6 +62,12 @@ def test_gateway_room_grant_secret_is_atomic_across_concurrent_workers(
 ):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))
+    # The secret is lru-cached by resolved home path. With
+    # ``tmp_path_retention_policy = "failed"`` the previous test's PASSED
+    # tmp_path is deleted at teardown and this test is handed the same
+    # numbered name (both truncate to ``test_gateway_room_grant_secret0``), so
+    # a warm cache would answer without ever writing the file this test stats.
+    _gateway_room_grant_secret_for_home.cache_clear()
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         secrets = list(pool.map(lambda _index: gateway_room_grant_secret(), range(8)))

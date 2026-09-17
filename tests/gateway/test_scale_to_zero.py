@@ -122,6 +122,14 @@ from gateway.scale_to_zero import (  # noqa: E402 - grouped with their section
 _FLY_ENV = {FLY_APP_NAME_ENV: "hermes-agent-stg-test", FLY_MACHINE_ID_ENV: "d891234f"}
 
 
+# Windows CPython has no AF_UNIX: the flaps transport cannot be faked there, so
+# the two round-trip tests skip by capability (the product's own "no AF_UNIX"
+# arm is pinned separately below, unmarked, so it runs on every host).
+_needs_unix_sockets = pytest.mark.skipif(
+    not hasattr(_socket, "AF_UNIX"), reason="unix sockets unavailable on this host"
+)
+
+
 def _fake_flaps(tmp_path, status_line, capture):
     """One-shot unix-socket HTTP server standing in for flaps."""
     sock_path = str(tmp_path / "fly-api.sock")
@@ -150,6 +158,7 @@ def _fake_flaps(tmp_path, status_line, capture):
     return sock_path, t
 
 
+@_needs_unix_sockets
 def test_suspend_self_posts_suspend_for_this_machine(tmp_path):
     captured: list[bytes] = []
     sock_path, t = _fake_flaps(tmp_path, "200 OK", captured)
@@ -164,6 +173,7 @@ def test_suspend_self_posts_suspend_for_this_machine(tmp_path):
     assert "Host: flaps\r\n" in request
 
 
+@_needs_unix_sockets
 def test_suspend_self_non_2xx_is_false_not_raise(tmp_path):
     captured: list[bytes] = []
     sock_path, t = _fake_flaps(tmp_path, "412 Precondition Failed", captured)
@@ -173,6 +183,15 @@ def test_suspend_self_non_2xx_is_false_not_raise(tmp_path):
 
 def test_suspend_self_missing_socket_is_false_not_raise(tmp_path):
     # Fail-awake: a dead/absent flaps socket must never raise out of the watcher.
+    assert suspend_self(_FLY_ENV, socket_path=str(tmp_path / "nope.sock")) is False
+
+
+def test_suspend_self_without_unix_sockets_is_false_not_raise(tmp_path, monkeypatch):
+    # Fail-awake on a host whose CPython lacks AF_UNIX (Windows): the contract is
+    # "never raises", and an AttributeError out of socket.socket() broke it.
+    import gateway.scale_to_zero as s2z
+
+    monkeypatch.delattr(s2z.socket, "AF_UNIX", raising=False)
     assert suspend_self(_FLY_ENV, socket_path=str(tmp_path / "nope.sock")) is False
 
 

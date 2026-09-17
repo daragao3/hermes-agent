@@ -16,6 +16,13 @@ import sys
 from pathlib import Path
 
 
+def _ok(proc: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
+    """check=True with the child's stderr in the failure text -- a bare
+    CalledProcessError names the argv and hides the ImportError behind it."""
+    assert proc.returncode == 0, f"child exited {proc.returncode}\nstderr:\n{proc.stderr}"
+    return proc
+
+
 def test_stale_claim_from_a_dead_one_shot_process_blocks_new_execution_creation(
     tmp_path,
 ):
@@ -30,31 +37,37 @@ def test_stale_claim_from_a_dead_one_shot_process_blocks_new_execution_creation(
     repo = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
     env["HERMES_HOME"] = str(home)
-    env["PYTHONPATH"] = str(repo)
+    # PREPEND the repo; never replace. Under the gateway the interpreter is the
+    # base CPython with the venv supplied through PYTHONPATH (the Windows
+    # launcher overlay), so clobbering it strands the child without its
+    # third-party imports -- exit 1 with the cause hidden behind check=True.
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(repo), *[p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]]
+    )
 
     # Simulate the dispatched runner's owner process dying mid-flight,
     # exactly as issue #86721 describes: a one-shot process creates the
     # execution row (status='claimed') and exits before finishing it.
-    create = subprocess.run(
+    create = _ok(subprocess.run(
         [
             sys.executable, "-c",
             "from cron.executions import create_execution; "
             "r=create_execution('cron-run-job', source='direct'); "
             "print(r['id'])",
         ],
-        cwd=repo, env=env, text=True, capture_output=True, check=True,
-    )
+        cwd=repo, env=env, text=True, capture_output=True,
+    ))
     execution_id = create.stdout.strip()
 
     # Without recovery, the row is exactly where the bug report found it.
-    check = subprocess.run(
+    check = _ok(subprocess.run(
         [
             sys.executable, "-c",
             "import json; from cron.executions import list_executions; "
             "print(json.dumps(list_executions(job_id='cron-run-job')))",
         ],
-        cwd=repo, env=env, text=True, capture_output=True, check=True,
-    )
+        cwd=repo, env=env, text=True, capture_output=True,
+    ))
     records = json.loads(check.stdout.strip())
     assert len(records) == 1
     assert records[0]["id"] == execution_id
@@ -72,23 +85,29 @@ def test_recover_interrupted_executions_reaps_the_stale_claim_from_a_dead_proces
     repo = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
     env["HERMES_HOME"] = str(home)
-    env["PYTHONPATH"] = str(repo)
+    # PREPEND the repo; never replace. Under the gateway the interpreter is the
+    # base CPython with the venv supplied through PYTHONPATH (the Windows
+    # launcher overlay), so clobbering it strands the child without its
+    # third-party imports -- exit 1 with the cause hidden behind check=True.
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(repo), *[p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]]
+    )
 
-    create = subprocess.run(
+    create = _ok(subprocess.run(
         [
             sys.executable, "-c",
             "from cron.executions import create_execution; "
             "r=create_execution('cron-run-job-2', source='direct'); "
             "print(r['id'])",
         ],
-        cwd=repo, env=env, text=True, capture_output=True, check=True,
-    )
+        cwd=repo, env=env, text=True, capture_output=True,
+    ))
     execution_id = create.stdout.strip()
 
     # This is what #86721's fix now calls, from a FRESH process, mirroring
     # exactly what a subsequent `hermes cron run` invocation would trigger
     # before attempting its own claim.
-    recover = subprocess.run(
+    recover = _ok(subprocess.run(
         [
             sys.executable, "-c",
             "import json; "
@@ -96,8 +115,8 @@ def test_recover_interrupted_executions_reaps_the_stale_claim_from_a_dead_proces
             "print(recover_interrupted_executions()); "
             "print(json.dumps(list_executions(job_id='cron-run-job-2')))",
         ],
-        cwd=repo, env=env, text=True, capture_output=True, check=True,
-    )
+        cwd=repo, env=env, text=True, capture_output=True,
+    ))
     lines = recover.stdout.strip().splitlines()
     assert lines[0] == "1", "exactly one stale execution must be reaped"
     records = json.loads(lines[1])
