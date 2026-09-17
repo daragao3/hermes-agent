@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from tests.bash_support import BASH
+from tests.timeout_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
@@ -23,6 +24,15 @@ POWERSHELL = next(
     (candidate for candidate in ("pwsh", "powershell") if shutil.which(candidate)),
     None,
 )
+
+# Each test here runs a real installer stage: a PowerShell (or bash) boot plus a
+# fetch/stash/pull/stash-apply sequence against three local git repos. That is
+# ~9-14s on an idle Windows box and 30-45s when other suites share the host, so
+# the global --timeout=30 tripped on load alone (measured 2026-09-17: 8.6s,
+# 29.6s, 32.7s, 43.5s for the same test). Nothing here asserts the stage is
+# fast; the bound is a safety net, so it takes a generous base scaled by
+# HERMES_TEST_TIMEOUT_SCALE. See tests/timeout_budget.py.
+runs_installer_stage = pytest.mark.timeout(scaled(180))
 
 
 def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -82,6 +92,7 @@ def _assert_conflict_was_recovered(repo: Path, output: str) -> None:
 # install.sh runs the whole stage, and its detect_os() refuses Windows outright
 # ("Please use the PowerShell installer", exit 1) -- the stage can only be exercised
 # on a POSIX host; CI runs the installer suite on the Linux job.
+@runs_installer_stage
 @pytest.mark.linux_only
 @pytest.mark.live_system_guard_bypass
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
@@ -106,6 +117,7 @@ def test_install_sh_repository_stage_recovers_from_autostash_conflict(
     _assert_conflict_was_recovered(managed, result.stdout)
 
 
+@runs_installer_stage
 @pytest.mark.live_system_guard_bypass
 @pytest.mark.skipif(
     shutil.which("git") is None or POWERSHELL is None,
@@ -138,6 +150,7 @@ def test_install_ps1_repository_stage_recovers_from_autostash_conflict(
     _assert_conflict_was_recovered(managed, result.stdout)
 
 
+@runs_installer_stage
 @pytest.mark.linux_only
 @pytest.mark.live_system_guard_bypass
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
