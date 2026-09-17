@@ -413,10 +413,13 @@ class TestSuppressPlatformWmiQueries:
         assert sys.modules["_wmi"] is None
         with pytest.raises(ImportError):
             import _wmi  # noqa: F401
-        # ... and an already-imported one raises the OSError the stdlib's own
-        # fallback paths (`_get_machine_win32`, `win32_ver`) catch.
+        # ... and an already-imported one answers the CPU query from kernel32
+        # (a WMI Win32_Processor.Architecture code the stdlib table maps) and
+        # raises the OSError win32_ver()'s fallback path catches for the rest.
+        [arch, *rest] = platform._wmi_query("CPU", "Architecture")
+        assert rest == [] and arch.isdigit() and int(arch) in {0, 5, 6, 9, 12}
         with pytest.raises(OSError):
-            platform._wmi_query("CPU", "Architecture")
+            platform._wmi_query("OS", "Version", "ProductType")
         # Idempotent.
         hb.suppress_platform_wmi_queries()
         with pytest.raises(OSError):
@@ -437,11 +440,34 @@ class TestSuppressPlatformWmiQueries:
 
         info = platform.uname()
         assert info.system == "Windows"
-        assert info.machine == (
-            os.environ.get("PROCESSOR_ARCHITEW6432", "") or os.environ.get("PROCESSOR_ARCHITECTURE", "")
-        )
+        assert info.machine in {"x86", "ARM", "ia64", "AMD64", "ARM64"}
+        env_arch = os.environ.get("PROCESSOR_ARCHITEW6432", "") or os.environ.get("PROCESSOR_ARCHITECTURE", "")
+        if env_arch:  # absent under scripts/run_tests.sh's env -i; kernel32 answers either way
+            assert info.machine == env_arch
         assert info.release  # from sys.getwindowsversion(), not WMI
         assert platform.system() == "Windows"
+
+    @pytest.mark.windows_only
+    def test_machine_survives_a_stripped_environment(self, monkeypatch):
+        """scripts/run_tests.sh runs pytest under ``env -i`` without PROCESSOR_ARCHITECTURE;
+        the stdlib's own fallback for ``machine()`` is then '' (dashboard /api/system/stats
+        lost its ``arch`` at 35a49ce840). The stub must answer from kernel32 instead."""
+        import platform
+        hb = _fresh_import()
+        monkeypatch.setattr(platform, "_wmi_query", platform._wmi_query)
+        monkeypatch.setitem(sys.modules, "_wmi", sys.modules.get("_wmi", None))
+        monkeypatch.setattr(platform, "_uname_cache", None)
+        monkeypatch.delenv("PROCESSOR_ARCHITECTURE", raising=False)
+        monkeypatch.delenv("PROCESSOR_ARCHITEW6432", raising=False)
+
+        hb.suppress_platform_wmi_queries()
+        if sys.version_info >= (3, 13, 4):
+            pytest.skip("interpreter carries the gh-130727 fix; stub is a no-op by design")
+
+        assert platform.machine() in {"x86", "ARM", "ia64", "AMD64", "ARM64"}
+        # The OS query still refuses -> win32_ver() takes sys.getwindowsversion().
+        with pytest.raises(OSError):
+            platform._wmi_query("OS", "Version")
 
     def test_applied_on_import(self):
         """Entry points only ``import hermes_bootstrap``; the stub must ride that."""
