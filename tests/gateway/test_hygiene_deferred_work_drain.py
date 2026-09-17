@@ -49,7 +49,7 @@ async def test_timed_out_codex_hygiene_worker_remains_visible_to_shutdown():
 
         def _compress_context(self, *_args, **_kwargs):
             started.set()
-            release.wait(timeout=5.0)
+            release.wait(timeout=30.0)
 
     agent = BlockingCodexAgent()
     runner._agent_cache = {"tg:123": (agent, 0.0)}
@@ -62,7 +62,10 @@ async def test_timed_out_codex_hygiene_worker_remains_visible_to_shutdown():
         auto_mode="hermes",
         history=[{"role": "user", "content": "hello"}],
         approx_tokens=100,
-        timeout_seconds=0.01,
+        # `started` is asserted the moment the host times out, so the executor
+        # worker must be SCHEDULED inside this window; a loaded -j 12 runner has
+        # left pool threads unstarted past 0.1 s (2026-09-17). Policy floor.
+        timeout_seconds=2.0,
         failure_cooldown_seconds=-1.0,
     )
 

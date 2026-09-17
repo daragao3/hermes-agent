@@ -262,12 +262,17 @@ def test_force_without_live_thread_does_not_run_local_compressor(mode):
 # ---------------------------------------------------------------------------
 
 def test_timeout_records_persistent_cooldown(tmp_path):
+    import threading
+
+    # Released only after the host has returned: the compaction must outlast the
+    # host's whole timeout path under load (a fixed 3 s sleep against a 1 s
+    # timeout could return first on a loaded runner and read as "compacted").
+    release = threading.Event()
+
     class HangingSession(FakeCodexSession):
         def compact_thread(self):
             self.compact_calls += 1
-            import time
-
-            time.sleep(3.0)
+            release.wait(timeout=30.0)
             return self.result
 
     agent = LiveCodexAgent(mode="hermes", session=HangingSession())
@@ -275,18 +280,24 @@ def test_timeout_records_persistent_cooldown(tmp_path):
     gw, db = _gateway(tmp_path, key, agent)
     db.create_session(agent.session_id, "gateway")
 
-    outcome = asyncio.run(
-        run_codex_hygiene_compaction(
-            gw,
-            key,
-            agent.session_id,
-            auto_mode="hermes",
-            history=_history(),
-            approx_tokens=345_000,
-            timeout_seconds=1.0,
-            failure_cooldown_seconds=300.0,
-        )
-    )
+    async def _timed_out_then_release():
+        try:
+            return await run_codex_hygiene_compaction(
+                gw,
+                key,
+                agent.session_id,
+                auto_mode="hermes",
+                history=_history(),
+                approx_tokens=345_000,
+                timeout_seconds=2.0,
+                failure_cooldown_seconds=300.0,
+            )
+        finally:
+            # Release inside the loop: asyncio.run's shutdown joins the default
+            # executor, which is still running the held compaction.
+            release.set()
+
+    outcome = asyncio.run(_timed_out_then_release())
 
     assert outcome == "failed:timeout"
     state = db.get_compression_failure_cooldown(agent.session_id)
