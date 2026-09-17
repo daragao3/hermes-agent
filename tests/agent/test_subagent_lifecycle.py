@@ -14,6 +14,13 @@ from agent.subagent_lifecycle import (
 )
 
 
+# lifecycle.wait() is a positive wait on the lifecycle executor's future; on timeout it
+# returns the NON-terminal state, which the assertions below would then fail on. The fake
+# child must be scheduled and finish inside this, so it sits well above the flake-policy
+# floor (AGENTS.md: wall-clock bounds >= 2 s); an already-finished future returns at once.
+_WAIT_S = 10.0
+
+
 class FakeChild:
     def __init__(self, ident="sa-test"):
         self._subagent_id = ident
@@ -74,7 +81,7 @@ def lifecycle(monkeypatch):
 def test_cancel_is_cooperative_and_forged_handle_is_unknown(lifecycle):
     handle = lifecycle.launch(SubagentLaunchRequest(goal="x"))
     assert lifecycle.cancel(handle, reason="test").accepted
-    terminal = lifecycle.wait(handle, timeout_seconds=1)
+    terminal = lifecycle.wait(handle, timeout_seconds=_WAIT_S)
     assert terminal.state is SubagentState.CANCELLED
     forged = handle.__class__(**{**handle.to_dict(), "capability": "forged"})
     assert lifecycle.status(forged).state is SubagentState.UNKNOWN
@@ -94,7 +101,7 @@ def test_cancel_uses_explicit_hard_interrupt(lifecycle):
     assert record.agent.interrupt_kind == "hard"
     assert "explicit user cancel" in record.agent.interrupt_message
     assert record.agent.tool_reason == "subagent cancellation requested"
-    lifecycle.wait(handle, timeout_seconds=1)
+    lifecycle.wait(handle, timeout_seconds=_WAIT_S)
 
 
 
@@ -135,7 +142,7 @@ def test_public_lifecycle_runs_host_aggregation(monkeypatch):
 
     service = SubagentLifecycleService(lambda: parent)
     handle = service.launch(SubagentLaunchRequest(goal="aggregate me"))
-    assert service.wait(handle, timeout_seconds=1).state is SubagentState.SUCCEEDED
+    assert service.wait(handle, timeout_seconds=_WAIT_S).state is SubagentState.SUCCEEDED
 
     memory.on_delegation.assert_called_once_with(
         task="aggregate me", result="aggregated", child_session_id="child-session"
@@ -165,6 +172,10 @@ def test_agent_turn_binds_and_clears_lifecycle_parent(monkeypatch):
     from run_agent import AIAgent
 
     agent = AIAgent.__new__(AIAgent)
+    # turn_facade.run_conversation publishes the session's persistence source,
+    # which reads self.platform directly (None -> "cli"); a bare instance
+    # otherwise raises AttributeError before the patched loop runs.
+    agent.platform = None
     observed = []
 
     def run_conversation(parent, *_args, **_kwargs):
