@@ -3815,3 +3815,59 @@ def _moa_caches_isolated():
     yield
     moa._preset_cache.clear()
     moa._runtime_cache.clear()
+
+
+@pytest.fixture(scope="session")
+def bash_syntax_check():
+    r"""Return ``check(source) -> CompletedProcess`` running ``bash -n`` portably.
+
+    The obvious form -- write a tempfile, then ``subprocess.run(["bash", "-n",
+    path])`` -- is not portable on Windows, and its verdict depends on *how the
+    sweep was launched* rather than on the code under test.  A bare ``bash``
+    from ``subprocess`` goes through ``CreateProcess``, which checks
+    ``%SystemRoot%\System32`` before ``PATH`` and finds the WSL launcher there
+    (see ``tests.bash_support``); a ``bash`` resolved through ``PATH`` differs
+    between a Git-Bash launch (Cygwin, understands a ``C:\...`` argument) and a
+    PowerShell launch (WSL, POSIX) which eats the backslashes and reports
+    ``C:UsersdiegoAppData...: No such file or directory`` with rc=127.  Same
+    commit, same code, opposite verdict -- a portability bug in the test, not
+    in the product.
+
+    Two things fix that.  The bash is :data:`tests.bash_support.BASH`, never a
+    bare ``"bash"``, so the WSL launcher is never booted.  And the script is
+    fed on stdin (``bash -n -``), which takes the path out of the picture
+    entirely; both bashes then agree, and both still return rc=2 on a genuine
+    syntax error, so the check keeps its teeth.
+    """
+    import shutil
+    import subprocess
+
+    from tests.bash_support import BASH, _under_system_root
+
+    exe = BASH if os.path.isabs(BASH) else shutil.which(BASH)
+    if exe is None:
+        pytest.skip("no bash on PATH; cannot run a `bash -n` syntax check")
+    if sys.platform == "win32" and _under_system_root(exe):
+        # bash_support fell through to the WSL launcher; spawning it boots a
+        # Linux distro (and has taken Docker down with it). Not a host bash.
+        pytest.skip(f"only the WSL launcher is available ({exe}); no host bash")
+
+    def check(source: str) -> "subprocess.CompletedProcess[bytes]":
+        return subprocess.run(
+            [exe, "-n", "-"], input=source.encode("utf-8"), capture_output=True
+        )
+
+    # A shim that is present but cannot actually run is still useless.  Prove
+    # the pipe works on trivially valid input before letting a failure be
+    # reported as the product's fault.
+    try:
+        probe = check("true\n")
+    except OSError as exc:  # pragma: no cover - depends on host shell install
+        pytest.skip(f"bash at {exe} is not runnable: {exc}")
+    if probe.returncode != 0:  # pragma: no cover - depends on host shell install
+        pytest.skip(
+            f"bash at {exe} cannot syntax-check stdin "
+            f"(rc={probe.returncode}): {probe.stderr.decode('utf-8', 'replace').strip()}"
+        )
+
+    return check
