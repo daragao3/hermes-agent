@@ -9,7 +9,6 @@ from hermes_state_errors import CompressionSessionClosedError
 
 
 class MessageWriter(SessionMessagesMixin):
-    _CONTENT_JSON_PREFIX = '\x00json:'
     _TRANSCRIPT_WRITE_PATIENCE_S = 60
 
     def __init__(self, conn):
