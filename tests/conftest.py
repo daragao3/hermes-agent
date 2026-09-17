@@ -2110,6 +2110,37 @@ _LOCAL_SERVER_PROBE_ATTRS = {
 
 _REAL_PROVIDER_AUTH_PROBE_MARK = "real_provider_auth_probe"
 
+# ── gh-CLI token probe guard ────────────────────────────────────────────
+#
+#   hermes_cli/copilot_auth.py  _probe_gh_cli_token
+#
+# ``resolve_copilot_token`` -> ``_try_gh_cli_token`` -> ``_probe_gh_cli_token``
+# runs ``subprocess.run(["gh", "auth", "token"], timeout=5)`` against the
+# DEVELOPER'S real GitHub credential store. Every auxiliary-client auto-detect
+# reaches it (``compress_context`` -> ``get_text_auxiliary_client`` ->
+# discovery chain -> ``credential_pool._seed_copilot_singleton``), so any
+# unmarked test that builds an ``AIAgent`` or compresses a transcript shells
+# out to gh. Quiet cost is 0.1-0.8 s; under host load ``gh.exe`` itself runs
+# 1-5 s and trips the 5 s cap in ~1 of 4 runs (2026-09-17, loops
+# aiagent-init-subprocess-5s-timeout-under-load-20260917), which is most of a
+# test's share of the suite-wide ``--timeout=30`` — and ``--timeout-method=
+# thread`` kills the whole file, not the test (tests/run_agent/
+# test_in_place_compaction.py passed or died on how fast gh answered, which is
+# why tests/run_agent/conftest.py carried a per-directory copy of this stub
+# before it was hoisted here).
+#
+# ``None`` is the correct hermetic answer: no gh-CLI token is available to a
+# test process. Tests of Copilot auth stub their own layer above this one
+# (env vars, ``resolve_copilot_token``, ``_try_gh_cli_token`` or
+# ``_probe_gh_cli_token`` itself); only a test of the probe's OWN argv/path
+# logic, which stubs ``subprocess.run`` beneath it, needs the opt-out.
+#
+# Third marker, again separate: this is a local host seam (keyring), not the
+# public internet, and opting into the real ``gh`` spawn is no reason to also
+# start exchanging tokens with api.github.com.
+
+_REAL_GH_CLI_PROBE_MARK = "real_gh_cli_probe"
+
 
 def _copilot_exchange_unavailable(*_args, **_kwargs):
     """Stub for ``exchange_copilot_token``.
@@ -2176,7 +2207,12 @@ class _NetworkProbeGuard:
             return None
         try:
             for finder in sys.meta_path:
-                if finder is self:
+                # Skip every sibling guard, not just ``self``: two guards can
+                # target the same module (provider-auth and gh-CLI both patch
+                # hermes_cli.copilot_auth), and delegating to a sibling whose
+                # find_spec delegates back recurses until the limit. The one
+                # guard that wins the meta_path race installs for all of them.
+                if isinstance(finder, _NetworkProbeGuard):
                     continue
                 spec = finder.find_spec(fullname, path, target)
                 if spec is None or spec.loader is None:
@@ -2185,7 +2221,9 @@ class _NetworkProbeGuard:
 
                 def _patched_exec(module, _orig_exec=_orig_exec, _name=fullname):
                     _orig_exec(module)
-                    self.install(_name, module)
+                    for guard in _NETWORK_PROBE_GUARDS:
+                        if _name in guard.targets:
+                            guard.install(_name, module)
 
                 spec.loader.exec_module = _patched_exec
                 return spec
@@ -2225,7 +2263,22 @@ _PROVIDER_AUTH_PROBE_GUARD = _NetworkProbeGuard(
     tag="_hermes_provider_auth_probe_guard",
 )
 
-_NETWORK_PROBE_GUARDS = (_LOCAL_SERVER_PROBE_GUARD, _PROVIDER_AUTH_PROBE_GUARD)
+_GH_CLI_PROBE_GUARD = _NetworkProbeGuard(
+    marker=_REAL_GH_CLI_PROBE_MARK,
+    targets={
+        "hermes_cli.copilot_auth": {
+            # Optional[str]; None == "gh is not installed / not logged in".
+            # ``_try_gh_cli_token`` caches this miss for its TTL, so the
+            # probe runs at most once per process anyway.
+            "_probe_gh_cli_token": lambda: None,
+        },
+    },
+    tag="_hermes_gh_cli_probe_guard",
+)
+
+_NETWORK_PROBE_GUARDS = (
+    _LOCAL_SERVER_PROBE_GUARD, _PROVIDER_AUTH_PROBE_GUARD, _GH_CLI_PROBE_GUARD,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -2457,6 +2510,13 @@ def pytest_configure(config):  # noqa: D401 — pytest hook
         "neutralises hermes_cli.auth.detect_zai_endpoint and "
         "hermes_cli.copilot_auth.exchange_copilot_token (for tests of those "
         "probes, which stub the HTTP layer beneath them).",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{_REAL_GH_CLI_PROBE_MARK}: opt out of the autouse stub that "
+        "defaults hermes_cli.copilot_auth._probe_gh_cli_token to None (for "
+        "tests of the probe's own argv/path logic, which stub subprocess.run "
+        "beneath it).",
     )
     config.addinivalue_line(
         "markers",
@@ -3579,11 +3639,13 @@ def _pid_scan_guard(request):
 def _network_probe_guards(request):
     """Choose whether this test may reach the network through a guarded probe.
 
-    Covers both guards — ``real_local_server_probe`` (agent.model_metadata,
-    localhost) and ``real_provider_auth_probe`` (hermes_cli.auth /
-    copilot_auth, the public internet). They are independent: opting out of one
-    leaves the other stubbed, because wanting the real local-server waterfall
-    is no reason to also start calling z.ai and api.github.com for real.
+    Covers all three guards — ``real_local_server_probe`` (agent.model_metadata,
+    localhost), ``real_provider_auth_probe`` (hermes_cli.auth / copilot_auth,
+    the public internet) and ``real_gh_cli_probe`` (copilot_auth's ``gh auth
+    token`` spawn against the host keyring). They are independent: opting out
+    of one leaves the others stubbed, because wanting the real local-server
+    waterfall is no reason to also start calling z.ai and api.github.com for
+    real, or to spawn the developer's gh.
 
     The wrappers are installed at import time by each guard's ``find_spec``;
     this fixture only flips the flag they read at call time. No import, no
