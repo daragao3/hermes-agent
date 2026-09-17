@@ -6,6 +6,7 @@ per attempt, labeled with the worker's own prompt.
 """
 
 import os
+import sqlite3
 
 import pytest
 
@@ -175,3 +176,122 @@ def test_retag_refuses_a_filesystem_root(db, tmp_path):
     row = db._conn.execute("SELECT source FROM sessions WHERE id = 'mine'").fetchone()
     assert row[0] == "cli"
     assert db._conn.execute("SELECT COUNT(*) FROM state_meta WHERE key LIKE 'kanban_worker_source_retagged:%'").fetchone()[0] == 0
+
+
+def _sources(db_path):
+    database = SessionDB(db_path=db_path)
+    try:
+        rows = database._conn.execute("SELECT id, source FROM sessions").fetchall()
+        gate = database._conn.execute(
+            "SELECT COUNT(*) FROM state_meta WHERE key LIKE 'kanban_worker_source_retagged:%'"
+        ).fetchone()[0]
+    finally:
+        database.close()
+    return {row[0]: row[1] for row in rows}, gate
+
+
+@pytest.fixture()
+def split_homes(tmp_path, monkeypatch):
+    """A profile-mode layout: the dispatcher runs as ``<root>/profiles/main`` while the
+    board (``kanban_home``) is shared at ``<root>`` -- the live gateway's shape."""
+    import hermes_state
+    from hermes_cli import kanban_db_dispatch as kbd
+
+    root = tmp_path
+    profile = root / "profiles" / "main"
+    profile.mkdir(parents=True)
+    monkeypatch.setenv("HERMES_HOME", str(profile))
+    # The hermetic conftest re-points the default; follow it to this profile the
+    # way production resolves it (``get_hermes_home() / "state.db"``).
+    monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", profile / "state.db")
+    monkeypatch.delenv("HERMES_KANBAN_HOME", raising=False)
+    monkeypatch.setattr(kbd, "_retagged_workspace_roots", set())
+    return root, profile
+
+
+def test_retag_sweeps_the_shared_root_state_db_too(split_homes):
+    """Workers that ran before the profile existed wrote their rows to the root's
+    state.db (the board is shared across profiles); the profile-mode dispatcher
+    must reclaim those as well, not only its own profile DB.
+    """
+    from hermes_cli import kanban_db_dispatch as kbd
+
+    root, profile = split_homes
+    workspaces = root / "kanban" / "workspaces"
+    for home, sid in ((root, "root-legacy"), (profile, "profile-legacy")):
+        database = SessionDB(db_path=home / "state.db")
+        database.create_session(session_id=sid, source="cli", cwd=str(workspaces / "t_a"))
+        database.create_session(session_id=sid + "-mine", source="cli", cwd=str(home / "repo"))
+        database.close()
+
+    kbd._retag_legacy_worker_sessions(str(workspaces))
+
+    assert _sources(root / "state.db") == ({"root-legacy": "kanban", "root-legacy-mine": "cli"}, 1)
+    assert _sources(profile / "state.db") == ({"profile-legacy": "kanban", "profile-legacy-mine": "cli"}, 1)
+    assert str(workspaces) in kbd._retagged_workspace_roots
+
+
+def test_retag_never_creates_the_root_state_db(split_homes):
+    """A root without a state.db (fresh install, custom layout) is left alone."""
+    from hermes_cli import kanban_db_dispatch as kbd
+
+    root, profile = split_homes
+    workspaces = root / "kanban" / "workspaces"
+    SessionDB(db_path=profile / "state.db").close()
+
+    kbd._retag_legacy_worker_sessions(str(workspaces))
+
+    assert not (root / "state.db").exists()
+    assert _sources(profile / "state.db")[1] == 1
+
+
+def test_retag_opens_the_profile_db_once_when_it_is_the_root(tmp_path, monkeypatch):
+    """Root mode (``HERMES_HOME`` is the root itself): one file, one sweep."""
+    import hermes_state
+    from hermes_cli import kanban_db_dispatch as kbd
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", tmp_path / "state.db")
+    monkeypatch.delenv("HERMES_KANBAN_HOME", raising=False)
+    monkeypatch.setattr(kbd, "_retagged_workspace_roots", set())
+    SessionDB(db_path=tmp_path / "state.db").close()
+    opened = []
+
+    class _Counting(hermes_state.SessionDB):
+        def __init__(self, *args, **kwargs):
+            opened.append(kwargs.get("db_path"))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(hermes_state, "SessionDB", _Counting)
+
+    kbd._retag_legacy_worker_sessions(str(tmp_path / "kanban" / "workspaces"))
+
+    assert opened == [None]
+    assert _sources(tmp_path / "state.db")[1] == 1
+
+
+def test_retag_failure_on_one_db_is_retried_next_spawn(split_homes, monkeypatch):
+    """A busy/broken DB must not latch the in-process gate: the meta gate keeps a
+    retry idempotent, so the next spawn tries again."""
+    import hermes_state
+    from hermes_cli import kanban_db_dispatch as kbd
+
+    root, profile = split_homes
+    workspaces = root / "kanban" / "workspaces"
+    for home in (root, profile):
+        SessionDB(db_path=home / "state.db").close()
+    real = hermes_state.SessionDB
+
+    class _RootBroken(real):
+        def __init__(self, *args, **kwargs):
+            if kwargs.get("db_path") is not None:
+                raise sqlite3.OperationalError("database is locked")
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(hermes_state, "SessionDB", _RootBroken)
+
+    kbd._retag_legacy_worker_sessions(str(workspaces))
+
+    assert str(workspaces) not in kbd._retagged_workspace_roots
+    assert _sources(profile / "state.db")[1] == 1  # the healthy DB was still swept
+    assert _sources(root / "state.db")[1] == 0

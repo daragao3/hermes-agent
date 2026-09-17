@@ -2063,27 +2063,57 @@ def _resolve_worker_cli_toolsets(hermes_home: Optional[str]) -> Optional[list[st
 _retagged_workspace_roots: set[str] = set()
 
 
+def _legacy_worker_state_db_paths() -> list[Optional[Path]]:
+    """state.db files a pre-tag worker row can sit in, deduplicated.
+
+    ``None`` is the dispatcher's own profile DB (``SessionDB()`` default, so a
+    re-pointed ``DEFAULT_DB_PATH`` still wins). The board is shared across
+    profiles by design (``kanban_home``), so workers that ran before this
+    profile existed wrote their rows to the root's ``state.db``; that file is
+    swept too when it is a different, already-existing file -- never created.
+    """
+    paths: list[Optional[Path]] = [None]
+    try:
+        from hermes_state import _default_db_path  # what SessionDB() opens, re-point included
+
+        own = Path(_default_db_path()).resolve()
+        root = _kb.kanban_home() / "state.db"
+        if root.is_file() and root.resolve() != own:
+            paths.append(root)
+    except Exception as exc:
+        _kb._log.debug("kanban worker: root state.db not considered for retag (%s)", exc)
+    return paths
+
+
 def _retag_legacy_worker_sessions(workspaces_root_path: str) -> None:
     """Reclaim pre-tag worker rows in state.db so they leave the session lists.
 
     Best-effort: the durable gate is ``state_meta`` in
-    ``retag_kanban_worker_sessions``; the in-process set avoids reopening
-    state.db on every spawn. A tick must never fail because a session DB was
-    busy or missing.
+    ``retag_kanban_worker_sessions``, kept per DB file; the in-process set
+    avoids reopening state.db on every spawn. A tick must never fail because a
+    session DB was busy or missing, and one DB failing must not skip the other.
     """
     if workspaces_root_path in _retagged_workspace_roots:
         return
     try:
         from hermes_state import SessionDB
-
-        db = SessionDB()
-        try:
-            db.retag_kanban_worker_sessions(workspaces_root_path)
-        finally:
-            db.close()
-        _retagged_workspace_roots.add(workspaces_root_path)
     except Exception as exc:
         _kb._log.debug("kanban worker: legacy session retag skipped (%s)", exc)
+        return
+    swept = True
+    for db_path in _legacy_worker_state_db_paths():
+        try:
+            db = SessionDB() if db_path is None else SessionDB(db_path=db_path)
+            try:
+                db.retag_kanban_worker_sessions(workspaces_root_path)
+            finally:
+                db.close()
+        except Exception as exc:
+            swept = False  # retried on the next spawn; the meta gate makes that idempotent
+            _kb._log.debug("kanban worker: legacy session retag skipped for %s (%s)",
+                           db_path or "profile state.db", exc)
+    if swept:
+        _retagged_workspace_roots.add(workspaces_root_path)
 
 
 def _worker_argv(task: Task, profile_arg: str, hermes_home: Optional[str]) -> list[str]:
