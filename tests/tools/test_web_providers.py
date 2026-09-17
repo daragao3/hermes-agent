@@ -259,7 +259,7 @@ class TestUnconfiguredErrorEnvelopeParity:
             calls["url"] = url
             return _FakeResponse()
 
-        monkeypatch.setattr(fc.httpx, "post", _fake_post)
+        monkeypatch.setattr("httpx.post", _fake_post)  # provider imports httpx lazily at the call
 
         result = json.loads(web_tools.web_search_tool("hello world", limit=3))
         assert result.get("success") is True, result

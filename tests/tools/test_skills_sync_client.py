@@ -15,6 +15,7 @@ in-memory object store + ref table. No live server, no network.
 
 import hashlib
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -386,7 +387,13 @@ class TestObjectBuilding:
         tree = json.loads(data)
         entries = {e["name"]: e for e in tree["entries"]}
         assert entries["SKILL.md"]["mode"] == wire.MODE_FILE
-        assert entries["run.sh"]["mode"] == wire.MODE_EXEC
+        if os.name == "nt":
+            # NTFS carries no exec bit for a .sh (CPython sets S_IXUSR only for
+            # .exe/.bat/.cmd/.com), so a skill synced FROM Windows ships run.sh
+            # as a plain file; the mode is what the host reports, not the intent.
+            assert entries["run.sh"]["mode"] == wire.MODE_FILE
+        else:
+            assert entries["run.sh"]["mode"] == wire.MODE_EXEC
         # entries sorted by name (byte order)
         names = [e["name"] for e in tree["entries"]]
         assert names == sorted(names)

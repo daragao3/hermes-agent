@@ -22,13 +22,23 @@ def _load_guard():
     return mod
 
 
-def test_all_tui_subprocess_calls_have_stdin():
-    """Every subprocess.run/Popen in TUI-context code must set stdin=."""
+def test_all_tui_subprocess_calls_have_stdin(tmp_path):
+    """Every subprocess.run/Popen in TUI-context code must set stdin=.
+
+    The scanner also walks user plugins under HERMES_HOME/plugins (by design, for
+    the CLI); this test pins the BUNDLED tree, so it runs the scanner against an
+    empty home rather than whatever plugins the developer has installed.
+    """
+    import os
+
+    env = {**os.environ, "HERMES_HOME": str(tmp_path / "hh")}
+    env.pop("HERMES_ENABLE_PROJECT_PLUGINS", None)
     result = subprocess.run(
         [sys.executable, str(SCRIPT)],
         capture_output=True,
         text=True,
         timeout=30,
+        env=env,
     )
     assert result.returncode == 0, (
         f"subprocess stdin= check failed:\n{result.stdout}\n{result.stderr}"

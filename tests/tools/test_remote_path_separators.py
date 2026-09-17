@@ -10,7 +10,6 @@ the parent must stay a single quoted argument so metacharacters in a path
 cannot break out into a second command.
 """
 
-import asyncio
 import shlex
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -42,35 +41,15 @@ def test_modal_upload_uses_posix_parent(tmp_path):
 
     captured = {}
 
-    class _Stdin:
-        def write(self, _data):
-            pass
-
-        def write_eof(self):
-            pass
-
-        @property
-        def drain(self):
-            async def _drain():
-                return None
-            return SimpleNamespace(aio=_drain)
-
-    async def _fake_exec(_shell, _flag, cmd):
+    # _modal_upload now goes through the backend's own ``_exec`` (stdin-streamed
+    # command runner); the mkdir text is what this test is about.
+    def _fake_exec(cmd, stdin=None, timeout=None, **_kw):
         captured["cmd"] = cmd
+        captured["stdin"] = stdin
 
-        async def _wait():
-            return 0
-
-        return SimpleNamespace(stdin=_Stdin(), wait=SimpleNamespace(aio=_wait))
-
-    env = SimpleNamespace(
-        _sandbox=SimpleNamespace(exec=SimpleNamespace(aio=_fake_exec)),
-        _worker=SimpleNamespace(
-            run_coroutine=lambda coro, timeout=None: asyncio.run(coro)
-        ),
-        _STDIN_CHUNK_SIZE=ModalEnvironment._STDIN_CHUNK_SIZE,
-    )
+    env = SimpleNamespace(_exec=_fake_exec)
     ModalEnvironment._modal_upload(env, str(host_file), EVIL_REMOTE)
+    assert captured["stdin"]  # the file body rides stdin, not the command line
 
     mkdir_part = captured["cmd"].split(" && ")[0]
     assert mkdir_part == f"mkdir -p {shlex.quote(EVIL_PARENT)}"
@@ -83,14 +62,16 @@ def test_scp_upload_uses_posix_parent(tmp_path, monkeypatch):
 
     calls = []
 
-    def _fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        return SimpleNamespace(returncode=0, stderr="")
-
-    monkeypatch.setattr("tools.environments.ssh.subprocess.run", _fake_run)
+    # The mkdir goes through the backend's ``_run_ssh``; the scp itself through
+    # ``run_capture`` (stubbed so nothing is spawned).
+    monkeypatch.setattr(
+        "tools.environments.ssh.run_capture",
+        lambda cmd, **kwargs: SimpleNamespace(returncode=0, stderr=""),
+    )
 
     env = SimpleNamespace(
-        _build_ssh_command=lambda: ["ssh", "host"],
+        _run_ssh=lambda cmd, timeout=None: calls.append(cmd),
+        _target_flags=lambda flag: [],
         control_socket="/tmp/cs",
         port=22,
         key_path=None,
@@ -99,6 +80,6 @@ def test_scp_upload_uses_posix_parent(tmp_path, monkeypatch):
     )
     SSHEnvironment._scp_upload(env, str(host_file), EVIL_REMOTE)
 
-    mkdir_arg = calls[0][-1]
+    mkdir_arg = calls[0]
     assert mkdir_arg == f"mkdir -p {shlex.quote(EVIL_PARENT)}"
     assert "\\" not in mkdir_arg

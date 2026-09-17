@@ -149,7 +149,7 @@ class TestFirecrawlClientConfig:
             captured["timeout"] = timeout
             return _Response()
 
-        monkeypatch.setattr(firecrawl_provider.httpx, "post", _fake_post)
+        monkeypatch.setattr("httpx.post", _fake_post)  # provider imports httpx lazily at the call
 
         client = firecrawl_provider._KeylessFirecrawlClient()
         result = client.search(query="firecrawl", limit=1)
@@ -180,7 +180,7 @@ class TestFirecrawlClientConfig:
             captured["timeout"] = timeout
             return _Response()
 
-        monkeypatch.setattr(firecrawl_provider.httpx, "post", _fake_post)
+        monkeypatch.setattr("httpx.post", _fake_post)  # provider imports httpx lazily at the call
 
         client = firecrawl_provider._KeylessFirecrawlClient()
         result = client.scrape(url="https://example.com", formats=["markdown"])
