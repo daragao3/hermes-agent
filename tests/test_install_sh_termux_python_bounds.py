@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -89,6 +90,12 @@ def _termux_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
         "PREFIX": str(prefix),
         "TERMUX_VERSION": "0.118.0",
     })
+    if os.name == "nt":
+        # setup-hermes.sh symlinks a venv/bin/hermes that the fake venv never
+        # creates.  Linux ln leaves that dangling; MSYS ln copies the target
+        # by default and fails on a missing one, so ask it for shortcut-style
+        # links (no privilege needed, unlike nativestrict).
+        env["MSYS"] = "winsymlinks:lnk"
     return env
 
 
@@ -177,11 +184,14 @@ def test_install_stage_provisions_supported_python_from_tur(tmp_path: Path) -> N
     staged = tmp_path / "staged"
     staged.mkdir()
     _write_fake_python(staged, "python3.13", "3.13.7")
+    # Spell the paths for sh: an unquoted Windows path loses its backslashes.
+    staged_py = shlex.quote((staged / "python3.13").as_posix())
+    bin_py = shlex.quote((bin_dir / "python3.13").as_posix())
     _write_executable(
         bin_dir / "pkg",
         "#!/bin/sh\n"
         "for arg in \"$@\"; do\n"
-        f"    if [ \"$arg\" = 'python3.13' ]; then cp {staged}/python3.13 {bin_dir}/python3.13; fi\n"
+        f"    if [ \"$arg\" = 'python3.13' ]; then cp {staged_py} {bin_py}; fi\n"
         "done\n"
         "exit 0\n",
     )
