@@ -11,6 +11,7 @@ import ntpath
 from unittest.mock import Mock, patch
 
 import pytest
+from tests.symlink_support import requires_symlinks, symlinks_supported
 from tools import browser_tool_cdp as bt_cdp
 from tools import browser_tool_cloud as bt_cloud
 from tools import browser_tool_lightpanda_fallback as bt_lightpanda_fallback
@@ -107,10 +108,15 @@ class TestSnapshotRealProfile:
         (root / "Default" / "Cache" / "Cache_Data" / "big").write_text("x" * 1000, encoding="utf-8")
         (root / "Code Cache" / "js" / "blob").write_text("y" * 1000, encoding="utf-8")
         (root / "Crashpad" / "dump").write_text("z", encoding="utf-8")
-        # Live-instance leftovers that must never reach the copy
-        os.symlink("dead-target-1", root / "SingletonLock")
+        # Live-instance leftovers that must never reach the copy. Chrome's
+        # SingletonLock is a dangling symlink (a POSIX shape); a Windows session
+        # without the symlink privilege builds the rest of the profile and the
+        # one test that asserts on the lock is gated below.
+        if symlinks_supported():
+            os.symlink("dead-target-1", root / "SingletonLock")
         return root
 
+    @requires_symlinks
     def test_fresh_snapshot_copies_auth_and_skips_caches(self, tmp_path, monkeypatch):
         import hermes_cli.browser_connect as bc
         src = self._make_profile(tmp_path / "real")
@@ -157,6 +163,7 @@ class TestSnapshotRealProfile:
         assert dst is None
         assert err and "was not found" in err
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits (0600/0700); NTFS carries ACLs, stat reads 0o666")
     def test_snapshot_files_are_owner_only(self, tmp_path, monkeypatch):
         """Every copied file must be 0600 and every dir 0700 (#96729).
 
@@ -188,6 +195,7 @@ class TestSnapshotRealProfile:
                     offenders.append((os.path.join(root, f), oct(mode)))
         assert not offenders, f"group/world-accessible snapshot entries: {offenders}"
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits (0600/0700); NTFS carries ACLs, stat reads 0o666")
     def test_existing_lax_snapshot_heals_on_refresh(self, tmp_path, monkeypatch):
         """A snapshot left 0644 by an older build tightens on the next pass."""
         import stat
@@ -228,8 +236,14 @@ class TestRealProfileCdpLaunch:
 
     def test_snapshot_failure_fails_closed(self):
         self._reset()
+        # No live session to reuse and no surviving Chrome: without these stubs the
+        # launcher runs a REAL `agent-browser get cdp-url` when the CLI is on PATH
+        # (it is on developer boxes with the skill installed), and on Windows that
+        # node CLI's daemon grandchild holds the capture pipe open past the timeout.
         with patch.object(bt_cloud, "_use_real_profile", return_value=True), \
              patch("hermes_cli.browser_connect.detect_default_chromium", return_value="chrome"), \
+             patch.object(bt_real_profile, "_agent_browser_get_cdp", return_value=None), \
+             patch.object(bt_real_profile, "_surviving_chrome_cdp", return_value=None), \
              patch("hermes_cli.browser_connect.snapshot_real_profile", return_value=(None, "boom")):
             cdp, err = bt_real_profile._real_profile_cdp()
         assert cdp is None

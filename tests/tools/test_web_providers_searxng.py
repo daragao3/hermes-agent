@@ -211,6 +211,12 @@ class TestCheckWebApiKey:
         monkeypatch.setattr(web_tools, "_is_tool_gateway_ready", lambda: False)
         monkeypatch.setattr(web_tools, "check_firecrawl_api_key", lambda: False)
         monkeypatch.setattr(web_tools, "_ddgs_package_importable", lambda: False)
+        # The DDGS plugin provider has its own importability check, and the `ddgs`
+        # package is installed in developer venvs: with it importable, the registry
+        # answers "available" with zero credentials, which is exactly the keyless
+        # case this test is NOT about.
+        from plugins.web.ddgs.provider import DDGSWebSearchProvider
+        monkeypatch.setattr(DDGSWebSearchProvider, "is_available", lambda self: False)
         # Disable the keyless free tier — with it on, zero credentials still
         # resolves (Parallel/Exa anonymous MCP; see test_web_keyless_fallback.py).
         monkeypatch.setattr(web_search_registry, "_keyless_tier_enabled", lambda: False)

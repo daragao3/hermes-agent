@@ -70,6 +70,7 @@ class TestCloudProviderCachePolicy:
         from agent.browser_provider import BrowserProvider
         import agent.browser_registry as browser_registry
         from hermes_constants import (
+            hermes_home_key,
             reset_hermes_home_override,
             set_hermes_home_override,
         )
@@ -95,6 +96,10 @@ class TestCloudProviderCachePolicy:
                 return None
 
         home = str((tmp_path / "same-profile").resolve())
+        # Register under the registry's own key for that home: lookups default to
+        # hermes_home_key(), which normcases the path on Windows, so a raw
+        # mixed-case scope would never be found there.
+        scope = hermes_home_key(home)
         first = Provider("first")
         second = Provider("second")
         monkeypatch.setattr(
@@ -104,17 +109,17 @@ class TestCloudProviderCachePolicy:
         monkeypatch.setattr("tools.browser_tool_cloud._ensure_browser_plugins_loaded", lambda: None)
         token = set_hermes_home_override(home)
         try:
-            browser_registry.register_provider(first, scope=home)
+            browser_registry.register_provider(first, scope=scope)
             assert bt_cloud._get_cloud_provider() is first
-            browser_registry.register_provider(second, scope=home)
+            browser_registry.register_provider(second, scope=scope)
             assert bt_cloud._get_cloud_provider() is second
         finally:
             current = browser_registry.snapshot_registration(
-                "cache-replacement", scope=home
+                "cache-replacement", scope=scope
             )
             if current is not None:
                 browser_registry.restore_registration(
-                    "cache-replacement", current, None, scope=home
+                    "cache-replacement", current, None, scope=scope
                 )
             reset_hermes_home_override(token)
 
@@ -127,6 +132,7 @@ class TestCloudProviderCachePolicy:
         from agent.browser_provider import BrowserProvider
         import agent.browser_registry as browser_registry
         from hermes_constants import (
+            hermes_home_key,
             reset_hermes_home_override,
             set_hermes_home_override,
         )
@@ -152,6 +158,7 @@ class TestCloudProviderCachePolicy:
                 return None
 
         home = str((tmp_path / "race-profile").resolve())
+        scope = hermes_home_key(home)  # see the same-profile test
         first = Provider("first")
         second = Provider("second")
         paused = Event()
@@ -162,7 +169,7 @@ class TestCloudProviderCachePolicy:
         def racing_get(name):
             nonlocal calls
             calls += 1
-            resolved = original_get(name, scope=home)
+            resolved = original_get(name, scope=scope)
             if calls == 1:
                 paused.set()
                 assert release.wait(timeout=2)
@@ -174,7 +181,7 @@ class TestCloudProviderCachePolicy:
         )
         monkeypatch.setattr("tools.browser_tool_cloud._ensure_browser_plugins_loaded", lambda: None)
         monkeypatch.setattr("tools.browser_tool_cloud._registry_get_browser_provider", racing_get)
-        browser_registry.register_provider(first, scope=home)
+        browser_registry.register_provider(first, scope=scope)
 
         def resolve():
             token = set_hermes_home_override(home)
@@ -187,16 +194,16 @@ class TestCloudProviderCachePolicy:
             with ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(resolve)
                 assert paused.wait(timeout=1)
-                browser_registry.register_provider(second, scope=home)
+                browser_registry.register_provider(second, scope=scope)
                 release.set()
                 assert future.result(timeout=2) is second
             assert calls == 2
         finally:
             release.set()
-            current = browser_registry.snapshot_registration("cache-race", scope=home)
+            current = browser_registry.snapshot_registration("cache-race", scope=scope)
             if current is not None:
                 browser_registry.restore_registration(
-                    "cache-race", current, None, scope=home
+                    "cache-race", current, None, scope=scope
                 )
 
     def test_explicit_local_caches_permanently(self, monkeypatch):
