@@ -372,6 +372,89 @@ def _raise_scan_error(*args, **kwargs):
     raise RegistryScanError("unstable")
 
 
+def test_scan_failure_records_the_reason_durably(
+    tmp_path, store, monkeypatch
+) -> None:
+    """The scan_failed bail must leave the same durable reason the planner bail does.
+
+    On 2026-09-16 22:01 a registry root became a junction, _root_identity raised
+    RegistryScanError on every 300s cycle, and run_once returned scan_failed=1
+    with no beat, no log line, no last-error row and (because nothing escaped
+    run_once) no post_scan_worker_diagnostic.  The 11h17m stall needed py-spy
+    plus an offline replay to name; a persisted reason makes it one query.
+    """
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100, title="One")
+    worker = DesktopRegistrySyncWorker(
+        store,
+        registry_roots=(a, b, c),
+        run_min_interval_seconds=0.0,
+        wall_clock=lambda: 7_000.0,
+    )
+    monkeypatch.setattr(
+        "session_bridge.desktop_registry_worker.scan_desktop_registry_roots",
+        _raise_scan_error,
+    )
+
+    counters = worker.run_once()
+
+    assert counters["scan_failed"] == 1
+    recorded = store.get_state(WORKER_LAST_ERROR_STATE_KEY)
+    assert recorded is not None
+    assert recorded["at"] == 7_000.0
+    assert recorded["stage"] == "scan"
+    assert recorded["error"] == "RegistryScanError: unstable"
+    # Still no forged liveness: the reason explains the stale beat, it does not replace it.
+    assert _heartbeat(store) is None
+
+
+def test_verify_scan_failure_records_the_reason_durably(
+    tmp_path, store, monkeypatch
+) -> None:
+    """The second scan_failed bail -- the post-mutation verify re-scan -- too.
+
+    A first scan that succeeds and a verify scan that raises is the shape of a
+    root vanishing mid-cycle; it abandons the run as verify_scan_failed and
+    must be just as explainable afterwards as the pre-scan bail.
+    """
+    from session_bridge import desktop_registry_worker as module
+
+    a, b, c = _roots(tmp_path)
+    _write_record(a, "local_one", mtime_ns=100, title="Old")
+    _write_record(b, "local_one", mtime_ns=300, title="Newest")
+    _write_record(c, "local_one", mtime_ns=100, title="Old")
+    real_scan = module.scan_desktop_registry_roots
+    calls: list[int] = []
+
+    def scan_then_raise(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            return real_scan(*args, **kwargs)
+        raise RegistryScanError("root vanished mid-cycle")
+
+    worker = DesktopRegistrySyncWorker(
+        store,
+        registry_roots=(a, b, c),
+        run_min_interval_seconds=0.0,
+        wall_clock=lambda: 7_500.0,
+    )
+    monkeypatch.setattr(module, "scan_desktop_registry_roots", scan_then_raise)
+
+    counters = worker.run_once()
+
+    assert len(calls) == 2, "the verify re-scan must have been reached"
+    assert counters["scan_failed"] == 1
+    assert counters["patched"] >= 1, "a divergent record must have produced a mutation"
+    recorded = store.get_state(WORKER_LAST_ERROR_STATE_KEY)
+    assert recorded is not None
+    assert recorded["at"] == 7_500.0
+    assert recorded["stage"] == "verify_scan"
+    assert recorded["error"] == "RegistryScanError: root vanished mid-cycle"
+    assert _heartbeat(store) is None
+    assert store.pending_desktop_registry_run() is None
+
+
 def test_beat_advances_across_cycles(tmp_path, store) -> None:
     a, b, c = _roots(tmp_path)
     for root in (a, b, c):
@@ -682,6 +765,7 @@ def test_baseline_error_records_the_reason_durably(
     assert recorded["at"] == 9_000.0
     assert "RegistryBaselineError" in recorded["error"]
     assert "expected 3 roots, found 2" in recorded["error"]
+    assert recorded["stage"] == "plan"
 
 
 def test_a_raise_inside_the_window_is_followed_by_a_throttled_call(
