@@ -556,9 +556,12 @@ async def test_session_hygiene_timeout_continues_to_agent_and_sets_cooldown(monk
 
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
+        # worker_started is asserted the moment the host gives up, so the
+        # executor worker must be SCHEDULED inside the idle window (flake-policy
+        # floor; a loaded -j 12 runner has left pool threads unstarted past 0.1 s).
         "compression:\n"
         "  enabled: true\n"
-        "  hygiene_timeout_seconds: 0.01\n"
+        "  hygiene_timeout_seconds: 2.0\n"
         "  hygiene_failure_cooldown_seconds: 120\n"
     , encoding="utf-8")
 
@@ -641,7 +644,7 @@ async def test_session_hygiene_timeout_continues_to_agent_and_sets_cooldown(monk
     SlowCompressAgent.last_instance.close.assert_not_called()
 
     release_worker.set()
-    await asyncio.wait_for(asyncio.to_thread(cleanup_done.wait), timeout=2)
+    await asyncio.wait_for(asyncio.to_thread(cleanup_done.wait), timeout=10)
 
     # The late worker observed cancellation at the commit fence, so it never
     # mutated the live session after the new turn began. Cleanup still ran once
@@ -723,9 +726,11 @@ async def test_session_hygiene_turn_hold_budget_abandons_streaming_wait(
         "  enabled: true\n"
         # Inactivity budget is huge, so the slice timeout can never fire on
         # its own; the turn-hold budget is the ONLY thing that abandons.
+        # The turn-hold window is also the window the worker must START inside
+        # (worker_started is asserted right after the hold is abandoned).
         "  hygiene_timeout_seconds: 60\n"
         "  hygiene_total_ceiling_seconds: 600\n"
-        "  hygiene_max_turn_hold_seconds: 0.3\n"
+        "  hygiene_max_turn_hold_seconds: 2.0\n"
         "  hygiene_failure_cooldown_seconds: 120\n"
     , encoding="utf-8")
 
@@ -788,20 +793,20 @@ async def test_session_hygiene_turn_hold_budget_abandons_streaming_wait(
     )
 
     started = time.monotonic()
-    result = await asyncio.wait_for(runner._handle_message(event), timeout=15)
+    result = await asyncio.wait_for(runner._handle_message(event), timeout=30)
     elapsed = time.monotonic() - started
 
     # The turn proceeded on the uncompressed transcript well under the 600s
-    # ceiling — the turn-hold budget (~0.3s) abandoned the streaming wait.
+    # ceiling — the turn-hold budget (~2s) abandoned the streaming wait.
     assert result == "ok"
-    assert elapsed < 5.0, f"turn held for {elapsed:.1f}s despite the turn-hold budget"
+    assert elapsed < 10.0, f"turn held for {elapsed:.1f}s despite the turn-hold budget"
     assert worker_started.is_set()
     assert runner._run_agent.await_count == 1
     # The stale commit must be fenced: the late worker never mutates the session.
     fake_db.archive_and_compact.assert_not_called()
 
     release_worker.set()
-    await asyncio.wait_for(asyncio.to_thread(cleanup_done.wait), timeout=3)
+    await asyncio.wait_for(asyncio.to_thread(cleanup_done.wait), timeout=10)
     fake_db.archive_and_compact.assert_not_called()
     StreamingCompressAgent.last_instance.close.assert_called_once()
 
@@ -900,7 +905,9 @@ async def test_session_hygiene_idle_timeout_still_takes_failure_path(
     cfg_path.write_text(
         "compression:\n"
         "  enabled: true\n"
-        "  hygiene_timeout_seconds: 0.1\n"
+        # The idle window is also the window the worker must START inside
+        # (worker_started is asserted right after the idle timeout fires).
+        "  hygiene_timeout_seconds: 2.0\n"
         "  hygiene_total_ceiling_seconds: 600\n"
         "  hygiene_max_turn_hold_seconds: 60\n"
         "  hygiene_failure_cooldown_seconds: 120\n"
@@ -965,13 +972,13 @@ async def test_session_hygiene_idle_timeout_still_takes_failure_path(
     )
 
     started = time.monotonic()
-    result = await asyncio.wait_for(runner._handle_message(event), timeout=15)
+    result = await asyncio.wait_for(runner._handle_message(event), timeout=30)
     elapsed = time.monotonic() - started
 
     # The turn proceeded on the uncompressed transcript after the idle
-    # timeout fired (~0.1s).
+    # timeout fired (~2s), not the 60s turn hold or the 600s ceiling.
     assert result == "ok"
-    assert elapsed < 5.0
+    assert elapsed < 10.0
     assert worker_started.is_set()
     assert runner._run_agent.await_count == 1
 
@@ -991,7 +998,7 @@ async def test_session_hygiene_idle_timeout_still_takes_failure_path(
 
     # Cleanup: release the stalled worker so it can exit, then verify teardown.
     release_worker.set()
-    await asyncio.wait_for(asyncio.to_thread(cleanup_done.wait), timeout=3)
+    await asyncio.wait_for(asyncio.to_thread(cleanup_done.wait), timeout=10)
     StalledCompressAgent.last_instance.close.assert_called_once()
 
 @pytest.mark.asyncio
@@ -1684,7 +1691,10 @@ async def test_hygiene_does_not_wait_ceiling_after_fence_cancel(
             worker_started.set()
             # Keep the worker alive (and keep reporting "progress") so a
             # host that still extends to the 600s ceiling would stall here.
-            deadline = time.monotonic() + 2.0
+            # Held until the TEST releases it (30 s net), so the fast-path
+            # bound below only has to beat this hold, not a 2 s deadline the
+            # fast path itself crossed under load (2.1 s, 2026-09-17).
+            deadline = time.monotonic() + 30.0
             while time.monotonic() < deadline:
                 if commit_fence is not None:
                     commit_fence.touch_progress()
@@ -1704,10 +1714,15 @@ async def test_hygiene_does_not_wait_ceiling_after_fence_cancel(
         elapsed = time.monotonic() - started
 
         assert result == "ok"
-        assert worker_started.wait(timeout=2)
-        # The ceiling being guarded against is 600s; 2.0s read 2.45s under the
-        # parallel suite on the Windows host (thread scheduling, not the wait).
-        assert elapsed < 30.0, (
+        assert worker_started.wait(timeout=10)
+        # A host that kept extending would run to the default 10 s turn-hold
+        # budget (the worker streams progress for 30 s, so neither idle nor the
+        # 600 s ceiling end it sooner); the cancelled-fence fast path took
+        # 2.1-2.45 s on a loaded runner, so this bound sits between the two.
+        # (13c2dede01 widened the old 2.0 s bound to 30 s against the same
+        # loaded reading; with the worker's previous 2 s hold that could not
+        # tell a fast path from a host waiting for the worker, hence the hold.)
+        assert elapsed < 5.0, (
             f"hygiene host waited {elapsed:.1f}s after fence cancel — "
             "must not extend toward the 600s ceiling (#96953)"
         )
@@ -1718,7 +1733,7 @@ async def test_hygiene_does_not_wait_ceiling_after_fence_cancel(
             "Context compression timed out" in s["content"] for s in adapter.sent
         ), "fence-cancel is not a summary-model timeout; no timeout toast"
         release_worker.set()
-        await asyncio.wait_for(asyncio.to_thread(cleanup_done.wait), timeout=2)
+        await asyncio.wait_for(asyncio.to_thread(cleanup_done.wait), timeout=10)
     finally:
         db.close()
 
@@ -1794,7 +1809,7 @@ async def test_hygiene_unwind_records_cooldown(monkeypatch, tmp_path):
 
         def _compress_context(self, messages, *_args, **_kwargs):
             worker_started.set()
-            release_worker.wait(timeout=5)
+            release_worker.wait(timeout=30)
             return (messages, None)
 
     db = SessionDB(db_path=tmp_path / "state.db")
@@ -1804,7 +1819,8 @@ async def test_hygiene_unwind_records_cooldown(monkeypatch, tmp_path):
             monkeypatch, tmp_path, SlowCompressAgent, db, session_id
         )
         task = asyncio.create_task(runner._handle_message(event))
-        assert await asyncio.to_thread(worker_started.wait, 2)
+        # Agent construction + hygiene dispatch + executor pickup under load.
+        assert await asyncio.to_thread(worker_started.wait, 10)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -1814,6 +1830,6 @@ async def test_hygiene_unwind_records_cooldown(monkeypatch, tmp_path):
             f"{state!r}"
         )
         release_worker.set()
-        await asyncio.wait_for(asyncio.to_thread(cleanup_done.wait), timeout=2)
+        await asyncio.wait_for(asyncio.to_thread(cleanup_done.wait), timeout=10)
     finally:
         db.close()

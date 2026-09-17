@@ -257,12 +257,17 @@ def test_f4_five_step_stale_holder_regression(tmp_path: Path) -> None:
         )
 
     # Step 2: host-owned progress wait times out while summary is blocked.
+    # The pooled worker must START (and reach the summary mock through the
+    # agent's pre-summary lock/checkpoint work) inside the idle window -- the
+    # idle clock runs from fence creation, and a slower pickup is fence-cancelled
+    # at the pre-start gate, so `summary_started` would never be set. Policy
+    # floor (>= 2 s), idle kept under the ceiling so this stays the idle path.
     result_msgs, _prompt = run_compress_context_with_progress_timeout(
         worker=_worker,
         messages=messages,
         system_prompt_fallback="fallback",
-        idle_timeout_seconds=0.6,
-        total_ceiling_seconds=1.2,
+        idle_timeout_seconds=2.0,
+        total_ceiling_seconds=4.0,
     )
     assert summary_started.wait(timeout=5)
     assert not release_summary.is_set()  # old worker STILL blocked

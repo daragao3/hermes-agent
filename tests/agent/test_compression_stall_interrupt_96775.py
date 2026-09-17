@@ -55,6 +55,14 @@ def _messages():
     return [{"role": "user", "content": f"m{i}"} for i in range(20)]
 
 
+# The idle window is also the wall-clock bound the "fresh progress" cases must fit
+# inside (touch_progress -> stall classification), so it sits at the flake-policy
+# floor (AGENTS.md: >= 2 s); a stalled fence is aged to twice that so the verdict
+# never rides the boundary.
+_IDLE_S = 2.0
+_STALLED_AGE_S = 2 * _IDLE_S
+
+
 def _age_fence(fence: CompressionCommitFence, idle_seconds: float) -> None:
     fence._last_progress = time.monotonic() - float(idle_seconds)
 
@@ -65,43 +73,43 @@ class TestStallClassificationIsFenceIdle:
         assert compression_attempt_stalled(
             commit_fence=fence,
             started_at=time.monotonic(),
-            idle_timeout_seconds=1.0,
+            idle_timeout_seconds=_IDLE_S,
         ) is False
 
     def test_idle_fence_is_stalled(self):
         fence = CompressionCommitFence()
-        _age_fence(fence, 2.0)
+        _age_fence(fence, _STALLED_AGE_S)
         assert compression_attempt_stalled(
             commit_fence=fence,
             started_at=time.monotonic(),
-            idle_timeout_seconds=1.0,
+            idle_timeout_seconds=_IDLE_S,
         ) is True
 
     def test_recent_progress_is_not_stalled(self):
         fence = CompressionCommitFence()
-        _age_fence(fence, 2.0)
+        _age_fence(fence, _STALLED_AGE_S)
         fence.touch_progress()
         assert compression_attempt_stalled(
             commit_fence=fence,
             started_at=time.monotonic() - 5.0,
-            idle_timeout_seconds=1.0,
+            idle_timeout_seconds=_IDLE_S,
         ) is False
 
     def test_chat_and_responses_share_the_fence_clock(self):
         """Transport-agnostic: both APIs tick the same fence or they don't."""
         chat_fence = CompressionCommitFence()
         responses_fence = CompressionCommitFence()
-        _age_fence(chat_fence, 2.0)
+        _age_fence(chat_fence, _STALLED_AGE_S)
         responses_fence.touch_progress()
         assert compression_attempt_stalled(
             commit_fence=chat_fence,
             started_at=time.monotonic(),
-            idle_timeout_seconds=1.0,
+            idle_timeout_seconds=_IDLE_S,
         ) is True
         assert compression_attempt_stalled(
             commit_fence=responses_fence,
             started_at=time.monotonic(),
-            idle_timeout_seconds=1.0,
+            idle_timeout_seconds=_IDLE_S,
         ) is False
 
 
@@ -142,7 +150,7 @@ class TestStallInterruptedBackoff:
     ):
         monkeypatch.setattr(
             "agent.conversation_compression.resolve_context_compression_timeouts",
-            lambda compression_cfg=None: (1.0, 10.0),
+            lambda compression_cfg=None: (_IDLE_S, 10.0),
         )
         db, agent = _build_agent(tmp_path, "STALL_AUX_CANCEL")
         original = _messages()
@@ -152,7 +160,7 @@ class TestStallInterruptedBackoff:
 
         def _stalled_then_stop(messages, **_kwargs):
             compress_calls["n"] += 1
-            _age_fence(fence, 2.0)
+            _age_fence(fence, _STALLED_AGE_S)
             messages[0]["content"] = "must be rolled back"
             raise AuxiliaryExplicitCancellation()
 
@@ -193,7 +201,7 @@ class TestStallInterruptedBackoff:
     ):
         monkeypatch.setattr(
             "agent.conversation_compression.resolve_context_compression_timeouts",
-            lambda compression_cfg=None: (1.0, 10.0),
+            lambda compression_cfg=None: (_IDLE_S, 10.0),
         )
         db, agent = _build_agent(tmp_path, "STALL_FENCE_CANCEL")
         original = _messages()
@@ -201,7 +209,7 @@ class TestStallInterruptedBackoff:
         fence = CompressionCommitFence()
 
         def _summary_then_cancel(messages, **_kwargs):
-            _age_fence(fence, 2.0)
+            _age_fence(fence, _STALLED_AGE_S)
             fence.cancel_before_commit()
             return [
                 {"role": "user", "content": "[CONTEXT COMPACTION] summary"},
@@ -231,7 +239,7 @@ class TestStallInterruptedBackoff:
     ):
         monkeypatch.setattr(
             "agent.conversation_compression.resolve_context_compression_timeouts",
-            lambda compression_cfg=None: (1.0, 10.0),
+            lambda compression_cfg=None: (_IDLE_S, 10.0),
         )
         db, agent = _build_agent(tmp_path, "FRESH_FENCE_CANCEL")
         original = _messages()
@@ -265,14 +273,14 @@ class TestStallInterruptedBackoff:
     ):
         monkeypatch.setattr(
             "agent.conversation_compression.resolve_context_compression_timeouts",
-            lambda compression_cfg=None: (1.0, 10.0),
+            lambda compression_cfg=None: (_IDLE_S, 10.0),
         )
         db, agent = _build_agent(tmp_path, "FORCE_BYPASS_STALL")
         original = _messages()
         fence = CompressionCommitFence()
 
         def _stalled_then_stop(messages, **_kwargs):
-            _age_fence(fence, 2.0)
+            _age_fence(fence, _STALLED_AGE_S)
             raise AuxiliaryExplicitCancellation()
 
         agent.context_compressor.compress = _stalled_then_stop
@@ -308,7 +316,7 @@ class TestStallInterruptedBackoff:
     ):
         monkeypatch.setattr(
             "agent.conversation_compression.resolve_context_compression_timeouts",
-            lambda compression_cfg=None: (1.0, 10.0),
+            lambda compression_cfg=None: (_IDLE_S, 10.0),
         )
         db, agent = _build_agent(tmp_path, "MERGE_MAX_STALL")
         agent.context_compressor._record_compression_failure_cooldown(
@@ -321,7 +329,7 @@ class TestStallInterruptedBackoff:
         fence = CompressionCommitFence()
 
         def _stalled_then_stop(messages, **_kwargs):
-            _age_fence(fence, 2.0)
+            _age_fence(fence, _STALLED_AGE_S)
             raise AuxiliaryExplicitCancellation()
 
         agent.context_compressor.compress = _stalled_then_stop
