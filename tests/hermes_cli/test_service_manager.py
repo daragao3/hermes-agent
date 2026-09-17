@@ -189,6 +189,7 @@ def fake_subprocess_run(monkeypatch: pytest.MonkeyPatch):
 
 def test_seed_supervise_skeleton_creates_expected_layout(tmp_path) -> None:
     """Verifies the dirs + FIFO the helper lays down."""
+    import os
     import stat
 
     from hermes_cli.service_manager import _seed_supervise_skeleton
@@ -205,11 +206,19 @@ def test_seed_supervise_skeleton_creates_expected_layout(tmp_path) -> None:
     # supervise/ dir.
     supervise = svc_dir / "supervise"
     assert supervise.is_dir(), "missing supervise/"
-    assert stat.S_IMODE(supervise.stat().st_mode) == 0o755
 
     # supervise/event/.
     supervise_event = supervise / "event"
     assert supervise_event.is_dir(), "missing supervise/event/"
+
+    if os.name == "nt":
+        # The directory layout above is all this host can attest: NTFS
+        # carries no POSIX mode bits (every directory reads 0o777), and the
+        # helper deliberately skips the FIFO where os.mkfifo does not exist.
+        # The mode + FIFO contract is s6's — checked on POSIX below and
+        # against the real supervisor in tests/docker.
+        return
+    assert stat.S_IMODE(supervise.stat().st_mode) == 0o755
 
     # supervise/control FIFO.
     control = supervise / "control"
