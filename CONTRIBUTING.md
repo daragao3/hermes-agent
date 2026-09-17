@@ -213,8 +213,11 @@ pytest tests/ -v
 # all): every fixture a changed test file requests must still exist.
 # `pytest --collect-only` cannot see a missing fixture; this runs one
 # `pytest --setup-plan` per directory of changed test files (no test or
-# fixture body executes) and fails on `fixture '<name>' not found`.
+# fixture body executes) and fails on `fixture '<name>' not found`, plus an
+# AST visibility scan of the same files for the tests `--setup-plan` cannot
+# reach on this host (a module skipped by `skipif`/`importorskip`).
 python scripts/check_orphaned_fixtures.py --base <trunk-ref>
+python scripts/check_orphaned_fixtures.py --static-only tests/x/test_y.py   # AST scan only, no pytest run
 ```
 
 ---
