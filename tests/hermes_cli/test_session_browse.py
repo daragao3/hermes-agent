@@ -9,8 +9,18 @@ Covers:
 import time
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from hermes_cli.sessions_cmd_browse import _session_browse_picker
+
+# ``curses`` (its ``_curses`` C extension) is Unix-only; the picker imports it lazily, so only
+# the simulated-key tests need the guard (same idiom as test_curses_color_compat).
+try:
+    import curses  # noqa: F401
+except ImportError:  # Windows
+    curses = None
+
+requires_curses = pytest.mark.skipif(curses is None, reason="curses is Unix-only")
 
 
 # ─── Sample session data ──────────────────────────────────────────────────────
@@ -95,6 +105,7 @@ class TestSessionBrowsePicker:
 
 # ─── Curses-based picker (mocked curses) ────────────────────────────────────
 
+@requires_curses
 class TestCursesBrowse:
     """Tests for the curses-based interactive picker via simulated key sequences."""
 

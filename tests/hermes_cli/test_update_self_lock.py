@@ -166,6 +166,13 @@ def test_recovered_update_retry_builds_parser_without_native_secret_modules(
 ):
     """Parser registration must not re-lock a freshly recovered updater."""
     called = []
+    # The three update gates read HOST state (agent-session cwd/env, upstream divergence, the
+    # shared stash) and refuse before cmd_update is reached; this test is about parser
+    # registration, so neutralize them like test_update_divergence_gate does.
+    from hermes_cli import _agent_session, _update_divergence, _update_worktrees
+    monkeypatch.setattr(_agent_session, "enforce_update_gate", lambda args: None)
+    monkeypatch.setattr(_update_divergence, "enforce_divergence_gate", lambda args: None)
+    monkeypatch.setattr(_update_worktrees, "enforce_shared_stash_gate", lambda args: None)
     monkeypatch.setattr(_early_recovery, "_UPDATE_RETRY_RECOVERED", True)
     monkeypatch.setattr(cli_main, "cmd_update", lambda args: called.append(args))
     monkeypatch.setattr(sys, "argv", ["hermes", "update", "--yes"])

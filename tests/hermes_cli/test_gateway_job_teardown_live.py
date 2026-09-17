@@ -36,6 +36,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.timeout_budget import scaled
+
 pytestmark = [
     pytest.mark.windows_only,
     pytest.mark.skipif(sys.platform != "win32", reason="native Windows only"),
@@ -195,6 +197,10 @@ class TestJobObjectMechanismLive:
             if job:
                 kernel32.CloseHandle(job)
 
+    # The breakaway grandchild is this test's own spawn, but its driver parent has exited by
+    # the time it is reaped, so the guard's parent-chain walk cannot attribute it to us and
+    # refuses the taskkill. Killing it is the point; the marker is the guard's sanctioned route.
+    @pytest.mark.live_system_guard_bypass
     def test_breakaway_child_survives_job_teardown(self, tmp_path):
         pid = self._run_in_job(tmp_path, "windows_detach_flags")
         try:
@@ -282,6 +288,9 @@ class TestWatcherRespawnLive:
 class TestResumeVerificationLive:
     """The user-visible lie: '✓ Restarting' printed for a dead gateway."""
 
+    # Backstop only: _verify_relaunched_gateways_alive polls a real 30 s readiness window
+    # before it can report the dead relaunch, which is the suite-wide cap to the second.
+    @pytest.mark.timeout(scaled(180))
     def test_dead_relaunch_is_not_reported_as_success(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
         (tmp_path / "home").mkdir(parents=True, exist_ok=True)

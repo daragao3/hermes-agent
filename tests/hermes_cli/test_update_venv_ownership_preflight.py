@@ -12,6 +12,7 @@ because update-path tests mock ``subprocess.run`` with sequenced side effects.
 """
 
 import os
+import sys
 
 import pytest
 
@@ -46,6 +47,7 @@ def test_all_owned_preflight_proceeds(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX ownership concept: _venv_foreign_owned_paths is [] on Windows by design")
 def test_foreign_owned_dist_info_child_detected(tmp_path, monkeypatch):
     venv = _make_fake_venv(tmp_path)
     installer = str(
@@ -65,6 +67,7 @@ def test_foreign_owned_dist_info_child_detected(tmp_path, monkeypatch):
     assert foreign == [(installer, 0)]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX ownership concept: _venv_foreign_owned_paths is [] on Windows by design")
 def test_foreign_owned_refuses_with_chown_hint(tmp_path, monkeypatch, capsys):
     venv = _make_fake_venv(tmp_path)
     hermes_bin = str(venv / "bin" / "hermes")

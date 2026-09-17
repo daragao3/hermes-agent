@@ -89,7 +89,10 @@ def probe(surface, scenario, directory):
                         '\nwhile not p.exists(): time.sleep(.01)\n'
                         f'print("BACKLOG_{index}"); sys.exit({7 if index == count - 1 else 0})')
                 process = registry.spawn_local(
-                    f'{shlex.quote(sys.executable)} -c {shlex.quote(code)} {shlex.quote(str(gate))}',
+                    # spawn_local runs this through a POSIX shell on every host (Git bash on
+                    # Windows), so the interpreter path is spelled with forward slashes: a
+                    # single-quoted C:\...\python.exe is not a command bash can exec there.
+                    f'{shlex.quote(Path(sys.executable).as_posix())} -c {shlex.quote(code)} {shlex.quote(str(gate))}',
                     cwd=str(directory), session_key='backlog-owner')
                 process.notify_on_complete = True
                 processes.append(process)
