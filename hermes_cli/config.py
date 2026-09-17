@@ -2451,7 +2451,15 @@ def _load_config_cache_sig(config_path: Path) -> Tuple[Optional[Tuple[int, int]]
     except OSError:
         managed_sig = (0, 0)
     if user_sig is None and managed_sig == (0, 0):
-        return None, None
+        # Neither file exists. Cache under a sentinel rather than rebuilding
+        # defaults + canonicalize + env-expand + managed overlay on EVERY call:
+        # a process with no config.yaml (fresh install, env-only container,
+        # every test's tmp HERMES_HOME) loads config hundreds of times per
+        # agent construction. The sentinel can never collide with a real
+        # (mtime_ns, size) pair, so the moment either file appears the
+        # signature changes and the entry is rebuilt; env drift is already
+        # covered by the env snapshot check in _load_config_impl.
+        return None, (-1, -1, 0, 0)
     return user_sig, (*(user_sig or (0, 0)), *managed_sig)
 
 

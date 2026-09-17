@@ -74,6 +74,11 @@ def _make_agent(session_db, session_id):
     agent.context_compressor._last_compress_aborted = False
     agent.context_compressor._last_summary_error = None
     agent.context_compressor.compression_count = 1
+    # The DB-mutation path is under test, not aux-provider resolution: skip the
+    # lazy feasibility probe (a 70-provider discovery walk, ~0.4 s cold and
+    # 2-4 s on a saturated host) the same way the product does after its first
+    # attempt. Mocked compress() above never calls the aux client anyway.
+    agent._compression_feasibility_checked = True
     return agent
 
 
