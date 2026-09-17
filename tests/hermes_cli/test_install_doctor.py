@@ -58,6 +58,45 @@ def test_declared_names_covers_packages_and_py_modules(tmp_path):
     }
 
 
+def test_declared_names_without_a_static_list_derives_py_modules_from_the_tree(tmp_path):
+    """No ``py-modules`` key -> the tree beside the pyproject is the source.
+
+    Mirrors setup.py's ``_root_py_modules``: every root ``*.py`` except
+    ``setup.py``; subpackages and non-.py files are not root modules.
+    """
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        "[tool.setuptools]\n"
+        "[tool.setuptools.packages.find]\n"
+        'include = ["events", "events.*"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "hermes_constants.py").write_text("", encoding="utf-8")
+    (tmp_path / "utils.py").write_text("", encoding="utf-8")
+    (tmp_path / "setup.py").write_text("", encoding="utf-8")
+    (tmp_path / "README.md").write_text("", encoding="utf-8")
+    (tmp_path / "events").mkdir()
+    (tmp_path / "events" / "__init__.py").write_text("", encoding="utf-8")
+
+    assert declared_names(pyproject) == {"events", "hermes_constants", "utils"}
+
+
+def test_declared_names_prefers_a_static_list_over_the_tree(tmp_path):
+    """A declared ``py-modules`` key is authoritative, even when the tree differs."""
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        "[tool.setuptools]\n"
+        'py-modules = ["hermes_constants"]\n'
+        "[tool.setuptools.packages.find]\n"
+        'include = ["events"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "hermes_constants.py").write_text("", encoding="utf-8")
+    (tmp_path / "stray.py").write_text("", encoding="utf-8")
+
+    assert declared_names(pyproject) == {"events", "hermes_constants"}
+
+
 def test_declared_names_on_real_pyproject_includes_the_drifted_five():
     """Anchor on the real declaration list — it was always correct."""
     names = declared_names(REPO_ROOT / "pyproject.toml")
@@ -66,6 +105,15 @@ def test_declared_names_on_real_pyproject_includes_the_drifted_five():
     # py-modules must be covered too: they share the finder's MAPPING and
     # fail identically. hermes_constants is imported nearly everywhere.
     assert "hermes_constants" in names
+    # The real pyproject carries no static py-modules list any more (it is
+    # derived from the tree by setup.py), so the breadth check must agree
+    # with the tree: every root module, never setup.py.
+    root_modules = {
+        p.stem for p in REPO_ROOT.glob("*.py") if p.name != "setup.py"
+    }
+    assert root_modules, "repo root lost its single-file modules?"
+    assert root_modules <= names
+    assert "setup" not in names
 
 
 def test_parse_finder_mapping_reads_the_annotated_form():

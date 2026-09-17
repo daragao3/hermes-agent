@@ -66,12 +66,40 @@ _MAPPING_RE = re.compile(
 )
 
 
+def root_py_modules(root: Path) -> set[str]:
+    """Root single-file modules the way setup.py's ``_root_py_modules`` derives them.
+
+    pyproject.toml no longer carries a static ``py-modules`` list (it
+    drifted from the tree and broke installed wheels — see the
+    ``[tool.setuptools]`` comment there). setup.py computes the list from
+    the source tree at build time, and the editable finder is generated
+    from that same ``setup()`` call, so its MAPPING carries every root
+    ``*.py`` except ``setup.py`` itself. This mirrors that rule exactly;
+    setup.py cannot be imported for it without running ``setup()``.
+    """
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return set()
+    return {
+        name[:-3]
+        for name in entries
+        if name.endswith(".py") and name != "setup.py"
+    }
+
+
 def declared_names(pyproject_path: Path) -> set[str]:
     """Top-level names a pyproject declares: packages AND py-modules.
 
     Both land in the finder's MAPPING and both fail identically when the
     finder is stale, so both belong in the breadth check. On this project
-    that is 23 packages + 14 py-modules = the 37 MAPPING entries observed.
+    that is 24 packages + 42 root modules = the 66 MAPPING entries observed.
+
+    py-modules come from the static ``[tool.setuptools] py-modules`` key
+    when one is declared, otherwise from the tree beside the pyproject —
+    the dynamic source setup.py feeds ``setup(py_modules=...)`` from. A
+    root module added after the last reinstall is exactly the drift this
+    doctor exists to catch, so the breadth check must see it.
     """
     data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     setuptools_cfg = data.get("tool", {}).get("setuptools", {})
@@ -83,7 +111,11 @@ def declared_names(pyproject_path: Path) -> set[str]:
         top = entry.split(".", 1)[0].strip()
         if top:
             names.add(top)
-    names.update(setuptools_cfg.get("py-modules", []))
+    static_modules = setuptools_cfg.get("py-modules")
+    if static_modules is not None:
+        names.update(static_modules)
+    else:
+        names.update(root_py_modules(pyproject_path.parent))
     return names
 
 
