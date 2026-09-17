@@ -29,6 +29,7 @@ import pytest
 from tools.skills_hub_install import bundle_content_hash, uninstall_skill
 from tools.skills_hub_models import SkillBundle
 from tools.skills_guard import content_hash
+from tests.symlink_support import requires_symlinks
 
 
 # =============================================================================
@@ -124,6 +125,7 @@ class TestUninstallPathTraversal:
         assert ok is False
         assert victim.exists()
 
+    @requires_symlinks
     def test_symlink_escape_rejected(self, tmp_path, hub_setup):
         """Symlinks inside SKILLS_DIR that point outside must be refused
         after realpath resolution."""

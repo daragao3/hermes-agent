@@ -252,6 +252,7 @@ class TestCheckStructure:
         ids = {fi.pattern_id for fi in _check_structure(tmp_path)}
         assert {"too_many_files", "oversized_file", "binary_file"} <= ids
 
+    @pytest.mark.skipif(not _can_symlink(), reason="Symlinks need elevated privileges")
     def test_symlink_escape(self, tmp_path):
         target = tmp_path / "outside"
         target.mkdir()
