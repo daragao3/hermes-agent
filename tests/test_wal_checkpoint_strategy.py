@@ -260,11 +260,12 @@ class TestCloseSkipsCheckpointOnReadOnlyHandles:
             f"read_only close must issue no checkpoint, got: {execute_calls}"
         )
         assert mock_conn.close.called, "connection must still be closed"
-        assert not hasattr(db, "_conn"), "_conn must still be deleted"
+        assert db._conn is None, "_conn must still be cleared"
         real_conn.close()
 
     def test_writable_close_still_checkpoints(self, tmp_path):
-        """The skip is keyed on read_only only — writable close is unchanged."""
+        """The skip is keyed on read_only only — writable close still
+        checkpoints (PASSIVE, per TestCloseUsesPassive above)."""
         db = SessionDB(db_path=tmp_path / "rw_state.db")
         real_conn = db._conn
         execute_calls = []
@@ -279,7 +280,7 @@ class TestCloseSkipsCheckpointOnReadOnlyHandles:
 
         db.close()
 
-        assert len([c for c in execute_calls if "wal_checkpoint(TRUNCATE)" in c]) == 1
+        assert len([c for c in execute_calls if "wal_checkpoint(PASSIVE)" in c]) == 1
         real_conn.close()
 
     def test_readonly_checkpoint_could_never_have_worked(self, tmp_path):

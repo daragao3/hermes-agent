@@ -296,34 +296,36 @@ class TestNoProgressDeadLoopBreaker:
         from run_agent import AIAgent
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db = SessionDB(db_path=Path(tmpdir) / "t.db")
-            with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
-                agent = AIAgent(
-                    api_key="test-key",
-                    base_url="https://openrouter.ai/api/v1",
-                    model="test/model",
-                    quiet_mode=True,
-                    session_db=db,
-                    session_id="s-84371",
-                    skip_context_files=True,
-                    skip_memory=True,
+            # Closed before the directory goes: Windows refuses to unlink a
+            # store another handle still holds (WinError 32).
+            with SessionDB(db_path=Path(tmpdir) / "t.db") as db:
+                with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
+                    agent = AIAgent(
+                        api_key="test-key",
+                        base_url="https://openrouter.ai/api/v1",
+                        model="test/model",
+                        quiet_mode=True,
+                        session_db=db,
+                        session_id="s-84371",
+                        skip_context_files=True,
+                        skip_memory=True,
+                    )
+                agent.compression_in_place = False
+                compressor = MagicMock()
+                # No-op compression: returns input unchanged.
+                compressor.compress.side_effect = (
+                    lambda messages, **_kwargs: messages
                 )
-            agent.compression_in_place = False
-            compressor = MagicMock()
-            # No-op compression: returns input unchanged.
-            compressor.compress.side_effect = (
-                lambda messages, **_kwargs: messages
-            )
-            compressor._last_compress_aborted = False
-            agent.context_compressor = compressor
-            messages = [{"role": "user", "content": "request"}]
+                compressor._last_compress_aborted = False
+                agent.context_compressor = compressor
+                messages = [{"role": "user", "content": "request"}]
 
-            returned, _ = agent._compress_context(
-                messages, "sys", approx_tokens=100
-            )
+                returned, _ = agent._compress_context(
+                    messages, "sys", approx_tokens=100
+                )
 
-            assert returned is messages
-            assert compressor._record_structural_no_op.called, (
-                "no_progress must arm the per-session backoff — otherwise "
-                "the dead loop re-fires a full aux summarization every turn"
-            )
+                assert returned is messages
+                assert compressor._record_structural_no_op.called, (
+                    "no_progress must arm the per-session backoff — otherwise "
+                    "the dead loop re-fires a full aux summarization every turn"
+                )

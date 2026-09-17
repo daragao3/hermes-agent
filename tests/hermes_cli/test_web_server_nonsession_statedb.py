@@ -32,6 +32,18 @@ import sqlite3
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _uncached_sidebar_endpoints(monkeypatch):
+    """The sidebar endpoint sits behind ``_sidebar_singleflight_cache`` (5s TTL, keyed on
+    the query params alone). Every test here builds a fresh tmp profile set under the same
+    default params, so a warm entry answers the corrupt-store test with the previous
+    test's clean payload. TTL 0 makes each request cold (same fixture as
+    test_profiles_sidebar_scope.py)."""
+    from hermes_cli.web_routers import profiles as profiles_routes
+
+    monkeypatch.setattr(profiles_routes, "_SIDEBAR_CACHE_TTL_SECONDS", 0.0)
+
+
 @pytest.fixture
 def isolated_profiles(tmp_path, monkeypatch, _isolate_hermes_home):
     from hermes_constants import get_hermes_home

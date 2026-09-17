@@ -16,7 +16,10 @@ def test_full_facade_initializes_bridge_and_preserves_messages_on_reopen(tmp_pat
         assert message_id > 0
         assert db.message_count('s') == 1
         assert db.get_messages('s')[0]['timestamp'] == 0
-        assert db._conn.execute('SELECT COUNT(*) FROM session_bridge_migrations').fetchone()[0] == 7
+        # Bridge init ran through the newest carry (a literal count drifted
+        # the moment desktop_registry_values_v34 landed in 7ca9df17dd).
+        applied = {row[0] for row in db._conn.execute('SELECT migration_name FROM session_bridge_migrations')}
+        assert {'claude_characterization_events_v28', SessionDB._DESKTOP_REGISTRY_VALUES_MIGRATION} <= applied
         assert db._conn.execute("SELECT name FROM sqlite_master WHERE name='external_sessions'").fetchone()
     with SessionDB(db_path=path, read_only=True) as reopened:
         assert reopened.get_messages('s')[0]['content'] == 'facade persistence needle'
