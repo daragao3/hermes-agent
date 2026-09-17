@@ -163,7 +163,7 @@ def _make_real_agent(provider="deepseek", model="deepseek-v4-pro",
     with (
         _patch("model_tools.get_tool_definitions", return_value=[]),
         _patch("model_tools.check_toolset_requirements", return_value={}),
-        _patch("run_agent.OpenAI"),
+        _patch("agent.process_bootstrap.OpenAI"),
     ):
         agent = AIAgent(
             api_key="test-key",
@@ -209,7 +209,7 @@ def test_no_override_regression_restore_unchanged(monkeypatch):
     agent = _activated_agent()
 
     from unittest.mock import patch as _patch
-    with _patch("run_agent.OpenAI", return_value=MagicMock()):
+    with _patch("agent.process_bootstrap.OpenAI", return_value=MagicMock()):
         result = agent._restore_primary_runtime()
 
     assert result is True
@@ -228,7 +228,7 @@ def test_expired_override_restores_real_primary(monkeypatch):
     monkeypatch.setattr(model_override, "get_override", lambda p, m: None)
 
     from unittest.mock import patch as _patch
-    with _patch("run_agent.OpenAI", return_value=MagicMock()):
+    with _patch("agent.process_bootstrap.OpenAI", return_value=MagicMock()):
         result = agent._restore_primary_runtime()
 
     assert result is True
@@ -265,7 +265,7 @@ def test_override_lookup_failure_fails_open_to_restore(monkeypatch):
     monkeypatch.setattr(model_override, "get_override", _boom)
 
     from unittest.mock import patch as _patch
-    with _patch("run_agent.OpenAI", return_value=MagicMock()):
+    with _patch("agent.process_bootstrap.OpenAI", return_value=MagicMock()):
         result = agent._restore_primary_runtime()
 
     assert result is True
@@ -461,7 +461,7 @@ def _anthropic_primary_agent():
     with (
         _patch("model_tools.get_tool_definitions", return_value=[]),
         _patch("model_tools.check_toolset_requirements", return_value={}),
-        _patch("run_agent.OpenAI"),
+        _patch("agent.process_bootstrap.OpenAI"),
     ):
         agent = AIAgent(
             api_key="test-key",
@@ -690,7 +690,7 @@ def test_expired_init_override_restores_the_configured_primary(monkeypatch):
     # `hermes overrides clear`, or simply 24h elapsing.
     monkeypatch.setattr(model_override, "get_override", lambda p, m: None)
 
-    with _patch("run_agent.OpenAI", return_value=MagicMock()):
+    with _patch("agent.process_bootstrap.OpenAI", return_value=MagicMock()):
         result = agent._restore_primary_runtime()
 
     assert result is True
@@ -749,7 +749,7 @@ def test_explicit_model_switch_retires_the_override_stash(monkeypatch):
                return_value=(mock_client, None)),
         _patch("agent.model_metadata.get_model_context_length",
                return_value=64000),
-        _patch("run_agent.OpenAI", return_value=MagicMock()),
+        _patch("agent.process_bootstrap.OpenAI", return_value=MagicMock()),
     ):
         agent.switch_model(
             "some-other-model", "openrouter",
@@ -878,7 +878,7 @@ def test_revert_restores_the_primarys_reasoning_config(monkeypatch):
     # `hermes overrides clear`, or simply 24h elapsing.
     monkeypatch.setattr(model_override, "get_override", lambda p, m: None)
 
-    with _patch("run_agent.OpenAI", return_value=MagicMock()):
+    with _patch("agent.process_bootstrap.OpenAI", return_value=MagicMock()):
         result = agent._restore_primary_runtime()
 
     assert result is True
