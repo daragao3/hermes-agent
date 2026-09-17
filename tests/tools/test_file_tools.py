@@ -6,6 +6,7 @@ handling without requiring a running terminal environment.
 
 import json
 import logging
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,16 @@ import pytest
 from tools.file_tools import (
     PATCH_SCHEMA,
 )
+
+
+def _sensitive_system_file(name: str) -> str:
+    """A path the sensitive-path guard refuses on THIS host: ``/etc/<name>`` on
+    POSIX, ``%SystemRoot%\\System32\\drivers\\etc\\<name>`` on Windows (the Windows
+    table). Lets the header-extraction and guard-order tests run everywhere."""
+    if os.name == "nt":
+        root = os.environ.get("SystemRoot") or r"C:\Windows"
+        return os.path.join(root, "System32", "drivers", "etc", name)
+    return f"/etc/{name}"
 
 
 class TestReadFileHandler:
@@ -60,17 +71,20 @@ class TestReadFileHandler:
 
 class TestWriteFileHandler:
     @patch("tools.file_tools._get_file_ops")
-    def test_writes_content(self, mock_get):
+    def test_writes_content(self, mock_get, tmp_path):
+        # An absolute tmp_path resolves to itself on every host; a bare "/tmp/x"
+        # is rendered drive-relative ("\\tmp\\x") by the resolver on Windows.
+        target = str(tmp_path / "out.txt")
         mock_ops = MagicMock()
         result_obj = MagicMock()
-        result_obj.to_dict.return_value = {"status": "ok", "path": "/tmp/out.txt", "bytes": 13}
+        result_obj.to_dict.return_value = {"status": "ok", "path": target, "bytes": 13}
         mock_ops.write_file.return_value = result_obj
         mock_get.return_value = mock_ops
 
         from tools.file_tools import write_file_tool
-        result = json.loads(write_file_tool("/tmp/out.txt", "hello world!\n"))
+        result = json.loads(write_file_tool(target, "hello world!\n"))
         assert result["status"] == "ok"
-        mock_ops.write_file.assert_called_once_with("/tmp/out.txt", "hello world!\n")
+        mock_ops.write_file.assert_called_once_with(target, "hello world!\n")
 
     @patch("tools.file_tools._get_file_ops")
     def test_permission_error_returns_error_json_without_error_log(self, mock_get, caplog):
@@ -148,7 +162,8 @@ class TestWriteFileHandler:
 
 class TestPatchHandler:
     @patch("tools.file_tools._get_file_ops")
-    def test_replace_mode_calls_patch_replace(self, mock_get):
+    def test_replace_mode_calls_patch_replace(self, mock_get, tmp_path):
+        target = str(tmp_path / "f.py")  # resolves to itself on every host
         mock_ops = MagicMock()
         result_obj = MagicMock()
         result_obj.to_dict.return_value = {"status": "ok", "replacements": 1}
@@ -157,11 +172,11 @@ class TestPatchHandler:
 
         from tools.file_tools import patch_tool
         result = json.loads(patch_tool(
-            mode="replace", path="/tmp/f.py",
+            mode="replace", path=target,
             old_string="foo", new_string="bar"
         ))
         assert result["status"] == "ok"
-        mock_ops.patch_replace.assert_called_once_with("/tmp/f.py", "foo", "bar", False)
+        mock_ops.patch_replace.assert_called_once_with(target, "foo", "bar", False)
 
 
     @patch("tools.file_tools._get_file_ops")
@@ -245,7 +260,7 @@ class TestPatchSensitivePathExtraction:
         from tools.file_tools import patch_tool
         patch_text = (
             "*** Begin Patch\n"
-            "*** Move File: /tmp/work.txt -> /etc/crontab\n"
+            f"*** Move File: /tmp/work.txt -> {_sensitive_system_file('crontab')}\n"
             "*** End Patch\n"
         )
         result = json.loads(patch_tool(mode="patch", patch=patch_text))
@@ -265,7 +280,7 @@ class TestPatchSensitivePathExtraction:
         from tools.file_tools import patch_tool
         patch_text = (
             "*** Begin Patch\n"
-            "***Update File: /etc/resolv.conf\n"
+            f"***Update File: {_sensitive_system_file('resolv.conf')}\n"
             "@@ @@\n"
             "-old\n"
             "+new\n"
@@ -478,10 +493,14 @@ class TestSensitivePathCheck:
         monkeypatch.setattr("tools.file_tools_write_guards._hermes_config_resolved_loaded", True)
 
         from tools.file_tools import write_file_tool
-        result = json.loads(write_file_tool("/etc/passwd", "evil"))
+        # ``hosts`` rather than ``passwd``: the credential-file guard (agent.file_safety)
+        # runs first and owns basenames like passwd; this test is about the
+        # sensitive-PATH guard.
+        result = json.loads(write_file_tool(_sensitive_system_file("hosts"), "evil"))
         assert "error" in result
         assert "sensitive system path" in result["error"]
 
+    @pytest.mark.skipif(os.name == "nt", reason="the /private/var carve-outs are POSIX table semantics")
     def test_macos_private_var_carveouts(self):
         """macOS temp dirs under /private/var must not be blanket-blocked,
         while the genuinely-sensitive /private/var subtrees still are."""
