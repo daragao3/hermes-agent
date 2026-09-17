@@ -65,6 +65,16 @@ def _messages():
     return [{"role": "user", "content": f"m{i}"} for i in range(20)]
 
 
+# Wait budgets (AGENTS.md flake policy: wall-clock bounds >= 2 s, event-based sync).
+# _START_WINDOW_S: the idle/ceiling window a test's worker must START inside -- the idle
+# clock runs from fence creation and a pickup slower than the window is fence-cancelled
+# at the pre-start gate, so the worker never runs and the teardown assertions below fail
+# as if the product had (a loaded -j 12 runner left pool workers unstarted past 0.1 s,
+# 2026-09-17). _HANDOFF_S: a signal between threads that are both already running.
+_START_WINDOW_S = 2.0
+_HANDOFF_S = 2.0
+
+
 class TestWorkerTeardownOnCeiling:
     def test_cooperative_worker_joined_within_grace(self):
         """A worker that exits promptly after cancel is joined on the
@@ -88,7 +98,7 @@ class TestWorkerTeardownOnCeiling:
             # Cooperative-but-not-instant exit: the unwind after seeing the
             # poison takes real time (rollback, telemetry). Long enough that
             # a host WITHOUT the bounded-grace join returns first; far
-            # inside the 5s grace for a host WITH it.
+            # inside the min(5s, ceiling) grace for a host WITH it.
             time.sleep(0.08)
             worker_done.set()
             return (original, "late")
@@ -98,9 +108,11 @@ class TestWorkerTeardownOnCeiling:
             worker=cooperative_worker,
             messages=original,
             system_prompt_fallback="fallback",
-            # Keep idle expiry out of this total-ceiling test under runner load.
-            idle_timeout_seconds=2.0,
-            total_ceiling_seconds=0.2,
+            # The worker's continuous progress keeps idle from expiring once it
+            # runs; both windows sit at the floor so it is scheduled inside them
+            # (the wrapper clamps the ceiling to at least the idle window).
+            idle_timeout_seconds=_START_WINDOW_S,
+            total_ceiling_seconds=_START_WINDOW_S,
             fence=fence,
             stall_fallback=False,
         )
@@ -149,8 +161,10 @@ class TestWorkerTeardownOnCeiling:
             worker=stuck_worker,
             messages=original,
             system_prompt_fallback="fallback",
-            idle_timeout_seconds=0.1,
-            total_ceiling_seconds=0.3,
+            # Start window at the floor (see _START_WINDOW_S); the worker's
+            # continuous progress then leaves only the TOTAL ceiling to expire.
+            idle_timeout_seconds=_START_WINDOW_S,
+            total_ceiling_seconds=_START_WINDOW_S,
             fence=fence,
             stall_fallback=False,
         )
@@ -164,7 +178,7 @@ class TestWorkerTeardownOnCeiling:
             "alive — overlap window reopened (#97488)"
         )
         release.set()
-        assert worker_finished.wait(timeout=2)
+        assert worker_finished.wait(timeout=_HANDOFF_S)
         # Late result was fence-poisoned, never adopted.
         assert msgs == [{"role": "user", "content": "keep"}]
 
