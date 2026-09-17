@@ -105,6 +105,28 @@ def _prune_terminal_temp_once() -> None:
 
 
 # --- Windows / MSYS path translation ---
+# The cwd marker's probe under Git Bash. Plain ``pwd -P`` answers in MSYS mount
+# form, and only the drive form (``/c/Users/x``) is translatable back; anything
+# under a mount point — ``/tmp`` IS ``%TEMP%``, ``/usr/bin`` is Git's own tree —
+# comes back as a path Python cannot find, so ``_extract_cwd_from_output`` rolled
+# the cwd back and dropped ``cwd_observed`` for every ``cd`` into %TEMP%. ``-W``
+# (MSYS-only; ``-P -W`` order matters, the last flag wins) makes bash spell the
+# physical cwd natively (``C:/Users/x/AppData/Local/Temp/y``); the fallback keeps
+# a non-MSYS bash (Cygwin) on the drive form the translator does understand.
+_WINDOWS_CWD_PROBE = "pwd -P -W 2>/dev/null || pwd -P"
+
+
+def _native_windows_path(cwd: str) -> str:
+    """``_msys_to_windows_path`` plus: a drive/UNC-rooted path with forward or
+    mixed separators (what ``pwd -W`` prints) becomes the native ``C:\\x\\y``
+    spelling, so a recorded cwd compares equal to ``str(Path)``. POSIX-only
+    forms (``/home/x``) and the off-Windows case are untouched."""
+    native = _msys_to_windows_path(cwd)
+    if _IS_WINDOWS and native and ntpath.splitdrive(native)[0]:
+        return ntpath.normpath(native)
+    return native
+
+
 def _msys_to_windows_path(cwd: str) -> str:
     """``/c/Users/x`` / ``/cygdrive/c/..`` / ``/mnt/c/..`` -> native ``C:\\Users\\x`` so
     ``isdir``/``Popen(cwd=)`` find it. No-op off Windows, for empty input and for
@@ -793,6 +815,14 @@ class LocalEnvironment(BaseEnvironment):
         """Use native paths for Python, but Git Bash-friendly paths for cd."""
         return BaseEnvironment._quote_cwd_for_cd(_windows_to_msys_path(cwd))
 
+    def _snapshot_script_kwargs(self, cwd: str) -> dict:
+        """Base kwargs plus, on Windows, the marker probe that has Git Bash spell
+        the cwd natively (see ``_WINDOWS_CWD_PROBE``)."""
+        kwargs = super()._snapshot_script_kwargs(cwd)
+        if _IS_WINDOWS:
+            kwargs["cwd_probe"] = _WINDOWS_CWD_PROBE
+        return kwargs
+
     def _quote_shell_path(self, path: str) -> str:
         """Rewrite native/mixed Windows paths before quoting for Git Bash."""
         return _quote_bash_path(path)
@@ -855,7 +885,7 @@ class LocalEnvironment(BaseEnvironment):
         prev_cwd = self.cwd
         super()._extract_cwd_from_output(result)
         if self.cwd != prev_cwd:
-            normalized = _msys_to_windows_path(self.cwd)
+            normalized = _native_windows_path(self.cwd)
             if normalized and os.path.isdir(normalized):
                 self.cwd = normalized
                 result["cwd"] = normalized

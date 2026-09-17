@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 import tools.terminal_tool as tt
+from tests.bash_support import NATIVE_PWD
 from tools.environments.local import LocalEnvironment
 
 
@@ -101,7 +102,7 @@ class TestInterruptDoesNotStealAnotherSessionsCwd:
         _run(env, "theirs", f"cd {_sh(theirs)} && pwd")
         _run(env, "mine", f"cd {_sh(mine)} && sleep 20", timeout=2)
 
-        result, _ = _run(env, "mine", "pwd")
+        result, _ = _run(env, "mine", NATIVE_PWD)
         assert os.path.realpath(result["output"].strip()) == os.path.realpath(str(mine))
 
     def test_single_session_keeps_its_own_prior_directory(self, env, tmp_path):

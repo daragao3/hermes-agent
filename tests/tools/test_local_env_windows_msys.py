@@ -42,11 +42,13 @@ from tools.environments.local import (
     _git_bash_bin_dirs,
     _make_run_env,
     _msys_to_windows_path,
+    _native_windows_path,
     _prepend_git_bash_dirs as _prepend_git_bash_dirs,
     _quote_bash_path,
     _resolve_safe_cwd,
     _sanitize_subprocess_env,
     _windows_to_msys_path,
+    _WINDOWS_CWD_PROBE,
     hermes_subprocess_env,
 )
 
@@ -332,3 +334,87 @@ class TestWrapCommandWindowsNativeCwd:
         script = captured["script"]
         assert "/c/Users/Alexander/AppData/Local/Temp/hermes-snap-deadbeef.sh" in script
         assert r"C:\Users\Alexander\AppData" not in script
+
+
+# ---------------------------------------------------------------------------
+# cwd marker probe: MSYS mount points (``/tmp`` IS %TEMP%) are not drive paths
+# ---------------------------------------------------------------------------
+
+class TestCwdProbeDefaultOffWindows:
+    def test_base_wrapper_keeps_plain_pwd_p(self):
+        """Remote/POSIX backends never see the MSYS flag: the base script
+        builders default to ``pwd -P`` and only LocalEnvironment on Windows
+        swaps in ``_WINDOWS_CWD_PROBE``."""
+        from tools.environments.base_session_env import _cwd_marker_printf, _wrap_command_script
+
+        assert '"$(pwd -P)"' in _cwd_marker_printf("__M__")
+        wrapped = _wrap_command_script(
+            "echo hi", quoted_cwd="/tmp", quoted_snap="/tmp/s", snap_tmp_template="/tmp/s.XXX",
+            passthrough_names=(), snapshot_ready=False, cwd_marker="__M__")
+        assert "pwd -W" not in wrapped and '"$(pwd -P)"' in wrapped
+
+
+@pytest.mark.windows_only
+class TestNativeWindowsPath:
+    def test_mixed_drive_path_becomes_native(self):
+        # What ``pwd -P -W`` prints for a dir under %TEMP%.
+        assert _native_windows_path("C:/Users/x/AppData/Local/Temp/y") == r"C:\Users\x\AppData\Local\Temp\y"
+
+    def test_msys_drive_path_still_translates(self):
+        assert _native_windows_path("/c/Users/x") == r"C:\Users\x"
+
+    def test_unc_and_posix_only_forms(self):
+        assert _native_windows_path("//server/share/x") == r"\\server\share\x"
+        assert _native_windows_path("/home/x") == "/home/x"
+        assert _native_windows_path("") == ""
+
+
+@pytest.mark.windows_only
+class TestWindowsCwdProbe:
+    def _env(self, cwd):
+        with patch.object(LocalEnvironment, "init_session", autospec=True, return_value=None):
+            return LocalEnvironment(cwd=str(cwd), timeout=10)
+
+    def test_wrapper_and_bootstrap_ask_bash_for_the_native_spelling(self, tmp_path):
+        from tools.environments.base_session_env import _snapshot_bootstrap_script
+
+        env = self._env(tmp_path)
+        env._snapshot_ready = True
+        assert f'"$({_WINDOWS_CWD_PROBE})"' in env._wrap_command("pwd", str(tmp_path))
+        bootstrap = _snapshot_bootstrap_script(excluded_names=(), **env._snapshot_script_kwargs(str(tmp_path)))
+        assert f'"$({_WINDOWS_CWD_PROBE})"' in bootstrap
+
+    def test_mixed_form_marker_stored_native(self, tmp_path):
+        """A marker carrying ``C:/Users/...`` (the ``-W`` spelling) is stored as
+        ``C:\\Users\\...`` so it equals ``str(Path)`` and ``cwd_observed`` survives."""
+        original = tmp_path / "starting"
+        original.mkdir()
+        new_dir = tmp_path / "next"
+        new_dir.mkdir()
+        env = self._env(original)
+        result = {"output": f"x\n{env._cwd_marker}{new_dir.as_posix()}{env._cwd_marker}\n", "returncode": 0}
+
+        env._extract_cwd_from_output(result)
+
+        assert env.cwd == str(new_dir)
+        assert result["cwd"] == str(new_dir)
+        assert result["cwd_observed"] is True
+        assert result["output"] == "x"  # the wrapper-injected ``\n`` goes with the marker line
+
+    def test_cd_under_temp_is_observed_by_real_git_bash(self, tmp_path):
+        """The regression itself: ``tmp_path`` lives under %TEMP%, which Git Bash
+        mounts as ``/tmp``, so plain ``pwd -P`` answered ``/tmp/...`` -- a path
+        Python cannot find -- and the cwd rolled back with no ``cwd_observed``."""
+        target = tmp_path / "projdir"
+        target.mkdir()
+        env = LocalEnvironment(cwd=str(tmp_path), timeout=30)
+        env.init_session()
+        try:
+            result = env.execute(f"cd {_quote_bash_path(str(target))}", cwd=str(tmp_path))
+        finally:
+            env.cleanup()
+
+        assert result["returncode"] == 0
+        assert result.get("cwd_observed") is True
+        assert result["cwd"] == str(target)
+        assert env.cwd == str(target)
