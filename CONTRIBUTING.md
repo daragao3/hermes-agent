@@ -208,6 +208,13 @@ scripts/run_tests.sh
 # Alternative (activate the venv first). The wrapper is still recommended
 # for parity with GitHub Actions before you open a PR:
 pytest tests/ -v
+
+# Cheap guard for a branch that touches tests (an integration merge above
+# all): every fixture a changed test file requests must still exist.
+# `pytest --collect-only` cannot see a missing fixture; this runs one
+# `pytest --setup-plan` per directory of changed test files (no test or
+# fixture body executes) and fails on `fixture '<name>' not found`.
+python scripts/check_orphaned_fixtures.py --base <trunk-ref>
 ```
 
 ---
