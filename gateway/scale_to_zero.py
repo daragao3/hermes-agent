@@ -245,6 +245,13 @@ def suspend_self(environ: Optional[dict] = None, *, socket_path: str = FLY_API_S
         return False
     request = (f"POST /v1/apps/{app}/machines/{machine_id}/suspend HTTP/1.1\r\n"
                "Host: flaps\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    # flaps is a unix socket, which Windows CPython does not expose (no
+    # ``socket.AF_UNIX``). Fly identity in the env on such a host is a
+    # misconfiguration, not a reason to break the "never raises" contract:
+    # fail-awake here too, or the watcher dies on AttributeError.
+    if not hasattr(socket, "AF_UNIX"):
+        logger.warning("scale-to-zero: flaps unix socket unsupported on this host; staying awake")
+        return False
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(timeout)
