@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.symlink_support import requires_symlinks
 from tools.plugin_guard import (
     scan_plugin,
     should_allow_plugin_install,
@@ -115,6 +116,7 @@ class TestMaliciousPlugin:
         result = scan_plugin(plugin)
         assert result.verdict == "dangerous"
 
+    @requires_symlinks
     def test_symlink_escape_is_dangerous(self, tmp_path):
         plugin = _mk_plugin(tmp_path, BASE_FILES)
         outside = tmp_path / "outside-secret.txt"

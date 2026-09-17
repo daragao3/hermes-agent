@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+from tests.symlink_support import requires_symlinks
 from tools.vision_tools import (
     _detect_video_mime_type,
     _video_to_base64_data_url,
@@ -144,6 +145,7 @@ class TestVideoAnalyzeTool:
         assert data["success"] is True
         assert "demo" in data["analysis"].lower()
 
+    @requires_symlinks
     def test_local_file_read_guard_blocks_env_via_video_extension(self, tmp_path):
         """A .env file symlinked with a video extension must still be blocked.
 
