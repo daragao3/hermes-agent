@@ -571,11 +571,21 @@ def resolve_windows_git_bash() -> Optional[str]:
                 return candidate
 
     found = shutil.which("bash")
-    if found and (
-        "\\system32\\" in found.lower() or "\\windowsapps\\" in found.lower()
-    ):
+    if found and is_wsl_bash_launcher(found):
         return None  # WSL launcher / Store stub — cannot see C:\ paths
     return found
+
+
+def is_wsl_bash_launcher(path: str) -> bool:
+    """True for the WSL launcher (``System32\\bash.exe``) or its Microsoft Store stub
+    (``WindowsApps\\bash.exe``) — the two ``bash`` spellings ``shutil.which`` returns on a
+    WSL-enabled box that must never be run as a shell: they boot the Linux VM and cannot
+    see ``C:\\`` paths.  Case-insensitive (``which`` reports ``bash.EXE``).  Every Windows
+    bash discovery must consult this before trusting a PATH hit -- ``_find_bash`` in
+    ``tools.environments.local`` lost the check in a refactor and probed the launcher
+    (booting Ubuntu from inside the test-suite) until 2026-09-16."""
+    lowered = path.lower()
+    return "\\system32\\" in lowered or "\\windowsapps\\" in lowered
 
 
 def windows_pipe_readable_bytes(fd: int) -> Optional[int]:
@@ -829,4 +839,4 @@ def _tree_kill(proc: subprocess.Popen) -> None:
         except OSError:
             pass
 
-__all__ += ["resolve_windows_git_bash", "windows_pipe_readable_bytes", "run_text_capture"]
+__all__ += ["resolve_windows_git_bash", "is_wsl_bash_launcher", "windows_pipe_readable_bytes", "run_text_capture"]

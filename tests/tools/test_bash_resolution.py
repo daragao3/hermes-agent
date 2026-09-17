@@ -18,6 +18,7 @@ level.
 
 from __future__ import annotations
 
+import contextlib
 import platform
 import shutil
 import sys
@@ -178,6 +179,20 @@ class TestResolveWindowsGitBash:
 # ---------------------------------------------------------------------------
 
 
+def _probe_records(monkeypatch, local):
+    """Stub ``_bash_starts`` (it EXECUTES its argument; the stand-ins here are empty
+    files) and record what ``_find_bash`` tried to run. Every candidate "starts", so the
+    order of preference alone decides the answer."""
+    probed = []
+
+    def fake_starts(bash):
+        probed.append(bash)
+        return True
+
+    monkeypatch.setattr(local, "_bash_starts", fake_starts)
+    return probed
+
+
 class TestLocalFindBash:
     def test_prefers_git_bash_over_wsl_launcher(self, win_bash_env, monkeypatch):
         """THE original bug: Git Bash installed in Program Files (not on
@@ -188,6 +203,7 @@ class TestLocalFindBash:
         git_bash = _mk_bash(win_bash_env.pf / "Git" / "bin" / "bash.exe")
         monkeypatch.setattr(local, "_IS_WINDOWS", True)
         _which_returns(monkeypatch, _WSL_LAUNCHER)
+        _probe_records(monkeypatch, local)
         assert local._find_bash() == git_bash
 
     def test_raises_actionable_error_when_only_wsl_present(self, win_bash_env, monkeypatch):
@@ -197,8 +213,29 @@ class TestLocalFindBash:
 
         monkeypatch.setattr(local, "_IS_WINDOWS", True)
         _which_returns(monkeypatch, _WSL_LAUNCHER)
+        _probe_records(monkeypatch, local)
         with pytest.raises(RuntimeError, match="Git Bash not found"):
             local._find_bash()
+
+    @pytest.mark.parametrize("launcher", [_WSL_LAUNCHER, _STORE_STUB])
+    def test_wsl_launcher_is_never_probed(self, win_bash_env, monkeypatch, launcher):
+        """The start-probe RUNS its candidate, and running System32\\bash.exe boots
+        the Ubuntu VM -- so the launcher must be refused before probing, not judged
+        by it. The regression: a Git Bash whose probe fails (broken install) fell
+        through to the PATH hit, which was the launcher, which booted WSL and won."""
+        from tools.environments import local
+
+        _mk_bash(win_bash_env.pf / "Git" / "bin" / "bash.exe")
+        monkeypatch.setattr(local, "_IS_WINDOWS", True)
+        _which_returns(monkeypatch, launcher)
+        probed = []
+        monkeypatch.setattr(local, "_bash_starts", lambda bash: probed.append(bash) or False)
+        # the failure-class branch shells out to powershell via shutil.which (patched above)
+        monkeypatch.setattr(local, "_mandatory_aslr_enabled", lambda: False)
+        with contextlib.suppress(RuntimeError):  # ASLR/spawn diagnosis may raise; not under test
+            local._find_bash()
+        assert probed, "the Git Bash stand-in should have been probed"
+        assert not any(p.lower() == launcher.lower() for p in probed), probed
 
     def test_find_shell_alias_is_fixed_too(self, win_bash_env, monkeypatch):
         """process_registry spawns background shells via the _find_shell
@@ -208,31 +245,33 @@ class TestLocalFindBash:
         git_bash = _mk_bash(win_bash_env.pf / "Git" / "bin" / "bash.exe")
         monkeypatch.setattr(local, "_IS_WINDOWS", True)
         _which_returns(monkeypatch, _WSL_LAUNCHER)
+        _probe_records(monkeypatch, local)
         assert local._find_shell() == git_bash
 
 
 # ---------------------------------------------------------------------------
-# Cron consumer: cron.scheduler._resolve_bash delegates to the shared helper
+# Cron consumer: cron.scheduler_script._resolve_bash delegates to the shared
+# helper (the branch lives in scheduler_script; cron.scheduler re-exports it)
 # ---------------------------------------------------------------------------
 
 
 class TestCronResolveBashDelegation:
     def test_windows_branch_delegates_to_shared_helper(self, monkeypatch):
-        import cron.scheduler as scheduler
+        import cron.scheduler_script as scheduler_script
 
         sentinel = r"C:\Program Files\Git\bin\bash.exe"
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr(scheduler, "resolve_windows_git_bash", lambda: sentinel)
-        assert scheduler._resolve_bash() == sentinel
+        monkeypatch.setattr(scheduler_script, "resolve_windows_git_bash", lambda: sentinel)
+        assert scheduler_script._resolve_bash() == sentinel
 
     def test_windows_branch_passes_none_through(self, monkeypatch):
         """None (no usable bash) must reach _run_job_script so it can emit
         the friendly 'bash not found' error."""
-        import cron.scheduler as scheduler
+        import cron.scheduler_script as scheduler_script
 
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr(scheduler, "resolve_windows_git_bash", lambda: None)
-        assert scheduler._resolve_bash() is None
+        monkeypatch.setattr(scheduler_script, "resolve_windows_git_bash", lambda: None)
+        assert scheduler_script._resolve_bash() is None
 
 
 # ---------------------------------------------------------------------------
