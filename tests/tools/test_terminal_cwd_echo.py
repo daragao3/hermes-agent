@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.bash_support import NATIVE_PWD
 from tools.terminal_tool import terminal_tool
 
 
@@ -48,7 +49,7 @@ class TestCwdEcho:
         r1 = json.loads(terminal_tool(f"cd {_sh(target)}", task_id="t-cwd-3"))
         assert "cwd" in r1
         # Next command runs IN the new cwd without changing it: no echo.
-        r2 = json.loads(terminal_tool("pwd", task_id="t-cwd-3"))
+        r2 = json.loads(terminal_tool(NATIVE_PWD, task_id="t-cwd-3"))
         assert "cwd" not in r2
         assert os.path.realpath(r2["output"].strip()) == os.path.realpath(str(target))
 

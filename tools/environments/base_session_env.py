@@ -40,10 +40,16 @@ def _cwd_marker(session_id: str) -> str:
     return f"__HERMES_CWD_{session_id}__"
 
 
-def _cwd_marker_printf(marker: str) -> str:
+_DEFAULT_CWD_PROBE = "pwd -P"
+
+
+def _cwd_marker_printf(marker: str, cwd_probe: str = _DEFAULT_CWD_PROBE) -> str:
     """Emit the CWD marker on its own line (leading ``\\n`` guards against a
-    command whose output lacks a trailing newline; ``_split_cwd_marker`` strips it)."""
-    return f"printf '\\n{marker}%s{marker}\\n' \"$(pwd -P)\""
+    command whose output lacks a trailing newline; ``_split_cwd_marker`` strips it).
+    *cwd_probe* is the shell text that prints the physical cwd; a backend whose
+    shell spells paths differently from the host (Git Bash on Windows) supplies
+    its own — see ``LocalEnvironment._snapshot_script_kwargs``."""
+    return f"printf '\\n{marker}%s{marker}\\n' \"$({cwd_probe})\""
 
 
 def _export_dump_excluding_session_vars(tmp_path: str, excluded_names: Iterable[str] = ()) -> str:
@@ -79,6 +85,7 @@ def _export_dump_excluding_session_vars(tmp_path: str, excluded_names: Iterable[
 
 def _snapshot_bootstrap_script(
     *, quoted_cwd: str, quoted_snap: str, snap_tmp_template: str, excluded_names: Iterable[str], cwd_marker: str,
+    cwd_probe: str = _DEFAULT_CWD_PROBE,
 ) -> str:
     """Login-shell bootstrap that captures env/functions/aliases into the snapshot. Atomic publish:
     assemble in a ``mktemp`` file, then ``mv`` over the final path so a concurrent ``source`` never
@@ -101,7 +108,7 @@ def _snapshot_bootstrap_script(
         # Publish only if assembly succeeded; otherwise drop the partial temp.
         f"mv -f {_SNAP_TMP} {quoted_snap} || rm -f {_SNAP_TMP}\n"
         f"builtin cd -- {quoted_cwd} 2>/dev/null || true\n"
-        f"{_cwd_marker_printf(cwd_marker)}\n")
+        f"{_cwd_marker_printf(cwd_marker, cwd_probe)}\n")
 
 
 def _passthrough_save_restore(names: Iterable[str]) -> tuple[list[str], list[str]]:
@@ -122,7 +129,8 @@ def _passthrough_save_restore(names: Iterable[str]) -> tuple[list[str], list[str
 
 def _wrap_command_script(
     command: str, *, quoted_cwd: str, quoted_snap: str, snap_tmp_template: str,
-    passthrough_names: Iterable[str], snapshot_ready: bool, cwd_marker: str) -> str:
+    passthrough_names: Iterable[str], snapshot_ready: bool, cwd_marker: str,
+    cwd_probe: str = _DEFAULT_CWD_PROBE) -> str:
     """Per-command bash script: source snapshot, cd, run, re-dump env, emit CWD marker.
     ``source`` stdout goes to /dev/null because macOS bash 3.2 / some Homebrew builds echo
     ``declare -x`` lines when sourcing. AI_AGENT/HERMES_AGENT advertise the harness to remote
@@ -153,7 +161,7 @@ def _wrap_command_script(
             f"{{ {_export_dump_excluding_session_vars(_SNAP_TMP, passthrough_names)} "
             f"&& mv -f {_SNAP_TMP} {quoted_snap}; }} "
             f"2>/dev/null || rm -f {_SNAP_TMP} 2>/dev/null || true")
-    parts += [_cwd_marker_printf(cwd_marker), "exit $__hermes_ec"]
+    parts += [_cwd_marker_printf(cwd_marker, cwd_probe), "exit $__hermes_ec"]
     return "\n".join(parts)
 
 

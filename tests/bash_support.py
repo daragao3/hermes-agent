@@ -89,3 +89,12 @@ def bash_path(path: "str | Path") -> str:
 
 
 BASH = resolve_bash()
+
+# A ``pwd`` whose output a test can hand to ``os.path.realpath``. Git's MSYS bash
+# answers in mount form -- ``/tmp/x`` for %TEMP% (where every ``tmp_path`` lives),
+# ``/c/Users/x`` for a drive -- and Python resolves ``/tmp`` against ``C:\``, so
+# the comparison fails on a command that ran exactly where it should. ``-W`` is
+# the MSYS extension that prints the native spelling; ``-P -W`` in that order
+# (the last flag wins) keeps it physical, and the fallback covers a bash without
+# ``-W``. Elsewhere it is plain ``pwd``, unchanged.
+NATIVE_PWD = "pwd -P -W 2>/dev/null || pwd -P" if os.name == "nt" else "pwd"
