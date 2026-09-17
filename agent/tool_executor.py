@@ -808,6 +808,13 @@ def _poll_sequential_future(agent, future, function_name: str, deadline: float |
         try:
             return "done", future.result(timeout=wait_slice)
         except concurrent.futures.TimeoutError:
+            if future.done():
+                # The WORKER raised a TimeoutError -- since 3.11 the builtin alias of this class, so a
+                # socket.timeout out of Relay, a plugin hook or the tool itself lands here too. That is
+                # a tool error for the caller's `except Exception`, not a wait: looping instead re-raised
+                # on every pass -- a hot spin to the deadline (420 s default; measured 1.86 s CPU per 3 s)
+                # that then reported "timeout" and lost the real error, and forever with no deadline.
+                raise
             if agent._interrupt_requested:
                 return "interrupted", None
             elapsed = int(time.monotonic() - started)

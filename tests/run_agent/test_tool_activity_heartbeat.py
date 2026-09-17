@@ -122,7 +122,12 @@ def test_heartbeat_touches_periodically_and_stops():
         daemon=True,
     )
     thread.start()
-    time.sleep(0.12)
+    # Wait for the SECOND touch instead of sleeping 0.12 s and hoping two 0.05 s waits fit:
+    # Event.wait(0.05) rounds up to the scheduler tick on Windows (15.6 ms), so the second
+    # touch regularly landed after the sleep and the count read 1.
+    deadline = time.monotonic() + 2.0
+    while len(touches) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
     stop.set()
     thread.join(timeout=1.0)
 
