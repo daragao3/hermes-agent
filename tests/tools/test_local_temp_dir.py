@@ -12,14 +12,16 @@ import pytest
 
 from tools.environments.local import LocalEnvironment
 
-# ``get_temp_dir`` on Windows ALWAYS answers the HERMES_HOME cache dir with forward
-# slashes (%TEMP% often has spaces that break unquoted bash) and ignores the
-# TERMINAL_TEMP_DIR / TMPDIR precedence chain; those precedence tests are POSIX.
+# ``get_temp_dir`` on Windows honors an EXPLICIT ``TERMINAL_TEMP_DIR`` (answered
+# with forward slashes) but never the ambient TMPDIR/TMP/TEMP chain: %TEMP% often
+# has spaces that break unquoted bash and is what the managed dir exists to avoid.
+# The TMPDIR precedence tests are therefore POSIX; the override tests run everywhere
+# and compare through ``normpath`` (the Windows spelling is the same directory).
 _posix_precedence = pytest.mark.skipif(
     sys.platform == "win32",
-    reason="get_temp_dir on Windows always uses HERMES_HOME/cache/terminal; "
-           "TERMINAL_TEMP_DIR/TMPDIR precedence is POSIX-only by design",
+    reason="get_temp_dir on Windows never consults TMPDIR/TMP/TEMP by design",
 )
+_windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows spelling rules")
 
 
 def _make_local_env(env: dict) -> LocalEnvironment:
@@ -29,21 +31,19 @@ def _make_local_env(env: dict) -> LocalEnvironment:
     return obj
 
 
-@_posix_precedence
 def test_temp_dir_override_honored(tmp_path):
     target = str(tmp_path)
     env = _make_local_env({"TERMINAL_TEMP_DIR": target})
-    assert env.get_temp_dir() == target
+    assert os.path.normpath(env.get_temp_dir()) == target
 
 
-@_posix_precedence
 def test_temp_dir_from_process_env(tmp_path):
     target = str(tmp_path)
     env = _make_local_env({})
     prev = os.environ.get("TERMINAL_TEMP_DIR")
     os.environ["TERMINAL_TEMP_DIR"] = target
     try:
-        assert env.get_temp_dir() == target
+        assert os.path.normpath(env.get_temp_dir()) == target
     finally:
         if prev is None:
             os.environ.pop("TERMINAL_TEMP_DIR", None)
@@ -90,6 +90,41 @@ def test_tmpdir_still_beats_default(tmp_path, monkeypatch):
     monkeypatch.setenv("TMPDIR", str(tmp_path))
     env = _make_local_env({})
     assert env.get_temp_dir() == str(tmp_path)
+
+
+@_windows_only
+class TestWindowsTempDir:
+    def test_override_answers_forward_slashes(self, tmp_path):
+        target = tmp_path / "with space"
+        target.mkdir()
+        env = _make_local_env({"TERMINAL_TEMP_DIR": str(target)})  # backslashes in
+        result = env.get_temp_dir()
+        assert "\\" not in result
+        assert result == str(target).replace("\\", "/")
+
+    def test_override_accepts_msys_spelling(self, tmp_path):
+        from tools.environments.local import _windows_to_msys_path
+        env = _make_local_env({"TERMINAL_TEMP_DIR": _windows_to_msys_path(str(tmp_path))})
+        assert os.path.normpath(env.get_temp_dir()) == str(tmp_path)
+
+    def test_override_of_a_drive_root_keeps_its_slash(self, tmp_path):
+        drive = os.path.splitdrive(str(tmp_path))[0]  # e.g. C:
+        env = _make_local_env({"TERMINAL_TEMP_DIR": drive + "\\"})
+        assert env.get_temp_dir() == drive + "/"
+
+    def test_missing_override_falls_back_to_managed_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+        env = _make_local_env({"TERMINAL_TEMP_DIR": str(tmp_path / "nope")})
+        assert os.path.normpath(env.get_temp_dir()) == str(tmp_path / ".hermes" / "cache" / "terminal")
+
+    def test_ambient_tmpdir_is_ignored(self, tmp_path, monkeypatch):
+        """%TEMP%-style ambient vars never redirect on Windows; only the explicit setting does."""
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+        monkeypatch.delenv("TERMINAL_TEMP_DIR", raising=False)
+        for var in ("TMPDIR", "TMP", "TEMP"):
+            monkeypatch.setenv(var, str(tmp_path))
+        env = _make_local_env({})
+        assert os.path.normpath(env.get_temp_dir()) == str(tmp_path / ".hermes" / "cache" / "terminal")
 
 
 def test_cleanup_terminal_temp_cache(tmp_path, monkeypatch):

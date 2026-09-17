@@ -781,9 +781,20 @@ class LocalEnvironment(BaseEnvironment):
         (Termux has no /tmp), ``HERMES_HOME/cache/terminal`` (real storage: tmpfs /tmp
         fills under Hermes load; pruned by ``cleanup_terminal_temp_cache``), /tmp,
         ``tempfile.gettempdir()``; backend env before process env so terminal.env
-        overrides work. Windows: ``%TEMP%`` often has spaces that break unquoted bash,
-        so always the HERMES_HOME cache dir with forward slashes (bash- and Python-valid)."""
+        overrides work. Windows: an EXPLICIT ``TERMINAL_TEMP_DIR`` (``terminal.temp_dir``)
+        naming an existing absolute directory is honored, as the docs promise for the
+        local backend, and answered with forward slashes; the ambient TMPDIR/TMP/TEMP
+        chain is NOT consulted there -- ``%TEMP%`` often has spaces that break unquoted
+        bash and is the tmpfs-like default the managed dir exists to avoid -- so
+        otherwise it is always the HERMES_HOME cache dir (bash- and Python-valid)."""
         if _IS_WINDOWS:
+            override = self.env.get("TERMINAL_TEMP_DIR") or os.environ.get("TERMINAL_TEMP_DIR")
+            if override:
+                native = _msys_to_windows_path(override)
+                if ntpath.isabs(native) and os.path.isdir(native):
+                    posix = native.replace("\\", "/")
+                    # A drive root keeps its slash: ``C:`` alone is drive-relative.
+                    return posix if posix.rstrip("/").endswith(":") else posix.rstrip("/")
             cache_dir = (_default_terminal_temp_dir()
                          or Path(tempfile.gettempdir()) / "hermes_terminal")
             cache_dir.mkdir(parents=True, exist_ok=True)

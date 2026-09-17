@@ -216,7 +216,11 @@ is a small RAM-backed tmpfs that Hermes session artifacts can fill under
 load. The managed directory is auto-pruned: artifacts older than 72 hours are
 swept hourly by gateway housekeeping and once per process on CLI-only
 installs. Set `temp_dir` to an existing absolute path to redirect session
-temp anywhere else; user-set paths are never auto-pruned.
+temp anywhere else; user-set paths are never auto-pruned. On Windows an
+explicit `temp_dir` is honored the same way (spelled with forward slashes for
+Git Bash), but the ambient `TMPDIR`/`TMP`/`TEMP` variables are not consulted:
+`%TEMP%` is exactly the location the managed directory exists to avoid, and its
+path often contains spaces.
 
 `terminal.font_family` controls the embedded terminal in Hermes Desktop. It accepts either one locally installed family name (for example, `MesloLGS NF`) or a CSS font stack. Hermes appends its bundled JetBrains Mono stack as a fallback, and an empty value keeps the default. You can edit the same profile-scoped setting in **Settings → Appearance → Terminal Font**; no Google Fonts download or system-font permission is required.
 
