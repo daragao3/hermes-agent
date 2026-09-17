@@ -1219,3 +1219,20 @@ def inheritable_local_child_cwd(parent, parent_session_id, child_source):
         return None
     cwd = parent["cwd"]
     return cwd if _is_canonical_absolute_cwd(cwd, platform=_NATIVE_CWD_PLATFORM) else None
+
+
+def inheritable_child_cwd(parent, parent_session_id, child_source):
+    """The parent cwd a compression child may carry: the ONE rule for both child-row writers.
+
+    Local (cli/tui) children copy it only when source matches and the path is canonical on this host
+    (:func:`inheritable_local_child_cwd`); gateway children copy the parent's persisted value verbatim --
+    it is the workspace the Desktop sidebar groups by (#64709) and a resume key for another harness, and
+    it must survive every compaction boundary. Neither arm discovers a cwd: an absent parent value stays
+    absent. ``_inherit_parent_session_metadata`` (create_session backfill) and
+    ``_publish_child_session_row`` (rotation) both go through here so they cannot drift apart again.
+    """
+    if isinstance(child_source, str) and child_source in _LOCAL_PERSISTED_CWD_SOURCES:
+        return inheritable_local_child_cwd(parent, parent_session_id, child_source)
+    if parent is None or not isinstance(parent_session_id, str) or parent["id"] != parent_session_id:
+        return None
+    return parent["cwd"]

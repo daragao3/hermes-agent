@@ -15,7 +15,7 @@ from agent.session_activity import (
     ActivityProvenance, bound_activity_description, normalize_activity_provenance,
 )
 from hermes_state_common import (
-    _LOCAL_PERSISTED_CWD_SOURCES, inheritable_local_child_cwd,
+    _LOCAL_PERSISTED_CWD_SOURCES, inheritable_child_cwd, inheritable_local_child_cwd,
     _LISTABLE_CHILD_SQL, _PREVIEW_ELIGIBLE_SQL, _PREVIEW_RAW_SELECT, _RECOVERABLE_END_REASONS,
     _RECOVERABLE_END_REASONS_SQL, _RESET_END_REASONS, _legacy_reset_child_sql, _shape_preview,
     _sql_session_last_active, _sql_session_last_active_by_id, escape_like as _escape_like,
@@ -340,8 +340,7 @@ class SessionSessionsMixin:
             "SELECT id, source, cwd, git_repo_root, git_branch FROM sessions WHERE id = ?",
             (child["parent_session_id"],)).fetchone()
         if child is not None and parent is not None:
-            inherited_cwd = (inheritable_local_child_cwd(parent, child["parent_session_id"], child["source"])
-                             if child["source"] in _LOCAL_PERSISTED_CWD_SOURCES else parent["cwd"])
+            inherited_cwd = inheritable_child_cwd(parent, child["parent_session_id"], child["source"])
             selected_cwd = child["cwd"] if child["cwd"] is not None else inherited_cwd
             same_workspace = selected_cwd is not None and selected_cwd == parent["cwd"]
             same_repo = child["git_repo_root"] is None or child["git_repo_root"] == parent["git_repo_root"]

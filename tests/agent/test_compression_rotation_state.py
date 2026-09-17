@@ -122,10 +122,17 @@ class TestCwdPropagatesOnLocalRotation:
         assert child["parent_session_id"] == parent
         assert child["cwd"] == cwd
 
-    def test_remote_child_does_not_inherit_host_cwd(self, tmp_path: Path):
+    def test_remote_child_never_discovers_a_cwd_of_its_own(self, tmp_path: Path):
+        """The narrow-copy rule (fa51a9f2d0): rotation copies persisted metadata, it does not
+        substitute the process or agent working directory. A gateway parent without a cwd
+        yields a child without one -- inheritance is a copy of what the parent HAD.
+        (The earlier form of this test asserted a gateway child drops a cwd its parent did
+        have; that contradicted the #64709/#64731 contract pinned below and the
+        create_session backfill this store already applied to gateway children.)"""
         db = SessionDB(db_path=tmp_path / "state.db")
-        parent = "PARENT_REMOTE_CWD"
-        db.create_session(parent, source="telegram", cwd=str(tmp_path / "host-only"))
+        parent = "PARENT_REMOTE_NO_CWD"
+        db.create_session(parent, source="telegram")
+        assert db.get_session(parent)["cwd"] is None
         agent = _build_agent_with_db(db, parent, platform="telegram")
 
         agent._compress_context(_msgs(), "sys", approx_tokens=120_000)
@@ -133,6 +140,24 @@ class TestCwdPropagatesOnLocalRotation:
         child = db.get_session(agent.session_id)
         assert child["parent_session_id"] == parent
         assert child["cwd"] is None
+
+    def test_rotation_and_create_session_backfill_agree_on_a_gateway_child_cwd(self, tmp_path: Path):
+        """One rule, two writers: the rotation row-publisher and the create_session
+        compression-fork backfill must give a gateway child the same cwd. They drifted apart
+        in the 0.21.1 integration (rotation kept the local-only rule while the backfill
+        inherited), so a Telegram session lost its workspace at every compaction."""
+        db = SessionDB(db_path=tmp_path / "state.db")
+        parent = "PARENT_PARITY"
+        db.create_session(parent, source="telegram", cwd=str(tmp_path / "ws"))
+        agent = _build_agent_with_db(db, parent, platform="telegram")
+        agent._compress_context(_msgs(), "sys", approx_tokens=120_000)
+        rotated = db.get_session(agent.session_id)
+
+        db.create_session("BACKFILLED", source="telegram", parent_session_id=agent.session_id)
+        backfilled = db.get_session("BACKFILLED")
+
+        assert rotated["cwd"] == str(tmp_path / "ws")
+        assert backfilled["cwd"] == rotated["cwd"]
 
 
 class TestGoalMigratesOnRotation:

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from hermes_state_common import (
     _COMPRESSION_LOCK_ROW_SQL as _LOCK_ROW_SQL, _ENDED_ROW_SQL, _ended_by_compression, _sql_session_last_active,
-    is_automatic_end_reason, inheritable_local_child_cwd)
+    is_automatic_end_reason, inheritable_child_cwd)
 
 # Log-record parity with the origin module (caplog tests pin "hermes_state").
 logger = logging.getLogger("hermes_state")
@@ -161,7 +161,7 @@ class SessionCompressionMixin:
         _insert_session_row's compression-fork backfill: the child stays on the parent's profile and keeps
         gateway routing/origin columns; no owner on either side -> this store's profile."""
         system_prompt_hash = self._store_system_prompt(conn, system_prompt)
-        selected_cwd = cwd or inheritable_local_child_cwd(parent, parent_session_id, source)
+        selected_cwd = cwd or inheritable_child_cwd(parent, parent_session_id, source)
         same_workspace = selected_cwd is not None and selected_cwd == parent["cwd"]
         conn.execute(
             """INSERT INTO sessions (
