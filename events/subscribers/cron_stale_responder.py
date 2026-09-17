@@ -99,6 +99,14 @@ class CronStaleResponder(BaseSubscriber):
             else self.REMEDIATE_AFTER_SECONDS
         )
         self._per_job_remediate = dict(per_job_remediate or {})
+        # Host-suspend awareness (2026-09-17): a poll gap far above the poll
+        # cadence is time the host slept, and a run cannot wedge while the
+        # host is asleep. The monitor already discounts suspends BEFORE the
+        # alert (its age_seconds is active time); this covers a suspend that
+        # lands AFTER the alert, which is exactly the 2026-09-17 shape --
+        # jobflow-approved-release was tracked at 0s, the host slept 7h19m,
+        # and it was stopped 15s after resume as "still running 26329s".
+        self._last_poll_at: Optional[datetime] = None
 
     # ----------------------------------------------------------------- config
 
@@ -138,6 +146,8 @@ class CronStaleResponder(BaseSubscriber):
             "age_at_alert": float(payload.get("age_seconds") or 0.0),
             "alert_seen_at": datetime.now(timezone.utc),
             "stop_requested": False,
+            # Seconds of host suspend observed since the alert (discounted).
+            "suspend_credit": 0.0,
         }
         self._stale_runs[str(job_id)] = record
         logger.warning(
@@ -158,13 +168,33 @@ class CronStaleResponder(BaseSubscriber):
     def poll(self) -> int:
         count = super().poll()
         try:
+            self._credit_suspend_gap(datetime.now(timezone.utc))
             self._check_remediate()
         except Exception:
             logger.exception("CronStaleResponder: remediation pass failed")
         return count
 
+    def _credit_suspend_gap(self, now: datetime) -> None:
+        """Charge a poll gap above the suspend threshold to every tracked run."""
+        from events.subscribers.cron_stale_monitor import _suspended_seconds
+
+        last = self._last_poll_at
+        self._last_poll_at = now
+        if last is None or not self._stale_runs:
+            return
+        credit = _suspended_seconds((now - last).total_seconds(), float(self.poll_interval_seconds))
+        if credit <= 0:
+            return
+        for record in self._stale_runs.values():
+            record["suspend_credit"] = record.get("suspend_credit", 0.0) + credit
+        logger.info(
+            "CronStaleResponder: poll gap read as a host suspend; discounting %.0fs "
+            "from %d tracked run(s)", credit, len(self._stale_runs),
+        )
+
     def _run_age_seconds(self, record: Dict[str, Any], now: datetime) -> float:
-        return record["age_at_alert"] + (now - record["alert_seen_at"]).total_seconds()
+        raw = record["age_at_alert"] + (now - record["alert_seen_at"]).total_seconds()
+        return max(0.0, raw - record.get("suspend_credit", 0.0))
 
     def _execution_still_running(self, execution_id: Optional[str]) -> bool:
         """True only if this exact execution is still non-terminal.

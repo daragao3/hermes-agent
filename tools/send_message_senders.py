@@ -64,11 +64,29 @@ _NO_DELIVERABLE = "No deliverable text or media remained after processing MEDIA 
 
 _TELEGRAM_TRANSIENT_MARKERS = ("bad gateway", "502", "too many requests", "429", "service unavailable", "503",
                                "gateway timeout", "504")
+# A connection that was never established cannot have delivered anything, so -- unlike a
+# timeout -- retrying it is duplicate-safe. PTB wraps httpx transport errors as
+# ``telegram.error.NetworkError("httpx.ConnectError: ")`` (the inner str is empty), so the
+# class name inside the text is the signal. 2026-09-17: 75 of these over one night on a
+# Wi-Fi host after a resume, every one recovered by the poller's own reconnect within a
+# second, and the 5 cron deliveries that hit the same instant were lost for want of one retry.
+_TELEGRAM_CONNECT_MARKERS = ("connecterror", "connection refused", "connection reset", "getaddrinfo",
+                             "name or service not known", "network is unreachable", "no route to host")
+
+
+def _is_connect_failure(exc: Exception, text: str) -> bool:
+    if type(exc).__name__.lower() in {"connecterror", "connectionrefusederror", "connectionreseterror"}:
+        return True
+    cause = getattr(exc, "__cause__", None)
+    if cause is not None and type(cause).__name__.lower() == "connecterror":
+        return True
+    return any(marker in text for marker in _TELEGRAM_CONNECT_MARKERS)
 
 
 def _telegram_retry_delay(exc: Exception, attempt: int) -> float | None:
     """Retry delay in seconds, or None when final: honours ``retry_after``; timeouts are
-    never retried (the send may have gone through); 5xx/429 back off exponentially."""
+    never retried (the send may have gone through); 5xx/429 and never-connected transport
+    failures back off exponentially."""
     retry_after = getattr(exc, "retry_after", None)
     if retry_after is not None:
         try:
@@ -76,6 +94,8 @@ def _telegram_retry_delay(exc: Exception, attempt: int) -> float | None:
         except (TypeError, ValueError):
             return 1.0
     text = str(exc).lower()
+    if _is_connect_failure(exc, text):
+        return float(2 ** attempt)
     if "timed out" in text or "timeout" in text:
         return None
     return float(2 ** attempt) if any(marker in text for marker in _TELEGRAM_TRANSIENT_MARKERS) else None

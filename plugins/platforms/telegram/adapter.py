@@ -32,6 +32,14 @@ def _redact_telegram_error_text(error: object) -> str:
         return "<telegram error redacted>"
 
 
+def _describe_transport_error(error: object) -> str:
+    """``ClassName: <redacted text>`` -- httpx transport errors often carry an EMPTY str()
+    (``httpx.ConnectError`` after a failed connect), so the class name is the only signal."""
+    text = _redact_telegram_error_text(error)
+    name = type(error).__name__ if error is not None else "None"
+    return f"{name}: {text}" if text else name
+
+
 def _scoped_gate_env(name: str, default: str = "") -> str:
     """Per-profile TELEGRAM_*/GATEWAY_* gate env read (multiplex env is first-writer-wins).
 
@@ -2934,10 +2942,17 @@ class TelegramAdapter(BasePlatformAdapter):
                 self._disarm_ptb_retry_loop()
                 self._spawn_polling_recovery(loop, self._handle_polling_conflict(error))
             elif self._looks_like_network_error(error):
-                logger.warning("[%s] Telegram network _redact_telegram_error_text(error), scheduling reconnect: %s", self.name, error)
+                # a04fcbf779 pasted the redactor's NAME into the format string and passed the
+                # raw error, so every line read "Telegram network _redact_telegram_error_text(error)
+                # ... httpx.ConnectError: " (str() of a ConnectError is empty). Name the class too.
+                logger.warning(
+                    "[%s] Telegram network error, scheduling reconnect: %s", self.name,
+                    _describe_transport_error(error))
                 self._spawn_polling_recovery(loop, self._handle_polling_network_error(error))
             else:
-                logger.error("[%s] Telegram polling _redact_telegram_error_text(error): %s", self.name, error, exc_info=True)
+                logger.error(
+                    "[%s] Telegram polling error: %s", self.name, _describe_transport_error(error),
+                    exc_info=True)
 
         self._polling_error_callback_ref = _polling_error_callback  # reused by _handle_polling_conflict
         polling_started = await self._start_polling_resilient(
