@@ -4,6 +4,19 @@ Diego's contract (2026-04-24): every LLM call across the Hermes platform must
 go through the openai-codex OAuth path with model gpt-5.5 — no
 OPENAI_API_KEY-based side paths, no OpenRouter, no fallbacks.
 
+AMENDED 2026-09-17 (Diego: "fix P2-1" on the daily triage): Codex stays the
+PRIMARY, but a quota wall on it no longer strands the graphs. The Codex free
+plan on this box hit ``usage_limit_reached`` with a reset 28 days out
+(2026-10-15), and because this module had no second route the matcher-shadow
+scorer and every Critic graph failed on every fire -- 10 cron_failed rows and
+10 Telegram pages a day for a month. ``codex_structured_invoke`` now (a) skips
+Codex without a round trip when ``agent.provider_quota_guard`` holds it
+exhausted, and (b) on a quota-class Codex failure walks the profile's
+``fallback_providers`` chain (the same list the main agent loop and the
+auxiliary router use) over the OpenAI-compatible chat-completions surface in
+JSON mode. Timeouts remain terminal and non-quota failures keep their retry
+semantics; neither of those falls back.
+
 This module gives my LangGraph code (graphs/jobflow.py + graphs/critic.py +
 any future graph) a single entry point to get a working ChatOpenAI client
 that talks to chatgpt.com/backend-api/codex via OAuth.
@@ -478,6 +491,25 @@ def codex_structured_invoke(
         + _json.dumps(schema_dict, indent=2)
     )
 
+    # Leg 1 -- Codex OAuth, unless another session already recorded it walled:
+    # skipping saves the 429 round trip AND the retry sleeps behind it.
+    codex_wall = _codex_quota_wall_remaining()
+    if codex_wall is not None:
+        logger.warning(
+            "oauth_llm: skipping openai-codex (quota wall recorded by an earlier "
+            "session, resets in %s); trying fallback_providers",
+            _format_remaining(codex_wall),
+        )
+        return _fallback_structured_invoke(
+            schema,
+            instructions=full_instructions,
+            user=user,
+            timeout_s=bound_s,
+            primary_error=RuntimeError(
+                f"openai-codex skipped: quota wall, resets in {_format_remaining(codex_wall)}"
+            ),
+        )
+
     last_err: Optional[Exception] = None
     for attempt in range(max_retries + 1):
         try:
@@ -487,23 +519,261 @@ def codex_structured_invoke(
                 user=user,
                 timeout_s=bound_s,
             )
-            # Some models still wrap in fences; tolerate.
-            if text.startswith("```"):
-                text = text.strip("`")
-                if text.lower().startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-            return schema.model_validate_json(text)
+            return _parse_structured_text(schema, text)
         except CodexTimeoutError:
             # Terminal by design: the bound is per call. See the module comment
             # above LLM_TIMEOUT_ENV for why a retry here would be wrong.
             raise
         except Exception as e:
             last_err = e
+            if _is_quota_error(e):
+                # A wall does not clear in 0.5 s; retrying Codex here only
+                # spends the budget. Leave for the next route immediately.
+                logger.warning(
+                    "oauth_llm: openai-codex quota-class failure (%s); trying "
+                    "fallback_providers",
+                    _describe_error(e),
+                )
+                return _fallback_structured_invoke(
+                    schema,
+                    instructions=full_instructions,
+                    user=user,
+                    timeout_s=bound_s,
+                    primary_error=e,
+                )
             if attempt >= max_retries:
                 break
             time.sleep(0.5 * (attempt + 1))
     raise RuntimeError(f"codex_structured_invoke failed after retries: {last_err}")
+
+
+def _parse_structured_text(schema: Any, text: str):
+    """Validate model text into ``schema``, tolerating a code-fence wrapper."""
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    return schema.model_validate_json(text)
+
+
+# --- quota-class detection and the fallback leg -------------------------------
+#
+# What counts as a quota wall: HTTP 429 / 402 from the SDK, or an error body
+# naming the ChatGPT ``usage_limit_reached`` type / "usage limit" text. That is
+# the shape the matcher-shadow scorer logged on 2026-09-17
+# (``Error code: 429 - {'type': 'usage_limit_reached', 'plan_type': 'free',
+# 'resets_at': 1792104505}``) and the shape the main loop's provider quota
+# guard already classifies. Nothing else diverts: a parse failure, a 5xx or a
+# transport error keeps the Codex retry loop exactly as before, because those
+# are the cases where the SAME route is expected to succeed a moment later.
+
+_QUOTA_STATUS_CODES = frozenset({402, 429})
+_QUOTA_TEXT_MARKERS = (
+    "usage_limit_reached",
+    "usage limit",
+    "rate_limit",
+    "rate limit",
+    "insufficient_quota",
+)
+
+
+def _is_quota_error(exc: BaseException) -> bool:
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status in _QUOTA_STATUS_CODES:
+        return True
+    try:
+        import openai as _openai
+
+        if isinstance(exc, _openai.RateLimitError):
+            return True
+    except Exception:  # noqa: BLE001 -- the SDK is optional at import time
+        pass
+    text = str(exc).lower()
+    return any(marker in text for marker in _QUOTA_TEXT_MARKERS)
+
+
+def _describe_error(exc: BaseException) -> str:
+    text = str(exc).replace("\n", " ")
+    return f"{type(exc).__name__}: {text[:200]}"
+
+
+def _format_remaining(seconds: float) -> str:
+    try:
+        from agent.provider_quota_guard import format_remaining
+
+        return format_remaining(seconds)
+    except Exception:  # noqa: BLE001
+        return f"{seconds:.0f}s"
+
+
+def _quota_wall_remaining(provider: str) -> Optional[float]:
+    """Seconds until ``provider``'s recorded quota wall resets, or None when
+    the cross-session guard holds nothing on it. Never raises: the guard is
+    advisory and must not break the call it advises."""
+    try:
+        from agent.provider_quota_guard import provider_exhaustion_remaining
+
+        remaining = provider_exhaustion_remaining(provider)
+    except Exception:  # noqa: BLE001
+        return None
+    if remaining is None or remaining <= 0:
+        return None
+    return float(remaining)
+
+
+def _codex_quota_wall_remaining() -> Optional[float]:
+    return _quota_wall_remaining("openai-codex")
+
+
+# Provider label the quota guard and the config chain use for the Codex OAuth
+# route -- kept separate from CODEX_BASE_URL so a test can pin the string.
+CODEX_PROVIDER_LABEL = "openai-codex"
+
+
+def _fallback_chain() -> list[dict[str, Any]]:
+    """The profile's ``fallback_providers`` entries ({provider, model}), in
+    order. Read through hermes_cli.config so profile routing (HERMES_HOME) is
+    honoured the same way the main loop honours it. Empty on any failure."""
+    try:
+        from hermes_cli.config import load_config
+
+        raw = load_config().get("fallback_providers") or []
+    except Exception:  # noqa: BLE001
+        logger.debug("oauth_llm: fallback_providers unreadable", exc_info=True)
+        return []
+    chain: list[dict[str, Any]] = []
+    for entry in raw:
+        if isinstance(entry, dict) and entry.get("provider"):
+            chain.append({"provider": str(entry["provider"]), "model": entry.get("model")})
+        elif isinstance(entry, str) and entry.strip():
+            chain.append({"provider": entry.strip(), "model": None})
+    return chain
+
+
+def _resolve_fallback_runtime(provider: str, model: Optional[str]) -> dict[str, Any]:
+    """Credentials + base_url for one chain entry via the platform resolver."""
+    from hermes_cli.runtime_provider import resolve_runtime_provider
+
+    return resolve_runtime_provider(requested=provider, target_model=model)
+
+
+def _build_chat_client(api_key: str, base_url: str, timeout_s: float):
+    """OpenAI-compatible client for a fallback hop, bounded like the Codex one.
+    Separate so tests can assert the kwargs without a request."""
+    import httpx
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        timeout=httpx.Timeout(timeout_s, connect=min(_CONNECT_TIMEOUT_CAP_S, timeout_s)),
+        max_retries=0,
+    )
+
+
+def _chat_completion_json_text(
+    *, runtime: dict[str, Any], model: str, instructions: str, user: str, timeout_s: float
+) -> str:
+    """ONE non-streaming chat-completions request in JSON mode; returns the text.
+
+    Non-streaming on purpose: the reply is a single body, so the client's read
+    timeout alone bounds it (there is no trickling-stream case to watch)."""
+    client = _build_chat_client(str(runtime["api_key"]), str(runtime["base_url"]), timeout_s)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": user},
+        ],
+        response_format={"type": "json_object"},
+        stream=False,
+    )
+    choices = getattr(response, "choices", None) or []
+    text = ""
+    if choices:
+        message = getattr(choices[0], "message", None)
+        text = (getattr(message, "content", None) or "").strip()
+    if not text:
+        raise RuntimeError(f"{runtime.get('provider')} returned empty response text")
+    return text
+
+
+def _fallback_structured_invoke(
+    schema: Any,
+    *,
+    instructions: str,
+    user: str,
+    timeout_s: float,
+    primary_error: BaseException,
+):
+    """Walk ``fallback_providers`` after Codex is walled or refused on quota.
+
+    Each hop is tried at most once (no retry loop: the whole chain IS the
+    retry), skipped without a call when the quota guard holds it exhausted,
+    and skipped with a log line when its API surface is not chat-completions
+    (kimi-coding is anthropic_messages; teaching this helper a second wire
+    format is not worth it while the chain has a chat-completions hop). When
+    every hop is skipped or fails, the PRIMARY error is what the caller sees,
+    with the hop failures chained on -- the operator's question is "why did
+    Codex fail", and the hops are the footnote.
+    """
+    chain = _fallback_chain()
+    if not chain:
+        raise RuntimeError(
+            f"codex_structured_invoke failed and no fallback_providers are configured: "
+            f"{_describe_error(primary_error)}"
+        ) from primary_error
+
+    hop_errors: list[str] = []
+    for entry in chain:
+        provider = entry["provider"]
+        if provider == CODEX_PROVIDER_LABEL:
+            continue
+        wall = _quota_wall_remaining(provider)
+        if wall is not None:
+            logger.info(
+                "oauth_llm: fallback skip %s (quota wall, resets in %s)",
+                provider, _format_remaining(wall),
+            )
+            hop_errors.append(f"{provider}: skipped, quota wall resets in {_format_remaining(wall)}")
+            continue
+        try:
+            runtime = _resolve_fallback_runtime(provider, entry.get("model"))
+        except Exception as exc:  # noqa: BLE001 -- an unresolvable hop is just the next hop
+            logger.warning("oauth_llm: fallback %s unresolvable: %s", provider, _describe_error(exc))
+            hop_errors.append(f"{provider}: unresolvable ({_describe_error(exc)})")
+            continue
+        api_mode = str(runtime.get("api_mode") or "chat_completions")
+        if api_mode != "chat_completions":
+            logger.info("oauth_llm: fallback skip %s (api_mode %s)", provider, api_mode)
+            hop_errors.append(f"{provider}: skipped, api_mode {api_mode}")
+            continue
+        model = str(entry.get("model") or runtime.get("model") or "")
+        if not model:
+            hop_errors.append(f"{provider}: skipped, no model configured")
+            continue
+        try:
+            text = _chat_completion_json_text(
+                runtime=runtime, model=model, instructions=instructions, user=user,
+                timeout_s=timeout_s,
+            )
+            result = _parse_structured_text(schema, text)
+        except Exception as exc:  # noqa: BLE001 -- try the next hop
+            logger.warning("oauth_llm: fallback %s/%s failed: %s", provider, model, _describe_error(exc))
+            hop_errors.append(f"{provider}/{model}: {_describe_error(exc)}")
+            continue
+        logger.warning(
+            "oauth_llm: structured invoke served by fallback %s/%s after %s",
+            provider, model, _describe_error(primary_error),
+        )
+        return result
+
+    raise RuntimeError(
+        "codex_structured_invoke failed after retries: "
+        f"{_describe_error(primary_error)}; fallback_providers exhausted: "
+        + "; ".join(hop_errors)
+    ) from primary_error
 
 
 def _codex_stream_text_bounded(
