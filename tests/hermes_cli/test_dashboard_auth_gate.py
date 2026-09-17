@@ -33,12 +33,18 @@ def _restore_app_state():
 
     Snapshot and restore the whole ``State`` mapping rather than named keys, so
     a test that stashes a new attribute cannot reintroduce the leak.
+
+    This is the ONLY restorer. The per-test ``_restore_app_state_after_test``
+    helper that used monkeypatch for the same keys was removed: ``monkeypatch``
+    is set up before this fixture (the root conftest's autouse guards request
+    it) and therefore torn down after it, so its ``delattr`` undo ran against a
+    mapping this fixture had already restored -- KeyError at teardown for every
+    test whose key was absent in the snapshot.
     """
     snapshot = dict(web_server.app.state._state)
     yield
     web_server.app.state._state.clear()
     web_server.app.state._state.update(snapshot)
-
 
 
 @pytest.fixture
@@ -55,10 +61,6 @@ def client_loopback():
     yield client
     web_server.app.state.bound_host = prev_host
     web_server.app.state.bound_port = prev_port
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -163,18 +165,13 @@ def _stub_uvicorn_run(monkeypatch):
 
     monkeypatch.setattr(uvicorn, "Config", _FakeConfig)
     monkeypatch.setattr(uvicorn, "Server", lambda config: _FakeServer())
+    # start_server probes the REAL port before building the server (#93608) and
+    # exits 75 on a conflict. These tests bind the default dashboard port 9119,
+    # which a developer's live dashboard occupies, so the probe is stubbed like
+    # tests/hermes_cli/test_web_startup_log_carry.py does -- nothing here is
+    # about the socket.
+    monkeypatch.setattr(web_server, "_port_bind_conflict", lambda *a: False)
     return captured
-
-
-def _restore_app_state_after_test(monkeypatch, *names):
-    """Restore app.state attributes after start_server mutates them."""
-    for name in names:
-        monkeypatch.setattr(
-            web_server.app.state,
-            name,
-            getattr(web_server.app.state, name, None),
-            raising=False,
-        )
 
 
 def test_start_server_loopback_sets_auth_required_false(monkeypatch):
@@ -384,13 +381,6 @@ def test_start_server_loopback_public_url_enables_gate(monkeypatch):
     clear_providers()
     register_provider(StubAuthProvider())
     captured = _stub_uvicorn_run(monkeypatch)
-    _restore_app_state_after_test(
-        monkeypatch,
-        "auth_required",
-        "bound_host",
-        "bound_port",
-        "trusted_public_hosts",
-    )
     try:
         web_server.start_server(
             host="127.0.0.1", port=9119,
@@ -416,13 +406,6 @@ def test_start_server_loopback_public_url_without_provider_fails_closed(monkeypa
     )
     clear_providers()
     _stub_uvicorn_run(monkeypatch)
-    _restore_app_state_after_test(
-        monkeypatch,
-        "auth_required",
-        "bound_host",
-        "bound_port",
-        "trusted_public_hosts",
-    )
 
     with pytest.raises(SystemExit, match=r"no auth providers"):
         web_server.start_server(
@@ -447,13 +430,6 @@ def test_loopback_public_url_fail_closed_message_is_actionable(monkeypatch):
     )
     clear_providers()
     _stub_uvicorn_run(monkeypatch)
-    _restore_app_state_after_test(
-        monkeypatch,
-        "auth_required",
-        "bound_host",
-        "bound_port",
-        "trusted_public_hosts",
-    )
 
     with pytest.raises(SystemExit) as exc:
         web_server.start_server(

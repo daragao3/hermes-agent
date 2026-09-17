@@ -318,6 +318,7 @@ def test_traversal_members_are_rejected(member):
         normalize_archive_parts(member)
 
 
+@pytest.mark.require_symlinks
 def test_extract_refuses_a_symlink_member(tmp_path):
     payload = tmp_path / "payload"
     payload.mkdir()

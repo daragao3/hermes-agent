@@ -423,8 +423,17 @@ def _write_machine_sentinel_line(line: str) -> None:
 
 
 def _report_port_in_use(host: str, port: int) -> None:
-    """Print the machine sentinel + a human hint naming likely holders."""
+    """Print the machine sentinel + a human hint naming likely holders, and log it durably."""
     _write_machine_sentinel_line(_PORT_IN_USE_SENTINEL.format(port=port))
+    # The pre-bind probe exits before uvicorn (and before the serve loop's own
+    # _log.error), so this is the only chance to put the failure in agent.log /
+    # gui.log: whoever spawned us may discard stdout/stderr entirely (the
+    # 2026-08-12 incident had a dashboard die with zero log hits while the
+    # error sat on stderr). ASCII only -- must survive a legacy MBCS console.
+    _log.error(
+        "Dashboard server could not start on %s:%s - the port is already in use. Exiting.",
+        host, port,
+    )
     print(
         f"  Port {port} on {host} is already in use — likely another "
         "'hermes serve' / 'hermes dashboard' backend or the Hermes gateway. "

@@ -12,6 +12,7 @@ The live profile on disk must stay untouched.
 import tarfile
 
 from hermes_cli.profiles import export_profile
+import pytest
 
 # Long enough to match agent.redact prefix patterns (sk- + 10+ chars).
 _LEAKED_KEY = "sk-or-v1-reallyLongSecretKeyValue12345678"
@@ -102,6 +103,7 @@ class TestExportSecretScrub:
         assert _LEAKED_KEY in skill.read_text(encoding="utf-8")
         assert _LEAKED_KEY in memory.read_text(encoding="utf-8")
 
+    @pytest.mark.require_symlinks
     def test_export_redacts_through_symlink_without_touching_source(
         self, tmp_path, monkeypatch
     ):

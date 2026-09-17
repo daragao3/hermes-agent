@@ -19,6 +19,7 @@ when the job is genuinely unloaded.
 from __future__ import annotations
 
 import subprocess
+import sys
 
 import pytest
 
@@ -166,12 +167,15 @@ class TestServicePidSweepExclusion:
         monkeypatch.setattr(gateway_mod.subprocess, "run", fake_run)
         return state
 
+    # _locate_launchd_gateway_service derives gui/<uid> from the process uid: POSIX only.
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX launchd helper: needs a real uid")
     def test_list_failure_falls_back_to_domain_print(self, macos_launchd):
         """`list` rc=1, `print` reports pid 59038 → the PID is still excluded."""
         from hermes_cli.gateway import _get_service_pids
 
         assert 59038 in _get_service_pids()
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX launchd helper: needs a real uid")
     def test_both_interfaces_negative_means_no_pid(self, macos_launchd):
         macos_launchd["print_rc"] = 113  # job genuinely not found in the domain
 
@@ -179,6 +183,7 @@ class TestServicePidSweepExclusion:
 
         assert _get_service_pids() == set()
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX launchd helper: needs a real uid")
     def test_registered_but_not_running_has_no_pid_line(self, macos_launchd):
         macos_launchd["print_out"] = _PRINT_OUTPUT_RUNNING.replace("\tpid = 59038\n", "")
 

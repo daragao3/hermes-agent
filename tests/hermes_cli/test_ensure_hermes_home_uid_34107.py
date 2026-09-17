@@ -25,6 +25,8 @@ import pytest
 
 
 class TestResolveHermesUidGid:
+    # The product returns (None, None) on win32 by design; the windows_only test below pins that.
+    @pytest.mark.skipif(sys.platform == "win32", reason="chown is no-op on Windows")
     def test_returns_parsed_values_when_both_set(self, monkeypatch):
         monkeypatch.setenv("HERMES_UID", "1000")
         monkeypatch.setenv("HERMES_GID", "911")
@@ -53,6 +55,7 @@ class TestResolveHermesUidGid:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="chown is no-op on Windows")
 class TestChownToHermesUid:
     def test_calls_os_chown_when_both_set(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HERMES_UID", "1000")

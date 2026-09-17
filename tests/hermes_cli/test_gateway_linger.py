@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+import sys
 
 import hermes_cli.gateway as gateway
 
@@ -106,6 +107,7 @@ class TestEnsureLingerEnabled:
 
 
 class TestEnsureSystemServiceLinger:
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX systemd helper: imports pwd")
     @pytest.mark.parametrize("running", [True, False])
     def test_fresh_enable_waits_on_target_uid_and_hints_restart_only_when_running(
         self, monkeypatch, capsys, running
@@ -134,6 +136,7 @@ class TestEnsureSystemServiceLinger:
         gateway._ensure_system_service_linger("alice")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX systemd helper: needs a real uid")
 def test_systemd_install_calls_linger_helper(monkeypatch, tmp_path, capsys):
     unit_path = tmp_path / "systemd" / "user" / "hermes-gateway.service"
 

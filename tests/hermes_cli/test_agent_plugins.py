@@ -133,6 +133,7 @@ def test_rejects_invalid_optional_skill_fields(
     assert package.skills == ()
 
 
+@pytest.mark.require_symlinks
 def test_symlink_escape_is_isolated_to_component(tmp_path: Path) -> None:
     root = tmp_path / "plugin"
     root.mkdir()
