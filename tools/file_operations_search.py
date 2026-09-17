@@ -168,6 +168,40 @@ def _pattern_has_regex_newline(pattern: str) -> bool:
     return "\n" in pattern or bool(_REGEX_NEWLINE_ESCAPE_RE.search(pattern))
 
 
+def _crlf_tolerant_newlines(pattern: str) -> str:
+    """Rewrite each line break a multiline regex asks for -- an unescaped ``\\n``
+    escape or a raw newline -- as ``(?:\\r?\\n)`` so it also matches CRLF files.
+    ripgrep's ``\\n`` never matches ``\\r\\n`` (not even under ``--crlf``, which only
+    moves ``$``), so on a Windows-native checkout the auto-multiline promise "the
+    regex can match across line boundaries" silently returned 0 matches.
+    Conservative: ``\\\\n`` (a literal backslash + n) and anything inside a
+    ``[...]`` class are left untouched, and the non-capturing group keeps a
+    following quantifier (``\\n{2}``) attached to the whole line break."""
+    out: list[str] = []
+    i, depth = 0, 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "\\" and i + 1 < len(pattern):
+            nxt = pattern[i + 1]
+            if nxt == "n" and depth == 0:
+                out.append(r"(?:\r?\n)")
+            else:
+                out.append(ch + nxt)
+            i += 2
+            continue
+        if ch == "[":
+            depth += 1
+        elif ch == "]" and depth:
+            depth -= 1
+        elif ch == "\n" and depth == 0:
+            out.append(r"(?:\r?\n)")
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _is_line_oriented_newline_error(error: Optional[str]) -> bool:
     """Return True for rg's hard error when multiline mode is required."""
     return bool(error) and "literal \"\\n\" is not allowed" in error and "--multiline" in error
@@ -912,6 +946,7 @@ class SearchMixin:
         multiline = _pattern_has_regex_newline(pattern)
         if multiline:
             cmd_parts.append("--multiline")
+            pattern = _crlf_tolerant_newlines(pattern)
         if context > 0:
             cmd_parts.extend(["-C", str(context)])
         cmd_parts.extend(self._rg_exclusion_globs(path))
@@ -924,7 +959,7 @@ class SearchMixin:
         cmd_parts.append(self._escape_native_tool_arg(path))
         ml_note = (
             "Pattern contains \\n — multiline mode (-U) was enabled automatically "
-            "so the regex can match across line boundaries."
+            "so the regex can match across line boundaries (LF or CRLF)."
         ) if multiline else None
         return self._run_search_pipeline(cmd_parts, output_mode, limit, offset, context, warning=ml_note)
 
