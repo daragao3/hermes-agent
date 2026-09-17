@@ -55,7 +55,10 @@ class TestWriteVerification:
         assert "did not persist" in r["error"]
 
     def test_verification_failure_never_breaks_write(self, workdir):
-        # sha256sum unavailable/failing -> verified omitted, write still ok.
+        # Hash cannot be taken -> verified omitted, write still ok. A local
+        # backend hashes natively (hashlib.file_digest) and only falls back to
+        # the shell's sha256sum for a path it cannot resolve, so BOTH seams
+        # must fail for the "no hash" path to be the one under test.
         f = workdir / "ok.txt"
         import tools.file_operations as fo
 
@@ -66,7 +69,11 @@ class TestWriteVerification:
                 raise RuntimeError("no hash binary")
             return real_exec(self, cmd, **kw)
 
-        with mock_patch.object(fo.ShellFileOperations, "_exec", flaky_exec):
+        def no_native_hash(*_a, **_k):
+            raise OSError("hash read failed")
+
+        with mock_patch.object(fo.ShellFileOperations, "_exec", flaky_exec), \
+             mock_patch.object(fo.hashlib, "file_digest", no_native_hash):
             r = json.loads(write_file_tool(str(f), "content lands anyway\n", task_id="t-wv2"))
         assert "error" not in r
         assert f.read_text(encoding="utf-8") == "content lands anyway\n"
