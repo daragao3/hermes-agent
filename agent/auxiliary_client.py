@@ -3168,14 +3168,41 @@ def _mark_provider_unhealthy(
     )
 
 
+def _seed_unhealthy_from_quota_guard(label: str, key: Any) -> Optional[float]:
+    """Adopt a quota wall another session recorded (``agent.provider_quota_guard``) as a local
+    unhealthy entry expiring at that wall's reset, so every chain walker skips the provider
+    WITHOUT spending a call on it. Before 2026-09-16 the auxiliary router consulted only its own
+    in-process cache: after the OpenCode Go weekly wall the main agent loop diverted straight to
+    the next hop, while ``task=approval`` resolved fallback_providers[0](opencode-go) afresh on
+    every call, took the 429, and escalated -- 4/4 smart approvals failed with the working
+    deepseek hop one entry further down the same chain. Returns the expiry, or None when the
+    guard has nothing on this provider. Never raises (the guard must never break routing)."""
+    try:
+        from agent.provider_quota_guard import format_remaining, provider_exhaustion_remaining
+        remaining = provider_exhaustion_remaining(label)
+    except Exception:
+        return None
+    if remaining is None or remaining <= 0:
+        return None
+    expires_at = time.time() + remaining
+    _aux_unhealthy_until[key] = expires_at
+    _aux_unhealthy_reason[key] = (
+        f"quota wall recorded by an earlier session, resets in {format_remaining(remaining)}")
+    return expires_at
+
+
 def _is_provider_unhealthy(label: str, base_url: Optional[str] = None) -> bool:
-    """True iff this provider endpoint is unhealthy and unexpired; lazily evicts expired entries."""
+    """True iff this provider endpoint is unhealthy and unexpired; lazily evicts expired entries.
+    A provider the cross-session quota guard holds exhausted is unhealthy for that whole window
+    (seeded on first sight, see :func:`_seed_unhealthy_from_quota_guard`)."""
     if not label:
         return False
     key = _unhealthy_cache_key(label, base_url)
     expires_at = _aux_unhealthy_until.get(key)
     if expires_at is None:
-        return False
+        expires_at = _seed_unhealthy_from_quota_guard(label, key)
+        if expires_at is None:
+            return False
     if time.time() >= expires_at:
         _aux_unhealthy_until.pop(key, None)
         _aux_unhealthy_logged_at.pop(key, None)
