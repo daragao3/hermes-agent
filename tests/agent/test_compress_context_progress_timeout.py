@@ -9,6 +9,7 @@ for the owned wrapper used when callers do not pass a ``commit_fence``.
 from __future__ import annotations
 
 import concurrent.futures
+import socket
 import threading
 import time
 from unittest.mock import MagicMock
@@ -504,6 +505,87 @@ class TestRunCompressContextWithProgressTimeout:
         second = mod._get_compress_timeout_executor()
         assert first is second
         assert isinstance(first, DaemonThreadPoolExecutor)
+
+
+class _InlineExecutor:
+    """Runs the pooled worker synchronously so its exception is already on the future when the host waits."""
+
+    def submit(self, fn, fence):
+        future = concurrent.futures.Future()
+        try:
+            future.set_result(fn(fence))
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
+
+
+class TestWorkerTimeoutErrorIsNotAWaitTimeout:
+    """Since 3.11 ``concurrent.futures.TimeoutError`` IS the builtin ``TimeoutError`` (so also
+    ``socket.timeout``). A worker that *raises* one used to be read by every waiter as "the wait ran out":
+    the host looped on an already-finished future for the whole idle budget (a hot spin, reported as a
+    stall), the bounded join called the dead worker "did not exit within grace" and kept its lease, and the
+    commit-overrun wait would have looped forever."""
+
+    def test_worker_timeout_error_propagates_instead_of_spinning_out_the_idle_budget(self, monkeypatch):
+        monkeypatch.setattr(cc, "_get_compress_timeout_executor", _InlineExecutor)
+
+        def worker(_fence):
+            raise socket.timeout("The read operation timed out")
+
+        started = time.monotonic()
+        with pytest.raises(TimeoutError, match="read operation timed out"):
+            run_compress_context_with_progress_timeout(
+                worker=worker,
+                messages=[{"role": "user", "content": "keep-me"}],
+                system_prompt_fallback="fallback-prompt",
+                idle_timeout_seconds=4.0,
+                total_ceiling_seconds=8.0,
+                stall_fallback=False,
+            )
+        # A dead worker is an exit, not four seconds of silence.
+        assert time.monotonic() - started < 2.0
+
+    def test_pre_start_deadline_gate_is_an_exit_so_the_lease_is_released(self, monkeypatch):
+        """The host's own gate raises too; that worker never ran, so nothing can outlive it."""
+
+        class _ExpiredBeforeStartExecutor(_InlineExecutor):
+            def submit(self, fn, fence):
+                fence._deadline = time.monotonic() - 1.0
+                return super().submit(fn, fence)
+
+        monkeypatch.setattr(cc, "_get_compress_timeout_executor", _ExpiredBeforeStartExecutor)
+        fence = CompressionCommitFence()
+        release = MagicMock()
+        fence.register_cancelled_lock_release(release)
+        causes = []
+
+        result_msgs, _ = run_compress_context_with_progress_timeout(
+            worker=MagicMock(),
+            messages=[{"role": "user", "content": "keep-me"}],
+            system_prompt_fallback="fallback-prompt",
+            idle_timeout_seconds=1.0,
+            total_ceiling_seconds=1.0,
+            on_timeout_cause=lambda total, progress: causes.append(total),
+            fence=fence,
+            stall_fallback=False,
+        )
+
+        assert result_msgs[0]["content"] == "keep-me"
+        assert causes == [True], "the gate fires on the total-ceiling path"
+        release.assert_called_once_with()
+
+    def test_join_reports_exit_for_a_worker_that_raised_timeout_error(self):
+        future = concurrent.futures.Future()
+        future.set_exception(socket.timeout("dead"))
+        assert cc._join_cancelled_worker(future, 0.5) is True
+
+    def test_committing_worker_timeout_error_ends_the_overrun_wait(self):
+        future = concurrent.futures.Future()
+        future.set_exception(socket.timeout("dead mid-commit"))
+        with pytest.raises(TimeoutError, match="dead mid-commit"):
+            cc._await_in_flight_commit(
+                future, ceiling=0.05, wait_started=time.monotonic(), on_commit_overrun=None
+            )
 
 
 class TestCompressContextForwarderOwnsTimeout:

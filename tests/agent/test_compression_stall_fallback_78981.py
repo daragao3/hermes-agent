@@ -90,7 +90,16 @@ class _StalledSummaryWorker:
             fence.finish_commit()
 
 
-def _run(worker, *, chain, timeouts, messages, idle=0.05, ceiling=0.2):
+# Budgets sit at the repo's >= 2 s wall-clock floor on purpose. A stalled attempt costs one idle window,
+# but the worker must actually be RUNNING for that window to mean "stalled": the ceiling is armed at
+# submit, and under a loaded runner a pool thread can take >0.2 s to pick the job up -- the pre-start
+# deadline gate then fires, the primary never calls the worker, and the retry becomes attempt one
+# (measured 2026-09-16, twice, under -j 12). Below these values the file flakes; above them it just waits.
+_IDLE = 2.0
+_CEILING = 4.0
+
+
+def _run(worker, *, chain, timeouts, messages, idle=_IDLE, ceiling=_CEILING):
     with _patch_chain(chain):
         return run_compress_context_with_progress_timeout(
             worker=worker,
@@ -151,8 +160,8 @@ def test_retry_runs_on_a_host_published_fence():
                 worker=worker,
                 messages=original,
                 system_prompt_fallback="degraded-prompt",
-                idle_timeout_seconds=0.05,
-                total_ceiling_seconds=0.2,
+                idle_timeout_seconds=_IDLE,
+                total_ceiling_seconds=_CEILING,
                 new_fence=_new_fence,
             )
     finally:
@@ -181,8 +190,8 @@ def test_hard_interrupt_suppresses_the_fallback_attempt():
                 worker=worker,
                 messages=original,
                 system_prompt_fallback="degraded-prompt",
-                idle_timeout_seconds=0.05,
-                total_ceiling_seconds=0.2,
+                idle_timeout_seconds=_IDLE,
+                total_ceiling_seconds=_CEILING,
                 on_timeout=lambda *args: timeouts.append(args),
                 telemetry_agent=agent,
             )
@@ -217,7 +226,7 @@ def test_fallback_that_also_stalls_degrades_after_one_attempt():
         [{"role": "user", "content": "unused"}], stall_attempts=2
     )
     timeouts = []
-    entry = dict(CHAIN_ENTRY, timeout=0.05)
+    entry = dict(CHAIN_ENTRY, timeout=_IDLE)
 
     try:
         msgs, prompt = _run(worker, chain=[entry], timeouts=timeouts, messages=original)

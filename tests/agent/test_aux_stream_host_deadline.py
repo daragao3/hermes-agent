@@ -123,7 +123,8 @@ def test_commit_fence_publishes_its_shared_deadline():
     assert not fence.deadline_exceeded
 
     fence.set_total_ceiling_seconds(0.001)
-    time.sleep(0.01)
+    # Past several ticks of a coarse monotonic clock (15.6 ms on Windows), not just past 1 ms.
+    time.sleep(0.1)
     assert fence.deadline_exceeded
     assert fence.deadline_monotonic <= time.monotonic()
 

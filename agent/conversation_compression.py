@@ -602,6 +602,15 @@ _COMMIT_OVERRUN_WAIT_SLICE_SECONDS = 30.0
 _CANCELLED_WORKER_TEARDOWN_GRACE_SECONDS = 5.0
 
 
+class _CompressionDeadlineExpiredBeforeStart(concurrent.futures.TimeoutError):
+    """Raised by the pool-side fence gate when the ceiling lapsed before the worker ever ran.
+
+    Its own class because since 3.11 ``concurrent.futures.TimeoutError`` IS the builtin ``TimeoutError``
+    (``socket.timeout``, ``asyncio.TimeoutError`` ...): a worker that *raised* one is otherwise
+    indistinguishable, at ``future.result(timeout=...)``, from a wait that ran out. The waiters below tell the
+    two apart with ``future.done()`` and treat only this class as the host's own abort."""
+
+
 def _join_cancelled_worker(future: Any, grace_seconds: float) -> bool:
     """Best-effort bounded join of a fence-cancelled compression worker.
     Returns True when the future settled within ``grace_seconds`` (thread provably exited); False for a
@@ -613,7 +622,9 @@ def _join_cancelled_worker(future: Any, grace_seconds: float) -> bool:
         future.result(timeout=grace)
         return True
     except concurrent.futures.TimeoutError:
-        return False
+        # ``result()`` re-raises a worker's OWN TimeoutError (socket.timeout, the pre-start gate) through
+        # this same clause; that worker has exited, so the lease need not outlive it.
+        return future.done()
     except concurrent.futures.CancelledError:
         # Never started; nothing can be in flight.
         return True
@@ -905,7 +916,13 @@ def _await_worker_within_budget(
         wait_slice = min(max(idle - since_progress, 0.005), remaining_ceiling)
         try:
             return True, future.result(timeout=wait_slice)
-        except concurrent.futures.TimeoutError:
+        except concurrent.futures.TimeoutError as exc:
+            if future.done() and not isinstance(exc, _CompressionDeadlineExpiredBeforeStart):
+                # The WORKER raised a TimeoutError (builtin alias since 3.11) -- it has exited, and its
+                # exception propagates like any other worker failure. Looping here instead re-raised on
+                # every pass: a hot spin for the whole idle budget, reported as a stall (measured 1.7 s CPU
+                # over a 2 s window on 2026-09-16), with a dead worker misfiled as hung.
+                raise
             waited = time.monotonic() - wait_started
             since_progress = fence.seconds_since_progress()
             if not fence.deadline_exceeded and since_progress < idle and waited < ceiling:
@@ -947,6 +964,10 @@ def _await_in_flight_commit(
         try:
             return future.result(timeout=remaining)
         except concurrent.futures.TimeoutError:
+            if future.done():
+                # The committing worker raised a TimeoutError of its own: the commit is over, and
+                # looping would re-raise instantly forever (unbounded spin, one overrun warning per pass).
+                raise
             # Commit-phase progress is informative only — the commit must complete; loop
             # and re-report with the updated overrun window.
             continue
@@ -1014,7 +1035,6 @@ def run_compress_context_with_progress_timeout(
     ceiling = max(float(total_ceiling_seconds), float(idle_timeout_seconds))
     idle = float(idle_timeout_seconds)
     fence = fence if fence is not None else CompressionCommitFence()
-    fence.set_total_ceiling_seconds(ceiling)
     # Sync mirror of gateway hygiene's run_in_executor + wait_for loop: offload,
     # poll idle budget + ceiling, fence-cancel on timeout so no late commit lands.
     from tools.thread_context import propagate_context_to_thread
@@ -1044,7 +1064,7 @@ def run_compress_context_with_progress_timeout(
         # An admitted job may start after the host stopped waiting; check the fence
         # BEFORE summary work so a stale job never burns an LLM call.
         if worker_fence.deadline_exceeded:
-            raise concurrent.futures.TimeoutError("compression deadline expired before worker start")
+            raise _CompressionDeadlineExpiredBeforeStart("compression deadline expired before worker start")
         if worker_fence.is_cancelled:
             logger.info("Skipping stale compression job: fence cancelled before start")
             return messages, ""
@@ -1052,13 +1072,18 @@ def run_compress_context_with_progress_timeout(
 
     # Bare pool workers start with an empty ContextVar map; propagate the
     # parent conversation/approval context into the worker.
+    pooled_worker = propagate_context_to_thread(_fence_gated_worker)
+    # Arm the ceiling HERE, at the instant the wait starts, not at entry: the executor's first use imports
+    # tools.daemon_pool / tools.thread_context (~0.2 s cold), and a ceiling armed before that was already
+    # partly spent when the gate above read it -- on a tight ceiling the worker never ran at all.
+    fence.set_total_ceiling_seconds(ceiling)
+    wait_started = time.monotonic()
     try:
-        future = executor.submit(propagate_context_to_thread(_fence_gated_worker), fence)
+        future = executor.submit(pooled_worker, fence)
     except BaseException:
         _release_compression_admission()
         raise
     future.add_done_callback(_release_compression_admission)
-    wait_started = time.monotonic()
     # EVERY host unwind must revoke commit admission or a detached worker could
     # later mutate durable state; handled_exit marks paths that settle it themselves
     handled_exit = False
