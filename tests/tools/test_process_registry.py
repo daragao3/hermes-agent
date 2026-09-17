@@ -10,6 +10,8 @@ import sys
 import threading
 import time
 import pytest
+
+from tests.timeout_budget import scaled
 from unittest.mock import MagicMock, patch
 
 from tools.environments.local_env_policy import _HERMES_PROVIDER_ENV_FORCE_PREFIX
@@ -654,6 +656,9 @@ class TestStdinHelpers:
         pty.write.assert_called_once_with("hello\r\n")
         assert result["status"] == "ok"
 
+    # A real PTY child bounded only by the global 30s cap trips it under a
+    # 12-worker load (measured twice on 2026-09-17); the bound is a safety net.
+    @pytest.mark.timeout(scaled(120))
     def test_close_stdin_allows_eof_driven_process_to_finish(self, registry, tmp_path):
         """PTY mode: writing data + sending EOF lets an EOF-driven child finish.
 
@@ -942,6 +947,7 @@ class TestEnvPollerIncrementalRead:
         assert "O=0" in cmd
 
     @pytest.mark.skipif(not shutil.which("sh"), reason="needs a POSIX sh")
+    @pytest.mark.timeout(scaled(120))  # ~23 real sh spawns; Git Bash on a loaded host exceeds 30s
     def test_read_command_holds_back_a_split_utf8_sequence(self, tmp_path):
         """A multibyte character straddling two polls must not be split.
 

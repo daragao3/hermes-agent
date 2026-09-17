@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.symlink_support import symlinks_supported
 from tools.environments import ssh as ssh_env
 from tools.environments.file_sync import quoted_mkdir_command, unique_parent_dirs
 from tools.environments.ssh import SSHEnvironment
@@ -148,7 +149,12 @@ class TestSSHBulkUpload:
                 staging_dir = cmd[c_idx + 1]
                 assert not os.path.exists(os.path.join(staging_dir, "home"))
                 expected = os.path.join(staging_dir, "cache/nested.txt")
-                assert os.path.islink(expected)
+                if symlinks_supported():
+                    assert os.path.islink(expected)
+                else:
+                    # Documented fallback: without SeCreateSymbolicLinkPrivilege
+                    # (WinError 1314) the file is staged as a plain copy.
+                    assert os.path.isfile(expected) and not os.path.islink(expected)
 
             mock = MagicMock()
             mock.stdout = MagicMock()

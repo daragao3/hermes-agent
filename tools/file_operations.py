@@ -232,10 +232,18 @@ class ShellFileOperations(LintMixin, SearchMixin, FileOperations):
 
     def _run_python_snippet(self, snippet: str) -> ExecuteResult:
         """Run ``snippet`` via the backend's ``python3``, retrying with ``python``
-        when only that name exists (Windows / older systems)."""
-        result = self._exec(f"python3 -c {self._escape_shell_arg(snippet)}")
+        when only that name exists (Windows / older systems). The source travels on
+        STDIN (``python3 -``, the same pipe ``_atomic_write`` trusts with file bodies),
+        never as a ``-c`` argument: the snippet is Python SOURCE, not a path, and on
+        Windows a ``-c`` argument crossed two backslash rewrites -- the path escaper
+        turned the BOM / byte / newline escapes in a string literal into
+        ``'/ufeff'``, ``b'/xff/xfe'``, ``'/r/n'`` (the UTF-16 read lane then kept the
+        BOM and never split a line), and MSYS collapses a ``repr()``'d path's doubled
+        backslashes on the way into a native ``python.exe`` (``'C:\\\\Users'`` arrives
+        as an unterminated ``\\U`` escape)."""
+        result = self._exec("python3 -", stdin_data=snippet)
         if result.exit_code != 0 and "python3" in (result.stdout or ""):
-            result = self._exec(f"python -c {self._escape_shell_arg(snippet)}")
+            result = self._exec("python -", stdin_data=snippet)
         return result
 
     def _sample_file_bytes(self, path: str, length: int = 1000):

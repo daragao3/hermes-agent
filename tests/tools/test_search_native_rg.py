@@ -12,6 +12,8 @@ import shlex
 
 import pytest
 
+from tests.timeout_budget import scaled
+
 from tools.environments.local import LocalEnvironment
 from tools.file_operations import ShellFileOperations
 
@@ -59,6 +61,7 @@ def _normalized(result):
     return d
 
 
+@pytest.mark.timeout(scaled(120))  # real rg both natively and via bash; the 30s cap tripped under load
 def test_native_search_never_touches_the_shell_and_matches_shell_results(tree, ops_factory, monkeypatch):
     cases = [
         dict(pattern="needle", path=str(tree)),

@@ -1,7 +1,10 @@
 """macOS TCC-safe behavior for broad file searches."""
 
 import re
+import sys
 from pathlib import Path
+
+import pytest
 
 import tools.file_operations as file_operations
 from tools.environments.local import LocalEnvironment
@@ -146,6 +149,14 @@ def test_grep_fallback_prunes_by_path_not_basename(tmp_path, monkeypatch):
         assert f"--exclude-dir='{dirname}'" not in pruned_command
 
 
+_real_env_cannot_fake_darwin = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="drives a REAL LocalEnvironment with sys.platform patched to darwin: the "
+           "product then takes the POSIX lane (fcntl) against Git Bash",
+)
+
+
+@_real_env_cannot_fake_darwin
 def test_grep_pruned_search_still_finds_nested_protected_names(tmp_path, monkeypatch):
     """A repo-internal directory literally named 'Downloads' must still be
     searched by the pruned grep path — the exact regression --exclude-dir had."""
@@ -361,10 +372,14 @@ def test_rg_scoped_multi_root_terminates_options_before_dash_prefixed_root(monke
 
     command = _rg_files_commands(env.commands)[0]
     assert "cd '/Users/alice' &&" in command
-    assert " -- '.' '--version' 2>/dev/null" in command
+    # ``--`` terminates options so the dash-prefixed root is a ROOT; the files
+    # lane merges stderr (diagnostics are split from the listing), so no
+    # ``2>/dev/null`` follows the roots.
+    assert " -- '.' '--version' |" in command
     assert result.error is None
 
 
+@_real_env_cannot_fake_darwin
 def test_real_ripgrep_does_not_descend_into_protected_folder(tmp_path, monkeypatch):
     home = tmp_path / "Users" / "alice"
     safe = home / "safe"

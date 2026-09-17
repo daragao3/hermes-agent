@@ -1,6 +1,8 @@
 """Regression tests for local terminal initial cwd normalization."""
 
+import os
 
+from tests.bash_support import NATIVE_PWD
 from tools.environments.local import LocalEnvironment, _resolve_local_initial_cwd
 
 
@@ -19,9 +21,10 @@ def test_local_environment_keeps_existing_relative_child_cwd(tmp_path, monkeypat
 
     env = LocalEnvironment(cwd="hermes-agent", timeout=5)
     try:
-        result = env.execute("pwd", timeout=5)
+        result = env.execute(NATIVE_PWD, timeout=5)
     finally:
         env.cleanup()
 
     assert result["returncode"] == 0
-    assert result["output"].strip() == str(project)
+    # normpath: NATIVE_PWD answers with "/" separators on Windows.
+    assert os.path.normpath(result["output"].strip()) == str(project)
