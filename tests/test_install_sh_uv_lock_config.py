@@ -29,11 +29,16 @@ def _locked_sync_helper(path: Path) -> str:
 
 
 def _bash_path(path: Path) -> str:
+    """Spell *path* the way the bash we spawn expects it.
+
+    On Windows ``BASH`` is Git's MSYS bash (tests.bash_support), which mounts
+    drives as ``/c/...``; the WSL launcher's ``/mnt/c/...`` form is never used.
+    """
     if os.name != "nt":
         return str(path)
     drive = path.drive.rstrip(":").lower()
     tail = path.as_posix().split(":", 1)[1].lstrip("/")
-    return f"/mnt/{drive}/{tail}"
+    return f"/{drive}/{tail}"
 
 
 def test_installers_keep_bootstrap_isolation_but_restore_project_config_for_lock() -> None:
