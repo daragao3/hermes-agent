@@ -8,11 +8,19 @@ from hermes_state_common import SCHEMA_SQL
 from hermes_state_compression import SessionCompressionMixin
 
 
+# Local (cli/tui) children copy the parent cwd only when the source matches and the path is
+# canonical on this host; a GATEWAY child copies the parent's persisted value verbatim -- it is
+# the workspace the Desktop sidebar groups by and must survive every compaction boundary
+# (hermes_state_common.inheritable_child_cwd, the one resolver both child-row writers use since
+# 7339d30808). Neither arm discovers a cwd: identity mismatch or an absent parent value -> None.
 @pytest.mark.parametrize("parent_source,child_source,cwd_kind,identity,expected", [
     ("cli", "cli", "absolute", "parent", True),
     ("tui", "tui", "absolute", "parent", True),
     ("cli", "tui", "absolute", "parent", False),
-    ("telegram", "telegram", "absolute", "parent", False),
+    ("telegram", "telegram", "absolute", "parent", True),
+    ("telegram", "telegram", "relative", "parent", True),
+    ("telegram", "telegram", "absolute", "other", False),
+    ("telegram", "telegram", "missing", "parent", False),
     ("cli", "cli", "relative", "parent", False),
     ("cli", "cli", "absolute", "other", False),
     ("cli", "cli", "whitespace", "parent", False),
