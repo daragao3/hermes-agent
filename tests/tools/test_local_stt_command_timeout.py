@@ -20,7 +20,8 @@ import subprocess
 
 import pytest
 
-from tools import transcription_tools
+import hermes_cli._subprocess_compat as _compat
+from tools import transcription_local
 
 
 @pytest.fixture
@@ -32,8 +33,11 @@ def _local_command(monkeypatch, tmp_path):
     """
     audio = tmp_path / "clip.wav"
     audio.write_bytes(b"RIFF....WAVE")
+    # The local-command helpers live in tools.transcription_local (62732c7d8b dropped the
+    # transcription_tools re-exports); run_text_capture is imported lazily at the call
+    # site, so it is patched on hermes_cli._subprocess_compat.
     monkeypatch.setattr(
-        transcription_tools, "_get_local_command_template", lambda: "whisper {input_path}"
+        transcription_local, "_get_local_command_template", lambda: "whisper {input_path}"
     )
     return str(audio)
 
@@ -48,9 +52,9 @@ def test_local_stt_uses_the_file_backed_capture_helper(monkeypatch, _local_comma
         # only pins HOW the command was run.
         return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(transcription_tools, "run_text_capture", _fake)
+    monkeypatch.setattr(_compat, "run_text_capture", _fake)
 
-    transcription_tools._transcribe_local_command(_local_command, "base")
+    transcription_local._transcribe_local_command(_local_command, "base")
 
     assert seen["kwargs"]["timeout"] == 300
     # No env var set -> auto-detected template -> list mode, not shell.
@@ -66,7 +70,7 @@ def test_local_stt_shell_mode_passes_a_command_string(monkeypatch, _local_comman
     ``list()`` over a command string would shred it into one argument per
     character — the exact reason the helper needed a shell parameter.
     """
-    monkeypatch.setenv(transcription_tools.LOCAL_STT_COMMAND_ENV, "whisper {input_path}")
+    monkeypatch.setenv(transcription_local.LOCAL_STT_COMMAND_ENV, "whisper {input_path}")
     seen = {}
 
     def _fake(command, **kwargs):
@@ -74,9 +78,9 @@ def test_local_stt_shell_mode_passes_a_command_string(monkeypatch, _local_comman
         seen["kwargs"] = kwargs
         return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(transcription_tools, "run_text_capture", _fake)
+    monkeypatch.setattr(_compat, "run_text_capture", _fake)
 
-    transcription_tools._transcribe_local_command(_local_command, "base")
+    transcription_local._transcribe_local_command(_local_command, "base")
 
     assert seen["kwargs"]["shell"] is True
     assert isinstance(seen["command"], str)
@@ -91,14 +95,14 @@ def test_local_stt_nonzero_exit_still_surfaces_the_commands_stderr(
     "did not produce a .txt transcript", burying the real cause.
     """
     monkeypatch.setattr(
-        transcription_tools,
+        _compat,
         "run_text_capture",
         lambda command, **kwargs: subprocess.CompletedProcess(
             args=command, returncode=2, stdout="", stderr="model weights missing"
         ),
     )
 
-    result = transcription_tools._transcribe_local_command(_local_command, "base")
+    result = transcription_local._transcribe_local_command(_local_command, "base")
 
     assert result["success"] is False
     assert "model weights missing" in result["error"]
@@ -110,9 +114,9 @@ def test_local_stt_timeout_is_reported_not_raised(monkeypatch, _local_command):
     def _timeout(command, **kwargs):
         raise subprocess.TimeoutExpired(command, 300)
 
-    monkeypatch.setattr(transcription_tools, "run_text_capture", _timeout)
+    monkeypatch.setattr(_compat, "run_text_capture", _timeout)
 
-    result = transcription_tools._transcribe_local_command(_local_command, "base")
+    result = transcription_local._transcribe_local_command(_local_command, "base")
 
     assert result["success"] is False
     assert result["transcript"] == ""

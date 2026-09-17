@@ -521,14 +521,18 @@ class TestCronjobRunCallerTraceability:
 
         bus = EventBus(db_path=self._tmp_path / "events.db")
         monkeypatch.setattr("cron.jobs._get_event_bus", lambda: bus)
+        # Same signature as the real claim (manual=, return_job=): a one-arg stub
+        # raises TypeError, which the claim helper reports as a claimed-then-failed
+        # run (execution_error), not the lost claim this test is about.
         monkeypatch.setattr(
-            "tools.cronjob_tools.claim_job_for_fire", lambda job_id: False
+            "tools.cronjob_tools.claim_job_for_fire", lambda job_id, **_kw: False
         )
 
         job = create_job(prompt="x", schedule="every 1h")
         result = json.loads(cronjob(action="run", job_id=job["id"]))
         assert result["success"] is True
         assert result["job"]["execution_skipped"]
+        assert result["job"]["executed"] is False
 
         assert bus.query(event_type=EventType.CRON_TRIGGERED) == []
 
