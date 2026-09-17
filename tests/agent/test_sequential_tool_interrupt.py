@@ -11,6 +11,7 @@ Now the wait loop polls the interrupt flag every
 synthesizes a cancelled tool result and abandons the worker.
 """
 
+import socket
 import threading
 import time
 
@@ -164,6 +165,40 @@ def test_no_deadline_still_runs_on_worker(monkeypatch, fake_agent):
 
     assert managed.result == "ok"
     assert seen_thread and seen_thread[0] != threading.current_thread().ident
+
+
+@pytest.mark.parametrize("deadline", [4.0, None], ids=["deadline", "no-deadline"])
+def test_worker_timeout_error_is_a_tool_error_not_a_wait(monkeypatch, fake_agent, deadline):
+    """A worker that RAISES TimeoutError (socket.timeout out of Relay, a plugin hook, the
+    tool) must surface as that exception promptly. Since 3.11 it is the same class the
+    poll loop catches as "still running": before the guard, the loop re-raised and
+    swallowed it every slice -- a CPU spin to the deadline (reported as a timeout, the real
+    error lost) or, with the deadline disabled, until the user interrupted."""
+
+    def _fake_middleware(agent_arg, **kwargs):
+        raise socket.timeout("The read operation timed out")
+
+    monkeypatch.setattr(tool_executor, "_run_agent_tool_execution_middleware", _fake_middleware)
+    monkeypatch.setattr(tool_executor, "_resolve_sequential_tool_timeout", lambda: deadline)
+    # Regression safety for the no-deadline arm: an interrupt is the only exit from the
+    # unguarded loop, so arm one at 3 s and let the assertion below fail instead of the
+    # whole process dying at pytest's 30 s cap.
+    bail = threading.Timer(3.0, lambda: setattr(fake_agent, "_interrupt_requested", True))
+    bail.daemon = True
+    bail.start()
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="read operation timed out"):
+        _run_sequential_tool_execution_middleware(
+            fake_agent,
+            function_name="read_file",
+            function_args={},
+            effective_task_id="t",
+            tool_call_id="call_4",
+            execute=lambda a: "unused",
+        )
+    # Half the 4 s deadline; on the unguarded loop this took the whole deadline (or never returned).
+    assert time.monotonic() - started < 2.0
 
 
 def test_never_parallel_tools_stay_inline(monkeypatch, fake_agent):
