@@ -235,21 +235,25 @@ def _discover_entry_point_providers() -> None:
     ``register_provider()`` — a pip package cannot hijack a first-party
     provider name.
     """
-    try:
-        import importlib.metadata as _md
-    except Exception:  # pragma: no cover — importlib.metadata always present ≥3.8
-        return
-
     # Same opt-in gate as the general PluginManager: only entry points named
     # in ``plugins.enabled`` load, and ``plugins.disabled`` always wins.
+    # This runs while ``hermes_cli.config`` is being imported (it calls
+    # list_providers() at module scope), so the gate comes from its leaf module
+    # and importlib.metadata is only paid for once the gate is open:
+    # tests/hermes_cli/test_auth_import_cost.py budgets `import hermes_cli.auth`.
     try:
-        from hermes_cli.plugins import _get_disabled_plugins, _get_enabled_plugins
+        from hermes_cli.plugin_gate import _get_disabled_plugins, _get_enabled_plugins
 
         enabled = _get_enabled_plugins()  # None = nothing enabled yet (opt-in default)
         disabled = _get_disabled_plugins()
     except Exception:  # pragma: no cover — config layer unavailable
         enabled, disabled = None, set()
     if not enabled:
+        return
+
+    try:
+        import importlib.metadata as _md
+    except Exception:  # pragma: no cover — importlib.metadata always present ≥3.8
         return
 
     group = "hermes_agent.plugins"

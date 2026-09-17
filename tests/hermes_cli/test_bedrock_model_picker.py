@@ -189,6 +189,9 @@ class TestBedrockRegionRouting:
     """End-to-end: region from botocore profile is used for discovery, so EU/AP
     users get eu.*/ap.* model IDs rather than the hardcoded us-east-1 list."""
 
+    # Asserts on the discovered (mocked) catalog reaching the picker; opt out of the hermes_cli
+    # conftest stub that defaults cached_provider_model_ids to [] (curated us.* fallback).
+    @pytest.mark.real_provider_model_fetch
     def test_eu_region_from_botocore_profile_yields_eu_models(self):
         """When botocore resolves eu-central-1, picker shows eu.* model IDs."""
         from hermes_cli.model_switch import list_authenticated_providers

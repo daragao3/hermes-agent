@@ -15,6 +15,11 @@ from unittest.mock import patch
 
 import pytest
 
+# These tests exercise cached_provider_model_ids itself (its collaborators are patched per
+# test, so nothing goes live); opt out of tests/hermes_cli/conftest.py's autouse stub that
+# defaults it to [] for the credential-gate tests.
+pytestmark = pytest.mark.real_provider_model_fetch
+
 
 @pytest.fixture(autouse=True)
 def _reset_swr_state():

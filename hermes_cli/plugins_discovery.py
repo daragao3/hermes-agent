@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, List, Optional, Set
 
 from hermes_constants import get_hermes_home
-from hermes_cli.config import cfg_get
 from hermes_cli.plugin_capabilities import VALID_CAPABILITY_IDS
 from hermes_cli.plugin_capabilities import parse_declared_capabilities as _parse_declared_capabilities
 from hermes_cli.plugins_manifest import (
@@ -77,26 +76,9 @@ def _classify_entrypoint_value_kind(value: str) -> str:
         return "standalone"
 
 
-def _get_disabled_plugins() -> set:
-    """Read ``plugins.disabled`` — a deny-list that wins over ``plugins.enabled``."""
-    try:
-        from hermes_cli.config import load_config
-        disabled = cfg_get(load_config(), "plugins", "disabled", default=[])
-        return set(disabled) if isinstance(disabled, list) else set()
-    except Exception:
-        return set()
-
-
-def _get_enabled_plugins() -> Optional[set]:
-    """Read the ``plugins.enabled`` allow-list (plugins are opt-in). ``None`` = key missing/malformed ("nothing
-    enabled yet"; the first ``migrate_config`` run grandfathers installed user plugins); ``set()`` = explicitly
-    empty; else the allow-list."""
-    try:
-        from hermes_cli.config import load_config
-        enabled = cfg_get(load_config(), "plugins", "enabled")
-        return set(enabled) if isinstance(enabled, list) else None
-    except Exception:
-        return None
+# The opt-in gate lives in a leaf so providers/ can consult it during `import hermes_cli.config`
+# without paying for this module; re-exported here (and from hermes_cli.plugins) unchanged.
+from hermes_cli.plugin_gate import _get_disabled_plugins, _get_enabled_plugins  # noqa: E402,F401
 
 
 def scan_directory(

@@ -258,6 +258,9 @@ class TestCachedFetchApiModelsDiskRoundTrip:
         assert second == ["disk-cached-model"]
         assert len(calls) == 1, "second open must be served from disk, not a fresh live fetch"
 
+    # Drives cached_provider_model_ids itself with its collaborators patched; opt out of the
+    # hermes_cli conftest stub that defaults it to [] so the provider-slug row is really written.
+    @pytest.mark.real_provider_model_fetch
     def test_custom_key_does_not_collide_with_provider_slug_cache(self, monkeypatch):
         """A custom endpoint literally named e.g. 'openrouter' in its
         base_url must not read/write the same cache slot as the first-class

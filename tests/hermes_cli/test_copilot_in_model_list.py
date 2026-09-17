@@ -8,6 +8,10 @@ import pytest
 from hermes_cli.model_switch import list_authenticated_providers
 from hermes_cli import model_switch_providers
 
+# These tests assert on the live-catalog branch of the picker with the fetch itself patched; opt out of tests/hermes_cli/conftest.py's autouse stub that
+# defaults it to [] for the credential-gate tests.
+pytestmark = pytest.mark.real_provider_model_fetch
+
 
 @patch.dict(os.environ, {"GH_TOKEN": "test-key"}, clear=False)
 def test_copilot_picker_uses_live_catalog_when_available():
