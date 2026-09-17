@@ -39,10 +39,22 @@ class _FakeRelayAdapter:
         return True
 
 
-async def _run_one_iteration(r, *, interval=0.01, settle=0.1):
-    """Run the watcher long enough for one iteration, then stop it cleanly."""
+async def _run_one_iteration(r, *, interval=0.01, settle=0.1, until=None):
+    """Run the watcher long enough for one iteration, then stop it cleanly.
+
+    ``until``: optional predicate; when given, the settle window extends (up
+    to HANG_GUARD_S) until it holds, so a loaded host cannot stop the watcher
+    before its first iteration ran -- a fixed 0.1s settle read an empty call
+    order under the parallel suite.
+    """
     task = asyncio.create_task(r._scale_to_zero_watcher(interval=interval))
-    await asyncio.sleep(settle)
+    if until is None:
+        await asyncio.sleep(settle)
+    else:
+        deadline = asyncio.get_running_loop().time() + HANG_GUARD_S
+        while not until() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(settle)
     r._running = False
     await asyncio.wait_for(task, timeout=HANG_GUARD_S)
 
@@ -376,7 +388,7 @@ async def test_watcher_holds_redial_before_going_dormant(monkeypatch):
     )
     monkeypatch.setattr(r, "_scale_to_zero_self_suspend", _noop_async)
 
-    await _run_one_iteration(r)
+    await _run_one_iteration(r, until=lambda: len(order) >= 2)
 
     assert order[:2] == ["hold=True", "go_dormant"]
 

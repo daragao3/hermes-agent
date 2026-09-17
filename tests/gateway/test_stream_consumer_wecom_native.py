@@ -626,11 +626,15 @@ class TestClarifyEagerReseed:
 
         # User answered → request an eager re-seed.  NO on_delta yet.
         consumer.request_reopen_seed()
-        await self._drain(consumer, 0.05)  # let run() process _REOPEN_SEED
 
-        seeds_after = len(
-            [f for f in adapter.frames if f["text"] == "" and not f["finalize"]]
-        )
+        def _seeds() -> int:
+            return len([f for f in adapter.frames if f["text"] == "" and not f["finalize"]])
+
+        # Poll, not a fixed 0.05s drain: under the parallel suite the run loop
+        # had not reached _REOPEN_SEED yet and the count read unchanged.
+        await self._wait_until(lambda: _seeds() > seeds_before)
+        await self._drain(consumer, 0.05)  # settle: no SECOND seed may follow
+        seeds_after = _seeds()
         assert seeds_after == seeds_before + 1, (
             "eager re-seed must emit exactly one new empty seed frame before "
             f"any delta (before={seeds_before}, after={seeds_after})"
@@ -1060,11 +1064,15 @@ class TestClarifyEagerReseed:
 
         # 第二轮 eager seed：即便标志有残留，仍能正确再次开流。
         consumer.request_reopen_seed()
-        await self._drain(consumer, 0.05)
 
-        seeds_after = len(
-            [f for f in adapter.frames if f["text"] == "" and not f["finalize"]]
-        )
+        def _seeds() -> int:
+            return len([f for f in adapter.frames if f["text"] == "" and not f["finalize"]])
+
+        # Poll for the seed (a fixed 0.05s drain read it unchanged under the
+        # parallel suite), then drain to prove no SECOND seed follows.
+        await self._wait_until(lambda: _seeds() > seeds_before_second_boundary)
+        await self._drain(consumer, 0.05)
+        seeds_after = _seeds()
         assert seeds_after == seeds_before_second_boundary + 1, (
             "第二轮 eager seed 必须再发一个新的空 seed 帧 "
             f"(before={seeds_before_second_boundary}, after={seeds_after})"

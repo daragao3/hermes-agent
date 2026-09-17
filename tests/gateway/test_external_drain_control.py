@@ -292,11 +292,20 @@ class TestDrainWatcher:
         # Drive a few ticks manually rather than spinning the loop.
         dc.write_drain_request()
         task = asyncio.create_task(runner._drain_control_watcher(interval=0.02))
-        await asyncio.sleep(0.06)
-        assert runner._external_drain_active is True
+
+        async def _settles_to(expected: bool) -> bool:
+            # Poll, not a fixed 0.06s sleep: three ticks is enough on an idle
+            # host and not under the parallel suite (read True after clear).
+            deadline = asyncio.get_running_loop().time() + 5.0
+            while asyncio.get_running_loop().time() < deadline:
+                if runner._external_drain_active is expected:
+                    return True
+                await asyncio.sleep(0.02)
+            return runner._external_drain_active is expected
+
+        assert await _settles_to(True)
         dc.clear_drain_request()
-        await asyncio.sleep(0.06)
-        assert runner._external_drain_active is False
+        assert await _settles_to(False)
         runner._running = False
         await asyncio.sleep(0.04)
         task.cancel()

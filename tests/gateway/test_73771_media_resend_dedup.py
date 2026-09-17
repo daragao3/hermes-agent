@@ -496,7 +496,9 @@ async def test_streamed_explicit_media_resend_is_delivered(tmp_path, monkeypatch
 
     adapter.send_multiple_images.assert_awaited_once()
     sent_paths = [p for p, _cap in adapter.send_multiple_images.await_args.kwargs["images"]]
-    assert str(img) in sent_paths[0]
+    # The producer is Path.absolute().as_uri() (run_notifications.py); on POSIX the raw
+    # path happens to be a substring of that URI, on Windows it is not (backslashes).
+    assert sent_paths[0] == img.absolute().as_uri()
 
 
 def test_stream_rescan_accepts_no_history_dedup_input():
