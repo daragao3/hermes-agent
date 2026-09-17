@@ -147,9 +147,10 @@ def test_deliver_lands_in_live_bot_chat_instead_of_subprocess(home, monkeypatch)
         return _Proc()
 
     # Warm platform.uname()'s one-shot stdlib cache BEFORE the fake is installed.
-    # _session_live_title -> _session_db -> hermes_state_registry.acquire ->
-    # hermes_state_dbfile.quarantine_cross_process_lock calls platform.system(), and on
-    # Windows the first uname() in a process shells out to `ver` (platform._syscmd_ver).
+    # (hermes_state_dbfile.quarantine_cross_process_lock used to call platform.system()
+    # on this path; it now tests sys.platform, but the server's own platform touches
+    # remain.) On Windows the first uname() in a process shells out to `ver`
+    # (platform._syscmd_ver).
     # That probe is a subprocess.run the handler never asked for: it lands in _fake_run and
     # reads as a CLI spawn. It is a RACE, not a fixed order -- the server module's import-time
     # update prefetch also touches platform on its daemon thread, so whether the cache is

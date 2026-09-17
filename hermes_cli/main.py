@@ -35,9 +35,16 @@ except ModuleNotFoundError:
 # Windows: neutralize CPython's ``platform._syscmd_ver`` before anything else
 # imports — it shells out ``cmd /c ver`` and flashes a console when this
 # process is windowless (pythonw gateway, kanban workers). No-op on POSIX.
-from hermes_cli._subprocess_compat import suppress_platform_ver_console
+# Same moment for ``platform.uname()``'s WMI queries: on CPython < 3.13.4 the
+# abandoned query thread can close a random handle and kill the process with
+# 0xC000070A (gh-130727). No-op on POSIX and on fixed interpreters.
+from hermes_cli._subprocess_compat import (
+    suppress_platform_ver_console,
+    suppress_platform_wmi_queries,
+)
 
 suppress_platform_ver_console()
+suppress_platform_wmi_queries()
 
 import os
 import re

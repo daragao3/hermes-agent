@@ -22,6 +22,7 @@ __all__ = [
     "resolve_node_command",
     "split_command_line",
     "suppress_platform_ver_console",
+    "suppress_platform_wmi_queries",
     "windows_detach_flags",
     "windows_detach_flags_without_breakaway",
     "windows_hide_flags",
@@ -201,6 +202,34 @@ def suppress_platform_ver_console() -> None:
             platform._syscmd_ver = _quiet_syscmd_ver
     except Exception:
         pass  # Purely cosmetic hardening — never let it break startup.
+
+
+def suppress_platform_wmi_queries() -> None:
+    """Keep ``platform.uname()`` off WMI where CPython abandons the query thread. No-op elsewhere.
+
+    ``platform.uname()`` on Windows runs two WMI queries on first use via ``_wmi``, whose
+    helper thread is given up on after 100 ms (ConnectServer). On CPython < 3.13.4 the
+    abandoned thread (gh-130727) still points at the caller's dead stack struct and ends by
+    ``CloseHandle``-ing whatever value sits there — a random live handle. If that is one with
+    a threadpool wait on it (bcrypt's system-RNG handle, opened by the next ``os.urandom``),
+    ntdll raises STATUS_THREADPOOL_HANDLE_EXCEPTION and the process exits 0xC000070A with no
+    traceback. Under load on this box that killed SessionDB children at a 2-in-12 rate
+    (2026-09-17). ``uname()`` then takes the same fallbacks it takes when WMI times out
+    (``sys.getwindowsversion()``, ``PROCESSOR_ARCHITECTURE``): same values, no thread.
+    Mirrors ``hermes_bootstrap.suppress_platform_wmi_queries``; double application is harmless.
+    """
+    if not IS_WINDOWS or sys.version_info >= (3, 13, 4):
+        return
+    try:
+        sys.modules["_wmi"] = None  # type: ignore[assignment]
+        import platform
+
+        def _no_wmi_query(*args, **kwargs):
+            raise OSError("not supported")
+
+        platform._wmi_query = _no_wmi_query
+    except Exception:
+        pass  # Hardening only — never let it break startup.
 
 
 def windows_detach_popen_kwargs() -> dict:
