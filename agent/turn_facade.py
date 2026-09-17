@@ -111,9 +111,11 @@ class TurnFacadeMixin:
             # Publish the session accounting handles the same way so auxiliary calls record their token
             # usage into session_model_usage (task dimension) — the fix for aux spend being invisible in
             # analytics (issue #23270).
+            # Stand-ins without the method (see agent.turn_context, #19027) fall back to platform.
+            source_fn = getattr(self, "_session_source_for_persistence", None)
             acct_token = set_accounting_context(
                 getattr(self, "_session_db", None), getattr(self, "session_id", None),
-                source=self._session_source_for_persistence(),
+                source=source_fn() if callable(source_fn) else getattr(self, "platform", None),
                 model_config=getattr(self, "_session_init_model_config", None),
             )
 

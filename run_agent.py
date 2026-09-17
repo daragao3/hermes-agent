@@ -289,7 +289,10 @@ class AIAgent(
         init_agent(self, **init_kwargs)
 
     def _session_source_for_persistence(self) -> str:
-        return _session_source_for_agent(self.platform)
+        # getattr: the same helper is fed this way at the session-start hook below and in
+        # agent.prompt_cache_scope; init_agent always sets ``platform``, but bare instances
+        # built by tests (and any pre-init call) must resolve to "cli", not AttributeError.
+        return _session_source_for_agent(getattr(self, "platform", None))
 
     def _record_activity_response(
         self,
