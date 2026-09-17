@@ -86,7 +86,25 @@ if sys.platform == "win32" and sys.version_info < (3, 13, 4):
     sys.modules["_wmi"] = None  # type: ignore[assignment]
     import platform as _platform
 
-    def _no_wmi_query(*args, **kwargs):
+    def _no_wmi_query(table, *keys):
+        # The runner's ``env -i`` allowlist drops PROCESSOR_ARCHITECTURE, so the
+        # stdlib's own env fallback for ``machine()`` would be '' here: answer
+        # the one CPU query from kernel32 (same code space as WMI) and refuse
+        # the OS one, which falls back to sys.getwindowsversion().
+        if table == "CPU" and tuple(keys) == ("Architecture",):
+            import ctypes
+
+            class _SYSTEM_INFO(ctypes.Structure):
+                _fields_ = [("wProcessorArchitecture", ctypes.c_ushort), ("wReserved", ctypes.c_ushort),
+                            ("dwPageSize", ctypes.c_uint32), ("lpMinimumApplicationAddress", ctypes.c_void_p),
+                            ("lpMaximumApplicationAddress", ctypes.c_void_p), ("dwActiveProcessorMask", ctypes.c_void_p),
+                            ("dwNumberOfProcessors", ctypes.c_uint32), ("dwProcessorType", ctypes.c_uint32),
+                            ("dwAllocationGranularity", ctypes.c_uint32), ("wProcessorLevel", ctypes.c_ushort),
+                            ("wProcessorRevision", ctypes.c_ushort)]
+
+            info = _SYSTEM_INFO()
+            ctypes.WinDLL("kernel32").GetNativeSystemInfo(ctypes.byref(info))
+            return iter([str(int(info.wProcessorArchitecture))])
         raise OSError("not supported")
 
     _platform._wmi_query = _no_wmi_query

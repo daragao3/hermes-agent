@@ -74,6 +74,35 @@ def suppress_platform_ver_console() -> None:
         pass  # hardening only — never break an entry point
 
 
+def _native_processor_architecture() -> int:
+    """``GetNativeSystemInfo().wProcessorArchitecture`` -- the same code space as WMI's
+    ``Win32_Processor.Architecture`` for every value ``platform`` maps (0 x86, 5 ARM, 6 ia64,
+    9 AMD64, 12 ARM64), read from kernel32, no thread, no environment."""
+    import ctypes
+
+    class _SYSTEM_INFO(ctypes.Structure):
+        _fields_ = [("wProcessorArchitecture", ctypes.c_ushort), ("wReserved", ctypes.c_ushort),
+                    ("dwPageSize", ctypes.c_uint32), ("lpMinimumApplicationAddress", ctypes.c_void_p),
+                    ("lpMaximumApplicationAddress", ctypes.c_void_p), ("dwActiveProcessorMask", ctypes.c_void_p),
+                    ("dwNumberOfProcessors", ctypes.c_uint32), ("dwProcessorType", ctypes.c_uint32),
+                    ("dwAllocationGranularity", ctypes.c_uint32), ("wProcessorLevel", ctypes.c_ushort),
+                    ("wProcessorRevision", ctypes.c_ushort)]
+
+    info = _SYSTEM_INFO()
+    ctypes.WinDLL("kernel32").GetNativeSystemInfo(ctypes.byref(info))
+    return int(info.wProcessorArchitecture)
+
+
+def _offline_wmi_query(table, *keys):
+    """Stand-in for ``platform._wmi_query``: answer the CPU-architecture query from kernel32 and
+    refuse the rest, so ``platform.machine()`` stays correct in a process whose environment lacks
+    ``PROCESSOR_ARCHITECTURE`` (``env -i`` test runners) while ``win32_ver()`` takes its documented
+    ``sys.getwindowsversion()`` fallback."""
+    if table == "CPU" and tuple(keys) == ("Architecture",):
+        return iter([str(_native_processor_architecture())])
+    raise OSError("not supported")
+
+
 def suppress_platform_wmi_queries() -> None:
     """Keep ``platform.uname()`` off WMI on interpreters that abandon the query thread.
 
@@ -94,9 +123,11 @@ def suppress_platform_wmi_queries() -> None:
 
     Setting ``_wmi`` to ``None`` in ``sys.modules`` makes a not-yet-imported
     ``platform`` take its ``ImportError`` branch; stubbing ``_wmi_query`` covers a
-    ``platform`` that was imported before us. Either way ``uname()`` takes exactly
-    the fallbacks it already takes when WMI times out (``sys.getwindowsversion()``,
-    ``PROCESSOR_ARCHITECTURE``) — the values are unchanged, only the thread is gone.
+    ``platform`` that was imported before us. ``win32_ver()`` then takes the fallback
+    it already takes when WMI times out (``sys.getwindowsversion()``); the CPU
+    architecture is answered from kernel32 rather than left to the
+    ``PROCESSOR_ARCHITECTURE`` env fallback, which an ``env -i`` runner strips
+    (``machine()`` came back '' under scripts/run_tests.sh) — same values, no thread.
     Fixed interpreters are left alone. Mirrors
     ``hermes_cli._subprocess_compat.suppress_platform_wmi_queries``.
     """
@@ -106,10 +137,7 @@ def suppress_platform_wmi_queries() -> None:
         sys.modules["_wmi"] = None  # type: ignore[assignment]
         import platform
 
-        def _no_wmi_query(*args, **kwargs):
-            raise OSError("not supported")
-
-        platform._wmi_query = _no_wmi_query
+        platform._wmi_query = _offline_wmi_query
     except Exception:
         pass  # hardening only — never break an entry point
 

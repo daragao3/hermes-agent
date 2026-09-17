@@ -204,6 +204,35 @@ def suppress_platform_ver_console() -> None:
         pass  # Purely cosmetic hardening — never let it break startup.
 
 
+def _native_processor_architecture() -> int:
+    """``GetNativeSystemInfo().wProcessorArchitecture`` -- the same code space as WMI's
+    ``Win32_Processor.Architecture`` for every value ``platform`` maps (0 x86, 5 ARM, 6 ia64,
+    9 AMD64, 12 ARM64), read from kernel32, no thread, no environment."""
+    import ctypes
+
+    class _SYSTEM_INFO(ctypes.Structure):
+        _fields_ = [("wProcessorArchitecture", ctypes.c_ushort), ("wReserved", ctypes.c_ushort),
+                    ("dwPageSize", ctypes.c_uint32), ("lpMinimumApplicationAddress", ctypes.c_void_p),
+                    ("lpMaximumApplicationAddress", ctypes.c_void_p), ("dwActiveProcessorMask", ctypes.c_void_p),
+                    ("dwNumberOfProcessors", ctypes.c_uint32), ("dwProcessorType", ctypes.c_uint32),
+                    ("dwAllocationGranularity", ctypes.c_uint32), ("wProcessorLevel", ctypes.c_ushort),
+                    ("wProcessorRevision", ctypes.c_ushort)]
+
+    info = _SYSTEM_INFO()
+    ctypes.WinDLL("kernel32").GetNativeSystemInfo(ctypes.byref(info))
+    return int(info.wProcessorArchitecture)
+
+
+def _offline_wmi_query(table, *keys):
+    """Stand-in for ``platform._wmi_query``: answer the CPU-architecture query from kernel32 and
+    refuse the rest, so ``platform.machine()`` stays correct in a process whose environment lacks
+    ``PROCESSOR_ARCHITECTURE`` (``env -i`` test runners) while ``win32_ver()`` takes its documented
+    ``sys.getwindowsversion()`` fallback."""
+    if table == "CPU" and tuple(keys) == ("Architecture",):
+        return iter([str(_native_processor_architecture())])
+    raise OSError("not supported")
+
+
 def suppress_platform_wmi_queries() -> None:
     """Keep ``platform.uname()`` off WMI where CPython abandons the query thread. No-op elsewhere.
 
@@ -214,8 +243,9 @@ def suppress_platform_wmi_queries() -> None:
     a threadpool wait on it (bcrypt's system-RNG handle, opened by the next ``os.urandom``),
     ntdll raises STATUS_THREADPOOL_HANDLE_EXCEPTION and the process exits 0xC000070A with no
     traceback. Under load on this box that killed SessionDB children at a 2-in-12 rate
-    (2026-09-17). ``uname()`` then takes the same fallbacks it takes when WMI times out
-    (``sys.getwindowsversion()``, ``PROCESSOR_ARCHITECTURE``): same values, no thread.
+    (2026-09-17). ``win32_ver()`` then takes the fallback it takes when WMI times out
+    (``sys.getwindowsversion()``); the CPU architecture comes from kernel32, not the
+    ``PROCESSOR_ARCHITECTURE`` env fallback an ``env -i`` runner strips: same values, no thread.
     Mirrors ``hermes_bootstrap.suppress_platform_wmi_queries``; double application is harmless.
     """
     if not IS_WINDOWS or sys.version_info >= (3, 13, 4):
@@ -224,10 +254,7 @@ def suppress_platform_wmi_queries() -> None:
         sys.modules["_wmi"] = None  # type: ignore[assignment]
         import platform
 
-        def _no_wmi_query(*args, **kwargs):
-            raise OSError("not supported")
-
-        platform._wmi_query = _no_wmi_query
+        platform._wmi_query = _offline_wmi_query
     except Exception:
         pass  # Hardening only — never let it break startup.
 
