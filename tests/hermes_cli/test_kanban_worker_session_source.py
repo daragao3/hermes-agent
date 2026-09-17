@@ -120,3 +120,58 @@ def test_retag_gate_is_per_board(db, tmp_path):
 
     assert db.retag_kanban_worker_sessions(str(board_a)) == 1
     assert db.retag_kanban_worker_sessions(str(board_b)) == 1
+
+
+def test_retag_gate_is_stable_across_root_spellings(db, tmp_path):
+    """One root, however spelled, closes one gate.
+
+    The dispatcher hands over ``str(Path)``; a trailing separator (or, on
+    Windows, ``as_posix()`` / another drive-letter case) must reclaim the same
+    rows and must not re-arm the sweep for a later row.
+    """
+    workspaces = tmp_path / "kanban" / "workspaces"
+    db.create_session(session_id="legacy", source="cli", cwd=str(workspaces / "t_a"))
+
+    assert db.retag_kanban_worker_sessions(str(workspaces) + os.sep) == 1
+
+    db.create_session(session_id="later", source="cli", cwd=str(workspaces / "t_b"))
+    spellings = [str(workspaces), str(workspaces) + os.sep]
+    if os.name == "nt":
+        spellings += [workspaces.as_posix(), str(workspaces).swapcase()]
+    for spelling in spellings:
+        assert db.retag_kanban_worker_sessions(spelling) == 0, spelling
+    row = db._conn.execute("SELECT source FROM sessions WHERE id = 'later'").fetchone()
+    assert row[0] == "cli"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="separator and case folding are NTFS semantics")
+def test_retag_matches_native_and_posix_cwd_spellings_on_windows(db, tmp_path):
+    """Rows are ``os.getcwd()``-native (backslashes, whatever drive-letter case the
+    process inherited) while the root arrives as a ``Path`` spelling; the
+    persisted cwd grammar admits either separator, so every spelling is one tree.
+    """
+    workspaces = tmp_path / "kanban" / "workspaces"
+    native = str(workspaces / "t_native")
+    posix = (workspaces / "t_posix").as_posix()
+    other_case = str(workspaces / "t_case").swapcase()
+    db.create_session(session_id="native", source="cli", cwd=native)
+    db.create_session(session_id="posix", source="cli", cwd=posix)
+    db.create_session(session_id="case", source="cli", cwd=other_case)
+    # A sibling whose name merely starts with the root's last component.
+    db.create_session(session_id="sibling", source="cli", cwd=str(workspaces) + "-old\t_x")
+
+    assert db.retag_kanban_worker_sessions(workspaces.as_posix()) == 3
+
+    sources = {row[0]: row[1] for row in db._conn.execute("SELECT id, source FROM sessions")}
+    assert sources == {"native": "kanban", "posix": "kanban", "case": "kanban", "sibling": "cli"}
+
+
+def test_retag_refuses_a_filesystem_root(db, tmp_path):
+    """A root that is the whole drive/filesystem would retag every cli row on the host."""
+    db.create_session(session_id="mine", source="cli", cwd=str(tmp_path / "www" / "repo"))
+
+    assert db.retag_kanban_worker_sessions(os.path.abspath(os.sep)) == 0
+    assert db.retag_kanban_worker_sessions(os.sep) == 0
+    row = db._conn.execute("SELECT source FROM sessions WHERE id = 'mine'").fetchone()
+    assert row[0] == "cli"
+    assert db._conn.execute("SELECT COUNT(*) FROM state_meta WHERE key LIKE 'kanban_worker_source_retagged:%'").fetchone()[0] == 0

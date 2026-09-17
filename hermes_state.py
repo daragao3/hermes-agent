@@ -1296,23 +1296,59 @@ class SessionDB(
         else:
             self._write_sql(sql, (key, value))
 
+    @staticmethod
+    def _kanban_workspaces_prefix(workspaces_root: str) -> str:
+        """Host-canonical spelling of a workspaces root, shared by the retag match and its gate key.
+        ``normpath`` collapses separators and a trailing slash; ``normcase`` folds case and ``/`` to
+        ``\\`` on Windows (identity on POSIX), so ``C:/x`` and ``c:\\x\\`` are one root on NTFS and
+        close one gate. A filesystem root is refused: it would sweep every cli row on the host."""
+        raw = str(workspaces_root).strip()
+        if not raw.rstrip("/\\"):
+            return ""
+        prefix = os.path.normcase(os.path.normpath(raw))
+        if os.path.dirname(prefix) == prefix:
+            return ""
+        return prefix
+
     def retag_kanban_worker_sessions(self, workspaces_root: str) -> int:
         """Retag legacy kanban worker rows from ``cli`` to ``kanban`` by cwd under the board's workspaces
-        root; gated once per root via state_meta. Returns rows retagged."""
-        prefix = str(workspaces_root).rstrip("/\\")
+        root; gated once per root via state_meta. Returns rows retagged.
+
+        The match runs in Python on ``normcase(normpath())`` of both sides, not in SQL: session cwd rows
+        are ``os.getcwd()``-native and the persisted grammar admits either separator on Windows, while the
+        caller's root is a ``Path`` spelling -- a ``cwd LIKE '<root>/%'`` pattern matched no child on
+        Windows and still closed the gate empty. The gate key carries the normalised prefix, so on
+        Windows it is a new (lower-case, backslash) key and the sweep re-arms once per root on hosts where
+        the old pattern closed it with nothing reclaimed; POSIX keys are unchanged."""
+        prefix = self._kanban_workspaces_prefix(workspaces_root)
         if not prefix:
             return 0
         gate = f"kanban_worker_source_retagged:{prefix}"
         if self.get_meta(gate) == "1":
             return 0
+        child_prefix = prefix + os.sep
+
+        def _under_root(cwd: object) -> bool:
+            if not isinstance(cwd, str) or not cwd:
+                return False
+            norm = os.path.normcase(os.path.normpath(cwd))
+            return norm == prefix or norm.startswith(child_prefix)
+
         def _do(conn):
-            cursor = conn.execute(
-                "UPDATE sessions SET source = 'kanban' "
-                "WHERE source = 'cli' AND (cwd = ? OR cwd LIKE ? ESCAPE '\\')",
-                (prefix, _escape_like(prefix) + "/%"),
-            )
-            # rowcount BEFORE set_meta reuses this cursor for its INSERT.
-            retagged = cursor.rowcount or 0
+            rows = conn.execute(
+                "SELECT id, cwd FROM sessions WHERE source = 'cli' AND cwd IS NOT NULL"
+            ).fetchall()
+            ids = [(row[0],) for row in rows if _under_root(row[1])]
+            cursor = conn.cursor()
+            retagged = 0
+            if ids:
+                # Same transaction as the SELECT; the source guard only matters if _execute_write
+                # replays this callback. executemany sums rowcount across the batch.
+                cursor.executemany(
+                    "UPDATE sessions SET source = 'kanban' WHERE id = ? AND source = 'cli'", ids,
+                )
+                # rowcount BEFORE set_meta reuses this cursor for its INSERT.
+                retagged = cursor.rowcount or 0
             self.set_meta(gate, "1", cursor=cursor)
             return retagged
         return self._execute_write(_do)
