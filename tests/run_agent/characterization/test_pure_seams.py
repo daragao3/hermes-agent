@@ -18,8 +18,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import run_agent
 from run_agent import AIAgent, IterationBudget
+from agent.message_sanitization import _repair_tool_call_arguments
+from agent.tool_dispatch_helpers import _paths_overlap, _should_parallelize_tool_batch
 from agent.transports.types import NormalizedResponse, ToolCall
 
 
@@ -55,7 +56,7 @@ class TestRepairToolCallArguments:
         ],
     )
     def test_repairs(self, raw, expected):
-        assert run_agent._repair_tool_call_arguments(raw, "tool") == expected
+        assert _repair_tool_call_arguments(raw, "tool") == expected
 
 
 # ===========================================================================
@@ -75,45 +76,49 @@ def _tc(name: str, arguments):
 
 class TestShouldParallelizeToolBatch:
     def test_single_call_never_parallel(self):
-        assert run_agent._should_parallelize_tool_batch([_tc("read_file", {"path": "a"})]) is False
+        assert _should_parallelize_tool_batch([_tc("read_file", {"path": "a"})]) is False
 
     def test_two_readonly_web_search_parallel(self):
         batch = [_tc("web_search", {"q": "a"}), _tc("web_search", {"q": "b"})]
-        assert run_agent._should_parallelize_tool_batch(batch) is True
+        assert _should_parallelize_tool_batch(batch) is True
 
     def test_two_reads_distinct_paths_parallel(self):
         batch = [_tc("read_file", {"path": "/tmp/a.txt"}), _tc("read_file", {"path": "/tmp/b.txt"})]
-        assert run_agent._should_parallelize_tool_batch(batch) is True
+        assert _should_parallelize_tool_batch(batch) is True
 
-    def test_two_reads_overlapping_paths_sequential(self):
+    def test_two_reads_overlapping_paths_parallel(self):
+        # Re-pinned to the reader/writer planner (cb1e059a98, 2026-07-31):
+        # reader<->reader overlap stays parallel; only an overlap involving a
+        # writer closes the run. Contract test: tests/run_agent/
+        # test_tool_batch_segmentation.py::test_reader_reader_same_file_stays_parallel.
         batch = [_tc("read_file", {"path": "/tmp/dir"}), _tc("read_file", {"path": "/tmp/dir/inner.txt"})]
-        assert run_agent._should_parallelize_tool_batch(batch) is False
+        assert _should_parallelize_tool_batch(batch) is True
 
     def test_never_parallel_tool_forces_sequential(self):
         batch = [_tc("clarify", {"question": "?"}), _tc("web_search", {"q": "a"})]
-        assert run_agent._should_parallelize_tool_batch(batch) is False
+        assert _should_parallelize_tool_batch(batch) is False
 
     def test_unknown_tool_in_batch_sequential(self):
         batch = [_tc("web_search", {"q": "a"}), _tc("terminal", {"cmd": "ls"})]
-        assert run_agent._should_parallelize_tool_batch(batch) is False
+        assert _should_parallelize_tool_batch(batch) is False
 
     def test_unparseable_args_sequential(self):
         batch = [_tc("read_file", "{not json"), _tc("read_file", {"path": "/tmp/b"})]
-        assert run_agent._should_parallelize_tool_batch(batch) is False
+        assert _should_parallelize_tool_batch(batch) is False
 
 
 class TestPathsOverlap:
     def test_identical(self):
-        assert run_agent._paths_overlap(Path("/a/b"), Path("/a/b")) is True
+        assert _paths_overlap(Path("/a/b"), Path("/a/b")) is True
 
     def test_parent_child(self):
-        assert run_agent._paths_overlap(Path("/a"), Path("/a/b/c")) is True
+        assert _paths_overlap(Path("/a"), Path("/a/b/c")) is True
 
     def test_siblings_no_overlap(self):
-        assert run_agent._paths_overlap(Path("/a/b"), Path("/a/c")) is False
+        assert _paths_overlap(Path("/a/b"), Path("/a/c")) is False
 
     def test_disjoint_roots(self):
-        assert run_agent._paths_overlap(Path("/x/y"), Path("/p/q")) is False
+        assert _paths_overlap(Path("/x/y"), Path("/p/q")) is False
 
 
 # ===========================================================================

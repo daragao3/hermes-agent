@@ -7,7 +7,9 @@ so that an upcoming upstream refactor — which splits run_agent.py into
 green.  Passing against the current code is what makes them a valid oracle.
 
 The model-call seam is the SDK client constructed from the module-level
-``run_agent.OpenAI`` symbol.  We monkeypatch that symbol to return a single
+``agent.process_bootstrap.OpenAI`` proxy (``run_agent.OpenAI`` is only a
+re-export; the client factory resolves the proxy at call time, so the
+re-export is never read).  We monkeypatch that proxy to return a single
 shared :class:`ScriptedClient` instance whose ``.chat.completions.create``
 pops successive scripted responses and records every received ``kwargs``.
 
@@ -346,7 +348,6 @@ def make_agent(
 
     ``task_id`` is fixed (not a uuid) so message/identity snapshots are stable.
     """
-    import run_agent
     import model_tools
     from run_agent import AIAgent
 
@@ -377,7 +378,7 @@ def make_agent(
 
     # Patches that must remain active across construction AND run_conversation.
     stack.enter_context(
-        patch.object(run_agent, "OpenAI", lambda **kwargs: shared_client)
+        patch("agent.process_bootstrap.OpenAI", lambda **kwargs: shared_client)
     )
     stack.enter_context(
         patch.object(model_tools, "get_tool_definitions", lambda *a, **k: tool_defs)
@@ -468,7 +469,8 @@ def make_agent(
     stack.enter_context(patch.object(agent, "_persist_session"))
     stack.enter_context(patch.object(agent, "_save_trajectory"))
     stack.enter_context(patch.object(agent, "_cleanup_task_resources"))
-    stack.enter_context(patch.object(agent, "_save_session_log"))
+    # ``_save_session_log`` (automatic session JSON snapshots) was removed
+    # upstream in 7a5fc1b2a9; there is no longer a side effect to neutralize.
 
     return agent
 
