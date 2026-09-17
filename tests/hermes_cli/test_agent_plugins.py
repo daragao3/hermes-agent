@@ -73,7 +73,7 @@ def test_loads_manifest_skill_and_stdio_server(tmp_path: Path) -> None:
     assert server["cwd"] == str(root.resolve())
     assert server["env"]["PLUGIN_ROOT"] == str(root.resolve())
     assert server["env"]["PLUGIN_DATA"] == str((tmp_path / "data").resolve())
-    assert server["env"]["CACHE"] == str((tmp_path / "data").resolve() / "cache")
+    assert server["env"]["CACHE"] == f'{(tmp_path / "data").resolve()}/cache'  # textual, like args
     assert (tmp_path / "data").is_dir()
 
 
