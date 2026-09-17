@@ -160,6 +160,22 @@ def _http_error_message(exc: requests.HTTPError) -> str:
     return (f"{code}: {message}" if code and code not in message else message) or str(exc)
 
 
+# xAI answers EVERY endpoint -- /v1/models included -- with this once the TEAM (not the key)
+# is out of credits or over its monthly spending limit. Measured 2026-09-17 on this box: the
+# key itself is valid (GET /v1/api-key 200, ACLs api-key:endpoint:* / api-key:model:*), and
+# the fix lives in the xAI console (buy credits / raise the limit), not in any config here.
+_XAI_BILLING_MARKERS = ("used all available credits", "monthly spending limit", "purchase more credits")
+XAI_CONSOLE_BILLING_URL = "https://console.x.ai/ (Billing -> Credits / Spending limits)"
+
+
+def _is_xai_billing_wall(exc: requests.HTTPError) -> bool:
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) != 403:
+        return False
+    text = str(getattr(response, "text", "") or "").lower()
+    return any(marker in text for marker in _XAI_BILLING_MARKERS)
+
+
 def _error_json(error: str, exc: BaseException) -> str:
     body = {"success": False, "provider": "xai", "tool": "x_search", "error": error}
     return json.dumps({**body, "error_type": type(exc).__name__}, ensure_ascii=False)
@@ -267,8 +283,18 @@ def x_search_tool(
         }
         return json.dumps(result, ensure_ascii=False)
     except requests.HTTPError as e:
-        logger.error("x_search failed: %s", e, exc_info=True)
-        return _error_json(_http_error_message(e), e)
+        message = _http_error_message(e)
+        if _is_xai_billing_wall(e):
+            # An account state, not a fault: say what to do, once per call, without a traceback.
+            logger.warning("x_search unavailable: xAI team credits/spending limit -- %s (fix at %s)",
+                           message, XAI_CONSOLE_BILLING_URL)
+            return _error_json(
+                f"{message} -- xAI account state (the key is valid); buy credits or raise the "
+                f"monthly spending limit at {XAI_CONSOLE_BILLING_URL}", e)
+        # Name the upstream message, not just "403 Client Error": the bare status told the
+        # 2026-09-17 triage nothing about WHY.
+        logger.error("x_search failed: %s (%s)", e, message, exc_info=True)
+        return _error_json(message, e)
     except requests.ReadTimeout as e:
         logger.error("x_search timed out: %s", e, exc_info=True)
         timeout = _get_x_search_int("timeout_seconds", DEFAULT_X_SEARCH_TIMEOUT_SECONDS, 30)
