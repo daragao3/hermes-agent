@@ -6,6 +6,8 @@ import shlex
 import subprocess
 import sys
 
+import pytest
+
 from hermes_cli import kanban_db as kb
 from hermes_cli.kanban_db_connect import connect
 from tools import kanban_tools
@@ -32,6 +34,11 @@ def _worker_board(tmp_path, monkeypatch):
     return conn, own, foreign
 
 
+# Five cold interpreter starts (a LocalEnvironment child, run_inline_shell, a shell hook, two
+# explicit spawns), each of which itself runs `hermes kanban complete` as a subprocess: ~40 s
+# on a quiet box, so the 30 s per-test cap flakes it under the parallel runner (2026-09-17
+# acceptance run: timed out, passed on retry). Budget the real cost.
+@pytest.mark.timeout(180)
 def test_terminal_descendants_cannot_mutate_even_after_task_is_removed(tmp_path, monkeypatch):
     conn, own, foreign = _worker_board(tmp_path, monkeypatch)
     script = tmp_path / "descendant.py"
