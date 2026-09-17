@@ -50,6 +50,12 @@ _HOOK_TIMEOUT_FAIL_CLOSED_HOOKS: Set[str] = {"pre_tool_call"}
 _HOOK_CALLER_THREAD_HOOKS: Set[str] = {"subagent_stop"}
 # After a timeout, suppress the same callback this long so a hung hook cannot pile up threads.
 _HOOK_TIMEOUT_SUPPRESSION_SECONDS = 60.0
+# Concurrent runs of ONE hook callback before further fires are skipped. One slot per callback
+# (the pre-2026-09-17 shape) meant every concurrent tool completion across parallel cron jobs
+# skipped the observer hooks -- 32 "skipped ... while still running" a day on post_tool_call
+# alone (dropped Langfuse tool spans, disk-cleanup ticks) with ZERO actual timeouts behind
+# them. Bounded so a merely slow callback still cannot pile up unbounded abandoned workers.
+_HOOK_MAX_CONCURRENT_RUNS = 8
 _PRE_TOOL_CALL_TIMEOUT_BLOCK_MESSAGE = "pre_tool_call plugin callback timed out or is still running"
 
 # System-prompt sections are tightly bounded: they become high-trust prompt bytes charged every turn.
@@ -202,22 +208,27 @@ class PluginDispatchMixin:
         self, hook_name: str, cb: Callable, kwargs: Dict[str, Any], timeout: float
     ) -> Any:
         """Run one callback on a daemon worker with a wall-clock cap; ``_HOOK_SKIPPED`` when
-        suppressed, still running, timed out (worker abandoned, never joined), or the worker
-        could not be started. Exceptions propagate."""
+        suppressed after a timeout, at the concurrent-run cap, timed out (worker abandoned,
+        never joined), or the worker could not be started. Exceptions propagate."""
         callback_name = getattr(cb, "__name__", repr(cb))
         callback_key = (hook_name, id(cb))
         token = object()
+        max_runs = getattr(self, "_hook_max_concurrent_runs", _HOOK_MAX_CONCURRENT_RUNS)
         with self._hook_timeout_lock:
             suppressed_until = self._hook_timeout_suppressed_until.get(callback_key)
-            running = callback_key in self._hook_running_callbacks
-            if (suppressed_until is not None and suppressed_until > time.monotonic()) or running:
+            live = self._hook_running_callbacks.get(callback_key) or set()
+            if suppressed_until is not None and suppressed_until > time.monotonic():
                 logger.warning(
-                    "Hook '%s' callback %s skipped after previous "
-                    "timeout or while still running", hook_name, callback_name)
+                    "Hook '%s' callback %s skipped after previous timeout", hook_name, callback_name)
+                return _HOOK_SKIPPED
+            if len(live) >= max_runs:
+                logger.warning(
+                    "Hook '%s' callback %s skipped: %d run(s) still in flight (cap %d)",
+                    hook_name, callback_name, len(live), max_runs)
                 return _HOOK_SKIPPED
             if suppressed_until is not None:
                 self._hook_timeout_suppressed_until.pop(callback_key, None)
-            self._hook_running_callbacks[callback_key] = token
+            self._hook_running_callbacks.setdefault(callback_key, set()).add(token)
 
         context = contextvars.copy_context()
         done = threading.Event()
@@ -226,8 +237,11 @@ class PluginDispatchMixin:
 
         def _release_token() -> None:
             with self._hook_timeout_lock:
-                if self._hook_running_callbacks.get(callback_key) is token:
-                    self._hook_running_callbacks.pop(callback_key, None)
+                live_now = self._hook_running_callbacks.get(callback_key)
+                if live_now is not None:
+                    live_now.discard(token)
+                    if not live_now:
+                        self._hook_running_callbacks.pop(callback_key, None)
 
         def _runner() -> None:
             try:

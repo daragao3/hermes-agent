@@ -2862,12 +2862,47 @@ def get_ticker_last_error() -> Optional[str]:
 
 # --- Job CRUD Operations ---
 
+# Windows reader-side contention on jobs.json. The writer is ``atomic_replace`` (a rename), and a
+# reader that opens the target in the same instant gets winerror 5/32 (sharing violation /
+# "Access is denied") -- a transient, not a permission problem. On 2026-09-17 02:45:37Z that one
+# open failed inside the completion path of tracker-operator-drain ("Cron completion event
+# failed"), so the run's cron_completed was never emitted and it read as started-never-finished.
+# The writer already retries the rename against a held handle (utils._REPLACE_RETRY_*); this is the
+# mirror for the reader, same contention set, same budget shape.
+_JOBS_READ_RETRY_ATTEMPTS = 10
+_JOBS_READ_RETRY_BASE_DELAY_S = 0.02
+_JOBS_READ_RETRY_MAX_DELAY_S = 0.15
+
+
+def _is_contended_windows_read_error(exc: OSError) -> bool:
+    from utils import _is_contended_windows_replace_error
+
+    return _is_contended_windows_replace_error(exc)
+
+
+def _read_jobs_file_text(jobs_file: Path) -> str:
+    """``jobs_file`` text, retrying a Windows sharing-violation open a bounded number of times."""
+    from agent.retry_utils import jittered_backoff
+
+    attempt = 0
+    while True:
+        try:
+            with open(jobs_file, "r", encoding="utf-8-sig") as f:
+                return f.read()
+        except OSError as exc:
+            attempt += 1
+            if attempt > _JOBS_READ_RETRY_ATTEMPTS or not _is_contended_windows_read_error(exc):
+                raise
+            time.sleep(jittered_backoff(
+                attempt, base_delay=_JOBS_READ_RETRY_BASE_DELAY_S,
+                max_delay=_JOBS_READ_RETRY_MAX_DELAY_S))
+
+
 def _parse_jobs_file(jobs_file: Path) -> Tuple[Any, bool]:
     """Tolerant jobs.json parse -> ``(data, used_strict_fallback)``: utf-8-sig absorbs a BOM, strict
     failure retries with ``strict=False``. IO/fallback errors propagate (caller decides repair vs
     bail)."""
-    with open(jobs_file, "r", encoding="utf-8-sig") as f:
-        raw = f.read()
+    raw = _read_jobs_file_text(jobs_file)
     try:
         return json.loads(raw), False
     except json.JSONDecodeError:

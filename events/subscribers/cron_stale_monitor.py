@@ -38,6 +38,18 @@ from events.subscribers.base import BaseSubscriber
 
 logger = logging.getLogger(__name__)
 
+# Mirrors cron.scheduler._CRON_SUSPEND_GAP_SECS / suspended_seconds (kept in
+# step by tests/events/subscribers/test_cron_stale_monitor.py).
+_SUSPEND_GAP_SECS = 60.0
+
+
+def _suspended_seconds(gap: float, poll_interval: float,
+                       threshold: float = _SUSPEND_GAP_SECS) -> float:
+    """Seconds of one poll ``gap`` attributable to the loop not running at all."""
+    if gap <= threshold or gap <= poll_interval:
+        return 0.0
+    return gap - poll_interval
+
 
 class CronStaleMonitor(BaseSubscriber):
     subscriber_id = "cron-stale-monitor"
@@ -106,6 +118,19 @@ class CronStaleMonitor(BaseSubscriber):
         # One alert per ticker outage; cleared when the heartbeat goes fresh
         # again so a SECOND outage still alerts.
         self._ticker_alerted: bool = False
+        # Host-suspend awareness (2026-09-17). A poll gap far larger than the
+        # poll cadence is time the whole host was asleep, not time a job was
+        # wedged: on 2026-09-17 a 7h19m Modern Standby made every open run
+        # read 26330s old 15s after resume, and the responder stopped three
+        # healthy runs on that number. The gateway watchdog already discounts
+        # suspends ("host was suspended, not a dead gateway"); this is the
+        # same rule for cron ages, using the scheduler's own gap arithmetic.
+        # Per open job: seconds of suspend since its cron_started.
+        self._suspend_credit: Dict[str, float] = {}
+        self._last_poll_at: Optional[datetime] = None
+        # Suspend seconds accumulated since the ticker heartbeat last advanced.
+        self._ticker_suspend_credit: float = 0.0
+        self._ticker_last_age: Optional[float] = None
         self._default_threshold = (
             default_threshold_seconds
             if default_threshold_seconds is not None
@@ -466,6 +491,7 @@ class CronStaleMonitor(BaseSubscriber):
                 return
             job_name = event.payload.get("job_name") or event.source or job_id
             self._open_jobs[job_id] = (started_at, job_name)
+            self._suspend_credit.pop(job_id, None)
             self._execution_ids.pop(job_id, None)
             if event.payload.get("execution_id"):
                 self._execution_ids[job_id] = event.payload["execution_id"]
@@ -480,6 +506,7 @@ class CronStaleMonitor(BaseSubscriber):
                 return
             self._execution_ids.pop(job_id, None)
             self._open_jobs.pop(job_id, None)
+            self._suspend_credit.pop(job_id, None)
             self._alerted.discard(job_id)
             # It finished on its own, so a later shutdown did not kill it.
             self._forget_started_ids_for(job_id)
@@ -494,9 +521,36 @@ class CronStaleMonitor(BaseSubscriber):
 
     def poll(self) -> int:
         count = super().poll()
+        self._credit_suspend_gap(datetime.now(timezone.utc))
         self._check_stale()
         self._check_ticker_stale()
         return count
+
+    def _credit_suspend_gap(self, now: datetime) -> None:
+        """Charge a poll gap that exceeds the suspend threshold to every open
+        run (and to the ticker) as time NOT spent running.
+
+        ``suspended_seconds`` is the scheduler's own rule (cron/scheduler.py):
+        a gap under 60s is scheduling jitter and counts in full; above it,
+        everything but one poll interval is time the loop -- and the host --
+        was not running. Copied rather than imported: cron.scheduler is the
+        heaviest module in the tree and this package must stay cheap.
+        """
+        last = self._last_poll_at
+        self._last_poll_at = now
+        if last is None:
+            return
+        gap = (now - last).total_seconds()
+        credit = _suspended_seconds(gap, float(self.poll_interval_seconds))
+        if credit <= 0:
+            return
+        for job_id in self._open_jobs:
+            self._suspend_credit[job_id] = self._suspend_credit.get(job_id, 0.0) + credit
+        self._ticker_suspend_credit += credit
+        logger.info(
+            "CronStaleMonitor: poll gap %.0fs read as a host suspend; discounting %.0fs "
+            "from %d open run(s) and the ticker heartbeat", gap, credit, len(self._open_jobs),
+        )
 
     def _check_ticker_stale(self) -> None:
         """Alert when the cron ticker's heartbeat stops advancing.
@@ -526,6 +580,13 @@ class CronStaleMonitor(BaseSubscriber):
         # death; alerting here would fire on every fresh install.
         if age is None:
             return
+
+        # A fresh heartbeat (age fell) retires the suspend credit: the ticker
+        # is provably running again, so a later stall must earn its own alert.
+        if self._ticker_last_age is not None and age < self._ticker_last_age:
+            self._ticker_suspend_credit = 0.0
+        self._ticker_last_age = float(age)
+        age = max(0.0, float(age) - self._ticker_suspend_credit)
 
         if age <= self.TICKER_STALE_THRESHOLD_SECONDS:
             self._ticker_alerted = False
@@ -565,7 +626,7 @@ class CronStaleMonitor(BaseSubscriber):
         for job_id, (started_at, job_name) in list(self._open_jobs.items()):
             if job_id in self._alerted:
                 continue
-            age = (now - started_at).total_seconds()
+            age = (now - started_at).total_seconds() - self._suspend_credit.get(job_id, 0.0)
             threshold = self._threshold_for(job_name)
             if age < threshold:
                 continue
