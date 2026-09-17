@@ -12,15 +12,20 @@ import winreg
 from pathlib import Path
 import pytest
 from hermes_cli._subprocess_compat import kill_process_tree, run_text_capture
+from tests.wave_runtime_support import wave_node
 
 def protocol_command():
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Classes\hermes\shell\open\command') as key:
         return winreg.QueryValueEx(key, '')[0]
 
 @pytest.mark.timeout(265)
-def test_packaged_candidate_backend_connection():
+def test_packaged_candidate_backend_connection(tmp_path):
     root = Path(__file__).resolve().parents[1]
-    output = Path('C:/Users/diego/architecture-map/wave-execution/2026-09-08') / ('desktop-connected-' + uuid.uuid4().hex[:8])
+    # Gate on the wave runtime before booting a backend: without node the
+    # renderer probe can never run, and every attempt used to leave a
+    # backend-home tree plus log behind in the wave evidence directory.
+    node = wave_node()
+    output = tmp_path / 'desktop-connected'
     home = output / 'backend-home'
     home.mkdir(parents=True)
     (home / 'config.yaml').write_text('''model:
@@ -68,7 +73,6 @@ auxiliary:
                     time.sleep(0.25)
             else:
                 pytest.fail('Owned backend readiness deadline: ' + (output / 'backend.log').read_text(errors='replace', encoding="utf-8")[-6000:])
-            node = root.parent / 'runtime-wave01-20260908/node/node-v24.20.0-win-x64/node.exe'
             env.update(HERMES_UPGRADE_REMOTE_URL=url,HERMES_UPGRADE_REMOTE_TOKEN=token,HERMES_UPGRADE_CONTRACTS='profile-cron')
             result = run_text_capture([str(node),str(root / 'apps/desktop/e2e/upgrade-packaged-debugger-probe.mjs'),str(output / 'desktop')],cwd=root,env=env,timeout=150)
             print(result.stdout + result.stderr,flush=True)

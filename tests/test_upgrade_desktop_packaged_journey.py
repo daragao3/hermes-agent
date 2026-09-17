@@ -1,21 +1,21 @@
 """Probe packaged startup only after debugger-gated host isolation is installed."""
 import json
-import uuid
 import winreg
 from pathlib import Path
 import pytest
 from hermes_cli._subprocess_compat import run_text_capture
+from tests.wave_runtime_support import wave_node
 
 def protocol_command():
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\hermes\shell\open\command") as key:
         return winreg.QueryValueEx(key, '')[0]
 
 @pytest.mark.timeout(175)
-def test_packaged_failure_journey():
+def test_packaged_failure_journey(tmp_path):
     root = Path(__file__).resolve().parents[1]
     app = root / 'apps/desktop'
-    node = root.parent / 'runtime-wave01-20260908/node/node-v24.20.0-win-x64/node.exe'
-    output = Path('C:/Users/diego/architecture-map/wave-execution/2026-09-08') / ('desktop-packaged-guarded-' + uuid.uuid4().hex[:8])
+    node = wave_node()
+    output = tmp_path / 'desktop-packaged-guarded'
     before = protocol_command()
     print('Guarded journey artifacts:', output, flush=True)
     try:

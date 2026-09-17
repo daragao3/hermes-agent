@@ -1,19 +1,18 @@
 """Validate reconciled Desktop seams in one shared, serial Vitest run."""
 import json
 import subprocess
-import uuid
 from pathlib import Path
 
 import pytest
 from hermes_cli._subprocess_compat import noninteractive_git_env, run_text_capture
+from tests.wave_runtime_support import wave_node
 
 
 @pytest.mark.timeout(205)
-def test_desktop_reconciled_seams():
+def test_desktop_reconciled_seams(tmp_path):
     root = Path(__file__).resolve().parents[1]
-    node = root.parent / "runtime-wave01-20260908/node/node-v24.20.0-win-x64/node.exe"
-    evidence = Path("C:/Users/diego/architecture-map/wave-execution/2026-09-08")
-    report = evidence / ("desktop-reconciled-seams-vitest-" + uuid.uuid4().hex[:8] + ".json")
+    node = wave_node()
+    report = tmp_path / "desktop-reconciled-seams-vitest.json"
     print("Vitest report:", report, flush=True)
     specs = ["electron/git-review-ops.test.ts"]
     git_env = noninteractive_git_env()

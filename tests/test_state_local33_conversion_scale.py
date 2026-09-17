@@ -19,8 +19,11 @@ def digest(path):
 
 
 @pytest.mark.timeout(180)
-def test_ten_thousand_message_conversion():
-    output = Path('C:/Users/diego/architecture-map/wave-execution/2026-09-08') / ('schema-scale-' + uuid.uuid4().hex[:8])
+def test_ten_thousand_message_conversion(tmp_path):
+    # Synthetic source and converted target live under pytest's tmp_path; the
+    # 2026-09-08 wave evidence tree this once wrote into is a ceremony record,
+    # not a suite scratch area.
+    output = tmp_path / ('schema-scale-' + uuid.uuid4().hex[:8])
     output.mkdir()
     source, target = output / 'source.db', output / 'converted.db'
     with closing(sqlite3.connect(source)) as conn:

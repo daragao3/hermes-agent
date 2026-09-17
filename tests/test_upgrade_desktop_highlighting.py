@@ -3,13 +3,13 @@ import json
 import pytest
 from pathlib import Path
 from hermes_cli._subprocess_compat import run_text_capture
+from tests.wave_runtime_support import wave_node
 
 
 @pytest.mark.timeout(85)
 def test_desktop_highlight_contracts(tmp_path):
     root = Path(__file__).resolve().parents[1]
-    node = root.parent / "runtime-wave01-20260908/node/node-v24.20.0-win-x64/node.exe"
-    assert node.is_file(), "isolated Wave 1 Node runtime is required"
+    node = wave_node()
     report = tmp_path / "vitest.json"
     result = run_text_capture([
         str(node), str(root / "node_modules/vitest/vitest.mjs"), "run",

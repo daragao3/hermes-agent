@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from hermes_cli._subprocess_compat import run_text_capture
+from tests.wave_runtime_support import wave_node
 
 
 @pytest.mark.parametrize("config,cache_name", [
@@ -13,10 +14,12 @@ from hermes_cli._subprocess_compat import run_text_capture
     ("tsconfig.e2e.json", "desktop-e2e"),
 ])
 @pytest.mark.timeout(325)
-def test_desktop_typecheck(config, cache_name):
+def test_desktop_typecheck(config, cache_name, tmp_path):
     root = Path(__file__).resolve().parents[1]
-    node = root.parent / "runtime-wave01-20260908/node/node-v24.20.0-win-x64/node.exe"
-    cache = Path("C:/Users/diego/architecture-map/wave-execution/2026-09-08") / (cache_name + ".tsbuildinfo")
+    node = wave_node()
+    # The incremental cache once persisted in the wave evidence tree; a suite
+    # run has no business writing there, so it is per-run under tmp_path.
+    cache = tmp_path / (cache_name + ".tsbuildinfo")
     try:
         result = run_text_capture([
             str(node), str(root / "node_modules/typescript/bin/tsc"),
