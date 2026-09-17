@@ -13,6 +13,7 @@ import pytest
 
 from hermes_cli import worktree_ops
 from pathlib import Path
+from tests.timeout_budget import scaled
 
 
 @functools.cache
@@ -1176,6 +1177,12 @@ class TestPruneParallelEquivalence:
                     out.add(kind)
         return out
 
+    # Backstop only, same reason as test_ten_concurrent_worktrees above: two
+    # nine-tree boards mean 18 worktree adds/commits plus two full prune
+    # passes, each of which spawns the real ``gh`` once per unpushed tree.
+    # Measured 23s alone on Windows; the suite-wide --timeout=30 tripped it
+    # inside ``git worktree remove`` whenever other files shared the run.
+    @pytest.mark.timeout(scaled(300))
     def test_single_and_multi_worker_agree(self, git_repo, monkeypatch):
         import cli
 
@@ -1414,6 +1421,24 @@ class TestPrMergedEscapeHatch:
 
     @staticmethod
     def _stub_gh(tmp_path, monkeypatch, stdout='[{"number": 1}]', exit_code=0):
+        if os.name == "nt":
+            # CreateProcess resolves a bare ``gh`` argv[0] to ``gh.exe`` only —
+            # no PATHEXT, no shebang — so neither this ``#!/bin/sh`` script nor
+            # a ``gh.cmd`` can shadow the real GitHub CLI here (measured: with
+            # a gh.cmd first on PATH the installed gh.exe still ran). Intercept
+            # the spawn at the product's own seam instead; every git call and
+            # the rest of the verdict logic still runs for real. Each call
+            # layers a newer interceptor outermost, so re-stubbing mid-test
+            # (the memoization case) takes effect immediately.
+            real_run = subprocess.run
+
+            def _run(argv, *args, **kwargs):
+                if argv and argv[0] == "gh":
+                    return subprocess.CompletedProcess(argv, exit_code, stdout=stdout, stderr="")
+                return real_run(argv, *args, **kwargs)
+
+            monkeypatch.setattr(subprocess, "run", _run)
+            return
         gh = tmp_path / "bin" / "gh"
         gh.parent.mkdir(parents=True, exist_ok=True)
         gh.write_text(f"#!/bin/sh\nprintf '%s' '{stdout}'\nexit {exit_code}\n", encoding="utf-8")
