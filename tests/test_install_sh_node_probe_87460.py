@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import shlex
 import subprocess
 import tarfile
 from pathlib import Path
@@ -112,6 +113,11 @@ def _run_install_node(tmp_path: Path, node_body: str) -> tuple[int, str, str, li
         }
     )
 
+    # Spell the paths for bash: an unquoted Windows path loses its backslashes,
+    # and install_node then builds its managed tree and links under a
+    # drive-relative `C:UsersdiegoAppData...home` in whatever cwd pytest has.
+    sh_home = shlex.quote(home.as_posix())
+    sh_link_dir = shlex.quote(link_dir.as_posix())
     driver = tmp_path / "driver.sh"
     driver.write_text(
         "#!/usr/bin/env bash\n"
@@ -119,13 +125,13 @@ def _run_install_node(tmp_path: Path, node_body: str) -> tuple[int, str, str, li
         "OS=linux\n"
         "DISTRO=ubuntu\n"
         "NODE_VERSION=26\n"
-        f"HERMES_HOME={home}\n"
+        f"HERMES_HOME={sh_home}\n"
         "HAS_NODE=maybe\n"
         "log_info()    { printf 'INFO %s\\n' \"$*\"; }\n"
         "log_success() { printf 'OK %s\\n' \"$*\"; }\n"
         "log_warn()    { printf 'WARN %s\\n' \"$*\"; }\n"
         "log_error()   { printf 'ERROR %s\\n' \"$*\" >&2; }\n"
-        f"get_command_link_dir() {{ echo {link_dir}; }}\n"
+        f"get_command_link_dir() {{ echo {sh_link_dir}; }}\n"
         "configure_managed_node_npm_prefix() { return 0; }\n"
         "node_satisfies_build() {\n"
         f"{_extract_node_satisfies_build()}"
