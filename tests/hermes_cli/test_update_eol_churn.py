@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from hermes_cli.update_cmd import _normalize_managed_eol
+from tests.timeout_budget import scaled
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 
@@ -190,6 +191,9 @@ def test_autocrlf_input_is_left_alone(tmp_path: Path) -> None:
     assert _autocrlf(repo) == "input"
 
 
+# Backstop only: renormalizes enough real files to overflow one argv, through real git; tripped
+# the suite-wide --timeout=30 inside subprocess.run().communicate() once under a shared box.
+@pytest.mark.timeout(scaled(300))
 def test_churn_across_more_files_than_fit_in_one_argv(tmp_path: Path) -> None:
     """The pathspec goes over stdin, so a fully renormalized tree fits.
 
