@@ -24,6 +24,55 @@ _SENSITIVE_PATH_PREFIXES = (
     "/private/var/db/", "/private/var/root/")
 _SENSITIVE_EXACT_PATHS = {"/var/run/docker.sock", "/run/docker.sock"}
 
+# Windows counterpart, same scope as the POSIX table (system config, boot,
+# service/persistence definitions -- not "anything that needs admin", so Program
+# Files stays writable the way /usr/bin and /opt do). Roots come from the live
+# environment, never a hardcoded C:, and matching is case-insensitive on the
+# native backslash form. %SystemRoot%\Temp is exempt for the same reason
+# /private/var is only partly blocked: a service-account session's %TEMP% lives
+# there and every temp-file write would otherwise be refused.
+_WINDOWS_SENSITIVE_SUBTREES = ("Boot", "EFI", "Recovery", "System Volume Information")
+_WINDOWS_SENSITIVE_ROOT_FILES = ("bootmgr", "BOOTNXT", "pagefile.sys", "hiberfil.sys", "swapfile.sys")
+_WINDOWS_ALL_USERS_STARTUP = r"Microsoft\Windows\Start Menu\Programs\StartUp"
+
+
+def _windows_sensitive_table(environ=None) -> tuple[tuple[str, ...], tuple[str, ...], frozenset]:
+    """``(prefixes, exempt_prefixes, exact)`` in ``ntpath.normcase`` form for the
+    host described by *environ* (default ``os.environ``). Pure: callable on any OS."""
+    import ntpath
+    env = os.environ if environ is None else environ
+    system_root = env.get("SystemRoot") or env.get("windir") or r"C:\Windows"
+    system_drive = env.get("SystemDrive") or ntpath.splitdrive(system_root)[0] or "C:"
+    program_data = env.get("ProgramData") or ntpath.join(system_drive + "\\", "ProgramData")
+
+    def norm(p: str) -> str:
+        return ntpath.normcase(ntpath.normpath(p))
+
+    drive_root = system_drive.rstrip("\\") + "\\"
+    prefixes = [norm(system_root) + "\\"]
+    prefixes += [norm(ntpath.join(drive_root, sub)) + "\\" for sub in _WINDOWS_SENSITIVE_SUBTREES]
+    prefixes.append(norm(ntpath.join(program_data, _WINDOWS_ALL_USERS_STARTUP)) + "\\")
+    exempt = (norm(ntpath.join(system_root, "Temp")) + "\\",)
+    exact = frozenset(norm(ntpath.join(drive_root, name)) for name in _WINDOWS_SENSITIVE_ROOT_FILES)
+    return tuple(prefixes), exempt, exact
+
+
+def _is_windows_sensitive(candidate: str, table=None) -> bool:
+    """True when *candidate* (any spelling: native, ``C:/x``, MSYS ``/c/x``) lands in
+    the Windows sensitive table. Relative / drive-relative inputs never match."""
+    import ntpath
+    from tools.environments.local import _msys_to_windows_path
+    prefixes, exempt, exact = table or _windows_sensitive_table()
+    native = _msys_to_windows_path(candidate)
+    if not ntpath.splitdrive(native)[0]:
+        return False
+    normed = ntpath.normcase(ntpath.normpath(native))
+    if normed in exact:
+        return True
+    if normed.startswith(exempt) or (normed + "\\").startswith(exempt):
+        return False
+    return normed.startswith(prefixes) or (normed + "\\").startswith(prefixes)
+
 _hermes_config_resolved: str | None = None
 _hermes_config_resolved_loaded = False
 _real_hermes_home_cached: str | None = None
@@ -83,6 +132,10 @@ def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None
         return (
             f"Refusing to write to sensitive system path: {filepath}\n"
             "Use the terminal tool with sudo if you need to modify system files.")
+    if os.name == "nt" and any(_is_windows_sensitive(c) for c in (*candidates, filepath)):
+        return (
+            f"Refusing to write to sensitive system path: {filepath}\n"
+            "Use the terminal tool from an elevated session if you need to modify system files.")
     # approvals.mode and other security settings live in config.yaml; a
     # prompt-injected agent could silently disable exec approval by editing it.
     hermes_config = _get_hermes_config_resolved()

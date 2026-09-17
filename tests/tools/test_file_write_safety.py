@@ -232,8 +232,8 @@ class TestSafeRootDenialMessageIntegration:
 
 @pytest.mark.skipif(
     os.name == "nt",
-    reason="the sensitive-prefix table is POSIX (/etc, /boot, /private); on Windows "
-           "normpath renders those drive-relative and no Windows table exists",
+    reason="these paths exercise the POSIX prefix table (/etc, /boot, /private); on "
+           "Windows normpath renders them drive-relative -- see TestCheckSensitivePathWindows",
 )
 class TestCheckSensitivePathMacOSBypass:
     """Verify _check_sensitive_path blocks /private/etc paths (issue #8734)."""
@@ -261,6 +261,112 @@ class TestCheckSensitivePathMacOSBypass:
     def test_safe_path_allowed(self):
         from tools.file_tools_write_guards import _check_sensitive_path
         assert _check_sensitive_path("/tmp/safe_file.txt") is None
+
+
+class TestWindowsSensitiveTable:
+    """Pure-function coverage of the Windows table: runs on every host with a
+    synthetic environment, so the CI Linux lane guards it too."""
+
+    _ENV = {"SystemRoot": r"D:\Win", "SystemDrive": "D:", "ProgramData": r"D:\PD"}
+
+    @pytest.fixture
+    def table(self):
+        from tools.file_tools_write_guards import _windows_sensitive_table
+        return _windows_sensitive_table(self._ENV)
+
+    def test_roots_come_from_the_environment(self, table):
+        prefixes, exempt, exact = table
+        assert prefixes[0] == "d:\\win\\"
+        assert "d:\\boot\\" in prefixes and "d:\\efi\\" in prefixes
+        assert "d:\\pd\\microsoft\\windows\\start menu\\programs\\startup\\" in prefixes
+        assert exempt == ("d:\\win\\temp\\",)
+        assert "d:\\bootmgr" in exact and "d:\\pagefile.sys" in exact
+
+    def test_defaults_when_environment_is_bare(self):
+        from tools.file_tools_write_guards import _windows_sensitive_table
+        prefixes, exempt, exact = _windows_sensitive_table({})
+        assert prefixes[0] == "c:\\windows\\"
+        assert exempt == ("c:\\windows\\temp\\",)
+        assert "c:\\bootmgr" in exact
+
+    @pytest.mark.parametrize("path", [
+        r"D:\Win\System32\drivers\etc\hosts",
+        r"d:\WIN\system32\config\SAM",          # case-insensitive
+        "D:/Win/System32/Tasks/persist.xml",    # forward slashes
+        r"D:\Win",                              # the root itself
+        r"D:\Boot\BCD",
+        r"D:\bootmgr",
+        r"D:\PD\Microsoft\Windows\Start Menu\Programs\StartUp\evil.lnk",
+    ])
+    def test_sensitive(self, table, path):
+        from tools.file_tools_write_guards import _is_windows_sensitive
+        assert _is_windows_sensitive(path, table)
+
+    @pytest.mark.parametrize("path", [
+        r"D:\Win\Temp\session.log",             # exempt: service-account %TEMP%
+        r"D:\WinOld\x",                         # prefix boundary
+        r"D:\Users\alice\notes.txt",
+        r"D:\Program Files\Git\etc\profile",    # /usr-class, not in the table
+        r"C:\Win\System32\x",                   # another drive
+        r"Win\System32\x",                      # relative: never matched here
+        r"\Win\System32\x",                     # drive-relative
+        "/etc/hosts",
+    ])
+    def test_not_sensitive(self, table, path):
+        from tools.file_tools_write_guards import _is_windows_sensitive
+        assert not _is_windows_sensitive(path, table)
+
+
+@pytest.mark.windows_only
+class TestCheckSensitivePathWindows:
+    """The guard on a real Windows host, through _check_sensitive_path."""
+
+    @pytest.fixture
+    def system_root(self):
+        root = os.environ.get("SystemRoot") or r"C:\Windows"
+        assert os.path.isdir(root)
+        return root
+
+    def test_hosts_file_blocked(self, system_root):
+        from tools.file_tools_write_guards import _check_sensitive_path
+        err = _check_sensitive_path(os.path.join(system_root, "System32", "drivers", "etc", "hosts"))
+        assert err and "sensitive system path" in err and "elevated" in err
+
+    def test_forward_slash_and_msys_spellings_blocked(self, system_root):
+        from tools.file_tools_write_guards import _check_sensitive_path
+        from tools.environments.local import _windows_to_msys_path
+        target = os.path.join(system_root, "System32", "config", "SAM")
+        assert _check_sensitive_path(target.replace("\\", "/")) is not None
+        assert _check_sensitive_path(_windows_to_msys_path(target)) is not None
+
+    def test_relative_traversal_resolves_and_is_blocked(self, system_root, tmp_path, monkeypatch):
+        from tools.file_tools_write_guards import _check_sensitive_path
+        target = os.path.join(system_root, "System32", "drivers", "etc", "hosts")
+        if os.path.splitdrive(str(tmp_path))[0].lower() != os.path.splitdrive(target)[0].lower():
+            pytest.skip("tmp_path and SystemRoot on different drives; no relative spelling")
+        monkeypatch.chdir(tmp_path)
+        assert _check_sensitive_path(os.path.relpath(target, tmp_path)) is not None
+
+    def test_write_file_tool_refuses_hosts_end_to_end(self, system_root, tmp_path, monkeypatch):
+        import json
+        from tools.file_tools import write_file_tool
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+        hosts = os.path.join(system_root, "System32", "drivers", "etc", "hosts")
+        before = open(hosts, "rb").read()
+        r = json.loads(write_file_tool(hosts, "127.0.0.1 evil\n", task_id="t-win-sens"))
+        assert "sensitive system path" in (r.get("error") or "")
+        assert open(hosts, "rb").read() == before
+
+    def test_windows_temp_is_exempt(self, system_root):
+        from tools.file_tools_write_guards import _check_sensitive_path
+        assert _check_sensitive_path(os.path.join(system_root, "Temp", "hermes-probe.txt")) is None
+
+    def test_user_and_program_files_paths_allowed(self, tmp_path):
+        from tools.file_tools_write_guards import _check_sensitive_path
+        assert _check_sensitive_path(str(tmp_path / "safe.txt")) is None
+        program_files = os.environ.get("ProgramFiles") or r"C:\Program Files"
+        assert _check_sensitive_path(os.path.join(program_files, "Git", "etc", "profile")) is None
+
 
 
 class TestAtomicWrite:
