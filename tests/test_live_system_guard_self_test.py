@@ -1260,3 +1260,74 @@ def test_real_provider_auth_probe_marker_restores_the_probe(monkeypatch):
     assert result is not None and result["id"] == "global", (
         "the real_provider_auth_probe marker did not restore the real probe"
     )
+
+
+# ──────────────────── gh-CLI token probe guard ────────────────────
+#
+# Sibling canary for the third _NetworkProbeGuard. This one is about a HOST
+# seam rather than the internet: ``copilot_auth._probe_gh_cli_token`` spawns
+# ``gh auth token`` (5 s timeout) against the developer's real credential
+# store, and every auxiliary-client auto-detect reaches it — so every unmarked
+# test that builds an AIAgent or compresses a transcript paid 0.1-5 s to gh,
+# and under host load the spawn tripped its cap in ~1 of 4 runs (2026-09-17).
+# tests/run_agent/conftest.py carried a per-directory stub after a file died
+# on the suite-wide 30 s cap "depending only on how fast gh answered"; the
+# guard hoists that to the whole suite.
+
+
+def test_gh_cli_probe_is_stubbed_by_default():
+    """No unmarked test may spawn the developer's ``gh``."""
+    import hermes_cli.copilot_auth as copilot_auth
+
+    assert getattr(copilot_auth._probe_gh_cli_token, "_hermes_gh_cli_probe_guard", False), (
+        "the gh-CLI probe guard is not installed on _probe_gh_cli_token — an "
+        "unmarked test can spawn `gh auth token` against the host keyring"
+    )
+    started = time.perf_counter()
+    assert copilot_auth._probe_gh_cli_token() is None
+    assert time.perf_counter() - started < 0.5, (
+        "the stub took long enough to have spawned gh"
+    )
+
+
+@pytest.mark.real_provider_auth_probe
+def test_the_gh_cli_probe_marker_is_independent_of_provider_auth():
+    """Opting into the internet probes must NOT unstub the ``gh`` spawn.
+
+    Same reasoning as the local-server/provider-auth split: a test of the
+    token exchange has no business spawning the developer's gh, and a shared
+    flag would silently grant both.
+    """
+    import hermes_cli.copilot_auth as copilot_auth
+
+    assert copilot_auth._probe_gh_cli_token() is None
+
+
+@pytest.mark.real_gh_cli_probe
+def test_real_gh_cli_probe_marker_restores_the_probe(monkeypatch):
+    """Tests of the probe's own path/argv logic must get the real implementation.
+
+    Asserts by BEHAVIOUR with ``subprocess.run`` replaced one level beneath —
+    the wrapper stays installed under the marker and delegates at call time,
+    so an identity check would be both wrong and vacuous. No process is
+    spawned: the fake ``run`` records its argv and answers with a token.
+    """
+    import hermes_cli.copilot_auth as copilot_auth
+
+    calls = []
+
+    class _Result:
+        returncode = 0
+        stdout = "gho_not_a_real_token\n"
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _Result()
+
+    monkeypatch.setattr(copilot_auth.shutil, "which", lambda command: "/fake/bin/gh")
+    monkeypatch.setattr(copilot_auth.subprocess, "run", _fake_run)
+
+    assert copilot_auth._probe_gh_cli_token() == "gho_not_a_real_token"
+    assert calls == [["/fake/bin/gh", "auth", "token"]], (
+        "the real_gh_cli_probe marker did not restore the real probe"
+    )

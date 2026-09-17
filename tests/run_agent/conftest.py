@@ -33,35 +33,6 @@ def _fast_retry_backoff(monkeypatch):
     monkeypatch.setattr(_retry_utils, "jittered_backoff", lambda *a, **k: 0.0)
 
 
-@pytest.fixture(autouse=True)
-def _no_live_gh_cli_token(monkeypatch):
-    """Keep auxiliary-client auto-detect off the real ``gh`` CLI.
-
-    Constructing an ``AIAgent`` runs the auxiliary auto-detect, which reaches
-    ``hermes_cli.copilot_auth.resolve_copilot_token`` ->
-    ``_try_gh_cli_token`` -> ``subprocess.run(["gh", "auth", "token"])``
-    against the developer's real GitHub credential store. That is a live host
-    seam in a hermetic unit test, and an expensive one: the probe carries a 5s
-    timeout and is retried per candidate ``gh`` path, so a single test that
-    builds two agents can spend most of the suite-wide 30s ``--timeout=30``
-    budget waiting on it. Because ``--timeout-method=thread`` kills the whole
-    pytest process rather than one test, an overrun takes the entire file down
-    — observed on tests/run_agent/test_in_place_compaction.py, which passed or
-    died depending only on how fast ``gh`` answered that run.
-
-    Returning None is the correct hermetic answer: no gh-CLI token is
-    available to a test process. Tests that exercise Copilot auth for real
-    stub their own layer (env vars or ``resolve_copilot_token``) above this
-    one, so this only removes the accidental dependency, not their coverage.
-    """
-    try:
-        from hermes_cli import copilot_auth
-    except ImportError:
-        return
-
-    monkeypatch.setattr(copilot_auth, "_try_gh_cli_token", lambda: None)
-
-
 @pytest.fixture
 def session_db(tmp_path):
     """A real ``SessionDB`` whose connection is closed before its dir is reclaimed.

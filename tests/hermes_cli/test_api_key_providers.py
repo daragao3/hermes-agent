@@ -336,6 +336,10 @@ class TestResolveApiKeyProviderCredentials:
 
 
 
+    # Drives the real ``_probe_gh_cli_token`` (candidate-path + argv logic)
+    # over a stubbed subprocess.run; the root conftest stubs the probe itself
+    # for every unmarked test.
+    @pytest.mark.real_gh_cli_probe
     def test_try_gh_cli_token_uses_homebrew_path_when_not_on_path(self, monkeypatch):
         from hermes_cli.copilot_auth import _invalidate_gh_cli_token_cache
 
