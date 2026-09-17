@@ -100,6 +100,11 @@ def _stale_holder(row, now: float) -> bool:
 
 
 class SessionMessagesMixin:
+    # Prefix marking JSON-encoded structured content; NUL cannot collide with text. Owned here
+    # because _encode_content/_decode_content read it through ``cls`` -- a host that mixes this
+    # in (SessionDB) inherits it, and the mixin works standalone under test.
+    _CONTENT_JSON_PREFIX = "\x00json:"
+
     """Message append/replace/rewind, reactions, resume conversations, replay dedupe."""
 
     def _bump_conversation_generation(self, conn, session_id: str, end_reason: str) -> None:

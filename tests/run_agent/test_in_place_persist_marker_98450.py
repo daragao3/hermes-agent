@@ -16,12 +16,31 @@ stamps after its ``archive_and_compact`` call; both now share
 ``stamp_db_persisted_markers``.
 """
 
+import contextlib
 import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+
+@contextlib.contextmanager
+def _temp_session_db(name: str = "test.db"):
+    """A SessionDB in a throwaway directory, CLOSED before the directory is removed.
+
+    ``TemporaryDirectory`` unlinks the store on exit; Windows refuses to unlink a file
+    another handle still holds (WinError 32), and an open SQLite connection is exactly
+    that handle. POSIX tolerates the unlink, which is why these tests never noticed.
+    """
+    from hermes_state import SessionDB
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = SessionDB(db_path=Path(tmpdir) / name)
+        try:
+            yield db
+        finally:
+            db.close()
 
 
 def _make_agent(session_db, session_id):
@@ -79,12 +98,10 @@ def _row_counts(db, sid):
 class TestInPlaceCommitPersistMarker:
     def test_post_commit_persist_does_not_reinsert_compacted_rows(self):
         """In-place commit → persist walk: row counts stay stable (#98450)."""
-        from hermes_state import SessionDB
         from agent.conversation_compression import compress_context
         from agent.context_compressor import _DB_PERSISTED_MARKER
 
-        with tempfile.TemporaryDirectory() as tmp:
-            db = SessionDB(db_path=Path(tmp) / "t.db")
+        with _temp_session_db("t.db") as db:
             sid = "20260830_120000_marker"
             _seed(db, sid, n=8)
             agent = _make_agent(db, sid)
@@ -144,14 +161,12 @@ class TestInPlaceCommitPersistMarker:
         via the shared helper (class-of-bug guard, not a change detector:
         asserts the behavioral outcome — dicts stamped after a successful
         archive_and_compact — for the sibling call path)."""
-        from hermes_state import SessionDB
         from agent.context_compressor import (
             ContextCompressor,
             _DB_PERSISTED_MARKER,
         )
 
-        with tempfile.TemporaryDirectory() as tmp:
-            db = SessionDB(db_path=Path(tmp) / "m.db")
+        with _temp_session_db("m.db") as db:
             sid = "20260830_120001_micro0"
             _seed(db, sid, n=4)
             compressor = ContextCompressor.__new__(ContextCompressor)

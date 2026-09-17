@@ -140,7 +140,7 @@ def test_inspection_refuses_ambiguous_version_rows(local_snapshot):
     from hermes_state_conversion import inspect_local_snapshot
     with sqlite3.connect(local_snapshot) as conn:
         conn.execute('INSERT INTO schema_version VALUES (30)')
-    with pytest.raises(ValueError, match='one local33 version row'):
+    with pytest.raises(ValueError, match='one local33/local34 version row'):
         inspect_local_snapshot(local_snapshot)
 
 

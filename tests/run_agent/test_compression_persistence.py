@@ -16,11 +16,29 @@ Bug scenario (pre-fix):
   8. Fallback wrote only user/assistant pair — summary lost
 """
 
+import contextlib
 import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+
+@contextlib.contextmanager
+def _temp_session_db(name: str = "test.db"):
+    """A SessionDB in a throwaway directory, CLOSED before the directory is removed.
+
+    ``TemporaryDirectory`` unlinks the store on exit; Windows refuses to unlink a file
+    another handle still holds (WinError 32), and an open SQLite connection is exactly
+    that handle. POSIX tolerates the unlink, which is why these tests never noticed.
+    """
+    from hermes_state import SessionDB
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = SessionDB(db_path=Path(tmpdir) / name)
+        try:
+            yield db
+        finally:
+            db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -55,11 +73,8 @@ class TestFlushAfterCompression:
         After the fix, conversation_history is cleared to None after compression,
         so flush_from = max(0, 0) = 0, and ALL compressed messages are written.
         """
-        from hermes_state import SessionDB
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.db"
-            db = SessionDB(db_path=db_path)
+        with _temp_session_db() as db:
 
             agent = self._make_agent(db)
 
@@ -102,11 +117,8 @@ class TestFlushAfterCompression:
 
     def test_flush_with_stale_history_loses_messages(self):
         """Stale conversation_history no longer causes data loss."""
-        from hermes_state import SessionDB
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.db"
-            db = SessionDB(db_path=db_path)
+        with _temp_session_db() as db:
 
             agent = self._make_agent(db)
 
@@ -138,11 +150,8 @@ class TestFlushAfterCompression:
         the compacted dicts again, doubling live context.
         """
         from agent.conversation_compression import conversation_history_after_compression
-        from hermes_state import SessionDB
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.db"
-            db = SessionDB(db_path=db_path)
+        with _temp_session_db() as db:
 
             agent = self._make_agent(db)
             agent._ensure_db_session()
@@ -231,9 +240,7 @@ class TestFlushAfterCompression:
                 self._last_compress_aborted = True
                 return messages
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.db"
-            db = SessionDB(db_path=db_path)
+        with _temp_session_db() as db:
             agent = self._make_agent(db)
             agent.compression_in_place = True
             original = [
@@ -264,7 +271,7 @@ class TestFlushAfterCompression:
             agent._flush_messages_to_session_db(returned, history)
 
             db.close()
-            resumed_db = SessionDB(db_path=db_path)
+            resumed_db = SessionDB(db_path=db.db_path)
             assert [message["content"] for message in resumed_db.get_messages_as_conversation(
                 agent.session_id
             )] == [
@@ -278,11 +285,8 @@ class TestFlushAfterCompression:
     def test_rotation_child_session_flushes_full_compressed_transcript_with_markers(self):
         """Regression for #57491: live cached-agent markers must not block child flush."""
         from agent.conversation_compression import compress_context
-        from hermes_state import SessionDB
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.db"
-            db = SessionDB(db_path=db_path)
+        with _temp_session_db() as db:
             parent_sid = "20260701_152840_parent"
             db.create_session(parent_sid, "gateway", model="test/model")
 
@@ -390,6 +394,14 @@ class TestStoredPromptCwdDrift:
         return agent
 
     @staticmethod
+    def _native(posix_path: str) -> str:
+        """``resolve_agent_cwd()`` returns ``Path(os.getcwd())``, so the stored line must carry the
+        host spelling (``\\project\\current`` on Windows) or a fixture cwd can never match."""
+        from pathlib import Path
+
+        return str(Path(posix_path))
+
+    @staticmethod
     def _host_block(cwd: str) -> str:
         """A stored prompt fragment shaped like the real host-info block.
 
@@ -428,7 +440,7 @@ class TestStoredPromptCwdDrift:
         from agent.conversation_loop import _stored_prompt_matches_runtime
 
         agent = self._make_agent()
-        current_cwd = "/project/current"
+        current_cwd = self._native("/project/current")
         stored_prompt = (
             self._host_block(current_cwd)
             + "Model: test/model\n"
@@ -456,7 +468,7 @@ class TestStoredPromptCwdDrift:
         from agent.conversation_loop import _stored_prompt_matches_runtime
 
         agent = self._make_agent()
-        current_cwd = "/project/current"
+        current_cwd = self._native("/project/current")
         stored_prompt = (
             self._host_block(current_cwd)
             + "\n# AGENTS.md\n\n"
@@ -505,15 +517,11 @@ class TestStoredPromptCwdDrift:
 
     def test_built_prompt_contains_platform_line(self):
         """The built system prompt must carry a Platform: line so drift detection works."""
-        import tempfile
-        from pathlib import Path
         from unittest.mock import patch
-        from hermes_state import SessionDB
         from run_agent import AIAgent
         from agent.system_prompt import build_system_prompt_parts
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db = SessionDB(db_path=Path(tmpdir) / "test.db")
+        with _temp_session_db() as db:
             with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
                 agent = AIAgent(
                     api_key="test-key",

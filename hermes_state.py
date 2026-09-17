@@ -1263,8 +1263,7 @@ class SessionDB(
     CANONICAL_BOT_CHAT_TITLE = "Bot Chat"
 
     # ── Message storage constants (SessionMessagesMixin) ──
-    # Prefix marking JSON-encoded structured content; NUL cannot collide with text.
-    _CONTENT_JSON_PREFIX = "\x00json:"
+    # (_CONTENT_JSON_PREFIX lives on SessionMessagesMixin itself, which is what reads it.)
     #: Reactions live inside ``display_metadata`` so they survive row rewrites.
     REACTIONS_METADATA_KEY = "reactions"
     # Columns every conversation projection decodes; ``active`` rides along so a display read
