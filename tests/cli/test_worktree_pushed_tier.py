@@ -261,13 +261,18 @@ class TestCronWorktreeMaintenance:
             "cron.jobs.load_jobs",
             lambda: [{"workdir": str(repo)}],
         )
+        # git rev-parse --show-toplevel answers with forward slashes on Windows; compare
+        # normalized spellings, not str(Path).
+        def _norm(paths):
+            return {os.path.normcase(os.path.normpath(r)) for r in paths}
+
         repos = sched._worktree_maintenance_repos()
-        assert str(repo) not in repos
+        assert _norm([str(repo)]) & _norm(repos) == set()
 
         # Adding .worktrees/ makes it eligible.
         (repo / ".worktrees").mkdir()
         repos = sched._worktree_maintenance_repos()
-        assert str(repo) in repos
+        assert _norm([str(repo)]) <= _norm(repos)
 
     def test_maintenance_prunes_via_real_pruner(self, repo_with_bare_origin, monkeypatch):
         import cron.scheduler as sched

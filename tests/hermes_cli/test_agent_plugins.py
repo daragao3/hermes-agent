@@ -67,7 +67,9 @@ def test_loads_manifest_skill_and_stdio_server(tmp_path: Path) -> None:
     assert package.skills[0].root == skill_dir.resolve()
     server = package.mcp_servers["worker"]
     assert server["command"] == "python"
-    assert server["args"] == [str(root.resolve() / "server.py"), "${UNKNOWN}"]
+    # ${PLUGIN_ROOT} is substituted textually, so the manifest's own "/" survives
+    # (a mixed C:\...\plugin/server.py is a valid Windows path; pathlib would re-spell it).
+    assert server["args"] == [f"{root.resolve()}/server.py", "${UNKNOWN}"]
     assert server["cwd"] == str(root.resolve())
     assert server["env"]["PLUGIN_ROOT"] == str(root.resolve())
     assert server["env"]["PLUGIN_DATA"] == str((tmp_path / "data").resolve())

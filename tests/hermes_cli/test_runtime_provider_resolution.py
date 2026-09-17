@@ -167,6 +167,10 @@ def test_qwen_oauth_auto_fallthrough_on_auth_failure(monkeypatch):
     )
     monkeypatch.setattr(rp, "_get_model_config", lambda: {})
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-or-key")
+    # The pool rung sits above the OAuth rung and seeds qwen-oauth from the qwen-cli
+    # token file in the REAL user home (outside HERMES_HOME), so on a box with
+    # qwen-cli logged in it answers first and the OAuth failure never fires.
+    monkeypatch.setattr(rp, "load_pool", lambda provider: None)
 
     # Should NOT raise — falls through to OpenRouter
     resolved = rp.resolve_runtime_provider(requested="auto")

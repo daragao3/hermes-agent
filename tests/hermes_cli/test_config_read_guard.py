@@ -47,6 +47,13 @@ ALLOWLIST = {
     "hermes_cli/managed_scope.py",
     # Parse-health probe: intentionally answers "does the raw file parse?".
     "gateway/readiness.py",
+    # Root-scope divergence guard (7ca9df17dd): reads the ROOT config.yaml's
+    # session_bridge.sidebar.enabled as a diagnostic where "absent" must stay
+    # distinct from "False". load_config() would merge defaults, substitute the
+    # whole default config on a corrupt file and write a .corrupt sidecar --
+    # exactly the wrong behaviour for a read-only comparison, as its docstring
+    # spells out. Same class as gateway/readiness.py.
+    "session_bridge/config.py",
 }
 
 # Directories that never count (tests may build fixture configs freely).

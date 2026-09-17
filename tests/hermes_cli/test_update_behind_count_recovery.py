@@ -101,9 +101,15 @@ def _ls_remote_result(sha):
     return MagicMock(returncode=0, stdout=f"{sha}\trefs/heads/main\n")
 
 
+# _upstream_main_sha runs ls-remote through hermes_cli._subprocess_compat.run_text_capture
+# (file-backed capture, on every host), NOT subprocess.run -- patching only the latter let
+# the probe reach github.com for real, and the answer then depended on the live tip.
+LS_REMOTE_SEAM = "hermes_cli._subprocess_compat.run_text_capture"
+
+
 def test_check_via_rev_recovers_exact_count():
     with patch(
-        "hermes_cli.banner.subprocess.run", return_value=_ls_remote_result(SHA_B)
+        LS_REMOTE_SEAM, return_value=_ls_remote_result(SHA_B)
     ), patch.object(banner, "_github_compare_behind", return_value=61) as compare:
         assert banner._check_via_rev(SHA_A) == 61
     compare.assert_called_once_with(SHA_A, SHA_B)
@@ -112,14 +118,14 @@ def test_check_via_rev_recovers_exact_count():
 def test_check_via_rev_falls_back_to_sentinel_offline():
     """FAIL-BEFORE (class): this path returned a fabricated 1 via callers."""
     with patch(
-        "hermes_cli.banner.subprocess.run", return_value=_ls_remote_result(SHA_B)
+        LS_REMOTE_SEAM, return_value=_ls_remote_result(SHA_B)
     ), patch.object(banner, "_github_compare_behind", return_value=None):
         assert banner._check_via_rev(SHA_A) == banner.UPDATE_AVAILABLE_NO_COUNT
 
 
 def test_check_via_rev_up_to_date_short_circuits_compare():
     with patch(
-        "hermes_cli.banner.subprocess.run", return_value=_ls_remote_result(SHA_A)
+        LS_REMOTE_SEAM, return_value=_ls_remote_result(SHA_A)
     ), patch.object(banner, "_github_compare_behind") as compare:
         assert banner._check_via_rev(SHA_A) == 0
     compare.assert_not_called()
@@ -128,7 +134,7 @@ def test_check_via_rev_up_to_date_short_circuits_compare():
 def test_check_via_rev_local_ahead_reports_up_to_date():
     """ahead_by == 0 with differing tips = local commits on top, not behind."""
     with patch(
-        "hermes_cli.banner.subprocess.run", return_value=_ls_remote_result(SHA_B)
+        LS_REMOTE_SEAM, return_value=_ls_remote_result(SHA_B)
     ), patch.object(banner, "_github_compare_behind", return_value=0):
         assert banner._check_via_rev(SHA_A) == 0
 

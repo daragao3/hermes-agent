@@ -90,7 +90,8 @@ def test_behavioral_read_gets_expansion_and_overlay_while_writeback_stays_raw(
 
         import os
         from pathlib import Path
-        saved = Path(server._hermes_home, "config.yaml").read_text(encoding="utf-8")
+        # _hermes_home is None at import since 204628dc15; the launch home is resolved per call
+        saved = Path(server._resolve_hermes_home(), "config.yaml").read_text(encoding="utf-8")
         Path(os.environ["E2E_OUT_FILE"]).write_text(json.dumps({
             "behavioral_prompt": cfg.get("custom_prompt"),
             "behavioral_effort": (cfg.get("agent") or {}).get("reasoning_effort"),

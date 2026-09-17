@@ -762,8 +762,14 @@ def _start_or_report_running(running_pids: list[int] | None = None, *, reason: s
         _report_gateway_start(f"direct spawn (PID {pid})")
 
 
-def _install_startup_fallback(script_path: Path, start_now: bool, detail: str) -> None:
-    """Install the Startup-folder fallback and optionally start once."""
+def _install_startup_fallback(
+    script_path: Path, start_now: bool, detail: str, *, reason: str = "install:startup-fallback",
+) -> None:
+    """Install the Startup-folder fallback and optionally start once.
+
+    ``reason`` is the diag-log spawn attribution (1db25d89c0): the two callers are distinct
+    operator situations -- elevation declined vs. schtasks refused -- and the log must say which.
+    """
     print(f"↻ Scheduled Task install blocked ({detail.splitlines()[0]}) — using Startup folder fallback")
     entry = _install_startup_entry(script_path)
     print(f"✓ Installed Windows login item: {entry}")
@@ -773,7 +779,7 @@ def _install_startup_fallback(script_path: Path, start_now: bool, detail: str) -
     # controlled by the pre-UAC start_now answer so every user decision precedes elevation.
     running_pids = _gateway_pids()
     if running_pids or start_now:
-        _start_or_report_running(running_pids, reason="install:startup-fallback")
+        _start_or_report_running(running_pids, reason=reason)
     else:
         from hermes_cli.gateway import _profile_arg
 
@@ -857,7 +863,8 @@ def install(
         return
 
     if _should_fall_back(1, detail):
-        _install_startup_fallback(script_path, start_now, detail)
+        _install_startup_fallback(
+            script_path, start_now, detail, reason="install:startup-fallback-after-schtasks")
         return
 
     raise RuntimeError(f"Windows gateway install failed: {detail}")

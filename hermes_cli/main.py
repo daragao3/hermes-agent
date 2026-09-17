@@ -733,9 +733,6 @@ from hermes_cli.main_platform_setup import (
     cmd_whatsapp,
     cmd_whatsapp_cloud,
 )
-from hermes_cli.dashboard_procs import (
-    _DashboardPids as _DashboardPids, _scan_ok, _scan_error, _dashboard_command_tokens as _dashboard_command_tokens, _is_python_interpreter_token as _is_python_interpreter_token, _dashboard_command_subcommand as _dashboard_command_subcommand, _dashboard_subcommand_from_tokens as _dashboard_subcommand_from_tokens, _looks_like_dashboard_command_line as _looks_like_dashboard_command_line
-)
 from hermes_cli.main_dashboard import (
     _dashboard_listening,
     _finalize_update_output,
@@ -2098,6 +2095,11 @@ _FROZEN_UPDATER_SURFACE: dict[str, tuple[str, ...]] = {
     ),
     "hermes_cli.dashboard_procs": (
         "_detect_concurrent_hermes_instances", "_kill_stale_dashboard_processes",
+        # Re-exports that used to be a module-scope import (the 0.21.1 integration put it
+        # back); tests/hermes_cli/test_lazy_command_exports.py pins dashboard_procs lazy.
+        "_DashboardPids", "_scan_ok", "_scan_error", "_dashboard_command_tokens",
+        "_is_python_interpreter_token", "_dashboard_command_subcommand",
+        "_dashboard_subcommand_from_tokens", "_looks_like_dashboard_command_line",
     ),
 }
 _FROZEN_ATTR_SOURCES: dict[str, str] = {
@@ -2418,6 +2420,8 @@ def _dashboard_lifecycle_flags(args, token_file) -> None:
         count = _report_dashboard_status()
         sys.exit(1 if count < 0 else 0)
     if getattr(args, "stop", False):
+        from hermes_cli.dashboard_procs import _scan_error, _scan_ok
+
         pids = _find_stale_dashboard_pids()
         if not _scan_ok(pids):
             print(f"⚠ Could not scan the process table ({_scan_error(pids)})")

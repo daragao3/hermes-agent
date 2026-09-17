@@ -87,6 +87,8 @@ def test_repair_runs_force_reinstall_with_pyproject_pins(
     assert detect_calls["count"] == 1
 
 
+# Drives _refresh_active_lazy_features itself; opt out of the hermes_cli conftest no-op stub.
+@pytest.mark.real_lazy_feature_refresh
 def test_refresh_repairs_venv_after_lazy_failure(tmp_path, monkeypatch, capsys):
     import tools.lazy_deps as lazy_deps_mod
 
@@ -116,6 +118,8 @@ def test_refresh_repairs_venv_after_lazy_failure(tmp_path, monkeypatch, capsys):
     assert "Backends keep their previously-installed version" not in out
 
 
+# Drives _refresh_active_lazy_features itself; opt out of the hermes_cli conftest no-op stub.
+@pytest.mark.real_lazy_feature_refresh
 def test_refresh_uses_pre_rebuild_snapshot_when_provided(monkeypatch):
     """Replacement runtimes must not re-detect features after packages vanish."""
     import tools.lazy_deps as lazy_deps_mod

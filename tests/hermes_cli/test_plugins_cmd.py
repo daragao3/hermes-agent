@@ -201,6 +201,10 @@ class TestGitPullPluginDirAutostash:
         git(origin, "init", "-q", "-b", "main")
         git(origin, "config", "user.email", "t@t")
         git(origin, "config", "user.name", "t")
+        # The fixture writes LF; a host with core.autocrlf=true (Windows default) would
+        # check the clone out as CRLF and turn the autostash into a whole-file diff that
+        # conflicts with the one-line upstream change. Pin what Linux CI has.
+        git(origin, "config", "core.autocrlf", "false")
         pad = "\n".join(f"# pad {i}" for i in range(12))
         (origin / "plugin.py").write_text(
             f"VALUE = 1\n{pad}\nOTHER = 'a'\n", encoding="utf-8"
@@ -209,9 +213,10 @@ class TestGitPullPluginDirAutostash:
         git(origin, "commit", "-qm", "init")
 
         checkout = tmp_path / "checkout"
-        git(tmp_path, "clone", "-q", str(origin), str(checkout))
+        git(tmp_path, "-c", "core.autocrlf=false", "clone", "-q", str(origin), str(checkout))
         git(checkout, "config", "user.email", "t@t")
         git(checkout, "config", "user.name", "t")
+        git(checkout, "config", "core.autocrlf", "false")
         return origin, checkout, git
 
     @staticmethod
@@ -459,7 +464,10 @@ class TestCmdRemove:
 
         cmd_remove("test-plugin")
 
-        mock_rmtree.assert_called_once_with(mock_target)
+        # positional target only: the checkout rmtree passes an onexc handler that makes a
+        # git clone's read-only objects deletable on Windows
+        assert mock_rmtree.call_count == 1
+        assert mock_rmtree.call_args.args[0] is mock_target
 
     @patch("hermes_cli.plugins_cmd._sanitize_plugin_name")
     @patch("hermes_cli.plugins_cmd._plugins_dir")

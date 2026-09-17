@@ -41,13 +41,27 @@ register_provider(
 )
 
 
+# shutil.which is PATHEXT-aware on Windows -- a bare-named script is never a hit there, and an
+# explicit path is only accepted with a PATHEXT extension -- so the fake CLIs are .cmd files on
+# win32. which() also reports the extension in PATHEXT's case (acme-cli.CMD): compare normcased.
+_EXT = ".cmd" if os.name == "nt" else ""
+
+
+def _fake(bindir, name):
+    return str(bindir / f"{name}{_EXT}")
+
+
+def _same_path(a, b):
+    return os.path.normcase(str(a)) == os.path.normcase(str(b))
+
+
 @pytest.fixture
 def fake_cli(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for name in ("acme-cli", "copilot", "custom-acme"):
-        exe = bindir / name
-        exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        exe = bindir / f"{name}{_EXT}"
+        exe.write_text("@echo off\r\n" if _EXT else "#!/bin/sh\nexit 0\n", encoding="utf-8")
         exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
     return bindir
@@ -62,12 +76,14 @@ def test_an_out_of_tree_external_process_provider_resolves_end_to_end(fake_cli, 
     assert resolve_provider("acme") == "acme-acp"
 
     creds = resolve_external_process_provider_credentials("acme-acp")
-    assert (creds["command"], creds["args"], creds["api_key"]) == (str(fake_cli / "acme-cli"), ["--acp"], "acme-acp")
+    assert _same_path(creds["command"], _fake(fake_cli, "acme-cli"))
+    assert (creds["args"], creds["api_key"]) == (["--acp"], "acme-acp")
 
-    monkeypatch.setenv("ACME_CLI_PATH", str(fake_cli / "custom-acme"))
+    monkeypatch.setenv("ACME_CLI_PATH", _fake(fake_cli, "custom-acme"))
     monkeypatch.setenv("ACME_ACP_ARGS", "--acp=true --verbose")
     creds = resolve_external_process_provider_credentials("acme-acp")
-    assert (creds["command"], creds["args"]) == (str(fake_cli / "custom-acme"), ["--acp=true", "--verbose"])
+    assert _same_path(creds["command"], _fake(fake_cli, "custom-acme"))
+    assert creds["args"] == ["--acp=true", "--verbose"]
 
     runtime = resolve_runtime_provider(requested="acme", target_model="acme")
     assert (runtime["provider"], runtime["base_url"], runtime["source"]) == ("acme-acp", "acp://acme", "process")
@@ -78,9 +94,9 @@ def test_copilot_acp_launch_details_are_unchanged(fake_cli, monkeypatch):
     from hermes_cli.runtime_provider import resolve_runtime_provider
 
     creds = resolve_external_process_provider_credentials("copilot-acp")
-    assert creds["command"] == str(fake_cli / "copilot")
+    assert _same_path(creds["command"], _fake(fake_cli, "copilot"))
     assert (creds["args"], creds["api_key"], creds["base_url"]) == (["--acp", "--stdio"], "copilot-acp", "acp://copilot")
 
-    monkeypatch.setenv("COPILOT_CLI_PATH", str(fake_cli / "custom-acme"))
-    assert resolve_external_process_provider_credentials("copilot-acp")["command"] == str(fake_cli / "custom-acme")
+    monkeypatch.setenv("COPILOT_CLI_PATH", _fake(fake_cli, "custom-acme"))
+    assert _same_path(resolve_external_process_provider_credentials("copilot-acp")["command"], _fake(fake_cli, "custom-acme"))
     assert resolve_runtime_provider(requested="copilot-acp", target_model="x")["base_url"] == "acp://copilot"

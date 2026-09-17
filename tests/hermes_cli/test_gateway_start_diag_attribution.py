@@ -502,7 +502,9 @@ def test_force_terminate_records_who_killed_the_gateway(monkeypatch):
     monkeypatch.setattr(
         gateway_status,
         "terminate_pid",
-        lambda pid, force=False: killed.append(pid),
+        # terminate_pid also takes expected_start_time= (PID-reuse identity check) since the
+        # taskkill-identity hardening; the stub accepts it like the real signature.
+        lambda pid, force=False, expected_start_time=None: killed.append(pid),
     )
 
     gateway_windows._force_terminate_known_gateway_pids([31337])

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -350,7 +349,7 @@ def test_metadata_write_failure_rolls_back_removal(monkeypatch, tmp_path):
 
 
 def test_reinstall_after_manual_directory_removal_retains_pin(monkeypatch, tmp_path):
-    from hermes_cli.plugins_cmd import _install_plugin_core
+    from hermes_cli.plugins_cmd import _install_plugin_core, _rmtree_checkout
 
     repo, old_sha, _new_sha = _plugin_repo(tmp_path)
     home = tmp_path / "home"
@@ -358,7 +357,9 @@ def test_reinstall_after_manual_directory_removal_retains_pin(monkeypatch, tmp_p
     target, _manifest, _name = _install_plugin_core(
         repo.as_uri(), force=False, ref=old_sha
     )
-    shutil.rmtree(target)
+    # the "manual rm -rf": a git clone's objects are read-only, which plain rmtree cannot
+    # delete on Windows
+    _rmtree_checkout(target)
 
     target, _manifest, _name = _install_plugin_core(repo.as_uri(), force=False)
 
