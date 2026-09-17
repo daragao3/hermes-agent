@@ -135,8 +135,16 @@ class DesktopRegistrySyncWorker:
             scan = scan_desktop_registry_roots(
                 self._registry_roots, cache=self._scan_cache
             )
-        except RegistryScanError:
+        except RegistryScanError as exc:
+            # Fail closed AND say why.  This bail used to persist nothing:
+            # on 2026-09-16 22:01 an enrolled root became a junction,
+            # _root_identity raised here on every 300s cycle for 11h17m, and
+            # the only instrument that moved was the heartbeat age -- no log
+            # line, no row, and no post_scan_worker_diagnostic either, since
+            # nothing escaped run_once.  Naming it took py-spy plus an offline
+            # replay; with the reason persisted it is one state.db read.
             counters["scan_failed"] = 1
+            self._record_last_error(exc, stage="scan")
             return counters
 
         stored_rows = self._store.load_desktop_registry_baselines()
@@ -155,7 +163,7 @@ class DesktopRegistrySyncWorker:
             # removes the coordinator's post_scan_worker_diagnostic line,
             # which on 2026-09-12 was the ONLY artifact that named the fault.
             counters["baseline_invalid"] = 1
-            self._record_last_error(exc)
+            self._record_last_error(exc, stage="plan")
             return counters
         counters["examined"] = len(plan.records)
         counters["conflicts"] = len(plan.conflicts)
@@ -204,12 +212,13 @@ class DesktopRegistrySyncWorker:
                 self._registry_roots, cache=self._scan_cache
             )
             verification = verify_registry_sync_plan(plan, fresh)
-        except (RegistryScanError, ValueError):
+        except (RegistryScanError, ValueError) as exc:
             if run_id is not None:
                 self._store.finish_desktop_registry_run(
                     run_id, "abandoned", resolution="verify_scan_failed"
                 )
             counters["scan_failed"] = 1
+            self._record_last_error(exc, stage="verify_scan")
             return counters
 
         failed_files = {failure.filename for failure in verification.failures}
@@ -289,8 +298,13 @@ class DesktopRegistrySyncWorker:
         self._beat(counters)
         return counters
 
-    def _record_last_error(self, exc: Exception) -> None:
+    def _record_last_error(self, exc: Exception, *, stage: str) -> None:
         """Persist why a cycle converged nothing, for a stale-beat triage.
+
+        ``stage`` names which bail wrote it -- ``scan`` (the pre-plan scan),
+        ``plan`` (the planner rejected a baseline) or ``verify_scan`` (the
+        post-mutation re-scan) -- because the three raise the same exception
+        classes and a triage reads this row instead of a traceback.
 
         Telemetry must never cost a reconciliation, so a failed write is
         swallowed exactly as in :meth:`_beat`.  The cost of swallowing is an
@@ -301,6 +315,7 @@ class DesktopRegistrySyncWorker:
                 WORKER_LAST_ERROR_STATE_KEY,
                 {
                     "at": float(self._wall_clock()),
+                    "stage": stage,
                     "error": f"{type(exc).__name__}: {exc}",
                 },
             )
@@ -315,7 +330,8 @@ class DesktopRegistrySyncWorker:
         that keeps failing is a leg that is alive but not doing its job, and
         letting the beat go stale is how that becomes visible instead of
         sitting silent -- which is exactly how the 2026-09-06 ``scan_failed``
-        class stranded records for days.
+        class stranded records for days.  The stale beat says THAT it
+        stopped; :meth:`_record_last_error` says WHY.
 
         Telemetry must never cost a reconciliation, so a failed write is
         swallowed: the cycle's real work is already committed by this point.
