@@ -1,6 +1,6 @@
 """Multiplex gateway log routing (#82936, salvage of #84954).
 
-``setup_logging(mode="gateway")`` binds agent.log/errors.log/gateway.log to
+``setup_logging(mode="gateway")`` binds agent-gateway.log/errors-gateway.log/gateway.log to
 the launch home. Under ``multiplex_profiles`` every secondary profile's
 records — emitted inside ``_profile_runtime_scope`` — used to fan out into
 the DEFAULT profile's files. The gateway now enables the #99440 profile
@@ -60,7 +60,11 @@ def test_multiplex_gateway_routes_profile_records_to_their_own_logs(
     _emit_under(default_home, "gateway.run", logging.INFO, "DEFAULT-GATEWAY-INFO")
     hermes_logging.flush_log_queue()
 
-    for filename in ("agent.log", "errors.log", "gateway.log"):
+    # mode="gateway" names the catch-all and error files per role (fork carry:
+    # agent-gateway.log / errors-gateway.log, so the gateway process is the sole
+    # holder of its files -- see tests/test_hermes_logging.py); gateway.log is
+    # unsuffixed. Upstream's test asserted the unsuffixed names and was red here.
+    for filename in ("agent-gateway.log", "errors-gateway.log", "gateway.log"):
         assert _contains(beta_home, filename, "BETA-GATEWAY-WARN"), filename
         assert not _contains(default_home, filename, "BETA-GATEWAY-WARN"), filename
     assert _contains(default_home, "gateway.log", "DEFAULT-GATEWAY-INFO")

@@ -8,7 +8,12 @@ HOME = Path(tempfile.mkdtemp(prefix="hermes-104653-state-"))
 # Discard inherited credentials/config, preserve only interpreter essentials.
 # SYSTEMROOT: Windows Python needs it for the CRT/ssl/random seeding once the
 # environment is scrubbed; it carries no credential.
-keep = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "TZ", "SYSTEMROOT")}
+# PYTHONPATH: under the gateway on Windows the interpreter is the base CPython
+# with the venv supplied THROUGH this variable (the launcher overlay), so the
+# foreign_writer.py child spawned below cannot import yaml without it -- the
+# "keyless independent-writer" observation then never reaches (nightly gate
+# 2026-09-17). It names directories, never credentials.
+keep = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "TZ", "SYSTEMROOT", "PYTHONPATH")}
 os.environ.clear()
 os.environ.update(keep)
 os.environ.update(

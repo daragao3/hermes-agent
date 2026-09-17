@@ -1705,7 +1705,9 @@ async def test_hygiene_does_not_wait_ceiling_after_fence_cancel(
 
         assert result == "ok"
         assert worker_started.wait(timeout=2)
-        assert elapsed < 2.0, (
+        # The ceiling being guarded against is 600s; 2.0s read 2.45s under the
+        # parallel suite on the Windows host (thread scheduling, not the wait).
+        assert elapsed < 30.0, (
             f"hygiene host waited {elapsed:.1f}s after fence cancel — "
             "must not extend toward the 600s ceiling (#96953)"
         )

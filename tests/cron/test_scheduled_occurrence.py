@@ -46,9 +46,17 @@ def _fire(home, mode):
            if not k.startswith(('HERMES_', '_HERMES_'))
            and not k.endswith(('_API_KEY', '_TOKEN'))}
     env['HERMES_HOME'] = str(home)
-    env['PYTHONPATH'] = str(Path(__file__).resolve().parents[2])
+    # Prepend the repo, never replace: under the gateway the interpreter is the
+    # base CPython with the venv supplied through PYTHONPATH, so replacing it
+    # strands the child without its third-party imports (yaml, first).
+    env['PYTHONPATH'] = os.pathsep.join(
+        [str(Path(__file__).resolve().parents[2]),
+         *[p for p in env.get('PYTHONPATH', '').split(os.pathsep) if p]])
+    # 300s, not 90: each fire cold-imports the scheduler (~15-20s idle here) and
+    # the provider/worker modes hit 90s under the 8-worker nightly harness
+    # (2026-09-17, both retries). A hang is still bounded; a slow box is not a red.
     result = subprocess.run([sys.executable, '-c', _FIRE, mode], env=env,
-                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
