@@ -6,6 +6,7 @@ import subprocess
 import pytest
 
 from tools.environments import docker as docker_env
+from tests.bash_support import BASH
 
 
 def _mock_subprocess_run(monkeypatch):
@@ -341,7 +342,7 @@ def test_wrapped_exec_scopes_explicit_forward_env_across_profiles(monkeypatch, t
             index += 2
         assert cmd[container_index + 1 : container_index + 3] == ["bash", "-c"]
         return subprocess.Popen(
-            ["bash", "-c", cmd[container_index + 3]],
+            [BASH, "-c", cmd[container_index + 3]],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,

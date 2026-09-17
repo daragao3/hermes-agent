@@ -13,6 +13,7 @@ asserting on the text of install.sh.
 import json
 import subprocess
 from pathlib import Path
+from tests.bash_support import BASH
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -37,7 +38,7 @@ log_warn() {{ echo "WARN: $*" >&2; }}
 write_bootstrap_marker
 """
     return subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True, timeout=30
+        [BASH, "-c", script], capture_output=True, text=True, timeout=30
     )
 
 

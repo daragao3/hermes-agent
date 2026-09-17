@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+from tests.bash_support import BASH
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STAGE2_HOOK = REPO_ROOT / "docker" / "stage2-hook.sh"
@@ -38,9 +38,7 @@ def test_seed_one_refuses_symlinked_destinations(
     stage2_text: str,
     tmp_path: Path,
 ) -> None:
-    bash = shutil.which("bash")
-    if bash is None:
-        pytest.skip("bash not available")
+    bash = BASH
 
     home = tmp_path / "home"
     install_dir = tmp_path / "install"
@@ -76,9 +74,7 @@ def test_seed_one_is_quiet_for_existing_symlinked_files(
     stage2_text: str,
     tmp_path: Path,
 ) -> None:
-    bash = shutil.which("bash")
-    if bash is None:
-        pytest.skip("bash not available")
+    bash = BASH
 
     home = tmp_path / "home"
     install_dir = tmp_path / "install"

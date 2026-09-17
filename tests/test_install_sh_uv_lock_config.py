@@ -8,6 +8,7 @@ import shutil
 import subprocess
 
 import pytest
+from tests.bash_support import BASH
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -55,9 +56,7 @@ def test_installers_keep_bootstrap_isolation_but_restore_project_config_for_lock
 
 
 def test_locked_sync_helper_sanitizes_only_its_subprocess(tmp_path: Path) -> None:
-    bash = shutil.which("bash")
-    if bash is None:
-        pytest.skip("bash is unavailable")
+    bash = BASH
 
     record = tmp_path / "uv-args.txt"
     fake_uv = tmp_path / "uv"

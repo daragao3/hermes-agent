@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests.bash_support import BASH
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
@@ -32,7 +33,7 @@ def workspace_args(install_dir: Path) -> list[str]:
         'printf "%s\\n" "${NODE_DEPS_WORKSPACE_ARGS[@]}"\n'
     )
     result = subprocess.run(
-        ["bash", "-c", script],
+        [BASH, "-c", script],
         capture_output=True,
         text=True,
         check=True,

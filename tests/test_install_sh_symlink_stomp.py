@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 
 from tests.symlink_support import requires_symlinks
+from tests.bash_support import BASH
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -94,7 +95,7 @@ def test_re_running_setup_path_block_preserves_pip_entry_point(tmp_path: Path) -
     # Drive the block with the real env vars setup_path() sets.
     script = f'set -e\nHERMES_BIN={pip_entry!s}\ncommand_link_dir={command_link_dir!s}\n{block}\n'
     result = subprocess.run(
-        ["bash", "-c", script],
+        [BASH, "-c", script],
         capture_output=True,
         text=True,
         cwd=tmp_path,
