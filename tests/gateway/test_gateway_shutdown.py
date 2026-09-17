@@ -188,7 +188,15 @@ async def test_unexpected_signal_starts_teardown_after_bounded_interrupt_grace()
         "gateway.status.write_runtime_status"
     ):
         stop_task = asyncio.create_task(runner.stop())
-        await asyncio.wait_for(disconnect_started.wait(), timeout=0.75)
+        # The property is that teardown STARTS once the 0.01s grace expires
+        # instead of waiting on the never-unwinding agent. The bound is not the
+        # grace: the fixed cost of the path between the grace and the adapter
+        # disconnect is ~1.5s on the Windows host (the post-interrupt tool-kill
+        # process scan ~0.4s, then the plugin registry loading during agent
+        # finalisation ~1s), so a 0.75s wait timed out on every nightly run
+        # while the mechanism worked. Generous, and still far below what a
+        # hang on the MagicMock agent would look like.
+        await asyncio.wait_for(disconnect_started.wait(), timeout=10.0)
         await stop_task
 
     assert runner._shutdown_event.is_set() is True

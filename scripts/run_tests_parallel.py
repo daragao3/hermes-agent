@@ -849,6 +849,38 @@ def _run_one_file_once(
         return _spawn_pytest(file, pytest_args, repo_root, file_timeout)
 
 
+def _child_python() -> str:
+    """The interpreter every per-file pytest runs under.
+
+    Normally ``sys.executable``. The exception is the Windows cron overlay:
+    ``cron/scheduler_script.py`` runs a ``.py`` job (the nightly gate) under
+    the venv's BASE CPython with ``VIRTUAL_ENV`` + ``PYTHONPATH`` overlaid and a
+    ``site.addsitedir`` bootstrap -- so the gate script itself sees the venv's
+    ``.pth`` files (pywin32, the editable install), but a grandchild spawned
+    as ``[sys.executable, "-m", "pytest"]`` inherits only the raw PYTHONPATH,
+    which ``site`` does not scan for ``.pth``. Measured 2026-09-17: no
+    ``pywintypes`` in those children -> portalocker's Win32Locker fails ->
+    concurrent-log-handler cannot lock -> every file-log emit is silently
+    dropped (test_multiplex_log_routing red on every nightly run while the
+    routing worked). The venv's own launcher gives the children a real venv
+    (``sys.prefix``, ``.pth`` processing, ``sys.executable`` = the launcher),
+    which is also what a developer's ``pytest`` sees. Only taken when that
+    launcher exists and we are not already it.
+    """
+    if sys.platform != "win32":
+        return sys.executable
+    venv = os.environ.get("VIRTUAL_ENV", "")
+    if not venv:
+        return sys.executable
+    launcher = Path(venv) / "Scripts" / "python.exe"
+    try:
+        if launcher.is_file() and launcher.resolve() != Path(sys.executable).resolve():
+            return str(launcher)
+    except OSError:
+        pass
+    return sys.executable
+
+
 def _spawn_pytest(
     file: Path,
     pytest_args: List[str],
@@ -856,7 +888,7 @@ def _spawn_pytest(
     file_timeout: float,
 ) -> Tuple[Path, int, str, dict[str, int], float]:
     """Run one pytest subprocess to completion (no concurrency guards)."""
-    cmd = [sys.executable, "-m", "pytest", str(file), *pytest_args]
+    cmd = [_child_python(), "-m", "pytest", str(file), *pytest_args]
     # Give each file its own tmp_path base so concurrent subprocesses can't
     # delete one another's numbered pytest temp roots during retention
     # cleanup (the WinError 3 teardown-error family). Respect an explicit

@@ -1717,8 +1717,11 @@ async def test_hygiene_does_not_wait_ceiling_after_fence_cancel(
         assert worker_started.wait(timeout=10)
         # A host that kept extending would run to the default 10 s turn-hold
         # budget (the worker streams progress for 30 s, so neither idle nor the
-        # 600 s ceiling end it sooner); the cancelled-fence fast path took 2.1 s
-        # on a loaded runner, so this bound sits between the two.
+        # 600 s ceiling end it sooner); the cancelled-fence fast path took
+        # 2.1-2.45 s on a loaded runner, so this bound sits between the two.
+        # (13c2dede01 widened the old 2.0 s bound to 30 s against the same
+        # loaded reading; with the worker's previous 2 s hold that could not
+        # tell a fast path from a host waiting for the worker, hence the hold.)
         assert elapsed < 5.0, (
             f"hygiene host waited {elapsed:.1f}s after fence cancel — "
             "must not extend toward the 600s ceiling (#96953)"
