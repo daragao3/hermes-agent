@@ -188,6 +188,10 @@ class TestCustomProviderSSLContext:
             assert _custom_provider_ssl_context(_BASE) is None
 
 
+# Calls fetch_endpoint_model_metadata directly, so it opts out of the autouse
+# stub in tests/conftest.py that defaults it to {} (which returned before the
+# patched requests.get was ever reached). Safe: requests.get is faked beneath.
+@pytest.mark.real_local_server_probe
 class TestMetadataProbeThreadsProviderCA:
     """End-to-end: the requests metadata probe carries the provider CA to the wire."""
 

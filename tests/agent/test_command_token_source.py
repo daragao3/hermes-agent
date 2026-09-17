@@ -14,6 +14,10 @@ behaviours that make the feature work:
 
 from __future__ import annotations
 
+import os
+import shlex
+import subprocess
+import sys
 import time
 from types import SimpleNamespace
 
@@ -25,6 +29,24 @@ from agent.command_token_source import (
     _mint,
     build_command_token_provider,
 )
+
+
+def _shell_command(*args: str) -> str:
+    """One command string for ``_mint``'s ``shell=True`` on THIS host's shell.
+
+    ``key_cmd`` runs through the platform shell (cmd.exe on Windows, ``/bin/sh``
+    elsewhere), so fixture commands that need more than ``printf``/``echo`` are
+    spelled as an interpreter invocation rather than POSIX shell syntax:
+    ``date +%s%N`` is cmd's interactive date prompt and ``;`` is not a command
+    separator there.
+    """
+    if os.name == "nt":
+        return subprocess.list2cmdline(list(args))
+    return " ".join(shlex.quote(str(arg)) for arg in args)
+
+
+# Output that changes every run: equal results prove caching, unequal a re-mint.
+_CHANGING_TOKEN_CMD = _shell_command(sys.executable, "-c", "import time; print(time.time_ns())")
 
 
 class TestMinting:
@@ -93,15 +115,15 @@ class TestNoCredentialLeak:
 class TestCaching:
     def test_token_is_cached_between_calls(self):
         """Without caching the command would run on every request."""
-        # A command whose output changes each run: equal results prove caching.
-        source = CommandTokenSource("date +%s%N", "dbx")
+        source = CommandTokenSource(_CHANGING_TOKEN_CMD, "dbx")
         assert source() == source()
 
     def test_expired_token_is_reminted(self):
-        # date +%s%N changes every run; $RANDOM would be bash-only (empty
-        # under dash, which is what /bin/sh is on Debian-family CI).
         source = CommandTokenSource(
-            """printf '{"access_token":"tok-%s","expires_in":3600}' "$(date +%s%N)" """,
+            _shell_command(
+                sys.executable, "-c",
+                "import json, time; print(json.dumps({'access_token': 'tok-%d' % time.time_ns(), 'expires_in': 3600}))",
+            ),
             "dbx",
         )
         first = source()
@@ -119,9 +141,13 @@ class TestCaching:
         """
         from agent.command_token_source import _NO_TTL_REFRESH_SECONDS
 
-        source = CommandTokenSource("date +%s%N", "dbx")
+        source = CommandTokenSource(_CHANGING_TOKEN_CMD, "dbx")
         first = source()
-        assert 0 < source._expires_at - time.monotonic() <= _NO_TTL_REFRESH_SECONDS
+        remaining = source._expires_at - time.monotonic()
+        # `<= window` with a float-noise allowance: when the clock has not
+        # ticked since the mint (15.6 ms resolution on Windows) the subtraction
+        # yields 900.0 plus an ulp, which is the window, not a longer cache.
+        assert 0 < remaining <= _NO_TTL_REFRESH_SECONDS + 1e-6
         assert source() == first  # cached inside the window
         source._expires_at = time.monotonic() - 1  # cross the window
         assert source() != first  # re-minted after it
@@ -282,10 +308,15 @@ class TestAbsoluteExpiry:
     def test_the_token_actually_gets_re_minted(self, tmp_path):
         """The regression that mattered: a deadline must expire the cache."""
         counter = tmp_path / "calls"
-        cmd = (
-            f"printf x >> {counter}; "
-            f"printf '%s' '{{\"access_token\":\"t\",\"expiry\":\"{self._iso(1)}\"}}'"
+        helper = tmp_path / "helper.py"
+        helper.write_text(
+            "import json, pathlib, sys\n"
+            "counter = pathlib.Path(sys.argv[1])\n"
+            "counter.write_bytes((counter.read_bytes() if counter.exists() else b'') + b'x')\n"
+            "print(json.dumps({'access_token': 't', 'expiry': sys.argv[2]}))\n",
+            encoding="utf-8",
         )
+        cmd = _shell_command(sys.executable, str(helper), str(counter), self._iso(1))
         src = CommandTokenSource(cmd, "p")
         src()
         assert src._expires_at is not None, "cache must carry a deadline"

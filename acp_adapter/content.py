@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from hermes_constants import is_wsl
+
 from acp.schema import (
     AudioContentBlock, BlobResourceContents, EmbeddedResourceContentBlock, ImageContentBlock,
     ResourceContentBlock, TextContentBlock, TextResourceContents,
@@ -69,9 +71,13 @@ _IMAGE_SUFFIX_MIME = {
 }
 
 
-def _path_from_file_uri(uri: str) -> Path | None:
+def _path_from_file_uri(uri: str, *, in_wsl: bool | None = None) -> Path | None:
     """Local file URI/path from an ACP client -> readable Path (None for non-file URIs).
-    Windows drive forms (Zed via wsl.exe) become ``/mnt/<drive>/...``."""
+    Windows drive forms (Zed via wsl.exe) become ``/mnt/<drive>/...`` only when Hermes runs
+    in WSL (``in_wsl``, default :func:`is_wsl`); a Windows-hosted Hermes reads ``C:/...`` as is --
+    ``/mnt/c`` does not exist there. Same gate as ``translate_cwd_for_wsl_backend``."""
+    if in_wsl is None:
+        in_wsl = is_wsl()
     raw = (uri or "").strip()
     if not raw:
         return None
@@ -91,6 +97,8 @@ def _path_from_file_uri(uri: str) -> Path | None:
         drive, rest = path_text[0], path_text[2:]
     else:
         return Path(path_text)
+    if not in_wsl:
+        return Path(f"{drive}:{rest}")
     return Path("/mnt") / drive.lower() / rest.lstrip("/\\").replace("\\", "/")
 
 

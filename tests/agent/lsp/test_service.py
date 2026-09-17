@@ -8,9 +8,7 @@ on.
 from __future__ import annotations
 
 import asyncio
-import sys
 import time
-from pathlib import Path
 
 import pytest
 
@@ -23,7 +21,7 @@ from agent.lsp.servers import (
 )
 
 
-MOCK_SERVER = str(Path(__file__).parent / "_mock_lsp_server.py")
+from tests.agent.lsp.mock_server_support import mock_server_command
 
 
 def _install_mock_server(
@@ -44,7 +42,7 @@ def _install_mock_server(
         spawn_count["value"] += 1
         env = {"MOCK_LSP_SCRIPT": scripts[index]}
         return SpawnSpec(
-            command=[sys.executable, MOCK_SERVER],
+            command=mock_server_command(),
             workspace_root=root,
             cwd=root,
             env=env,
