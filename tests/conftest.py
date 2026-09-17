@@ -3908,14 +3908,23 @@ def _moa_caches_isolated():
     tool loop doesn't re-resolve them serially on every iteration. Tests
     monkeypatch resolvers and config paths, so a cache entry leaked from one
     test would poison the next. Clear both around every test.
-    """
-    import agent.moa_loop as moa
 
-    moa._preset_cache.clear()
-    moa._runtime_cache.clear()
+    Looked up in ``sys.modules``, never imported: a module that was never
+    imported has no cache to leak, and ``agent.moa_loop`` imports
+    ``agent.auxiliary_client`` at module level (-> credential_pool,
+    model_metadata, ~950 modules), which is exactly the cost
+    tests/test_conftest_import_cost.py forbids charging to a trivial test's
+    fixture setup. Same rule as ``_reset_module_state``.
+    """
+    def _clear():
+        moa = sys.modules.get("agent.moa_loop")
+        if moa is not None:
+            moa._preset_cache.clear()
+            moa._runtime_cache.clear()
+
+    _clear()
     yield
-    moa._preset_cache.clear()
-    moa._runtime_cache.clear()
+    _clear()
 
 
 @pytest.fixture(scope="session")
