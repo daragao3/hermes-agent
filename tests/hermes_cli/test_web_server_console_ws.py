@@ -10,6 +10,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from hermes_cli import web_server
+from tests.timeout_budget import scaled
 
 
 @pytest.fixture
@@ -183,6 +184,10 @@ def blocking_provider():
         srv.shutdown()
 
 
+# Backstop only: a real socket server, a forked AIAgent, a 2 s command timeout plus the product's
+# 10 s unwind and a confirm-probe worker all sit inside one test; it grazed the suite-wide
+# 30 s cap under the parallel runner's load (healed on retry twice).
+@pytest.mark.timeout(scaled(180))
 @pytest.mark.parametrize("stop", ["cancel", "timeout"])
 def test_console_cancel_stops_forked_agent_request_before_reporting(console_client, monkeypatch, blocking_provider, stop):
     """#106179: cancelling (or timing out) a console command whose worker forked an AIAgent must interrupt
