@@ -478,6 +478,138 @@ class TestThrottleBuffer:
         assert len(sent) == 1
         assert "Acme" in sent[0]
 
+    def _buffered(self, bus, quiet_config, queue_path, sent):
+        escalator = WhatsAppEscalator(
+            bus, quiet_config_path=quiet_config, queue_path=queue_path,
+            send_fn=lambda msg: sent.append(msg),
+        )
+        event = Event.create(
+            EventType.APPROVAL_REQUEST, "tracker",
+            {"job_title": "Visa Analyst", "job_company": "Acme", "score": 9},
+        )
+        with patch.object(escalator, '_is_quiet_hours', return_value=False):
+            escalator.handle(event)
+        assert len(escalator._throttle_buffer) == 1
+        return escalator
+
+    def test_shutdown_leaves_the_buffer_for_the_successor_when_the_bridge_is_down(
+        self, bus, quiet_config, queue_path, caplog,
+    ):
+        """_stop_impl disconnects the adapters BEFORE the registry flushes.
+        When the gateway owned the bridge that killed it (2026-09-18 11:28:
+        `whatsapp disconnected (2.18s)`), and the old flush then paid ~5s of
+        connection-refused, a Telegram fallback, and a requeue to the QUIET
+        queue — the 7am morning flush — for a message the successor would
+        have re-sent within one throttle window from the persisted buffer.
+        Probe first; a dead bridge means: send nothing, keep the buffer."""
+        sent = []
+        escalator = self._buffered(bus, quiet_config, queue_path, sent)
+
+        with patch.object(escalator, "_bridge_listening", return_value=False), \
+                caplog.at_level(logging.INFO, logger="events.subscribers.whatsapp_escalator"):
+            escalator.shutdown()
+
+        assert sent == [], "no send against a bridge that is not listening"
+        assert len(escalator._throttle_buffer) == 1, "the buffer is the successor's"
+        assert not queue_path.exists(), "must not be misrouted to the morning queue"
+        assert "bridge not listening at shutdown" in caplog.text
+        # The successor restores it (persisted on append; window restarts).
+        successor = WhatsAppEscalator(
+            bus, quiet_config_path=quiet_config, queue_path=queue_path,
+            send_fn=lambda msg: None,
+        )
+        assert len(successor._throttle_buffer) == 1
+        assert "Acme" in successor._throttle_buffer[0]
+
+    def test_shutdown_flushes_when_the_bridge_is_listening(
+        self, bus, quiet_config, queue_path,
+    ):
+        """The common case on this box — an EXTERNAL bridge the adapter
+        attached to survives the adapter's disconnect (7 of 8 shutdown
+        flushes in the 2026-09-15..18 census delivered) — keeps its
+        immediate delivery."""
+        sent = []
+        escalator = self._buffered(bus, quiet_config, queue_path, sent)
+
+        with patch.object(escalator, "_bridge_listening", return_value=True):
+            escalator.shutdown()
+
+        assert len(sent) == 1
+        assert escalator._throttle_buffer == []
+
+    def test_shutdown_does_not_send_once_the_registry_budget_is_spent(
+        self, bus, quiet_config, queue_path, caplog,
+    ):
+        """The registry's shutdown budget is shared with TelegramNotifier,
+        which runs first; when it is spent the throttle buffer stays
+        persisted rather than starting one more multi-second send."""
+        import events.subscribers.whatsapp_escalator as we
+        sent = []
+        escalator = self._buffered(bus, quiet_config, queue_path, sent)
+
+        with patch.object(we, "shutdown_time_remaining", return_value=0.0), \
+                caplog.at_level(logging.WARNING, logger=we.logger.name):
+            escalator.shutdown()
+
+        assert sent == []
+        assert len(escalator._throttle_buffer) == 1
+        assert "shutdown flush budget spent" in caplog.text
+
+    def test_shutdown_with_an_empty_buffer_never_probes(
+        self, bus, quiet_config, queue_path,
+    ):
+        escalator = WhatsAppEscalator(
+            bus, quiet_config_path=quiet_config, queue_path=queue_path,
+            send_fn=lambda msg: None,
+        )
+        with patch.object(escalator, "_bridge_listening") as probe:
+            escalator.shutdown()
+        probe.assert_not_called()
+
+    def test_bridge_probe_reports_a_closed_port_immediately(self, bus, quiet_config, queue_path):
+        """The probe exists because the sender itself takes ~5s to learn the
+        port is closed; it must answer in well under a second, and only the
+        production path (no send_fn) probes at all."""
+        import socket
+        import time
+        escalator = WhatsAppEscalator(
+            bus, quiet_config_path=quiet_config, queue_path=queue_path,
+        )
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            closed_port = s.getsockname()[1]
+        with patch("gateway.config.load_gateway_config") as cfg:
+            cfg.return_value.platforms.get.return_value.extra = {"bridge_port": closed_port}
+            t0 = time.monotonic()
+            listening = escalator._bridge_listening()
+            took = time.monotonic() - t0
+        assert listening is False
+        assert took < 2.0, f"closed-port probe took {took:.2f}s"
+
+    def test_bridge_probe_sees_a_listening_port(self, bus, quiet_config, queue_path):
+        import socket
+        escalator = WhatsAppEscalator(
+            bus, quiet_config_path=quiet_config, queue_path=queue_path,
+        )
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            s.listen(1)
+            port = s.getsockname()[1]
+            with patch("gateway.config.load_gateway_config") as cfg:
+                cfg.return_value.platforms.get.return_value.extra = {"bridge_port": port}
+                assert escalator._bridge_listening() is True
+
+    def test_bridge_probe_is_always_true_with_an_injected_send_fn(
+        self, bus, quiet_config, queue_path,
+    ):
+        escalator = WhatsAppEscalator(
+            bus, quiet_config_path=quiet_config, queue_path=queue_path,
+            send_fn=lambda msg: None,
+        )
+        with patch("socket.create_connection") as connect:
+            assert escalator._bridge_listening() is True
+        connect.assert_not_called()
+
 
 class TestFlushQueueChunking:
     """flush_queue must chunk oversized queues to fit under the WhatsApp

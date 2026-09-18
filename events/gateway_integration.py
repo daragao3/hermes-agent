@@ -76,7 +76,31 @@ POLL_LOOP_ERROR_COOLDOWN_SECONDS = 900
 # older comments cite (_TASKKILL_TIMEOUT_S, removed 51ef1feed3) was the taskkill
 # subprocess timeout, never a grace period.  10s keeps this tail a small slice
 # of the 70s the stopper grants.
+#
+# This bounds the DRAIN (one last poll per subscriber) only. The other half of
+# shutdown()'s tail — SubscriberRegistry.shutdown_all(), where TelegramNotifier
+# flushes its per-topic batches and WhatsAppEscalator its throttle buffer —
+# has its own budget below; this one never applied to it.
 SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 10.0
+# Budget for shutdown_all()'s flushes, shared by every subscriber (see
+# SubscriberRegistry.shutdown_all / shutdown_time_remaining). Census 2026-09-18
+# (16 stops 09-15..09-18 with agent-gateway.log coverage; 38 in gateway.log):
+# the whole `Gateway stopped` -> `EventBus: shutdown complete` tail was this
+# flush — p50 6.1s / p90 13.0s / max 29.6s — as 1-5 serial "Batched (N
+# events)" Telegram sends at 1-8s each. Each send is slow because shutdown()
+# runs synchronously INSIDE the still-running gateway loop
+# (gateway/run.py::_start_gateway_shutdown_tail), so cron.scheduler_delivery's
+# _standalone_send cannot asyncio.run() and falls back to a fresh thread + loop
+# + TLS client per message, capped at 30s each. Unflushed remainders are not
+# lost: both flushers persist their buffers and the successor restores them
+# (telegram_notifier keeps the batch age, whatsapp_escalator restarts its
+# 15-min window), so past the budget they stop STARTING sends and leave the
+# rest. 30s covers every observed stop; the worst case is ~30s + one 30s send,
+# which with the 10s drain above just fits the stopper's 70s default grace and
+# sits well inside the 130s it grants once the 2026-09-18 teardown margin
+# (claude/stop-grace-covers-shutdown-tail-20260918, _STOP_TEARDOWN_MARGIN_S)
+# lands. Not configurable on purpose: it is sized against those clocks.
+SHUTDOWN_FLUSH_BUDGET_SECONDS = 30.0
 # Heartbeat write interval — external watchers stat gateway_heartbeat_path()
 # and alert on staleness > a few minutes, so this cadence must be tight
 # enough that a single missed write stays under the alert threshold.
@@ -520,7 +544,10 @@ def shutdown() -> None:
         _drain_subscribers_for_shutdown(_registry, skip=(_applier_subscriber,))
     _applier_subscriber = None
     if _registry:
-        _registry.shutdown_all()
+        # The flushes in here were the whole measured stop tail (see
+        # SHUTDOWN_FLUSH_BUDGET_SECONDS); the budget is shared, not per
+        # subscriber, and never skips a subscriber's shutdown().
+        _registry.shutdown_all(budget_seconds=SHUTDOWN_FLUSH_BUDGET_SECONDS)
     if _bus:
         _bus.close()
         _bus = None

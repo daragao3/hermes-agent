@@ -31,7 +31,7 @@ from events.routing_policy import (
     resolve_topic_thread,
 )
 from events.schema import Event, EventType, Priority
-from events.subscribers.base import BaseSubscriber
+from events.subscribers.base import BaseSubscriber, shutdown_time_remaining
 
 logger = logging.getLogger(__name__)
 
@@ -641,8 +641,72 @@ class WhatsAppEscalator(BaseSubscriber):
             logger.exception("WhatsAppEscalator: failed to persist throttle buffer")
 
     def shutdown(self) -> None:
-        """Flush pending throttle buffer and queue on shutdown."""
+        """Flush the throttle buffer on shutdown — only when it can land.
+
+        By the time the registry calls this, gateway/run_shutdown._stop_impl
+        has already disconnected every adapter. What that did to the bridge
+        depends on who owns it: an EXTERNAL bridge (the adapter attached to
+        one already listening — 7 of the 8 shutdown flushes in the
+        2026-09-15..18 census, `whatsapp disconnected (0.03s)`) is left
+        running and the send lands; a bridge THIS gateway spawned was
+        terminated (`whatsapp disconnected (2.18s)`, 2026-09-18 11:28) and
+        the send is refused after ~5s, then pays a Telegram fallback and is
+        requeued to the QUIET queue — i.e. the 7am morning flush, even
+        though the successor would have re-sent it within one throttle
+        window. So: probe the bridge port first (sub-second) and, when
+        nothing is listening or the registry's shutdown budget is already
+        spent, leave the buffer where it is. It is persisted on every
+        append and the successor restores it with a fresh window (delay,
+        never loss — see __init__).
+        """
+        if not self._throttle_buffer:
+            self._throttle_start = None
+            return
+        remaining = shutdown_time_remaining()
+        if remaining is not None and remaining <= 0:
+            logger.warning(
+                "WhatsAppEscalator: shutdown flush budget spent; %d buffered "
+                "escalation(s) stay persisted for the successor",
+                len(self._throttle_buffer),
+            )
+            return
+        if not self._bridge_listening():
+            logger.info(
+                "WhatsAppEscalator: bridge not listening at shutdown; %d "
+                "buffered escalation(s) stay persisted for the successor",
+                len(self._throttle_buffer),
+            )
+            return
         self._flush_throttle_buffer()
+
+    def _bridge_listening(self) -> bool:
+        """True when something accepts TCP on the bridge port right now.
+
+        Tests inject ``send_fn`` and have no bridge, so they are always
+        "listening". Production resolves the port the standalone sender
+        uses (``platforms.whatsapp.extra.bridge_port``, default 3000) and
+        connects to 127.0.0.1 with a short timeout — a closed port is
+        refused immediately, which is the whole point versus the ~5s the
+        sender itself takes to fail. Any error resolving or probing counts
+        as not listening: the cost of a false negative is one throttle
+        window of delay; the cost of a false positive is the 5s + fallback
+        + morning-queue path this exists to avoid.
+        """
+        if self._send_fn is not None:
+            return True
+        import socket
+        port = 3000
+        try:
+            from gateway.config import Platform, load_gateway_config
+            pconfig = load_gateway_config().platforms.get(Platform.WHATSAPP)
+            port = int((getattr(pconfig, "extra", {}) or {}).get("bridge_port", 3000))
+        except Exception:
+            logger.debug("WhatsAppEscalator: bridge_port unresolved, probing %d", port, exc_info=True)
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return True
+        except OSError:
+            return False
 
     def _deliver(
         self,

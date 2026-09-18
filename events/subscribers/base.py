@@ -403,7 +403,33 @@ class BaseSubscriber(ABC):
         """Called once when the subscriber is registered.  Override for init logic."""
 
     def shutdown(self) -> None:
-        """Called once on gateway shutdown.  Override for cleanup logic."""
+        """Called once on gateway shutdown.  Override for cleanup logic.
+
+        A shutdown() that SENDS (the Telegram batch flush, the WhatsApp
+        throttle flush) must consult :func:`shutdown_time_remaining` before
+        each send and leave the remainder in its persisted buffer for the
+        successor process: the registry's ``shutdown_all`` budget is shared
+        by every subscriber and gates whether a send STARTS, never how long
+        one may take.
+        """
+
+
+# Deadline (time.monotonic()) of the shutdown_all() in progress, or None
+# outside one — see SubscriberRegistry.shutdown_all. Module-level rather than
+# a shutdown() parameter so the three in-tree overrides, test fakes and
+# plugin subscribers keep their ``shutdown(self)`` signature.
+_shutdown_deadline: Optional[float] = None
+
+
+def shutdown_time_remaining() -> Optional[float]:
+    """Seconds left in the shutdown_all() budget, or None when unbounded.
+
+    None outside shutdown_all() (a flush from handle()/poll() is never
+    budgeted) and inside an unbudgeted shutdown_all(). Never negative.
+    """
+    if _shutdown_deadline is None:
+        return None
+    return max(0.0, _shutdown_deadline - time.monotonic())
 
 
 class SubscriberRegistry:
@@ -437,13 +463,39 @@ class SubscriberRegistry:
             except Exception:
                 logger.exception("Subscriber %s startup failed", sub.subscriber_id)
 
-    def shutdown_all(self) -> None:
-        """Call shutdown() on all subscribers."""
-        for sub in self.subscribers:
-            try:
-                sub.shutdown()
-            except Exception:
-                logger.exception("Subscriber %s shutdown failed", sub.subscriber_id)
+    def shutdown_all(self, budget_seconds: Optional[float] = None) -> None:
+        """Call shutdown() on EVERY subscriber, in registration order.
+
+        ``budget_seconds`` is one deadline shared by all of them, published
+        through :func:`shutdown_time_remaining` for the duration of the
+        call. It never skips a subscriber — CronStaleMonitor is registered
+        AFTER the two flushers and its shutdown() is where the cron
+        shutdown attribution is emitted — it only tells a flusher when to
+        stop STARTING sends. A send already in flight runs to its own
+        transport timeout, so the whole call is bounded by roughly
+        ``budget_seconds`` plus one send, not by ``budget_seconds``.
+        """
+        global _shutdown_deadline
+        if budget_seconds is not None:
+            _shutdown_deadline = time.monotonic() + max(0.0, float(budget_seconds))
+        started = time.monotonic()
+        try:
+            for sub in self.subscribers:
+                try:
+                    sub.shutdown()
+                except Exception:
+                    logger.exception("Subscriber %s shutdown failed", sub.subscriber_id)
+        finally:
+            _shutdown_deadline = None
+        elapsed = time.monotonic() - started
+        if budget_seconds is not None and elapsed > budget_seconds:
+            logger.warning(
+                "Subscriber shutdown took %.1fs against a %.0fs budget "
+                "(a send in flight at the deadline runs to its own timeout)",
+                elapsed, budget_seconds,
+            )
+        else:
+            logger.info("Subscriber shutdown took %.1fs", elapsed)
 
     def lag_report(self) -> Dict[str, int]:
         """Return {subscriber_id: events_behind_head} for all registered subscribers.

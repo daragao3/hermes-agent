@@ -47,7 +47,7 @@ from events.routing_policy import (
 )
 from events.schema import Event, EventType, Priority
 from events.state import load_state, save_state
-from events.subscribers.base import BaseSubscriber
+from events.subscribers.base import BaseSubscriber, shutdown_time_remaining
 
 logger = logging.getLogger(__name__)
 
@@ -1285,13 +1285,31 @@ class TelegramNotifier(BaseSubscriber):
             )
 
     def _flush_stale_batches(self, max_age: float = BATCH_FLUSH_SECONDS) -> None:
-        """Flush batched TRACE messages older than max_age seconds."""
+        """Flush batched TRACE messages older than max_age seconds.
+
+        Inside ``SubscriberRegistry.shutdown_all`` the sends are budgeted
+        (``shutdown_time_remaining``): each per-topic batch is a serial
+        1-8s send from the stopping gateway, and 4-5 topics were the whole
+        measured stop tail (2026-09-18). Once the budget is spent, the keys
+        not yet flushed stay buffered and persisted with their age, so the
+        successor's first pass flushes them (delayed, never lost). From
+        handle() the budget is None and every stale key is flushed.
+        """
         now = time.monotonic()
         keys_to_flush = [
             k for k, ts in self._batch_timestamps.items()
             if now - ts >= max_age
         ]
-        for key in keys_to_flush:
+        for index, key in enumerate(keys_to_flush):
+            remaining = shutdown_time_remaining()
+            if remaining is not None and remaining <= 0:
+                left = keys_to_flush[index:]
+                logger.warning(
+                    "TelegramNotifier: shutdown flush budget spent; %d batch(es) "
+                    "left for the successor: %s",
+                    len(left), ", ".join(left),
+                )
+                break
             self._flush_batch_key(key)
         if keys_to_flush:
             self._persist_batch_buffer()
@@ -1395,7 +1413,12 @@ class TelegramNotifier(BaseSubscriber):
             logger.exception("TelegramNotifier: failed to persist batch buffer")
 
     def shutdown(self) -> None:
-        """Flush all pending batches on shutdown."""
+        """Flush pending batches on shutdown, within the registry's budget.
+
+        Best-effort: whatever the budget leaves unflushed is already on disk
+        (every append persists) and the successor resumes it with its
+        original age — see _flush_stale_batches.
+        """
         self._flush_stale_batches(max_age=0)
 
     def _thread_id_to_key(self, thread_id: str) -> str:

@@ -246,6 +246,94 @@ def test_shutdown_drains_only_after_the_poll_thread_is_joined(bus, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# shutdown_all(): the flush budget (2026-09-18 census — the whole measured
+# stop tail was TelegramNotifier + WhatsAppEscalator flushing inside here)
+# ---------------------------------------------------------------------------
+
+from events.subscribers import base as sub_base
+
+
+class BudgetProbe(FakeSubscriber):
+    """Records what shutdown_time_remaining() said when shutdown() ran, and
+    optionally burns wall-clock so the NEXT subscriber sees the budget spent."""
+
+    def __init__(self, subscriber_id, burn=0.0):
+        super().__init__(subscriber_id, [EventType.CRON_STARTED])
+        self._burn = burn
+        self.remaining_seen = "never called"
+        self.shutdowns = 0
+
+    def shutdown(self):
+        self.shutdowns += 1
+        self.remaining_seen = sub_base.shutdown_time_remaining()
+        if self._burn:
+            time.sleep(self._burn)
+
+
+def test_shutdown_all_publishes_one_shared_deadline_and_never_skips_a_subscriber():
+    """The budget is SHARED: a flusher that spends it leaves zero for the
+    next, but the next still runs — CronStaleMonitor is registered after the
+    two flushers and its shutdown() emits the cron shutdown attribution."""
+    spender = BudgetProbe("telegram-notifier", burn=0.3)
+    after = BudgetProbe("cron-stale-monitor")
+
+    _registry(spender, after).shutdown_all(budget_seconds=0.2)
+
+    assert spender.remaining_seen is not None and 0 <= spender.remaining_seen <= 0.2
+    assert after.shutdowns == 1, "a spent budget must not skip shutdown()"
+    assert after.remaining_seen == 0.0, "the budget is shared, not per subscriber"
+
+
+def test_shutdown_all_without_a_budget_is_unbounded():
+    probe = BudgetProbe("telegram-notifier")
+
+    _registry(probe).shutdown_all()
+
+    assert probe.remaining_seen is None
+
+
+def test_shutdown_all_clears_the_deadline_afterwards_even_when_a_shutdown_raises():
+    """A stale deadline would budget the NEXT handle()-time flush in this
+    process (tests, or a gateway restart that re-uses the module)."""
+    boom = FakeSubscriber("boom", [EventType.CRON_STARTED])
+    boom.shutdown = lambda: (_ for _ in ()).throw(RuntimeError("shutdown exploded"))
+    after = BudgetProbe("cron-stale-monitor")
+
+    _registry(boom, after).shutdown_all(budget_seconds=5.0)
+
+    assert after.shutdowns == 1
+    assert sub_base.shutdown_time_remaining() is None
+
+
+def test_shutdown_all_says_when_the_budget_was_overrun(caplog):
+    """Never silent: a send in flight at the deadline runs to its own
+    transport timeout, so the call can outrun the budget — say so."""
+    slow = BudgetProbe("telegram-notifier", burn=0.15)
+
+    with caplog.at_level(logging.WARNING, logger=sub_base.logger.name):
+        _registry(slow).shutdown_all(budget_seconds=0.05)
+
+    assert "against a 0s budget" in caplog.text
+
+
+def test_shutdown_passes_the_flush_budget_to_shutdown_all(bus, monkeypatch):
+    """Wiring: gateway_integration.shutdown() budgets shutdown_all() with
+    SHUTDOWN_FLUSH_BUDGET_SECONDS — SHUTDOWN_DRAIN_TIMEOUT_SECONDS gates the
+    drain only and never applied to the flushes."""
+    probe = BudgetProbe("telegram-notifier")
+    monkeypatch.setattr(gi, "_registry", _registry(probe))
+    monkeypatch.setattr(gi, "_bus", bus)
+    monkeypatch.setattr(gi, "_subscriber_thread", None)
+    monkeypatch.setattr(gi, "_applier_thread", None)
+
+    gi.shutdown()
+
+    assert probe.remaining_seen is not None, "shutdown_all() ran unbudgeted"
+    assert probe.remaining_seen <= gi.SHUTDOWN_FLUSH_BUDGET_SECONDS
+    assert probe.remaining_seen > gi.SHUTDOWN_FLUSH_BUDGET_SECONDS - 5
+
+
+# ---------------------------------------------------------------------------
 # End to end: the behaviour the drain exists for
 # ---------------------------------------------------------------------------
 
