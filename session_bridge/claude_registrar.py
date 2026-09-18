@@ -23,6 +23,7 @@ from typing import Any, Callable, Mapping, NamedTuple, Protocol, Sequence
 _LOG = logging.getLogger(__name__)
 
 from .claude_adapter import (
+    CLAUDE_NO_MCP_ARGS,
     ClaudeParseResult,
     ClaudeReadableSource,
     _is_cli_command_bookkeeping,
@@ -42,11 +43,11 @@ from .models import OriginKind, ProjectedMessage, Provider, SessionProjection
 _MAX_RESPONSE_CHARS = 65_536
 # Empty setting sources exclude user/project/local settings. Claude's managed
 # policy settings remain authoritative; Session Bridge never bypasses them.
+# The MCP half is the tuple every ``--print`` placeholder uses too
+# (``claude_adapter.CLAUDE_NO_MCP_ARGS``), so both argv shapes move together.
 _CLAUDE_STARTUP_ISOLATION_ARGS = (
     "--setting-sources=",
-    "--mcp-config",
-    '{"mcpServers":{}}',
-    "--strict-mcp-config",
+    *CLAUDE_NO_MCP_ARGS,
     "--no-chrome",
 )
 _CLAUDE_STARTUP_THEMES = frozenset({

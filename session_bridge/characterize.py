@@ -25,6 +25,7 @@ from agent.transports.codex_app_server import CodexAppServerClient
 from hermes_constants import get_default_hermes_root
 
 from .claude_adapter import (
+    CLAUDE_NO_MCP_ARGS,
     CLAUDE_PLACEHOLDER_MAX_BUDGET_USD,
     ClaudeMarkerSource,
     ClaudeReadableSource,
@@ -3445,12 +3446,15 @@ def _file_backed_claude_run(
     """``subprocess.run``-shaped runner for the disposable Claude session.
 
     Not ``subprocess.run(capture_output=True, timeout=…)``: the disposable
-    session runs with ``cwd`` = the project under characterization, so it
-    starts that project's configured MCP servers (observed 2026-09-18: the
-    codegraph ``node.exe … serve --mcp`` server of agent-src). Those servers
-    inherit the capture pipe handles and outlive ``claude.exe`` — after the CLI
-    exits (in ~6 s on a 429 reply) the pipe never reaches EOF, ``subprocess.run``
-    raises ``TimeoutExpired`` at ``timeout`` and its except path then calls
+    session runs with ``cwd`` = the project under characterization, so until
+    ``CLAUDE_NO_MCP_ARGS`` it started that project's configured MCP servers
+    (observed 2026-09-18: the codegraph ``node.exe … serve --mcp`` server of
+    agent-src). Those servers are gone from the argv now, but the CLI still
+    runs that project's hooks and plugins under the same cwd, and any such
+    grandchild is the same hazard: it inherits the capture pipe handles and
+    outlives ``claude.exe`` — after the CLI exits (in ~6 s on a 429 reply) the
+    pipe never reaches EOF, ``subprocess.run`` raises ``TimeoutExpired`` at
+    ``timeout`` and its except path then calls
     ``communicate()`` with NO timeout, joining the reader threads until the
     grandchild dies on its own (~30 min per turn under codegraph's watchdog;
     py-spy: ``join <- _communicate <- communicate <- run <-
@@ -3644,6 +3648,7 @@ def _resume_claude_characterization(
     args = [
         *_immutable_argv_prefix(executable, label="Claude executable"),
         "--print",
+        *CLAUDE_NO_MCP_ARGS,
         "--resume",
         native_id,
         "--tools",
