@@ -387,7 +387,7 @@ def _copy_dist_payload(staged: Path, target: Path, manifest: DistributionManifes
 
     # Emit .env.EXAMPLE from manifest if the staged tree didn't ship one
     if manifest.env_requires and not (target / ENV_EXAMPLE_FILENAME).exists():
-        (target / ENV_EXAMPLE_FILENAME).write_text(_env_template_from_manifest(manifest), encoding="utf-8")
+        (target / ENV_EXAMPLE_FILENAME).write_text(_env_template_from_manifest(manifest), encoding="utf-8", newline="\n")
 
     # Make sure the manifest on disk reflects resolved name + source
     write_manifest(target, manifest)

@@ -685,6 +685,51 @@ class TestRemoveEnvValue:
         assert env_mode == 0o640, f"expected 0o640, got {oct(env_mode)}"
 
 
+class TestEnvWriterLineEndings:
+    """Every ``.env`` writer keeps LF on disk on every platform: the file is sourced by POSIX
+    shells and Docker bind-mounts, and a save must leave the lines it never touched byte-identical
+    (890e5ab0f1 pinned the OpenViking writer to the same contract). Fixtures use ``write_bytes``:
+    ``write_text`` would itself emit CRLF on Windows and hide the defect under test."""
+
+    def test_save_env_value_leaves_untouched_lines_byte_identical(self, tmp_path):
+        env_path = tmp_path / ".env"
+        env_path.write_bytes(b"# comment\nFIRST=1\nTARGET=old\nLAST=3\n")
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            os.environ.pop("TARGET", None)
+            save_env_value("TARGET", "new")
+        assert env_path.read_bytes() == b"# comment\nFIRST=1\nTARGET=new\nLAST=3\n"
+
+    def test_save_env_value_appends_with_lf(self, tmp_path):
+        env_path = tmp_path / ".env"
+        env_path.write_bytes(b"FIRST=1\n")
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            os.environ.pop("SECOND", None)
+            save_env_value("SECOND", "2")
+        assert env_path.read_bytes() == b"FIRST=1\nSECOND=2\n"
+
+    def test_save_env_value_new_file_is_lf(self, tmp_path):
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            os.environ.pop("ONLY", None)
+            save_env_value("ONLY", "1")
+        assert (tmp_path / ".env").read_bytes() == b"ONLY=1\n"
+
+    def test_remove_env_value_leaves_untouched_lines_byte_identical(self, tmp_path):
+        env_path = tmp_path / ".env"
+        env_path.write_bytes(b"FIRST=1\nGONE=x\nLAST=3\n")
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            assert remove_env_value("GONE") is True
+        assert env_path.read_bytes() == b"FIRST=1\nLAST=3\n"
+
+    def test_sanitize_env_file_rewrites_as_lf(self, tmp_path):
+        """A rewrite (here: trailing whitespace on one assignment) normalizes that line and leaves
+        the rest LF-terminated -- not CRLF on Windows."""
+        env_path = tmp_path / ".env"
+        env_path.write_bytes(b"FIRST=1\nPADDED = 2 \nLAST=3\n")
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            assert sanitize_env_file() == 1
+        assert env_path.read_bytes() == b"FIRST=1\nPADDED = 2\nLAST=3\n"
+
+
 class TestSaveConfigAtomicity:
     """Verify save_config uses atomic writes (tempfile + os.replace)."""
 

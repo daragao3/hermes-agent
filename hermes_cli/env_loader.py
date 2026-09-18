@@ -293,7 +293,9 @@ def _sanitize_env_file_if_needed(path: Path) -> None:
             import tempfile
             fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=".env_")
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                # newline="\n" like ``hermes_cli.config._write_env_lines``: the sanitized lines are
+                # LF-terminated and stay so on disk on every platform.
+                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
                     f.writelines(sanitized)
                     f.flush()
                     os.fsync(f.fileno())

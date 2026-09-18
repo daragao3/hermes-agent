@@ -759,12 +759,15 @@ def _resolve_clone_source(clone_from: Optional[str]) -> Path:
     return source_dir
 
 
-def _seed_file_if_missing(path: Path, text: str, mode: Optional[int] = None) -> None:
-    """Best-effort: write *text* to *path* unless it already exists; never raises."""
+def _seed_file_if_missing(path: Path, text: str, mode: Optional[int] = None, *,
+                          newline: Optional[str] = None) -> None:
+    """Best-effort: write *text* to *path* unless it already exists; never raises.
+    ``newline`` is passed through to ``write_text`` (``"\\n"`` for ``.env``, which every
+    Hermes writer keeps LF on disk; the default keeps platform newlines for prose files)."""
     if path.exists():
         return
     with contextlib.suppress(OSError):
-        path.write_text(text, encoding="utf-8")
+        path.write_text(text, encoding="utf-8", newline=newline)
         if mode is not None:
             os.chmod(str(path), mode)
 
@@ -864,7 +867,7 @@ def create_profile(
     # profile-scoped env writes (dashboard Channels/Keys pages, `hermes -p <name> auth add`)
     # had no file until first write and the profile silently inherited shell API keys —
     # read by users as "the new profile reads the root .env". Skipped when a clone copied one.
-    _seed_file_if_missing(profile_dir / ".env", _PLACEHOLDER_ENV, 0o600)
+    _seed_file_if_missing(profile_dir / ".env", _PLACEHOLDER_ENV, 0o600, newline="\n")
 
     # Default SOUL.md to customize immediately (skipped when a clone already provided one).
     with contextlib.suppress(Exception):  # best-effort — don't fail profile creation over this
@@ -950,7 +953,7 @@ def backfill_profile_envs(quiet: bool = False) -> List[str]:
             if default_env.is_file():
                 shutil.copy2(default_env, env_path)
             else:
-                env_path.write_text(_PLACEHOLDER_ENV, encoding="utf-8")
+                env_path.write_text(_PLACEHOLDER_ENV, encoding="utf-8", newline="\n")
             os.chmod(str(env_path), 0o600)
             backfilled.append(entry.name)
         except OSError as e:
