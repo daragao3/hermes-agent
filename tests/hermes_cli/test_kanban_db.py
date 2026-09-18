@@ -19,6 +19,7 @@ from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
 from hermes_cli import kanban_db_dispatch as kbd
 from hermes_cli import kanban_db_workspace as kbw
+from tests.timeout_budget import scaled
 
 
 @pytest.fixture
@@ -1207,6 +1208,9 @@ def test_resolve_hermes_argv_falls_back_to_module_form_when_no_path_shim(monkeyp
     assert argv == [sys.executable, "-m", "hermes_cli.main"]
 
 
+# Backstop only: spawns a real `python -m hermes_cli...` child, which on a freshly provisioned
+# venv compiles its bytecode cold (tripped the suite cap right after the 3.13 cut-over).
+@pytest.mark.timeout(scaled(300))
 def test_resolve_hermes_argv_module_actually_runs():
     """The fallback module name must be importable + runnable.
 
