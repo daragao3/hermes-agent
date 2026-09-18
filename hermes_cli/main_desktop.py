@@ -332,9 +332,9 @@ def _windows_native_machine() -> str:
         env_arch = os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE")
         if env_arch:
             return env_arch.upper()
-    import platform as _platform
+    from hermes_cli._subprocess_compat import host_machine
 
-    return (_platform.machine() or "").upper()
+    return (host_machine() or "").upper()
 
 
 def _expected_windows_pe_machines() -> set:

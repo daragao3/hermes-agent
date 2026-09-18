@@ -8,9 +8,10 @@ Linux: pactl creates a null-sink plus a virtual source on the sink's monitor; ca
 from __future__ import annotations
 
 import contextlib
-import platform
 import subprocess
 from typing import Optional
+
+from hermes_cli._subprocess_compat import host_system
 
 
 _BLACKHOLE_DEVICE = "BlackHole 2ch"
@@ -41,7 +42,7 @@ class AudioBridge:
 
     def setup(self) -> dict:
         """Provision the device; raises RuntimeError on unsupported platforms or missing tools."""
-        system = platform.system()
+        system = host_system()
         impl = {"Linux": self._setup_linux, "Darwin": self._setup_darwin}.get(system)
         if impl is None:
             raise RuntimeError("windows not supported in v2" if system == "Windows"
@@ -127,7 +128,7 @@ def chrome_fake_audio_flags(bridge_info: dict) -> list[str]:
     On macOS the caller must ensure the system default audio input is
     set to the returned BlackHole device (we do not flip that switch).
     """
-    system = platform.system()
+    system = host_system()
     if system == "Linux":
         # Chromium on Linux picks up the PulseAudio source selected via
         # PULSE_SOURCE env var; the fake-ui flag skips the permission

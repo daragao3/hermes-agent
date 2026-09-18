@@ -9,8 +9,8 @@ URLs passed in — no calendar scanning, auto-dial or consent announcement.
 from __future__ import annotations
 
 import logging
-import platform
 
+from hermes_cli._subprocess_compat import host_system
 from plugins.google_meet import process_manager as pm
 from plugins.google_meet.cli import meet_command as _meet_command, register_cli as _register_meet_cli
 from plugins.google_meet.tools import (
@@ -42,7 +42,7 @@ def _on_session_end(**kwargs) -> None:
 def register(ctx) -> None:
     """Register tools, CLI, and lifecycle hooks (called once by the plugin loader)."""
     # Windows: no tested audio-routing path and flaky guest-join Chromium — refuse rather than half-work.
-    system = platform.system().lower()
+    system = host_system().lower()
     if system not in {"linux", "darwin"}:
         logger.info("google_meet plugin: platform=%s not supported (linux/macos only)", system)
         return

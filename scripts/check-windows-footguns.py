@@ -54,8 +54,6 @@ GUARD_HINTS = (
     "getattr(os,",
     "getattr(signal,",
     "shutil.which(",
-    "if platform.system() != \"Windows\"",
-    "if platform.system() != 'Windows'",
     "if sys.platform == \"win32\"",
     "if sys.platform != \"win32\"",
     "if sys.platform == 'win32'",
@@ -233,7 +231,7 @@ FOOTGUNS: list[Footgun] = [
             "Windows use creationflags instead."
         ),
         fix=(
-            "if platform.system() != 'Windows':\n"
+            "if sys.platform != 'win32':\n"
             "    kwargs['preexec_fn'] = os.setsid\n"
             "else:\n"
             "    kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP"
@@ -375,12 +373,47 @@ FOOTGUNS: list[Footgun] = [
             "access. Each has a portable stdlib or psutil equivalent."
         ),
         fix=(
-            "Guard with hasattr(os, 'X') and fall back: platform.uname() for "
+            "Guard with hasattr(os, 'X') and fall back: "
+            "hermes_cli._subprocess_compat.wmi_safe_platform().uname() for "
             "uname; psutil.getloadavg() / psutil.cpu_percent() for "
             "getloadavg; os.cpu_count() for sched_getaffinity; "
             "psutil.virtual_memory() / os.cpu_count() for the sysconf "
             "page/cpu keys."
         ),
+    ),
+    Footgun(
+        name="bare platform.system / platform.uname / platform.machine / platform.release (WMI thread)",
+        # ``platform.`` and the ``import platform as _platform`` alias; the
+        # ``python_version()``/``mac_ver()``/``python_implementation()`` reads do not
+        # touch uname() and are not matched.
+        pattern=re.compile(
+            r"\b_?platform\.(?:system|uname|machine|release|version|node|processor|platform)\s*\("
+        ),
+        message=(
+            "On Windows every platform.uname()-backed read (system(), machine(), "
+            "release(), version(), node(), platform()) runs two WMI queries on "
+            "a helper thread that CPython < 3.13.4 abandons after a 100 ms "
+            "connect timeout (gh-130727, never backported to 3.12). The stray "
+            "thread later closes a random live handle of the process, which "
+            "dies with exit 0xC000070A and no traceback under host load. "
+            "hermes_bootstrap stubs the query for entry points, but every "
+            "module here is importable from a bare python -c / -m child "
+            "(desktop -m hermes_cli.windows_ssh_runtime, hermes-session-bridge, "
+            "ops scripts, skill scripts run by the terminal tool), where the "
+            "stub was never applied."
+        ),
+        fix=(
+            "OS-name tests: sys.platform == 'win32' / 'darwin' / .startswith('linux'), "
+            "or hermes_cli._subprocess_compat.host_system() where a "
+            "'Windows'/'Darwin'/'Linux' string (dict key, log field, test seam) is "
+            "wanted. Genuine arch/version reads: host_machine(), or "
+            "plat = wmi_safe_platform() and read plat.release()/plat.version()/"
+            "plat.node() -- the stub is applied first. Suppress a deliberate "
+            "call (exercising the stub itself) with `# windows-footgun: ok`."
+        ),
+        # A docstring/comment/string that merely names the call is not a call
+        # (the checker's own tests keep sample lines as string literals).
+        post_filter=lambda m, line: not _looks_like_string_literal(line, m),
     ),
     Footgun(
         name="bare os.WNOHANG / os.WIFEXITED / os.WIFSIGNALED / os.WEXITSTATUS / os.WTERMSIG",

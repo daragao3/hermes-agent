@@ -765,14 +765,29 @@ that touches the OS, assume *any* platform can hit your code path.
    these is simply ABSENT on Windows, so the failure is an `AttributeError`
    at attribute access -- which `except OSError` / `except PermissionError`
    cannot catch (it is not an `OSError`). Guard the attribute or the
-   platform, not the errno: `platform.system()`, `sys.platform`, or
+   platform, not the errno: `sys.platform`, `os.name`, or
    `hasattr(os, "setsid")`:
    ```python
-   if platform.system() != "Windows":
+   if sys.platform != "win32":
        kwargs["preexec_fn"] = os.setsid
    else:
        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
    ```
+
+   **Not `platform.system()`** — nor `platform.machine()`, `release()`,
+   `version()`, `node()`, `platform()` or `uname()`. On Windows every one of
+   those runs two WMI queries on a helper thread that CPython < 3.13.4
+   abandons after a 100 ms connect timeout (gh-130727, never backported to
+   3.12); the stray thread later closes a random live handle and the process
+   dies with exit `0xC000070A` and no traceback under host load.
+   `hermes_bootstrap` stubs the query for the entry points, but every module
+   in this tree is importable from a bare `python -c` / `-m` child where the
+   stub was never applied, so the checker flags the bare spelling. Use
+   `sys.platform` for an OS test, `hermes_cli._subprocess_compat.host_system()`
+   where a `"Windows"`/`"Darwin"`/`"Linux"` string is wanted (dict key, log
+   field, test seam — tests patch `module.host_system`, not `platform`), and
+   `host_machine()` / `plat = wmi_safe_platform()` for the arch and version
+   reads that genuinely need `uname()` data.
 
    **Preferred:** for killing a process AND its children (what `os.killpg`
    does on POSIX), use `psutil` — it works on every platform:

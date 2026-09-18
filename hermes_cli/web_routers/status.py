@@ -494,15 +494,16 @@ async def get_status(profile: Optional[str] = None):
 async def get_system_stats():
     """Host + process system stats for the System page (stdlib identity; psutil CPU/memory/
     disk/uptime when available). Non-sensitive: no env values, no paths beyond hermes home."""
-    import platform as _platform
+    from hermes_cli._subprocess_compat import host_system, wmi_safe_platform
 
+    plat = wmi_safe_platform()  # release/version/node/machine need uname(); keep it off WMI
     info: Dict[str, Any] = {
         **_display_system_platform(
-            system=_platform.system(), release=_platform.release(), version=_platform.version(),
-            platform_label=_platform.platform()),
-        "arch": _platform.machine(), "hostname": _platform.node(),
-        "python_version": _platform.python_version(),
-        "python_impl": _platform.python_implementation(),
+            system=host_system(), release=plat.release(), version=plat.version(),
+            platform_label=plat.platform()),
+        "arch": plat.machine(), "hostname": plat.node(),
+        "python_version": plat.python_version(),
+        "python_impl": plat.python_implementation(),
         "hermes_version": __version__, "cpu_count": os.cpu_count()}
 
     def _disk():

@@ -206,7 +206,7 @@ def test_register_refuses_on_windows():
         def register_cli_command(self, **kw): calls["cli"].append(kw["name"])
         def register_hook(self, name, fn): calls["hooks"].append(name)
 
-    with patch.object(plugin.platform, "system", return_value="Windows"):
+    with patch.object(plugin, "host_system", return_value="Windows"):
         plugin.register(_Ctx())
 
     assert calls == {"tools": [], "cli": [], "hooks": []}
@@ -290,7 +290,7 @@ def test_realtime_session_cancel_response_when_disconnected():
 def test_cmd_install_refuses_windows(capsys):
     from plugins.google_meet.cli import _cmd_install
 
-    with patch("plugins.google_meet.cli.platform" if False else "platform.system",
+    with patch("plugins.google_meet.cli.host_system",
                return_value="Windows"):
         rc = _cmd_install(realtime=False, assume_yes=True)
     assert rc == 1

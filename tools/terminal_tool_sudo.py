@@ -6,7 +6,6 @@ Split out of ``tools/terminal_tool.py``; every public/patched name is re-importe
 
 import logging
 import os
-import platform
 import re
 import shlex
 import subprocess
@@ -149,7 +148,7 @@ def _read_hidden_password(result: dict) -> None:
     tty_fd = old_attrs = None
     try:
         chars = []
-        if platform.system() == "Windows":
+        if sys.platform == "win32":
             import msvcrt
             while (c := msvcrt.getwch()) not in {"\r", "\n"}:
                 if c == "\x03":

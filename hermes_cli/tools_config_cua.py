@@ -6,7 +6,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import platform
 import re
 import shutil
 import subprocess
@@ -14,6 +13,8 @@ import sys
 import time
 from pathlib import Path
 from typing import List, Optional
+
+from hermes_cli._subprocess_compat import host_system
 from hermes_constants import real_executable
 
 from hermes_cli.cli_output import (
@@ -301,7 +302,7 @@ def install_cua_driver(upgrade: bool = False, require_confirmed_update: bool = F
     Re-running the upstream installer (always the latest release tag) is the canonical upgrade.
     ``upgrade=False`` (toolset enable flow) keeps a compatible installation, repairs an
     old/incomplete one and installs when missing; ``upgrade=True`` always refreshes."""
-    system = platform.system()
+    system = host_system()
     if system not in ("Darwin", "Windows", "Linux"):
         if not upgrade:  # silent under `hermes update`, which calls this for every user
             _print_warning(
@@ -758,7 +759,7 @@ def _run_cua_driver_installer(label: str = "Installing", verbose: bool = True,
     """Run the upstream cua-driver installer (idempotent: always the latest release, so re-running
     upgrades). ``installer_timeout`` lets quiet callers use a shorter ceiling without weakening the
     explicit install path's stale-lock recovery window."""
-    system = platform.system()
+    system = host_system()
     is_windows, is_linux = system == "Windows", system == "Linux"
     install_cmd, manual_hint, script_path = _cua_installer_command(is_windows)
     if install_cmd is None:

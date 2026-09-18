@@ -17,7 +17,6 @@ runs the helper exactly ONCE with an empty key; POSIX-only (needs ``/bin/sh``).
 from __future__ import annotations
 
 import os
-import platform
 import re
 import signal as _signal
 import subprocess
@@ -39,7 +38,7 @@ _ENV_LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
 
 def _is_windows() -> bool:
-    return os.name == "nt" or platform.system() == "Windows"
+    return os.name == "nt"
 
 
 def _log(message: str) -> None:

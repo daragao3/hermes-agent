@@ -219,14 +219,12 @@ def _set_process_title() -> None:
         pass
 
     import ctypes
-    import platform
 
     try:
-        system = platform.system()
-        if system == "Linux":
+        if sys.platform.startswith("linux"):
             libc = ctypes.CDLL("libc.so.6", use_errno=True)
             libc.prctl(15, b"hermes", 0, 0, 0)  # PR_SET_NAME = 15
-        elif system == "Darwin":
+        elif sys.platform == "darwin":
             libc = ctypes.CDLL("libc.dylib", use_errno=True)
             libc.pthread_setname_np(b"hermes")
     except Exception:

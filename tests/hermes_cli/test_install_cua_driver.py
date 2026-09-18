@@ -115,13 +115,13 @@ class TestInstallCuaDriverUpgrade:
     # below except the two unsupported-platform cases, the Linux host takes a
     # byte-identical path to macOS — same ``fetch_tool`` ("curl"), same
     # ``_cua_install_target_writable()`` verdict, same branch — so the old
-    # ``patch("platform.system", return_value="Darwin")`` bought nothing but a
+    # ``patch.object(tools_config, "host_system", return_value="Darwin")`` bought nothing but a
     # fake host. Dropped, and the names no longer claim macOS.
 
     def test_upgrade_on_unsupported_platform_is_silent_noop(self):
         """The one branch no CI runner can reach for real.
 
-        ``platform.system`` is still faked here, deliberately and narrowly: we
+        ``host_system`` is still faked here, deliberately and narrowly: we
         run Linux/macOS/Windows lanes, and every one of them is a *supported*
         platform, so the refusal path is unreachable on all three. The fake is
         sound because the function returns before touching any OS facility —
@@ -131,7 +131,7 @@ class TestInstallCuaDriverUpgrade:
         from hermes_cli import tools_config_cua as tools_config
 
         with patch.object(tools_config, "_print_warning") as warn, \
-             patch("platform.system", return_value="FreeBSD"):
+             patch.object(tools_config, "host_system", return_value="FreeBSD"):
             assert tools_config.install_cua_driver(upgrade=True) is False
             warn.assert_not_called()
 
@@ -140,7 +140,7 @@ class TestInstallCuaDriverUpgrade:
         from hermes_cli import tools_config_cua as tools_config
 
         with patch.object(tools_config, "_print_warning") as warn, \
-             patch("platform.system", return_value="FreeBSD"):
+             patch.object(tools_config, "host_system", return_value="FreeBSD"):
             assert tools_config.install_cua_driver(upgrade=False) is False
             warn.assert_called()
 
@@ -1818,7 +1818,7 @@ class TestUnattendedRefreshPreflights:
         proc.communicate.return_value = ("ok", None)
         proc.returncode = 0
 
-        with patch("platform.system", return_value=system), \
+        with patch.object(tools_config, "host_system", return_value=system), \
              patch.object(tools_config, "_cua_install_lock_held",
                           return_value=lock_held) as lock_probe, \
              patch.object(tools_config, "_cua_release_endpoint_reachable",

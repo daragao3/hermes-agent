@@ -156,7 +156,7 @@ def test_deliver_lands_in_live_bot_chat_instead_of_subprocess(home, monkeypatch)
     # update prefetch also touches platform on its daemon thread, so whether the cache is
     # already warm when this test runs decides pass/fail (measured 2/4 either way).
     import platform
-    platform.uname()
+    platform.uname()  # windows-footgun: ok — deliberate cache warm; conftest keeps it off WMI
 
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setitem(

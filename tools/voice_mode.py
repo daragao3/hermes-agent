@@ -7,7 +7,6 @@ playback via sounddevice or system players. Optional deps: ``uv sync --extra voi
 import logging
 import math
 import os
-import platform
 import shlex
 import shutil
 import subprocess
@@ -20,6 +19,8 @@ import threading
 import time
 import wave
 from typing import Any, Callable, Dict, List, Optional
+
+from hermes_cli._subprocess_compat import host_system
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ def _sounddevice_output_allowed() -> bool:
     NOT affect audio *input* (recording), which legitimately needs microphone permission. See PR #62601 /
     #13291.
     """
-    return platform.system() != "Darwin"
+    return sys.platform != "darwin"
 
 
 def _play_int16_via_tempfile(audio, sample_rate: int) -> None:
@@ -1043,7 +1044,7 @@ def _wsl_powershell_player_cmd(file_path: str) -> Optional[List[str]]:
 
 def _system_player_candidates(file_path: str) -> List[List[str]]:
     """Ordered system-player commands for this platform."""
-    system = platform.system()
+    system = host_system()
     players: List[List[str]] = [["afplay", file_path]] if system == "Darwin" else []
     ps_cmd = _wsl_powershell_player_cmd(file_path) if system == "Linux" else None
     if ps_cmd:

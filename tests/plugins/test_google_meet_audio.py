@@ -48,7 +48,7 @@ def test_setup_linux_loads_null_sink_and_virtual_source():
             return _linux_pactl_result("43\n")
         raise AssertionError(f"unexpected pactl invocation: {argv}")
 
-    with patch("plugins.google_meet.audio_bridge.platform.system",
+    with patch("plugins.google_meet.audio_bridge.host_system",
                return_value="Linux"), \
          patch("plugins.google_meet.audio_bridge.subprocess.run",
                side_effect=_fake_run):
@@ -86,7 +86,7 @@ def test_teardown_linux_unloads_modules_in_reverse_order():
             return _linux_pactl_result("42\n")
         return _linux_pactl_result("43\n")
 
-    with patch("plugins.google_meet.audio_bridge.platform.system",
+    with patch("plugins.google_meet.audio_bridge.host_system",
                return_value="Linux"), \
          patch("plugins.google_meet.audio_bridge.subprocess.run",
                side_effect=_setup_run):

@@ -2,11 +2,11 @@
 
 import json
 import os
-import platform
 import subprocess
 import sys
 from pathlib import Path
 
+from hermes_cli._subprocess_compat import host_system, wmi_safe_platform
 from hermes_cli.config import get_hermes_home, get_env_path, get_project_root, load_config
 from hermes_cli.env_loader import load_hermes_dotenv
 from hermes_constants import display_hermes_home
@@ -246,10 +246,11 @@ def run_dump(args):
         profile = "(default)"
     toolsets = config.get("toolsets", ["hermes-cli"])
     platforms = [name for name, env in _PLATFORM_ENV_VARS.items() if os.getenv(env)]
+    plat = wmi_safe_platform()
     lines = [
         "--- hermes dump ---",
         f"version:          {_version_line(project_root)}",
-        f"os:               {platform.system()} {platform.release()} {platform.machine()}",
+        f"os:               {host_system()} {plat.release()} {plat.machine()}",
         f"python:           {sys.version.split()[0]}",
         f"openai_sdk:       {_openai_version()}",
         f"profile:          {profile}",

@@ -28,11 +28,11 @@ from hermes_cli import doctor_platform
 
 
 def _darwin(monkeypatch):
-    monkeypatch.setattr(tcc.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(tcc, "host_system", lambda: "Darwin")
 
 
 def _linux(monkeypatch):
-    monkeypatch.setattr(tcc.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(tcc, "host_system", lambda: "Linux")
 
 
 def _build_store(tmp_path, version: str = "3.11.15", *, with_libpython: bool = False) -> Path:
@@ -320,7 +320,7 @@ class TestEnsureTccAnchor:
 
         # Recovery: with alias copies working again the retry completes.
         monkeypatch.undo()
-        monkeypatch.setattr(tcc.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(tcc, "host_system", lambda: "Darwin")
         assert tcc.ensure_tcc_anchor(root) is not None
         assert tcc.tcc_anchor_state(root)[0] == "active"
 

@@ -10,7 +10,6 @@ import hashlib
 import json
 import logging
 import os
-import platform
 import shutil
 import stat
 import subprocess
@@ -21,6 +20,7 @@ import time
 import urllib.request
 from contextlib import suppress
 
+from hermes_cli._subprocess_compat import host_machine, host_system
 from hermes_constants import get_hermes_home
 
 logger = logging.getLogger(__name__)
@@ -189,8 +189,8 @@ _TARGET_ARCHES = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "
 
 def _detect_target() -> str | None:
     """Rust target triple for this platform, or None if tirith has no build for it."""
-    plat = _TARGET_PLATFORMS.get(platform.system())
-    arch = _TARGET_ARCHES.get(platform.machine().lower())
+    plat = _TARGET_PLATFORMS.get(host_system())
+    arch = _TARGET_ARCHES.get(host_machine().lower())
     return f"{arch}-{plat}" if plat and arch else None
 
 
@@ -294,7 +294,7 @@ def _install_tirith(*, log_failures: bool = True) -> tuple[str | None, str]:
     failure_reason)``; the reason ("" on success) is the disk marker's retryability tag."""
     log = logger.warning if log_failures else logger.debug
     if not (target := _detect_target()):
-        logger.info("tirith auto-install: unsupported platform %s/%s", platform.system(), platform.machine())
+        logger.info("tirith auto-install: unsupported platform %s/%s", host_system(), host_machine())
         return None, "unsupported_platform"
     archive_name = f"tirith-{target}.tar.gz"
     base_url = f"https://github.com/{_REPO}/releases/latest/download"

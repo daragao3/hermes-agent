@@ -287,7 +287,7 @@ def _restart_running_gateway(any_messaging: bool, supports_systemd: bool) -> Non
         systemd_restart, launchd_restart, UserSystemdUnavailableError, SystemScopeRequiresRootError,
         _system_scope_wizard_would_need_root, _print_system_scope_remediation,
     )
-    import platform as _platform
+    from hermes_cli._subprocess_compat import host_system
     if supports_systemd and _system_scope_wizard_would_need_root():
         _print_system_scope_remediation("restart")
         return
@@ -296,9 +296,9 @@ def _restart_running_gateway(any_messaging: bool, supports_systemd: bool) -> Non
     try:
         if supports_systemd:
             systemd_restart()
-        elif _platform.system() == "Darwin":
+        elif host_system() == "Darwin":
             launchd_restart()
-        elif _platform.system() == "Windows":
+        elif host_system() == "Windows":
             from hermes_cli import gateway_windows
             gateway_windows.restart()
     except UserSystemdUnavailableError as e:

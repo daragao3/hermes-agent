@@ -828,8 +828,8 @@ def _windows_marketing_version() -> str:
     try:
         return "11" if sys.getwindowsversion().build >= 22000 else "10"  # type: ignore[attr-defined]
     except Exception:
-        import platform
-        return platform.release()
+        from hermes_cli._subprocess_compat import wmi_safe_platform
+        return wmi_safe_platform().release()
 
 
 _WINDOWS_BASH_SHELL_HINT = (
@@ -945,13 +945,14 @@ def _clear_backend_probe_cache() -> None:
 
 def _local_host_hints() -> list[str]:
     """Host OS / home / cwd block for a local terminal backend (tools run on this host)."""
-    import platform
+    from hermes_cli._subprocess_compat import host_system, wmi_safe_platform
 
+    plat = wmi_safe_platform()
     host = (
         "WSL (Windows Subsystem for Linux)" if is_wsl()
         else f"Windows ({_windows_marketing_version()})" if sys.platform == "win32"
-        else f"macOS ({platform.mac_ver()[0] or platform.release()})" if sys.platform == "darwin"
-        else f"{platform.system()} ({platform.release()})"
+        else f"macOS ({plat.mac_ver()[0] or plat.release()})" if sys.platform == "darwin"
+        else f"{host_system()} ({plat.release()})"
     )
     host_lines = [f"Host: {host}", f"User home directory: {os.path.expanduser('~')}"]
     try:

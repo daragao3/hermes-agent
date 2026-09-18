@@ -16,7 +16,6 @@ import hashlib
 import json
 import logging
 import os
-import platform
 import secrets
 import stat
 import subprocess
@@ -26,6 +25,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from hermes_cli._subprocess_compat import host_system
 from hermes_constants import get_hermes_home
 from agent.secret_scope import get_secret as _get_secret
 
@@ -216,7 +216,7 @@ def _claude_oauth_record(data: Any, source: str) -> Optional[Dict[str, Any]]:
 
 def _read_claude_code_credentials_from_keychain() -> Optional[Dict[str, Any]]:
     """Read the "Claude Code-credentials" macOS Keychain entry (Claude Code >=2.1.114)."""
-    if platform.system() != "Darwin":
+    if host_system() != "Darwin":
         return None
     try:
         result = subprocess.run(

@@ -76,8 +76,8 @@ def hermes_home(tmp_path, monkeypatch):
     ],
 )
 def test_platform_asset_name(system, machine, libc_text, expected):
-    with mock.patch.object(bw.platform, "system", return_value=system), \
-         mock.patch.object(bw.platform, "machine", return_value=machine), \
+    with mock.patch.object(bw, "host_system", return_value=system), \
+         mock.patch.object(bw, "host_machine", return_value=machine), \
          mock.patch.object(
              bw.subprocess,
              "run",

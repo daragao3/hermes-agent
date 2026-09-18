@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import logging
 import os
-import platform
 import shlex
+import sys
 import subprocess
 import tempfile
 import importlib.util as _ilu
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from hermes_cli._subprocess_compat import host_machine
 
 from tools.transcription_audio import _find_whisper_binary, _prepare_local_audio
 from tools.transcription_common import (
@@ -106,9 +108,9 @@ def _sysctl_value(name: str) -> str:
 def _should_force_faster_whisper_cpu() -> bool:
     """Force CPU on Apple Silicon (incl. x86_64 under Rosetta), where ctranslate2's
     ``device="auto"`` can abort inside native code before Python can catch it."""
-    if platform.system() != "Darwin":
+    if sys.platform != "darwin":
         return False
-    if platform.machine().lower() in {"arm64", "aarch64"}:
+    if host_machine().lower() in {"arm64", "aarch64"}:
         return True
     # Under Rosetta platform.machine() reports x86_64; sysctl.proc_translated
     # flags translation and hw.optional.arm64 distinguishes Apple Silicon hosts.

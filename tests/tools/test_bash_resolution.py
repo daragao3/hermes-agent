@@ -19,7 +19,6 @@ level.
 from __future__ import annotations
 
 import contextlib
-import platform
 import shutil
 import sys
 from pathlib import Path
@@ -27,7 +26,7 @@ from types import SimpleNamespace
 
 import pytest
 
-_ON_WINDOWS = platform.system() == "Windows"
+_ON_WINDOWS = sys.platform == "win32"
 
 # What shutil.which("bash") really returns on a WSL-enabled box (note the
 # uppercase .EXE — the refusal check must be case-insensitive).

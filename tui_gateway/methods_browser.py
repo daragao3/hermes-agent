@@ -106,7 +106,7 @@ def _connect_local_default(port: int, system: str, announce) -> str | None:
 
 
 def _browser_connect(rid, params: dict) -> dict:
-    import platform
+    from hermes_cli._subprocess_compat import host_system
     from hermes_cli.browser_connect import DEFAULT_BROWSER_CDP_URL
     from tools.browser_tool_lifecycle import cleanup_all_browsers
     from urllib.parse import urlparse
@@ -114,7 +114,7 @@ def _browser_connect(rid, params: dict) -> dict:
     if raw_url is not None and not isinstance(raw_url, str):
         return _err(rid, 4015, f"browser url must be a string, got {type(raw_url).__name__}")
     url = (raw_url or "").strip() or DEFAULT_BROWSER_CDP_URL
-    sid, system, messages = params.get("session_id") or "", platform.system(), []
+    sid, system, messages = params.get("session_id") or "", host_system(), []
 
     def announce(message: str, *, level: str = "info") -> None:
         messages.append(message)

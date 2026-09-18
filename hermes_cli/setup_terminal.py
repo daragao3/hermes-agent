@@ -287,14 +287,13 @@ _BACKEND_ENV_MIRROR = {"modal": ("TERMINAL_MODAL_MODE", "modal_mode", "auto"),
 
 def setup_terminal_backend(config: dict):
     """Configure the terminal execution backend."""
-    import platform as _platform
     _setup.print_header("Terminal Backend")
     _setup._info("Choose where Hermes runs shell commands and code.",
                  "This affects tool execution, file access, and isolation.",
                  f"   Guide: {_setup._DOCS_BASE}/user-guide/configuration#terminal-backend-configuration", None)
     current_backend = _setup.cfg_get(config, "terminal", "backend", default="local")
     backends = list(_BUILTIN_TERMINAL_BACKENDS)
-    if _platform.system() == "Linux":
+    if sys.platform.startswith("linux"):
         backends.append(("singularity", "Singularity/Apptainer - HPC-friendly container"))
     # Plugin-registered backends (~/.hermes/plugins/). Fail-soft: a broken plugin must not take
     # the wizard down.

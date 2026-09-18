@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import platform
 import threading
 from typing import Any
 
 from agent.relay_runtime import RUNTIME_INSTANCE_KEY
+from hermes_cli._subprocess_compat import host_machine, host_system
 from hermes_cli.config import detect_install_method
 
 from .shared_metrics import SharedMetricsStore
@@ -54,8 +54,8 @@ class SharedMetricsSubscriber:
         self.store = store
         self._client_resource = client_resource(
             hermes_version,
-            os_name=platform.system(),
-            architecture=platform.machine(),
+            os_name=host_system(),
+            architecture=host_machine(),
             install_method=detect_install_method(),
         )
         self._runtime_id = runtime_id

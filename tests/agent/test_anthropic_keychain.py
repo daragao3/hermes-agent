@@ -19,7 +19,7 @@ pytestmark = pytest.mark.allow_macos_keychain
 class TestReadClaudeCodeCredentialsFromKeychain:
     """Bug 4: macOS Keychain support for Claude Code >=2.1.114.
 
-    ``macos_only``: the reader is gated on ``platform.system() == "Darwin"``
+    ``macos_only``: the reader is gated on ``host_system() == "Darwin"``
     and shells out to the ``security`` CLI. Faking Darwin on Linux selected
     the branch but proved nothing about the host it exists for; on the real
     macOS runner only ``subprocess.run`` is mocked (via the

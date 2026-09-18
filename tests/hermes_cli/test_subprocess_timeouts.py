@@ -1,5 +1,6 @@
 """Tests for subprocess.run() timeout coverage in CLI utilities."""
 import ast
+import sys
 from pathlib import Path
 
 import pytest
@@ -68,9 +69,7 @@ def _leaky_argv(wedge_direct_child: bool) -> list:
     deadline, which is what forces the timeout (and therefore the tree-kill)
     rather than a clean early return.
     """
-    import platform
-
-    if platform.system() == "Windows":
+    if sys.platform == "win32":
         # `start /b` detaches ping from cmd.exe; `& ping` (when wedging) keeps
         # cmd.exe itself alive in the foreground.  120 pings is ~119s.
         inner = "start /b ping -n 120 127.0.0.1"
