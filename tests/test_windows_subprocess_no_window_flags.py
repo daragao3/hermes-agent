@@ -77,7 +77,11 @@ def test_bounded_git_probe_fast_path_spawn_contract_windows(monkeypatch):
     ``bounded_git_probe`` only sets that key when ``IS_WINDOWS`` — which the
     helper caches from the real platform at import. ``windows_hide_flags`` is
     still stubbed so the expected value is a fixed constant rather than
-    whatever bundle the helper currently returns.
+    whatever bundle the helper currently returns. Bitmask rather than
+    equality: the spawn also ORs in ``CREATE_SUSPENDED`` (when the child can
+    be thawed) so the probe joins its job object before its first
+    instruction -- the tree kill on timeout is by job membership, never
+    ``taskkill /T`` (2026-09-17).
     """
     from hermes_cli import _subprocess_compat
 
@@ -98,7 +102,8 @@ def test_bounded_git_probe_fast_path_spawn_contract_windows(monkeypatch):
     assert kwargs["text"] is True
     assert kwargs["encoding"] == "utf-8"
     assert kwargs["errors"] == "replace"
-    assert kwargs["creationflags"] == _CREATE_NO_WINDOW
+    assert kwargs["creationflags"] & _CREATE_NO_WINDOW == _CREATE_NO_WINDOW
+    assert kwargs["creationflags"] & ~(_CREATE_NO_WINDOW | _subprocess_compat._CREATE_SUSPENDED) == 0
 
 
 

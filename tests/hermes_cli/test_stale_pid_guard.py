@@ -116,26 +116,30 @@ class TestKillProcessTree:
     """kill_process_tree operates on our own retained Popen handle.
 
     A retained handle pins the PID (the child cannot be reaped while the
-    handle is open), so PID recycling is impossible there and the identity
-    guard deliberately does NOT apply — it could only false-refuse a
-    legitimate cleanup. These tests pin that contract for the legacy
-    Windows fallback path.
+    handle is open), so PID recycling is impossible for the ROOT and the
+    ``pid_is_hermes`` probe deliberately does NOT apply — it could only
+    false-refuse a legitimate cleanup. The descendants are another matter:
+    their ParentProcessId edges can point at strangers (an orphan whose dead
+    parent's pid was recycled onto our child), so the legacy Windows fallback
+    runs the creation-time-guarded walk (``windows_kill_popen_tree``) and
+    never spawns ``taskkill`` (2026-09-17 incident).
     """
 
     def _proc(self, pid=4321):
         return mock.Mock(pid=pid)
 
-    def test_retained_handle_is_taskkilled_without_probe(self):
+    def test_retained_handle_is_walked_without_probe_and_without_taskkill(self):
         with mock.patch.object(_subprocess_compat, "IS_WINDOWS", True), mock.patch.object(
             _subprocess_compat, "pid_is_hermes"
-        ) as guard, mock.patch.object(_subprocess_compat.subprocess, "run") as run:
-            _subprocess_compat._legacy_kill_process_tree(self._proc())
+        ) as guard, mock.patch.object(
+            _subprocess_compat, "windows_kill_popen_tree", return_value=[4321]
+        ) as walk, mock.patch.object(_subprocess_compat.subprocess, "run") as run:
+            proc = self._proc()
+            _subprocess_compat._legacy_kill_process_tree(proc)
             guard.assert_not_called()
-            run.assert_called_once()
-            argv = run.call_args.args[0]
-            assert argv[0] == "taskkill"
-            assert "/PID" in argv
-            assert str(4321) in argv
+            run.assert_not_called()
+            walk.assert_called_once_with(proc)
+            proc.kill.assert_called_once()
 
 
 class TestStopProcessTrees:
@@ -145,31 +149,45 @@ class TestStopProcessTrees:
         with mock.patch(
             "gateway.status.get_process_start_time", return_value=123
         ), mock.patch(
+            "hermes_cli._subprocess_compat.windows_process_created", return_value=1.23
+        ), mock.patch(
             "hermes_cli._subprocess_compat.pid_is_hermes", return_value=False
-        ), mock.patch.object(update_cmd.subprocess, "run") as run:
+        ), mock.patch(
+            "hermes_cli._subprocess_compat.windows_kill_process_tree"
+        ) as walk, mock.patch.object(update_cmd.subprocess, "run") as run:
             update_cmd._stop_process_trees([1111, 2222])
         run.assert_not_called()
+        walk.assert_not_called()
 
-    def test_hermes_pid_probed_then_taskkilled(self):
+    def test_hermes_pid_probed_then_tree_killed_pinned_to_its_identity(self):
+        """The walk, never ``taskkill``: pinned to the creation time read
+        BEFORE the probe so a pid recycled afterwards kills nothing."""
         with mock.patch(
             "gateway.status.get_process_start_time", return_value=123
+        ), mock.patch(
+            "hermes_cli._subprocess_compat.windows_process_created", return_value=1.23
         ), mock.patch(
             "hermes_cli._subprocess_compat.pid_is_hermes", return_value=True
-        ), mock.patch.object(
-            update_cmd.subprocess, "run", return_value=mock.Mock(returncode=0)
-        ) as run:
+        ), mock.patch(
+            "hermes_cli._subprocess_compat.windows_kill_process_tree", return_value=[1111]
+        ) as walk, mock.patch.object(update_cmd.subprocess, "run") as run:
             update_cmd._stop_process_trees([1111])
-        assert len(run.call_args_list) == 1
-        assert run.call_args.args[0][0] == "taskkill"
+        run.assert_not_called()
+        walk.assert_called_once_with(1111, root_created=1.23)
 
-    def test_probe_timeout_skips_taskkill(self):
+    def test_probe_timeout_skips_tree_kill(self):
         with mock.patch(
             "gateway.status.get_process_start_time", return_value=123
         ), mock.patch(
+            "hermes_cli._subprocess_compat.windows_process_created", return_value=1.23
+        ), mock.patch(
             "hermes_cli._subprocess_compat.pid_is_hermes", return_value=False
-        ), mock.patch.object(update_cmd.subprocess, "run") as run:
+        ), mock.patch(
+            "hermes_cli._subprocess_compat.windows_kill_process_tree"
+        ) as walk, mock.patch.object(update_cmd.subprocess, "run") as run:
             update_cmd._stop_process_trees([1111, 2222])  # must not raise
         run.assert_not_called()
+        walk.assert_not_called()
 
 
 class TestKillStaleDashboardProcesses:

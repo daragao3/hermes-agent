@@ -239,7 +239,13 @@ fork-after-snapshot race. The stop wait is bounded; discovery or permission
 failures still use best-effort group cleanup, not a sandbox guarantee. Any target
 stopped by cleanup is resumed if termination fails; already-stopped targets keep
 their original state. Explicit graceful signals do not suspend their recipients.
-Windows continues to use `taskkill /F /T`.
+On Windows the same call runs a creation-time-guarded ParentProcessId walk
+(`hermes_cli._subprocess_compat.windows_kill_process_tree`): a process is adopted
+as a descendant only if it was created at or after its claimed parent, every
+victim is identity-checked before `TerminateProcess`, and a pid that has already
+exited kills nothing. It never runs `taskkill /T` — that walks recorded parent
+pids without checking birth order, so on a busy box it adopts orphans of a
+recycled pid and kills unrelated services (2026-09-17 incident).
 
 ### Provider Recovery
 

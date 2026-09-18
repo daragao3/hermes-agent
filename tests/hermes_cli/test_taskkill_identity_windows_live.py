@@ -172,7 +172,7 @@ class TestAncestorRefusalLive:
         )
         assert refused is True
         out = capsys.readouterr().out
-        assert "taskkill /T" in out
+        assert "process-tree kill" in out
         assert "separate terminal" in out
 
     def test_unrelated_live_process_is_not_refused(self):

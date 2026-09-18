@@ -820,7 +820,7 @@ def test_plain_update_refuses_to_tree_kill_its_gateway_ancestor(
 
     assert refused is True
     output = capsys.readouterr().out
-    assert "taskkill /T" in output
+    assert "process-tree kill" in output
     assert "`/update`" in output
     assert "separate terminal" in output
 
@@ -1143,7 +1143,7 @@ def test_update_impl_refuses_before_terminating_gateway_ancestor(
     terminate.assert_not_called()
     resume.assert_called_once_with(None)
     output = capsys.readouterr().out
-    assert "taskkill /T" in output
+    assert "process-tree kill" in output
     assert "`/update`" in output
 
 
