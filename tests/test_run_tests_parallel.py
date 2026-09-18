@@ -14,8 +14,9 @@ and walk away. The verifier runs the runner over the leaker file in a
 subprocess, then waits for the grandchild PID to disappear from the
 kernel's process table.
 
-POSIX-only: Windows has its own grandchild lifecycle (no shared session,
-``taskkill /F /T`` semantics). Marked accordingly.
+POSIX-only: Windows has its own grandchild lifecycle (no shared session; a
+kill-on-close job object per child, or a creation-time-guarded ppid walk --
+see tests/scripts/test_run_tests_parallel_kill_tree.py). Marked accordingly.
 """
 
 from __future__ import annotations
