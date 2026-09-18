@@ -200,18 +200,26 @@ def _write_bridge_pidfile(session_path: Path, pid: int) -> None:
 
 
 def _terminate_bridge_process(proc, *, force: bool = False) -> None:
-    """Terminate the bridge process using process-tree semantics where possible."""
+    """Terminate the bridge process using process-tree semantics where possible.
+
+    Windows has no graceful signal: ``Popen.terminate()`` IS ``TerminateProcess``, and
+    ``taskkill /T`` without ``/F`` refused console processes outright. Both branches take the
+    creation-time-guarded walk over the Popen we hold
+    (:func:`hermes_cli._subprocess_compat.windows_kill_popen_tree`) -- never ``taskkill /T``,
+    which adopted the orphans of a recycled pid (2026-09-17) -- and only ``force`` verifies:
+    it raises ``OSError`` when the bridge itself is still alive afterwards. A walk that cannot
+    run at all falls back to the root-only ``terminate()``/``kill()``, as the missing-binary
+    path did before.
+    """
     action = "kill" if force else "terminate"
     if _IS_WINDOWS:
+        from hermes_cli._subprocess_compat import windows_kill_popen_tree
         try:
-            result = subprocess.run(
-                ["taskkill", "/PID", str(proc.pid), "/T"] + (["/F"] if force else []),
-                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10,
-            )
-        except FileNotFoundError:
+            killed = windows_kill_popen_tree(proc)
+        except Exception:
             return getattr(proc, action)()
-        if result.returncode != 0:
-            raise OSError((result.stderr or result.stdout or "").strip() or f"taskkill failed for PID {proc.pid}")
+        if force and proc.pid not in killed and proc.poll() is None:
+            raise OSError(f"tree kill did not reach bridge PID {proc.pid}")
         return
     import psutil
     with suppress(psutil.NoSuchProcess):

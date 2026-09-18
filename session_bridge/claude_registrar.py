@@ -14,7 +14,6 @@ import queue
 import re
 import select
 import socket
-import subprocess
 import sys
 import threading
 import time
@@ -633,6 +632,24 @@ def _registrar_pywinpty_process_type() -> Any:
     return _RegistrarPtyProcess
 
 
+def _windows_kill_tree_quietly(pid: int) -> bool:
+    """Creation-time-guarded tree kill of a PTY child by pid; True when the root died.
+
+    Windows only; anything else (POSIX, helper unavailable, walk failure) is False and
+    never raises. The pid comes from a PTY handle the caller still holds, so it names
+    the child we spawned; the walk refuses descendants that predate their claimed parent
+    and re-checks each victim's identity before ``TerminateProcess``.
+    """
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        from hermes_cli._subprocess_compat import windows_kill_process_tree
+
+        return pid in windows_kill_process_tree(pid)
+    except Exception:
+        return False
+
+
 def _reclaim_unadapted_process(process: object, *, timeout: float) -> bool:
     try:
         alive = bool(process.isalive())  # type: ignore[attr-defined]
@@ -654,15 +671,9 @@ def _reclaim_unadapted_process(process: object, *, timeout: float) -> bool:
     if alive:
         pid = getattr(process, "pid", None)
         if type(pid) is int:
-            try:
-                subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/T", "/F"],
-                    check=False,
-                    capture_output=True,
-                    timeout=timeout,
-                )
-            except (OSError, subprocess.SubprocessError):
-                pass
+            # The PTY still reports the child alive, so the walk has a live root to
+            # stand on; never ``taskkill /T`` (recycled-pid orphan adoption, 2026-09-17).
+            _windows_kill_tree_quietly(pid)
         final_deadline = time.monotonic() + timeout
         while time.monotonic() < final_deadline:
             try:
@@ -1244,16 +1255,9 @@ class _WinPtyProcess:
             time.sleep(0.01)
         pid = getattr(self._process, "pid", None)
         if sys.platform.startswith("win") and type(pid) is int:
-            try:
-                completed = subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/T", "/F"],
-                    check=False,
-                    capture_output=True,
-                    timeout=max(0.1, timeout),
-                )
-            except (OSError, subprocess.SubprocessError):
-                return False
-            if completed.returncode == 0:
+            # ``_is_dead`` just said the child is alive, so the guarded walk has a live
+            # root; never ``taskkill /T`` (recycled-pid orphan adoption, 2026-09-17).
+            if _windows_kill_tree_quietly(pid):
                 final_deadline = time.monotonic() + timeout
                 while time.monotonic() < final_deadline:
                     if self._is_dead():

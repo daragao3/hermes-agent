@@ -40,14 +40,23 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Heavy trees that a trivial test must never drag in. These are exactly the
-# modules the autouse fixture used to import unconditionally (plus ``openai``,
-# which ``agent.auxiliary_client`` force-loads via the codex compat guard).
+# Heavy trees that a trivial test must never drag in. The first four are
+# exactly the modules the autouse fixture used to import unconditionally (plus
+# ``openai``, which ``agent.auxiliary_client`` force-loads via the codex compat
+# guard). The rest were added 2026-09-18 after two more autouse fixtures were
+# caught importing what they reset: ``hermes_cli.plugins`` (the plugin
+# singleton reset, -> plugins_loader) and ``hermes_cli.kanban_db_dispatch``
+# (the memory-guard pin, -> kanban_db -> toolsets.get_toolset_names() ->
+# tools.registry, i.e. tool discovery on every test).
 FORBIDDEN_PREFIXES = (
     "openai",
     "agent.auxiliary_client",
     "agent.credential_pool",
     "agent.model_metadata",
+    "hermes_cli.plugins",
+    "hermes_cli.plugins_loader",
+    "hermes_cli.kanban_db_dispatch",
+    "tools.registry",
 )
 
 # Written to a temp dir and loaded with ``-p import_probe`` in the child run.

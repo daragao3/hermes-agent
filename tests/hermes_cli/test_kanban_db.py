@@ -19,6 +19,7 @@ from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
 from hermes_cli import kanban_db_dispatch as kbd
 from hermes_cli import kanban_db_workspace as kbw
+from tests.timeout_budget import scaled
 
 
 @pytest.fixture
@@ -1207,6 +1208,9 @@ def test_resolve_hermes_argv_falls_back_to_module_form_when_no_path_shim(monkeyp
     assert argv == [sys.executable, "-m", "hermes_cli.main"]
 
 
+# Backstop only: spawns a real `python -m hermes_cli...` child, which on a freshly provisioned
+# venv compiles its bytecode cold (tripped the suite cap right after the 3.13 cut-over).
+@pytest.mark.timeout(scaled(300))
 def test_resolve_hermes_argv_module_actually_runs():
     """The fallback module name must be importable + runnable.
 
@@ -1223,8 +1227,13 @@ def test_resolve_hermes_argv_module_actually_runs():
 
     with mock.patch.dict(os.environ, {}, clear=False):
         os.environ.pop("HERMES_BIN", None)
-        with mock.patch.object(shutil, "which", return_value=None):
+        # Windows resolves through the PATH walk in ``_safe_which_no_cwd``, not
+        # ``shutil.which``; stub both so the MODULE fallback is what runs, not
+        # whatever ``hermes.EXE`` this box has on PATH (a stale Store-Python
+        # stub here, which boots the whole install and blows 30 s under load).
+        with mock.patch.object(shutil, "which", return_value=None),              mock.patch.object(kbd, "_safe_which_no_cwd", return_value=None):
             argv = kbd._resolve_hermes_argv()
+    assert argv[:2] == [sys.executable, "-m"], f"expected the module fallback, got {argv!r}"
     r = subprocess.run(argv + ["--version"], capture_output=True, text=True, timeout=30, encoding="utf-8")
     assert r.returncode == 0, (
         f"`{' '.join(argv)} --version` failed (rc={r.returncode}); "

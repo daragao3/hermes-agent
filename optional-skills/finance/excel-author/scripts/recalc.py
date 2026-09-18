@@ -24,25 +24,92 @@ from pathlib import Path
 _IS_WINDOWS = sys.platform == "win32"
 _CREATE_NEW_PROCESS_GROUP = 0x00000200
 _CREATE_NO_WINDOW = 0x08000000
+_CREATE_SUSPENDED = 0x00000004
 
 
-def _tree_kill(proc: subprocess.Popen) -> None:
+def _windows_job_for(proc: subprocess.Popen):
+    """Create a job object and put *proc* in it; the handle, or None.
+
+    The Windows equivalent of the POSIX process group: every descendant
+    inherits membership, and ``TerminateJobObject`` kills by membership --
+    never by pid or image name. ``Popen._handle`` names exactly the process we
+    spawned; a Popen without one (a test double) is left alone.
+    """
+    try:
+        import ctypes
+
+        handle = getattr(proc, "_handle", None)
+        if handle is None:
+            return None
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        if not kernel32.AssignProcessToJobObject(job, int(handle)):
+            kernel32.CloseHandle(job)
+            return None
+        return job
+    except Exception:
+        return None
+
+
+def _windows_resume(proc: subprocess.Popen) -> bool:
+    """Thaw a CREATE_SUSPENDED child (``NtResumeProcess`` on the Popen handle)."""
+    try:
+        import ctypes
+
+        ntdll = ctypes.WinDLL("ntdll")
+        ntdll.NtResumeProcess.argtypes = [ctypes.c_void_p]
+        return ntdll.NtResumeProcess(int(proc._handle)) == 0
+    except Exception:
+        return False
+
+
+def _windows_job_terminate(job) -> bool:
+    try:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.TerminateJobObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        return bool(kernel32.TerminateJobObject(job, 1))
+    except Exception:
+        return False
+
+
+def _windows_close(handle) -> None:
+    if handle is None:
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+
+
+def _tree_kill(proc: subprocess.Popen, job=None) -> None:
     """Kill *proc* and its descendants; never raises.
 
     Best effort. Correctness does not depend on it — with file-backed stdio
     there is nothing left to drain and we never wait on the child again — but
     an abandoned ``soffice.bin`` keeps a lock on the user profile and wedges
     every later LibreOffice run, so it is worth reaping.
+
+    Windows: the job captured at spawn is terminated by membership. Never
+    ``taskkill /T``: it walked ParentProcessId edges, and an orphan whose dead
+    parent's pid had been recycled onto our launcher died with it
+    (2026-09-17). Without a job only the launcher we hold is provably ours,
+    so only it is killed.
     """
     try:
         if _IS_WINDOWS:
-            subprocess.run(
-                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-                creationflags=_CREATE_NO_WINDOW,
-            )
+            if job is None or not _windows_job_terminate(job):
+                proc.kill()
         else:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except Exception:
@@ -69,7 +136,9 @@ def _run_captured(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
     Returns decoded text, so callers must not ``.decode()`` the result.
     """
     if _IS_WINDOWS:
-        popen_kwargs = {"creationflags": _CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW}
+        # Created frozen so the launcher joins its job before its first instruction:
+        # nothing it spawns (``soffice.bin``) can predate the job.
+        popen_kwargs = {"creationflags": _CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW | _CREATE_SUSPENDED}
     else:
         # Own process group so killpg() on timeout reaches the grandchildren.
         popen_kwargs = {"start_new_session": True}
@@ -86,13 +155,20 @@ def _run_captured(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
             stdin=subprocess.DEVNULL,
             **popen_kwargs,
         )
+        job = None
+        if _IS_WINDOWS:
+            job = _windows_job_for(proc)
+            if not _windows_resume(proc):
+                proc.kill()  # never leave a frozen child sitting out the whole timeout
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            _tree_kill(proc)
+            _tree_kill(proc, job)
             raise subprocess.TimeoutExpired(
                 proc.args, timeout, output=_read(out_f), stderr=_read(err_f),
             )
+        finally:
+            _windows_close(job)
         return subprocess.CompletedProcess(
             proc.args, proc.returncode, _read(out_f), _read(err_f),
         )

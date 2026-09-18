@@ -781,9 +781,17 @@ class ProcessRegistry(ProcessCheckpointMixin):
         or dead PID means the number was recycled onto a stranger and we refuse to touch
         it — a leaked orphan beats tree-killing someone's browser. POSIX: psutil SIGTERMs
         children before the parent (so trees aren't reparented to init and survive), then
-        SIGKILLs survivors after ``terminal.daemon_term_grace_seconds``. Windows:
-        ``taskkill /T /F`` (psutil's stale PPID links miss orphans there); ``os.kill``
-        is the fallback."""
+        SIGKILLs survivors after ``terminal.daemon_term_grace_seconds``. Windows: a
+        creation-time-guarded ParentProcessId walk pinned to the root's identity
+        (:func:`hermes_cli._subprocess_compat.windows_kill_process_tree`), never
+        ``taskkill /T`` -- it believed every ParentProcessId edge and adopted the orphans
+        of a recycled pid (2026-09-17). The pin is read BEFORE the ownership probe so a
+        pid recycled after the probe kills nothing; ``os.kill`` is the fallback only when
+        the walk itself fails."""
+        root_created = None
+        if _IS_WINDOWS:
+            from hermes_cli._subprocess_compat import windows_process_created
+            root_created = windows_process_created(pid)
         if expected_start is not None and not cls._host_pid_is_ours(pid, expected_start):
             logger.warning(
                 "Refusing to terminate host pid %d: start-time mismatch — "
@@ -794,13 +802,17 @@ class ProcessRegistry(ProcessCheckpointMixin):
             with suppress(OSError, ProcessLookupError, PermissionError):
                 os.kill(pid, signal.SIGTERM)
         if _IS_WINDOWS:
+            if root_created is None:
+                logger.debug("Not tree-killing host pid %d: creation time unreadable (exited?)", pid)
+                return
+            from hermes_cli._subprocess_compat import windows_kill_process_tree
             try:
-                subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True,
-                    encoding='utf-8', errors='replace', timeout=10, creationflags=windows_hide_flags(),
-                    stdin=subprocess.DEVNULL)
-            except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+                killed = windows_kill_process_tree(pid, root_created=root_created)
+            except Exception:
+                logger.debug("Tree kill of host pid %d failed", pid, exc_info=True)
                 _sigterm_quietly()
+                return
+            logger.debug("Tree-killed host pid %d: %s", pid, killed or "nothing (exited or identity changed)")
             return
         import psutil
         gone = (psutil.NoSuchProcess, psutil.AccessDenied, OSError)

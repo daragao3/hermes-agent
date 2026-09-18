@@ -1014,6 +1014,9 @@ class TestImportAtomicWrites:
         assert chown_calls == [(target, 123, 456)]
 
     @pytest.mark.skipif(not hasattr(os, "fchmod"), reason="needs fchmod present to remove it")
+    # Python 3.13 gave Windows an os.fchmod, so the guard above no longer skips there -- but
+    # the assertion is on POSIX mode bits, which NTFS does not carry (0o644 reads back 0o666).
+    @pytest.mark.skipif(sys.platform == "win32", reason="asserts POSIX mode bits; NTFS has none")
     def test_mode_is_applied_before_the_replace_without_fchmod(self, tmp_path, monkeypatch):
         """Covers the Windows branch: no ``fchmod``, so ``chmod`` the temp path.
 

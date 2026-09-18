@@ -1,6 +1,5 @@
 """Status carry integration: no process termination or live home mutation."""
 import json
-import subprocess
 import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -18,29 +17,42 @@ def no_real_termination(monkeypatch):
 
 
 @pytest.mark.parametrize("alive", [False, True])
-def test_guarded_taskkill_timeout_uses_liveness_not_child_exit(monkeypatch, alive):
+def test_guarded_force_kill_uses_liveness_not_the_walks_report(monkeypatch, alive):
+    """The walk reporting nothing terminated decides nothing; whether the pid is still
+    there does. Never a subprocess (``taskkill /T`` adopted recycled-pid orphans, 2026-09-17)."""
+    from hermes_cli import _subprocess_compat as compat
+
     monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123)
     monkeypatch.setattr(status, "_pid_exists", lambda pid: alive)
     monkeypatch.setattr(status, "_TASKKILL_VERIFY_TIMEOUT_S", 0)
-    run = Mock(side_effect=subprocess.TimeoutExpired("taskkill", 30))
+    monkeypatch.setattr(compat, "windows_process_created", lambda pid: 1.23)
+    walk = Mock(return_value=[])
+    monkeypatch.setattr(compat, "windows_kill_process_tree", walk)
+    run = Mock(side_effect=AssertionError("terminate_pid spawned a process"))
     monkeypatch.setattr(status.subprocess, "run", run)
     if alive:
         with pytest.raises(OSError, match="still alive"):
             status.terminate_pid(987654, force=True, expected_start_time=123, reason="drain expired")
     else:
         status.terminate_pid(987654, force=True, expected_start_time=123, reason="drain expired")
-    assert run.call_args.kwargs["timeout"] == 30
+    walk.assert_called_once_with(987654, root_created=1.23)
+    run.assert_not_called()
     assert status.write_diag.call_args.kwargs["reason"] == "drain expired"
     status.os.kill.assert_not_called()
 
 
 @pytest.mark.parametrize("expected", [None, 999])
 def test_identity_refusal_precedes_kill_and_termination_event(monkeypatch, expected):
+    from hermes_cli import _subprocess_compat as compat
+
     monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123)
+    walk = Mock(return_value=[])
+    monkeypatch.setattr(compat, "windows_kill_process_tree", walk)
     run = Mock()
     monkeypatch.setattr(status.subprocess, "run", run)
     with pytest.raises(OSError, match="refusing"):
         status.terminate_pid(987654, force=True, expected_start_time=expected)
+    walk.assert_not_called()
     run.assert_not_called()
     status.os.kill.assert_not_called()
     status.write_diag.assert_not_called()

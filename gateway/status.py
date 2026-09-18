@@ -33,7 +33,8 @@ _GATEWAY_KIND = "hermes-gateway"
 _RUNTIME_STATUS_FILE = "gateway_state.json"
 _LOCKS_DIRNAME = "gateway-locks"
 _IS_WINDOWS = sys.platform == "win32"
-_TASKKILL_TIMEOUT_S = 30
+# How long a Windows force-kill waits for the root to disappear after TerminateProcess
+# before calling the kill a failure. A kill under load can take a beat to be reaped.
 _TASKKILL_VERIFY_TIMEOUT_S = 10.0
 _UNSET = object()
 _GATEWAY_LOCK_FILENAME = "gateway.lock"
@@ -217,14 +218,27 @@ def terminate_pid(
     pid: int, *, force: bool = False, expected_start_time: Optional[float] = None,
     reason: str | None = None
 ) -> None:
-    """Terminate a PID; POSIX SIGTERM/SIGKILL, Windows taskkill /T /F for force. Identity guard:
-    Windows ``force`` REQUIRES a matching ``expected_start_time`` (taskkill on a recycled PID has
+    """Terminate a PID; POSIX SIGTERM/SIGKILL, Windows tree kill for force. Identity guard:
+    Windows ``force`` REQUIRES a matching ``expected_start_time`` (a force-kill on a recycled PID has
     killed svchost.exe); POSIX optional, but a provided mismatch refuses the kill everywhere.
 
     On POSIX an expectation is optional, but when the caller provides one and it no longer matches the live
     process, the kill is refused on every platform — a mismatched fingerprint always means the PID was
     recycled. See #89614.
+
+    Windows ``force`` is a creation-time-guarded ParentProcessId walk
+    (:func:`hermes_cli._subprocess_compat.windows_kill_process_tree`), never ``taskkill /T``: the
+    centisecond guard above protected the ROOT, but ``/T`` believed every ParentProcessId edge below
+    it, and an orphan whose dead parent's pid was recycled onto the root died with it
+    (2026-09-17T21:30:08Z, Security 4689). The root's float creation time is read BEFORE the guard
+    and pinned into the walk, so a pid recycled after the guard admits it kills nothing; each
+    descendant is adopted only if born at or after its claimed parent and identity-checked again
+    before ``TerminateProcess``. Raises ``OSError`` when the root is still alive afterwards.
     """
+    root_created: Optional[float] = None
+    if force and _IS_WINDOWS:
+        from hermes_cli._subprocess_compat import windows_process_created
+        root_created = windows_process_created(pid)
     if force and (_IS_WINDOWS or expected_start_time is not None):
         if expected_start_time is None:
             raise OSError(f"refusing to force-kill PID {pid} without a process start-time guard")
@@ -245,27 +259,23 @@ def terminate_pid(
     if not (force and _IS_WINDOWS):
         os.kill(pid, signal.SIGTERM if not force else getattr(signal, "SIGKILL", signal.SIGTERM))
         return
-    # Hide flags: a bare taskkill spawn from windowless pythonw.exe would flash a conhost window.
-    from hermes_cli._subprocess_compat import windows_hide_flags
+    from hermes_cli._subprocess_compat import windows_kill_process_tree
 
-    try:
-        result = subprocess.run(
-            ["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=_TASKKILL_TIMEOUT_S, creationflags=windows_hide_flags(),
-        )
-    except FileNotFoundError:
-        os.kill(pid, signal.SIGTERM)
-        return
-    except subprocess.TimeoutExpired:
-        if _wait_for_pid_death(pid, _TASKKILL_VERIFY_TIMEOUT_S):
-            logger.warning("terminate_pid(%s): taskkill timed out but process is gone", pid)
+    if root_created is None:
+        # The guard read a fingerprint but the pin did not: the process left between the two
+        # reads. Gone is the outcome the caller wanted; anything else is unprovable, refuse.
+        if not _pid_exists(pid):
             return
-        raise OSError(
-            f"taskkill timed out after {_TASKKILL_TIMEOUT_S:.0f}s and PID {pid} is still alive"
-        ) from None
-    if result.returncode != 0:
-        details = (result.stderr or result.stdout or "").strip()
-        raise OSError(details or f"taskkill failed for PID {pid}")
+        raise OSError(f"refusing to force-kill PID {pid}; creation time unreadable")
+    try:
+        killed = windows_kill_process_tree(pid, root_created=root_created)
+    except Exception as exc:
+        raise OSError(f"tree kill failed for PID {pid}: {exc}") from exc
+    if pid not in killed:
+        logger.debug("terminate_pid(%s): root not terminated by the walk (exited or identity changed)", pid)
+    if _wait_for_pid_death(pid, _TASKKILL_VERIFY_TIMEOUT_S):
+        return
+    raise OSError(f"tree kill did not take down PID {pid}; still alive after {_TASKKILL_VERIFY_TIMEOUT_S:.0f}s")
 
 
 def _start_times_agree(current: Any, *recorded: Any) -> bool:
@@ -1389,7 +1399,7 @@ def _wait_for_scoped_lock_owner_exit(
 def _snapshot_gateway_children(pid: int) -> list:
     """Best-effort snapshot of ``pid``'s live descendants (POSIX only; never raises). Take it while
     the parent is alive -- once it exits the children are reparented and undiscoverable. ``[]`` on
-    Windows (taskkill /T tree-kills)."""
+    Windows (``terminate_pid(force=True)`` tree-kills there)."""
     if _IS_WINDOWS:
         return []
     try:

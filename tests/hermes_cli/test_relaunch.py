@@ -1,5 +1,6 @@
 """Tests for hermes_cli.relaunch — unified self-relaunch utility."""
 
+import os
 import sys
 
 import pytest
@@ -9,7 +10,9 @@ from hermes_cli import relaunch as relaunch_mod
 
 class TestResolveHermesBin:
     def test_prefers_absolute_argv0_when_executable(self, monkeypatch):
-        fake = "/nix/store/abc/bin/hermes"
+        # abspath: on Windows a lone leading slash is not absolute (os.path.isabs is
+        # False for it since Python 3.13), and resolve_hermes_bin gates on isabs first.
+        fake = os.path.abspath("/nix/store/abc/bin/hermes")
         monkeypatch.setattr(sys, "argv", [fake])
         monkeypatch.setattr(relaunch_mod.os.path, "isfile", lambda p: p == fake)
         monkeypatch.setattr(relaunch_mod.os, "access", lambda p, mode: p == fake)

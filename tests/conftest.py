@@ -1154,8 +1154,15 @@ def _hermetic_environment(tmp_path, monkeypatch):
     # 5. Reset plugin singleton so tests don't leak plugins from
     #    ~/.hermes/plugins/ (which, per step 3, is now empty — but the
     #    singleton might still be cached from a previous test).
+    #    Looked up in ``sys.modules``, never imported: a module that was never
+    #    imported has built no manager to leak, and ``hermes_cli.plugins``
+    #    drags ``hermes_cli.plugins_loader`` in at import — a tree
+    #    tests/test_conftest_import_cost.py forbids charging to a trivial
+    #    test's fixture setup. Same rule as ``_reset_module_state``.
     try:
-        import hermes_cli.plugins as _plugins_mod
+        _plugins_mod = sys.modules.get("hermes_cli.plugins")
+        if _plugins_mod is None:
+            raise LookupError("hermes_cli.plugins not imported yet")
         monkeypatch.setattr(_plugins_mod, "_plugin_manager", None)
         # Also clear the keyed per-home manager cache (and any plugin
         # submodules it left in sys.modules) so a manager built for a
@@ -1196,26 +1203,15 @@ def _isolate_hermes_home(_hermetic_environment):
     return None
 
 
-@pytest.fixture(autouse=True)
-def _neutralize_kanban_memory_guard(request, monkeypatch):
-    """Pin the kanban dispatcher's memory guard to "no data" for every test.
-
-    The dispatcher consults live system memory before spawning (OOF-30/
-    OOF-77: memory-derived default cap + pressure-based spawn restriction).
-    Left un-patched, dispatch tests would pass or fail based on how loaded
-    the CI runner happens to be. Defaulting the sample to ``{}`` makes the
-    derived cap ``None`` and the pressure level ``"unknown"`` — i.e. the
-    pre-guard behaviour every existing test was written against. Tests that
-    exercise the guard itself opt out with
-    ``@pytest.mark.real_memory_guard`` or patch the seam directly.
-    """
-    if request.node.get_closest_marker("real_memory_guard"):
-        return
-    try:
-        from hermes_cli import kanban_db_dispatch as _kbd_mod
-    except Exception:
-        return
-    monkeypatch.setattr(_kbd_mod, "_system_memory_sample", lambda: {}, raising=False)
+# The kanban dispatcher's memory guard (``hermes_cli.kanban_db_dispatch
+# ._system_memory_sample``) is pinned to "no data" by ``_KANBAN_MEMORY_GUARD``
+# below — an arm-at-import guard, not a fixture. The fixture it replaced did
+# ``from hermes_cli import kanban_db_dispatch`` on every test, and that import
+# reaches ``tools.registry`` (kanban_db -> toolsets.get_toolset_names() ->
+# tools.registry) at module level: tool discovery charged to every trivial
+# test's setup. A ``sys.modules`` lookup would not do here: the patch must be
+# in place BEFORE a test's own lazy import of the dispatcher uses it, which is
+# exactly what arming at first import guarantees.
 
 
 @pytest.fixture(autouse=True)
@@ -2374,8 +2370,23 @@ _GH_CLI_PROBE_GUARD = _NetworkProbeGuard(
     tag="_hermes_gh_cli_probe_guard",
 )
 
+_KANBAN_MEMORY_GUARD = _NetworkProbeGuard(
+    # Not a network probe, but the same mechanism: the dispatcher consults live
+    # system memory before spawning (OOF-30/OOF-77: memory-derived default cap
+    # + pressure-based spawn restriction), so un-pinned, dispatch tests would
+    # pass or fail on how loaded the runner is. ``{}`` makes the derived cap
+    # None and the pressure level "unknown" -- the pre-guard behaviour every
+    # existing test was written against. Tests of the guard itself opt out with
+    # ``@pytest.mark.real_memory_guard`` or patch the seam directly (a
+    # monkeypatch replaces the wrapper for that test and restores it after).
+    marker="real_memory_guard",
+    targets={"hermes_cli.kanban_db_dispatch": {"_system_memory_sample": lambda: {}}},
+    tag="_hermes_kanban_memory_guard",
+)
+
 _NETWORK_PROBE_GUARDS = (
     _LOCAL_SERVER_PROBE_GUARD, _PROVIDER_AUTH_PROBE_GUARD, _GH_CLI_PROBE_GUARD,
+    _KANBAN_MEMORY_GUARD,
 )
 
 
@@ -3752,13 +3763,14 @@ def _pid_scan_guard(request):
 def _network_probe_guards(request):
     """Choose whether this test may reach the network through a guarded probe.
 
-    Covers all three guards — ``real_local_server_probe`` (agent.model_metadata,
+    Covers all four guards — ``real_local_server_probe`` (agent.model_metadata,
     localhost), ``real_provider_auth_probe`` (hermes_cli.auth / copilot_auth,
-    the public internet) and ``real_gh_cli_probe`` (copilot_auth's ``gh auth
-    token`` spawn against the host keyring). They are independent: opting out
-    of one leaves the others stubbed, because wanting the real local-server
-    waterfall is no reason to also start calling z.ai and api.github.com for
-    real, or to spawn the developer's gh.
+    the public internet), ``real_gh_cli_probe`` (copilot_auth's ``gh auth
+    token`` spawn against the host keyring) and ``real_memory_guard`` (the
+    kanban dispatcher's live system-memory sample). They are independent:
+    opting out of one leaves the others stubbed, because wanting the real
+    local-server waterfall is no reason to also start calling z.ai and
+    api.github.com for real, or to spawn the developer's gh.
 
     The wrappers are installed at import time by each guard's ``find_spec``;
     this fixture only flips the flag they read at call time. No import, no

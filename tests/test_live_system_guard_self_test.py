@@ -1331,3 +1331,40 @@ def test_real_gh_cli_probe_marker_restores_the_probe(monkeypatch):
     assert calls == [["/fake/bin/gh", "auth", "token"]], (
         "the real_gh_cli_probe marker did not restore the real probe"
     )
+
+
+# ──────────────────── kanban memory guard ────────────────────
+#
+# Fourth _NetworkProbeGuard, not a network probe: the kanban dispatcher samples
+# live system memory before spawning, so an unpinned test passes or fails on
+# how loaded the runner is. It used to be pinned by an autouse fixture that
+# imported hermes_cli.kanban_db_dispatch on every test -- and that import
+# reaches tools.registry (tool discovery) at module level, which is why
+# tests/test_conftest_import_cost.py forbids it. Arming at first import keeps
+# the pin in place for a test's own lazy import without paying for it here.
+
+
+def test_kanban_memory_sample_is_pinned_by_default():
+    """No unmarked test may read live system memory through the dispatcher."""
+    from hermes_cli import kanban_db_dispatch as kbd
+
+    assert getattr(kbd._system_memory_sample, "_hermes_kanban_memory_guard", False), (
+        "the kanban memory guard is not installed on _system_memory_sample -- an "
+        "unmarked dispatch test depends on the runner's live memory"
+    )
+    assert kbd._system_memory_sample() == {}
+
+
+@pytest.mark.real_memory_guard
+def test_real_memory_guard_marker_restores_the_sample(monkeypatch):
+    """Tests of the guard itself get the real sampler (asserted by behaviour,
+    with the ledger's sample_memory swapped one level beneath so the answer does
+    not depend on this box)."""
+    from hermes_cli import kanban_db_dispatch as kbd
+    from gateway import lifecycle_ledger
+
+    monkeypatch.setattr(lifecycle_ledger, "sample_memory", lambda: {"mem_total_kib": 4242})
+
+    assert kbd._system_memory_sample() == {"mem_total_kib": 4242}, (
+        "the real_memory_guard marker did not restore the real sampler"
+    )

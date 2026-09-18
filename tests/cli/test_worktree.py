@@ -830,6 +830,9 @@ class TestSystemPromptInjection:
         assert "commit and push" in wt_note
 
 
+# Backstop only (see test_ten_concurrent_worktrees): real worktree add/lock/remove per test;
+# the one class here without it tripped the cap on a cold 3.13 venv under a shared box.
+@pytest.mark.timeout(scaled(300))
 class TestWorktreeLockReaping:
     """Exercise the REAL cli._prune_stale_worktrees lock/dirty/unpushed logic.
 
