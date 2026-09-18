@@ -24,10 +24,13 @@ from cron.jobs import _ensure_cron_dir
 from pathlib import Path
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
-from hermes_cli._subprocess_compat import windows_hide_flags
+from hermes_cli._subprocess_compat import (
+    windows_hide_flags, windows_job_close, windows_kill_popen_tree, windows_suspended_spawn_flag,
+    windows_tree_capture)
 
 if TYPE_CHECKING:
     from cron.scheduler import _CancelEventLike
+    from hermes_cli._subprocess_compat import WindowsProcessTree
 
 # Log-record parity with the origin module.
 logger = logging.getLogger("cron.scheduler")
@@ -149,19 +152,27 @@ def _windows_cron_python_invocation(python_exe: str) -> tuple[str, dict[str, str
     return str(interpreter), env_overlay
 
 
-def _terminate_cron_script_process(proc: subprocess.Popen) -> None:
-    """Best-effort hard stop of a cron script and every child it spawned."""
+def _terminate_cron_script_process(proc: subprocess.Popen, tree: "WindowsProcessTree | None" = None) -> None:
+    """Best-effort hard stop of a cron script and every child it spawned.
+
+    Windows: the job captured at spawn (``tree``) is terminated by membership; without one, the
+    creation-time-guarded ParentProcessId walk runs while the root is alive
+    (:func:`hermes_cli._subprocess_compat.windows_kill_popen_tree`). Never ``taskkill /T``: this
+    was the fallback :func:`_terminate_cron_script_tree` took when the unified kill reported no
+    signal -- which is exactly the exited-pid case -- and ``/T`` on an exited pid adopts the
+    orphans of whoever wore that pid before (2026-09-17T21:30:08Z, Security 4689).
+    """
     if proc.poll() is not None:
         return
     if sys.platform != "win32":
         _terminate_process_group(proc)
     else:
         try:
-            subprocess.run(
-                ["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=10,
-                creationflags=windows_hide_flags(), check=False)
-        except (OSError, subprocess.TimeoutExpired):
-            proc.kill()
+            windows_kill_popen_tree(proc, tree)
+        except Exception:
+            logger.debug("Cron script tree kill failed for pid %s", proc.pid, exc_info=True)
+        with contextlib.suppress(OSError):
+            proc.kill()  # Popen's bookkeeping sees the exit either way
     try:
         proc.wait(timeout=1.0)
     except subprocess.TimeoutExpired:
@@ -173,7 +184,7 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
     """POSIX: TERM the script's process group, then KILL if ANY member survived (a survivor holds
     the pipe write ends open and the caller's communicate() would block on EOF forever)."""
     try:
-        process_group = os.getpgid(proc.pid)  # windows-footgun: ok -- POSIX-only helper; the caller takes the win32 taskkill branch first
+        process_group = os.getpgid(proc.pid)  # windows-footgun: ok -- POSIX-only helper; the caller takes the win32 job/walk branch first
         os.killpg(process_group, signal.SIGTERM)  # windows-footgun: ok — POSIX-only branch
     except (ProcessLookupError, PermissionError, OSError):
         return
@@ -187,10 +198,18 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
         os.killpg(process_group, getattr(signal, "SIGKILL", signal.SIGTERM))
 
 
-def _terminate_cron_script_tree(proc: subprocess.Popen) -> None:
-    """Terminate a script tree, then fall back to the local process-group path."""
+def _terminate_cron_script_tree(proc: subprocess.Popen, tree: "WindowsProcessTree | None" = None) -> None:
+    """Terminate a script tree, then fall back to the local process-group path.
+
+    On Windows a spawn that captured its job (``tree``) goes straight to the membership kill:
+    it is the one primitive that is safe after the root has exited, so the bare-pid walk and
+    its "no signal" fallback are not consulted at all.
+    """
     if proc.poll() is not None:
         # Already reaped: kill_process_tree would log a spurious "no signal" warning.
+        return
+    if sys.platform == "win32" and tree is not None:
+        _terminate_cron_script_process(proc, tree)
         return
     def fallback(reason: str, *args, exc_info: bool = False) -> None:
         logger.warning(
@@ -425,10 +444,16 @@ def _run_job_script(
     try:
         from tools.environments.local import build_subprocess_env
         popen_kwargs: dict[str, Any] = {"start_new_session": True}
+        suspended_flag = 0
         if sys.platform == "win32":
+            # CREATE_SUSPENDED (when thawable) so the script joins its job before its first
+            # instruction: nothing it spawns can predate the job, and a cancel/timeout kill is
+            # by membership rather than by pid.
+            suspended_flag = windows_suspended_spawn_flag()
             popen_kwargs = {
                 "creationflags": windows_hide_flags()
-                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | suspended_flag,
                 # Lossy UTF-8 decode — locale-mismatched bytes from the STT command must not raise in the
                 # reader threads on non-UTF-8 Windows (#45099).
                 # Lossy UTF-8 decode — locale-mismatched bytes from the TTS command must not raise in the
@@ -449,25 +474,31 @@ def _run_job_script(
             proc = subprocess.Popen(
                 argv, stdout=out_file, stderr=err_file, stdin=subprocess.DEVNULL,
                 cwd=workdir or str(path.parent), env=env, **popen_kwargs)
+            tree = (windows_tree_capture(proc, suspended=bool(suspended_flag))
+                    if sys.platform == "win32" else None)
             set_stage("script_wait")
             deadline = time.monotonic() + script_timeout
-            while True:
-                if cancel_event is not None and cancel_event.is_set():
-                    set_stage("script_cancel_cleanup")
-                    _terminate_cron_script_tree(proc)
-                    _drain_script_pipes(proc)
-                    return False, "Script cancelled because cron fire ownership was lost"
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    set_stage("script_timeout_cleanup")
-                    _terminate_cron_script_tree(proc)
-                    _drain_script_pipes(proc)
-                    return False, f"Script timed out after {script_timeout}s: {path}"
-                try:
-                    proc.wait(timeout=min(0.1, remaining))
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
+            try:
+                while True:
+                    if cancel_event is not None and cancel_event.is_set():
+                        set_stage("script_cancel_cleanup")
+                        _terminate_cron_script_tree(proc, tree)
+                        _drain_script_pipes(proc)
+                        return False, "Script cancelled because cron fire ownership was lost"
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        set_stage("script_timeout_cleanup")
+                        _terminate_cron_script_tree(proc, tree)
+                        _drain_script_pipes(proc)
+                        return False, f"Script timed out after {script_timeout}s: {path}"
+                    try:
+                        proc.wait(timeout=min(0.1, remaining))
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+            finally:
+                # Not kill-on-close: a script that finished may have detached a helper on purpose.
+                windows_job_close(tree.job if tree is not None else None)
             set_stage("script_output_read")
             out_file.seek(0)
             err_file.seek(0)

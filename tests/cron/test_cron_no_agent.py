@@ -186,7 +186,7 @@ def test_timed_out_no_agent_script_delivery_is_not_mislabeled_as_provider_failur
     monkeypatch.setattr(scheduler.subprocess, "Popen", _NeverFinishes)
     monkeypatch.setattr(sched_script, "_get_script_timeout", lambda: 1)
     monkeypatch.setattr(sched_script, "_terminate_cron_script_process",
-        lambda proc: setattr(proc, "returncode", -15),
+        lambda proc, tree=None: setattr(proc, "returncode", -15),
     )
     monkeypatch.setattr(
         scheduler,

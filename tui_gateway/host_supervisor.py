@@ -170,17 +170,20 @@ def _force_kill_pid(pid: int) -> bool:
     Windows has no ``SIGKILL``: ``signal.SIGKILL`` is undefined there, and merely NAMING it
     raised ``AttributeError`` at argument evaluation -- before ``_signal_pid``'s own ``try`` --
     so it escaped :meth:`HostSupervisor._terminate_pid`, then ``reconcile_startup_orphan``
-    (which has no ``except``), and reached ``start()``. ``taskkill /T /F`` is the documented
-    tree-kill primitive, mirroring ``tools.process_registry._terminate_host_pid``. The tree
-    matters: under a uv trampoline the interpreter is a grandchild of the pid we hold.
+    (which has no ``except``), and reached ``start()``. The Windows tree kill is the
+    creation-time-guarded ParentProcessId walk
+    (:func:`hermes_cli._subprocess_compat.windows_kill_process_tree`), mirroring
+    ``tools.process_registry._terminate_host_pid``; never ``taskkill /T``, which adopted the
+    orphans of a recycled pid (2026-09-17). The tree matters: under a uv trampoline the
+    interpreter is a grandchild of the pid we hold. True when the root was terminated.
     """
     if sys.platform == "win32":
         try:
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
-                           timeout=10, stdin=subprocess.DEVNULL)
-            return True
+            from hermes_cli._subprocess_compat import windows_kill_process_tree
+
+            return pid in windows_kill_process_tree(pid)
         except Exception:
-            logger.debug("failed to taskkill compute host pid=%s", pid, exc_info=True)
+            logger.debug("failed to tree-kill compute host pid=%s", pid, exc_info=True)
             return False
     return _signal_pid(pid, signal.SIGKILL, "SIGKILL")  # windows-footgun: ok -- win32 exits above
 

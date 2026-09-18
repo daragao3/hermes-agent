@@ -129,28 +129,27 @@ def test_fingerprint_units_agree_with_the_live_windows_guard(monkeypatch):
     """The executor's fingerprint must be the SAME unit terminate_pid derives
     from psutil (centiseconds), or the guard refuses with "process identity
     changed" instead -- a second way to never kill anything. Drive the real
-    terminate_pid with a fake psutil reading and a fake taskkill."""
+    terminate_pid with a fake psutil reading and a fake tree walk (never
+    ``taskkill /T``: it adopted orphans of a recycled pid, 2026-09-17)."""
     import gateway.status as status
     from claude_fleet_control.executor import start_time_fingerprint
+    from hermes_cli import _subprocess_compat as compat
 
     create_time = 1789487080.37  # what psutil.Process(pid).create_time() returns
     monkeypatch.setattr(status, "_IS_WINDOWS", True)
     monkeypatch.setattr(status, "_get_process_start_time",
                         lambda pid: int(round(create_time * 100)))
     monkeypatch.setattr(status, "write_diag", lambda *a, **k: None)
-    calls = []
-
-    class _Done:
-        returncode = 0
-        stdout = ""
-        stderr = ""
-
     monkeypatch.setattr(status.subprocess, "run",
-                        lambda *args, **kwargs: (calls.append(args[0]), _Done())[1])
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("terminate_pid spawned a process")))
+    walks = []
+    monkeypatch.setattr(compat, "windows_process_created", lambda pid: create_time)
+    monkeypatch.setattr(compat, "windows_kill_process_tree",
+                        lambda pid, root_created=None: walks.append((pid, root_created)) or [pid])
     monkeypatch.setattr(status, "_wait_for_pid_death", lambda pid, timeout: True)
 
     status.terminate_pid(
         -260, force=True, expected_start_time=start_time_fingerprint(create_time),
         reason="claude_fleet:p10",
     )
-    assert calls == [["taskkill", "/PID", "-260", "/T", "/F"]]
+    assert walks == [(-260, create_time)]

@@ -180,6 +180,7 @@ class TestRunJobScript:
 
         monkeypatch.setattr(sched_mod.sys, "executable", str(venv_python))
         monkeypatch.setattr(sched_script, "windows_hide_flags", lambda: 0x08000000)
+        monkeypatch.setattr(sched_script, "windows_suspended_spawn_flag", lambda: 0x00000004)
         monkeypatch.setattr(sched_mod.subprocess, "Popen", fake_run)
 
         success, output = _run_job_script("probe.py")
@@ -195,11 +196,15 @@ class TestRunJobScript:
         assert m is not None
         assert Path(m.group(1)) == site_packages
         assert captured["argv"][3] == str(script.resolve())
-        # The script runner always adds CREATE_NEW_PROCESS_GROUP on win32 so a
-        # cancel can taskkill the whole tree; on POSIX the getattr default is
-        # 0 and the flag set is exactly windows_hide_flags().
-        expected_flags = sched_script.windows_hide_flags() | getattr(
-            sched_mod.subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        # The script runner always adds CREATE_NEW_PROCESS_GROUP on win32, plus
+        # CREATE_SUSPENDED when the child can be thawed so it joins its job
+        # object before its first instruction (a cancel then kills the whole
+        # tree by membership, never ``taskkill /T``); on POSIX the getattr
+        # default is 0 and the flag set is exactly windows_hide_flags().
+        expected_flags = (
+            sched_script.windows_hide_flags()
+            | getattr(sched_mod.subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | sched_script.windows_suspended_spawn_flag()
         )
         assert captured["kwargs"]["creationflags"] == expected_flags
         env = captured["kwargs"]["env"]
@@ -743,7 +748,7 @@ class TestScriptTimeoutTreeKill:
 
         tree_calls = []
 
-        def _record_and_kill(proc):
+        def _record_and_kill(proc, tree=None):
             # Record the routing, then really kill so _drain_script_pipes
             # reaps instantly instead of waiting out its 5s communicate().
             tree_calls.append(proc.pid)
@@ -770,6 +775,65 @@ class TestScriptTimeoutTreeKill:
         assert not ok
         assert "ownership was lost" in out
         assert len(tree_calls) == 1
+
+    @pytest.mark.windows_only
+    def test_windows_spawn_is_frozen_captured_and_killed_by_job_on_cancel(self, cron_env, monkeypatch):
+        """Spawn contract on Windows: the script is created suspended, captured into its
+        job (creation time pinned) before it runs, thawed, and a cancel kills that job by
+        membership -- never the bare-pid path, never ``taskkill /T`` (2026-09-17). The job
+        handle is closed exactly once."""
+        from cron import scheduler as sched_mod
+        from cron import scheduler_script as sched_script
+        from hermes_cli import _subprocess_compat as compat
+
+        calls = SimpleNamespace(captured=[], killed=[], closed=[], spawned=[])
+
+        class FakeProc:
+            def __init__(self, argv, **kwargs):
+                calls.spawned.append(kwargs)
+                self.pid = 100
+                self.returncode = None
+                self.stdout = self.stderr = None
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout=None):
+                if self.returncode is None:
+                    raise subprocess.TimeoutExpired(["script"], timeout)
+                return self.returncode
+
+            def kill(self):
+                self.returncode = -1
+
+            def communicate(self, timeout=None):
+                return ("", "")
+
+        tree = compat.WindowsProcessTree(job=0x99, root_created=1234.5)
+        monkeypatch.setattr(sched_script, "windows_suspended_spawn_flag", lambda: 0x00000004)
+        monkeypatch.setattr(sched_script, "windows_tree_capture",
+                            lambda proc, suspended=False: calls.captured.append((proc.pid, suspended)) or tree)
+        monkeypatch.setattr(sched_script, "windows_kill_popen_tree",
+                            lambda proc, t=None: calls.killed.append((proc.pid, t)) or [])
+        monkeypatch.setattr(sched_script, "windows_job_close", lambda job: calls.closed.append(job))
+        monkeypatch.setattr(sched_mod.subprocess, "Popen", FakeProc)
+        monkeypatch.setattr(sched_mod.subprocess, "run",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("kill path spawned a process")))
+
+        class _Cancelled:
+            def is_set(self):
+                return True
+
+        scripts_dir = cron_env / "scripts"
+        (scripts_dir / "long.py").write_text("import time; time.sleep(30)\n", encoding="utf-8")
+        ok, out = sched_script._run_job_script(
+            str(scripts_dir / "long.py"), workdir=str(cron_env), cancel_event=_Cancelled())
+
+        assert not ok and "ownership was lost" in out
+        assert calls.spawned[0]["creationflags"] & 0x00000004
+        assert calls.captured == [(100, True)]
+        assert calls.killed == [(100, tree)]
+        assert calls.closed == [0x99]
 
     @pytest.mark.live_system_guard_bypass
     def test_timeout_leaves_no_setsid_grandchild(self, cron_env, monkeypatch):

@@ -610,11 +610,12 @@ class TestHttpSessionLifecycle:
 
     @pytest.mark.asyncio
     @pytest.mark.windows_only
-    async def test_disconnect_uses_taskkill_tree_on_windows(self):
-        """Windows disconnect should target the bridge process tree, not just the parent PID.
+    async def test_disconnect_uses_the_guarded_tree_walk_on_windows(self):
+        """Windows disconnect should target the bridge process tree, not just the parent PID --
+        through the creation-time-guarded walk over the Popen we hold, never ``taskkill /T``
+        (it adopted orphans of a recycled pid, 2026-09-17).
 
-        ``windows_only``: ``taskkill /T`` is the Windows tree-kill primitive;
-        on Linux the branch was reachable only by faking ``_IS_WINDOWS``.
+        ``windows_only``: on Linux the branch was reachable only by faking ``_IS_WINDOWS``.
         """
         adapter = _make_adapter()
         mock_proc = MagicMock()
@@ -626,18 +627,16 @@ class TestHttpSessionLifecycle:
         adapter._running = True
         adapter._session_lock_identity = None
 
-        with patch("plugins.platforms.whatsapp.adapter.subprocess.run", return_value=MagicMock(returncode=0)) as mock_run, \
+        walked = []
+        with patch("plugins.platforms.whatsapp.adapter.subprocess.run",
+                   side_effect=AssertionError("disconnect spawned a process")) as mock_run, \
+             patch("hermes_cli._subprocess_compat.windows_kill_popen_tree",
+                   side_effect=lambda proc, tree=None: walked.append(proc) or [proc.pid]), \
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock):
             await adapter.disconnect()
 
-        mock_run.assert_called_once_with(
-            ["taskkill", "/PID", "12345", "/T"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=10,
-        )
+        assert walked == [mock_proc]
+        mock_run.assert_not_called()
         mock_proc.terminate.assert_not_called()
         mock_proc.kill.assert_not_called()
 

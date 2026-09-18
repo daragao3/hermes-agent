@@ -467,11 +467,21 @@ def _kill_process_tree(proc: "subprocess.Popen") -> None:
 
 def _legacy_kill_process_tree(proc: "subprocess.Popen") -> None:
     """Local tree-kill (SIGTERM then SIGKILL to the process group) — fallback when
-    agent.deadline is unavailable; tests pin this signal sequence."""
+    agent.deadline is unavailable; tests pin this signal sequence.
+
+    Windows: the creation-time-guarded walk over the Popen we hold
+    (:func:`hermes_cli._subprocess_compat.windows_kill_popen_tree`), never ``taskkill /T``
+    -- it adopted the orphans of a recycled pid (2026-09-17). A root that already exited
+    kills nothing."""
     if os.name == "nt":
         try:
-            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                           check=False, capture_output=True, stdin=subprocess.DEVNULL)
+            from hermes_cli._subprocess_compat import windows_kill_popen_tree
+
+            windows_kill_popen_tree(proc)
+        except Exception:
+            pass
+        try:
+            proc.kill()  # Popen's bookkeeping sees the exit either way
         except Exception:
             pass
         return

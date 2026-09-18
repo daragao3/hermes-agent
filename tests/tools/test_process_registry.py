@@ -1499,39 +1499,42 @@ class TestKillProcess:
         finally:
             registry._running.pop(s.id, None)
 
+    @staticmethod
+    def _fake_walk(monkeypatch):
+        """The Windows kill path is the creation-time-guarded tree walk
+        (``hermes_cli._subprocess_compat.windows_kill_process_tree``), never
+        ``taskkill /T`` (it adopted orphans of a recycled pid, 2026-09-17).
+        Record the walk instead of letting a real one loose on an arbitrary,
+        possibly recycled, live PID; any subprocess spawn is the old bug."""
+        from hermes_cli import _subprocess_compat as compat
+        from tools import process_registry as pr
+
+        walks = []
+        monkeypatch.setattr(compat, "windows_process_created", lambda pid: 1234.5)
+        monkeypatch.setattr(compat, "windows_kill_process_tree",
+                            lambda pid, root_created=None: walks.append((pid, root_created)) or [pid])
+        monkeypatch.setattr(pr.subprocess, "run",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("kill path spawned a process")))
+        return walks
+
     @pytest.mark.windows_only
     def test_kill_detached_session_uses_host_pid_windows(self, registry, monkeypatch):
-        """Windows kill path shells out to ``taskkill /PID <pid> /T /F``
-        (see ``_terminate_host_pid`` — psutil is intentionally not used on
-        Windows). Capture subprocess.run instead of letting a real taskkill
-        loose on an arbitrary, possibly recycled, live PID."""
+        """Windows kill path walks the host pid's tree, pinned to its creation time
+        (see ``_terminate_host_pid`` — psutil's stale PPID links are not trusted on
+        Windows; the walk guards each edge by creation time)."""
         s = _make_session(sid="proc_detached", command="sleep 999")
         s.pid = 424242
         s.detached = True
         registry._running[s.id] = s
 
-        from tools import process_registry as pr
-
-        run_calls = []
-
-        def fake_run(args, **kwargs):
-            run_calls.append(args)
-            return MagicMock(returncode=0, stderr="", stdout="")
-
+        walks = self._fake_walk(monkeypatch)
 
         try:
-            with patch("gateway.status._pid_exists", return_value=True), \
-                 patch.object(pr.subprocess, "run", fake_run):
+            with patch("gateway.status._pid_exists", return_value=True):
                 result = registry.kill_process(s.id)
 
             assert result["status"] == "killed"
-            assert len(run_calls) == 1
-            args = run_calls[0]
-            assert args[0] == "taskkill"
-            assert "/PID" in args
-            assert "424242" in args
-            assert "/T" in args, "Tree flag required to reach descendants"
-            assert "/F" in args, "Force flag required for console-less children"
+            assert walks == [(424242, 1234.5)]
         finally:
             registry._running.pop(s.id, None)
 
@@ -1541,35 +1544,22 @@ class TestKillProcess:
     ):
         """pywinpty's terminate(force=True) returns False (without raising)
         when the child ignores it and survives. kill_process must then
-        escalate to the host-pid tree-kill (taskkill /T /F) rather than
+        escalate to the host-pid tree-kill (the guarded walk) rather than
         silently marking the session exited and leaking a live process
         (probe-verified 2026-06-11)."""
-        from tools import process_registry as pr
-
         s = _make_session(sid="proc_pty_survivor", command="trap '' TERM; sleep 999")
         s.pid = 555001
         fake_pty = _FakeKillPty(terminate_returns=False, alive=True)
         s._pty = fake_pty
         registry._running[s.id] = s
 
-        run_calls = []
-
-        def fake_run(args, **kwargs):
-            run_calls.append(args)
-            return MagicMock(returncode=0, stderr="", stdout="")
-
+        walks = self._fake_walk(monkeypatch)
 
         try:
-            with patch.object(pr.subprocess, "run", fake_run):
-                result = registry.kill_process(s.id)
+            result = registry.kill_process(s.id)
 
             assert fake_pty.terminate_calls == [True], "terminate(force=True) attempted first"
-            assert len(run_calls) == 1, "host-pid taskkill fallback must fire on a False return"
-            args = run_calls[0]
-            assert args[0] == "taskkill"
-            assert "/PID" in args and "555001" in args
-            assert "/T" in args, "Tree flag required to reach descendants"
-            assert "/F" in args, "Force flag required for console-less children"
+            assert walks == [(555001, 1234.5)], "host-pid tree-kill fallback must fire on a False return"
             assert result["status"] == "killed"
             assert s.exited is True
         finally:
@@ -1651,28 +1641,18 @@ class TestKillProcess:
         """Defense in depth: if a winpty build returns True (or None) from
         terminate() while the child is in fact still alive, the isalive()
         recheck must still trigger the host-pid escalation."""
-        from tools import process_registry as pr
-
         s = _make_session(sid="proc_pty_linger", command="sleep 999")
         s.pid = 555004
         fake_pty = _FakeKillPty(terminate_returns=True, alive=True)
         s._pty = fake_pty
         registry._running[s.id] = s
 
-        run_calls = []
-
-        def fake_run(args, **kwargs):
-            run_calls.append(args)
-            return MagicMock(returncode=0, stderr="", stdout="")
-
+        walks = self._fake_walk(monkeypatch)
 
         try:
-            with patch.object(pr.subprocess, "run", fake_run):
-                result = registry.kill_process(s.id)
+            result = registry.kill_process(s.id)
 
-            assert len(run_calls) == 1, "isalive() recheck must escalate a lingering child"
-            assert run_calls[0][0] == "taskkill"
-            assert "555004" in run_calls[0]
+            assert walks == [(555004, 1234.5)], "isalive() recheck must escalate a lingering child"
             assert result["status"] == "killed"
         finally:
             registry._running.pop(s.id, None)
@@ -1828,40 +1808,29 @@ def test_drain_notifications_owns_event_callback_beats_key_equality():
 
 
 class TestTerminateHostPidWindows:
-    """Windows branch uses ``taskkill /T /F`` — the documented MS tree-kill
-    primitive. We can't use psutil's ``children(recursive=True)`` /
-    ``.terminate()`` path on Windows because (1) Windows doesn't maintain
-    a Unix-style process tree so the walk is unreliable, and (2)
-    ``Process.terminate()`` on Windows is ``TerminateProcess()`` for the
-    target handle only, not the tree.
+    """Windows branch is the creation-time-guarded ParentProcessId walk
+    (``hermes_cli._subprocess_compat.windows_kill_process_tree``), pinned to the
+    root's creation time read BEFORE the ownership probe. Never ``taskkill /T``:
+    it believed every ParentProcessId edge and adopted the orphans of a recycled
+    pid (2026-09-17T21:30:08Z). psutil's ``children(recursive=True)`` is not used
+    either: its PPID links are the same unguarded edges.
     """
 
     @pytest.mark.windows_only
-    def test_windows_invokes_taskkill_with_tree_and_force_flags(self, monkeypatch):
-        """The Windows branch must shell out to ``taskkill /PID N /T /F``.
-
-        Windows-only: ``taskkill.exe`` is the thing under test and only exists
-        here — with a faked ``_IS_WINDOWS`` the argv was asserted against a
-        binary that could never have run.
-        """
+    def test_windows_walks_the_tree_pinned_to_the_creation_time(self, monkeypatch):
+        from hermes_cli import _subprocess_compat as compat
         from tools import process_registry as pr
 
-        captured = {}
-
-        def fake_run(args, **kwargs):
-            captured["args"] = args
-            captured["kwargs"] = kwargs
-            return MagicMock(returncode=0, stderr="", stdout="")
-
-        monkeypatch.setattr(pr.subprocess, "run", fake_run)
+        walks = []
+        monkeypatch.setattr(compat, "windows_process_created", lambda pid: 1234.5)
+        monkeypatch.setattr(compat, "windows_kill_process_tree",
+                            lambda pid, root_created=None: walks.append((pid, root_created)) or [pid])
+        monkeypatch.setattr(pr.subprocess, "run",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("kill path spawned a process")))
 
         pr.ProcessRegistry._terminate_host_pid(12345)
 
-        assert captured["args"][0] == "taskkill"
-        assert "/PID" in captured["args"]
-        assert "12345" in captured["args"]
-        assert "/T" in captured["args"], "Tree flag required to reach descendants"
-        assert "/F" in captured["args"], "Force flag required for headless Chromium"
+        assert walks == [(12345, 1234.5)]
 
 @pytest.mark.linux_only
 class TestTerminateHostPidPosix:

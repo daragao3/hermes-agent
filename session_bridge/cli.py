@@ -414,18 +414,19 @@ def _run_continuous_sidebar_recovery_worker(
 
 
 def _kill_process_tree(pid: int) -> bool:
-    """Kill a process AND its descendants. Best-effort; never raises."""
+    """Kill a process AND its descendants. Best-effort; never raises.
+
+    Windows: the creation-time-guarded ParentProcessId walk
+    (:func:`hermes_cli._subprocess_compat.windows_kill_process_tree`), never ``taskkill /T``
+    -- the caller still holds the Popen so the root cannot be recycled, but ``/T`` believed
+    every ParentProcessId edge below it and adopted the orphans of a recycled pid
+    (2026-09-17). True when the walk terminated the root.
+    """
     try:
         if os.name == "nt":
-            completed = subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=10.0,
-                check=False,
-            )
-            return completed.returncode == 0
+            from hermes_cli._subprocess_compat import windows_kill_process_tree
+
+            return pid in windows_kill_process_tree(pid)
         os.killpg(os.getpgid(pid), 9)  # pragma: no cover - posix path  # windows-footgun: ok - the nt branch above returns first
         return True  # pragma: no cover - posix path
     except Exception:
@@ -465,7 +466,8 @@ def _bounded_run(
         a grandchild holding them cannot extend it;
       * output is drained on daemon threads that are joined with their own small
         bound and simply abandoned if a leaked handle keeps them alive;
-      * on timeout the whole process TREE is killed (``taskkill /T``), which is
+      * on timeout the whole process TREE is killed (the guarded ParentProcessId
+        walk; never ``taskkill /T``), which is
         what actually releases the inherited handles.
 
     Raises ``subprocess.TimeoutExpired`` on timeout, matching the contract callers
