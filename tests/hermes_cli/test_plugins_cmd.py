@@ -21,6 +21,16 @@ from hermes_cli.plugins_cmd import (
     _resolve_subdir_within,
     _sanitize_plugin_name,
 )
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): the autostash and subdir-install classes drive real git
+# (init, commit, clone, stash, pull --ff-only, stash pop) per test, each command bounded at 60 s by the
+# product. 35-104 s for the file bare on an idle-ish box, 131-464 s under the 12-worker runner on a
+# shared one; at 100% host load a bare run tripped the cap on all three pull tests at 31-32 s inside
+# _run_plugin_git's wait (ceremony 20260917e, and again 2026-09-18).
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 # ── _sanitize_plugin_name ─────────────────────────────────────────────────
@@ -671,8 +681,10 @@ class TestNoAutoActivation:
         be used — only explicit config triggers plugin engines."""
         # This tests the run_agent.py logic indirectly by checking that the
         # code path for default config doesn't call get_plugin_context_engine.
-        import run_agent as ra_module
-        source = Path(ra_module.__file__).read_text(encoding="utf-8")
+        # Read the source by path: importing run_agent pulls model_tools, whose
+        # discover_builtin_tools() imports every tool module -- 25 s cold under host
+        # load, which tripped the cap for a text assertion that never needed the module.
+        source = (Path(__file__).resolve().parents[2] / "run_agent.py").read_text(encoding="utf-8")
         # The old code had: "Even with default config, check if a plugin registered one"
         # The fix removes this. Verify it's gone.
         assert "Even with default config, check if a plugin registered one" not in source
