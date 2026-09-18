@@ -425,3 +425,158 @@ def test_live_guarded_walk_kills_the_tree_and_spares_a_decoy(harness, monkeypatc
     finally:
         _reap(proc, inner, grandchild)
         _reap(decoy, decoy_inner, decoy_grandchild)
+
+
+# --- the runner's own job: the frozen child in the spawn window ---------------
+#
+# Sighting 2026-09-18 (boot 2026-09-16): venv launcher pid 12144,
+# ``Scripts\python.exe -m pytest ...test_redact.py --basetemp=...hermes-parallel-...``,
+# created 01:46:02, still alive at 09:55 with its runner parent gone, zero
+# children, 0 s CPU, 1 thread, 2 MB. That is a process that never ran its
+# first instruction: the runner was hard-terminated between CreateProcess
+# (CREATE_SUSPENDED) and the per-file AssignProcessToJobObject, so nothing
+# ever thawed it and no job of ours held it. The runner now sits in its own
+# kill-on-close job, so a child born in that window is a member at birth
+# and dies with the runner.
+
+
+def test_main_enrolls_the_runner_in_its_own_job_before_the_first_spawn(harness):
+    """Source contract: the enrolment precedes the pool that spawns, and the
+    runner's job is never closed by the runner (closing it kills the runner)."""
+    src = inspect.getsource(harness.main)
+    enrol = src.index("_RUNNER_JOB = _win_enroll_runner()")
+    assert enrol < src.index("with ThreadPoolExecutor(max_workers=args.jobs) as pool:")
+    tree = ast.parse(_SCRIPT.read_text(encoding="utf-8"))
+    closed = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_win_job_close"
+        for arg in node.args
+        if isinstance(arg, ast.Name) and arg.id == "_RUNNER_JOB"
+    ]
+    assert not closed
+
+
+def test_enroll_runner_is_a_no_op_off_windows(harness, monkeypatch):
+    monkeypatch.setattr(harness.sys, "platform", "linux")
+    monkeypatch.setattr(
+        harness, "_win_kill_on_close_job",
+        lambda handle, pid: (_ for _ in ()).throw(AssertionError("must not touch kernel32 off Windows")),
+    )
+    assert harness._win_enroll_runner() is None
+
+
+def test_job_for_hands_the_popen_handle_and_pid_to_the_job_maker(harness, monkeypatch):
+    seen = []
+    monkeypatch.setattr(harness, "_win_kill_on_close_job", lambda handle, pid: seen.append((handle, pid)) or 0x99)
+    with_handle = _FakeProc(pid=100, returncode=None)
+    with_handle._handle = 0x1234
+    assert harness._win_job_for(with_handle) == 0x99
+    assert harness._win_job_for(_FakeProc(pid=101, returncode=None)) == 0x99
+    assert seen == [(0x1234, 100), (None, 101)]
+
+
+_RUNNER_IN_THE_WINDOW = (
+    # A runner the instant before its per-file job assignment: enrolled in its
+    # own job, one child created frozen and never assigned, never thawed.
+    "import importlib.util, os, subprocess, sys, time;"
+    "spec = importlib.util.spec_from_file_location('r', sys.argv[1]);"
+    "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m);"
+    "job = m._win_enroll_runner() if sys.argv[2] == 'enrolled' else None;"
+    "frozen = subprocess.Popen([sys.executable, '-c', 'pass'], creationflags=m._CREATE_SUSPENDED);"
+    "print(os.getpid(), frozen.pid, job or 0, flush=True);"
+    "time.sleep(300)"
+)
+
+
+class _Window:
+    """A child runner frozen mid-spawn, and the identity of every pid it names
+    (creation times pinned while each was certainly alive), so cleanup can
+    never reach a recycled pid."""
+
+    def __init__(self, mode: str):
+        psutil = pytest.importorskip("psutil")
+        self.launcher = subprocess.Popen(
+            [sys.executable, "-c", _RUNNER_IN_THE_WINDOW, str(_SCRIPT), mode], stdout=subprocess.PIPE, text=True
+        )
+        try:
+            self.runner_pid, self.frozen_pid, self.job = (int(x) for x in self.launcher.stdout.readline().split())
+            self.runner_born = psutil.Process(self.runner_pid).create_time()
+            self.frozen_born = psutil.Process(self.frozen_pid).create_time()
+        except (ValueError, psutil.Error):
+            _reap(self.launcher)
+            raise
+
+    def reap(self):
+        psutil = pytest.importorskip("psutil")
+        for pid, born in ((self.frozen_pid, self.frozen_born), (self.runner_pid, self.runner_born)):
+            try:
+                p = psutil.Process(pid)
+                if p.create_time() == born:
+                    p.kill()
+            except psutil.Error:
+                pass
+        _reap(self.launcher)
+
+
+def _still_frozen(psutil, pid: int, created: float) -> bool:
+    try:
+        p = psutil.Process(pid)
+        return p.is_running() and p.create_time() == created and p.status() == psutil.STATUS_STOPPED
+    except psutil.Error:
+        return False
+
+
+@pytest.mark.windows_only
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows only")
+@pytest.mark.timeout(scaled(60))
+def test_live_a_runner_killed_inside_the_spawn_window_takes_its_frozen_child_with_it(harness):
+    """The 2026-09-18 shape, forced: hard-terminate the runner while a child
+    sits frozen between CreateProcess and its per-file job. The child dies
+    with the runner. A frozen decoy we own ourselves, outside that job, is
+    untouched -- this is membership, not a sweep by image name."""
+    psutil = pytest.importorskip("psutil")
+    decoy = subprocess.Popen([sys.executable, "-c", "pass"], creationflags=harness._CREATE_SUSPENDED)
+    w = _Window("enrolled")
+    try:
+        if not w.job:
+            pytest.skip("job assignment refused on this host (nested jobs forbidden)")
+        frozen = psutil.Process(w.frozen_pid)
+        assert frozen.status() == psutil.STATUS_STOPPED and frozen.num_threads() == 1
+        assert Path(frozen.exe()).name == Path(sys.executable).name  # the launcher stub, as sighted
+        assert _still_frozen(psutil, decoy.pid, psutil.Process(decoy.pid).create_time())
+
+        psutil.Process(w.runner_pid).kill()  # the abort: TerminateProcess, no cleanup runs
+
+        deadline = time.monotonic() + scaled(10)
+        while _still_frozen(psutil, w.frozen_pid, w.frozen_born) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _still_frozen(psutil, w.frozen_pid, w.frozen_born), "frozen child outlived the runner that spawned it"
+        assert _still_frozen(psutil, decoy.pid, psutil.Process(decoy.pid).create_time())
+    finally:
+        w.reap()
+        _reap(decoy)
+
+
+@pytest.mark.windows_only
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows only")
+@pytest.mark.timeout(scaled(60))
+def test_live_falsifier_without_the_runner_job_the_frozen_child_is_orphaned_forever(harness):
+    """The same abort against a runner in no job of its own: the frozen child
+    outlives it (parent gone, 1 thread, no children -- pid 12144's shape).
+    This is what the assertion above is sensitive to."""
+    psutil = pytest.importorskip("psutil")
+    w = _Window("bare")
+    try:
+        assert w.job == 0
+        psutil.Process(w.runner_pid).kill()
+        w.launcher.wait(timeout=scaled(20))  # the launcher stub relays its interpreter's exit
+        time.sleep(scaled(1))
+        orphan = psutil.Process(w.frozen_pid)
+        assert _still_frozen(psutil, w.frozen_pid, w.frozen_born)
+        assert orphan.num_threads() == 1 and not orphan.children()
+        assert not psutil.pid_exists(orphan.ppid()) or psutil.Process(orphan.ppid()).create_time() != w.runner_born
+    finally:
+        w.reap()

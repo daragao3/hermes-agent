@@ -739,6 +739,12 @@ def _discover_files(roots: List[Path]) -> List[Path]:
 #    pinned at spawn) and each victim must still be the process the snapshot
 #    saw before it is terminated. A root that has already exited means the
 #    walk has nothing provable to stand on, so it kills nothing.
+#
+# 3. The runner is a member of its own kill-on-close job (``_win_enroll_runner``)
+#    for the one process neither primitive can reach: a child that exists,
+#    frozen, between CreateProcess and its per-file job assignment when the
+#    runner itself is hard-terminated. Membership is inherited at creation,
+#    so the runner's death reaps it with everything else the runner spawned.
 
 
 class _ProcRecord(NamedTuple):
@@ -929,6 +935,17 @@ def _win_kill_pid(pid: int, created: float | None) -> bool:
 def _win_job_for(proc: "subprocess.Popen") -> int | None:
     """Create a kill-on-close job and put ``proc`` in it. Handle, or None.
 
+    Popen's own handle names exactly the process we spawned, whatever its
+    pid means by now; only fall back to a pid lookup without it.
+    """
+    return _win_kill_on_close_job(getattr(proc, "_handle", None), proc.pid)
+
+
+def _win_kill_on_close_job(handle, pid: int | None) -> int | None:
+    """Create a kill-on-close job and put the process ``handle`` (or, without
+    one, ``pid``) in it. Returns the job handle, or None when the job could
+    not be created or the process could not be assigned.
+
     ``BREAKAWAY_OK`` keeps children spawned with ``CREATE_BREAKAWAY_FROM_JOB``
     (the product's detached gateway / watcher spawns) escaping exactly as
     they do outside the runner; those were never reapable by anything but a
@@ -977,14 +994,11 @@ def _win_job_for(proc: "subprocess.Popen") -> int | None:
         info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK
         ok = kernel32.SetInformationJobObject(job, JobObjectExtendedLimitInformation, ctypes.byref(info), ctypes.sizeof(info))
-        # Popen's own handle names exactly the process we spawned, whatever
-        # its pid means by now; only fall back to a pid lookup without it.
-        handle = getattr(proc, "_handle", None)
-        if handle is None:
+        if handle is None and pid is not None:
             kernel32.OpenProcess.restype = ctypes.c_void_p
             kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
             PROCESS_SET_QUOTA, PROCESS_TERMINATE = 0x0100, 0x0001
-            handle = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, proc.pid)
+            handle = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid)
         if not ok or not handle or not kernel32.AssignProcessToJobObject(job, int(handle)):
             kernel32.CloseHandle(job)
             return None
@@ -1012,6 +1026,43 @@ def _win_job_close(job: int) -> None:
         kernel32.CloseHandle(job)
     except Exception:
         pass
+
+
+# The runner's own kill-on-close job, held open for the runner's lifetime
+# (never passed to ``_win_job_close``: closing it kills the runner too).
+_RUNNER_JOB: int | None = None
+
+
+def _win_enroll_runner() -> int | None:
+    """Put the runner itself in a kill-on-close job, so every process it will
+    ever spawn is a member from its first instruction. Handle, or None.
+
+    The per-file job below is assigned after ``Popen`` returns. Between
+    ``CreateProcess`` and ``AssignProcessToJobObject`` the child exists,
+    frozen by ``CREATE_SUSPENDED``, in no job of ours -- a window of 0.3 ms
+    on a quiet box and 170 ms+ at 100% CPU. A runner hard-terminated inside
+    that window (a session abort, a tool timeout, ``TerminateProcess`` from
+    anywhere) can never thaw the child, and nothing else owns it: it stays
+    frozen forever, 1 thread, 0 CPU, ~2 MB, parent gone, no children
+    (venv launcher pid 12144, created 2026-09-18 01:46:02, found alive
+    eight hours later). Job membership is inherited at ``CreateProcess``,
+    so a runner that is a member of its own job closes the window: the
+    kernel closes the runner's handles when it dies, however it dies, and
+    KILL_ON_JOB_CLOSE reaps every member by membership -- frozen or not,
+    with no pid, image name or ppid walk involved. ``BREAKAWAY_OK`` is set
+    as on the per-file jobs, so deliberate detached spawns escape as before.
+    Nested inside whatever job the host already has the runner in (Windows
+    8+ allows nesting); a refused assignment leaves today's behaviour.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        return _win_kill_on_close_job(kernel32.GetCurrentProcess(), os.getpid())
+    except Exception:
+        return None
 
 
 _CREATE_SUSPENDED = 0x00000004
@@ -2070,6 +2121,19 @@ def main() -> int:
             )
             if rc != 0:
                 _print_inline_failure(fpath, output, repo_root, pytest_passthrough)
+
+    # Windows: the runner joins its own kill-on-close job before the first
+    # spawn, so a child caught between CreateProcess and its per-file job
+    # assignment when the runner dies is reaped with the runner rather
+    # than left frozen forever (see _win_enroll_runner).
+    global _RUNNER_JOB  # noqa: PLW0603 -- held open for the runner's lifetime
+    _RUNNER_JOB = _win_enroll_runner()
+    if sys.platform == "win32" and _RUNNER_JOB is None:
+        print(
+            "  note: the runner could not join a kill-on-close job on this host; "
+            "a hard abort during a spawn may leave a frozen child behind.",
+            file=sys.stderr,
+        )
 
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures: List[Future] = []
