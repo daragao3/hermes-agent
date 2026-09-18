@@ -86,17 +86,14 @@ def _list_targets(platform_filter: Optional[str], *, json_mode: bool) -> int:
     except Exception as exc:
         return _fail(f"hermes send: failed to read channel directory: {exc}")
     platforms = dict(raw.get("platforms") or {})
-
-    # Merge in configured-but-undiscovered platforms (e.g. a fresh SimpleX setup used only for
-    # outbound sends) so `--list` never hides a working send target.
-    try:
-        from gateway.config import load_gateway_config
-        for plat in load_gateway_config().get_connected_platforms():
-            plat_name = getattr(plat, "value", str(plat))
-            if plat_name not in ("local", "api_server", "webhook"):
-                platforms.setdefault(plat_name, [])
-    except Exception:
-        pass  # directory contents alone are still useful; don't fail --list on a config problem
+    # The directory is the ONLY source here -- deliberately not merged with
+    # load_gateway_config().get_connected_platforms() (upstream 7483745da7). That loader runs
+    # the plugin YAML hooks, which resolve every configured platform plugin and its SDK
+    # (telegram/slack_bolt/discord...): +1598 modules and 7-14 s on a command whose whole
+    # point is to be cheap enough for cron and scripts (test_send_import_cost pins the
+    # budget). build_channel_directory already records every platform the gateway connected,
+    # with [] for the ones it could not enumerate, so the only thing lost is a platform
+    # configured since the gateway last ran -- and the empty-list guidance below covers it.
     if platform_filter:
         key = platform_filter.strip().lower()
         filtered = {k: v for k, v in platforms.items() if k.lower() == key}

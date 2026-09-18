@@ -102,61 +102,45 @@ def test_file_decode_error_suggests_media_directive(fake_tool, capsys, monkeypat
 # ---------------------------------------------------------------------------
 
 
-def test_list_includes_configured_platform_without_discovered_channels(
-    monkeypatch, capsys
-):
-    """A configured platform absent from the channel directory must still be
-    listed (with a no-channels hint) instead of silently omitted."""
+def test_list_never_loads_the_gateway_config(monkeypatch, capsys):
+    """--list renders the channel directory and NOTHING else: it must not consult
+    load_gateway_config(), whose plugin YAML hooks resolve every configured platform
+    plugin and SDK (+1598 modules, 7-14 s) on a command that has to stay cheap for cron
+    and scripts. A platform present only in config.yaml is therefore not listed until the
+    gateway has run once and recorded it in the directory; the empty-directory guidance
+    says so. (Reverses upstream 7483745da7's merge; the budget is
+    tests/hermes_cli/test_send_import_cost.py.)"""
     import types
     import sys
 
-    class _FakePlatform:
-        def __init__(self, value):
-            self.value = value
-
-    class _FakeGwConfig:
-        def get_connected_platforms(self):
-            return [_FakePlatform("simplex")]
+    def _boom():
+        raise AssertionError("send --list must not load the gateway config")
 
     fake_gw_config = types.ModuleType("gateway.config")
-    fake_gw_config.load_gateway_config = lambda: _FakeGwConfig()
+    fake_gw_config.load_gateway_config = _boom
     monkeypatch.setitem(sys.modules, "gateway.config", fake_gw_config)
 
     fake_dir = types.ModuleType("gateway.channel_directory")
     fake_dir.load_directory = lambda: {"updated_at": None, "platforms": {}}
-
-    def _format(platforms=None):
-        lines = []
-        for name, channels in sorted((platforms or {}).items()):
-            lines.append(f"{name}:")
-            if not channels:
-                lines.append("  (no channels discovered yet)")
-        return "\n".join(lines)
-
-    fake_dir.format_directory_for_display = _format
+    fake_dir.format_directory_for_display = lambda platforms=None: ""
     monkeypatch.setitem(sys.modules, "gateway.channel_directory", fake_dir)
 
     rc = send_cmd._list_targets(None, json_mode=False)
     out = capsys.readouterr().out
     assert rc == 0
-    assert "simplex" in out
-    assert "no channels discovered yet" in out
+    assert "No messaging platforms configured or no channels discovered yet." in out
+    assert "run the gateway once" in out
 
 
-def test_list_json_includes_configured_platform(monkeypatch, capsys):
+def test_list_json_is_the_directory_verbatim(monkeypatch, capsys):
+    """JSON mode is the directory's platforms map, discovered entries preserved and
+    nothing merged in from elsewhere."""
     import types
     import sys
 
-    class _FakePlatform:
-        def __init__(self, value):
-            self.value = value
-
-    class _FakeGwConfig:
-        def get_connected_platforms(self):
-            return [_FakePlatform("simplex"), _FakePlatform("local")]
-
     fake_gw_config = types.ModuleType("gateway.config")
-    fake_gw_config.load_gateway_config = lambda: _FakeGwConfig()
+    fake_gw_config.load_gateway_config = lambda: (_ for _ in ()).throw(
+        AssertionError("send --list must not load the gateway config"))
     monkeypatch.setitem(sys.modules, "gateway.config", fake_gw_config)
 
     fake_dir = types.ModuleType("gateway.channel_directory")
@@ -170,14 +154,7 @@ def test_list_json_includes_configured_platform(monkeypatch, capsys):
     rc = send_cmd._list_targets(None, json_mode=True)
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
-    assert payload["platforms"]["simplex"] == []
-    assert "local" not in payload["platforms"]  # infra pseudo-platform skipped
-    assert payload["platforms"]["telegram"]  # discovered entries preserved
-
-
-# ---------------------------------------------------------------------------
-# Parser registration contract
-# ---------------------------------------------------------------------------
+    assert payload["platforms"] == {"telegram": [{"id": "1", "name": "home"}]}
 
 
 def test_register_send_subparser_is_reusable():
