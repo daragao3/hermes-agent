@@ -22,6 +22,7 @@ Pinned surfaces:
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -294,25 +295,54 @@ class TestArgvConsistencyCheck:
             assert _replace_target_belongs_to_other_profile(424242) is True
 
 
+class _PastReplaceGuard(RuntimeError):
+    """Sentinel raised at the first step after the replace decision."""
+
+
 class TestSignalBoundary:
-    """Integration witness at the destructive boundary (#89315 review req)."""
+    """Integration witness at the destructive boundary (#89315 review req).
+
+    The signal that reaches the incumbent is host-specific since the drain
+    rework (437780e6d3): POSIX asks via ``terminate_pid(pid, force=False)``;
+    Windows asks via ``write_planned_stop_marker(pid)`` and only escalates to
+    ``terminate_pid(force=True, ...)`` when the incumbent survives the drain.
+    Both are counted; each test asserts the one its host must (or must not)
+    emit, so the guard is witnessed on every lane rather than skipped.
+    """
 
     def _run_replace(self, agent_patches):
         from gateway import run as gateway_run
 
-        calls = {"terminate": 0, "marker": 0}
+        calls = {"terminate": 0, "marker": 0, "planned_stop": 0, "past_guard": 0}
 
-        def _fake_terminate(pid, force=False):
+        # Mirror the real ``terminate_pid`` signature: the force-escalation
+        # call passes ``expected_start_time=`` and a narrower fake would
+        # raise TypeError, which ``_swallow`` hides as "raised" BEFORE the
+        # counter moves -- a false "never signalled".
+        def _fake_terminate(pid, *, force=False, expected_start_time=None, reason=None):
             calls["terminate"] += 1
 
         def _fake_marker(pid):
             calls["marker"] += 1
+
+        def _fake_planned_stop(pid):
+            calls["planned_stop"] += 1
+            return True
+
+        # Everything after the replace decision (logging setup, building the
+        # GatewayRunner) is out of scope and load-sensitive; a count-then-raise
+        # at that seam proves the decision was "proceed" and stops there.
+        def _stop_at_boundary(verbosity):
+            calls["past_guard"] += 1
+            raise _PastReplaceGuard()
 
         base = [
             patch("gateway.status.get_running_pid", return_value=424242),
             patch.object(gateway_run, "_replace_target_belongs_to_other_profile"),
             patch("gateway.status.terminate_pid", side_effect=_fake_terminate),
             patch("gateway.status.write_takeover_marker", side_effect=_fake_marker),
+            patch("gateway.status.write_planned_stop_marker", side_effect=_fake_planned_stop),
+            patch.object(gateway_run, "_start_gateway_configure_logging", side_effect=_stop_at_boundary),
         ]
         import contextlib
 
@@ -329,7 +359,8 @@ class TestSignalBoundary:
 
     def test_unprovable_ownership_never_signals(self, profile_env):
         """Unprovable ownership → start_gateway returns False WITHOUT calling
-        terminate_pid or writing a takeover marker."""
+        terminate_pid, writing a planned-stop marker (the Windows signal), or
+        writing a takeover marker."""
 
         def configure(stack):
             guard = stack.enter_context(
@@ -343,8 +374,12 @@ class TestSignalBoundary:
         result, calls = self._run_replace(lambda s: configure(s))
 
         assert result is False
+        assert calls["past_guard"] == 0, "a refused --replace must not proceed to start"
         assert calls["terminate"] == 0, (
             "--replace must not signal a target whose ownership is unproven"
+        )
+        assert calls["planned_stop"] == 0, (
+            "--replace must not ask an unproven target to drain (Windows signal)"
         )
         assert calls["marker"] == 0, (
             "no takeover marker may be written for a refused target"
@@ -352,8 +387,15 @@ class TestSignalBoundary:
 
     def test_provable_same_home_reaches_replace_flow(self, profile_env):
         """Counterpart: bound same-home target still enters the replace flow
-        (terminate attempted) — the fail-closed gate must not disable legit
-        Windows-style replaces."""
+        (the host's drain signal is attempted) — the fail-closed gate must not
+        disable legit replaces.
+
+        The fake PID is dead, so ``_wait_for_pid_exit`` confirms exit on its
+        first probe and the force-escalation ``terminate_pid`` is never due;
+        on Windows the graceful signal is therefore the planned-stop marker,
+        and ``terminate_pid`` staying at 0 is the correct reading, not a
+        missed call.
+        """
         def configure(stack):
             stack.enter_context(
                 patch(
@@ -371,9 +413,27 @@ class TestSignalBoundary:
 
         result, calls = self._run_replace(configure)
 
-        assert calls["terminate"] == 1, (
-            "a provably same-home target must still be replaceable"
+        assert calls["past_guard"] == 1, (
+            "a provably same-home target must reach the start path after the replace"
         )
+        assert calls["marker"] == 1, (
+            "a provably same-home target gets the takeover marker before the signal"
+        )
+        if sys.platform == "win32":
+            assert calls["planned_stop"] == 1, (
+                "a provably same-home target must still be asked to drain "
+                "(Windows planned-stop marker)"
+            )
+            assert calls["terminate"] == 0, (
+                "a dead incumbent never earns the force escalation"
+            )
+        else:
+            assert calls["terminate"] == 1, (
+                "a provably same-home target must still be replaceable"
+            )
+            assert calls["planned_stop"] == 0, (
+                "POSIX signals with terminate_pid, not the Windows drain marker"
+            )
 
 
 def asyncio_run(coro):
