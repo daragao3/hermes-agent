@@ -11,6 +11,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional
 from typing import TYPE_CHECKING
@@ -20,6 +21,10 @@ if TYPE_CHECKING:
     from hermes_cli.kanban_db import Task
 
 _REMOVABLE_KINDS = ("scratch", "worktree")
+
+# Terminal statuses whose scratch dir is reaped (``_cleanup_workspace`` runs on
+# complete and archive; failed/cancelled keep theirs for retry/inspection).
+_SWEEPABLE_STATUSES = ("done", "archived")
 
 # Statuses after which a child no longer needs its parent's workspace artifacts.
 _ACTIVE_CHILDREN_SQL = (
@@ -110,6 +115,83 @@ def _is_managed_scratch_path(p: Path) -> bool:
     return _managed_scratch_path_info(p)[0]
 
 
+def _step_out_of_dir(target: Path) -> None:
+    """``chdir`` away when *target* is (or contains) this process's cwd.
+
+    A worker completes its own task in-process and ``_default_spawn`` launched
+    it with ``cwd=workspace``. On Windows a directory that is any process's cwd
+    cannot be removed (``rmdir`` -> WinError 32 after the contents went), so
+    ``rmtree(ignore_errors=True)`` used to leave the empty scratch dir behind.
+    Stepping out first lets the removal finish; a cwd held by another process
+    is caught by :func:`sweep_stale_scratch_workspaces` on the next tick.
+    """
+    try:
+        cwd = Path(os.getcwd()).resolve(strict=False)
+        root = target.resolve(strict=False)
+    except OSError:
+        return  # cwd already unlinked (POSIX) — nothing to step out of
+    if cwd != root and not cwd.is_relative_to(root):
+        return
+    for fallback in (root.parent, Path.home(), Path(tempfile.gettempdir())):
+        try:
+            os.chdir(fallback)
+            return
+        except OSError:
+            continue
+
+
+def _remove_scratch_dir(wp: Path) -> bool:
+    """``rmtree`` a managed scratch workspace; True iff the directory is gone."""
+    _step_out_of_dir(wp)
+    shutil.rmtree(wp, ignore_errors=True)
+    return not wp.is_dir()
+
+
+def sweep_stale_scratch_workspaces(
+    conn: sqlite3.Connection, *, board: Optional[str] = None,
+) -> list[str]:
+    """Reap ``<workspaces_root>/<task_id>`` dirs that outlived their task.
+
+    :func:`_cleanup_workspace` runs inside the completing process; when a
+    *different* process still holds the workspace as its cwd (a worker's
+    terminal shell running ``hermes kanban complete``), Windows refuses the
+    final ``rmdir`` and only the contents go. The dispatcher's reclaim phase
+    calls this so the leftover is removed once the holder exits. Only entries
+    whose task is done/archived, scratch-kind, free of active children and
+    under managed storage are touched; anything else is left alone.
+    """
+    removed: list[str] = []
+    try:
+        root = _kb.workspaces_root(board=board)
+        entries = [e for e in root.iterdir() if e.is_dir()]
+    except OSError:
+        return removed
+    for entry in entries:
+        try:
+            row = conn.execute(
+                "SELECT status, workspace_kind, workspace_path FROM tasks WHERE id = ?",
+                (entry.name,),
+            ).fetchone()
+            if (
+                not row
+                or row["status"] not in _SWEEPABLE_STATUSES
+                or row["workspace_kind"] != "scratch"
+            ):
+                continue
+            if row["workspace_path"]:
+                recorded = Path(row["workspace_path"]).expanduser().resolve(strict=False)
+                if recorded != entry.resolve(strict=False):
+                    continue
+            if _has_active_children(conn, entry.name) or not _is_managed_scratch_path(entry):
+                continue
+            if _remove_scratch_dir(entry):
+                removed.append(entry.name)
+                _kb._log.info("Swept leftover scratch workspace of task %s: %s", entry.name, entry)
+        except Exception:
+            continue  # best-effort — one bad entry never blocks the tick
+    return removed
+
+
 def _cleanup_workspace(conn: sqlite3.Connection, task_id: str) -> None:
     """Remove a task's scratch workspace dir and kill its stale tmux session.
     Called from :func:`complete_task` after the transaction commits; best-effort
@@ -151,8 +233,13 @@ def _cleanup_workspace(conn: sqlite3.Connection, task_id: str) -> None:
             # source tree; without this, completion would rmtree the user's data.
             # See #28818.
             if _is_managed_scratch_path(wp):
-                shutil.rmtree(wp, ignore_errors=True)
-                _kb._log.debug("Removed scratch workspace: %s", wp)
+                if _remove_scratch_dir(wp):
+                    _kb._log.debug("Removed scratch workspace: %s", wp)
+                else:
+                    _kb._log.debug(
+                        "Scratch workspace for task %s is still pinned by another "
+                        "process's cwd; the dispatcher sweep retries: %s", task_id, wp,
+                    )
             else:
                 _kb._log.warning(
                     "Refusing to remove out-of-scratch workspace for task %s: %s "
@@ -241,8 +328,7 @@ def _try_cleanup_parent_workspaces(conn: sqlite3.Connection, task_id: str) -> No
                 _cleanup_worktree_workspace(parent_id, row["workspace_path"], row["branch_name"])
                 continue
             wp = Path(row["workspace_path"])
-            if wp.is_dir() and _is_managed_scratch_path(wp):
-                shutil.rmtree(wp, ignore_errors=True)
+            if wp.is_dir() and _is_managed_scratch_path(wp) and _remove_scratch_dir(wp):
                 _kb._log.debug("Deferred cleanup: removed parent %s scratch workspace: %s", parent_id, wp)
     except Exception:
         pass  # best-effort
