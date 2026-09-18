@@ -31,8 +31,35 @@ from agent.credential_pool import (
     CredentialPool,
     PooledCredential,
 )
+from tests.timeout_budget import scaled
 
 CONCURRENCY = 20
+
+# Bottleneck bound for the thread stress case, in seconds. The fast path
+# (one POST, nineteen lock+adopt round trips) is dominated by the real file
+# lock and on-disk pool persistence, not by the fake network delay: measured
+# 0.8-1.0 s bare on Windows and 1.44 s under the 12-worker runner
+# (2026-09-17, agent-src acceptance 07b8eb4d5d->e1efed5c1f). The regression
+# the bound guards against -- every waiter adopting the rotated token and
+# then POSTing anyway -- pays CONCURRENCY * delay on top of that, so the
+# delay is what makes the two separable: it must put the regression well
+# ABOVE this bound while the loaded fast path stays well BELOW it.
+# ``_assert_bound_is_discriminating`` pins that ordering.
+THREAD_STRESS_NETWORK_DELAY_SECONDS = 0.5
+THREAD_STRESS_BOTTLENECK_BOUND_SECONDS = 6.0
+# Deadlock net for the join loop: above the serialized regression (~13 s
+# measured) so a bottleneck is reported as one, below the per-test cap.
+THREAD_STRESS_JOIN_NET_SECONDS = 30.0
+
+
+def _assert_bound_is_discriminating() -> None:
+    """A bound the regression could pass is decoration, not a check."""
+    regression_floor = CONCURRENCY * THREAD_STRESS_NETWORK_DELAY_SECONDS
+    assert regression_floor >= 1.5 * THREAD_STRESS_BOTTLENECK_BOUND_SECONDS, (
+        f"serialized-POST regression floor {regression_floor:.1f}s must sit well "
+        f"above the bottleneck bound {THREAD_STRESS_BOTTLENECK_BOUND_SECONDS:.1f}s"
+    )
+    assert THREAD_STRESS_JOIN_NET_SECONDS > regression_floor
 
 
 def _process_claude_code_refresh_worker(
@@ -177,6 +204,7 @@ def hermes_home(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.mark.timeout(scaled(90))
 def test_high_concurrency_anthropic_refresh_no_lost_updates_no_deadlock(
     hermes_home, monkeypatch
 ):
@@ -188,7 +216,8 @@ def test_high_concurrency_anthropic_refresh_no_lost_updates_no_deadlock(
     take, not blow up toward CONCURRENCY * network_delay -- and every
     participant must end up with a usable, non-exhausted credential.
     """
-    server = _SingleUseTokenServer(delay_seconds=0.02)
+    _assert_bound_is_discriminating()
+    server = _SingleUseTokenServer(delay_seconds=THREAD_STRESS_NETWORK_DELAY_SECONDS)
     monkeypatch.setattr(
         "agent.anthropic_credentials.refresh_anthropic_oauth_pure",
         lambda refresh_token, use_json=False: server.refresh(refresh_token, use_json=use_json),
@@ -219,11 +248,11 @@ def test_high_concurrency_anthropic_refresh_no_lost_updates_no_deadlock(
     start = time.monotonic()
     for t in threads:
         t.start()
-    # Generous per-thread join budget: a correct implementation serializes
-    # through one file lock, so worst case is roughly
-    # CONCURRENCY * (delay + lock overhead), well under this ceiling. A
-    # deadlock or livelock would blow straight through it.
-    deadline = start + max(10.0, CONCURRENCY * server.delay_seconds * 5)
+    # Deadlock net, not a performance bound: a correct implementation
+    # serializes through one file lock and finishes in a couple of seconds,
+    # the serialized-POST regression in ~13 s; only a deadlock or livelock
+    # reaches this ceiling.
+    deadline = start + THREAD_STRESS_JOIN_NET_SECONDS
     for t in threads:
         remaining = max(0.1, deadline - time.monotonic())
         t.join(timeout=remaining)
@@ -248,15 +277,16 @@ def test_high_concurrency_anthropic_refresh_no_lost_updates_no_deadlock(
             "despite valid tokens existing on disk"
         )
 
-    # Bottleneck signal: this must stay well below "every thread pays the
-    # full network delay independently" (CONCURRENCY * delay). If the fix
-    # regresses into N sequential POSTs instead of lock+adopt, this is
-    # where it would show up first.
-    naive_serial_upper_bound = CONCURRENCY * server.delay_seconds * 3
-    assert elapsed < naive_serial_upper_bound, (
+    # Bottleneck signal: the fast path pays the network delay ONCE (plus the
+    # lock/persistence round trips); if the fix regresses into N sequential
+    # POSTs instead of lock+adopt, elapsed jumps past CONCURRENCY * delay and
+    # this is where it shows up first. The bound is a fixed floor sized for
+    # a loaded host, not a multiple of the delay -- see the constants above.
+    assert elapsed < THREAD_STRESS_BOTTLENECK_BOUND_SECONDS, (
         f"refresh race took {elapsed:.2f}s for {CONCURRENCY} concurrent "
-        f"processes -- expected well under {naive_serial_upper_bound:.2f}s "
-        "if the lock + pool-store adoption path is working efficiently"
+        f"processes -- expected well under {THREAD_STRESS_BOTTLENECK_BOUND_SECONDS:.2f}s "
+        f"if the lock + pool-store adoption path is working efficiently (a "
+        f"serialized-POST regression costs >= {CONCURRENCY * server.delay_seconds:.1f}s)"
     )
 
 
