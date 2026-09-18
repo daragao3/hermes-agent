@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -1843,6 +1844,136 @@ class TestWmiStrayThreadTrigger:
         assert "WAL mode" in both and "WMI queries stubbed" in both
 
 
+class TestWindowsRuntimeHoldersPolicy:
+    """The holders gate names WHICH holders block, and only structural ones block under
+    ``transient-ok``. Measured 2026-09-18 (rename_probe.py, loops pbs-cpython-313-cutover-20260917):
+    an NTFS directory rename succeeds under a running child; the cut-over swapped under 14
+    transient pytest holders by hand. The default stays strict (any holder defers)."""
+
+    VENV = r"C:\hermes\venv"
+    PY = VENV + r"\Scripts\python.exe"
+    GATEWAY = (1, "python.exe", f'"{PY}" -m hermes_cli.main --profile main gateway run --replace')
+    SERVE = (2, "python.exe", f"{PY} -m hermes_cli.main serve --host 127.0.0.1 --port 0")
+    BRIDGE = (3, "hermes-session-bridge.exe", r"C:\hermes\venv\Scripts\hermes-session-bridge.exe serve")
+    PYTEST = (4, "python.exe", f"{PY} -m pytest tests/hermes_cli/test_managed_uv.py -q")
+    RUNNER = (5, "python.exe", f"{PY} C:/hermes/scripts/run_tests_parallel.py tests/agent")
+    BARE = (6, "python.exe", f"{PY} -")
+
+    @pytest.fixture(autouse=True)
+    def _windows(self, monkeypatch):
+        from hermes_cli import managed_uv
+
+        monkeypatch.setattr(managed_uv, "host_system", lambda: "Windows")
+        monkeypatch.delenv(managed_uv._RUNTIME_HOLDER_POLICY_ENV, raising=False)
+        # Real pids mean nothing here: no holder has a cwd inside the venv unless a test says so.
+        monkeypatch.setattr(managed_uv, "_holder_cwd", lambda pid: "")
+
+    @staticmethod
+    def _holders(*rows):
+        return lambda: list(rows)
+
+    def test_classification_of_structural_and_transient_holders(self):
+        from hermes_cli import managed_uv
+
+        prefix = self.VENV.lower() + "\\"
+        classify = lambda row, **kw: managed_uv._classify_runtime_holder(*row, live_prefix=prefix, **kw)
+
+        assert classify(self.GATEWAY) == "long-lived `hermes gateway`"
+        assert classify(self.SERVE) == "long-lived `hermes serve`"
+        assert classify(self.BRIDGE).startswith("service launcher hermes-session-bridge")
+        assert classify(self.PYTEST) is None
+        assert classify(self.RUNNER) is None
+        assert classify(self.BARE) is None
+        # (b) a cwd inside the venv holds a directory handle open: structural whatever the argv.
+        inside = classify(self.PYTEST, cwd_of=lambda pid: self.VENV.lower() + r"\lib\site-packages")
+        assert inside is not None and "cwd inside the venv" in inside
+        assert classify(self.PYTEST, cwd_of=lambda pid: r"c:\hermes") is None
+
+    def test_strict_default_defers_on_transient_only_and_names_the_escape_hatch(self):
+        from hermes_cli import managed_uv
+
+        blocked, detail = managed_uv._windows_runtime_holders(
+            Path(self.VENV), detector=self._holders(self.PYTEST, self.RUNNER))
+
+        assert blocked is True
+        assert "0 structural, 2 transient" in detail
+        assert "transient PID 4, 5" in detail
+        assert f"{managed_uv._RUNTIME_HOLDER_POLICY_ENV}=transient-ok" in detail
+        assert "rename succeeds" in detail and "lazy imports may fail" in detail
+
+    def test_structural_holder_defers_under_every_policy(self, monkeypatch):
+        from hermes_cli import managed_uv
+
+        monkeypatch.setenv(managed_uv._RUNTIME_HOLDER_POLICY_ENV, "transient-ok")
+        blocked, detail = managed_uv._windows_runtime_holders(
+            Path(self.VENV), detector=self._holders(self.PYTEST, self.GATEWAY, self.BRIDGE))
+
+        assert blocked is True
+        assert "2 structural, 1 transient" in detail
+        assert "PID 1: long-lived `hermes gateway`" in detail
+        assert "PID 3: service launcher hermes-session-bridge.exe" in detail
+        assert "transient-ok would let" not in detail, "no escape hatch is offered for structural holders"
+
+    def test_transient_ok_swaps_under_transient_holders_with_a_warning(self, monkeypatch):
+        from hermes_cli import managed_uv
+
+        monkeypatch.setenv(managed_uv._RUNTIME_HOLDER_POLICY_ENV, "transient-ok")
+        blocked, detail = managed_uv._windows_runtime_holders(
+            Path(self.VENV), detector=self._holders(self.PYTEST, self.BARE))
+
+        assert blocked is False
+        assert "2 transient holder(s)" in detail and "PID 4, 6" in detail
+        assert "lazily" in detail and "measured 2026-09-18" in detail
+
+    def test_unknown_policy_value_is_strict(self, monkeypatch):
+        from hermes_cli import managed_uv
+
+        monkeypatch.setenv(managed_uv._RUNTIME_HOLDER_POLICY_ENV, "yes-please")
+        blocked, _ = managed_uv._windows_runtime_holders(
+            Path(self.VENV), detector=self._holders(self.PYTEST))
+        assert blocked is True
+
+    def test_no_holders_and_off_windows_are_unchanged(self, monkeypatch):
+        from hermes_cli import managed_uv
+
+        assert managed_uv._windows_runtime_holders(Path(self.VENV), detector=self._holders()) == (False, "")
+        monkeypatch.setattr(managed_uv, "host_system", lambda: "Linux")
+        assert managed_uv._windows_runtime_holders(Path(self.VENV), detector=self._holders(self.GATEWAY)) == (
+            False, "")
+
+    def test_preflight_prints_the_transient_warning_and_proceeds(self, tmp_path, monkeypatch, capsys):
+        """Through the preflight: transient-ok prints the hazard, does not defer, and the repair
+        continues to provisioning (which this test declines) — live venv untouched."""
+        from hermes_cli import managed_uv
+        from hermes_cli.managed_uv import repair_vulnerable_runtime
+
+        root, live, sentinel = _make_runtime_install(tmp_path, windows=True)
+        live_python = next(live.rglob("python*"))
+        current = _runtime_info(live_python, (3, 50, 4))
+        monkeypatch.setenv(managed_uv._RUNTIME_HOLDER_POLICY_ENV, "transient-ok")
+        monkeypatch.setattr(sys, "executable", str(tmp_path / "outside" / "python.exe"))
+        seen: list[Path | None] = []
+        real_holders = managed_uv._windows_runtime_holders
+
+        def holders(live_arg=None, **kw):
+            seen.append(live_arg)
+            return real_holders(live_arg, detector=self._holders(self.PYTEST))
+
+        with patch("hermes_cli.managed_uv._windows_runtime_holders", side_effect=holders), \
+             patch("hermes_cli.managed_uv.probe_sqlite_runtime", return_value=current), \
+             patch("hermes_cli.managed_uv._install_safe_python_generation",
+                   return_value=None) as mock_install:
+            result = repair_vulnerable_runtime("uv", project_root=root)
+
+        assert seen == [live], "the preflight must hand the live venv to the classifier"
+        assert result.status == "failed" and "provision" in result.detail
+        mock_install.assert_called_once()
+        out = capsys.readouterr().out
+        assert "swapping the venv under 1 transient holder(s)" in out
+        assert "repair deferred" not in out
+        assert sentinel.read_text(encoding="utf-8") == "live"
+
+
 class TestSmokeTimeoutIsNotAVerdict:
     """A timed-out import smoke is host load, never a rejection of the candidate.
 
@@ -1880,16 +2011,24 @@ class TestSmokeTimeoutIsNotAVerdict:
             "open(p, 'w').close()\n"
             "time.sleep(30)\n")
         venv = self._real_interpreter(monkeypatch, tmp_path, script)
+        # Warm the interpreter image: the first attempt must get as far as writing the marker
+        # before the bound kills it, and cold start-up alone beat a 3 s bound under three sibling
+        # suites (2026-09-18).
+        subprocess.run([sys.executable, "-I", "-c", "pass"], check=False, timeout=60)
 
-        # 3 s: interpreter start-up alone can exceed 1 s on a loaded host, and the first attempt
-        # must get as far as writing the marker before it is killed.
-        healthy, detail, info = managed_uv._smoke_candidate_venv(venv, timeout_s=3.0)
+        try:
+            healthy, detail, info = managed_uv._smoke_candidate_venv(venv, timeout_s=5.0)
+        except managed_uv.CandidateSmokeInconclusive:
+            if not marker.exists():
+                pytest.skip("interpreter start-up exceeded the 5 s bound: host load, the retry "
+                            "path was never reached")
+            raise AssertionError("the retry (marker present) must pass, not time out again")
 
         assert (healthy, detail) == (True, "")
         assert info is not None and info.python_version == (3, 13, 15)
         assert marker.exists(), "the first attempt must have run (and been killed) for real"
         out = capsys.readouterr().out
-        assert "did not finish within 3 s" in out and "retrying once with 6 s" in out
+        assert "did not finish within 5 s" in out and "retrying once with 10 s" in out
 
     def test_two_timeouts_are_inconclusive_not_a_rejection(self, tmp_path, monkeypatch):
         """A real child that never finishes: the smoke raises, it does NOT return ``False``."""
