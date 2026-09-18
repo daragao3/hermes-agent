@@ -319,6 +319,7 @@ class TestWindowsStopDrainTimeout:
         assert gateway_windows._windows_stop_drain_timeout() == pytest.approx(
             resolve_shutdown_watchdog_delay(0.0)
             + gateway_windows._STOP_ESCALATION_MARGIN_S
+            + gateway_windows._STOP_TEARDOWN_MARGIN_S
         )
 
     def test_zero_drain_still_outlasts_the_shutdown_watchdog_leash(self, monkeypatch):
@@ -353,6 +354,7 @@ class TestWindowsStopDrainTimeout:
         assert gateway_windows._windows_stop_drain_timeout() == pytest.approx(
             resolve_shutdown_watchdog_delay(0.0)
             + gateway_windows._STOP_ESCALATION_MARGIN_S
+            + gateway_windows._STOP_TEARDOWN_MARGIN_S
         )
 
     def test_only_a_missing_drain_value_falls_back_to_the_default(self, monkeypatch):
@@ -366,4 +368,47 @@ class TestWindowsStopDrainTimeout:
                 gateway_windows._STOP_FALLBACK_DRAIN_TIMEOUT_S
             )
             + gateway_windows._STOP_ESCALATION_MARGIN_S
+            + gateway_windows._STOP_TEARDOWN_MARGIN_S
         )
+
+    def test_grace_covers_the_post_stop_impl_tail_not_just_the_leash(
+        self, monkeypatch
+    ):
+        """The leash bounds ``_stop_impl``; the process is not gone at the leash.
+
+        ``gateway/run.py`` runs a tail after ``wait_for_shutdown`` — chiefly
+        ``events.gateway_integration.shutdown()`` flushing the notifiers'
+        pending batches — with no internal bound, and the interpreter exits
+        after that.  Measured 2026-09-18 over the 38 stops in gateway.log:
+        p50 7.4s, p90 13.5s, max 32.0s.  Until then ``stop`` granted the tail
+        only the 10s escalation margin while ``--replace`` had carried a 60s
+        teardown margin since b6fec07e66; a ``_stop_impl`` that ran to its
+        leash would have been tree-killed mid-flush by ``stop`` alone.
+        """
+        from gateway.shutdown_watchdog import resolve_shutdown_watchdog_delay
+
+        self._configured(monkeypatch, 0.0)
+
+        leash = resolve_shutdown_watchdog_delay(0.0)
+        granted = gateway_windows._windows_stop_drain_timeout()
+        assert granted >= leash + gateway_windows._STOP_ESCALATION_MARGIN_S + 32.0, (
+            f"{granted}s leaves the measured 32s tail no room past the leash"
+        )
+        assert gateway_windows._STOP_TEARDOWN_MARGIN_S >= 46.0, (
+            "must clear the ~46s non-wedge teardown tail b6fec07e66 measured"
+        )
+
+    def test_grace_still_does_not_wait_out_a_wedge(self, monkeypatch):
+        """Headroom for the tail must not become patience for a hung process.
+
+        b6fec07e66's data had teardown wedges of 356s, 362s and 753s; the
+        force-kill exists for those, and the ceiling has to stay well under
+        them for every configured drain.
+        """
+        self._configured(monkeypatch, 60.0)
+
+        assert gateway_windows._windows_stop_drain_timeout() <= 300.0
+
+        self._configured(monkeypatch, 86400.0)
+
+        assert gateway_windows._windows_stop_drain_timeout() <= 300.0
