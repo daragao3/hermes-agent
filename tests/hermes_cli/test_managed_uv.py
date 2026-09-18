@@ -80,6 +80,20 @@ def _make_runtime_install(
     return root, live, sentinel
 
 
+def _park_backup(root: Path, live: Path, *, epoch: int, mtime: float | None = None) -> Path:
+    """A parked venv next to *live*, named the way ``_cut_over_candidate`` names it
+    (``<live>.stale.runtime-<epoch>-<pid>-<hex8>``). *epoch* is the parking time the
+    sweep must read; *mtime* (default: now) is the directory stat, which on a real
+    parked venv is the build time and says nothing about when it was parked."""
+    import os
+
+    backup = root / f"{live.name}.stale.runtime-{epoch}-{os.getpid()}-{'%08x' % epoch}"
+    (backup / "bin").mkdir(parents=True)
+    if mtime is not None:
+        os.utime(backup, (mtime, mtime))
+    return backup
+
+
 # ---------------------------------------------------------------------------
 # managed_uv_path
 # ---------------------------------------------------------------------------
@@ -531,21 +545,19 @@ class TestRuntimeRepair:
 
     def test_safe_runtime_sweeps_old_stale_backups(self, tmp_path):
         """A fixed runtime reclaims aged venv.stale.runtime-* leftovers
-        (issue #73109) but leaves fresh ones (possible in-flight repair)."""
-        import os
+        (issue #73109) but leaves fresh ones (possible in-flight repair).
+
+        "Aged" and "fresh" are the token epoch in the NAME (what ``_cut_over_candidate``
+        mints at parking time), not directory mtime -- see the class of tests below."""
         import time as _time
 
         from hermes_cli.managed_uv import repair_vulnerable_runtime
 
         root, live, sentinel = _make_runtime_install(tmp_path)
-        old_backup = root / f"{live.name}.stale.runtime-1-2-aaaa"
-        (old_backup / "bin").mkdir(parents=True)
+        old_backup = _park_backup(root, live, epoch=int(_time.time()) - 7200)
         (old_backup / "bin" / "python").write_text("old", encoding="utf-8")
-        stale_mtime = _time.time() - 7200
-        os.utime(old_backup, (stale_mtime, stale_mtime))
 
-        fresh_backup = root / f"{live.name}.stale.runtime-9-9-bbbb"
-        (fresh_backup / "bin").mkdir(parents=True)
+        fresh_backup = _park_backup(root, live, epoch=int(_time.time()))
 
         current = _runtime_info(live / "bin" / "python", (3, 53, 1))
         with patch(
@@ -602,6 +614,121 @@ class TestRuntimeRepair:
         )
         leftovers = list(root.glob(f"{live.name}.stale.runtime-*"))
         assert leftovers == [], f"no stale markers may remain: {leftovers}"
+
+
+class TestStaleBackupAgeIsTheParkingTime:
+    """The sweep's age gate reads the token epoch in the backup's NAME, never directory stat.
+
+    A rename preserves ``st_mtime`` (NTFS also keeps ``st_ctime`` = creation time), so the
+    parked copy of a venv built weeks ago stats as weeks old the moment it is parked. Measured
+    2026-09-18: the rollback backup of a 3.12->3.13 cut-over, parked at 00:50, was reaped by
+    a 24 h-gated sweep at 03:52 with a reported age of 52 days. The token epoch is minted by
+    ``_token()`` at parking time and is the only record of it.
+    """
+
+    def test_fresh_token_with_old_directory_mtime_survives(self, tmp_path):
+        """THE 2026-09-18 CASE: built long ago, parked just now -> still a rollback path."""
+        import time as _time
+
+        from hermes_cli.managed_uv import _sweep_stale_runtime_backups
+
+        root, live, _sentinel = _make_runtime_install(tmp_path)
+        weeks_ago = _time.time() - 52 * 86400
+        backup = _park_backup(root, live, epoch=int(_time.time()), mtime=weeks_ago)
+        assert _time.time() - backup.stat().st_mtime > 24 * 3600, "fixture must stat as old"
+
+        _sweep_stale_runtime_backups(live, root=root, min_age_seconds=24 * 3600)
+
+        assert backup.is_dir(), "a backup parked seconds ago was reaped on its directory mtime"
+
+    def test_old_token_with_fresh_directory_mtime_is_reclaimed(self, tmp_path):
+        """The converse: parked days ago, touched since (an rmtree that gave up half-way,
+        a scan writing a marker) -> still a leftover; mtime must not resurrect it."""
+        import time as _time
+
+        from hermes_cli.managed_uv import _sweep_stale_runtime_backups
+
+        root, live, _sentinel = _make_runtime_install(tmp_path)
+        backup = _park_backup(root, live, epoch=int(_time.time()) - 3 * 86400, mtime=_time.time())
+
+        _sweep_stale_runtime_backups(live, root=root, min_age_seconds=24 * 3600)
+
+        assert not backup.exists(), "an old backup was kept because its directory mtime was fresh"
+
+    def test_unparseable_name_falls_back_to_the_stat_rule(self, tmp_path, monkeypatch):
+        """A hand-named ``.stale.runtime-<something>`` has no epoch to read: the NEWEST of
+        st_mtime/st_ctime decides. Old on both -> reclaimed; old mtime but a newer ctime
+        (POSIX: the rename itself bumps ctime) -> kept.
+
+        The stat is a seam here, not the filesystem: ``os.utime`` cannot age st_ctime on any
+        host (NTFS reports creation time there; POSIX resets it to now on the utime call),
+        so the aged directory cannot be built for real. The freshly created one can."""
+        import os
+        import time as _time
+
+        from hermes_cli.managed_uv import _sweep_stale_runtime_backups
+
+        root, live, _sentinel = _make_runtime_install(tmp_path)
+        old = root / f"{live.name}.stale.runtime-manual-old"
+        touched = root / f"{live.name}.stale.runtime-manual-touched"
+        fresh = root / f"{live.name}.stale.runtime-manual-fresh"
+        for d in (old, touched, fresh):
+            (d / "bin").mkdir(parents=True)
+        now = _time.time()
+        days3 = now - 3 * 86400
+        stamps = {old: (days3, days3), touched: (days3, now)}  # (st_mtime, st_ctime)
+        real_stat = Path.stat
+
+        def stat_with_stamps(self, *args, **kwargs):
+            st = real_stat(self, *args, **kwargs)
+            if self not in stamps:
+                return st
+            mtime, ctime = stamps[self]
+            return os.stat_result(tuple(st)[:7] + (st.st_atime, mtime, ctime))
+
+        monkeypatch.setattr(Path, "stat", stat_with_stamps)
+        _sweep_stale_runtime_backups(live, root=root, min_age_seconds=24 * 3600)
+
+        assert not old.exists(), "unparseable + old on both stat fields must be reclaimed"
+        assert touched.is_dir(), "a newer st_ctime must win over an old st_mtime"
+        assert fresh.is_dir(), "unparseable + fresh stat must be kept"
+
+    def test_parked_at_reads_exactly_the_token_shape(self, tmp_path):
+        """``_token()``'s own output parses to its epoch; anything looser (a date-like
+        ``2026-09-18-manual``) must NOT be read as an epoch, or a hand-parked backup
+        would count as 56 years old."""
+        import time as _time
+
+        from hermes_cli.managed_uv import _stale_backup_parked_at, _token
+
+        root, live, _sentinel = _make_runtime_install(tmp_path)
+        before = int(_time.time())
+        token = _token()
+        minted = root / f"{live.name}.stale.runtime-{token}"
+        minted.mkdir()
+        assert before <= _stale_backup_parked_at(minted, live.name) <= _time.time()
+
+        datelike = root / f"{live.name}.stale.runtime-2026-09-18-manual"
+        datelike.mkdir()
+        assert _stale_backup_parked_at(datelike, live.name) >= before, (
+            "a date-like name was parsed as an epoch")
+
+        missing = root / f"{live.name}.stale.runtime-gone"
+        assert _stale_backup_parked_at(missing, live.name) >= before, (
+            "an unstat-able candidate must read as fresh, never as reapable")
+
+    def test_keep_still_exempts_the_backup_this_repair_created(self, tmp_path):
+        """``keep=`` semantics are untouched by the age source: exempt even when old."""
+        import time as _time
+
+        from hermes_cli.managed_uv import _sweep_stale_runtime_backups
+
+        root, live, _sentinel = _make_runtime_install(tmp_path)
+        kept = _park_backup(root, live, epoch=int(_time.time()) - 3 * 86400)
+
+        _sweep_stale_runtime_backups(live, root=root, keep=kept, min_age_seconds=24 * 3600)
+
+        assert kept.is_dir()
 
 
 class TestStageCandidateVenvCrossPlatform:

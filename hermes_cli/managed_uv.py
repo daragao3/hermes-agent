@@ -12,6 +12,7 @@ import importlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -356,7 +357,34 @@ def _reject(path: Path, boundary: Path, msg: str, *args) -> None:
 
 
 def _token() -> str:
+    """``<epoch>-<pid>-<hex8>``; the epoch is the one durable record of WHEN a backup was parked
+    (``_stale_backup_parked_at`` reads it back), so keep it first and keep it integer seconds."""
     return f"{int(time.time())}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+_TOKEN_RE = re.compile(r"^(\d+)-\d+-[0-9a-f]{8}$")
+
+
+def _stale_backup_parked_at(candidate: Path, live_name: str) -> float:
+    """When *candidate* (``<live_name>.stale.runtime-<token>``) was parked, as a POSIX timestamp.
+
+    The token's epoch is authoritative: ``_cut_over_candidate`` mints it at parking time and a
+    rename carries no other trace. Directory stat is NOT evidence of parking -- on NTFS a rename
+    preserves both ``st_mtime`` and ``st_ctime`` (creation time on Windows), and on POSIX only
+    ``st_ctime`` moves. A venv built weeks ago and parked seconds ago therefore stats as weeks
+    old. Names that do not carry a ``_token()`` fall back to ``max(st_mtime, st_ctime)``, the
+    most recent thing stat can vouch for; a stat failure reads as "just now" so the caller keeps
+    the tree rather than deleting what it could not inspect.
+    """
+    suffix = candidate.name[len(f"{live_name}.stale.runtime-"):]
+    match = _TOKEN_RE.match(suffix)
+    if match is not None:
+        return float(match.group(1))
+    try:
+        st = candidate.stat()
+    except OSError:
+        return time.time()
+    return max(st.st_mtime, st.st_ctime)
 
 
 def _dotted(parts) -> str:
@@ -888,6 +916,13 @@ def _sweep_stale_runtime_backups(
     keep their inodes). ``min_age_seconds`` avoids racing a concurrent repair whose fresh backup
     may still be its rollback path; ``keep`` exempts the backup this repair just created.
 
+    Age is measured from the PARKING time (``_stale_backup_parked_at``: the token epoch in the
+    name), not from directory stat. The gate originally read ``st_mtime``, which a rename
+    preserves, so a venv created weeks earlier and parked seconds ago was reaped by the very
+    next sweep: measured 2026-09-18 on Windows, a 3.12->3.13 cut-over's rollback backup
+    (1.04 GB, parked 00:50) went to a 24 h-gated scheduled sweep at 03:52 with a reported age
+    of 52 days.
+
     A successful runtime repair parks the previous venv as ``<live>.stale.runtime-<token>``; historically
     nothing ever reclaimed those, so each repair leaked a full venv (~1 GB) at the project root forever
     (issue #73109).
@@ -900,10 +935,7 @@ def _sweep_stale_runtime_backups(
     for candidate in candidates:
         if keep is not None and candidate == keep:
             continue
-        try:
-            if now - candidate.stat().st_mtime < min_age_seconds:
-                continue
-        except OSError:
+        if now - _stale_backup_parked_at(candidate, live.name) < min_age_seconds:
             continue
         _remove_tree(candidate, boundary=root)
 
