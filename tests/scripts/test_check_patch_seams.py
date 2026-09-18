@@ -194,8 +194,141 @@ def _demo_repo(tmp_path: Path) -> Path:
         import os
         globals().update(dict(os.environ))
         """)
-    _write(repo, "pkg/registrar.py", "def register(mod):\n    mod.published = 1\n")
+    # A registrar whose body the scan cannot read: the namespace goes through
+    # ``vars(mod).update(...)``, so pkg.shared stays non-static (a readable
+    # registrar is the split-module demo, _split_repo).
+    _write(repo, "pkg/registrar.py", "def register(mod):\n    vars(mod).update(_computed())\n\n\ndef _computed():\n    return {'published': 1}\n")
     _write(repo, "ns/sub/adapter.py", "def send():\n    pass\n")
+    return repo
+
+
+def _split_repo(tmp_path: Path) -> Path:
+    """A miniature of tui_gateway/server.py's split-module pattern: ``server``
+    imports its handler modules last and hands itself to each ``register`` in
+    a loop; ``methods_a.register`` publishes the module through a
+    ``bind_module(globals(), server, skip=...)`` with method_ctx's skip rules;
+    ``methods_b`` installs handlers through a HandlerRegistry (no names), then
+    publishes a literal setattr loop, an attribute assignment, and hands the
+    server on to ``methods_c.bind_server`` / ``methods_c.register``."""
+    repo = tmp_path / "split"
+    _write(repo, "pkg/__init__.py", "")
+    _write(repo, "pkg/compat.py", "def host_system():\n    return 'Linux'\n")
+    _write(repo, "pkg/consts.py", "LIMIT = 3\n")
+    _write(repo, "pkg/gw/__init__.py", "")
+    _write(repo, "pkg/gw/method_ctx.py", """
+        import types
+
+        class HandlerRegistry:
+            def __init__(self):
+                self._pending = []
+
+            def method(self, name):
+                def dec(fn):
+                    self._pending.append((name, fn))
+                    return fn
+                return dec
+
+            def install(self, server):
+                for name, fn in self._pending:
+                    server._methods[name] = fn
+
+
+        _PLUMBING = {"HandlerRegistry", "method", "_profile_scoped", "register", "rebind", "logger"}
+
+
+        def bind_module(module_globals, server, *, skip=()):
+            for name, obj in list(module_globals.items()):
+                if name.startswith("__") or name in _PLUMBING or name in skip or isinstance(obj, (types.ModuleType, HandlerRegistry)):
+                    continue
+                setattr(server, name, obj)
+        """)
+    _write(repo, "pkg/gw/methods_a.py", """
+        import os
+        from typing import TYPE_CHECKING
+        from .method_ctx import HandlerRegistry, bind_module
+        from pkg.compat import host_system      # a plain import of a def: server has its own
+        from pkg.consts import LIMIT            # a constant: published as-is
+        from . import methods_b                 # a module: skipped
+
+        if TYPE_CHECKING:
+            from .server import _sessions       # declared for the type checker, never bound
+
+        _registry = HandlerRegistry()
+        _ = None
+        DISPATCH = {"prompt.submit": None}
+
+
+        @_registry.method("prompt.submit")
+        def _run_prompt_submit(params):
+            return _sessions, LIMIT
+
+
+        class Turn:
+            pass
+
+
+        def register(server):
+            bind_module(globals(), server, skip=("_",))
+        """)
+    _write(repo, "pkg/gw/methods_b.py", """
+        from .method_ctx import HandlerRegistry
+
+        _registry = HandlerRegistry()
+
+
+        @_registry.method("session.start")
+        def _only_a_handler(params):
+            return None
+
+
+        def register(server):
+            _registry.install(server)
+            from . import methods_c
+            server._LONG_HANDLERS = server._LONG_HANDLERS | methods_c.LONG_HANDLERS
+            for name in ("_WORKER_UNAVAILABLE", "_profile_name"):
+                setattr(server, name, getattr(methods_c, name))
+            methods_c.bind_server(server)
+            methods_c.register(server)
+        """)
+    _write(repo, "pkg/gw/methods_c.py", """
+        LONG_HANDLERS = frozenset()
+        _WORKER_UNAVAILABLE = "unavailable"
+        _profile_name = "main"
+        _profile_execution_policy = "strict"
+        _bound_server = None
+
+
+        def bind_server(server):
+            global _bound_server
+            _bound_server = server
+            server._profile_execution_policy = _profile_execution_policy
+
+
+        def register(server):
+            pass
+        """)
+    _write(repo, "pkg/gw/server.py", """
+        import sys
+
+        # Static declarations for globals supplied by method_ctx.bind_module.
+        if __import__("typing").TYPE_CHECKING:
+            from .methods_a import _run_prompt_submit, _renamed_away
+
+        _sessions = {}
+        _methods = {}
+        _LONG_HANDLERS = frozenset()
+
+
+        def _emit(event):
+            return event
+
+
+        from . import methods_a as _methods_a, methods_b as _methods_b  # noqa: E402
+
+        for _m in (_methods_a, _methods_b):
+            _m.register(sys.modules[__name__])
+        del _m
+        """)
     return repo
 
 
@@ -650,6 +783,175 @@ def test_reads_stay_out_of_the_patch_only_scan(tmp_path):
     assert _scan(repo, "tests/test_patch_only.py") == ([], cps.Stats(files=1))
     findings, _ = _scan(repo, "tests/test_patch_only.py", reads=True)
     assert findings == [("tests/test_patch_only.py", 5, "read", "vm.platform")]
+
+
+# ── Split-module registrars (tui_gateway/server.py) ─────────────────────────
+
+
+def test_split_module_registrars_are_read_so_the_host_stays_static(tmp_path):
+    """``for _m in (...): _m.register(sys.modules[__name__])`` no longer makes
+    the host non-static: what each registrar publishes is read from its body.
+    A name a split module keeps verifies; a name it dropped (or never
+    published: a plain import of a def, a module, the registry plumbing, a
+    TYPE_CHECKING declaration, a handler installed into a table) is reported
+    -- the head-only red a split-module rename would cause."""
+    repo = _split_repo(tmp_path)
+    facts = cps.Repo(repo).facts("pkg.gw.server")
+    assert facts.static
+    assert facts.registrars == ((".methods_a", "register"), (".methods_b", "register"))
+    assert facts.registered == {
+        # methods_a via bind_module: its defs, assignments, a constant imported
+        # from the repo and a name imported from outside it (TYPE_CHECKING is a
+        # bool, published as-is) -- not ``os``, ``methods_b``, ``host_system``.
+        "LIMIT", "TYPE_CHECKING", "DISPATCH", "_run_prompt_submit", "Turn",
+        "_LONG_HANDLERS", "_WORKER_UNAVAILABLE", "_profile_name",  # methods_b.register
+        "_profile_execution_policy",                              # methods_c.bind_server
+    }
+    _write(repo, "tests/test_server.py", """
+        from unittest.mock import patch
+        import pkg.gw.server as server
+
+
+        def test_kept():
+            with patch.object(server, "_run_prompt_submit"), patch.object(server, "_emit"):
+                pass
+            with patch.object(server, "_WORKER_UNAVAILABLE"), patch.object(server, "_profile_execution_policy"):
+                pass
+            with patch.object(server, "LIMIT"), patch.object(server, "_LONG_HANDLERS"):
+                pass
+
+
+        def test_dropped():
+            with patch.object(server, "_renamed_away"):        # server declares it, no split module binds it
+                pass
+            with patch.object(server, "host_system"):          # methods_a's plain import of a def
+                pass
+            with patch.object(server, "methods_b"):            # an imported module
+                pass
+            with patch.object(server, "_registry"):            # HandlerRegistry instance
+                pass
+            with patch.object(server, "bind_module"):          # plumbing
+                pass
+            with patch.object(server, "_"):                    # in skip=
+                pass
+            with patch.object(server, "_only_a_handler"):      # installed into _methods, never a name
+                pass
+            with patch("pkg.gw.server._sessions_declared"):
+                pass
+        """)
+    findings, stats = _scan(repo, "tests/test_server.py")
+    assert [f[3] for f in findings] == [
+        "server._renamed_away", "server.host_system", "server.methods_b", "server._registry",
+        "server.bind_module", "server._", "server._only_a_handler", "pkg.gw.server._sessions_declared",
+    ]
+    assert stats.verified == 6
+    assert stats.not_static == 0
+
+
+def test_registrar_the_scan_cannot_read_keeps_the_host_non_static(tmp_path):
+    """Every escape from the readable shapes falls back to the old verdict:
+    a registrar outside the repo, a body that hands the server to a call the
+    scan does not follow, a computed setattr key, ``server.__dict__`` writes."""
+    repo = _split_repo(tmp_path)
+    cases = {
+        "outside": "import sys\nimport third_party\nthird_party.register(sys.modules[__name__])\n",
+        "handed_on": "import sys\nfrom . import opaque\nopaque.register(sys.modules[__name__])\n",
+        "computed": "import sys\nfrom . import keyed\nkeyed.register(sys.modules[__name__])\n",
+        "dunder": "import sys\nfrom . import dunder\ndunder.register(sys.modules[__name__])\n",
+        "rebound": "import sys\nfrom . import methods_c\nmethods_c = None\nmethods_c.register(sys.modules[__name__])\n",
+    }
+    _write(repo, "pkg/gw/opaque.py", "import os\n\n\ndef register(server):\n    os.register(server)\n")
+    _write(repo, "pkg/gw/keyed.py", "def register(server):\n    for name in _names():\n        setattr(server, name, 1)\n\n\ndef _names():\n    return ['x']\n")
+    _write(repo, "pkg/gw/dunder.py", "def register(server):\n    server.__dict__['x'] = 1\n")
+    for name, body in cases.items():
+        _write(repo, f"pkg/gw/host_{name}.py", body)
+        facts = cps.Repo(repo).facts(f"pkg.gw.host_{name}")
+        assert not facts.static, name
+        assert facts.registered is None, name
+    # ...and the direct hand-off forms stay unknown as before.
+    _write(repo, "pkg/gw/host_direct.py", "from .method_ctx import bind_module\nbind_module(globals(), object())\n")
+    assert cps.Repo(repo).facts("pkg.gw.host_direct").shared_namespace
+
+
+def test_the_live_server_split_is_static_and_binds_what_its_tests_patch():
+    """The pattern this exists for, against the real tree: tui_gateway/server.py
+    resolves through its ~34 registrars, so ``patch.object(server, "_run_prompt
+    _submit")`` in tests/tui_gateway verifies instead of being skipped as
+    not_static, and a name no split module binds is a finding."""
+    facts = cps.Repo(REPO_ROOT).facts("tui_gateway.server")
+    assert facts.static
+    assert len(facts.registrars) >= 30 and all(spec.startswith(".") and fn == "register" for spec, fn in facts.registrars)
+    assert facts.registered and len(facts.registered) > 500
+    assert facts.binds("_run_prompt_submit") and facts.binds("_start_inflight_turn") and facts.binds("_apply_model_switch")
+    assert facts.binds("_WORKER_UNAVAILABLE")  # methods_bot_relay.register's setattr loop over methods_groups
+    assert not facts.binds("_this_name_is_bound_by_no_split_module")
+    assert not facts.binds("bind_module")
+
+
+def test_type_checking_only_imports_are_not_bound(tmp_path):
+    """``if TYPE_CHECKING: import httpx`` never runs: a test patching through
+    that name is the 8586e305a2 nous-provider red (eight tests, 2026-09-10 to
+    2026-09-18, fixed alongside this rule).  ``if not TYPE_CHECKING:`` is the
+    runtime branch and binds."""
+    repo = _demo_repo(tmp_path)
+    _write(repo, "pkg/typed.py", """
+        from typing import TYPE_CHECKING
+        import typing as t
+
+        if TYPE_CHECKING:
+            import httpx
+        if t.TYPE_CHECKING:
+            from pkg.vm import Player
+        else:
+            import json
+        if not TYPE_CHECKING:
+            import shutil
+        else:
+            import tomllib
+
+
+        def post(url):
+            import httpx
+            return httpx.post(url)
+        """)
+    _write(repo, "tests/test_typed.py", """
+        from unittest.mock import patch
+        import pkg.typed as typed
+
+
+        def test_it():
+            with patch("pkg.typed.httpx.post"), patch.object(typed, "Player"), patch.object(typed, "tomllib"):
+                pass
+            with patch.object(typed, "json"), patch.object(typed, "shutil"), patch.object(typed, "post"):
+                pass
+        """)
+    findings, stats = _scan(repo, "tests/test_typed.py")
+    assert [f[3] for f in findings] == ["pkg.typed.httpx", "typed.Player", "typed.tomllib"]
+    assert stats.verified == 3
+
+
+_HTTPX_STALE_AT = "36d80d1d5f"  # trunk before the fix landed with this rule
+_HTTPX_TEST = "tests/plugins/dashboard_auth/test_nous_provider.py"
+
+
+def test_the_nous_httpx_seam_is_caught_before_and_clean_after():
+    """Replay against the CURRENT plugins/dashboard_auth/_shared.py: the test
+    file at 36d80d1d5f patched ``plugins.dashboard_auth._shared.httpx.post``
+    while _shared had ``import httpx`` under TYPE_CHECKING only (eight
+    AttributeErrors at run time); the tree's file patches ``httpx.post``."""
+    before = _git_show(f"{_HTTPX_STALE_AT}:{_HTTPX_TEST}")
+    if before is None:
+        pytest.skip(f"{_HTTPX_STALE_AT} is not in this clone's history")
+    repo = cps.Repo(REPO_ROOT)
+
+    stats = cps.Stats()
+    stale = cps.check_file(repo, _HTTPX_TEST, before.encode("utf-8"), stats)
+    assert {(f.form, f.target) for f in stale} == {("patch", "plugins.dashboard_auth._shared.httpx")}
+    assert len(stale) == 8
+    assert "plugins.dashboard_auth._shared binds no `httpx`" in stale[0].reason
+
+    stats = cps.Stats()
+    assert cps.check_file(repo, _HTTPX_TEST, (REPO_ROOT / _HTTPX_TEST).read_bytes(), stats) == []
 
 
 # ── Historical positive control ─────────────────────────────────────────────
