@@ -74,11 +74,57 @@ def suppress_platform_ver_console() -> None:
         pass  # hardening only — never break an entry point
 
 
-def _native_processor_architecture() -> int:
-    """``GetNativeSystemInfo().wProcessorArchitecture`` -- the same code space as WMI's
-    ``Win32_Processor.Architecture`` for every value ``platform`` maps (0 x86, 5 ARM, 6 ia64,
-    9 AMD64, 12 ARM64), read from kernel32, no thread, no environment."""
+# --- wmi-stub shared block (byte-identical in hermes_bootstrap.py, hermes_cli/_subprocess_compat.py
+# and tests/conftest.py; tests/hermes_cli/test_host_platform_helpers.py::TestWmiStubCopies diffs them) ---
+# IsWow64Process2's IMAGE_FILE_MACHINE_* codes -> WMI ``Win32_Processor.Architecture`` codes, the
+# space ``platform.uname()`` maps (0 x86, 5 ARM, 9 AMD64, 12 ARM64).
+_PE_MACHINE_TO_WMI_ARCHITECTURE = {0xAA64: 12, 0x8664: 9, 0x014C: 0, 0x01C4: 5}
+
+
+def _native_machine_from_iswow64():
+    """The OS-native machine as a WMI architecture code via ``IsWow64Process2``, or ``None`` (API
+    absent before Windows 10 1709, call failed, unmapped machine code). It is the one kernel32 API
+    that tells the truth from an x64 interpreter emulated on ARM64 Windows, where
+    ``GetNativeSystemInfo`` returns the emulated details (AMD64) and the real WMI query would have
+    said 12. HANDLE types are bound explicitly: ctypes' default ``c_int`` truncates the
+    ``(HANDLE)-1`` pseudo-handle and ``IsWow64Process2`` then fails with ERROR_INVALID_HANDLE on
+    Win64 (the residual Windows-on-ARM failure ``main_desktop._windows_native_machine_from_iswow64``
+    documents)."""
     import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    try:
+        is_wow64_process2 = kernel32.IsWow64Process2
+    except AttributeError:
+        return None
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.GetCurrentProcess.argtypes = []
+    is_wow64_process2.argtypes = [
+        wintypes.HANDLE, ctypes.POINTER(wintypes.USHORT), ctypes.POINTER(wintypes.USHORT)]
+    is_wow64_process2.restype = wintypes.BOOL
+    process_machine = wintypes.USHORT(0)
+    native_machine = wintypes.USHORT(0)
+    if not is_wow64_process2(
+            kernel32.GetCurrentProcess(), ctypes.byref(process_machine), ctypes.byref(native_machine)):
+        return None
+    return _PE_MACHINE_TO_WMI_ARCHITECTURE.get(native_machine.value)
+
+
+def _native_processor_architecture() -> int:
+    """The host's native CPU architecture in WMI's ``Win32_Processor.Architecture`` code space,
+    read from kernel32 -- no thread, no environment. ``IsWow64Process2`` first (truthful under
+    x64-on-ARM64 emulation), then ``GetNativeSystemInfo().wProcessorArchitecture`` (same code
+    space; emulated details on such a host, exact everywhere else)."""
+    import ctypes
+
+    try:
+        code = _native_machine_from_iswow64()
+    except (OSError, AttributeError, TypeError, ValueError):
+        code = None  # DLL load failure or a mistyped binding: fall back, never raise
+
+    if code is not None:
+        return code
 
     class _SYSTEM_INFO(ctypes.Structure):
         _fields_ = [("wProcessorArchitecture", ctypes.c_ushort), ("wReserved", ctypes.c_ushort),
@@ -101,6 +147,7 @@ def _offline_wmi_query(table, *keys):
     if table == "CPU" and tuple(keys) == ("Architecture",):
         return iter([str(_native_processor_architecture())])
     raise OSError("not supported")
+# --- end wmi-stub shared block ---
 
 
 def suppress_platform_wmi_queries() -> None:

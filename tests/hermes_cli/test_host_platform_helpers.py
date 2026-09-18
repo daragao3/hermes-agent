@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import types
 from pathlib import Path
 
 import pytest
@@ -141,3 +142,102 @@ class TestBareChildNeverQueriesWmi:
         )
         assert proc.returncode == 0, proc.stderr[-2000:]
         assert "WMI_CALLS 0" in proc.stdout, proc.stdout
+
+
+_SHARED_BLOCK_COPIES = (
+    "hermes_bootstrap.py",
+    "hermes_cli/_subprocess_compat.py",
+    "tests/conftest.py",
+)
+_BLOCK_START = "# --- wmi-stub shared block"
+_BLOCK_END = "# --- end wmi-stub shared block ---"
+
+
+def _shared_block(rel: str) -> str:
+    text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    assert text.count(_BLOCK_START) == 1 and text.count(_BLOCK_END) == 1, rel
+    return text[text.index(_BLOCK_START): text.index(_BLOCK_END) + len(_BLOCK_END)]
+
+
+class TestWmiStubCopies:
+    """The stub lives three times over (``hermes_bootstrap`` for entry points, ``_subprocess_compat``
+    for library callers that cannot import the bootstrap, ``tests/conftest.py`` inline because
+    importing the bootstrap there would reconfigure pytest's stdio). They are one block of source,
+    kept byte-identical: a fix to the CPU answer that lands in one copy and not the others is exactly
+    the drift this test refuses."""
+
+    @pytest.mark.parametrize("rel", _SHARED_BLOCK_COPIES[1:])
+    def test_copies_are_byte_identical(self, rel):
+        assert _shared_block(rel) == _shared_block(_SHARED_BLOCK_COPIES[0]), rel
+
+    def test_block_defines_the_whole_stub(self):
+        block = _shared_block(_SHARED_BLOCK_COPIES[0])
+        for name in ("_PE_MACHINE_TO_WMI_ARCHITECTURE", "def _native_machine_from_iswow64",
+                     "def _native_processor_architecture", "def _offline_wmi_query"):
+            assert name in block, name
+        # The truthful API is consulted before the one that lies under emulation.
+        assert block.index("IsWow64Process2") < block.index("GetNativeSystemInfo(")
+
+    def test_pe_machine_table_matches_main_desktop(self):
+        """Same IMAGE_FILE_MACHINE_* codes as the desktop integrity gate, mapped onto the WMI
+        ``Win32_Processor.Architecture`` codes the stdlib table names."""
+        from hermes_cli import main_desktop
+        table = compat._PE_MACHINE_TO_WMI_ARCHITECTURE
+        assert table[main_desktop._PE_MACHINE_ARM64] == 12
+        assert table[main_desktop._PE_MACHINE_AMD64] == 9
+        assert table[main_desktop._PE_MACHINE_I386] == 0
+        assert table[0x01C4] == 5  # ARMNT: the desktop gate has no 32-bit ARM build to name
+
+
+class TestHostMachineUnderEmulation:
+    """``host_machine()`` on an ARM64 Windows host running the x64 PBS interpreter must say
+    ``ARM64`` -- what the real WMI query says there -- not the ``AMD64`` GetNativeSystemInfo
+    reports for the emulated process. This host is AMD64: the kernel32 answers are faked."""
+
+    @staticmethod
+    def _install_fake_kernel32(monkeypatch, native_pe_machine, native_system_info):
+        import ctypes
+        try:
+            import ctypes.wintypes  # noqa: F401
+        except Exception as exc:  # pragma: no cover — ancient non-Windows ctypes
+            pytest.skip(f"ctypes.wintypes unavailable: {exc}")
+        calls = []
+
+        def GetCurrentProcess():
+            return -1
+
+        def IsWow64Process2(handle, p_process, p_native):
+            calls.append("IsWow64Process2")
+            p_native._obj.value = native_pe_machine
+            return 1
+
+        def GetNativeSystemInfo(p_info):
+            calls.append("GetNativeSystemInfo")
+            p_info._obj.wProcessorArchitecture = native_system_info
+
+        dll = types.SimpleNamespace(
+            GetCurrentProcess=GetCurrentProcess, IsWow64Process2=IsWow64Process2,
+            GetNativeSystemInfo=GetNativeSystemInfo)
+        monkeypatch.setattr(ctypes, "WinDLL", lambda name, *a, **k: dll, raising=False)
+        return calls
+
+    def test_stub_answers_arm64_from_an_emulated_x64_process(self, monkeypatch):
+        calls = self._install_fake_kernel32(monkeypatch, native_pe_machine=0xAA64, native_system_info=9)
+        assert compat._native_processor_architecture() == 12
+        assert list(compat._offline_wmi_query("CPU", "Architecture")) == ["12"]
+        assert calls == ["IsWow64Process2", "IsWow64Process2"]
+
+    @pytest.mark.windows_only
+    def test_host_machine_reports_arm64_from_an_emulated_x64_process(self, monkeypatch):
+        """End to end through ``platform.machine()``: the stub feeds the stdlib's own code table."""
+        import platform
+        if sys.version_info >= (3, 13, 4):
+            pytest.skip("interpreter carries the gh-130727 fix; stub is a no-op by design")
+        monkeypatch.setattr(platform, "_wmi_query", platform._wmi_query)
+        monkeypatch.setitem(sys.modules, "_wmi", sys.modules.get("_wmi", None))
+        monkeypatch.setattr(platform, "_uname_cache", None)
+        monkeypatch.delenv("PROCESSOR_ARCHITECTURE", raising=False)
+        monkeypatch.delenv("PROCESSOR_ARCHITEW6432", raising=False)
+        self._install_fake_kernel32(monkeypatch, native_pe_machine=0xAA64, native_system_info=9)
+
+        assert compat.host_machine() == "ARM64"
