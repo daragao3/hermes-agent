@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -2010,16 +2011,24 @@ class TestSmokeTimeoutIsNotAVerdict:
             "open(p, 'w').close()\n"
             "time.sleep(30)\n")
         venv = self._real_interpreter(monkeypatch, tmp_path, script)
+        # Warm the interpreter image: the first attempt must get as far as writing the marker
+        # before the bound kills it, and cold start-up alone beat a 3 s bound under three sibling
+        # suites (2026-09-18).
+        subprocess.run([sys.executable, "-I", "-c", "pass"], check=False, timeout=60)
 
-        # 3 s: interpreter start-up alone can exceed 1 s on a loaded host, and the first attempt
-        # must get as far as writing the marker before it is killed.
-        healthy, detail, info = managed_uv._smoke_candidate_venv(venv, timeout_s=3.0)
+        try:
+            healthy, detail, info = managed_uv._smoke_candidate_venv(venv, timeout_s=5.0)
+        except managed_uv.CandidateSmokeInconclusive:
+            if not marker.exists():
+                pytest.skip("interpreter start-up exceeded the 5 s bound: host load, the retry "
+                            "path was never reached")
+            raise AssertionError("the retry (marker present) must pass, not time out again")
 
         assert (healthy, detail) == (True, "")
         assert info is not None and info.python_version == (3, 13, 15)
         assert marker.exists(), "the first attempt must have run (and been killed) for real"
         out = capsys.readouterr().out
-        assert "did not finish within 3 s" in out and "retrying once with 6 s" in out
+        assert "did not finish within 5 s" in out and "retrying once with 10 s" in out
 
     def test_two_timeouts_are_inconclusive_not_a_rejection(self, tmp_path, monkeypatch):
         """A real child that never finishes: the smoke raises, it does NOT return ``False``."""
