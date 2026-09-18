@@ -12,6 +12,7 @@ import pytest
 
 from hermes_cli.models import clamp_reasoning_effort_to_supported
 from hermes_cli.models_reasoning_caps import parse_openrouter_reasoning_capabilities
+from tests.timeout_budget import scaled
 
 
 class TestParseReasoningCapabilities:
@@ -174,6 +175,11 @@ class TestOpenRouterModelReasoningCapabilities:
         assert openrouter_model_reasoning_capabilities("a/b") is None
 
 
+# Backstop only (tests/timeout_budget shape): the one class here that constructs a
+# real AIAgent, i.e. the cold run_agent import (cron/jobs, every tools/ module);
+# three ids tripped the suite-wide cap on that import under a shared box
+# (2026-09-18). The contract is the metadata gate, not a duration.
+@pytest.mark.timeout(scaled(300))
 class TestSupportsReasoningExtraBodyMetadataGate:
     """AIAgent._supports_reasoning_extra_body: metadata-first with fallback."""
 

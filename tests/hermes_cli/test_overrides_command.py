@@ -13,6 +13,10 @@ import types
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import pytest
+
+from tests.timeout_budget import scaled
+
 
 def _record(
     provider="anthropic",
@@ -295,6 +299,10 @@ class TestDispatcher:
 # argparse wiring — verify `hermes overrides` is registered in main.py
 # ---------------------------------------------------------------------------
 
+# Backstop only (tests/timeout_budget shape): both tests spawn a cold
+# `python -m hermes_cli.main` child; a fixed 30 s child bound tripped under a shared
+# box (2026-09-18). The contract is the parser wiring, not a duration.
+@pytest.mark.timeout(scaled(300))
 class TestArgparseWiring:
     def test_overrides_help_lists_subcommands(self):
         import subprocess
@@ -304,7 +312,7 @@ class TestArgparseWiring:
             [sys.executable, "-m", "hermes_cli.main", "overrides", "--help"],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=scaled(240),
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         out = result.stdout + result.stderr
@@ -323,7 +331,7 @@ class TestArgparseWiring:
             [sys.executable, "-m", "hermes_cli.main", "overrides", "list"],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=scaled(240),
             env=env,
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"

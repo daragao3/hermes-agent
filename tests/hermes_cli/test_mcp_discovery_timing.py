@@ -24,6 +24,7 @@ import types
 import pytest
 
 from hermes_cli import mcp_startup
+from tests.timeout_budget import scaled
 
 
 @pytest.fixture(autouse=True)
@@ -218,6 +219,11 @@ def test_init_agent_calls_ensure_helper_before_aiagent(monkeypatch):
     )
 
 
+# Backstop only (tests/timeout_budget shape): the one test here that imports the real
+# cli module, which pulls run_agent and model_tools (discover_builtin_tools reads every
+# tools/ module source at import). That cold import tripped the suite-wide cap under a
+# shared box (2026-09-18); the contract is the forwarded flag, not a duration.
+@pytest.mark.timeout(scaled(300))
 def test_init_agent_forwards_single_query_flag(monkeypatch):
     """Single-query mode forwards single_query=True to the discovery wait."""
     import cli as cli_mod

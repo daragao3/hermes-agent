@@ -22,6 +22,8 @@ from unittest import mock
 
 import pytest
 
+from tests.timeout_budget import scaled
+
 from hermes_cli.models import (
     OPENCODE_ZEN_FREE_KEYLESS_PLACEHOLDER,
     opencode_zen_free_headers,
@@ -98,6 +100,12 @@ class TestRuntimeProviderKeylessRouting:
             self._resolve("opencode-zen", "claude-sonnet-5")
 
 
+# Backstop only (tests/timeout_budget shape): every picker build here walks each
+# provider's credential pool in-process (measured 2026-09-18 at 100% host CPU:
+# 185 load_pool -> 1575 Path.resolve() syscalls per build, see
+# test_local_picker_identity); two ids here tripped the suite-wide cap under a shared
+# box. Nothing here asserts a duration.
+@pytest.mark.timeout(scaled(300))
 class TestKeylessProviderAlwaysAuthenticated:
     """opencode-free counts as authenticated everywhere, with zero keys.
 

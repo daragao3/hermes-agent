@@ -2,6 +2,16 @@
 
 from types import SimpleNamespace
 
+import pytest
+
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): show_status runs plugin discovery (58
+# plugins, cold import) and the provider probes in-process; one id tripped the
+# suite-wide cap under a shared box (2026-09-18). The contract is the rendered
+# label, not a duration.
+pytestmark = pytest.mark.timeout(scaled(300))
+
 import subprocess
 
 

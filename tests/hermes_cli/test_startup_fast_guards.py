@@ -76,7 +76,9 @@ def _run_version(env_overrides: dict) -> subprocess.CompletedProcess:
         [sys.executable, "-m", "hermes_cli.main", "--version"],
         capture_output=True,
         text=True,
-        timeout=60,
+        # Incidental safety net (tests/timeout_budget): a fixed 60 s tripped for three
+        # ids on a cold `--version` child under a shared box (2026-09-18).
+        timeout=scaled(240),
         cwd=REPO_ROOT,
         env=env,
     )

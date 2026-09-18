@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.timeout_budget import scaled
+
 from hermes_state import SessionDB
 from hermes_cli.oneshot import (
     _apply_stored_session_runtime,
@@ -165,6 +167,11 @@ class TestApplyStoredSessionRuntime:
         assert choice.api_key is self._AMBIENT_KEY
         assert choice.api_mode is None
 
+# Backstop only (tests/timeout_budget shape): the real _run_agent imports run_agent, whose
+# discover_builtin_tools imports every tools/ module; that cold import tripped the
+# suite-wide cap for two ids under a shared box (2026-09-18). Nothing here asserts a
+# duration; the contract is the runtime handed to AIAgent.
+@pytest.mark.timeout(scaled(300))
 class TestRunAgentResumeRuntime:
     """End-to-end wiring: ``_run_agent`` must hand AIAgent the session's stored runtime
     and a reopened session row (both regressions from the review on #105957)."""

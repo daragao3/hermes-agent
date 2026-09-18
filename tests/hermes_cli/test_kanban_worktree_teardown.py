@@ -19,6 +19,15 @@ import pytest
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_workspace as kbw
 from hermes_cli import kanban_db_connect as kbc
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): every test builds a bare origin, a
+# clone and a linked worktree with real git, and the completion path under test
+# runs plugin discovery (58 plugins, cold import) before its own git calls. One
+# id tripped the suite-wide --timeout=30 under a shared box (2026-09-18: alone
+# with a wide cap it passed at setup 70 s + call 55 s). Nothing here asserts a
+# duration; the contract is whether the worktree survives.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 def _git(*args: str, cwd: str | None = None) -> str:
@@ -29,7 +38,7 @@ def _git(*args: str, cwd: str | None = None) -> str:
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=60,
+        timeout=scaled(120),
     )
     assert result.returncode == 0, f"git {' '.join(args)} failed: {result.stderr}"
     return result.stdout

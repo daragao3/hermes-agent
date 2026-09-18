@@ -10,6 +10,7 @@ works offline in the hermetic sandbox), proving the worktree includes commits
 that exist on the remote but not on the stale local HEAD.
 """
 
+import functools
 import os
 import subprocess
 import time
@@ -27,6 +28,14 @@ from tests.timeout_budget import scaled
 # The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
 # regression it is not (tripped 2026-09-18 under a triple-runner box, ids shifting between runs).
 pytestmark = pytest.mark.timeout(scaled(300))
+
+# The product's default fetch bound (5 s) is a startup-path guard with its own
+# fallback test below. A local file:// fetch of one commit takes well under a
+# second idle but tripped that bound under a shared box (2026-09-18: label came
+# back 'cached — fetch timed out after 5s'). Tests that assert the FETCHED path
+# are about which ref wins, not about the bound, so they raise it through the
+# parameter the product exposes instead of widening the product constant.
+_FETCH_BOUND = scaled(60)
 
 
 def _run(args, cwd):
@@ -85,7 +94,9 @@ def remote_and_clone(tmp_path):
 class TestResolveWorktreeBase:
     def test_resolves_to_fetched_upstream(self, remote_and_clone):
         clone, remote_head, stale_local_head = remote_and_clone
-        base_ref, label = worktree_ops._resolve_worktree_base(str(clone))
+        base_ref, label = worktree_ops._resolve_worktree_base(
+            str(clone), fetch_timeout=_FETCH_BOUND
+        )
         # Should resolve to the upstream tracking ref and have fetched it.
         assert base_ref == "origin/main"
         assert "fetched" in label
@@ -143,7 +154,9 @@ class TestResolveWorktreeBaseStartupCost:
         fetch_head = Path(clone) / ".git" / "FETCH_HEAD"
         old = time.time() - 3600
         os.utime(fetch_head, (old, old))
-        base_ref, label = worktree_ops._resolve_worktree_base(str(clone))
+        base_ref, label = worktree_ops._resolve_worktree_base(
+            str(clone), fetch_timeout=_FETCH_BOUND
+        )
         assert base_ref == "origin/main"
         assert label == "origin/main (fetched)"
 
@@ -202,6 +215,12 @@ class TestResolveWorktreeBaseStartupCost:
 class TestSetupWorktreeSyncBase:
     def test_sync_true_branches_from_remote_tip(self, remote_and_clone, monkeypatch):
         clone, remote_head, stale_local_head = remote_and_clone
+        # _setup_worktree calls the resolver with the product default bound;
+        # same exposure as above, raised at the module-global seam it looks up.
+        monkeypatch.setattr(
+            worktree_ops, "_resolve_worktree_base",
+            functools.partial(worktree_ops._resolve_worktree_base, fetch_timeout=_FETCH_BOUND),
+        )
         info = cli._setup_worktree(str(clone), sync_base=True)
         assert info is not None
         # The new worktree's HEAD must be the REMOTE tip, not the stale local one.
@@ -220,9 +239,16 @@ class TestSetupWorktreeSyncBase:
         assert wt_head == stale_local_head
         assert not (Path(info["path"]) / "feature.txt").exists()
 
-    def test_default_is_sync_true(self, remote_and_clone):
+    def test_default_is_sync_true(self, remote_and_clone, monkeypatch):
         """The default path (no sync_base arg) branches from the remote tip."""
         clone, remote_head, _ = remote_and_clone
+        # Same exposure as test_sync_true_branches_from_remote_tip: the default fetch
+        # bound tripped under a shared box and the worktree branched from the cached
+        # (stale) origin/main (2026-09-18 proof run).
+        monkeypatch.setattr(
+            worktree_ops, "_resolve_worktree_base",
+            functools.partial(worktree_ops._resolve_worktree_base, fetch_timeout=_FETCH_BOUND),
+        )
         info = cli._setup_worktree(str(clone))
         assert info is not None
         assert _head(info["path"]) == remote_head

@@ -191,6 +191,12 @@ class TestRepairDecision:
         npm.write_text("#!/bin/sh\n", encoding="utf-8")
         npm.chmod(0o755)
         monkeypatch.setenv("HERMES_HOME", str(home))
+        # The repair path first asks managed_node_tree_in_use(); on win32 that is a
+        # psutil walk of every process (exe + cmdline per pid) and on POSIX a constant
+        # False. Every test here assumes "not in use" (TestInUseDeferral covers the
+        # other answer at the same seam), so pin it: the walk is not the subject and
+        # tripped the suite-wide cap for three ids under a shared box (2026-09-18).
+        monkeypatch.setattr(npm_engine, "managed_node_tree_in_use", lambda: False)
         return npm
 
     def test_upgrades_managed_npm_with_the_range_npm_asked_for(

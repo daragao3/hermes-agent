@@ -1720,6 +1720,12 @@ class TestForceReloadSymmetry:
 
         mgr = PluginManager()
         mgr._hooks["pre_tool_call"] = [hung_policy]
+        # A fresh manager reads as undiscovered, and _delivery_manager would then run
+        # REAL plugin discovery (58 plugins from the live plugin dirs) inside the timed
+        # window below: ~3 s idle, 10-39 s under a shared box (2026-09-18), against a
+        # bound that exists to prove the 0.1 s hook timeout fires long before the 10 s
+        # hang. Present the double as discovered, the shape the product asks of doubles.
+        mgr._discovered = True
 
         import hermes_cli.plugins as plugins_mod
 

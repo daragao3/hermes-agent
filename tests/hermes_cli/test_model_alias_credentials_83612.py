@@ -755,16 +755,25 @@ class TestNoProductionCodeMutatesTheAliasCacheInPlace:
 
     @staticmethod
     def _production_sources():
+        import os
         import pathlib
 
         repo = pathlib.Path(__file__).resolve().parents[2]
-        # .worktrees / .claude: sibling agent worktrees live inside the checkout and would be
-        # scanned as if they were this tree's sources (re-reporting every copy, ~8 min).
-        skip = {".git", "node_modules", "tests", "build", "dist", ".venv", ".worktrees", ".claude"}
-        for path in repo.rglob("*.py"):
-            if any(part in skip for part in path.parts):
-                continue
-            yield path, path.relative_to(repo).as_posix()
+        # Pruned os.walk, not rglob (same shape as test_config_read_guard._iter_source_files):
+        # rglob descends into every directory and filters AFTER the walk. Sibling agent
+        # worktrees live under .claude/worktrees and .worktrees inside the checkout, the
+        # venv (and a parked .venv.stale.*) and .hermes-runtime (a full CPython stdlib)
+        # sit beside them — 143k .py files walked for ~13k sources on the live checkout
+        # (2026-09-18), which blew the file's scaled(300) cap under a shared box. No
+        # tracked source lives under a dotted directory, so every one is pruned.
+        skip = {"node_modules", "tests", "build", "dist", "__pycache__"}
+        for dirpath, dirnames, filenames in os.walk(repo, onerror=lambda _e: None):
+            dirnames[:] = [d for d in dirnames if d not in skip and not d.startswith(".")]
+            for name in filenames:
+                if not name.endswith(".py"):
+                    continue
+                path = pathlib.Path(dirpath) / name
+                yield path, path.relative_to(repo).as_posix()
 
     @classmethod
     def _violations(cls, source: str, rel: str):

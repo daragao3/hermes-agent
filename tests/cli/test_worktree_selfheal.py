@@ -16,6 +16,14 @@ import subprocess
 
 import pytest
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): every test drives real git (the
+# threshold test alone makes 6 commits + 6 pack-objects + a repack); the
+# suite-wide --timeout=30 tripped inside `git commit` communicate() under a
+# shared box (2026-09-18, file at 184 s). Nothing here asserts a duration.
+pytestmark = pytest.mark.timeout(scaled(300))
+
 
 def _git(cwd, *args, check=True):
     return subprocess.run(
