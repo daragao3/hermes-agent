@@ -44,6 +44,7 @@ from types import SimpleNamespace
 import pytest
 
 from hermes_cli import _subprocess_compat as compat
+from tests.timeout_budget import scaled
 
 _REPO = Path(__file__).resolve().parents[2]
 
@@ -696,6 +697,7 @@ def test_recalc_job_helpers_leave_a_popen_without_a_handle_alone(recalc):
 
 
 @pytest.mark.windows_only
+@pytest.mark.timeout(scaled(120))
 def test_recalc_timeout_reaps_the_grandchild_it_spawned(recalc, tmp_path):
     """Live, on processes this test spawned: the wedged grandchild (the ``soffice.bin``
     shape) is dead shortly after the timeout, by job membership -- no walk, no taskkill."""
@@ -713,7 +715,9 @@ def test_recalc_timeout_reaps_the_grandchild_it_spawned(recalc, tmp_path):
     grandchild = None
     try:
         with pytest.raises(recalc.subprocess.TimeoutExpired):
-            recalc._run_captured([sys.executable, str(wedged)], timeout=3)
+            # Incidental start window (tests/timeout_budget rule 2): the wedged child and its
+            # grandchild are two cold interpreter starts; 3 s was not enough under load.
+            recalc._run_captured([sys.executable, str(wedged)], timeout=scaled(10))
         assert pid_file.exists(), "the wedged child never started its grandchild"
         grandchild = int(pid_file.read_text(encoding="utf-8"))
         deadline = time.monotonic() + 10

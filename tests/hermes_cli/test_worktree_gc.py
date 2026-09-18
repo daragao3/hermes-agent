@@ -24,6 +24,13 @@ import pytest
 from tests._home_isolation import redirect_home
 
 from hermes_cli import worktree_gc
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): every test builds real worktrees/branches on disk and drives git through them
+# (17 of 17 trips were communicate() caps inside the audit/reclaim/branch-gc paths).
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not (tripped 2026-09-18 under a triple-runner box, ids shifting between runs).
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 def _git(args, cwd, env=None):

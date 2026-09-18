@@ -91,6 +91,7 @@ def _branch_exists(repo, branch):
     ).returncode == 0
 
 
+@pytest.mark.timeout(scaled(300))
 class TestFetchRemoteBranchHeads:
     def test_lists_pushed_branches(self, repo_with_bare_origin):
         repo = repo_with_bare_origin
@@ -108,6 +109,7 @@ class TestFetchRemoteBranchHeads:
         assert worktree_ops._fetch_remote_branch_heads(str(repo)) is None
 
 
+@pytest.mark.timeout(scaled(300))
 class TestBranchPushedExact:
     def test_exact_match_true(self, repo_with_bare_origin):
         repo = repo_with_bare_origin

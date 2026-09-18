@@ -8,6 +8,12 @@ import pytest
 from hermes_cli import config as hermes_config
 from hermes_cli import main as hermes_main
 from hermes_cli import update_cmd
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): the restore probes spawn a real interpreter per verdict on top of real git state.
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not (tripped 2026-09-18 under a triple-runner box, ids shifting between runs).
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 # ---------------------------------------------------------------------------

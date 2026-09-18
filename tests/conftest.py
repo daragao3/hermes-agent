@@ -40,6 +40,21 @@ from pathlib import Path
 
 import pytest
 
+# Import PyYAML before any test can. Nineteen files in tests/cli and
+# tests/hermes_cli wrap an ``import cli`` (or similar) in
+# ``patch.dict(sys.modules, ...)``; on exit patch.dict restores the dict, which
+# DROPS every module first imported inside the block. The pure-Python
+# ``yaml.*`` modules then re-execute on the next import, but the single-phase C
+# extension ``yaml._yaml`` comes back from the interpreter's extension cache
+# with its ORIGINAL ``ScalarNode``/``MappingNode`` globals. The re-executed
+# ``yaml.resolver.Resolver.resolve`` compares ``kind is ScalarNode`` against the
+# new classes, falls through, and ``CSafeLoader`` composes every node with tag
+# None ("could not determine a constructor for the tag None") -- for the rest
+# of the process, for every caller of ``utils.fast_safe_load``. Reproduced in
+# a bare interpreter on PyYAML 6.0.3 / CPython 3.13 (2026-09-18); pinned by
+# tests/cli/test_cli_init.py::TestMakeCliKeepsYamlIntact.
+import yaml  # noqa: F401  (see above; must precede every patch.dict(sys.modules))
+
 # Hard-off the OpenTelemetry span exporter for the whole suite.
 #
 # WHY IT CANNOT BE A FIXTURE. graphs/critic.py:68, graphs/jobflow.py:25,

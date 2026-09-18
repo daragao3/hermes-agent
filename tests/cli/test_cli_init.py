@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.timeout_budget import scaled
 
 
 
@@ -68,6 +69,37 @@ def _make_cli(env_overrides=None, config_overrides=None, **kwargs):
         # rebind cleanly.
         import cli as _cli_restore
         importlib.reload(_cli_restore)
+
+
+# Backstop only (tests/timeout_budget shape): this class runs first in the file, so its
+# _make_cli() carries the process's cold ``import cli`` + HermesCLI construction (model_switch
+# pulls the provider stack) -- >30 s under a saturated box on 2026-09-18.
+@pytest.mark.timeout(scaled(300))
+class TestMakeCliKeepsYamlIntact:
+    """``_make_cli`` wraps ``import cli`` in ``patch.dict(sys.modules)``.
+
+    Anything first imported inside that block is dropped on exit. PyYAML's
+    pure-Python modules survive a re-import, but the single-phase C extension
+    ``yaml._yaml`` comes back from the extension cache with its original node
+    classes, and every later ``CSafeLoader`` parse in the process composes
+    nodes with tag None (the ``TestRootLevelProviderOverride`` reds of
+    2026-09-18). tests/conftest.py imports ``yaml`` first so the block can
+    never own it; this pins that guard from the consumer's side.
+    """
+
+    def test_c_extension_node_classes_stay_live(self):
+        _make_cli()
+        import yaml.nodes
+        from utils import fast_safe_load
+
+        c_ext = sys.modules.get("yaml._yaml")
+        if c_ext is None:
+            pytest.skip("PyYAML built without libyaml; nothing to poison")
+        assert c_ext.ScalarNode is yaml.nodes.ScalarNode
+        assert c_ext.MappingNode is yaml.nodes.MappingNode
+        assert fast_safe_load("terminal:\r\n  vercel_runtime: python3.13\r\n") == {
+            "terminal": {"vercel_runtime": "python3.13"}
+        }
 
 
 class TestMaxTurnsResolution:
