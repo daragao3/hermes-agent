@@ -958,12 +958,36 @@ def manual_chrome_debug_command(port: int = DEFAULT_BROWSER_CDP_PORT, system: st
     return None
 
 
-def _detach_kwargs(system: str) -> dict:
+_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
+
+def _detach_kwargs(system: str, *, breakaway: bool = True) -> dict:
+    """Popen kwargs for a browser that must outlive this process.
+
+    On Windows ``DETACHED_PROCESS`` only detaches the console; job membership is inherited, and a
+    process that has enrolled itself in its kill-on-close job (``_subprocess_compat.
+    windows_enroll_self``, which every suspended probe spawn does) would take the browser down with
+    it at exit. ``CREATE_BREAKAWAY_FROM_JOB`` escapes that; a parent job that forbids breakaway
+    refuses it with ERROR_ACCESS_DENIED, and the caller retries with ``breakaway=False``.
+    """
     if system != "Windows":
         return {"start_new_session": True}
     flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
              | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    if breakaway:
+        flags |= _CREATE_BREAKAWAY_FROM_JOB
     return {"creationflags": flags} if flags else {}
+
+
+def _popen_detached(argv: list[str], system: str, **kwargs) -> subprocess.Popen:
+    """``Popen(argv, **_detach_kwargs(system))``, retried without breakaway when the parent's job
+    object refuses the flag (OSError: ERROR_ACCESS_DENIED). Other spawn failures propagate."""
+    try:
+        return subprocess.Popen(argv, **kwargs, **_detach_kwargs(system))
+    except OSError:
+        if system != "Windows":
+            raise
+        return subprocess.Popen(argv, **kwargs, **_detach_kwargs(system, breakaway=False))
 
 
 def _wait_for_browser_debug_ready_or_exit(
@@ -1046,9 +1070,9 @@ def launch_chrome_debug(
     for candidate in candidates:
         try:
             with open(stderr_path, "wb") as stderr_file:
-                proc = subprocess.Popen(
-                    [candidate, *_chrome_debug_args(port)],
-                    stdout=subprocess.DEVNULL, stderr=stderr_file, **_detach_kwargs(system))
+                proc = _popen_detached(
+                    [candidate, *_chrome_debug_args(port)], system,
+                    stdout=subprocess.DEVNULL, stderr=stderr_file)
         except Exception as exc:
             result.attempts.append(LaunchAttempt(binary=candidate, state="spawn-failed"))
             logger.info("browser debug launch: failed to spawn %s: %s", candidate, exc)
