@@ -20,7 +20,6 @@ from contextlib import contextmanager
 import faulthandler
 import logging
 import os
-import subprocess
 import sys
 import threading
 import time
@@ -406,7 +405,14 @@ def _process_tree_snapshot(pid: int, *, hard_kill: bool):
 def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
     """Terminate ``pid`` and all its descendants, portably; True when anything was signalled.
 
-    Windows: ``taskkill /F /T`` (``sig`` ignored). POSIX: snapshot descendants via
+    Windows (``sig`` ignored): a creation-time-guarded ParentProcessId walk from
+    ``pid`` (:func:`hermes_cli._subprocess_compat.windows_kill_process_tree`) --
+    a child is adopted only if it was born at or after its claimed parent, each
+    victim is identity-checked before ``TerminateProcess``, and a ``pid`` that has
+    already exited kills nothing. Never ``taskkill /T``: it adopted orphans of a
+    recycled pid and took down unrelated services (2026-09-17). Callers that hold
+    a Popen keep the root pid from recycling; a bare pid's identity is the
+    caller's to verify. POSIX: snapshot descendants via
     psutil; for SIGKILL, stop and rescan the live tree so a concurrent fork cannot
     escape a stale snapshot. Signal identity-checked descendants before their
     parent, then its group when ``pid`` leads one. Stopping is best-effort with a
@@ -414,19 +420,15 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
     signals do not suspend recipients. ``sig`` defaults to ``SIGKILL``."""
     if sys.platform == "win32":
         try:
-            from hermes_cli._subprocess_compat import windows_hide_flags
-            creationflags = windows_hide_flags()
+            from hermes_cli._subprocess_compat import windows_kill_process_tree
         except Exception:
-            creationflags = 0
+            logger.debug("kill_process_tree: tree-kill helper unavailable for pid %s", pid, exc_info=True)
+            return False
         try:
-            proc = subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                capture_output=True, timeout=15, check=False, creationflags=creationflags,
-            )
-            # taskkill exits non-zero for not-found / access-denied (False = nothing terminated).
-            return proc.returncode == 0
+            # False = nothing terminated (already exited, identity changed, or unreadable).
+            return bool(windows_kill_process_tree(int(pid)))
         except Exception:
-            logger.debug("kill_process_tree: taskkill failed for pid %s", pid, exc_info=True)
+            logger.debug("kill_process_tree: tree kill failed for pid %s", pid, exc_info=True)
             return False
 
     import signal as _signal

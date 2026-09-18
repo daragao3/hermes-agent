@@ -83,7 +83,7 @@ def test_run_text_capture_bound_holds_even_when_the_tree_kill_fails(
         "time.sleep(20)\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(_subprocess_compat, "_tree_kill", lambda proc: None)
+    monkeypatch.setattr(_subprocess_compat, "_tree_kill", lambda proc, tree=None: None)
 
     start = time.monotonic()
     with pytest.raises(subprocess.TimeoutExpired):
@@ -161,7 +161,7 @@ def test_run_text_capture_shell_bound_holds_when_the_tree_kill_fails(tmp_path, m
         "time.sleep(20)\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(_subprocess_compat, "_tree_kill", lambda proc: None)
+    monkeypatch.setattr(_subprocess_compat, "_tree_kill", lambda proc, tree=None: None)
 
     start = time.monotonic()
     with pytest.raises(subprocess.TimeoutExpired):

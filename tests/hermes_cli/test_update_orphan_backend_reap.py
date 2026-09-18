@@ -204,24 +204,33 @@ def test_missing_psutil_keeps_refusal():
 
 
 def test_stop_process_trees_kills_full_tree():
+    """Each root goes through the creation-time-guarded walk, pinned to the
+    identity read before the ``pid_is_hermes`` probe -- never ``taskkill /T``,
+    which adopted orphans of a recycled pid (2026-09-17)."""
     from hermes_cli import update_cmd
 
     with patch("gateway.status.get_process_start_time", return_value=123), patch(
+        "hermes_cli._subprocess_compat.windows_process_created", side_effect=lambda pid: pid / 100
+    ), patch(
         "hermes_cli._subprocess_compat.pid_is_hermes", return_value=True
-    ), patch.object(update_cmd.subprocess, "run") as run:
+    ), patch(
+        "hermes_cli._subprocess_compat.windows_kill_process_tree", return_value=[]
+    ) as walk, patch.object(update_cmd.subprocess, "run") as run:
         cli_main._stop_process_trees([111, 222])
-    calls = [c.args[0] for c in run.call_args_list]
-    assert calls == [
-        ["taskkill", "/PID", "111", "/T", "/F"],
-        ["taskkill", "/PID", "222", "/T", "/F"],
+    run.assert_not_called()
+    assert [(c.args, c.kwargs) for c in walk.call_args_list] == [
+        ((111,), {"root_created": 1.11}),
+        ((222,), {"root_created": 2.22}),
     ]
 
 
 def test_stop_process_trees_never_raises():
-    from hermes_cli import update_cmd
-
-    with patch.object(
-        update_cmd.subprocess, "run", side_effect=OSError("no taskkill")
+    with patch("gateway.status.get_process_start_time", return_value=123), patch(
+        "hermes_cli._subprocess_compat.windows_process_created", return_value=1.11
+    ), patch(
+        "hermes_cli._subprocess_compat.pid_is_hermes", return_value=True
+    ), patch(
+        "hermes_cli._subprocess_compat.windows_kill_process_tree", side_effect=OSError("no snapshot")
     ):
         cli_main._stop_process_trees([111])  # must not raise
 

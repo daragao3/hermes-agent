@@ -334,10 +334,10 @@ def _leftover_pausable_gateway_pids(matches: list[tuple[int, str, str]]) -> list
 
 def _refuse_gateway_ancestor_tree_kill(pids: list[int], *, gateway_mode: bool) -> bool:
     """Refuse a plain Windows update that would tree-kill its own ancestry (a chat agent's ``hermes update`` is
-    a gateway child; ``taskkill /T /F`` kills the updater first). ``--gateway`` is exempt (detached delivery).
+    a gateway child; the tree kill takes the updater with it). ``--gateway`` is exempt (detached delivery).
     Refuse only when a nominated gateway is positively an ancestor; unknown ancestry keeps existing recovery.
 
-    The leftover holder recovery below uses ``taskkill /T /F`` on Windows, so force-stopping that gateway
+    The leftover holder recovery below tree-kills the holder on Windows, so force-stopping that gateway
     also kills the updater before it can mutate the checkout (#98814).
     """
     if gateway_mode or not pids:
@@ -352,7 +352,7 @@ def _refuse_gateway_ancestor_tree_kill(pids: list[int], *, gateway_mode: bool) -
     print(
         "✗ Refusing to stop the gateway process tree because this updater "
         f"is running inside it (gateway PID(s): {', '.join(str(pid) for pid in ancestors)}).\n"
-        "  On Windows, taskkill /T would terminate the updater before the update can run.\n"
+        "  On Windows, the process-tree kill would terminate the updater before the update can run.\n"
         "  From a chat platform, use `/update` instead.\n  Otherwise, run `hermes update` from a separate terminal."
     )
     return True
@@ -446,7 +446,7 @@ def _orphaned_desktop_backend_pids(matches: list[tuple[int, str, str]]) -> list[
     Killing a Desktop-owned ``serve`` is futile (the app respawns it), but a straggler whose Desktop is gone
     would dead-end the update with "Hermes is still running" and zero open windows. Qualifies only if cmdline
     is a Hermes backend AND the parent is demonstrably gone (PID missing or reused). Tree-aware: holders inside
-    an accepted root's tree fold into it; only roots are returned (``taskkill /T`` reaps descendants). Any
+    an accepted root's tree fold into it; only roots are returned (the tree kill reaps descendants). Any
     live-parent backend, unjustified non-backend, unprovable case, or no psutil -> ``None``. Never raises.
 
     The venv-holder guard refuses on the Desktop app's ``serve`` backend by design: while the Desktop is
@@ -555,26 +555,32 @@ def _handoff_reapable_backend_pids(matches: list[tuple[int, str, str]]) -> list[
 def _stop_process_trees(pids: list[int] | list[tuple[int, int]]) -> None:
     """Force-stop each PID with its full child tree (Windows); best effort, never raises.
 
-    ``taskkill /T /F``: stopping only the parent can leave a ``.hermes-runtime`` child holding the install open.
+    Stopping only the parent can leave a ``.hermes-runtime`` child holding the install open, so the
+    provable tree goes with it: a creation-time-guarded ParentProcessId walk
+    (:func:`hermes_cli._subprocess_compat.windows_kill_process_tree`), never ``taskkill /T`` -- these
+    are bare pids with no spawn handle, exactly where ``/T`` adopted orphans of a recycled pid and
+    killed unrelated services (2026-09-17). The root's identity is read BEFORE the ``pid_is_hermes``
+    probe and pinned into the walk, so a pid recycled after the probe kills nothing.
 
     See #70026.
     """
     from gateway.status import get_process_start_time
-    from hermes_cli._subprocess_compat import pid_is_hermes, windows_hide_flags
+    from hermes_cli._subprocess_compat import pid_is_hermes, windows_kill_process_tree, windows_process_created
     for entry in pids:
         pid, expected_start_time = entry if isinstance(entry, tuple) else (int(entry), get_process_start_time(int(entry)))
         try:
             if expected_start_time is None:
-                logger.debug("Skipping taskkill of PID %s: process identity unavailable", pid)
+                logger.debug("Skipping tree kill of PID %s: process identity unavailable", pid)
+                continue
+            root_created = windows_process_created(pid)
+            if root_created is None:
+                logger.debug("Skipping tree kill of PID %s: creation time unreadable", pid)
                 continue
             if not pid_is_hermes(pid, expected_start_time=expected_start_time):
-                logger.debug("Skipping taskkill of non-Hermes or changed PID %s", pid)
+                logger.debug("Skipping tree kill of non-Hermes or changed PID %s", pid)
                 continue
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"], check=False,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-                creationflags=windows_hide_flags(),
-            )
+            killed = windows_kill_process_tree(pid, root_created=root_created)
+            logger.debug("Stopped process tree %s: terminated %s", pid, killed or "nothing (exited or identity changed)")
         except Exception as exc:
             logger.debug("Could not stop process tree %s: %s", pid, exc)
 
