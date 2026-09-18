@@ -20,9 +20,13 @@ test it could find -- but it searched for DOTTED patch strings such as
 ``patch.object(vm, "platform")`` through ``import tools.voice_mode as vm``.
 That one stayed stale until agent-src-acceptance-ceremony-de1f83cddf-20260917
 and was fixed test-only as 006faacb8b.  A first cut of this scan, run on the
-tree at the time, found exactly that seam.  The first run of this file over the
-trunk (2026-09-18, 33.5k seams) found six more of the same class that no run
-had reported: tests/integration/test_scout_firecrawl_credit_circuit.py still
+tree at the time, found exactly that seam.  The same day 3a392cdb87 moved
+``WMI_STRAY_THREAD_FIXED`` from module scope into a function in
+hermes_cli/_subprocess_compat.py and tests/hermes_cli/test_host_platform_
+helpers.py kept READING ``compat.WMI_STRAY_THREAD_FIXED`` -- no patch involved,
+the same head-only red (fixed 5432bf59ce), which is why plain reads are
+seams here too.  The first run of this file over the trunk (2026-09-18, 33.5k
+patch seams) found six more of the same class that no run had reported: tests/integration/test_scout_firecrawl_credit_circuit.py still
 patched five helpers that de60f789a7 moved out of tools/browser_tool.py (a red
 at its first setattr), and tests/hermes_cli/test_doctor.py stubbed a Gemini
 OAuth status function that 7130d60861 removed, inside a ``try/except
@@ -40,6 +44,9 @@ these shapes:
   -- any receiver, so ``monkeypatch``, ``mp``, ``m`` all count;
 * ``patch("<dotted.module>.<name>", ...)`` / ``patch.multiple("<dotted>", name=...)``
   / ``<x>.setattr("<dotted.module>.<name>", value)``;
+* a plain READ ``<target>.<name>`` (``compat.WMI_STRAY_THREAD_FIXED``,
+  ``vm.play_audio_file(...)``): the same AttributeError at the same moment.
+  ``--no-reads`` limits the scan to the patch forms;
 
 is resolved WITHOUT importing anything.  ``<target>`` is a ``Name`` or a dotted
 ``Attribute`` chain whose leading name is bound in the test file by an import
@@ -60,9 +67,17 @@ Deliberately NOT reported (each is counted under ``--verbose``):
 * ``patch.object(type(x), ...)``, ``patch.object(sys.modules[...], ...)``,
   ``patch.object(self.obj, ...)``: not a module seam;
 * a target module outside this repository (``sys``, ``os.path``, third-party):
-  EXTERNAL, out of scope.  A plain attribute READ (``compat.WMI_STRAY_THREAD_
-  FIXED``) is also out of scope: only patch/setattr seams are checked, though
-  a read of a name the module dropped is the same head-only red;
+  EXTERNAL, out of scope;
+* an attribute the test tree CREATES: ``mod.x = v`` / ``setattr(mod, "x", v)``
+  / ``monkeypatch.setattr(mod, "x", v, raising=False)`` / ``patch.object(mod,
+  "x", create=True)`` in the same file, or in any ``conftest.py`` (the one
+  place a creation reaches other files, through a fixture -- tests/tools/
+  conftest.py's ``_find_cli_unpatched``).  The conftest set is computed once
+  per scan, tree-wide, whatever files are in scope;
+* a read the test GUARDS: ``hasattr(mod, "x")`` / ``getattr(mod, "x", default)``
+  anywhere in the file, or inside a ``try`` whose ``except`` catches
+  AttributeError (or wider), ``pytest.raises(AttributeError)`` or
+  ``contextlib.suppress(AttributeError)``;
 * a chain that reaches a bound object and keeps going (``vm.shutil.which``,
   ``mod.Class.method``): an object/class attribute, out of scope -- the module
   seam it crossed was verified;
@@ -93,7 +108,8 @@ USAGE
     python scripts/check_patch_seams.py --repo /path/to/checkout --verbose --jobs 1
 
 Exit 0 when clean, 1 with one ``path:line: ...`` line per stale seam, 2 on a
-usage error.
+usage error.  Reads triple the seam count (~290k over ~4600 files vs ~34k) for
+about half again the wall time.
 """
 
 from __future__ import annotations
@@ -142,6 +158,7 @@ class Seam:
     names: tuple[str, ...]   # attribute names patched on the resolved target
     lenient: bool        # create=True / raising=False present
     string: bool = False  # target came from a dotted string, not a Name/Attribute
+    guarded: bool = False  # a read inside try/except AttributeError, pytest.raises, suppress
 
     @property
     def target(self) -> str:
@@ -174,6 +191,8 @@ class Stats:
     object_attr: int = 0
     not_static: int = 0
     lenient: int = 0
+    created: int = 0     # the attribute is one the test tree itself creates (conftest / this file)
+    guarded: int = 0     # a read the test guards (hasattr / try-except AttributeError / raises)
     unparseable: list[str] = field(default_factory=list)
 
     def merge(self, other: "Stats") -> None:
@@ -185,6 +204,8 @@ class Stats:
         self.object_attr += other.object_attr
         self.not_static += other.not_static
         self.lenient += other.lenient
+        self.created += other.created
+        self.guarded += other.guarded
         self.unparseable.extend(other.unparseable)
 
     def render(self) -> str:
@@ -192,7 +213,8 @@ class Stats:
             f"files={self.files} seams={self.seams} verified={self.verified} "
             f"skipped: dynamic={self.dynamic} external={self.external} "
             f"object_attr={self.object_attr} not_static={self.not_static} "
-            f"lenient={self.lenient} unparseable={len(self.unparseable)}"
+            f"lenient={self.lenient} created={self.created} guarded={self.guarded} "
+            f"unparseable={len(self.unparseable)}"
         )
 
 
@@ -615,18 +637,65 @@ class _Bindings(ast.NodeVisitor):
     their dotted module) and everything else (parameters, assignments, defs,
     fixtures via parameters, with/for/except targets, walrus)."""
 
-    def __init__(self, package: str, path: str = ""):
+    def __init__(self, package: str, path: str = "", reads: bool = True):
         self.package = package          # dotted package of the test file, for relative imports
         self.path = path
+        self.reads = reads              # also collect plain ``alias.NAME`` reads as seams
         self.imports: dict[str, set[str]] = {}   # name -> {dotted module, ...}
         self.other: set[str] = set()             # names bound by anything but an import
         self.seams: list[Seam] = []              # collected in the same pass
+        # Attributes this file CREATES on a chain: ``alias.NAME = v``,
+        # ``setattr(alias, "NAME", v)``, a lenient patch/setattr.  (chain, NAME).
+        self.created: set[tuple[tuple[str, ...], str]] = set()
+        # Attributes this file checks before touching: ``hasattr(alias, "NAME")``,
+        # ``getattr(alias, "NAME", default)``.  (chain, NAME).
+        self.guards: set[tuple[tuple[str, ...], str]] = set()
+        self._guard_depth = 0           # inside try/except AttributeError, raises(), suppress()
+        self.created_resolved: Created = frozenset()  # set by check_file once chains resolve
 
     def visit_Call(self, node: ast.Call) -> None:
         seam = seam_of(self.path, node)
         if seam is not None:
             self.seams.append(seam)
+            if seam.lenient and not seam.string:
+                for name in seam.names:
+                    self.created.add((seam.chain, name))
+        elif isinstance(node.func, ast.Name) and len(node.args) >= 2:
+            chain = _dotted_chain(node.args[0])
+            key = node.args[1]
+            if chain is not None and isinstance(key, ast.Constant) and isinstance(key.value, str):
+                if node.func.id == "setattr":
+                    self.created.add((chain, key.value))
+                elif node.func.id == "hasattr" or (node.func.id == "getattr" and len(node.args) >= 3):
+                    self.guards.add((chain, key.value))
         self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        chain = _dotted_chain(node)
+        if chain is None:
+            self.generic_visit(node)  # ``f().x`` / ``a[0].x``: the base may hold calls
+            return
+        # A pure Name chain: record it once, at its outermost node, and do not
+        # descend -- every inner Attribute is a prefix of this one.
+        if isinstance(node.ctx, ast.Store):
+            self.created.add((chain[:-1], chain[-1]))
+        elif isinstance(node.ctx, ast.Load) and self.reads and len(chain) >= 2:
+            self.seams.append(Seam(self.path, node.lineno, "read", chain[:-1], (chain[-1],), False,
+                                   guarded=self._guard_depth > 0))
+
+    def visit_Try(self, node: ast.Try) -> None:
+        """A body that catches AttributeError (or anything wider) is a guard
+        for the reads inside it; the handlers, else and finally are not."""
+        guarded = any(_catches_attribute_error(h.type) for h in node.handlers)
+        self._guard_depth += guarded
+        for stmt in node.body:
+            self.visit(stmt)
+        self._guard_depth -= guarded
+        for part in (node.handlers, node.orelse, node.finalbody):
+            for stmt in part:
+                self.visit(stmt)
+
+    visit_TryStar = visit_Try  # type: ignore[assignment]
 
     def _bind_import(self, name: str, dotted: str | None) -> None:
         if dotted is None:
@@ -713,10 +782,16 @@ class _Bindings(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_With(self, node: ast.With) -> None:
+        guarded = False
         for item in node.items:
             if item.optional_vars is not None:
                 self._bind_other(item.optional_vars)
-        self.generic_visit(node)
+            self.visit(item.context_expr)
+            guarded |= _is_attribute_error_context(item.context_expr)
+        self._guard_depth += guarded
+        for stmt in node.body:
+            self.visit(stmt)
+        self._guard_depth -= guarded
 
     visit_AsyncWith = visit_With  # type: ignore[assignment]
 
@@ -745,6 +820,13 @@ class _Bindings(ast.NodeVisitor):
             self.other.add(node.rest)
         self.generic_visit(node)
 
+    def is_guarded(self, seam: Seam) -> bool:
+        """``hasattr(a, "b")`` guards ``a.b``, ``a.b.c`` and a patch on ``a.b``:
+        the name and every component of the chain after the first."""
+        if any((seam.chain, name) in self.guards for name in seam.names):
+            return True
+        return any((seam.chain[:i], seam.chain[i]) in self.guards for i in range(1, len(seam.chain)))
+
     def resolve(self, name: str) -> str | None:
         """Dotted module for a leading name, or None when the name is bound
         dynamically, ambiguously, or not at all."""
@@ -754,6 +836,31 @@ class _Bindings(ast.NodeVisitor):
         if not modules or len(modules) != 1:
             return None
         return next(iter(modules))
+
+
+def _catches_attribute_error(handler_type: ast.expr | None) -> bool:
+    """``except:`` / ``except AttributeError`` / ``except (X, AttributeError)`` /
+    ``except Exception`` / ``except BaseException``."""
+    if handler_type is None:
+        return True
+    names = [handler_type] if not isinstance(handler_type, ast.Tuple) else list(handler_type.elts)
+    for name in names:
+        leaf = name.attr if isinstance(name, ast.Attribute) else name.id if isinstance(name, ast.Name) else None
+        if leaf in ("AttributeError", "Exception", "BaseException"):
+            return True
+    return False
+
+
+def _is_attribute_error_context(expr: ast.expr) -> bool:
+    """``pytest.raises(AttributeError)`` / ``raises(AttributeError, ...)`` /
+    ``contextlib.suppress(AttributeError)`` as a ``with`` item."""
+    if not isinstance(expr, ast.Call):
+        return False
+    func = expr.func
+    leaf = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
+    if leaf not in ("raises", "suppress"):
+        return False
+    return any(_catches_attribute_error(arg) for arg in expr.args if not isinstance(arg, ast.Constant))
 
 
 def _dotted_chain(node: ast.expr) -> tuple[str, ...] | None:
@@ -846,11 +953,15 @@ def seam_of(path: str, node: ast.Call) -> Seam | None:
 
 # ── Resolution ──────────────────────────────────────────────────────────────
 
-def _walk_chain(repo: Repo, dotted: str, rest: tuple[str, ...]) -> tuple[str, str | None]:
+Created = frozenset[tuple[str, str]]  # (dotted module, attribute) the test tree creates
+
+
+def _walk_chain(repo: Repo, dotted: str, rest: tuple[str, ...], created: Created = frozenset()) -> tuple[str, str | None]:
     """Walk ``rest`` from module ``dotted``.  Returns (verdict, detail):
     ``module`` (the whole chain is a module; detail = its dotted path),
     ``object_attr`` (crossed into a bound object), ``not_static``,
-    ``unbound`` (detail = the message), ``unparseable``."""
+    ``unbound`` (detail = the message), ``unparseable``, ``created`` (crossed
+    an attribute the test tree itself creates)."""
     for i, name in enumerate(rest):
         sub = f"{dotted}.{name}"
         if repo.is_module(sub):
@@ -861,6 +972,8 @@ def _walk_chain(repo: Repo, dotted: str, rest: tuple[str, ...]) -> tuple[str, st
             return "unparseable", dotted
         if facts.binds(name) or name in _MODULE_DUNDERS:
             return ("object_attr", None) if i + 1 < len(rest) else ("bound", dotted)
+        if (dotted, name) in created:
+            return "created", dotted
         if not facts.static:
             return "not_static", dotted
         return "unbound", f"{dotted} binds no `{name}` at top level ({repo.module_file(dotted).relative_to(repo.root).as_posix()})"
@@ -870,67 +983,87 @@ def _walk_chain(repo: Repo, dotted: str, rest: tuple[str, ...]) -> tuple[str, st
 _SEAM_BYTES = (b"patch", b"setattr", b"delattr")
 
 
-def check_file(repo: Repo, rel: str, source: bytes, stats: Stats, allow: frozenset[str] = ALLOWLIST) -> list[Finding]:
-    stats.files += 1
-    if not any(token in source for token in _SEAM_BYTES):
-        return []  # no seam can be spelled without one of these
+def _model(repo: Repo, rel: str, source: bytes, reads: bool) -> _Bindings | None:
     tree = _parse(source, rel)
     if tree is None:
+        return None
+    package = ".".join(Path(rel).with_suffix("").parts[:-1])
+    bindings = _Bindings(package, rel, reads=reads)
+    bindings.visit(tree)
+    return bindings
+
+
+def _module_of_chain(repo: Repo, bindings: _Bindings, chain: tuple[str, ...], string: bool = False) -> tuple[str | None, str]:
+    """Resolve a seam's target chain to a repo module: (dotted, "module"), or
+    (None, reason) with reason in dynamic / external / object_attr /
+    not_static / unparseable / created / unbound."""
+    if string:
+        top = chain[0]
+        if not repo.is_module(top):
+            return None, "external"
+        dotted, rest = top, chain[1:]
+    else:
+        dotted = bindings.resolve(chain[0])
+        if dotted is None:
+            return None, "dynamic"
+        if not repo.is_module(dotted):
+            # ``from pkg import name`` where name is not a submodule: an object
+            # (class/function) or an external module.  Either way not a module seam.
+            parent, _, _leaf = dotted.rpartition(".")
+            return None, "object_attr" if parent and repo.is_module(parent) else "external"
+        rest = chain[1:]
+    verdict, detail = _walk_chain(repo, dotted, rest, bindings.created_resolved)
+    if verdict == "module":
+        return detail or dotted, "module"
+    if verdict == "bound":
+        return None, "object_attr"
+    return None, verdict if verdict != "unbound" else f"unbound:{detail}"
+
+
+def created_by(repo: Repo, bindings: _Bindings) -> set[tuple[str, str]]:
+    """The (module, attribute) pairs a file creates, its chains resolved."""
+    out: set[tuple[str, str]] = set()
+    bindings.created_resolved = frozenset()
+    for chain, name in bindings.created:
+        module, _ = _module_of_chain(repo, bindings, chain)
+        if module is not None:
+            out.add((module, name))
+    return out
+
+
+def check_file(repo: Repo, rel: str, source: bytes, stats: Stats, allow: frozenset[str] = ALLOWLIST,
+               created: Created = frozenset(), reads: bool = True) -> list[Finding]:
+    stats.files += 1
+    if not reads and not any(token in source for token in _SEAM_BYTES):
+        return []  # no patch seam can be spelled without one of these
+    bindings = _model(repo, rel, source, reads)
+    if bindings is None:
         stats.unparseable.append(rel)
         return []
-    package = ".".join(Path(rel).with_suffix("").parts[:-1])
-    bindings = _Bindings(package, rel)
-    bindings.visit(tree)
+    # What the tree creates (conftests, passed in) plus what this file creates.
+    bindings.created_resolved = frozenset(created | created_by(repo, bindings))
     findings: list[Finding] = []
     for seam in bindings.seams:
         stats.seams += 1
         if seam.lenient:
             stats.lenient += 1
             continue
-        if seam.string:
-            # Dotted string: the leading component must be a repo top-level module/package.
-            top = seam.chain[0]
-            if not repo.is_module(top):
-                stats.external += 1
-                continue
-            dotted, rest = top, seam.chain[1:]
-        else:
-            dotted = bindings.resolve(seam.chain[0])
-            if dotted is None:
-                stats.dynamic += 1
-                continue
-            if not repo.is_module(dotted):
-                # ``from pkg import name`` where name is not a submodule: an object
-                # (class/function) or an external module.  Either way not a module seam.
-                parent, _, leaf = dotted.rpartition(".")
-                if parent and repo.is_module(parent):
-                    stats.object_attr += 1
-                else:
-                    stats.external += 1
-                continue
-            rest = seam.chain[1:]
-        verdict, detail = _walk_chain(repo, dotted, rest)
-        if verdict == "object_attr":
-            stats.object_attr += 1
+        if seam.guarded or bindings.is_guarded(seam):
+            stats.guarded += 1
             continue
-        if verdict == "not_static":
-            stats.not_static += 1
+        dotted, reason = _module_of_chain(repo, bindings, seam.chain, seam.string)
+        if dotted is None:
+            if reason.startswith("unbound:"):
+                # The chain itself does not resolve: report once, for the chain.
+                finding = Finding(rel, seam.line, seam.form, seam.target, reason[len("unbound:"):])
+                if finding.key not in allow:
+                    findings.append(finding)
+            elif reason == "unparseable":
+                stats.unparseable.append(seam.target)
+            else:
+                setattr(stats, reason, getattr(stats, reason) + 1)
             continue
-        if verdict == "unparseable":
-            stats.unparseable.append(detail or dotted)
-            continue
-        if verdict == "unbound":
-            # The chain itself does not resolve: report once, for the chain.
-            finding = Finding(rel, seam.line, seam.form, seam.target, detail or "")
-            if finding.key not in allow:
-                findings.append(finding)
-            continue
-        if verdict == "bound":
-            # Chain ended on a bound object: the names are attributes of that object.
-            stats.object_attr += 1
-            continue
-        # verdict == "module": now check each patched name on that module.
-        module = detail or dotted
+        module = dotted
         facts = repo.facts(module)
         if facts is None:
             stats.unparseable.append(module)
@@ -939,6 +1072,9 @@ def check_file(repo: Repo, rel: str, source: bytes, stats: Stats, allow: frozens
             target = f"{seam.target}.{name}"
             if facts.binds(name) or name in _MODULE_DUNDERS or repo.is_module(f"{module}.{name}"):
                 stats.verified += 1
+                continue
+            if (module, name) in bindings.created_resolved:
+                stats.created += 1
                 continue
             if seam.form.startswith("patch") and name in _BUILTIN_NAMES:
                 stats.lenient += 1
@@ -968,9 +1104,38 @@ def tracked_test_files(repo: Path) -> list[str]:
     return sorted({p for p in proc.stdout.decode("utf-8", errors="surrogateescape").split("\0") if p.endswith(".py")})
 
 
-def scan(repo_root: Path, files: list[str], allow: frozenset[str] = ALLOWLIST) -> tuple[list[Finding], Stats]:
-    """Scan ``files`` (repo-relative) in this process."""
+def conftest_files(repo_root: Path) -> list[str]:
+    """Every ``conftest.py`` under ``tests/`` (plus a root one): the only test
+    files whose attribute creations reach OTHER files, through fixtures."""
+    found = sorted(p.relative_to(repo_root).as_posix() for p in (repo_root / "tests").rglob("conftest.py"))
+    if (repo_root / "conftest.py").is_file():
+        found.insert(0, "conftest.py")
+    return found
+
+
+def conftest_created(repo_root: Path) -> Created:
+    """(module, attribute) pairs any conftest creates -- ``monkeypatch.setattr(
+    mod, "x", v, raising=False)`` in a fixture, ``mod.x = v``, ``setattr(mod,
+    "x", v)`` -- so a test reading them is not judged against the module."""
     repo = Repo(repo_root)
+    out: set[tuple[str, str]] = set()
+    for rel in conftest_files(repo_root):
+        try:
+            bindings = _model(repo, rel, (repo_root / rel).read_bytes(), reads=False)
+        except OSError:
+            continue
+        if bindings is not None:
+            out |= created_by(repo, bindings)
+    return frozenset(out)
+
+
+def scan(repo_root: Path, files: list[str], allow: frozenset[str] = ALLOWLIST,
+         created: Created | None = None, reads: bool = True) -> tuple[list[Finding], Stats]:
+    """Scan ``files`` (repo-relative) in this process.  ``created`` is the
+    tree-wide conftest creation set; computed here when not given."""
+    repo = Repo(repo_root)
+    if created is None:
+        created = conftest_created(repo_root)
     stats = Stats()
     findings: list[Finding] = []
     for rel in files:
@@ -980,32 +1145,33 @@ def scan(repo_root: Path, files: list[str], allow: frozenset[str] = ALLOWLIST) -
         except OSError:
             stats.unparseable.append(rel)
             continue
-        findings.extend(check_file(repo, Path(rel).as_posix(), source, stats, allow))
+        findings.extend(check_file(repo, Path(rel).as_posix(), source, stats, allow, created, reads))
     findings.sort(key=lambda f: (f.path, f.line, f.target))
     return findings, stats
 
 
-def _scan_chunk(args: tuple[str, list[str]]) -> tuple[list[Finding], Stats]:
-    root, files = args
-    return scan(Path(root), files)
+def _scan_chunk(args: tuple[str, list[str], Created, bool]) -> tuple[list[Finding], Stats]:
+    root, files, created, reads = args
+    return scan(Path(root), files, created=created, reads=reads)
 
 
 def default_jobs() -> int:
     return max(1, min(4, os.cpu_count() or 1))
 
 
-def scan_parallel(repo_root: Path, files: list[str], jobs: int) -> tuple[list[Finding], Stats]:
-    """``scan`` split over ``jobs`` worker processes (parsing ~3400 test files
+def scan_parallel(repo_root: Path, files: list[str], jobs: int, reads: bool = True) -> tuple[list[Finding], Stats]:
+    """``scan`` split over ``jobs`` worker processes (parsing ~4600 test files
     is the whole cost; each worker keeps its own module-facts cache).  Serial
     when ``jobs`` is 1 or the scope is small; the workers re-import this file
     by path, so this is only reachable from the CLI, never from ``scan()``."""
+    created = conftest_created(repo_root)
     if jobs <= 1 or len(files) < 64:
-        return scan(repo_root, files)
+        return scan(repo_root, files, created=created, reads=reads)
     chunks = [files[i::jobs] for i in range(jobs)]
     findings: list[Finding] = []
     stats = Stats()
     with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
-        for chunk_findings, chunk_stats in pool.map(_scan_chunk, [(str(repo_root), chunk) for chunk in chunks]):
+        for chunk_findings, chunk_stats in pool.map(_scan_chunk, [(str(repo_root), chunk, created, reads) for chunk in chunks]):
             findings.extend(chunk_findings)
             stats.merge(chunk_stats)
     findings.sort(key=lambda f: (f.path, f.line, f.target))
@@ -1018,6 +1184,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=str(REPO_ROOT), help="repository root (default: this checkout)")
     parser.add_argument("--verbose", action="store_true", help="print scan statistics to stderr")
     parser.add_argument("--jobs", type=int, default=default_jobs(), help="worker processes for a full scan (default: min(4, cpus); 1 = in-process)")
+    parser.add_argument("--no-reads", action="store_true", help="check patch/setattr seams only, not plain `alias.NAME` reads")
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo).resolve()
@@ -1042,7 +1209,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 2
 
-    findings, stats = scan_parallel(repo_root, files, args.jobs)
+    findings, stats = scan_parallel(repo_root, files, args.jobs, reads=not args.no_reads)
     for finding in findings:
         print(finding.render())
     if args.verbose or stats.unparseable:
@@ -1051,8 +1218,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  unparseable: {rel}", file=sys.stderr)
     if findings:
         print(
-            f"{len(findings)} stale patch seam(s): the patched name is not bound by the "
-            "module's source, so mock/monkeypatch raises AttributeError at run time.",
+            f"{len(findings)} stale seam(s): the patched or read name is not bound by the "
+            "module's source, so the test raises AttributeError at run time.",
             file=sys.stderr,
         )
         return 1
