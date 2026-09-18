@@ -78,3 +78,14 @@ def test_secret_file_removed_when_permission_validation_fails(monkeypatch):
     assert not _embedded_profile_env_path(_CONFIG).exists(), (
         "secret env file must be cleaned up when validation fails"
     )
+
+
+def test_profile_env_is_written_with_lf_line_endings():
+    """Every ``.env`` writer keeps LF on disk on every platform (the file is sourced by the
+    embedded daemon and matches ``hermes_cli.config._write_env_lines``); text-mode default
+    would emit CRLF on Windows."""
+    profile_env = _materialize_embedded_profile_env(_CONFIG, llm_api_key="sk-lf")
+
+    raw = profile_env.read_bytes()
+    assert b"\r" not in raw
+    assert b"HINDSIGHT_API_LLM_API_KEY=sk-lf\n" in raw

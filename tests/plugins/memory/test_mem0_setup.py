@@ -208,6 +208,16 @@ class TestWriteEnv:
         assert "OPENAI_API_KEY=new" in content
 
 
+    def test_update_leaves_untouched_lines_byte_identical(self, tmp_path):
+        """Same round-trip contract as the OpenViking writer (890e5ab0f1): LF stays LF on
+        every platform. ``write_bytes`` fixture: ``write_text`` would emit CRLF on Windows
+        and hide the defect."""
+        env_path = tmp_path / ".env"
+        env_path.write_bytes(b"FIRST=1\nOPENAI_API_KEY=old\nLAST=3\n")
+        _write_env(env_path, {"OPENAI_API_KEY": "new"})
+        assert env_path.read_bytes() == b"FIRST=1\nOPENAI_API_KEY=new\nLAST=3\n"
+
+
 class TestPromptApiKey:
 
     def test_existing_key_found_behind_bom(self, tmp_path, monkeypatch):

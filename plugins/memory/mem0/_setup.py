@@ -144,7 +144,9 @@ def _write_env(env_path: Path, env_writes: dict[str, str]) -> None:
     keys = [line.split("=", 1)[0].strip() if "=" in line and not line.startswith("#") else None for line in existing_lines]
     new_lines = [f"{k}={env_writes[k]}" if k in env_writes else line for k, line in zip(keys, existing_lines)]
     new_lines += [f"{k}={v}" for k, v in env_writes.items() if k not in keys]
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    # newline="\n": every .env writer keeps LF on disk (see hermes_cli.config._write_env_lines);
+    # text-mode default would rewrite the untouched lines as CRLF on Windows.
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def _activate_provider(config: dict) -> None:
