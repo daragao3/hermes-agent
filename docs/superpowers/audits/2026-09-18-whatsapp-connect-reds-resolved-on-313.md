@@ -80,3 +80,80 @@ this note records the runtime question that the 04:50Z ceremony pass raised.
   on 3.12 (conftest WMI stub) and load-flaky on ≥ 3.13.4 (real WMI, 258 timeout
   under load). Fix the test by warming `platform.uname()` or importing the lazy
   module before the mock; never widen the mock or re-enable the stub for 3.13.
+
+## Addendum 2026-09-18 (sweep): no other test file has this shape
+
+**Question.** Does any other file under `tests/` mock `subprocess.run` /
+`check_output` / `Popen` while the pytest process's first
+`platform.uname()` / `win32_ver()` fires — the shape that made this file a
+per-process coin flip on 3.13.15?
+
+**Method** (trunk 009454192e, venv CPython 3.13.15, host at 100% CPU with
+~70 foreign python processes, 17:44–19:44Z).
+
+1. Candidates: every test file that patches a real subprocess seam —
+   `patch("…subprocess.run")` / `patch.object(subprocess, "run")` /
+   `monkeypatch.setattr(subprocess, …)` / module-qualified forms
+   (`plugins.platforms.whatsapp.adapter.subprocess.run`) / the alias form
+   `import subprocess as _sp; setattr(_sp, "Popen", …)` — 208 files
+   (207 by the literal regex, plus `tests/devflow_delegation/test_agent_tools.py`
+   found by the alias grep). No `patch.multiple` / `sys.modules["subprocess"]`
+   forms exist. Positive control: the pre-fix 973255d3f5 copy of this file,
+   run as `tests/gateway/test_zz_probe_wa_prefix.py`.
+2. Import-time `platform.*` callers, by AST (module/class body, not inside a
+   def) over site-packages: `aiohttp.helpers` (57, 58),
+   `aiohttp.web_urldispatcher` (82), `rich._windows` (70), `truststore._api`
+   (19, 21), `grpclib.metadata` (18), `modal._output.rich` (57),
+   `modal._utils.grpc_utils` (49), `setuptools.msvc` (29),
+   `setuptools._distutils.compat.py39` (23), `sounddevice` (76–82),
+   `simple_term_menu` (39), `onnxruntime.capi._pybind_state` (14, 22),
+   `alibabacloud_credentials.provider.cli_profile` (10). The repo's own
+   product code has none. (Calls hidden behind a module-level helper call
+   escape this scan; the dynamic probe below is the authoritative filter.)
+3. Deterministic reproduction: every candidate file was run through
+   `scripts/run_tests.sh <files> -p _wmi_off_probe -p no:cacheprovider`, where
+   the untracked probe plugin sets `platform._wmi = None` at import (exactly
+   what the 3.12-only conftest stub produced for the OS query: `_wmi_query`
+   raises OSError, so the first `uname()` shells out through
+   `_syscmd_ver` → `subprocess.check_output(['ver'])`) and wraps
+   `platform._syscmd_ver` to log, per call, the current test id and which of
+   `subprocess.run/check_output/Popen` is test-patched at that moment (the
+   autouse live-system guard's `_guarded_*` wrappers excluded; the log is
+   written through `io.open`, because the tests patch `builtins.open`).
+
+**Result.** 208 files: 5105 tests passed, 50 failed, 326 skipped.
+
+| Outcome | Files |
+|---|---|
+| `_syscmd_ver` fired under a test-patched seam (the shape) | **only the positive control** (`run`+`Popen` MagicMocks → `TypeError … got 'MagicMock'`, the same 8 ids as the adjudicated list, reproduced 2 of 2) |
+| First `uname()` fired mid-test but with the live guard / originals in place (real `ver`, ok) | 12: `agent/test_anthropic_adapter`, `cron/test_cron_no_agent`, `cron/test_cron_script`, `cron/test_scheduler_overdue_diagnostics`, `cron/test_script_claim_heartbeat`, `gateway/test_whatsapp_connect` (the fixed file: its warm `import aiohttp` is the event), `gateway/test_whatsapp_stale_bridge`, `plugins/memory/test_hindsight_provider`, `test_bitwarden_secrets`, `tools/test_tirith_security`, `tools/test_voice_mode`, `tui_gateway/test_bot_relay_methods` |
+| Never reached `platform.uname()` in the file's process | the other 195 |
+
+The 42 non-control reds are not this shape: none of their failure blocks
+mention `platform`, `_syscmd_ver` or a MagicMock, and none logged a
+patched-seam event. They are host-load timeouts (`Timeout (>30.0s) from
+pytest-timeout` inside real-process spawns / `_wait_for_process` snapshot
+waits / a timeout firing inside pytest's own traceback rendering:
+`test_local_env_blocklist` ×19, `test_read_extract` ×5, `test_npm_engine` ×3,
+`test_terminal_degraded_mode` ×3, `test_resource_limits` ×2,
+`test_gui_command`, `test_windows_native_support`, `test_transcription_tools`,
+`test_env_probe`, `test_environment_and_runner`, `test_tts_command_providers`,
+`test_bot_relay_methods` (1 error); timing bounds under load —
+`test_worktree_sync_base` "fetch timed out after 5s",
+`test_script_claim_heartbeat` "script did not start", `test_cron_script`
+"spawner never wrote the grandchild pid", `test_run_tests_parallel_kill_tree`
+spawn-window race, `test_hindsight_provider` 0.25 s bound ×2) plus one
+pre-existing trunk red confirmed probe-independent (bare pytest, no plugin):
+`tests/computer_use/test_cua_wsl_manifest_path.py` ×2 —
+`_wsl_windows_path_to_posix` joins with `os.path` on a Windows host and
+returns `/mnt\c\Users\…`; the first of the two tests does not touch
+`subprocess` at all. Those load reds were not re-run without the probe;
+their attribution is by traceback and by the absence of a patched-seam event.
+
+**Conclusion.** f8d58a66a1 closed the only instance. No test change was
+needed from this sweep. For the next occurrence: a Windows red whose
+traceback ends in `platform._syscmd_ver` / `check_output(['ver'])` under a
+mock is fixed in the test (warm `platform.uname()` or import the lazy module
+before the subprocess patch); the probe above turns the 3.13 coin flip into a
+deterministic red for bisecting. Loops record:
+`platform-under-mocked-subprocess-sweep-20260918`.
