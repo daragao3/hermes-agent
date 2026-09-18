@@ -16,6 +16,14 @@ deterministic head-only red that no import-time or setup-time gate could see,
 fixed test-only as 006faacb8b during the de1f83cddf acceptance ceremony.  The
 historical positive control below replays exactly that pair: the pre-fix test
 file against the current ``tools/voice_mode.py``.
+
+The second class is a plain READ of a dropped name: 3a392cdb87 moved
+``WMI_STRAY_THREAD_FIXED`` into function scope in hermes_cli/_subprocess_compat.py
+and tests/hermes_cli/test_host_platform_helpers.py kept reading
+``compat.WMI_STRAY_THREAD_FIXED`` (head-only red in ceremony 973255d3f5, fixed
+5432bf59ce).  Reads are seams since 2026-09-18; the exclusion model that keeps
+them at zero false positives (attributes the test tree creates, guarded
+reads) is pinned below, each rule against a demo that would otherwise report.
 """
 
 from __future__ import annotations
@@ -35,8 +43,10 @@ SCRIPT = REPO_ROOT / "scripts" / "check_patch_seams.py"
 
 # Same ordering rule as the footgun wrapper: the subprocess bound must fire
 # before pyproject's thread watchdog, so a slow scan names itself.
-_SCAN_TIMEOUT_S = scaled(240)
-_TEST_TIMEOUT_S = scaled(300)
+# ~55 s with reads on this box under load (37 s patch-only); 190 s was seen
+# once at 100% host CPU, so the net sits well above that.
+_SCAN_TIMEOUT_S = scaled(420)
+_TEST_TIMEOUT_S = scaled(480)
 
 
 def _load():
@@ -189,8 +199,10 @@ def _demo_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _scan(repo: Path, *files: str):
-    findings, stats = cps.scan(repo, list(files))
+def _scan(repo: Path, *files: str, reads: bool = False):
+    """Patch seams only by default: the stats the older tests pin count those;
+    the read tests pass ``reads=True`` explicitly."""
+    findings, stats = cps.scan(repo, list(files), reads=reads)
     return [(f.path, f.line, f.form, f.target) for f in findings], stats
 
 
@@ -487,21 +499,21 @@ def test_cli_exit_codes_and_report_lines(tmp_path):
             monkeypatch.setattr(vm, "host_system", None)
         """)
     red = subprocess.run(
-        [sys.executable, str(SCRIPT), "--repo", str(repo), "tests/test_cli.py"],
+        [sys.executable, str(SCRIPT), "--repo", str(repo), "tests/test_cli.py", "--no-reads"],
         capture_output=True, text=True, timeout=scaled(30), stdin=subprocess.DEVNULL,
     )
     assert red.returncode == 1, red.stderr
     assert red.stdout.splitlines() == [
         "tests/test_cli.py:5: setattr(vm.platform) -- pkg.vm binds no `platform` at top level (pkg/vm.py)",
     ]
-    assert "1 stale patch seam(s)" in red.stderr
+    assert "1 stale seam(s)" in red.stderr
 
     (repo / "tests" / "test_cli.py").write_text(
         "import pkg.vm as vm\n\n\ndef test_it(monkeypatch):\n    monkeypatch.setattr(vm, 'host_system', None)\n",
         encoding="utf-8",
     )
     green = subprocess.run(
-        [sys.executable, str(SCRIPT), "--repo", str(repo), "tests/test_cli.py", "--verbose"],
+        [sys.executable, str(SCRIPT), "--repo", str(repo), "tests/test_cli.py", "--verbose", "--no-reads"],
         capture_output=True, text=True, timeout=scaled(30), stdin=subprocess.DEVNULL,
     )
     assert green.returncode == 0, green.stdout + green.stderr
@@ -513,6 +525,131 @@ def test_cli_exit_codes_and_report_lines(tmp_path):
         capture_output=True, text=True, timeout=scaled(30), stdin=subprocess.DEVNULL,
     )
     assert outside.returncode == 2
+
+
+# ── Reads ───────────────────────────────────────────────────────────────────
+
+
+def test_stale_read_reported_in_every_read_shape(tmp_path):
+    """A plain ``alias.NAME`` load -- bare, called, in a comparison, as a
+    decorator argument, deep in an expression -- is a seam; a chain that
+    crosses a module boundary reports the first missing component once."""
+    repo = _demo_repo(tmp_path)
+    _write(repo, "tests/test_reads.py", """
+        import pkg
+        import pkg.vm as vm
+        from pkg import vm as vm2
+
+
+        def test_it():
+            assert vm.platform
+            vm.platform.system()
+            if vm2.platform == "x":
+                pass
+            x = [vm.host_system(), vm.CONFIG, pkg.vm.gone, pkg.vm.Player, vm.shutil.which]
+            assert vm.Player.play
+            assert vm.Player.missing_method   # beyond the seam: object attr, not judged
+        """)
+    findings, stats = _scan(repo, "tests/test_reads.py", reads=True)
+    assert findings == [
+        ("tests/test_reads.py", 7, "read", "vm.platform"),
+        ("tests/test_reads.py", 8, "read", "vm.platform"),
+        ("tests/test_reads.py", 9, "read", "vm2.platform"),
+        ("tests/test_reads.py", 11, "read", "pkg.vm.gone"),
+    ]
+    assert stats.verified == 3  # host_system, CONFIG, Player; the three deeper chains are object attrs
+    assert stats.object_attr == 3
+
+
+def test_reads_of_attributes_the_test_tree_creates_are_not_judged(tmp_path):
+    """The three creation shapes, in the file itself and in a conftest whose
+    fixture reaches other files -- tests/tools/conftest.py's
+    ``_find_cli_unpatched`` is the real case."""
+    repo = _demo_repo(tmp_path)
+    _write(repo, "tests/conftest.py", """
+        import pytest
+        import pkg.vm as vm
+
+
+        @pytest.fixture(autouse=True)
+        def _pin_cli(monkeypatch):
+            monkeypatch.setattr(vm, "_find_cli_unpatched", vm.play_audio_file, raising=False)
+            vm.from_store = 1
+            setattr(vm, "from_setattr", 2)
+        """)
+    _write(repo, "tests/sub/test_uses_conftest.py", """
+        import pkg.vm as vm
+        from unittest.mock import patch
+
+
+        def test_it(monkeypatch):
+            assert vm._find_cli_unpatched() and vm.from_store and vm.from_setattr
+            monkeypatch.setattr(vm, "own_lenient", 1, raising=False)
+            with patch.object(vm, "own_create", create=True):
+                assert vm.own_lenient and vm.own_create
+            vm.own_store = 3
+            assert vm.own_store
+            monkeypatch.setattr(vm, "_find_cli_unpatched", None)  # a patch of a created attr: fine too
+            assert vm.never_created
+        """)
+    findings, stats = _scan(repo, "tests/sub/test_uses_conftest.py", reads=True)
+    assert findings == [("tests/sub/test_uses_conftest.py", 13, "read", "vm.never_created")]
+    assert stats.created == 7
+    assert cps.conftest_created(repo) == {("pkg.vm", "_find_cli_unpatched"), ("pkg.vm", "from_store"), ("pkg.vm", "from_setattr")}
+
+
+def test_guarded_reads_are_not_judged(tmp_path):
+    repo = _demo_repo(tmp_path)
+    _write(repo, "tests/test_guards.py", """
+        import contextlib
+        import pytest
+        import pkg.vm as vm
+
+
+        def test_it():
+            if hasattr(vm, "maybe"):
+                assert vm.maybe and vm.maybe.deeper
+            assert getattr(vm, "maybe_default", None) is None or vm.maybe_default
+            try:
+                vm.in_try
+            except AttributeError:
+                pass
+            try:
+                vm.in_wide_try
+            except (KeyError, Exception):
+                pass
+            try:
+                vm.in_bare_try
+            except:  # noqa: E722
+                pass
+            with pytest.raises(AttributeError):
+                vm.in_raises
+            with contextlib.suppress(AttributeError):
+                vm.in_suppress
+            try:
+                vm.not_guarded_by_this_except
+            except KeyError:
+                vm.in_handler_not_guarded
+            else:
+                vm.in_else_not_guarded
+        """)
+    findings, stats = _scan(repo, "tests/test_guards.py", reads=True)
+    assert [f[3] for f in findings] == ["vm.not_guarded_by_this_except", "vm.in_handler_not_guarded", "vm.in_else_not_guarded"]
+    assert stats.guarded == 8
+
+
+def test_reads_stay_out_of_the_patch_only_scan(tmp_path):
+    repo = _demo_repo(tmp_path)
+    _write(repo, "tests/test_patch_only.py", """
+        import pkg.vm as vm
+
+
+        def test_it():
+            assert vm.platform
+        """)
+    assert _scan(repo, "tests/test_patch_only.py") == ([], cps.Stats(files=1))
+    findings, _ = _scan(repo, "tests/test_patch_only.py", reads=True)
+    assert findings == [("tests/test_patch_only.py", 5, "read", "vm.platform")]
 
 
 # ── Historical positive control ─────────────────────────────────────────────
@@ -548,4 +685,31 @@ def test_the_voice_mode_incident_is_caught_before_and_clean_after():
     stats = cps.Stats()
     fixed = cps.check_file(repo, _INCIDENT_TEST, after.encode("utf-8"), stats)
     assert fixed == []
+    assert stats.verified >= 1
+
+
+_READ_FIX = "5432bf59ce"
+_READ_TEST = "tests/hermes_cli/test_host_platform_helpers.py"
+
+
+def test_the_wmi_constant_read_is_caught_before_and_clean_after():
+    """The reads class, replayed against the CURRENT hermes_cli/_subprocess_compat.py:
+    the file before 5432bf59ce read ``compat.WMI_STRAY_THREAD_FIXED`` after
+    3a392cdb87 had moved that import into function scope; the file after
+    imports it from sqlite_runtime.  With the tree's conftest creations in
+    force, as a real scan would have them."""
+    before = _git_show(f"{_READ_FIX}~1:{_READ_TEST}")
+    after = _git_show(f"{_READ_FIX}:{_READ_TEST}")
+    if before is None or after is None:
+        pytest.skip(f"{_READ_FIX} is not in this clone's history")
+    repo = cps.Repo(REPO_ROOT)
+    created = cps.conftest_created(REPO_ROOT)
+
+    stats = cps.Stats()
+    stale = cps.check_file(repo, _READ_TEST, before.encode("utf-8"), stats, created=created)
+    assert [(f.form, f.target) for f in stale] == [("read", "compat.WMI_STRAY_THREAD_FIXED")]
+    assert "hermes_cli._subprocess_compat binds no `WMI_STRAY_THREAD_FIXED`" in stale[0].reason
+
+    stats = cps.Stats()
+    assert cps.check_file(repo, _READ_TEST, after.encode("utf-8"), stats, created=created) == []
     assert stats.verified >= 1
