@@ -166,7 +166,9 @@ def scan_plugin(plugin_dir: Optional[Path], manifest: Optional[Dict[str, Dict[st
             src = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        hits += scan_source(src, str(p.relative_to(plugin_dir)), manifest)
+        # POSIX form on every host: ``Hit.file`` is display and report text (``file:line`` rows, the JSON
+        # the Desktop boot modal reads), not a path to open, so it must not change spelling by platform.
+        hits += scan_source(src, p.relative_to(plugin_dir).as_posix(), manifest)
     return hits
 
 
