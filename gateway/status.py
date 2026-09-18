@@ -332,6 +332,21 @@ def _read_process_cmdline(pid: int) -> Optional[str]:
     return None
 
 
+# Launchers that take the real program as a later token (``nohup hermes-gateway``).
+_LAUNCH_WRAPPERS = frozenset({"sudo", "env", "nohup", "setsid", "exec", "nice"})
+_ENV_ASSIGNMENT = re.compile(r"^[a-z_][a-z0-9_]*=")  # tokens are lower-cased by the caller
+
+
+def _program_basename(tokens: list[str], basenames: list[str]) -> str:
+    """Basename of the program token: the first token that is not a launch wrapper, a wrapper
+    flag (``-u``) or an ``env`` assignment (``KEY=value``)."""
+    for token, basename in zip(tokens, basenames):
+        if basename in _LAUNCH_WRAPPERS or token.startswith("-") or _ENV_ASSIGNMENT.match(token):
+            continue
+        return basename
+    return ""
+
+
 def _gateway_command_subcommand(command: str | None) -> str | None:
     """Hermes gateway lifecycle subcommand from a command line, or None. No loose substring matches
     (``"gateway" in cmdline`` also matched ``gateway status`` / ``python -m tui_gateway``): needs a
@@ -352,7 +367,11 @@ def _gateway_command_subcommand(command: str | None) -> str | None:
     # Gateway-dedicated entrypoints carry no subcommand to inspect.
     if any(t == "gateway/run.py" or t.endswith("/gateway/run.py") for t in tokens):
         return "run"
-    if any(b in ("hermes-gateway", "hermes-gateway.exe") for b in basenames):
+    # The dedicated launcher is the PROGRAM: argv[0], or the first token behind a launch
+    # wrapper. The same basename later in argv is an argument, not a launch -- ``systemctl
+    # --user status hermes-gateway`` names the systemd unit, and matching it here made the
+    # tests' live-system guard block every read-only unit probe.
+    if _program_basename(tokens, basenames) in ("hermes-gateway", "hermes-gateway.exe"):
         return "run"
     joined = " ".join(tokens)
     if "hermes_cli.main" not in joined and "hermes_cli/main.py" not in joined and not any(

@@ -95,12 +95,16 @@ class TestRegistration:
 
     def test_same_name_is_isolated_by_profile(self, tmp_path):
         from hermes_constants import (
+            hermes_home_key,
             reset_hermes_home_override,
             set_hermes_home_override,
         )
 
-        home_a = str((tmp_path / "secrets-a").resolve())
-        home_b = str((tmp_path / "secrets-b").resolve())
+        # Scope keys are hermes_home_key() values (what PluginManager passes),
+        # not raw resolved paths: get_source() looks up hermes_home_key(), which
+        # is os.path.normcase'd -- a raw mixed-case Windows path never matches it.
+        home_a = hermes_home_key(tmp_path / "secrets-a")
+        home_b = hermes_home_key(tmp_path / "secrets-b")
         source_a = _make_source(name="profile_secret", secrets={"A": "a"})
         source_b = _make_source(name="profile_secret", secrets={"B": "b"})
         assert reg.register_source(source_a, scope=home_a)

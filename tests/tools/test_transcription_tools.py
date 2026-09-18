@@ -1192,15 +1192,24 @@ class TestRunCommandSttIdleTimeout:
     def test_stderr_progress_extends_beyond_timeout(self, tmp_path):
         """A slow-but-alive command that keeps emitting output survives an
         idle timeout shorter than its total runtime."""
+        from tests.timeout_budget import scaled
         from tools.transcription_command import _run_command_stt
 
+        # The idle window is also the START window: nothing resets the deadline
+        # until the child's first tick, and on a loaded Windows host the shell +
+        # venv launcher + interpreter start-up alone ran past a 1.0 s window
+        # (red at both pins of the 2026-09-17 ceremonies). Keep the invariant
+        # (gap < window < total runtime) but derive it from a >= 2 s, load-scaled
+        # window instead of hardcoding 1.0 / 0.4.
+        idle_window = scaled(2.0)
+        gap = idle_window * 0.4  # 4 ticks -> total 1.6x the window
         script = tmp_path / "progress_then_exit.py"
         script.write_text(
             "\n".join([
                 "import sys, time",
                 "for idx in range(4):",
                 "    print(f'tick {idx}', file=sys.stderr, flush=True)",
-                "    time.sleep(0.4)",
+                f"    time.sleep({gap!r})",
                 "print('done', flush=True)",
             ]),
             encoding="utf-8",
@@ -1208,7 +1217,7 @@ class TestRunCommandSttIdleTimeout:
 
         result = _run_command_stt(
             self._shell_command(sys.executable, "-u", str(script)),
-            timeout=1.0,
+            timeout=idle_window,
         )
 
         assert result.returncode == 0

@@ -88,6 +88,12 @@ def _mock_aiohttp(status=200, json_data=None, json_side_effect=None):
 
 def _connect_patches(mock_proc, mock_fh, mock_client_cls=None):
     """Common patches needed to reach the health-check loop, as one CM."""
+    # Resolve the aiohttp patch target BEFORE subprocess.run / builtins.open
+    # are patched: patch("aiohttp.ClientSession") imports aiohttp lazily on
+    # first use, and aiohttp.helpers evaluates platform.system() at import,
+    # which on Windows shells out through subprocess (the `ver` probe) -- the
+    # MagicMock returncode then dies inside platform._syscmd_ver.
+    import aiohttp  # noqa: F401
     base = [
         patch("plugins.platforms.whatsapp.adapter.check_whatsapp_requirements", return_value=True),
         patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"),
@@ -735,9 +741,14 @@ class _AllPatches:
         self._patchers = patchers
 
     def __enter__(self):
-        self._stack = contextlib.ExitStack()
-        for patcher in self._patchers:
-            self._stack.enter_context(patcher)
+        # If one patcher fails to enter, the ones already entered must be
+        # unwound here -- __exit__ never runs for a CM whose __enter__ raised,
+        # so a bare loop would leak e.g. the Path.exists patch into every later
+        # test in the file (seen as InvalidSpecError "already been mocked out").
+        with contextlib.ExitStack() as stack:
+            for patcher in self._patchers:
+                stack.enter_context(patcher)
+            self._stack = stack.pop_all()
         return self
 
     def __exit__(self, *exc_info):

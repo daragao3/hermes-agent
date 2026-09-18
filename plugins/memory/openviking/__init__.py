@@ -817,7 +817,11 @@ def _write_env_vars(env_path: Path, env_writes: dict, remove_keys: tuple[str, ..
         new_lines.append(f"{key_match}={_env_line_safe(env_writes[key_match])}" if key_match in env_writes else line)
     new_lines += [f"{key}={_env_line_safe(val)}" for key, val in env_writes.items() if key not in updated_keys]
     _secure_secret_file(env_path, create=True)
-    env_path.write_text("\n".join(new_lines) + ("\n" if new_lines else ""), encoding="utf-8", errors="surrogateescape")
+    # newline="\n": the round-trip contract above covers line endings too -- text-mode
+    # write_text would rewrite every LF as CRLF on Windows, touching lines this call
+    # never updated.
+    env_path.write_text("\n".join(new_lines) + ("\n" if new_lines else ""), encoding="utf-8",
+                        errors="surrogateescape", newline="\n")
     _secure_secret_file(env_path)
 
 

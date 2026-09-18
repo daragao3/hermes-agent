@@ -224,8 +224,14 @@ fi
 # this box); without them it answers '' and every stdlib-sourced identity field
 # (/api/system/stats "arch", the Windows SSH runtime probe) comes back empty ONLY
 # under this runner. A real shell always carries them.
+#
+# PROGRAMFILES: the Docker CLI discovers its plugins under %ProgramFiles%\Docker\cli-plugins
+# (buildx lives there on Docker Desktop). Without it `docker build` silently falls back to
+# the legacy builder and every `COPY --chmod` in the Dockerfile fails with "requires
+# BuildKit" -- tests/docker's built_image fixture errored at both pins of the 2026-09-17
+# ceremonies for exactly this reason, while the same build passed from a real shell.
 for _var in SYSTEMDRIVE PROGRAMDATA ALLUSERSPROFILE WINDIR COMSPEC PATHEXT \
-            PROCESSOR_ARCHITECTURE PROCESSOR_ARCHITEW6432; do
+            PROCESSOR_ARCHITECTURE PROCESSOR_ARCHITEW6432 PROGRAMFILES; do
   eval "_val=\${$_var:-}"
   if [ -n "$_val" ]; then
     CLEAN_ENV+=("$_var=$_val")

@@ -124,16 +124,22 @@ def test_check_paused_logs_once_per_engagement(hermes_home, caplog):
 # ── cron scheduler integration ──────────────────────────────────────────────
 
 
+def _stub_due_job_scan(monkeypatch, scheduler, calls):
+    # tick() scans through get_due_and_skipped_jobs() (the CRON_SKIPPED emitter,
+    # 2169b5ed9e), not the bare get_due_jobs() upstream's test stubbed -- a stub
+    # on the wrong seam made the "resumes" assertion unreachable on every host.
+    def _fake_get_due_and_skipped_jobs():
+        calls.append(1)
+        return [], []
+
+    monkeypatch.setattr(scheduler, "get_due_and_skipped_jobs", _fake_get_due_and_skipped_jobs)
+
+
 def test_cron_tick_skips_dispatch_when_engaged(hermes_home, monkeypatch):
     from cron import scheduler
 
     calls = []
-
-    def _fake_get_due_jobs():
-        calls.append(1)
-        return []
-
-    monkeypatch.setattr(scheduler, "get_due_jobs", _fake_get_due_jobs)
+    _stub_due_job_scan(monkeypatch, scheduler, calls)
 
     estop.engage(reason="test")
     assert scheduler.tick(verbose=False) == 0
@@ -144,12 +150,7 @@ def test_cron_tick_resumes_after_disengage(hermes_home, monkeypatch):
     from cron import scheduler
 
     calls = []
-
-    def _fake_get_due_jobs():
-        calls.append(1)
-        return []
-
-    monkeypatch.setattr(scheduler, "get_due_jobs", _fake_get_due_jobs)
+    _stub_due_job_scan(monkeypatch, scheduler, calls)
 
     estop.engage()
     scheduler.tick(verbose=False)

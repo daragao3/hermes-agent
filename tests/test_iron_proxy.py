@@ -341,12 +341,16 @@ def test_subprocess_env_strips_unrelated_secrets(hermes_home, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_ca_key_created_with_0o600(hermes_home, monkeypatch):
-    """The CA private key must NEVER exist on disk with default umask
-    permissions, even transiently.  Fix: open with explicit mode=0o600
-    so the very first byte is written under tight perms."""
+# The mode assertions below are POSIX-only: Windows chmod can only toggle the read-only bit, so
+# ``st_mode & 0o777`` reads 0o666 (files) / 0o777 (dirs) there regardless. The Windows-reachable
+# halves of each contract (the file/dir exists, the token is stable, ensure_audit_log neither
+# crashes nor raises) stay unconditional.
+_posix_mode_bits = pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits")
 
-    # ensure_ca_cert shells out to openssl; mock the subprocess.run calls
+
+def _ensure_ca_with_fake_openssl(monkeypatch):
+    """ensure_ca_cert() with openssl stubbed: no openssl on the host, no output-format dependence."""
+
     # so we don't need openssl on the test host AND don't depend on its
     # output format.
     def fake_run(args, **kwargs):
@@ -364,9 +368,20 @@ def test_ca_key_created_with_0o600(hermes_home, monkeypatch):
 
     monkeypatch.setattr(ip.shutil, "which", lambda name: "/usr/bin/openssl" if name == "openssl" else None)
     monkeypatch.setattr(ip.subprocess, "run", fake_run)
+    return ip.ensure_ca_cert()
 
-    ca_crt, ca_key = ip.ensure_ca_cert()
+
+def test_ca_key_created(hermes_home, monkeypatch):
+    _ca_crt, ca_key = _ensure_ca_with_fake_openssl(monkeypatch)
     assert ca_key.exists()
+
+
+@_posix_mode_bits
+def test_ca_key_created_with_0o600(hermes_home, monkeypatch):
+    """The CA private key must NEVER exist on disk with default umask
+    permissions, even transiently.  Fix: open with explicit mode=0o600
+    so the very first byte is written under tight perms."""
+    _ca_crt, ca_key = _ensure_ca_with_fake_openssl(monkeypatch)
     mode = ca_key.stat().st_mode & 0o777
     assert mode == 0o600, f"CA key has perms {oct(mode)}, expected 0o600"
 
@@ -374,12 +389,6 @@ def test_ca_key_created_with_0o600(hermes_home, monkeypatch):
 # ---------------------------------------------------------------------------
 # Audit log permissions (regression: depended on umask)
 # ---------------------------------------------------------------------------
-
-
-# The two mode assertions are POSIX-only: Windows chmod can only toggle the read-only bit, so
-# ``st_mode & 0o777`` reads 0o666 there regardless. The Windows-reachable contract -- that
-# ensure_audit_log neither crashes nor raises -- is pinned by the missing-fchmod test below.
-_posix_mode_bits = pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits")
 
 
 @_posix_mode_bits
@@ -442,6 +451,11 @@ def test_open_private_append_strict_still_fails_loud_on_a_real_chmod_error(herme
 # ---------------------------------------------------------------------------
 
 
+def test_proxy_state_dir_is_created(hermes_home):
+    assert ip._proxy_state_dir().is_dir()
+
+
+@_posix_mode_bits
 def test_proxy_state_dir_is_0o700(hermes_home):
     state = ip._proxy_state_dir()
     mode = state.stat().st_mode & 0o777
@@ -536,6 +550,12 @@ def test_ensure_management_token_persists_and_is_stable(hermes_home):
     assert t1.startswith("hermes-mgmt-")
     p = ip._proxy_state_dir() / "management.token"
     assert p.exists()
+
+
+@_posix_mode_bits
+def test_management_token_file_is_0o600(hermes_home):
+    ip.ensure_management_token()
+    p = ip._proxy_state_dir() / "management.token"
     assert (p.stat().st_mode & 0o777) == 0o600
 
 

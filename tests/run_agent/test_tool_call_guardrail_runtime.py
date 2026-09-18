@@ -2,7 +2,6 @@
 
 import json
 import uuid
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -324,10 +323,15 @@ def test_relay_rewrite_precedes_sequential_policy_approval_checkpoint_and_dispat
     assert observed["approval"] == expected
     assert observed["start"] == expected
     assert observed["dispatch"] == expected
-    # The checkpoint sees the approved path after _resolve_path_for_task, i.e.
-    # a pathlib path str()-ed in the platform spelling (backslashes on win32).
+    # The checkpoint sees the approved path exactly as the file tool will resolve it
+    # (_ensure_file_checkpoint -> _resolve_path_for_task): on POSIX that is the literal
+    # "/approved/path"; on win32 it is ntpath-normalized, and since 3.13 ntpath.isabs()
+    # no longer treats a drive-less "/x" as absolute, so it is anchored onto the task's
+    # base dir too -- spell the expectation through the same resolver, not by hand.
+    from tools.file_tools_paths import _resolve_path_for_task
+
     assert observed["checkpoint"] == [
-        (str(Path(final_args["path"])), "before write_file")
+        (str(_resolve_path_for_task(final_args["path"], "task-1")), "before write_file")
     ]
 
 
