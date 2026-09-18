@@ -144,7 +144,9 @@ class TestStaleBridgeHandshake:
              patch("aiohttp.ClientSession", mock_client), \
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock), \
              patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"), \
+             patch("plugins.platforms.whatsapp.adapter._port_is_free", return_value=False), \
              patch("plugins.platforms.whatsapp.adapter._kill_port_process"), \
+             patch("plugins.platforms.whatsapp.adapter._wait_for_port_release", new_callable=AsyncMock, return_value=True), \
              patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
              patch.object(adapter, "_acquire_platform_lock", return_value=True, create=True):
             await adapter.connect()
@@ -169,7 +171,9 @@ class TestDepRefreshStamp:
              patch("aiohttp.ClientSession", _mock_health({"status": "disconnected"})), \
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock), \
              patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"), \
+             patch("plugins.platforms.whatsapp.adapter._port_is_free", return_value=False), \
              patch("plugins.platforms.whatsapp.adapter._kill_port_process"), \
+             patch("plugins.platforms.whatsapp.adapter._wait_for_port_release", new_callable=AsyncMock, return_value=True), \
              patch("hermes_cli._subprocess_compat.run_text_capture") as mock_run, \
              patch("subprocess.Popen", return_value=mock_proc), \
              patch.object(adapter, "_acquire_platform_lock", return_value=True, create=True):
@@ -195,7 +199,9 @@ class TestDepRefreshStamp:
              patch("aiohttp.ClientSession", _mock_health({"status": "disconnected"})), \
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock), \
              patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"), \
+             patch("plugins.platforms.whatsapp.adapter._port_is_free", return_value=False), \
              patch("plugins.platforms.whatsapp.adapter._kill_port_process"), \
+             patch("plugins.platforms.whatsapp.adapter._wait_for_port_release", new_callable=AsyncMock, return_value=True), \
              patch("hermes_cli._subprocess_compat.run_text_capture",
                    return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run, \
              patch("subprocess.Popen", return_value=mock_proc), \
@@ -229,7 +235,9 @@ class TestDepRefreshStamp:
              patch("aiohttp.ClientSession", _mock_health({"status": "disconnected"})), \
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock), \
              patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"), \
+             patch("plugins.platforms.whatsapp.adapter._port_is_free", return_value=False), \
              patch("plugins.platforms.whatsapp.adapter._kill_port_process"), \
+             patch("plugins.platforms.whatsapp.adapter._wait_for_port_release", new_callable=AsyncMock, return_value=True), \
              patch("hermes_cli._subprocess_compat.run_text_capture",
                    side_effect=_npm_install) as mock_run, \
              patch("subprocess.Popen", return_value=mock_proc), \
@@ -257,7 +265,9 @@ class TestCacheDirEnvPassthrough:
              patch("aiohttp.ClientSession", _mock_health({"status": "disconnected"})), \
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock), \
              patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"), \
+             patch("plugins.platforms.whatsapp.adapter._port_is_free", return_value=False), \
              patch("plugins.platforms.whatsapp.adapter._kill_port_process"), \
+             patch("plugins.platforms.whatsapp.adapter._wait_for_port_release", new_callable=AsyncMock, return_value=True), \
              patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
              patch.object(adapter, "_acquire_platform_lock", return_value=True, create=True):
             await adapter.connect()

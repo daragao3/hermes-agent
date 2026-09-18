@@ -1815,6 +1815,11 @@ class BasePlatformAdapter(ABC):
     supports_async_delivery: bool = True
     # ``send()`` chunks natively via ``truncate_message()`` -> the router skips its truncation.
     splits_long_messages: bool = False
+    # Connect budget (seconds) the runner applies to ``connect()`` instead of its per-platform default;
+    # ``None`` keeps the default. An adapter whose connect has bounded phases of its own (WhatsApp: pre-spawn
+    # probes + a 30 s bridge readiness poll) declares their sum here. ``HERMES_GATEWAY_PLATFORM_CONNECT_TIMEOUT``
+    # still wins over it.
+    connect_timeout_secs: Optional[float] = None
     # Prefix users can always TYPE for Hermes commands ("!" where the client eats a leading "/").
     typed_command_prefix: str = "/"
     # ``in_channel`` continuable-cron surface: job delivered FLAT, plain replies continue it via

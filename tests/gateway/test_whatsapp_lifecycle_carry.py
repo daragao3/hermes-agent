@@ -70,6 +70,7 @@ async def test_connect_waits_for_port_then_rotates_before_mocked_spawn(tmp_path,
     for name in ["_preflight", "_ensure_bridge_deps", "_acquire_platform_lock"]:
         monkeypatch.setattr(adapter, name, Mock(return_value=True))
     monkeypatch.setattr(adapter, "_reuse_running_bridge", AsyncMock(return_value=False))
+    monkeypatch.setattr(wa, "_port_is_free", lambda port: False)  # bound: the wait-then-rotate order is the subject
     monkeypatch.setattr(wa, "_kill_stale_bridge_by_pidfile", Mock())
     monkeypatch.setattr(wa, "_kill_port_process", Mock())
     async def wait(port):

@@ -97,6 +97,9 @@ def _connect_patches(mock_proc, mock_fh, mock_client_cls=None):
     base = [
         patch("plugins.platforms.whatsapp.adapter.check_whatsapp_requirements", return_value=True),
         patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"),
+        # These tests model a bridge already LISTENING (the mocked /health answers); a free port
+        # would skip the adopt/kill/release probes entirely (see _port_is_free).
+        patch("plugins.platforms.whatsapp.adapter._port_is_free", return_value=False),
         patch("plugins.platforms.whatsapp.adapter._kill_port_process"),
         patch("plugins.platforms.whatsapp.adapter._wait_for_port_release", new_callable=AsyncMock, return_value=True),
         patch("plugins.platforms.whatsapp.adapter._rotate_bridge_log_if_large"),
