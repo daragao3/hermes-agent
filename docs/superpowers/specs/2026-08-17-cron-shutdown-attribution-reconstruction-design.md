@@ -10,11 +10,19 @@
 `CRON_STALE` with `scope="gateway_stopped"`, `Priority.NORMAL`. It learns which
 runs were in flight from the `GATEWAY_STOPPED` payload's
 `inflight_cron_correlation_ids` — a list of `cron_started` event ids stamped by
-`gateway/run.py`'s `_stop_impl_body` via `cron/inflight.py`.
+`gateway/run.py`'s `_stop_impl_body` via `cron/inflight.py` (since
+0e3d11241b: `gateway/run_shutdown.py`'s `_stop_begin_teardown`, the first
+phase of `_stop_impl`).
 
-That snapshot is taken EARLY in teardown and must stay there: a teardown
-force-killed past `gateway/status.py`'s `_TASKKILL_TIMEOUT_S` (30) would
-otherwise emit no `GATEWAY_STOPPED` at all. Because it is early, a listed run
+That snapshot is taken EARLY in teardown and must stay there: a teardown cut
+short — the shutdown watchdog's `os._exit(1)`, or the stopper's tree kill past
+`hermes_cli/gateway_windows._windows_stop_drain_timeout()` — would
+otherwise emit no `GATEWAY_STOPPED` at all. (Updated 2026-09-18: this spec
+originally cited `gateway/status.py`'s `_TASKKILL_TIMEOUT_S` (30) here. That
+constant was the `taskkill` subprocess timeout, not a grace period, and it was
+removed in 51ef1feed3 — the Windows force-kill is now a creation-time-guarded
+TerminateProcess walk, `hermes_cli._subprocess_compat.windows_kill_process_tree`,
+which completes in well under a second.) Because it is early, a listed run
 can still FINISH during teardown, so "in flight when the stop began" is a
 weaker claim than "killed by the stop". `2dc4bdf27c` fixed the resulting false
 reports by STAGING the report in `_resolve_gateway_stopped` and flushing it in
@@ -22,7 +30,8 @@ reports by STAGING the report in `_resolve_gateway_stopped` and flushing it in
 staging time rather than at the flush.
 
 **The flush only happens on a graceful teardown.** If the process is
-force-killed — `taskkill /F` past `_TASKKILL_TIMEOUT_S`, or the shutdown
+force-killed — tree-killed by the stopper past `_windows_stop_drain_timeout()`
+(leash + 10s; the kill itself is instantaneous), or the shutdown
 watchdog's `exit_code=1` (leash = `agent.restart_drain_timeout` + 60s) —
 neither `_drain_subscribers_for_shutdown()` nor `SubscriberRegistry.
 shutdown_all()` runs, and the staged reports die with the process. Nothing is

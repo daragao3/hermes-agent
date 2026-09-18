@@ -62,9 +62,20 @@ LAG_ALERT_COOLDOWN_SECONDS = 900  # 15 minutes
 POLL_LOOP_ERROR_COOLDOWN_SECONDS = 900
 # Budget for the BEST-EFFORT tail of shutdown()'s drain.  GATEWAY_STOPPED
 # consumers are drained first and never skipped; everything else yields to this
-# deadline.  Bounded because teardown creeping toward gateway/status.py's
-# _TASKKILL_TIMEOUT_S is what leaves the gateway DOWN on this box: a stop that
-# outruns the cap gets force-killed mid-teardown.
+# deadline.  Bounded because a teardown that outruns its stopper's patience is
+# cut down mid-teardown, and that is what leaves the gateway DOWN on this box.
+# The clocks that bound it (re-checked 2026-09-18): the shutdown watchdog leash
+# (agent.restart_drain_timeout + 60s, then os._exit(1)) covers _stop_impl only;
+# this drain runs in gateway/run.py's post-wait_for_shutdown tail, after the
+# cron-thread (<= 65s) and housekeeping (<= 35s) waits, where the only killer is
+# the external `hermes gateway stop` / --replace grace —
+# hermes_cli/gateway_windows._windows_stop_drain_timeout(), leash + 10s (70s by
+# default, ceiling 300s).  Past that grace the stopper's terminate_pid(force=True)
+# is a TerminateProcess walk (hermes_cli._subprocess_compat.windows_kill_process_
+# tree) that completes in well under a second and grants nothing; the 30s figure
+# older comments cite (_TASKKILL_TIMEOUT_S, removed 51ef1feed3) was the taskkill
+# subprocess timeout, never a grace period.  10s keeps this tail a small slice
+# of the 70s the stopper grants.
 SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 10.0
 # Heartbeat write interval — external watchers stat gateway_heartbeat_path()
 # and alert on staleness > a few minutes, so this cadence must be tight
@@ -417,9 +428,14 @@ def _drain_subscribers_for_shutdown(
     died. The premise was falsified on 2026-08-17: PID 10168 was force-killed
     INSIDE ``_drain_active_agents`` — it logged ``notify_active_sessions done
     at +1.76s`` and never ``drain done`` — so this function never ran, and two
-    genuinely-killed crons went unreported. The general form is that the
-    gateway's drain budget and ``gateway/status.py``'s ``_TASKKILL_TIMEOUT_S``
-    are both ~30s, so any hook at or after the drain is reachable only when the
+    genuinely-killed crons went unreported. The general form outlives both the
+    2026-08-17 re-ordering of the stop budgets and the 2026-09-18 removal of
+    the 30s ``taskkill`` timeout (``_TASKKILL_TIMEOUT_S``): whatever cuts a
+    teardown short — the shutdown watchdog's ``os._exit(1)`` past
+    ``agent.restart_drain_timeout + 60s``, or the stopper's tree kill past
+    ``_windows_stop_drain_timeout()`` (a sub-second TerminateProcess walk with
+    no grace of its own) — fires precisely while a drain is still waiting on
+    live work, so any hook at or after the drain is reachable only when the
     drain ended early, i.e. only when nothing was killed and there is nothing
     to report. Attribution therefore moved to the SUCCESSOR, rebuilt from the
     bus in ``CronStaleMonitor.startup()`` (517cc56c97), where it needs nothing

@@ -561,10 +561,12 @@ class TestGatewayStoppedResolution:
 # =========================================================================
 # Snapshot timing (2026-08-17)
 #
-# gateway/run.py takes the inflight snapshot EARLY in _stop_impl_body, before
-# the gateway drains its in-flight work — and it has to stay there, because a
-# teardown that gets force-killed past _TASKKILL_TIMEOUT_S would otherwise emit
-# no GATEWAY_STOPPED at all. So "in flight when the stop began" is NOT the same
+# gateway/run_shutdown.py takes the inflight snapshot EARLY in _stop_impl
+# (_stop_begin_teardown), before the gateway drains its in-flight work — and it
+# has to stay there, because a teardown cut short (the shutdown watchdog's
+# os._exit(1) past agent.restart_drain_timeout + 60s, or the stopper's tree kill
+# past _windows_stop_drain_timeout()) would otherwise emit no GATEWAY_STOPPED at
+# all. So "in flight when the stop began" is NOT the same
 # claim as "killed by the stop": a run can still finish while the gateway tears
 # down. Production, 2026-08-17: jobflow-researcher was reported killed at
 # 05:31:30 and emitted cron_completed at 05:32:05, 35s later.
@@ -776,7 +778,9 @@ class TestShutdownAttributionTiming:
 # Successor-side reconstruction (2026-08-17)
 #
 # The staged report above is flushed in shutdown(), which only runs on a
-# GRACEFUL teardown. A gateway force-killed past _TASKKILL_TIMEOUT_S, or cut
+# GRACEFUL teardown. A gateway tree-killed by its stopper past
+# _windows_stop_drain_timeout() (a sub-second TerminateProcess walk; the 30s
+# taskkill budget _TASKKILL_TIMEOUT_S is gone since 51ef1feed3), or cut
 # down by the shutdown watchdog's exit_code=1, never reaches it: the staged
 # reports die with the process and NOTHING is recorded for runs that genuinely
 # were killed. The 2026-08-12 census found six shutdowns started that day and

@@ -162,11 +162,14 @@ class CronStaleMonitor(BaseSubscriber):
     def _resolve_gateway_stopped(self, event: Event) -> None:
         """STAGE the runs this shutdown may have killed; do not report yet.
 
-        ``gateway/run.py`` stamps GATEWAY_STOPPED with the cron_started
+        ``gateway/run_shutdown.py`` stamps GATEWAY_STOPPED with the cron_started
         event_ids of everything still in flight (``cron/inflight.py``), and it
-        takes that snapshot EARLY in ``_stop_impl_body`` — before the gateway
-        drains its work. It has to stay there: a teardown force-killed past
-        ``_TASKKILL_TIMEOUT_S`` would otherwise emit no GATEWAY_STOPPED at all.
+        takes that snapshot EARLY in ``_stop_impl`` (``_stop_begin_teardown``)
+        — before the gateway drains its work. It has to stay there: a teardown
+        cut short — the shutdown watchdog's ``os._exit(1)`` past
+        ``agent.restart_drain_timeout + 60s``, or the stopper's tree kill past
+        ``hermes_cli/gateway_windows._windows_stop_drain_timeout()`` — would
+        otherwise emit no GATEWAY_STOPPED at all.
 
         So "in flight when the stop began" is a weaker claim than "killed by
         the stop", and reporting on sight gets it wrong for any run that
@@ -276,8 +279,11 @@ class CronStaleMonitor(BaseSubscriber):
         """Rebuild shutdown attributions the previous gateway never recorded.
 
         ``_flush_pending_shutdown`` only runs on a GRACEFUL teardown. A gateway
-        force-killed past ``gateway/status.py``'s ``_TASKKILL_TIMEOUT_S``, or
-        cut down by the shutdown watchdog's ``exit_code=1``, reaches neither
+        tree-killed by its stopper past ``_windows_stop_drain_timeout()`` (on
+        Windows ``gateway/status.py``'s ``terminate_pid(force=True)`` is a
+        sub-second TerminateProcess walk; it no longer runs ``taskkill`` under
+        a 30s budget), or cut down by the shutdown watchdog's ``exit_code=1``,
+        reaches neither
         ``_drain_subscribers_for_shutdown()`` nor ``shutdown_all()`` — the
         staged reports die with the process and nothing is recorded for runs
         that genuinely WERE killed. The 2026-08-12 census found six shutdowns
