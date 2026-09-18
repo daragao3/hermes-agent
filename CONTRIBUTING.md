@@ -218,6 +218,15 @@ pytest tests/ -v
 # reach on this host (a module skipped by `skipif`/`importorskip`).
 python scripts/check_orphaned_fixtures.py --base <trunk-ref>
 python scripts/check_orphaned_fixtures.py --static-only tests/x/test_y.py   # AST scan only, no pytest run
+
+# Cheap guard for a branch that renames or removes a module-level name: every
+# `patch.object(mod, "name")` / `monkeypatch.setattr(mod, "name", ...)` /
+# `patch("pkg.mod.name")` in tests/ must still name something `mod` binds.
+# Nothing before the test body can see a stale one (the test imports clean,
+# --collect-only and --setup-plan pass); this resolves each seam against the
+# target module's SOURCE, no imports, in ~20s over the whole tree.
+python scripts/check_patch_seams.py                       # all tracked tests/**/*.py
+python scripts/check_patch_seams.py tests/x/test_y.py     # just the files you touched
 ```
 
 ---
@@ -785,7 +794,9 @@ that touches the OS, assume *any* platform can hit your code path.
    stub was never applied, so the checker flags the bare spelling. Use
    `sys.platform` for an OS test, `hermes_cli._subprocess_compat.host_system()`
    where a `"Windows"`/`"Darwin"`/`"Linux"` string is wanted (dict key, log
-   field, test seam — tests patch `module.host_system`, not `platform`), and
+   field, test seam — tests patch `module.host_system`, not `platform`;
+   `scripts/check_patch_seams.py` fails on a test still patching a name the
+   module no longer binds, the head-only red the sweep left behind), and
    `host_machine()` / `plat = wmi_safe_platform()` for the arch and version
    reads that genuinely need `uname()` data. The real cure is the interpreter:
    `hermes_cli.sqlite_runtime.SQLiteRuntimeInfo.wmi_stray_thread_vulnerable`

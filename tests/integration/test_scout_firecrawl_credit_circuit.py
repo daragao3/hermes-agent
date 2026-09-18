@@ -9,7 +9,7 @@ from cron import scheduler
 from events.schema import EventType
 from plugins.browser.firecrawl import provider as browser_provider_module
 from plugins.web.firecrawl import provider as web_provider_module
-from tools import browser_tool, web_tools
+from tools import browser_tool, browser_tool_cdp, browser_tool_cloud, browser_tool_lifecycle, browser_tool_session, web_tools
 
 
 class RecordingBus:
@@ -131,10 +131,14 @@ async def test_scout_activation_stops_later_firecrawl_and_emits_one_credits_acti
     monkeypatch.setattr(browser_tool, "_active_sessions", {})
     monkeypatch.setattr(browser_tool, "_cached_cloud_provider", None)
     monkeypatch.setattr(browser_tool, "_cloud_provider_resolved", False)
-    monkeypatch.setattr(browser_tool, "_start_browser_cleanup_thread", lambda: None)
-    monkeypatch.setattr(browser_tool, "_update_session_activity", lambda task_id: None)
-    monkeypatch.setattr(browser_tool, "_get_cloud_provider", lambda: firecrawl_browser)
-    monkeypatch.setattr(browser_tool, "_get_cdp_override", lambda: None)
+    # The session/lifecycle/cloud/cdp helpers moved to sibling modules (de60f789a7
+    # dropped browser_tool's re-exports); browser_tool_session calls them through
+    # the sibling module objects, so the seams live there now. The state dicts
+    # above still live in browser_tool, read via ``_bt``.
+    monkeypatch.setattr(browser_tool_lifecycle, "_start_browser_cleanup_thread", lambda: None)
+    monkeypatch.setattr(browser_tool_lifecycle, "_update_session_activity", lambda task_id: None)
+    monkeypatch.setattr(browser_tool_cloud, "_get_cloud_provider", lambda: firecrawl_browser)
+    monkeypatch.setattr(browser_tool_cdp, "_get_cdp_override", lambda: None)
 
     def fake_local(task_id):
         local_calls.append(task_id)
@@ -145,7 +149,7 @@ async def test_scout_activation_stops_later_firecrawl_and_emits_one_credits_acti
             "features": {"local": True},
         }
 
-    monkeypatch.setattr(browser_tool, "_create_local_session", fake_local)
+    monkeypatch.setattr(browser_tool_session, "_create_local_session", fake_local)
 
     run, token = state.install_firecrawl_run()
     try:
@@ -173,7 +177,7 @@ async def test_scout_activation_stops_later_firecrawl_and_emits_one_credits_acti
         ]
         assert len(client.scrape_calls) == 1
 
-        local_session = browser_tool._get_session_info("after-open")
+        local_session = browser_tool_session._get_session_info("after-open")
         assert local_session["features"]["local"] is True
         assert local_session["fallback_reason"] == "provider_circuit_open"
         assert local_calls == ["after-open"]
