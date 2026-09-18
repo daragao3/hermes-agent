@@ -74,8 +74,14 @@ POLL_LOOP_ERROR_COOLDOWN_SECONDS = 900
 # is a TerminateProcess walk (hermes_cli._subprocess_compat.windows_kill_process_
 # tree) that completes in well under a second and grants nothing; the 30s figure
 # older comments cite (_TASKKILL_TIMEOUT_S, removed 51ef1feed3) was the taskkill
-# subprocess timeout, never a grace period.  10s keeps this tail a small slice
-# of the 70s the stopper grants.
+# subprocess timeout, never a grace period.  Since 2026-09-18 that grace is
+# leash + 10s + a 60s teardown margin (_STOP_TEARDOWN_MARGIN_S; 130s by
+# default) precisely because of this tail: the 38-stop census in gateway.log
+# measured shutdown() at p50 7.4s / p90 13.5s / max 32.0s, and none of it was
+# the drain poll this constant bounds -- it was _registry.shutdown_all(),
+# TelegramNotifier and WhatsAppEscalator flushing their pending batches one
+# round-trip per topic, which this deadline does NOT gate.  10s keeps the poll
+# pass a small slice of that margin.
 SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 10.0
 # Heartbeat write interval — external watchers stat gateway_heartbeat_path()
 # and alert on staleness > a few minutes, so this cadence must be tight
