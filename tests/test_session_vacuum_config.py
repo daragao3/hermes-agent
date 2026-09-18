@@ -42,7 +42,12 @@ def test_fresh_config_runs_auto_prune_at_startup(monkeypatch, tmp_path: Path):
         retention_days=90,
         min_interval_hours=24,
         min_vacuum_interval_days=30,
-        vacuum=True,
+        # Local carry (cli._run_state_db_auto_maintenance): the CLI shares state.db with the
+        # live gateway, so it never asks for the exclusive VACUUM regardless of
+        # vacuum_after_prune, and prunes in bounded batches. Upstream passes
+        # vacuum=bool(cfg["vacuum_after_prune"]) and no max_batch here.
+        vacuum=False,
+        max_batch=200,
         sessions_dir=tmp_path / "sessions",
     )
 
@@ -117,6 +122,7 @@ def test_cli_auto_maintenance_forwards_vacuum_interval(monkeypatch, tmp_path: Pa
         retention_days=90,
         min_interval_hours=24,
         min_vacuum_interval_days=17,
-        vacuum=True,
+        vacuum=False,  # local carry, see test_fresh_config_runs_auto_prune_at_startup
+        max_batch=200,
         sessions_dir=tmp_path / "sessions",
     )
