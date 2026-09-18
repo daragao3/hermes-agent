@@ -15,8 +15,14 @@ import pytest
 from hermes_cli import plugin_catalog as pc_cat
 from hermes_cli import plugins_cmd as pc
 from hermes_cli import plugins_cmd_catalog as cat
+from tests.timeout_budget import scaled
 
-pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
+pytestmark = [
+    pytest.mark.skipif(shutil.which("git") is None, reason="git not available"),
+    # Backstop only (tests/timeout_budget shape): real git clones and re-pins of file://
+    # repos per test; the install+update round trip tripped the 30 s cap under load.
+    pytest.mark.timeout(scaled(300)),
+]
 
 _GIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}

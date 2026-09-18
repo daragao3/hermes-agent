@@ -9,6 +9,12 @@ import pytest
 import yaml
 
 from hermes_cli import plugin_catalog as pc_cat
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): importing hermes_cli.web_server scans the plugin tree at module scope.
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not (tripped 2026-09-18 under a triple-runner box, ids shifting between runs).
+pytestmark = pytest.mark.timeout(scaled(300))
 
 VALID_SHA = "38fe0fb53eff98d477f807432e965429e665ca33"
 OTHER_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

@@ -9,6 +9,13 @@ from hermes_cli.prompt_size import (
     _compute_skills_breakdown,
     compute_prompt_breakdown,
 )
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): compute_prompt_breakdown imports run_agent cold and the import walks the checkout
+# (54-199 s in nt.listdir under a saturated box, 6 s alone).
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not (tripped 2026-09-18 under a triple-runner box, ids shifting between runs).
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 def _seed_memory(hermes_home, memory_text="", user_text=""):

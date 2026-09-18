@@ -7,6 +7,12 @@ from hermes_cli import web_server
 
 pytest.importorskip("starlette.testclient")
 from starlette.testclient import TestClient
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): real git remotes, fetches and worktree adds on disk behind the web server API.
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not (tripped 2026-09-18 under a triple-runner box, ids shifting between runs).
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 @pytest.fixture

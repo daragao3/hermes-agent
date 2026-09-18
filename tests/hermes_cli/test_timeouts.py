@@ -6,6 +6,14 @@ from hermes_cli.timeouts import (
     get_provider_request_timeout as get_provider_request_timeout,
     get_provider_stale_timeout as get_provider_stale_timeout,
 )
+import pytest
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): both tests pay a cold import in this process --
+# the anthropic SDK (pydantic model build) and run_agent (plugin discovery over 58 plugins);
+# each tripped the 30 s cap under a saturated box on 2026-09-18, one per run. The suite-wide
+# --timeout=30 is sized for unit tests; a load-shaped trip here reads as a regression it is not.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 def _write_config(tmp_path, body: str) -> None:

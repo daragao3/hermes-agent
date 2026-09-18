@@ -20,10 +20,17 @@ import pytest
 from hermes_cli import worktree_ops
 
 import cli
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): real git fetches against a local remote; a first trip then blew the file budget while
+# pytest formatted the failure (inspect.getmodule realpath walk over every module).
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not (tripped 2026-09-18 under a triple-runner box, ids shifting between runs).
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 def _run(args, cwd):
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=30, encoding="utf-8")
+    return subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=scaled(120), encoding="utf-8")
 
 
 def _commit(repo, name, msg):
