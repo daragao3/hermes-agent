@@ -90,6 +90,18 @@ def test_clean_env_forwards_windows_os_path_var(var: str) -> None:
     )
 
 
+def test_clean_env_forwards_programfiles_for_docker_cli_plugins() -> None:
+    """The Docker CLI finds buildx under %ProgramFiles%\Docker\cli-plugins. Without
+    PROGRAMFILES it silently uses the legacy builder, and every ``COPY --chmod`` in
+    the Dockerfile fails with "requires BuildKit" -- tests/docker's built_image
+    fixture errored at both pins of the 2026-09-17 acceptance ceremonies this way."""
+    names = _clean_env_names()
+    assert "PROGRAMFILES" in names, (
+        f"PROGRAMFILES is not forwarded through `env -i`; docker build under the runner "
+        f"cannot find the buildx plugin. Forwarded names: {sorted(names)}"
+    )
+
+
 def test_clean_env_parse_found_the_block() -> None:
     """Falsifier for the parser: a regex that matches nothing would pass vacuously."""
     names = _clean_env_names()
