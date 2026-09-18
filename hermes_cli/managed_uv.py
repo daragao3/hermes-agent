@@ -620,8 +620,48 @@ def _install_safe_python_generation(
     return None
 
 
-def _smoke_candidate_venv(venv_dir: Path) -> tuple[bool, str, SQLiteRuntimeInfo | None]:
-    """Exercise the candidate interpreter and imports through its real path."""
+# Import-smoke bound. Measured 2026-09-18 during the PBS 3.12.13 → 3.13.15 cut-over (loops
+# pbs-cpython-313-cutover-20260917, evidence ~/.hermes/evidence/pbs-313-upgrade-plan-20260917/):
+# with the host at 100 % CPU (three sibling test suites) the same import list took 46.6 s cold /
+# 51.7 s warm on 3.13 and 8.8-19.7 s on 3.12 — parity, pure load. A fixed bound therefore trips on
+# nothing but load, and tripping used to DELETE the fully synced candidate (a ~6 min uv sync). Now a
+# timeout is retried once at ``_SMOKE_IMPORT_TIMEOUT_RETRY_SCALE`` × the bound, and a second timeout
+# is reported as INCONCLUSIVE (``CandidateSmokeInconclusive``) so callers keep the candidate.
+_SMOKE_IMPORT_TIMEOUT_S = 90.0
+_SMOKE_IMPORT_TIMEOUT_RETRY_SCALE = 2.0
+_SMOKE_IMPORT_CHECK = (
+    "import dotenv, fastapi, openai, prompt_toolkit, pydantic, rich, uvicorn, yaml\n"
+    "import hermes_state\n")
+# A candidate kept after an inconclusive smoke is reclaimed by the next repair once its token epoch
+# is this old; a retained candidate nobody cut over by hand must not leak ~1 GB forever.
+_RETAINED_CANDIDATE_MAX_AGE_S = 24 * 3600.0
+
+
+class CandidateSmokeInconclusive(RuntimeError):
+    """The candidate's import smoke timed out twice: evidence of host load, not of a broken venv.
+
+    ``venv_dir`` is the tree callers must KEEP (with its generation) instead of rejecting: it is fully
+    synced and can be cut over by hand (``_cut_over_candidate``) in a quiet window, exactly as the
+    2026-09-18 runbook did after the old destructive path had deleted the first candidate.
+    """
+
+    def __init__(self, detail: str, *, venv_dir: Path, info: SQLiteRuntimeInfo | None) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.venv_dir = venv_dir
+        self.info = info
+
+
+def _smoke_candidate_venv(
+    venv_dir: Path, *, timeout_s: float = _SMOKE_IMPORT_TIMEOUT_S,
+) -> tuple[bool, str, SQLiteRuntimeInfo | None]:
+    """Exercise the candidate interpreter and imports through its real path.
+
+    ``(False, detail, info)`` is a verdict: the candidate is broken. A timeout is not a verdict — the
+    import list is retried once at a longer bound, and a second timeout raises
+    :class:`CandidateSmokeInconclusive` rather than returning ``False``, so a loaded host can never
+    turn a healthy candidate into a rejected one.
+    """
     python = _venv_python(venv_dir)
     info = probe_sqlite_runtime(python)
     if info is None:
@@ -632,19 +672,95 @@ def _smoke_candidate_venv(venv_dir: Path) -> tuple[bool, str, SQLiteRuntimeInfo 
         return False, (
             f"candidate Python {info.python_version_string} still abandons platform.uname()'s "
             "WMI thread (gh-130727)"), info
-    check = (
-        "import dotenv, fastapi, openai, prompt_toolkit, pydantic, rich, uvicorn, yaml\n"
-        "import hermes_state\n")
-    try:
-        result = subprocess.run(
-            [str(python), "-I", "-c", check], cwd=venv_dir.parent, env=isolated_interpreter_env(),
-            capture_output=True, text=True, timeout=90, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, str(exc), info
+    bounds = (timeout_s, timeout_s * _SMOKE_IMPORT_TIMEOUT_RETRY_SCALE)
+    for attempt, bound in enumerate(bounds, start=1):
+        try:
+            result = subprocess.run(
+                [str(python), "-I", "-c", _SMOKE_IMPORT_CHECK], cwd=venv_dir.parent,
+                env=isolated_interpreter_env(), capture_output=True, text=True, timeout=bound,
+                check=False)
+        except subprocess.TimeoutExpired:
+            if attempt < len(bounds):
+                print(
+                    f"  ⚠ Candidate import smoke did not finish within {bound:.0f} s (host load?); "
+                    f"retrying once with {bounds[attempt]:.0f} s...")
+                logger.warning(
+                    "candidate import smoke timed out after %.0fs (attempt %d); retrying with %.0fs",
+                    bound, attempt, bounds[attempt])
+                continue
+            raise CandidateSmokeInconclusive(
+                f"core import smoke timed out twice ({bounds[0]:.0f} s, then {bound:.0f} s)",
+                venv_dir=venv_dir, info=info)
+        except OSError as exc:
+            return False, str(exc), info
+        break
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "core import smoke failed").strip()
         return False, detail.splitlines()[-1] if detail else "core import smoke failed", info
     return True, "", info
+
+
+def _token_epoch(path: Path, prefix: str) -> float | None:
+    """Epoch seconds embedded in a ``<prefix><token>`` directory name (see ``_token``); None if absent.
+
+    Ages a tree by its creation token, never by ``st_mtime`` — a rename preserves mtime, which is how
+    a freshly parked venv once read as 52 days old to a sweep (loops pbs-cpython-313-cutover-20260917).
+    """
+    name = path.name
+    if not name.startswith(prefix):
+        return None
+    head = name[len(prefix):].split("-", 1)[0]
+    return float(head) if head.isdigit() else None
+
+
+def _sweep_retained_candidates(
+    runtime_root: Path, *, python_root: Path, live_home: Path | None,
+    max_age_seconds: float = _RETAINED_CANDIDATE_MAX_AGE_S) -> None:
+    """Reclaim ``venv-candidate-*`` trees older than ``max_age_seconds`` (by token epoch), together with
+    the private generation each one was built on unless the live venv also runs from it. Best-effort;
+    never raises. Called under the repair lock, so it cannot race the staging of a fresh candidate.
+    """
+    try:
+        retained = list(runtime_root.glob("venv-candidate-*"))
+    except OSError:
+        return
+    now = time.time()
+    for candidate in retained:
+        epoch = _token_epoch(candidate, "venv-candidate-")
+        if epoch is None or now - epoch < max_age_seconds:
+            continue
+        generation = _candidate_generation(candidate, python_root=python_root)
+        logger.info("reclaiming retained candidate venv %s (token age %.0f h)", candidate, (now - epoch) / 3600)
+        _remove_tree(candidate, boundary=runtime_root)
+        if generation is not None and (live_home is None or not _is_within(live_home, generation)):
+            _remove_tree(generation, boundary=python_root)
+
+
+def _is_within(path: Path, ancestor: Path) -> bool:
+    try:
+        path.resolve().relative_to(ancestor.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _candidate_generation(candidate: Path, *, python_root: Path) -> Path | None:
+    """The ``generation-*`` directory a candidate's ``pyvenv.cfg`` ``home`` points into, or None."""
+    try:
+        lines = (candidate / "pyvenv.cfg").read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        key, sep, value = line.partition("=")
+        if not (sep and key.strip() == "home"):
+            continue
+        try:
+            rel = Path(value.strip()).resolve().relative_to(python_root.resolve())
+        except (OSError, ValueError):
+            return None
+        top = rel.parts[0] if rel.parts else ""
+        return python_root / top if top.startswith("generation-") else None
+    return None
 
 
 def _stage_candidate_venv(
@@ -687,7 +803,14 @@ def _stage_candidate_venv(
         cwd=project_root, env=sync_env, stderr=subprocess.STDOUT, check=False)
     if synced.returncode != 0:
         return reject("candidate dependency sync failed (rc=%d)", synced.returncode)
-    healthy, detail, _ = _smoke_candidate_venv(candidate)
+    try:
+        healthy, detail, _ = _smoke_candidate_venv(candidate)
+    except CandidateSmokeInconclusive as exc:
+        # Not a verdict on the candidate: keep the synced tree (and, in the caller, its generation)
+        # instead of throwing ~6 min of sync away over host load. Propagates so _repair_under_lock
+        # reports it as deferred rather than failed.
+        logger.warning("candidate venv smoke inconclusive: %s; keeping %s", exc.detail, candidate)
+        raise
     if not healthy:
         return reject("candidate venv smoke failed: %s", detail)
     return candidate
@@ -728,8 +851,13 @@ def _cut_over_candidate(
                     "could not promote the replacement venv "
                     f"({promote_error}); rollback failed ({rollback_error})")
             return False, None, None, f"could not promote the replacement venv: {promote_error}"
+        inconclusive: CandidateSmokeInconclusive | None = None
         try:
             healthy, detail, info = _smoke_candidate_venv(live)
+        except CandidateSmokeInconclusive as exc:
+            # The live path must be VERIFIED, so roll back — but the tree is not condemned: it is
+            # demoted to venv-rejected-<token> and kept (re-raised below with that path).
+            inconclusive, healthy, detail, info = exc, False, exc.detail, exc.info
         except Exception as exc:
             healthy, detail, info = False, f"candidate smoke raised: {exc}", None
         if healthy:
@@ -741,6 +869,10 @@ def _cut_over_candidate(
             return False, backup, info, (
                 "post-cutover smoke failed "
                 f"({detail}); rollback failed ({exc}); rejected venv: {rejected}")
+        if inconclusive is not None:
+            raise CandidateSmokeInconclusive(
+                f"post-cutover smoke inconclusive ({detail}); live venv restored",
+                venv_dir=rejected, info=info) from inconclusive
         _remove_tree(rejected, boundary=runtime_root)
         return False, None, info, f"post-cutover smoke failed: {detail}"
     except BaseException:
@@ -974,6 +1106,31 @@ def _repair_windows_preflight(
     return None
 
 
+def _retain_inconclusive_candidate(
+    exc: CandidateSmokeInconclusive, current: SQLiteRuntimeInfo, candidate_info: SQLiteRuntimeInfo,
+    *, generation: Path) -> RuntimeRepairResult:
+    """Report a twice-timed-out import smoke as DEFERRED, keeping the candidate and its generation.
+
+    Nothing is removed: the tree is complete and only the verdict is missing. The next repair
+    stages afresh (and reclaims this tree after ``_RETAINED_CANDIDATE_MAX_AGE_S``); an operator
+    can cut it over by hand sooner via ``_cut_over_candidate`` once the host is quiet.
+    """
+    detail = (
+        f"replacement environment import smoke was inconclusive ({exc.detail}); "
+        f"kept {exc.venv_dir} on {generation}")
+    for line in (
+        f"  ⚠ Python runtime repair deferred: {exc.detail}.",
+        "    This is host load, not a broken candidate: the synced environment is kept at",
+        f"      {exc.venv_dir}",
+        f"    (interpreter generation {generation}) and the next `hermes update` retries in a",
+        f"    quieter window; it is reclaimed after {_RETAINED_CANDIDATE_MAX_AGE_S / 3600:.0f} h.",
+        *(f"    {line}" for line in _interim_protection_lines(current.repair_reasons)),
+    ):
+        print(line)
+    return _result(
+        "skipped", current, detail, sqlite_after=candidate_info.sqlite_version_string)
+
+
 def _repair_under_lock(
     uv_bin: str, *, root: Path, live: Path, live_python: Path, runtime_root: Path
 ) -> RuntimeRepairResult:
@@ -987,6 +1144,8 @@ def _repair_under_lock(
         return _result("safe", current, sqlite_after=current.sqlite_version_string)
     for line in _describe_repair_reasons(current):
         print(f"  ⚠ {line}")
+    python_root = managed_python_install_dir(root)
+    _sweep_retained_candidates(runtime_root, python_root=python_root, live_home=current.base_prefix)
     provisioned = _install_safe_python_generation(uv_bin, project_root=root, current=current)
     # Likely a stale managed-uv catalog: python-build-standalone re-releases the same patch
     # versions with fixed SQLite, but a frozen catalog keeps resolving the old vulnerable build
@@ -999,21 +1158,28 @@ def _repair_under_lock(
         return _result("failed", current, "could not provision a fixed private Python runtime")
     generation, python, candidate_info = provisioned
 
-    candidate = _stage_candidate_venv(
-        uv_bin, project_root=root, generation=generation, python=python)
+    try:
+        candidate = _stage_candidate_venv(
+            uv_bin, project_root=root, generation=generation, python=python)
+    except CandidateSmokeInconclusive as exc:
+        return _retain_inconclusive_candidate(exc, current, candidate_info, generation=generation)
     if candidate is None:
-        _remove_tree(generation, boundary=managed_python_install_dir(root))
+        _remove_tree(generation, boundary=python_root)
         return _result(
             "failed", current,
             "replacement environment did not pass dependency and import smoke tests",
             sqlite_after=candidate_info.sqlite_version_string)
 
-    cut_over, backup, final_info, cutover_detail = _cut_over_candidate(
-        candidate, project_root=root, live=live)
+    try:
+        cut_over, backup, final_info, cutover_detail = _cut_over_candidate(
+            candidate, project_root=root, live=live)
+    except CandidateSmokeInconclusive as exc:
+        # The live venv is already restored; the demoted tree is kept for a quiet-window retry.
+        return _retain_inconclusive_candidate(exc, current, candidate_info, generation=generation)
     if not cut_over:
         if backup is None:
             _remove_tree(candidate, boundary=runtime_root)
-            _remove_tree(generation, boundary=managed_python_install_dir(root))
+            _remove_tree(generation, boundary=python_root)
         return _result(
             "failed", current, cutover_detail,
             sqlite_after=final_info.sqlite_version_string if final_info is not None else "",
