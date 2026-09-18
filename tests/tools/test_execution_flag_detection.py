@@ -80,6 +80,11 @@ def test_real_binaries_execute_leading_dash_program_payload(
     tmp_path, tool, args, stdin, needs_tty
 ):
     """A PATH marker proves these binaries do not reparse '-program' as an option."""
+    if os.name == "nt":
+        # The payload is a #!/bin/sh script; a native Windows binary spawns it
+        # through CreateProcess, which cannot run a text file, so the marker can
+        # never be written here whatever the flag parsing does.
+        pytest.skip("payload is a sh script; CreateProcess cannot spawn it from a native binary")
     unusable = _unusable_binary(tool)
     if unusable is None and needs_tty and shutil.which("script") is None:
         unusable = "script is not installed"

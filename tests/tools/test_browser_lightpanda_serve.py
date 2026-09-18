@@ -64,12 +64,14 @@ def _exe(path):
 
 
 class TestFindBinary:
+    @pytest.mark.skipif(os.name == "nt", reason="Lightpanda has no Windows build: find_lightpanda_binary() is None and launch refuses on nt by design")
     def test_prefers_path(self, tmp_path, monkeypatch):
         exe = _exe(tmp_path / "bin" / "lightpanda")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
         monkeypatch.setattr("tools.browser_tool_install._merge_browser_path", lambda p: p)
         assert lp.find_lightpanda_binary() == str(exe)
 
+    @pytest.mark.skipif(os.name == "nt", reason="Lightpanda has no Windows build: find_lightpanda_binary() is None and launch refuses on nt by design")
     def test_falls_back_to_home_candidates(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PATH", str(tmp_path / "empty"))
         monkeypatch.setattr("tools.browser_tool_install._merge_browser_path", lambda p: p)
@@ -107,6 +109,7 @@ class TestLaunch:
         server, err = lp.launch_lightpanda("lp_test", **kw)
         return server, err, calls
 
+    @pytest.mark.skipif(os.name == "nt", reason="Lightpanda has no Windows build: find_lightpanda_binary() is None and launch refuses on nt by design")
     def test_missing_binary_returns_install_hint(self, monkeypatch):
         monkeypatch.setattr(lp, "find_lightpanda_binary", lambda: None)
         server, err = lp.launch_lightpanda("lp_test")
@@ -366,3 +369,19 @@ class TestProcessIdentity:
         proc = self._P("lightpanda", ["lightpanda", "serve", "--port", "1"])
         with patch("psutil.Process", return_value=proc):
             assert lp._is_lightpanda_process(999, 43111, None) is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the Windows contract of a POSIX-only engine")
+class TestWindowsHasNoBuild:
+    def test_resolver_is_none_even_with_a_binary_on_path(self, tmp_path, monkeypatch):
+        exe = _exe(tmp_path / "bin" / "lightpanda")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        monkeypatch.setattr("tools.browser_tool_install._merge_browser_path", lambda p: p)
+        assert exe.exists()
+        assert lp.find_lightpanda_binary() is None
+
+    def test_launch_names_the_platform_not_the_installer(self):
+        server, err = lp.launch_lightpanda("lp_test")
+        assert server is None
+        assert "no Windows build" in err and "browser.engine" in err
+        assert lp.LIGHTPANDA_INSTALL_URL not in err  # an installer link would be a false lead here

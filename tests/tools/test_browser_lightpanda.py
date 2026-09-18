@@ -398,6 +398,7 @@ class TestEngineOverride:
         assert len(captured_cmds) == 1
         assert "--engine" not in captured_cmds[0]
 
+    @pytest.mark.skipif(os.name == "nt", reason="Lightpanda has no Windows build: find_lightpanda_binary() is None and launch refuses on nt by design")
     @patch("tools.browser_tool_session._get_session_info")
     @patch("tools.browser_tool_install._find_agent_browser", return_value="/usr/bin/agent-browser")
     @patch("tools.browser_tool_cloud._is_local_mode", return_value=True)

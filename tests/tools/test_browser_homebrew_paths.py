@@ -444,7 +444,10 @@ class TestRunBrowserCommandPathConstruction:
              patch("os.open", return_value=99), \
              patch("os.close"), \
              patch("tools.interrupt.is_interrupted", return_value=False), \
-             patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "HOME": "/home/test"}, clear=True):
+             patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "HOME": "/home/test",
+                                     # Path.home() reads USERPROFILE on Windows; a cleared env raises.
+                                     **({"USERPROFILE": str(tmp_path)} if os.name == "nt" else {})},
+                        clear=True):
             with patch("builtins.open", mock_open(read_data=fake_json)):
                 _run_browser_command("test-task", "navigate", ["https://example.com"])
 
