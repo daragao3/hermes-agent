@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from tests.timeout_budget import scaled
 from tools.process_registry import ProcessRegistry
 
 
@@ -65,14 +66,42 @@ def test_macos_pty_surrogateescape_roundtrip(tmp_path):
 
 
 @pytest.mark.windows_only
+# The READY window alone (60 s) can exceed the 30 s addopts cap under load;
+# the runner hit pytest-timeout inside the wait loop's time.sleep(0.05).
+@pytest.mark.timeout(scaled(120))
 def test_windows_pty_rejects_surrogate_and_remains_usable(tmp_path):
     registry = ProcessRegistry()
     out = tmp_path / 'valid.txt'
     script = tmp_path / 'read_unicode.py'
-    script.write_text(f"import sys\nopen({str(out)!r}, 'w', encoding='utf-8').write(sys.stdin.readline())\n")
+    # The child prints READY before blocking on stdin, and the test waits
+    # for it instead of writing straight after spawn: input written while the
+    # `bash -lic` shell is still initialising its ConPTY console is discarded,
+    # so both writes below used to land on nobody and valid.txt never appeared
+    # (FileNotFoundError; 5/5 red at 100% host load on 2026-09-18, on either
+    # side of the PTY watchdog fix). Same handshake as
+    # TestStdinHelpers.test_close_stdin_allows_eof_driven_process_to_finish.
+    script.write_text(
+        "import sys\n"
+        "print('READY', flush=True)\n"
+        f"open({str(out)!r}, 'w', encoding='utf-8').write(sys.stdin.readline())\n",
+        encoding='utf-8',
+    )
     session = registry.spawn_local(f'python3 {shlex.quote(str(script))}', cwd=str(tmp_path), use_pty=True)
     try:
         assert session._pty is not None, 'Windows acceptance requires the real PTY backend'
+        # Start window for a login shell + interpreter under ConPTY: READY
+        # measured up to ~21 s on a 100%-loaded Windows host (2026-09-18);
+        # 60 s is ~3x the worst measurement.
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            if 'READY' in registry.poll(session.id)['output_preview']:
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail(
+                'PTY child never printed READY -- startup failed: '
+                f'{registry.poll(session.id)!r}'
+            )
         rejected = registry.write_stdin(session.id, '\udcff\n')
         assert rejected['status'] == 'error'
         assert registry.write_stdin(session.id, 'valid\n')['status'] == 'ok'
