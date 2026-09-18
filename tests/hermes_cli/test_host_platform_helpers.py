@@ -26,6 +26,9 @@ from pathlib import Path
 import pytest
 
 from hermes_cli import _subprocess_compat as compat
+# The version gate lives in sqlite_runtime; _subprocess_compat imports it inside the
+# function that needs it (3a392cdb87 keeps that module free of module-level repo imports).
+from hermes_cli.sqlite_runtime import WMI_STRAY_THREAD_FIXED
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -147,7 +150,7 @@ class TestBareChildNeverQueriesWmi:
             errors="replace", timeout=120, cwd=str(REPO_ROOT), env=env,
         )
         assert proc.returncode == 0, proc.stderr[-2000:]
-        if sys.version_info < compat.WMI_STRAY_THREAD_FIXED:
+        if sys.version_info < WMI_STRAY_THREAD_FIXED:
             # Sites answered from sys.platform alone never load the stub; the invariant is
             # the query count, not who owns _wmi_query.
             assert "WMI_CALLS 0" in proc.stdout, proc.stdout
