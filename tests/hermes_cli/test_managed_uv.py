@@ -2210,11 +2210,15 @@ class TestSmokeTimeoutIsNotAVerdict:
             (cand / "pyvenv.cfg").write_text(f"home = {home}\nversion_info = 3.13\n", encoding="utf-8")
             return cand, gen
 
-        old, old_gen = make(f"venv-candidate-{old_epoch}-1-aaaa", "generation-1-1-aaaa")
-        fresh, fresh_gen = make(f"venv-candidate-{fresh_epoch}-1-bbbb", "generation-1-1-bbbb")
-        shared, live_gen = make(f"venv-candidate-{old_epoch}-1-cccc", "generation-1-1-cccc")
+        old, old_gen = make(f"venv-candidate-{old_epoch}-1-aaaaaaaa", "generation-1-1-aaaa")
+        fresh, fresh_gen = make(f"venv-candidate-{fresh_epoch}-1-bbbbbbbb", "generation-1-1-bbbb")
+        shared, live_gen = make(f"venv-candidate-{old_epoch}-1-cccccccc", "generation-1-1-cccc")
         odd = runtime_root / "venv-candidate-not-a-token"
         odd.mkdir()
+        # Leading digits are not a token: the shared parser (_TOKEN_RE) wants the exact
+        # ``<epoch>-<pid>-<hex8>`` shape, so a date-like name is never read as epoch 2026.
+        datelike = runtime_root / "venv-candidate-2026-09-18-manual"
+        datelike.mkdir()
 
         managed_uv._sweep_retained_candidates(
             runtime_root, python_root=python_root,
@@ -2225,3 +2229,4 @@ class TestSmokeTimeoutIsNotAVerdict:
         assert not shared.exists() and live_gen.exists(), (
             "the generation the live venv runs from is never removed")
         assert odd.exists(), "an unparseable token is never aged"
+        assert datelike.exists(), "a date-like name is not a token; it must not age as epoch 2026"

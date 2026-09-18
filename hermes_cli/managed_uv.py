@@ -357,8 +357,9 @@ def _reject(path: Path, boundary: Path, msg: str, *args) -> None:
 
 
 def _token() -> str:
-    """``<epoch>-<pid>-<hex8>``; the epoch is the one durable record of WHEN a backup was parked
-    (``_stale_backup_parked_at`` reads it back), so keep it first and keep it integer seconds."""
+    """``<epoch>-<pid>-<hex8>``; the epoch is the one durable record of WHEN a tree was parked or
+    staged (``_TOKEN_RE`` reads it back for ``_stale_backup_parked_at`` and
+    ``_sweep_retained_candidates``), so keep it first and keep it integer seconds."""
     return f"{int(time.time())}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
 
@@ -700,25 +701,18 @@ def _smoke_candidate_venv(
     return True, "", info
 
 
-def _token_epoch(path: Path, prefix: str) -> float | None:
-    """Epoch seconds embedded in a ``<prefix><token>`` directory name (see ``_token``); None if absent.
-
-    Ages a tree by its creation token, never by ``st_mtime`` — a rename preserves mtime, which is how
-    a freshly parked venv once read as 52 days old to a sweep (loops pbs-cpython-313-cutover-20260917).
-    """
-    name = path.name
-    if not name.startswith(prefix):
-        return None
-    head = name[len(prefix):].split("-", 1)[0]
-    return float(head) if head.isdigit() else None
-
-
 def _sweep_retained_candidates(
     runtime_root: Path, *, python_root: Path, live_home: Path | None,
     max_age_seconds: float = _RETAINED_CANDIDATE_MAX_AGE_S) -> None:
     """Reclaim ``venv-candidate-*`` trees older than ``max_age_seconds`` (by token epoch), together with
     the private generation each one was built on unless the live venv also runs from it. Best-effort;
     never raises. Called under the repair lock, so it cannot race the staging of a fresh candidate.
+
+    Aged by the ``_token()`` epoch only (``_TOKEN_RE``, the same read ``_stale_backup_parked_at``
+    uses), never by stat -- a rename preserves ``st_mtime`` (and ``st_ctime`` on NTFS), which is how
+    a freshly parked venv once read as 52 days old to a sweep (loops pbs-cpython-313-cutover-20260917).
+    A name that is not exactly ``_token()``'s shape carries no date and is left alone: unlike a
+    stale backup there is no stat fallback, since a candidate mid-repair must never be reclaimed.
     """
     try:
         retained = list(runtime_root.glob("venv-candidate-*"))
@@ -726,8 +720,11 @@ def _sweep_retained_candidates(
         return
     now = time.time()
     for candidate in retained:
-        epoch = _token_epoch(candidate, "venv-candidate-")
-        if epoch is None or now - epoch < max_age_seconds:
+        match = _TOKEN_RE.match(candidate.name[len("venv-candidate-"):])
+        if match is None:
+            continue
+        epoch = float(match.group(1))
+        if now - epoch < max_age_seconds:
             continue
         generation = _candidate_generation(candidate, python_root=python_root)
         logger.info("reclaiming retained candidate venv %s (token age %.0f h)", candidate, (now - epoch) / 3600)
