@@ -56,9 +56,14 @@ def _agent_browser_session_cmd(session_name: str, *cmd: str, log_label: str) -> 
     except FileNotFoundError:
         return None
     try:
-        return subprocess.run([*_session._agent_browser_argv(browser_cmd), "--session", session_name, *cmd],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
-                              env=_real_profile_daemon_env(), stdin=subprocess.DEVNULL)
+        # File-backed capture, not pipes: agent-browser is a node CLI whose daemon
+        # grandchild outlives the command and inherits the capture handles, so
+        # under subprocess.run(capture_output=True) the pipe never reaches EOF and
+        # the 15 s timeout cannot fire on Windows (the test_browser_real_profile
+        # whole-file abort, 2026-09-17). run_text_capture also tree-kills on timeout.
+        from hermes_cli._subprocess_compat import run_text_capture
+        return run_text_capture([*_session._agent_browser_argv(browser_cmd), "--session", session_name, *cmd],
+                                timeout=15, env=_real_profile_daemon_env(), stdin=subprocess.DEVNULL)
     except (subprocess.SubprocessError, OSError) as e:
         _bt.logger.debug("real-profile %s failed: %s", log_label, e)
         return None
@@ -200,9 +205,13 @@ def _attach_agent_browser_to_real_profile(port: int, copy_dir: str) -> Tuple[Opt
     argv = [*_session._agent_browser_argv(browser_cmd), "--session", _bt._REAL_PROFILE_SESSION,
             "--cdp", str(port), "open", "about:blank"]
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=_bt._get_open_command_timeout(first_open=True), env=_real_profile_daemon_env(),
-                              stdin=subprocess.DEVNULL)
+        # This command STARTS the agent-browser daemon, i.e. a grandchild that is
+        # meant to outlive it -- the textbook capture-pipe hang; see
+        # _agent_browser_session_cmd. On timeout the helper's tree-kill takes the
+        # half-started daemon with it, so nothing is left holding the copy dir.
+        from hermes_cli._subprocess_compat import run_text_capture
+        proc = run_text_capture(argv, timeout=_bt._get_open_command_timeout(first_open=True),
+                                env=_real_profile_daemon_env(), stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return None, _RP + "the real-profile browser took too long to start. Retry, or turn the toggle off."
     except (subprocess.SubprocessError, OSError) as e:
