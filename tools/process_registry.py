@@ -11,7 +11,9 @@ import logging
 import os
 import sys
 import shlex
+import select
 import signal
+import socket
 import stat
 import subprocess
 import threading
@@ -1268,6 +1270,18 @@ class ProcessRegistry(ProcessCheckpointMixin):
         # PTY reads can split a multibyte UTF-8 character across chunks just like pipe reads — hold partial
         # sequences until the rest arrives. (Ported from openclaw/openclaw#112325.)
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        reader_done = threading.Event()
+        if _IS_WINDOWS:
+            # pywinpty's read() blocks on its socket pair and only EOFs once its own
+            # forwarding thread sees iseof() -- which it checks AFTER a native ConPTY
+            # read returns, and ConPTY never returns a read left pending when the child
+            # exits. So a child that exits between reads is noticed by the isalive()
+            # guard below, but one that exits DURING a read is never noticed: the
+            # session stays "running" forever (2026-09-18: 4/5 spawns under host load).
+            threading.Thread(
+                target=self._pty_exit_watchdog, args=(pty, reader_done), daemon=True,
+                name=f"proc-pty-exit-watchdog-{session.id}",
+            ).start()
         try:
             while pty.isalive():
                 try:
@@ -1281,9 +1295,56 @@ class ProcessRegistry(ProcessCheckpointMixin):
                     break
         except Exception as e:
             logger.debug("PTY stdout reader ended: %s", e)
+        finally:
+            reader_done.set()
         self._finish_reader(
             session, decoder, lambda t: self._ingest_output(session, t), "PTY",
             pty.wait, lambda: pty.exitstatus if hasattr(pty, 'exitstatus') else -1)
+
+    # Watchdog cadence for the Windows PTY exit hang (see _pty_reader_loop).
+    _PTY_EXIT_POLL_SECONDS = 0.25
+    # After the child is gone, how long the reader gets to drain naturally before the
+    # socket side is closed under it: output written before exit is still in flight
+    # through pywinpty's forwarding thread, and a natural EOF beats a forced one.
+    _PTY_EXIT_DRAIN_GRACE_SECONDS = 1.0
+
+    @staticmethod
+    def _socket_has_pending_input(sock: Any) -> bool:
+        """True when bytes are queued on ``sock`` that nobody has read yet."""
+        try:
+            readable, _, _ = select.select([sock], [], [], 0)
+        except Exception:
+            return False
+        return bool(readable)
+
+    @classmethod
+    def _pty_exit_watchdog(cls, pty: Any, reader_done: threading.Event) -> None:
+        """Windows only: once the PTY child is dead and the reader is still blocked,
+        shut pywinpty's socket side so the pending ``recv`` returns EOF and the reader
+        tears down through ``_finish_reader`` exactly as on a natural EOF.
+        ``pty.close()`` is not usable for this: pywinpty's ``isalive()`` marks the
+        handle ``closed`` as soon as the child dies, which turns ``close()`` into a
+        no-op. Shutdown before close because a bare close does not wake a blocked
+        ``recv`` everywhere; and shutdown discards queued input on Windows, so the
+        grace restarts while bytes are still waiting for a starved reader. pywinpty's
+        native forwarding thread stays parked in its ConPTY read; it is a daemon and
+        dies with the process."""
+        while not reader_done.wait(cls._PTY_EXIT_POLL_SECONDS):
+            if cls._pty_is_alive(pty):
+                continue
+            fileobj = getattr(pty, "fileobj", None)
+            if fileobj is None:
+                return
+            while True:
+                if reader_done.wait(cls._PTY_EXIT_DRAIN_GRACE_SECONDS):
+                    return
+                if not cls._socket_has_pending_input(fileobj):
+                    break
+            with suppress(Exception):
+                fileobj.shutdown(socket.SHUT_RDWR)
+            with suppress(Exception):
+                fileobj.close()
+            return
 
     def _ingest_output(self, session: ProcessSession, text: str) -> None:
         """Buffer a freshly-read chunk, then scan watch patterns and stream it live."""
