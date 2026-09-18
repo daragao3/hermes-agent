@@ -480,9 +480,20 @@ class TestManagedPythonStore:
         assert base_env["PYTHONHOME"] == "/poison/home"
 
 
-@pytest.mark.skipif(sys.platform == "win32",
-                    reason="POSIX-only: fixtures build the bin/ (not Scripts/) venv layout")
+_POSIX_LAYOUT_SKIP = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX-only: fixtures build the bin/ (not Scripts/) venv layout")
+
+
+def _host_venv_python(live: Path) -> Path:
+    """The interpreter ``_make_runtime_install(windows=sys.platform == "win32")`` laid down:
+    what ``_venv_python`` resolves on this host, so the repair path finds a live interpreter."""
+    return live / ("Scripts" if sys.platform == "win32" else "bin") / (
+        "python.exe" if sys.platform == "win32" else "python")
+
+
 class TestRuntimeRepair:
+    @_POSIX_LAYOUT_SKIP
     def test_safe_runtime_is_a_noop(self, tmp_path):
         from hermes_cli.managed_uv import repair_vulnerable_runtime
 
@@ -504,6 +515,7 @@ class TestRuntimeRepair:
         assert not (root / ".hermes-runtime").exists()
         mock_install.assert_not_called()
 
+    @_POSIX_LAYOUT_SKIP
     def test_failed_candidate_preserves_live_venv(self, tmp_path):
         from hermes_cli.managed_uv import (
             _acquire_repair_lock,
@@ -549,18 +561,21 @@ class TestRuntimeRepair:
         (issue #73109) but leaves fresh ones (possible in-flight repair).
 
         "Aged" and "fresh" are the token epoch in the NAME (what ``_cut_over_candidate``
-        mints at parking time), not directory mtime -- see the class of tests below."""
+        mints at parking time), not directory mtime -- see the class of tests below.
+
+        Runs on every host: the fixture builds the host's venv layout (Scripts/ on Windows), and
+        the sweep itself is host-neutral (name glob + rmtree)."""
         import time as _time
 
         from hermes_cli.managed_uv import repair_vulnerable_runtime
 
-        root, live, sentinel = _make_runtime_install(tmp_path)
+        root, live, sentinel = _make_runtime_install(tmp_path, windows=sys.platform == "win32")
         old_backup = _park_backup(root, live, epoch=int(_time.time()) - 7200)
         (old_backup / "bin" / "python").write_text("old", encoding="utf-8")
 
         fresh_backup = _park_backup(root, live, epoch=int(_time.time()))
 
-        current = _runtime_info(live / "bin" / "python", (3, 53, 1))
+        current = _runtime_info(_host_venv_python(live), (3, 53, 1))
         with patch(
                  "hermes_cli.managed_uv.probe_sqlite_runtime",
                  return_value=current,
@@ -574,11 +589,17 @@ class TestRuntimeRepair:
 
     def test_successful_repair_removes_parked_backup(self, tmp_path):
         """After a successful cutover the parked venv is removed instead of
-        leaking ~1 GB at the project root forever (issue #73109)."""
+        leaking ~1 GB at the project root forever (issue #73109).
+
+        Runs on every host. ``_repair_windows_preflight`` (holders + self-lock gate, run before
+        the cut-over on Windows; its own tests are below) is stubbed to "clear": on this box the
+        default holder detector answers for the checkout's real venv and sibling runners, not the
+        fixture, and the subject here is the post-cutover backup removal. On POSIX the stub equals
+        the product (both gates answer ``(False, "")`` off Windows)."""
         from hermes_cli.managed_uv import repair_vulnerable_runtime
 
-        root, live, sentinel = _make_runtime_install(tmp_path)
-        current = _runtime_info(live / "bin" / "python", (3, 50, 4))
+        root, live, sentinel = _make_runtime_install(tmp_path, windows=sys.platform == "win32")
+        current = _runtime_info(_host_venv_python(live), (3, 50, 4))
         generation = root / ".hermes-runtime" / "python" / "generation-test"
         candidate_python = generation / "bin" / "python"
         candidate_python.parent.mkdir(parents=True)
@@ -594,6 +615,7 @@ class TestRuntimeRepair:
                  "hermes_cli.managed_uv.probe_sqlite_runtime",
                  side_effect=[current, current],
              ), \
+             patch("hermes_cli.managed_uv._repair_windows_preflight", return_value=None), \
              patch(
                  "hermes_cli.managed_uv._install_safe_python_generation",
                  return_value=(generation, candidate_python, fixed),
