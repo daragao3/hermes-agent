@@ -371,7 +371,7 @@ class TestProcessIdentity:
             assert lp._is_lightpanda_process(999, 43111, None) is False
 
 
-@pytest.mark.skipif(os.name != "nt", reason="the Windows contract of a POSIX-only engine")
+@pytest.mark.windows_only  # the Windows contract of a POSIX-only engine; conftest marker so the lane counts it
 class TestWindowsHasNoBuild:
     def test_resolver_is_none_even_with_a_binary_on_path(self, tmp_path, monkeypatch):
         exe = _exe(tmp_path / "bin" / "lightpanda")
