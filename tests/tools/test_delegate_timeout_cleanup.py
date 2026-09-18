@@ -35,7 +35,12 @@ class _SlowUnwindingChild:
         # Model the real child turn's finally path: it still performs session
         # activity/SQLite cleanup after the parent requests interruption.
         self.unwinding.set()
-        assert self.allow_finish.wait(timeout=2)
+        # Hang net, not the subject: the parent's post-timeout teardown lazily
+        # imports model_tools (plugin discovery) on the way to returning, and on a
+        # loaded Windows box that cold import measured 7 s (2026-09-17). A short
+        # budget here makes the fake RAISE, which completes the future and fires
+        # the deferred close -- the exact symptom the test guards against.
+        assert self.allow_finish.wait(timeout=30)
         self.finished.set()
         return {
             "final_response": "",
