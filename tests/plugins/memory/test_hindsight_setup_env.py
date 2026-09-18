@@ -23,3 +23,15 @@ def test_append_and_new_file_use_lf(tmp_path):
 
     _write_env(env_path, {"HINDSIGHT_API_URL": "http://localhost:8888"})
     assert env_path.read_bytes() == b"HINDSIGHT_API_KEY=k\nHINDSIGHT_API_URL=http://localhost:8888\n"
+
+
+def test_non_utf8_env_preserves_unrelated_bytes(tmp_path):
+    # Same contract as the OpenViking writer (38175b8c22): an undecodable byte on an
+    # UNRELATED line (a Windows editor saving cp1252) round-trips unchanged instead of
+    # raising UnicodeDecodeError in the wizard.
+    env_path = tmp_path / ".env"
+    env_path.write_bytes(b"NAME=caf\xe9\nHINDSIGHT_API_KEY=old\n")
+
+    _write_env(env_path, {"HINDSIGHT_API_KEY": "new"})
+
+    assert env_path.read_bytes() == b"NAME=caf\xe9\nHINDSIGHT_API_KEY=new\n"
