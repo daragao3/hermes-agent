@@ -515,9 +515,11 @@ class TestCheckForSkillUpdates:
         )
         skill_dir = tmp_path / "demo-skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text("same content", encoding="utf-8")
+        # newline="\n": the bundle hash is over the bytes above; a text-mode write on
+        # Windows would put CRLF on disk and the two hashes could never agree.
+        (skill_dir / "SKILL.md").write_text("same content", encoding="utf-8", newline="\n")
         (skill_dir / "references").mkdir()
-        (skill_dir / "references" / "checklist.md").write_text("- [ ] security\n", encoding="utf-8")
+        (skill_dir / "references" / "checklist.md").write_text("- [ ] security\n", encoding="utf-8", newline="\n")
 
         assert bundle_content_hash(bundle) == content_hash(skill_dir)
 
@@ -887,7 +889,7 @@ class TestOptionalSkillSourceBinaryAssets:
             wav_bytes
         )
         (skill_dir / "assets" / "neutts-cli" / "samples" / "jo.txt").write_text(
-            "hello\n", encoding="utf-8"
+            "hello\n", encoding="utf-8", newline="\n"  # the assertion is on these bytes
         )
         pycache_dir = skill_dir / "assets" / "neutts-cli" / "src" / "neutts_cli" / "__pycache__"
         pycache_dir.mkdir(parents=True)

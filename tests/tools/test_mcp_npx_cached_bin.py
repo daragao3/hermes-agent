@@ -35,10 +35,18 @@ def _cache(tmp_path, *, package, deps=None, bin_field, make_bin=True, entry="abc
     bindir = root / "node_modules" / ".bin"
     bindir.mkdir(parents=True, exist_ok=True)
     name = bin_field if isinstance(bin_field, str) else list(bin_field)[0]
-    target = bindir / (os.path.basename(package) if isinstance(bin_field, str) else name)
+    stem = os.path.basename(package) if isinstance(bin_field, str) else name
+    # npm lays down the launcher the host can spawn: the sh script on POSIX, a
+    # `<name>.cmd` shim on Windows (where the sh sibling also exists but is never
+    # the one the resolver may pick -- see test_windows_selects_launchers...).
+    target = bindir / (stem + ".cmd" if os.name == "nt" else stem)
     if make_bin:
-        target.write_text("#!/usr/bin/env node\n", encoding="utf-8")
-        target.chmod(0o755)
+        if os.name == "nt":
+            (bindir / stem).write_text("#!/usr/bin/env node\n", encoding="utf-8")
+            target.write_text("@echo off\r\nnode dist\\index.js %*\r\n", encoding="utf-8")
+        else:
+            target.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+            target.chmod(0o755)
     return target
 
 
@@ -188,14 +196,16 @@ def test_windows_selects_launchers_never_the_sh_script():
     from tools.mcp_tool_config import _npx_bin_candidates
 
     win = _npx_bin_candidates("/c/bin", "mcp-linear", windows=True)
-    assert win == ["/c/bin/mcp-linear.cmd", "/c/bin/mcp-linear.exe"]
+    # The helper joins with the HOST's separator (the real resolver hands it a
+    # native cache dir); the subject here is extension selection, not the join.
+    assert win == [os.path.join("/c/bin", "mcp-linear.cmd"), os.path.join("/c/bin", "mcp-linear.exe")]
     assert not any(c.endswith("mcp-linear") for c in win), "sh script must not be a candidate"
 
-    assert _npx_bin_candidates("/bin", "mcp-linear", windows=False) == ["/bin/mcp-linear"]
+    assert _npx_bin_candidates("/bin", "mcp-linear", windows=False) == [os.path.join("/bin", "mcp-linear")]
 
 
 def test_posix_resolution_uses_the_helper(tmp_path):
-    """The resolver honours the helper's ordering (POSIX path end-to-end)."""
+    """The resolver honours the helper's ordering (host launcher end-to-end)."""
     target = _cache(tmp_path, package="mcp-linear", bin_field={"mcp-linear": "i.js"})
 
     assert _npx_cached_bin(["-y", "mcp-linear"]) == (str(target), [])

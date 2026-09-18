@@ -9,6 +9,9 @@ resident local models.
 
 from __future__ import annotations
 
+import os
+import shlex
+import subprocess
 import threading
 
 import pytest
@@ -302,4 +305,7 @@ def test_command_provider_runs_warm_and_release_commands(monkeypatch):
     done.clear()
     tts_tool_lifecycle.release_tts_lease("desktop:read-aloud")
     assert done.wait(5)
-    assert ran == ["curl -s localhost:5002/load?model='kokoro v1'", "curl -s localhost:5002/unload"]
+    # An unquoted placeholder is quoted for the HOST shell (quote_command_placeholder:
+    # list2cmdline on Windows, shlex.quote elsewhere).
+    model = subprocess.list2cmdline(["kokoro v1"]) if os.name == "nt" else shlex.quote("kokoro v1")
+    assert ran == [f"curl -s localhost:5002/load?model={model}", "curl -s localhost:5002/unload"]

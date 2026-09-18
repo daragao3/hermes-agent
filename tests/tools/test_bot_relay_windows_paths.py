@@ -24,6 +24,7 @@ Two failures on a Windows desktop install talking to a remote gateway:
 
 import ast
 import shlex
+import sys
 from pathlib import Path
 
 import tools.bot_mode_dm as bot_mode_dm
@@ -60,7 +61,10 @@ def test_waiter_posix_path_and_label_values_roundtrip():
         if isinstance(t, ast.Assign) and isinstance(t.targets[0], ast.Name)
     }
     expected = str(root / "bot_relay" / "replies" / f"{ENV['id']}.json")
-    assert assigns["p"].value == expected
+    # On a Windows host Path("/tmp/...") is a WindowsPath, so the raw literal
+    # carries repr's doubled backslashes until the execution layer folds them
+    # (the design above); fold here too. A no-op for a backslash-free path.
+    assert assigns["p"].value.replace("\\\\", "\\") == expected
     assert assigns["label"].value == "@researcher on ssh-vps"
     # The literals are raw-prefixed in the generated source.
     assert "\np = r'" in code
@@ -91,7 +95,8 @@ def test_waiter_raw_prefix_keeps_injection_defense():
 def test_local_delivery_resolves_sibling_hermes(tmp_path, monkeypatch):
     bin_dir = tmp_path / "venv" / "bin"
     bin_dir.mkdir(parents=True)
-    sibling = bin_dir / "hermes"
+    # The resolver looks for the host's entrypoint spelling beside the interpreter.
+    sibling = bin_dir / ("hermes.exe" if sys.platform == "win32" else "hermes")
     sibling.touch()
     sibling.chmod(0o755)
     monkeypatch.setattr("sys.executable", str(bin_dir / "python"))
