@@ -68,7 +68,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, List, NamedTuple, Tuple
 
 
 # Default test discovery roots.
@@ -704,7 +704,380 @@ def _discover_files(roots: List[Path]) -> List[Path]:
     return sorted(out)
 
 
-def _kill_tree(proc: "subprocess.Popen", pgid: int | None = None) -> None:
+# ---------------------------------------------------------------------------
+# Windows tree kill
+# ---------------------------------------------------------------------------
+#
+# Why ``taskkill /F /T /PID`` is gone (2026-09-17T21:30:08Z, Security 4689):
+# the happy path below used to run it on a pytest launcher pid that had
+# ALREADY exited. ``/T`` walks every process whose recorded ParentProcessId
+# equals that pid. Windows recycles pids within minutes on a busy box, and
+# every long-lived service is an orphan of a shell that exited long ago --
+# an orphan keeps its dead parent's pid as ParentProcessId forever. So the
+# walk adopted, and killed, five unrelated interpreters (Hermes Canvas
+# :9121, Control Center :9120, three more) plus git/docker/cmd in one 80 ms
+# sweep, 3 ms after the launcher pids it was aimed at had exited normally.
+#
+# Two primitives replace it, neither of which can name a process that was
+# never ours:
+#
+# 1. A kill-on-close job object per pytest child (the exact Windows
+#    equivalent of the POSIX process group captured at spawn). The child is
+#    assigned to the job while it is still alive; every descendant inherits
+#    membership; ``TerminateJobObject`` kills by membership, not by pid or
+#    image name, and is safe after the root has exited. CPython's venv
+#    launcher runs its worker in its own SILENT_BREAKAWAY job, so a
+#    grandchild (say, a uvicorn server) survives the launcher's exit -- the
+#    runner's job still holds it because breakaway only skips the jobs that
+#    allow it.
+#
+# 2. When no job could be assigned (nested jobs forbidden, ctypes trouble),
+#    a ppid walk over a process snapshot, guarded: a child is adopted only if
+#    it was created at or after its claimed parent -- a real child can never
+#    predate its parent -- and an unknown creation time is not adopted. The
+#    root itself must still be the process we spawned (its creation time is
+#    pinned at spawn) and each victim must still be the process the snapshot
+#    saw before it is terminated. A root that has already exited means the
+#    walk has nothing provable to stand on, so it kills nothing.
+
+
+class _ProcRecord(NamedTuple):
+    """One row of a process snapshot (the Win32_Process / psutil shape)."""
+
+    pid: int
+    ppid: int
+    created: float | None  # epoch seconds; None when the host would not say
+
+
+class _WinTree:
+    """What ``_kill_tree`` knows about a Windows child, captured at spawn.
+
+    ``job`` is the kill-on-close job handle the child was assigned to, or
+    None when assignment failed. ``root_created`` is the child's creation
+    time (epoch seconds) read while it was certainly alive, so a later walk
+    can tell our root from a stranger wearing its recycled pid.
+    """
+
+    __slots__ = ("job", "root_created")
+
+    def __init__(self, job: int | None = None, root_created: float | None = None) -> None:
+        self.job = job
+        self.root_created = root_created
+
+
+# Two records agree on identity when their creation times match to the
+# millisecond: psutil computes the float from the same FILETIME both times,
+# and no pid can be reused faster than that.
+_CREATED_TOLERANCE_S = 1e-3
+
+
+def _same_process(created_a: float | None, created_b: float | None) -> bool:
+    if created_a is None or created_b is None:
+        return False
+    return abs(created_a - created_b) <= _CREATED_TOLERANCE_S
+
+
+def _is_genuine_child(child: _ProcRecord, parent: _ProcRecord) -> bool:
+    """A real child can never predate its parent; an unknown birth is not adopted.
+
+    The recycled-pid orphan claims ``parent.pid`` as its ParentProcessId but
+    was born before ``parent`` existed. This is the whole guard.
+    """
+    if child.created is None or parent.created is None:
+        return False
+    return child.created >= parent.created
+
+
+def _process_tree_victims(
+    root_pid: int,
+    snapshot: Iterable[_ProcRecord],
+    root_created: float | None = None,
+) -> list[_ProcRecord]:
+    """Pure: the root and every provable descendant, leaves first, root last.
+
+    Empty when the root is not in the snapshot, or when ``root_created`` is
+    given and the snapshot's root is a different process (recycled pid).
+    """
+    rows = list(snapshot)
+    by_pid: dict[int, _ProcRecord] = {r.pid: r for r in rows}
+    root = by_pid.get(root_pid)
+    if root is None:
+        return []
+    if root_created is not None and not _same_process(root.created, root_created):
+        return []
+    children: dict[int, list[_ProcRecord]] = {}
+    for r in rows:
+        children.setdefault(r.ppid, []).append(r)
+    victims: list[_ProcRecord] = []
+    seen = {root_pid}
+    queue = [root]
+    while queue:
+        current = queue.pop(0)
+        victims.append(current)
+        for child in children.get(current.pid, ()):
+            if child.pid in seen or not _is_genuine_child(child, current):
+                continue
+            seen.add(child.pid)
+            queue.append(child)
+    victims.reverse()
+    return victims
+
+
+def _win_process_created(pid: int) -> float | None:
+    """Creation time of ``pid`` right now, or None if it cannot be read."""
+    try:
+        import psutil
+        return float(psutil.Process(pid).create_time())
+    except Exception:
+        return None
+
+
+def _win_ppid_map() -> dict[int, int] | None:
+    """``{pid: recorded ParentProcessId}`` for every process, one Toolhelp32 snapshot.
+
+    Why not ``psutil.process_iter``: it pins every process's identity by
+    reading its creation time, and each access-denied read falls back to a
+    full NtQuerySystemInformation scan -- 62 s cold on this box under a
+    running ceremony (measured 2026-09-17), longer than the tree we are
+    trying to kill. The snapshot is one syscall and carries no times; the
+    walk asks for times only along the candidate chain.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        TH32CS_SNAPPROCESS = 0x2
+        INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+        kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        kernel32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W)]
+        kernel32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32W)]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+        snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not snap or snap == INVALID_HANDLE_VALUE:
+            return None
+        try:
+            entry = PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(entry)
+            out: dict[int, int] = {}
+            ok = kernel32.Process32FirstW(snap, ctypes.byref(entry))
+            while ok:
+                out[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+                ok = kernel32.Process32NextW(snap, ctypes.byref(entry))
+            return out
+        finally:
+            kernel32.CloseHandle(snap)
+    except Exception:
+        return None
+
+
+def _win_tree_snapshot(root_pid: int) -> list[_ProcRecord] | None:
+    """Rows for the root and everything that CLAIMS to descend from it.
+
+    The claim closure is deliberately unguarded -- it only decides whom to
+    ask for a creation time; ``_process_tree_victims`` applies the guard.
+    None when no snapshot could be taken: the caller kills nothing rather
+    than guess.
+    """
+    edges = _win_ppid_map()
+    if edges is None or root_pid not in edges:
+        return None
+    claimed: dict[int, list[int]] = {}
+    for pid, ppid in edges.items():
+        claimed.setdefault(ppid, []).append(pid)
+    order = [root_pid]
+    seen = {root_pid}
+    i = 0
+    while i < len(order):
+        for child in claimed.get(order[i], ()):
+            if child not in seen:
+                seen.add(child)
+                order.append(child)
+        i += 1
+    return [_ProcRecord(pid, edges[pid], _win_process_created(pid)) for pid in order]
+
+
+def _win_kill_pid(pid: int, created: float | None) -> bool:
+    """TerminateProcess ``pid`` only if it is still the process the snapshot saw.
+
+    Never by image name, never a recycled pid: a creation time that no
+    longer matches means someone else now wears this pid, and we leave it.
+    """
+    try:
+        import psutil
+        p = psutil.Process(pid)
+        if not _same_process(p.create_time(), created):
+            return False
+        p.kill()
+        return True
+    except Exception:
+        return False
+
+
+def _win_job_for(proc: "subprocess.Popen") -> int | None:
+    """Create a kill-on-close job and put ``proc`` in it. Handle, or None.
+
+    ``BREAKAWAY_OK`` keeps children spawned with ``CREATE_BREAKAWAY_FROM_JOB``
+    (the product's detached gateway / watcher spawns) escaping exactly as
+    they do outside the runner; those were never reapable by anything but a
+    ppid walk, and a ppid walk is what we refuse to trust.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x0800
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        JobObjectExtendedLimitInformation = 9
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_ulonglong) for n in (
+                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER), ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.POINTER(wintypes.ULONG)), ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                *((n, ctypes.c_size_t) for n in (
+                    "ProcessMemoryLimit", "JobMemoryLimit", "PeakProcessMemoryUsed", "PeakJobMemoryUsed")),
+            ]
+
+        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        kernel32.SetInformationJobObject.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK
+        ok = kernel32.SetInformationJobObject(job, JobObjectExtendedLimitInformation, ctypes.byref(info), ctypes.sizeof(info))
+        # Popen's own handle names exactly the process we spawned, whatever
+        # its pid means by now; only fall back to a pid lookup without it.
+        handle = getattr(proc, "_handle", None)
+        if handle is None:
+            kernel32.OpenProcess.restype = ctypes.c_void_p
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            PROCESS_SET_QUOTA, PROCESS_TERMINATE = 0x0100, 0x0001
+            handle = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, proc.pid)
+        if not ok or not handle or not kernel32.AssignProcessToJobObject(job, int(handle)):
+            kernel32.CloseHandle(job)
+            return None
+        return int(job)
+    except Exception:
+        return None
+
+
+def _win_job_terminate(job: int) -> bool:
+    """Kill every process still in ``job`` (by membership, not by pid)."""
+    try:
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.TerminateJobObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        return bool(kernel32.TerminateJobObject(job, 1))
+    except Exception:
+        return False
+
+
+def _win_job_close(job: int) -> None:
+    try:
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle(job)
+    except Exception:
+        pass
+
+
+_CREATE_SUSPENDED = 0x00000004
+
+
+def _win_can_resume() -> bool:
+    """Whether we can thaw a CREATE_SUSPENDED child (psutil's NtResumeProcess)."""
+    try:
+        import psutil
+        return callable(getattr(psutil.Process, "resume", None))
+    except Exception:
+        return False
+
+
+def _win_resume(pid: int) -> bool:
+    try:
+        import psutil
+        psutil.Process(pid).resume()
+        return True
+    except Exception:
+        return False
+
+
+def _win_tree_capture(proc: "subprocess.Popen", suspended: bool = False) -> _WinTree:
+    """Pin the child's identity and job membership while it is alive.
+
+    With ``suspended`` the child was created frozen: it joins the job and has
+    its creation time read before its first instruction, so nothing it will
+    ever spawn can predate the job. It is thawed here; if that fails it is
+    killed rather than left frozen for the whole file timeout (the retry
+    path then reports the file).
+    """
+    tree = _WinTree(job=_win_job_for(proc), root_created=_win_process_created(proc.pid))
+    if suspended and not _win_resume(proc.pid):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    return tree
+
+
+def _win_kill_tree(proc: "subprocess.Popen", tree: _WinTree | None) -> list[int]:
+    """Windows half of ``_kill_tree``; returns the pids it terminated itself."""
+    if tree is not None and tree.job is not None and _win_job_terminate(tree.job):
+        return []
+    if proc.poll() is not None:
+        # The root has exited and was in no job of ours. Its pid may already
+        # belong to someone else, and every ParentProcessId edge below it is
+        # unprovable. This is exactly the 2026-09-17 shape: kill nothing.
+        return []
+    snapshot = _win_tree_snapshot(proc.pid)
+    if snapshot is None:
+        return []
+    root_created = tree.root_created if tree is not None else None
+    killed: list[int] = []
+    for victim in _process_tree_victims(proc.pid, snapshot, root_created=root_created):
+        if _win_kill_pid(victim.pid, victim.created):
+            killed.append(victim.pid)
+    return killed
+
+
+def _kill_tree(
+    proc: "subprocess.Popen",
+    pgid: int | None = None,
+    tree: _WinTree | None = None,
+) -> None:
     """Kill the pytest subprocess and every descendant it spawned.
 
     A test run can spin up uvicorn servers, async runtimes, or other
@@ -721,30 +1094,17 @@ def _kill_tree(proc: "subprocess.Popen", pgid: int | None = None) -> None:
     the group are still alive. SIGKILL'ing the captured pgid takes out
     everything in that group atomically.
 
-    Windows: ``taskkill /F /T /PID`` walks the recorded ppid chain and
-    terminates the whole tree, even when the root has already exited.
-
-    Why not psutil: psutil walks the parent-child tree, but in the
-    happy path the root has already been reaped so ``psutil.Process(pid)``
-    can't find it; grandchildren reparented to PID 1 are also
-    unreachable by tree walk at that point. The platform-native
-    primitives (process groups / taskkill) handle both cases correctly
-    without an extra abstraction layer.
+    Windows: the caller passes ``tree`` from ``_win_tree_capture`` (the
+    job object and root identity captured at spawn). The job is
+    terminated by membership; without a job, a creation-time-guarded ppid
+    walk runs only while the root is still alive. Never ``taskkill /T``,
+    never by image name -- see the block comment above ``_ProcRecord``.
     """
     if proc.pid is None:
         return
 
     if sys.platform == "win32":
-        try:
-            
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-            )  # windows-footgun: ok
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            pass
+        _win_kill_tree(proc, tree)
     else:
         # POSIX: kill the captured pgid. Local-import signal so the
         # SIGKILL attribute is never referenced on Windows.
@@ -921,6 +1281,10 @@ def _spawn_pytest(
     env["PYTEST_DEBUG_TEMPROOT"] = temproot
 
     subproc_start = time.monotonic()
+    # Windows: start the child frozen so it joins the job before it can
+    # spawn anything; _win_tree_capture thaws it. Only when we know we can
+    # thaw it -- a child left suspended would sit out the whole file timeout.
+    suspended = sys.platform == "win32" and _win_can_resume()
     # launch the pytest process
     proc = subprocess.Popen(
         cmd,
@@ -932,8 +1296,10 @@ def _spawn_pytest(
         # POSIX: place the child at the head of its own process group so
         # _kill_tree can SIGKILL the group atomically.
         # Windows: this maps to CREATE_NEW_PROCESS_GROUP in CPython 3.12+;
-        # _kill_tree handles the Windows path via taskkill /F /T.
+        # the Windows equivalent of the group is the job object captured
+        # just below by _win_tree_capture.
         start_new_session=True,
+        creationflags=_CREATE_SUSPENDED if suspended else 0,
     )
 
     # Capture the pgid NOW, before the leader can exit and be reaped. Once
@@ -941,7 +1307,12 @@ def _spawn_pytest(
     # even though grandchildren in that group are still alive — defeating
     # the whole cleanup. None on Windows where the pgid concept doesn't apply.
     pgid: int | None = None
-    if sys.platform != "win32":
+    tree: _WinTree | None = None
+    if sys.platform == "win32":
+        # Same reason, same moment: the job assignment and the root's
+        # identity are only trustworthy while the child is certainly alive.
+        tree = _win_tree_capture(proc, suspended=suspended)
+    else:
         try:
             pgid = os.getpgid(proc.pid)  # windows-footgun: ok -- inside the not-win32 gate on the previous line
         except (ProcessLookupError, PermissionError):
@@ -951,7 +1322,7 @@ def _spawn_pytest(
         output, _ = proc.communicate(timeout=file_timeout)
         rc = proc.returncode
     except subprocess.TimeoutExpired:
-        _kill_tree(proc, pgid=pgid)
+        _kill_tree(proc, pgid=pgid, tree=tree)
         try:
             output, _ = proc.communicate(timeout=10)
         except subprocess.TimeoutExpired:
@@ -964,15 +1335,19 @@ def _spawn_pytest(
     except BaseException:
         # KeyboardInterrupt / runner crash — make sure no zombie
         # grandchildren outlive us.
-        _kill_tree(proc, pgid=pgid)
+        _kill_tree(proc, pgid=pgid, tree=tree)
         raise
     else:
         # Happy path: pytest exited on its own. Kill the group anyway in
         # case it left grandchildren behind; already-dead is a no-op.
-        _kill_tree(proc, pgid=pgid)
+        _kill_tree(proc, pgid=pgid, tree=tree)
 
         output +=  "\n"
     finally:
+        # Closing the kill-on-close job is itself the last sweep of anything
+        # still in it; it also releases the handle.
+        if tree is not None and tree.job is not None:
+            _win_job_close(tree.job)
         # Delete the temp root for this attempt. Nothing reads it after the
         # subprocess exits. More than 3000 of them fill the disk of the
         # runner over one suite.
