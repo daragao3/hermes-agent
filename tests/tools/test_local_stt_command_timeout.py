@@ -58,17 +58,21 @@ def test_local_stt_uses_the_file_backed_capture_helper(monkeypatch, _local_comma
 
     assert seen["kwargs"]["timeout"] == 300
     # No env var set -> auto-detected template -> list mode, not shell.
-    assert seen["kwargs"]["shell"] is False
+    assert seen["kwargs"].get("shell", False) is False  # list mode is the helper default
     assert isinstance(seen["command"], list)
     # The helper supplies CREATE_NO_WINDOW itself; passing it again is an error.
     assert "creationflags" not in seen["kwargs"]
 
 
-def test_local_stt_shell_mode_passes_a_command_string(monkeypatch, _local_command):
-    """A user-supplied template runs under ``shell=True`` and must stay a STRING.
+def test_local_stt_env_template_also_runs_in_list_mode(monkeypatch, _local_command):
+    """A user-supplied template is split into argv like the auto-detected one.
 
-    ``list()`` over a command string would shred it into one argument per
-    character — the exact reason the helper needed a shell parameter.
+    The fork once ran env-var templates under ``shell=True`` as a string so a
+    user could write pipes into ``HERMES_LOCAL_STT_COMMAND``; that contradicts
+    upstream's shell-safety contract (``TestShellSafety`` in
+    test_transcription_tools.py: metacharacters stay literal argv) and is
+    retired. ``shlex.split`` keeps a spaced path as ONE argument because the
+    placeholder was ``shlex.quote``'d before substitution.
     """
     monkeypatch.setenv(transcription_local.LOCAL_STT_COMMAND_ENV, "whisper {input_path}")
     seen = {}
@@ -82,8 +86,11 @@ def test_local_stt_shell_mode_passes_a_command_string(monkeypatch, _local_comman
 
     transcription_local._transcribe_local_command(_local_command, "base")
 
-    assert seen["kwargs"]["shell"] is True
-    assert isinstance(seen["command"], str)
+    assert seen["kwargs"].get("shell", False) is False  # list mode is the helper default
+    assert isinstance(seen["command"], list)
+    # Two argv elements: the backslashed/spaced Windows path survives as ONE token.
+    assert seen["command"][0] == "whisper" and len(seen["command"]) == 2
+    assert seen["command"][1].endswith("clip.wav")
 
 
 def test_local_stt_nonzero_exit_still_surfaces_the_commands_stderr(
