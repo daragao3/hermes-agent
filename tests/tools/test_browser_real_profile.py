@@ -8,6 +8,7 @@ are limited to OS detection and process launch.
 """
 import os
 import ntpath
+import subprocess
 from unittest.mock import Mock, patch
 
 import pytest
@@ -270,7 +271,7 @@ class TestRealProfileCdpLaunch:
              patch.object(bt_real_profile, "_agent_browser_get_cdp",
                           side_effect=[None, "http://127.0.0.1:41000"]), \
              patch.object(bt_install, "_find_agent_browser", return_value="/usr/bin/agent-browser"), \
-             patch.object(bt.subprocess, "run", return_value=proc), \
+             patch("hermes_cli._subprocess_compat.run_text_capture", return_value=proc), \
              patch.object(bt_cloud, "_is_headed_mode", return_value=False):
             cdp, err = bt_real_profile._real_profile_cdp()
         assert err is None
@@ -321,7 +322,7 @@ class TestRealProfileCdpLaunch:
              patch.object(bt_real_profile, "_agent_browser_get_cdp",
                           side_effect=[None, "http://127.0.0.1:41000"]), \
              patch.object(bt_install, "_find_agent_browser", return_value="/usr/bin/agent-browser"), \
-             patch.object(bt.subprocess, "run", side_effect=fake_run), \
+             patch("hermes_cli._subprocess_compat.run_text_capture", side_effect=fake_run), \
              patch.object(bt, "_socket_safe_tmpdir", return_value=str(tmp_path)), \
              patch.object(bt_cloud, "_is_headed_mode", return_value=False):
             bt_real_profile._real_profile_cdp()
@@ -366,7 +367,7 @@ class TestRealProfileCdpLaunch:
              patch.object(bt_real_profile, "_agent_browser_close_session",
                           side_effect=lambda s: closed.__setitem__("n", closed["n"] + 1)), \
              patch.object(bt_install, "_find_agent_browser", return_value="/usr/bin/agent-browser"), \
-             patch.object(bt.subprocess, "run", return_value=proc), \
+             patch("hermes_cli._subprocess_compat.run_text_capture", return_value=proc), \
              patch.object(bt_cloud, "_is_headed_mode", return_value=False):
             cdp, err = bt_real_profile._real_profile_cdp()
         assert closed["n"] == 1  # stale wrong-dir session was closed
@@ -1027,7 +1028,7 @@ class TestReviewRound3:
              patch.object(bt_real_profile, "_agent_browser_get_cdp",
                           side_effect=[None, "http://127.0.0.1:9251"]), \
              patch.object(bt_install, "_find_agent_browser", return_value="/usr/bin/agent-browser"), \
-             patch.object(bt.subprocess, "run", return_value=proc), \
+             patch("hermes_cli._subprocess_compat.run_text_capture", return_value=proc), \
              patch.object(bt_cloud, "_is_headed_mode", return_value=False):
             cdp, err = bt_real_profile._real_profile_cdp()
         assert err is None
@@ -1173,3 +1174,41 @@ class TestWindowsLockedProfileCopy:
         dst, err = bc.snapshot_real_profile("chrome", src=str(root))
         assert dst is None
         assert err and "login data" in err.lower() and "close" in err.lower()
+
+
+class TestAgentBrowserCommandsUseFileBackedCapture:
+    """agent-browser is a node CLI whose daemon grandchild outlives the command and
+    inherits the capture handles; under ``subprocess.run(capture_output=True)`` the
+    pipe never reaches EOF and the timeout cannot fire on Windows. Both agent-browser
+    call sites must go through ``run_text_capture`` (temp-file stdio + tree-kill)."""
+
+    def _forbid_pipe_capture(self):
+        def _boom(*_a, **_k):
+            raise AssertionError("agent-browser must not run under subprocess.run pipe capture")
+        return patch.object(bt_real_profile.subprocess, "run", side_effect=_boom)
+
+    def test_session_cmd_goes_through_the_helper(self):
+        seen = {}
+
+        def fake_capture(argv, **kw):
+            seen["argv"], seen["kw"] = argv, kw
+            return subprocess.CompletedProcess(argv, 0, stdout="ws://127.0.0.1:41000/devtools/browser/x\n", stderr="")
+
+        with self._forbid_pipe_capture(), \
+             patch.object(bt_install, "_find_agent_browser", return_value="/usr/bin/agent-browser"), \
+             patch("hermes_cli._subprocess_compat.run_text_capture", side_effect=fake_capture):
+            assert bt_real_profile._agent_browser_get_cdp("hermes-real-profile") == "http://127.0.0.1:41000"
+        assert seen["argv"][-3:] == ["hermes-real-profile", "get", "cdp-url"]
+        assert seen["kw"]["timeout"] == 15
+        assert seen["kw"]["stdin"] is subprocess.DEVNULL
+
+    def test_attach_goes_through_the_helper_and_times_out_cleanly(self, tmp_path):
+        def timed_out(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw["timeout"])
+
+        with self._forbid_pipe_capture(), \
+             patch.object(bt_install, "_find_agent_browser", return_value="/usr/bin/agent-browser"), \
+             patch("hermes_cli._subprocess_compat.run_text_capture", side_effect=timed_out):
+            cdp, err = bt_real_profile._attach_agent_browser_to_real_profile(41000, str(tmp_path))
+        assert cdp is None
+        assert err and "took too long" in err
