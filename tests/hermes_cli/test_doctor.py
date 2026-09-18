@@ -896,7 +896,8 @@ def test_run_doctor_flags_missing_credentials_for_active_openrouter_provider(mon
         monkeypatch.setattr(_auth_mod, "get_nous_auth_status_local", lambda: {})
         monkeypatch.setattr(_auth_mod, "get_codex_auth_status", lambda: {})
         monkeypatch.setattr(_auth_mod, "get_minimax_oauth_auth_status", lambda: {})
-        monkeypatch.setattr(_auth_mod, "get_gemini_oauth_auth_status", lambda: {})
+        # get_gemini_oauth_auth_status left with the provider (7130d60861); a
+        # setattr on it raised AttributeError into this except and was inert.
     except Exception:
         pass
 
