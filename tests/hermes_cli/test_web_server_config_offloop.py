@@ -106,7 +106,9 @@ class TestGetConfigOffLoop:
         # the loop keeps ticking (~50 ticks at 20ms). Pre-fix, the handler
         # blocked the loop for the whole hold and the heartbeat got ~0
         # ticks. Threshold is generous so slow CI machines don't flake.
-        assert ticks >= 10, (
+        # Blocked = 0 (at most 1) tick; a free loop on a 12-worker-saturated Windows box
+        # measured 5 in the 1 s hold (2026-09-17). 3 still separates the two outcomes.
+        assert ticks >= 3, (
             f"event loop heartbeat only ticked {ticks} time(s) while "
             "_SKILLS_PROFILE_LOCK was held — /api/config is blocking the "
             "loop again"
@@ -177,7 +179,9 @@ class TestRouterOffLoop:
             return ticks
 
         ticks = asyncio.run(_scenario())
-        assert ticks >= 10, (
+        # Blocked = 0 (at most 1) tick; a free loop on a 12-worker-saturated Windows box
+        # measured 5 in the 1 s hold (2026-09-17). 3 still separates the two outcomes.
+        assert ticks >= 3, (
             f"event loop heartbeat only ticked {ticks} time(s) while "
             "_SKILLS_PROFILE_LOCK was held — GET /api/skills is blocking "
             "the loop"
