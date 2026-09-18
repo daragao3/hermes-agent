@@ -82,12 +82,37 @@ Deliberately NOT reported (each is counted under ``--verbose``):
   ``mod.Class.method``): an object/class attribute, out of scope -- the module
   seam it crossed was verified;
 * a module with a wildcard import, or one that hands its namespace to a call
-  (``register(sys.modules[__name__])``, ``bind_module(globals(), ...)`` -- the
-  tui_gateway.server split-module pattern -- or ``globals().update(computed)``):
-  its attribute set is not static, so names it does not bind explicitly are
+  this scan cannot read (``bind_module(globals(), ...)`` at module scope,
+  ``globals().update(computed)``, a registrar outside the repo): its
+  attribute set is not static, so names it does not bind explicitly are
   skipped.  ``globals()["x"] = v`` binds ``x`` and ``globals()[f"check_{n}_
   requirements"] = v`` (tools/browser_tool.py) binds the pattern, so a module
   that only does that stays static;
+* the split-module REGISTRAR pattern IS read (since 2026-09-18): ``for _m in
+  (_a, _b): _m.register(sys.modules[__name__])`` -- tui_gateway/server.py's
+  tail, 34 modules -- or ``register(globals())`` with every alias bound by one
+  import of a repo module.  Each ``register(server)`` body is walked:
+  ``bind_module(globals(), server, skip=...)`` publishes that module's own
+  top-level names under tui_gateway/method_ctx.py's rules (no dunders, no
+  ``skip``/plumbing names, no imported modules or HandlerRegistry instances,
+  no plain import of a repo def/class -- a constant import is published
+  as-is), ``server.X = v`` / ``setattr(server, "X", v)`` / a setattr loop over
+  string literals bind X, ``other.fn(server)`` for a repo module is read the
+  same way, ``_registry.install(server)`` publishes into a table and no name.
+  The union is what the host binds beyond its own source, so a split-module
+  rename is reported (tests/tui_gateway patch ``server._run_prompt_submit``
+  and 800-odd other published names; before this they were skipped as
+  not_static, and a rename was exactly the head-only red this file exists
+  for).  Any shape the walk does not follow (a computed key, ``server.
+  __dict__``, ``vars(server)``, the server handed to an unresolvable call)
+  keeps the old non-static verdict;
+* an ``if TYPE_CHECKING:`` body never runs, so its imports bind nothing (the
+  split modules declare the names bind_module supplies there); ``if not
+  TYPE_CHECKING:`` is the runtime branch.  First run of this rule over the
+  trunk found tests/plugins/dashboard_auth/test_nous_provider.py patching
+  ``plugins.dashboard_auth._shared.httpx.post`` -- eight AttributeErrors
+  since the 0.21.1 merge 8586e305a2 moved ``import httpx`` under TYPE_CHECKING
+  (fixed test-only alongside this rule);
 * a PEP 562 ``__getattr__`` IS read: the names it compares ``name`` with and the
   keys of the module-level literal it looks ``name`` up in (``_PLUGIN_COMPAT_LAZY
   .get(name)``, ``name not in __all__``) count as bound -- tools/voice_mode.py,
@@ -143,6 +168,8 @@ _MODULE_DUNDERS = frozenset({
 # module (``patch("pkg.mod.input")`` works with no ``input`` bound); monkeypatch
 # does not, so this leniency applies to the patch forms only.
 _BUILTIN_NAMES = frozenset(name for name in dir(builtins) if not name.startswith("_"))
+# tui_gateway/method_ctx.py ``_PLUMBING``: names bind_module never publishes.
+_BIND_MODULE_PLUMBING = frozenset({"HandlerRegistry", "method", "_profile_scoped", "register", "rebind", "logger"})
 
 
 # ── Findings ────────────────────────────────────────────────────────────────
@@ -231,19 +258,77 @@ class ModuleFacts:
     patterns: tuple[re.Pattern[str], ...] = ()  # ``globals()[f"check_{x}_requirements"] = ...``
     shared_namespace: bool = False  # hands ``globals()``/``sys.modules[__name__]`` to a call
     namespace_package: bool = False  # a directory without __init__.py: binds nothing itself
+    # ``X.register(sys.modules[__name__])`` / ``register(globals())`` at module
+    # scope, X imported from a repo module: (import spec, function) pairs whose
+    # bodies Repo reads -- the split-module registrar pattern.  ``registered``
+    # is what they publish, resolved by Repo; None until then (not static).
+    registrars: tuple[tuple[str, str], ...] = ()
+    registered: set[str] | None = None
+    # For reading a registrar's ``bind_module(globals(), server)``: what kind of
+    # binding each top-level name has.  ``defs`` are def/class; ``imports`` maps a
+    # name bound ONLY by import to (import spec, leaf) -- leaf None for ``import x``;
+    # ``registries`` are ``_x = HandlerRegistry()`` instances.
+    defs: set[str] = field(default_factory=set)
+    imports: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    registries: set[str] = field(default_factory=set)
 
     @property
     def static(self) -> bool:
         """The attribute set is known from the source: no wildcard import, no
-        namespace handed away, and any ``__getattr__`` names its keys."""
+        namespace handed away (or every registrar it was handed to is read),
+        and any ``__getattr__`` names its keys."""
         if self.wildcard or self.shared_namespace:
+            return False
+        if self.registrars and self.registered is None:
             return False
         return not self.getattr_hook or self.lazy is not None
 
     def binds(self, name: str) -> bool:
         if name in self.bound or (self.lazy is not None and name in self.lazy):
             return True
+        if self.registered is not None and name in self.registered:
+            return True
         return any(pattern.fullmatch(name) for pattern in self.patterns)
+
+
+def _import_spec(node: ast.ImportFrom) -> str:
+    """The module an ``ImportFrom`` names, with its relative dots kept:
+    ``from . import x`` -> ``"."``, ``from .a import x`` -> ``".a"``,
+    ``from a.b import x`` -> ``"a.b"``.  Resolved by ``_resolve_spec``."""
+    return "." * node.level + (node.module or "")
+
+
+def _join_spec(spec: str, leaf: str) -> str:
+    return spec + leaf if not spec or spec.endswith(".") else f"{spec}.{leaf}"
+
+
+def _resolve_spec(spec: str, package: str) -> str | None:
+    """A (possibly relative) import spec as a dotted module, from ``package``
+    (the dotted package the importing file lives in): ``""`` for ``from .
+    import x`` at the root, None when the relative part climbs out of the
+    tree."""
+    level = len(spec) - len(spec.lstrip("."))
+    module = spec[level:]
+    if not level:
+        return module
+    parts = package.split(".") if package else []
+    if level - 1 > len(parts):
+        return None
+    parts = parts[: len(parts) - (level - 1)]
+    return ".".join(p for p in parts + ([module] if module else []) if p)
+
+
+def _type_checking_test(test: ast.expr) -> bool | None:
+    """``if TYPE_CHECKING:`` / ``typing.TYPE_CHECKING`` / ``__import__("typing")
+    .TYPE_CHECKING`` -> True, ``if not TYPE_CHECKING:`` -> False, else None."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        inner = _type_checking_test(test.operand)
+        return None if inner is None else not inner
+    if isinstance(test, ast.Name):
+        return True if test.id == "TYPE_CHECKING" else None
+    if isinstance(test, ast.Attribute):
+        return True if test.attr == "TYPE_CHECKING" else None
+    return None
 
 
 def _target_names(node: ast.AST) -> set[str]:
@@ -261,10 +346,14 @@ def _target_names(node: ast.AST) -> set[str]:
 
 def _walk_top_level(body: list[ast.stmt]):
     """Yield statements at module scope, descending into compound statements
-    but never into ``def``/``class`` bodies (those bind names elsewhere)."""
+    but never into ``def``/``class`` bodies (those bind names elsewhere), nor
+    into an ``if TYPE_CHECKING:`` body (never run: the split modules' static
+    declarations of names bind_module supplies live there)."""
     for stmt in body:
         yield stmt
-        if isinstance(stmt, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+        if isinstance(stmt, ast.If) and (type_checking := _type_checking_test(stmt.test)) is not None:
+            yield from _walk_top_level(stmt.orelse if type_checking else stmt.body)
+        elif isinstance(stmt, (ast.If, ast.For, ast.AsyncFor, ast.While)):
             yield from _walk_top_level(stmt.body)
             yield from _walk_top_level(stmt.orelse)
         elif isinstance(stmt, (ast.With, ast.AsyncWith)):
@@ -320,17 +409,21 @@ def _key_pattern(key: ast.expr) -> tuple[str | None, re.Pattern[str] | None, boo
     return None, None, True
 
 
-def _namespace_effects(stmt: ast.stmt) -> tuple[set[str], list[re.Pattern[str]], bool]:
+def _namespace_effects(stmt: ast.stmt) -> tuple[set[str], list[re.Pattern[str]], bool, list[tuple[str, str]]]:
     """What a module-scope statement does to the module's own namespace
     besides ordinary binding.  Returns (names bound by key, key patterns,
-    unknown): ``globals()["x"] = v`` binds ``x``; ``globals()[f"check_{n}_
-    requirements"] = v`` binds a pattern; ``globals().update({"x": v})`` binds
-    its literal keys; ``register(sys.modules[__name__])`` / ``bind_module(
-    globals(), ...)`` / ``globals().update(computed)`` hand the namespace to
-    code this source does not show, so the attribute set is unknown."""
+    unknown, registrars): ``globals()["x"] = v`` binds ``x``; ``globals()[f"check_
+    {n}_requirements"] = v`` binds a pattern; ``globals().update({"x": v})``
+    binds its literal keys; ``X.register(sys.modules[__name__])`` / ``register(
+    globals())`` -- the namespace as the ONLY argument of a named callee --
+    is a registrar (alias, function) for the caller to resolve against the
+    repo; ``bind_module(globals(), ...)`` / ``globals().update(computed)`` /
+    any other call handed the namespace runs code this source does not show,
+    so the attribute set is unknown."""
     names: set[str] = set()
     patterns: list[re.Pattern[str]] = []
     unknown = False
+    registrars: list[tuple[str, str]] = []
     for sub in _walk_expressions(stmt):
         if isinstance(sub, ast.Subscript) and _is_own_namespace(sub.value):
             if isinstance(sub.ctx, ast.Store):
@@ -369,11 +462,17 @@ def _namespace_effects(stmt: ast.stmt) -> tuple[set[str], list[re.Pattern[str]],
                 elif pattern is not None:
                     patterns.append(pattern)
                 unknown |= bad
+            elif len(sub.args) == 1 and not sub.keywords and _is_own_namespace(sub.args[0]) and (
+                    isinstance(func, ast.Name) or (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name))):
+                if isinstance(func, ast.Name):
+                    registrars.append(("", func.id))  # ``register(globals())``: an imported function
+                else:
+                    registrars.append((func.value.id, func.attr))  # ``_m.register(sys.modules[__name__])``
             else:
                 for arg in (*sub.args, *(kw.value for kw in sub.keywords)):
                     if _is_own_namespace(arg):
                         unknown = True  # the namespace handed to a callee
-    return names, patterns, unknown
+    return names, patterns, unknown, registrars
 
 
 def _parse(source: bytes, filename: str) -> ast.Module | None:
@@ -508,9 +607,18 @@ def module_facts(tree: ast.Module) -> ModuleFacts:
     # a name assigned twice, augmented, or mutated in place is not a literal.
     literals: dict[str, set[str] | None] = {}
     deep: dict[str, set[str] | None] = {}  # every string inside the display, for comprehensions
+    # For the registrar pattern and for reading a registrar's bind_module call.
+    defs: set[str] = set()
+    imports: dict[str, tuple[str, str | None]] = {}  # name -> (import spec, leaf)
+    other: set[str] = set()                 # names bound by anything but an import
+    registries: set[str] = set()            # ``_registry = HandlerRegistry()``
+    name_tuples: dict[str, tuple[str, ...]] = {}  # ``_MODS = (_a, _b)`` / ``for _m in (_a, _b)``
+    aliases: list[tuple[str, str]] = []     # (alias, function) from _namespace_effects
     for stmt in _walk_top_level(tree.body):
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             bound.add(stmt.name)
+            defs.add(stmt.name)
+            other.add(stmt.name)
             if stmt.name == "__getattr__" and isinstance(stmt, ast.FunctionDef):
                 getattr_hooks.append(stmt)
             continue  # bodies bind elsewhere; never walked
@@ -535,40 +643,65 @@ def module_facts(tree: ast.Module) -> ModuleFacts:
         elif (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
               and isinstance(stmt.value.func, ast.Attribute) and isinstance(stmt.value.func.value, ast.Name)):
             literals[stmt.value.func.value.id] = deep[stmt.value.func.value.id] = None  # X.update(...)
-        names, stmt_patterns, unknown = _namespace_effects(stmt)
+        names, stmt_patterns, unknown, stmt_aliases = _namespace_effects(stmt)
         bound |= names
+        other |= names
         patterns.extend(stmt_patterns)
         shared |= unknown
+        aliases.extend(stmt_aliases)
+        stmt_bound: set[str] = set()  # by this statement, other than by import
         if isinstance(stmt, ast.Import):
             for alias in stmt.names:
-                bound.add(alias.asname or alias.name.split(".", 1)[0])
+                if alias.asname:
+                    bound.add(alias.asname)
+                    imports[alias.asname] = (alias.name, None)
+                else:
+                    top = alias.name.split(".", 1)[0]
+                    bound.add(top)
+                    imports[top] = (top, None)
         elif isinstance(stmt, ast.ImportFrom):
             for alias in stmt.names:
                 if alias.name == "*":
                     wildcard = True
                 else:
                     bound.add(alias.asname or alias.name)
+                    imports[alias.asname or alias.name] = (_import_spec(stmt), alias.name)
         elif isinstance(stmt, ast.Assign):
             for target in stmt.targets:
-                bound |= _target_names(target)
+                stmt_bound |= _target_names(target)
+            if len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+                key = stmt.targets[0].id
+                value = stmt.value
+                if isinstance(value, (ast.Tuple, ast.List)) and all(isinstance(e, ast.Name) for e in value.elts):
+                    name_tuples[key] = tuple(e.id for e in value.elts)
+                elif (isinstance(value, ast.Call) and not value.args and not value.keywords
+                      and _dotted_chain(value.func) and _dotted_chain(value.func)[-1] == "HandlerRegistry"):
+                    registries.add(key)
         elif isinstance(stmt, (ast.AnnAssign, ast.AugAssign)):
-            bound |= _target_names(stmt.target)
+            stmt_bound |= _target_names(stmt.target)
         elif isinstance(stmt, (ast.For, ast.AsyncFor)):
-            bound |= _target_names(stmt.target)
+            stmt_bound |= _target_names(stmt.target)
+            if isinstance(stmt.target, ast.Name):
+                if isinstance(stmt.iter, (ast.Tuple, ast.List)) and all(isinstance(e, ast.Name) for e in stmt.iter.elts):
+                    name_tuples[stmt.target.id] = tuple(e.id for e in stmt.iter.elts)
+                elif isinstance(stmt.iter, ast.Name) and stmt.iter.id in name_tuples:
+                    name_tuples[stmt.target.id] = name_tuples[stmt.iter.id]
         elif isinstance(stmt, (ast.With, ast.AsyncWith)):
             for item in stmt.items:
                 if item.optional_vars is not None:
-                    bound |= _target_names(item.optional_vars)
+                    stmt_bound |= _target_names(item.optional_vars)
         elif isinstance(stmt, ast.Try) or (hasattr(ast, "TryStar") and isinstance(stmt, ast.TryStar)):
             for handler in stmt.handlers:
                 if handler.name:
-                    bound.add(handler.name)
+                    stmt_bound.add(handler.name)
         elif hasattr(ast, "TypeAlias") and isinstance(stmt, ast.TypeAlias):
-            bound |= _target_names(stmt.name)
+            stmt_bound |= _target_names(stmt.name)
         # Walrus anywhere in a module-scope expression binds at module scope too.
         for node in _walk_expressions(stmt):
             if isinstance(node, ast.NamedExpr):
-                bound |= _target_names(node.target)
+                stmt_bound |= _target_names(node.target)
+        bound |= stmt_bound
+        other |= stmt_bound
     lazy: set[str] | None = set()
     for hook in getattr_hooks:
         served = _lazy_names(hook, literals)
@@ -576,6 +709,26 @@ def module_facts(tree: ast.Module) -> ModuleFacts:
             lazy = None
             break
         lazy |= served
+    # A registrar alias must be bound by ONE import (or be a loop variable /
+    # tuple over such aliases); anything else is a namespace handed to code
+    # the source does not name.
+    imports = {name: spec for name, spec in imports.items() if name not in other}
+    registrars: list[tuple[str, str]] = []
+    for alias, func in aliases:
+        members = name_tuples.get(alias, (alias,)) if alias else ("",)
+        for member in members:
+            if not member:  # ``register(globals())``: ``register`` itself is the import
+                spec = imports.get(func)
+                if spec is None or spec[1] is None:
+                    shared = True
+                else:
+                    registrars.append((spec[0], spec[1]))
+                continue
+            spec = imports.get(member)
+            if spec is None:
+                shared = True
+            else:
+                registrars.append((spec[0] if spec[1] is None else _join_spec(spec[0], spec[1]), func))
     return ModuleFacts(
         bound=bound,
         wildcard=wildcard,
@@ -583,6 +736,10 @@ def module_facts(tree: ast.Module) -> ModuleFacts:
         lazy=lazy if getattr_hooks else None,
         patterns=tuple(patterns),
         shared_namespace=shared,
+        registrars=tuple(registrars),
+        defs=defs,
+        imports=imports,
+        registries=registries,
     )
 
 
@@ -615,7 +772,24 @@ class Repo:
     def is_module(self, dotted: str) -> bool:
         return self.module_file(dotted) is not None
 
+    def tree(self, dotted: str) -> ast.Module | None:
+        path = self.module_file(dotted)
+        if path is None or path.is_dir():
+            return None
+        return _parse(path.read_bytes(), str(path))
+
+    def package_of(self, dotted: str) -> str:
+        """The dotted package relative imports in ``dotted`` resolve from."""
+        path = self.module_file(dotted)
+        if path is not None and (path.is_dir() or path.name == "__init__.py"):
+            return dotted
+        return dotted.rpartition(".")[0]
+
     def facts(self, dotted: str) -> ModuleFacts | None:
+        """``module_facts`` of the module's source, with any registrars it
+        hands its namespace to resolved (``registered``); a facts object whose
+        registrars are still unresolved is what a registrar chain sees of its
+        own members, never a caller."""
         if dotted in self._facts:
             return self._facts[dotted]
         path = self.module_file(dotted)
@@ -623,11 +797,176 @@ class Repo:
         if path is not None and path.is_dir():
             facts = ModuleFacts(bound=set(), namespace_package=True)
         elif path is not None:
-            tree = _parse(path.read_bytes(), str(path))
+            tree = self.tree(dotted)
             if tree is not None:
                 facts = module_facts(tree)
         self._facts[dotted] = facts
+        if facts is not None and facts.registrars:
+            facts.registered = self._registered(dotted, facts)
         return facts
+
+    # ── Registrars: ``for _m in (...): _m.register(sys.modules[__name__])`` ──
+
+    def _registered(self, dotted: str, facts: ModuleFacts) -> set[str] | None:
+        """Every name the module's registrars publish onto it, read from their
+        bodies; None when one registrar is not a repo module or its body hands
+        the module to code this scan cannot read."""
+        package = self.package_of(dotted)
+        out: set[str] = set()
+        seen: set[tuple[str, str]] = set()
+        for spec, func in facts.registrars:
+            target = _resolve_spec(spec, package)
+            if not target or not self.is_module(target):
+                return None
+            names = self._publishes(target, func, seen)
+            if names is None:
+                return None
+            out |= names
+        return out
+
+    def _publishes(self, dotted: str, func: str, seen: set[tuple[str, str]]) -> set[str] | None:
+        """Names ``dotted.func(server)`` publishes onto its first argument, read
+        from the body: ``server.X = v`` / ``setattr(server, "X", v)`` (or a
+        loop variable over string literals) bind X; ``bind_module(globals(),
+        server, skip=(...))`` publishes this module's own top-level names under
+        method_ctx.bind_module's rules; ``other.fn(server)`` for a repo module
+        (imported at module scope or in the body) reads that function the same
+        way; ``_registry.install(server)`` on a HandlerRegistry publishes
+        handlers into a table, not names.  Any other call handed ``server``
+        makes the result unknown (None)."""
+        if (dotted, func) in seen:
+            return set()
+        seen.add((dotted, func))
+        tree = self.tree(dotted)
+        facts = self.facts(dotted)
+        if tree is None or facts is None:
+            return None
+        fn = next((s for s in _walk_top_level(tree.body) if isinstance(s, ast.FunctionDef) and s.name == func), None)
+        if fn is None or not (fn.args.posonlyargs or fn.args.args):
+            return None
+        param = (fn.args.posonlyargs or fn.args.args)[0].arg
+        package = self.package_of(dotted)
+        imports = dict(facts.imports)
+        loops: dict[str, set[str] | None] = {}
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports[alias.asname or alias.name.split(".", 1)[0]] = (alias.name if alias.asname else alias.name.split(".", 1)[0], None)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    imports[alias.asname or alias.name] = (_import_spec(node), alias.name)
+            elif isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+                loops[node.target.id] = _literal_strings(node.iter)
+
+        def is_param(node: ast.AST) -> bool:
+            return isinstance(node, ast.Name) and node.id == param
+
+        def module_of(alias: str) -> str | None:
+            spec = imports.get(alias)
+            if spec is None:
+                return None
+            target = _resolve_spec(spec[0] if spec[1] is None else _join_spec(spec[0], spec[1]), package)
+            return target if target and self.is_module(target) else None
+
+        out: set[str] = set()
+        for node in ast.walk(fn):
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                for target in node.targets if isinstance(node, ast.Assign) else (node.target,):
+                    if isinstance(target, ast.Attribute) and is_param(target.value):
+                        out.add(target.attr)
+                continue
+            if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store) and (_dotted_chain(node.value) or ("",))[0] == param:
+                return None  # ``server.__dict__[k] = v``: keys this body does not spell
+            if not isinstance(node, ast.Call):
+                continue
+            callee = node.func
+            if (_dotted_chain(callee) or ("",))[0] == param:
+                return None  # ``server.__dict__.update(...)`` / ``server.install(...)``: code unseen
+            if not any(is_param(a) for a in (*node.args, *(kw.value for kw in node.keywords))):
+                continue
+            if isinstance(callee, ast.Name) and callee.id == "setattr" and len(node.args) >= 2 and is_param(node.args[0]):
+                key = node.args[1]
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    out.add(key.value)
+                elif isinstance(key, ast.Name) and loops.get(key.id) is not None:
+                    out |= loops[key.id]
+                else:
+                    return None
+            elif isinstance(callee, ast.Name) and callee.id in ("getattr", "hasattr") and is_param(node.args[0]):
+                continue  # a read
+            elif ((isinstance(callee, ast.Name) and callee.id == "bind_module")
+                  or (isinstance(callee, ast.Attribute) and callee.attr == "bind_module")):
+                if not (len(node.args) == 2 and _is_own_namespace(node.args[0]) and is_param(node.args[1])):
+                    return None
+                skip: set[str] = set()
+                for kw in node.keywords:
+                    lit = _literal_strings(kw.value) if kw.arg == "skip" else None
+                    if lit is None:
+                        return None
+                    skip = lit
+                names = self._bind_module_names(dotted, facts, skip)
+                if names is None:
+                    return None
+                out |= names
+            elif isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
+                if callee.value.id in facts.registries and callee.attr == "install":
+                    continue  # handlers into ``server._methods``, no names
+                target = module_of(callee.value.id)
+                if target is None:
+                    return None
+                names = self._publishes(target, callee.attr, seen)
+                if names is None:
+                    return None
+                out |= names
+            elif isinstance(callee, ast.Name):
+                spec = imports.get(callee.id)
+                if spec is not None and spec[1] is not None:
+                    target = _resolve_spec(spec[0], package)
+                    if not target or not self.is_module(target):
+                        return None
+                    names = self._publishes(target, spec[1], seen)
+                elif callee.id in facts.defs:
+                    names = self._publishes(dotted, callee.id, seen)
+                else:
+                    return None
+                if names is None:
+                    return None
+                out |= names
+            else:
+                return None
+        return out
+
+    def _bind_module_names(self, dotted: str, facts: ModuleFacts, skip: set[str]) -> set[str] | None:
+        """What ``bind_module(globals(), server, skip=skip)`` in module ``dotted``
+        publishes, mirroring tui_gateway/method_ctx.py: every top-level name
+        except dunders, ``skip``, the registry plumbing, imported modules,
+        HandlerRegistry instances, and plain imports of a function or class
+        (a repo module's def/class under its own name; a name the source
+        module no longer binds is skipped too, it would not import).  A
+        constant imported from anywhere is published as-is.  None when the
+        module's own attribute set is not static."""
+        if facts.wildcard or facts.shared_namespace or (facts.getattr_hook and facts.lazy is None):
+            return None
+        package = self.package_of(dotted)
+        out: set[str] = set()
+        for name in facts.bound:
+            if name.startswith("__") or name in skip or name in _BIND_MODULE_PLUMBING or name in facts.registries:
+                continue
+            spec = facts.imports.get(name)
+            if spec is None:
+                out.add(name)  # def / class / assignment of this module
+                continue
+            if spec[1] is None:
+                continue  # ``import x``: a module
+            source = _resolve_spec(spec[0], package)
+            if source is not None and self.is_module(_join_spec(source, spec[1])):
+                continue  # ``from . import submodule``
+            source_facts = self.facts(source) if source and self.is_module(source) else None
+            if source_facts is None:
+                out.add(name)  # outside the repo: could be a constant
+            elif spec[1] not in source_facts.defs and source_facts.binds(spec[1]):
+                out.add(name)  # a constant, published as-is
+        return out
 
 
 # ── Test-file model ─────────────────────────────────────────────────────────
@@ -711,15 +1050,11 @@ class _Bindings(ast.NodeVisitor):
                 self._bind_import(alias.name.split(".", 1)[0], alias.name.split(".", 1)[0])
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        base = node.module or ""
-        if node.level:
-            parts = self.package.split(".") if self.package else []
-            if node.level - 1 > len(parts):
-                for alias in node.names:
-                    self.other.add(alias.asname or alias.name)
-                return
-            parts = parts[: len(parts) - (node.level - 1)]
-            base = ".".join(p for p in parts + ([base] if base else []) if p)
+        base = _resolve_spec(_import_spec(node), self.package) if node.level else (node.module or "")
+        if base is None:  # climbs out of the tree
+            for alias in node.names:
+                self.other.add(alias.asname or alias.name)
+            return
         for alias in node.names:
             if alias.name == "*":
                 continue
