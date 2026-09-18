@@ -29,6 +29,13 @@ from hermes_cli import main as hermes_main
 import hermes_cli.main_web_build as main_web_build
 import hermes_cli.main_install_repair as main_install_repair
 from hermes_cli import update_cmd
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): every test drives a real `hermes update` branch flow (clone, fetch, switch) against bare
+# repos on disk -- 22 tests in 490-940 s under a shared box, three of them past the cap.
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 GIT = ["git"]

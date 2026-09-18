@@ -27,6 +27,13 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+import pytest
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): an os.walk over the whole checkout reading every .py (75 s under a shared box, 18 s alone).
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 

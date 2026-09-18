@@ -17,6 +17,12 @@ import subprocess
 import pytest
 
 from hermes_cli import web_git
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): real git remotes, pushes and branch-base probes on disk (488 s under a shared box).
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 def _git(cwd, *args):

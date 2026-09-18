@@ -21,6 +21,13 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import pytest
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): each test spawns the interpreter for a cold `hermes --version` (277 s under a shared box).
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

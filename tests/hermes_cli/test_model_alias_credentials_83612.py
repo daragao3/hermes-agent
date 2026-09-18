@@ -11,6 +11,12 @@ endpoint probe is actually handed, not just on the returned struct.
 """
 
 import pytest
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): one test AST-scans every production source (138 s for the file under a shared box).
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 ALIAS_HOST = "https://theta.example.com/v1"

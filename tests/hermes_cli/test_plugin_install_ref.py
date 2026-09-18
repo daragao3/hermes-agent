@@ -11,6 +11,12 @@ import pytest
 import yaml
 
 from hermes_cli.subcommands.plugins import build_plugins_parser
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): real git clones/pins of a fixture repo per test (598 s for the file under a shared box).
+# The suite-wide --timeout=30 is sized for unit tests; a load-shaped trip here reads as a
+# regression it is not.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 def _git(repo: Path, *args: str) -> str:
