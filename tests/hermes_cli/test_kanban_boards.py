@@ -38,8 +38,10 @@ from tests.timeout_budget import scaled
 
 # ── CLI child deadlines ──────────────────────────────────────────────────────
 #
-# Only ``TestCLI`` spawns anything; everything above it is in-process and
-# keeps the tight global ``--timeout=30`` from pyproject.toml.
+# ``TestCLI`` and one ``TestBoardCRUD`` case (the win32 foreign-holder leg,
+# ``test_cli_rm_reports_foreign_holder_instead_of_traceback``, two ``_cli()``
+# calls) spawn; everything else is in-process and keeps the tight global
+# ``--timeout=30`` from pyproject.toml.
 #
 # Each ``_cli()`` call is a fresh interpreter running ``python -m
 # hermes_cli.main kanban …``. That is not a cheap process: importing
@@ -278,6 +280,10 @@ class TestBoardCRUD:
         assert kb.get_current_board() == kb.DEFAULT_BOARD
 
     @pytest.mark.skipif(sys.platform != "win32", reason="POSIX unlinks open files")
+    # Two _cli() spawns, outside the @spawns_cli class: measured 29.8 / 34.7 / 86.6 s
+    # call (+5-21 s setup) at 100% host load, 14.9 s alone -- load scatter, no fixed
+    # wait (cProfile: per-spawn cold import, nothing repeated), so the same backstop.
+    @spawns_cli
     def test_cli_rm_reports_foreign_holder_instead_of_traceback(self, tmp_path):
         env = {"HERMES_HOME": str(tmp_path)}
         assert _cli(["boards", "create", "held"], env_extra=env).returncode == 0
