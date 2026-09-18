@@ -16,9 +16,15 @@ import argparse
 import itertools
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
+
+# Repo root, for the shared Windows process-tree primitives (never taskkill).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from hermes_cli._subprocess_compat import (  # noqa: E402
+    windows_job_close, windows_kill_popen_tree, windows_suspended_spawn_flag, windows_tree_capture)
 
 ROOT = os.environ.get("BUBENCH_ROOT", os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable
@@ -50,15 +56,58 @@ if os.path.exists(args.results):
             pass
 
 
-def reset_browser_state():
-    """Kill lingering drivers and clear cookies between cells."""
+_last_cell = None  # (Popen, WindowsProcessTree | None) of the previous cell, reaped at the next reset
+
+
+def _spawn_cell(argv, env):
+    """Spawn one cell so its WHOLE tree stays reachable after it exits: a job object on
+    Windows (captured before the child's first instruction), its own session on POSIX. A
+    driver daemon the cell leaves behind is still a member of either."""
+    kwargs = {}
+    suspended = 0
     if sys.platform == "win32":
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "agent-browser.exe", "/T"],
-            capture_output=True,
-        )
+        suspended = windows_suspended_spawn_flag()
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | suspended
     else:
-        subprocess.run(["pkill", "-f", "agent-browser"], capture_output=True)
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", env=env, **kwargs)
+    tree = windows_tree_capture(proc, suspended=bool(suspended)) if sys.platform == "win32" else None
+    return proc, tree
+
+
+def _kill_cell(proc, tree):
+    """Kill the cell's tree by membership (job / session), never by image name.
+
+    The old ``taskkill /F /IM agent-browser.exe /T`` killed every agent-browser on the box --
+    other sessions' daemons included -- and ``/T`` adopted the orphans of recycled pids
+    (2026-09-17); the POSIX command-line sweep was the same cross-session reach. Only what
+    THIS battery spawned is touched.
+    """
+    try:
+        if sys.platform == "win32":
+            windows_kill_popen_tree(proc, tree)
+        else:
+            # start_new_session made the cell its own group leader (pgid == pid); the group
+            # outlives the leader while any member (a lingering driver) is still in it.
+            os.killpg(proc.pid, signal.SIGKILL)  # windows-footgun: ok -- POSIX branch of the platform split above
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+
+def reset_browser_state():
+    """Kill drivers the PREVIOUS cell left behind and clear cookies between cells."""
+    global _last_cell
+    if _last_cell is not None:
+        proc, tree = _last_cell
+        _last_cell = None
+        _kill_cell(proc, tree)
+        if tree is not None:
+            windows_job_close(tree.job)
     code = "cdp('Network.clearBrowserCookies')\nprint('cleared')\n"
     try:
         subprocess.run(
@@ -86,16 +135,23 @@ for arm, task, model, rep in cells:
     print(f"[{n}/{total}] {arm} {task} {model} rep{rep}", flush=True)
     reset_browser_state()
     t0 = time.time()
+    proc, tree = _spawn_cell(
+        [PY, os.path.join(ROOT, "single_run.py"), arm, task, model, str(rep)],
+        env={**ENV, "BUBENCH_TASKS": args.tasks},
+    )
+    _last_cell = (proc, tree)
     try:
-        proc = subprocess.run(
-            [PY, os.path.join(ROOT, "single_run.py"), arm, task, model, str(rep)],
-            capture_output=True,
-            text=True,
-            timeout=args.run_timeout,
-            env={**ENV, "BUBENCH_TASKS": args.tasks},
-        )
+        try:
+            stdout, stderr = proc.communicate(timeout=args.run_timeout)
+        except subprocess.TimeoutExpired:
+            _kill_cell(proc, tree)
+            try:
+                proc.communicate(timeout=10)
+            except Exception:
+                pass
+            raise
         rec = None
-        for line in (proc.stdout or "").splitlines():
+        for line in (stdout or "").splitlines():
             if line.startswith("RESULT_JSON:"):
                 rec = json.loads(line[len("RESULT_JSON:") :])
         if rec is None:
@@ -106,8 +162,8 @@ for arm, task, model, rep in cells:
                 "rep": rep,
                 "ok": False,
                 "error": "no-result",
-                "stderr_tail": (proc.stderr or "")[-800:],
-                "stdout_tail": (proc.stdout or "")[-400:],
+                "stderr_tail": (stderr or "")[-800:],
+                "stdout_tail": (stdout or "")[-400:],
             }
     except subprocess.TimeoutExpired:
         rec = {

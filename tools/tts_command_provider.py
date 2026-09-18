@@ -100,11 +100,19 @@ def terminate_command_process_tree(proc: subprocess.Popen) -> None:
     if proc.poll() is not None:
         return
     if os.name == "nt":
+        # Creation-time-guarded walk over the Popen we hold, never ``taskkill /T`` (it
+        # adopted the orphans of a recycled pid, 2026-09-17). ``proc.kill()`` afterwards so
+        # Popen's bookkeeping sees the exit whether or not the walk reached the shell.
         try:
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=5, stdin=subprocess.DEVNULL)
+            from hermes_cli._subprocess_compat import windows_kill_popen_tree
+
+            windows_kill_popen_tree(proc)
         except Exception:
+            pass
+        try:
             proc.kill()
+        except OSError:
+            pass
         return
     try:
         import psutil  # type: ignore

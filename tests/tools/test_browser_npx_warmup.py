@@ -29,14 +29,14 @@ from tools.browser_tool_lifecycle import _legacy_kill_process_tree
 # host. On Windows that fake cannot hold: os.getpgid/os.killpg do not exist (so
 # monkeypatch.setattr raises), signal.SIGKILL does not exist, and pathlib starts
 # handing back PosixPath. Production is unaffected -- _legacy_kill_process_tree
-# returns after ``taskkill /T /F`` on nt and never reaches this branch -- so the
-# behaviour under test genuinely does not exist here. Same idiom and rationale as
-# tests/tools/test_local_interrupt_cleanup.py.
+# returns after the guarded Windows tree walk on nt and never reaches this branch
+# -- so the behaviour under test genuinely does not exist here. Same idiom and
+# rationale as tests/tools/test_local_interrupt_cleanup.py.
 posix_semantics_only = pytest.mark.skipif(
     os.name == "nt",
     reason="POSIX process-group semantics: the process-group and hard-kill "
            "primitives are absent on Windows, where production takes the "
-           "taskkill early return",
+           "tree-walk early return",
 )
 
 
@@ -151,7 +151,7 @@ def test_runs_in_its_own_process_group_on_posix(monkeypatch):
 
 def test_uses_new_process_group_creationflag_on_windows_instead_of_start_new_session():
     """start_new_session is a POSIX-only Popen kwarg (raises on Windows).
-    The Windows equivalent for _kill_process_tree's taskkill /T to have a
+    The Windows equivalent for _kill_process_tree's tree kill to have a
     coherent tree to kill is CREATE_NEW_PROCESS_GROUP via creationflags."""
     with patch("os.name", "nt"), \
          patch("tools.browser_tool_install._resolve_npx_bin", return_value="C:\\npx.cmd"), \
@@ -320,20 +320,29 @@ class TestLegacyKillProcessTree:
 
         assert killpg_calls == [(999, signal.SIGTERM)]
 
-    def test_windows_uses_taskkill_with_tree_and_force_flags(self, monkeypatch):
+    def test_windows_walks_the_held_popen_and_never_spawns(self, monkeypatch):
+        """Never ``taskkill /T``: it adopted the orphans of a recycled pid (2026-09-17).
+        The Popen we hold goes through the creation-time-guarded walk instead."""
+        from hermes_cli import _subprocess_compat as compat
+
         proc = MagicMock()
         proc.pid = 4321
         monkeypatch.setattr("os.name", "nt")
-        with patch("subprocess.run") as mock_run:
+        walked = []
+        monkeypatch.setattr(compat, "windows_kill_popen_tree",
+                            lambda p, tree=None: walked.append(p) or [4321])
+        with patch("subprocess.run", side_effect=AssertionError("kill path spawned a process")):
             _legacy_kill_process_tree(proc)
 
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args.args[0]
-        assert cmd == ["taskkill", "/PID", "4321", "/T", "/F"]
+        assert walked == [proc]
+        proc.kill.assert_called_once()
 
-    def test_windows_taskkill_failure_does_not_raise(self, monkeypatch):
+    def test_windows_walk_failure_does_not_raise(self, monkeypatch):
+        from hermes_cli import _subprocess_compat as compat
+
         proc = MagicMock()
         proc.pid = 4321
         monkeypatch.setattr("os.name", "nt")
-        with patch("subprocess.run", side_effect=OSError("taskkill missing")):
-            _legacy_kill_process_tree(proc)  # must not raise
+        monkeypatch.setattr(compat, "windows_kill_popen_tree",
+                            lambda p, tree=None: (_ for _ in ()).throw(OSError("ctypes trouble")))
+        _legacy_kill_process_tree(proc)  # must not raise

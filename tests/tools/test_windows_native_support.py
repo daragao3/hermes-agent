@@ -84,49 +84,47 @@ class TestConfigureWindowsStdio:
 
 @pytest.mark.windows_only
 class TestTerminatePidRoutingOnWindows:
-    """``gateway.status.terminate_pid`` must use taskkill /T /F on Windows.
+    """``gateway.status.terminate_pid(force=True)`` on Windows is the creation-time-guarded
+    tree walk (``hermes_cli._subprocess_compat.windows_kill_process_tree``), never
+    ``taskkill /T /F`` (it adopted orphans of a recycled pid, 2026-09-17).
 
     ``windows_only``: this used to patch the module-level ``_IS_WINDOWS``
-    flag on Linux, which selected the taskkill branch on a host where
-    ``taskkill`` does not exist and ``gateway/status`` cannot even import its
-    ``msvcrt`` branch. On the Windows runner the flag is genuinely True, so
-    only ``subprocess.run`` is mocked — the dependency, not the host.
+    flag on Linux, which selected the Windows branch on a host where
+    ``gateway/status`` cannot even import its ``msvcrt`` branch. On the Windows
+    runner the flag is genuinely True, so only the walk is mocked — the
+    dependency, not the host.
     """
 
-    def test_force_uses_taskkill_on_windows(self, monkeypatch):
+    @staticmethod
+    def _no_spawn(monkeypatch, status):
+        def _boom(*args, **kwargs):  # pragma: no cover - only on regression
+            raise AssertionError(f"terminate_pid spawned a process: {args!r}")
+
+        monkeypatch.setattr(status.subprocess, "run", _boom)
+
+    def test_force_walks_the_tree_pinned_to_the_creation_time(self, monkeypatch):
         from gateway import status
+        from hermes_cli import _subprocess_compat as compat
 
-        captured = {}
-
-        def fake_run(args, **kwargs):
-            captured["args"] = args
-            result = MagicMock()
-            result.returncode = 0
-            result.stderr = ""
-            result.stdout = ""
-            return result
-
-        monkeypatch.setattr(status.subprocess, "run", fake_run)
+        self._no_spawn(monkeypatch, status)
+        walks = []
+        monkeypatch.setattr(compat, "windows_process_created", lambda pid: 1234.56)
+        monkeypatch.setattr(compat, "windows_kill_process_tree",
+                            lambda pid, root_created=None: walks.append((pid, root_created)) or [pid])
         monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123456)
+        monkeypatch.setattr(status, "_wait_for_pid_death", lambda pid, timeout: True)
         status.terminate_pid(12345, force=True, expected_start_time=123456)
 
-        assert captured["args"][0] == "taskkill"
-        assert "/PID" in captured["args"]
-        assert "12345" in captured["args"]
-        assert "/T" in captured["args"]
-        assert "/F" in captured["args"]
+        assert walks == [(12345, 1234.56)]
 
-    def test_force_taskkill_failure_raises_oserror(self, monkeypatch):
+    def test_force_walk_failure_raises_oserror(self, monkeypatch):
         from gateway import status
+        from hermes_cli import _subprocess_compat as compat
 
-        def fake_run(args, **kwargs):
-            result = MagicMock()
-            result.returncode = 128
-            result.stderr = "ERROR: The process cannot be terminated."
-            result.stdout = ""
-            return result
-
-        monkeypatch.setattr(status.subprocess, "run", fake_run)
+        self._no_spawn(monkeypatch, status)
+        monkeypatch.setattr(compat, "windows_process_created", lambda pid: 1234.56)
+        monkeypatch.setattr(compat, "windows_kill_process_tree",
+                            lambda pid, **kw: (_ for _ in ()).throw(RuntimeError("The process cannot be terminated.")))
         monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123456)
         with pytest.raises(OSError, match="cannot be terminated"):
             status.terminate_pid(12345, force=True, expected_start_time=123456)
@@ -152,26 +150,20 @@ class TestTerminatePidRoutingOnWindows:
         assert captured["pid"] == 99
         assert captured["sig"] == signal.SIGTERM
 
-    def test_taskkill_not_found_falls_back_to_os_kill(self, monkeypatch):
-        """On Windows without taskkill (WinPE, containers), fall back gracefully."""
+    def test_force_on_a_target_that_left_before_the_pin_is_not_fatal(self, monkeypatch):
+        """The guard read a fingerprint but the pin could not: the process exited between
+        the two reads. Gone is the outcome the caller wanted -- no raise, no os.kill."""
         from gateway import status
+        from hermes_cli import _subprocess_compat as compat
 
-        captured = {}
-
-        def fake_run(args, **kwargs):
-            raise FileNotFoundError(2, "taskkill not found")
-
-        def fake_kill(pid, sig):
-            captured["pid"] = pid
-            captured["sig"] = sig
-
-        monkeypatch.setattr(status.subprocess, "run", fake_run)
-        monkeypatch.setattr(status.os, "kill", fake_kill)
+        self._no_spawn(monkeypatch, status)
+        monkeypatch.setattr(compat, "windows_process_created", lambda pid: None)
+        monkeypatch.setattr(compat, "windows_kill_process_tree",
+                            lambda pid, **kw: (_ for _ in ()).throw(AssertionError("walked without a pin")))
+        monkeypatch.setattr(status.os, "kill", lambda pid, sig: (_ for _ in ()).throw(AssertionError("os.kill")))
         monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123456)
-        status.terminate_pid(42, force=True, expected_start_time=123456)
-
-        assert captured["pid"] == 42
-        assert captured["sig"] == signal.SIGTERM
+        monkeypatch.setattr(status, "_pid_exists", lambda pid: False)
+        status.terminate_pid(42, force=True, expected_start_time=123456)  # must not raise
 
 
 # ---------------------------------------------------------------------------
