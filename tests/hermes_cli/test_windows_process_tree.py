@@ -312,14 +312,108 @@ def test_a_frozen_child_that_cannot_be_thawed_is_killed_not_left_frozen(monkeypa
 
 
 def test_suspended_spawn_flag_is_offered_only_when_the_thaw_is(monkeypatch):
+    enrolled = []
+    monkeypatch.setattr(compat, "windows_enroll_self", lambda: enrolled.append(True) or 0x51)
     monkeypatch.setattr(compat, "IS_WINDOWS", True)
     monkeypatch.setattr(compat, "windows_can_resume", lambda: True)
     assert compat.windows_suspended_spawn_flag() == compat._CREATE_SUSPENDED
+    assert enrolled == [True]  # the parent joins its own job before a child can be frozen
     monkeypatch.setattr(compat, "windows_can_resume", lambda: False)
     assert compat.windows_suspended_spawn_flag() == 0
     monkeypatch.setattr(compat, "IS_WINDOWS", False)
     monkeypatch.setattr(compat, "windows_can_resume", lambda: True)
     assert compat.windows_suspended_spawn_flag() == 0
+    assert enrolled == [True]  # no flag, no enrolment
+
+
+def test_a_refused_enrolment_does_not_withhold_the_flag(monkeypatch):
+    """The window enrolment closes needs a hard-killed parent inside a few
+    milliseconds; a child that runs before its job is assigned can father a
+    grandchild the timeout kill never sees. The flag is the bigger guard."""
+    monkeypatch.setattr(compat, "windows_enroll_self", lambda: None)
+    monkeypatch.setattr(compat, "IS_WINDOWS", True)
+    monkeypatch.setattr(compat, "windows_can_resume", lambda: True)
+    assert compat.windows_suspended_spawn_flag() == compat._CREATE_SUSPENDED
+
+
+@pytest.fixture
+def fresh_self_job(monkeypatch):
+    """Reset the once-per-process enrolment state for the test's duration
+    (the real handle, if this interpreter already has one, is untouched)."""
+    monkeypatch.setattr(compat, "_SELF_JOB", None)
+    monkeypatch.setattr(compat, "_SELF_JOB_TRIED", False)
+    monkeypatch.setattr(compat, "IS_WINDOWS", True)
+
+
+def test_enroll_self_assigns_this_process_once_and_keeps_the_handle(fresh_self_job, monkeypatch):
+    seen = []
+    monkeypatch.setattr(compat, "_windows_job_assign", lambda handle, *, kill_on_close: seen.append((handle, kill_on_close)) or 0x42)
+    monkeypatch.setattr(compat, "_self_process_handle", lambda: -1)  # GetCurrentProcess's pseudo-handle
+    assert compat.windows_enroll_self() == 0x42
+    assert compat.windows_enroll_self() == 0x42
+    assert compat.windows_enroll_self() == 0x42
+    assert seen == [(-1, True)]  # one job, kill-on-close, this process
+    assert compat._SELF_JOB == 0x42
+
+
+def test_enroll_self_failure_is_remembered_not_retried(fresh_self_job, monkeypatch):
+    calls = []
+    monkeypatch.setattr(compat, "_windows_job_assign", lambda handle, *, kill_on_close: calls.append(1) and None)
+    monkeypatch.setattr(compat, "_self_process_handle", lambda: -1)
+    assert compat.windows_enroll_self() is None
+    assert compat.windows_enroll_self() is None
+    assert calls == [1]
+
+
+def test_enroll_self_is_a_no_op_off_windows(fresh_self_job, monkeypatch):
+    monkeypatch.setattr(compat, "IS_WINDOWS", False)
+    monkeypatch.setattr(compat, "_windows_job_assign", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not touch kernel32 off Windows")))
+    assert compat.windows_enroll_self() is None
+    assert compat._SELF_JOB_TRIED is False
+
+
+def test_the_self_job_is_never_closed_and_process_identity_delegates_to_it():
+    """Source contract: closing the self job kills the process, so no call site
+    hands ``_SELF_JOB`` to ``windows_job_close``; and the gateway's startup
+    self-attach is the same job (one per process, no SILENT_BREAKAWAY_OK --
+    the bit that used to keep every child OUT of it)."""
+    import ast
+    import inspect
+    from hermes_cli import process_identity
+
+    tree = ast.parse(inspect.getsource(compat))
+    closed = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "windows_job_close"
+        for arg in node.args
+        if isinstance(arg, ast.Name) and arg.id == "_SELF_JOB"
+    ]
+    assert not closed
+    src = inspect.getsource(process_identity.attach_self_to_kill_on_close_job)
+    assert "windows_enroll_self()" in src
+    assert "SILENT_BREAKAWAY" not in inspect.getsource(process_identity).replace(
+        'also set ``SILENT_BREAKAWAY_OK``', "")
+    assert "SILENT_BREAKAWAY" not in inspect.getsource(compat._windows_job_assign)
+
+
+def test_process_identity_attach_reports_the_shared_job(monkeypatch):
+    from hermes_cli import process_identity
+
+    monkeypatch.setattr(process_identity, "_IS_WINDOWS", True)
+    monkeypatch.setattr(process_identity, "_JOB_HANDLE", None)
+    monkeypatch.setattr(compat, "windows_enroll_self", lambda: 0x77)
+    assert process_identity.attach_self_to_kill_on_close_job() is True
+    assert process_identity._JOB_HANDLE == 0x77
+    monkeypatch.setattr(compat, "windows_enroll_self", lambda: (_ for _ in ()).throw(AssertionError("enrolled twice")))
+    assert process_identity.attach_self_to_kill_on_close_job() is True
+    monkeypatch.setattr(process_identity, "_JOB_HANDLE", None)
+    monkeypatch.setattr(compat, "windows_enroll_self", lambda: None)
+    assert process_identity.attach_self_to_kill_on_close_job() is False
+    monkeypatch.setattr(process_identity, "_IS_WINDOWS", False)
+    assert process_identity.attach_self_to_kill_on_close_job() is False
 
 
 def test_job_close_tolerates_no_job():
@@ -443,3 +537,167 @@ def test_live_bare_pid_walk_on_an_exited_root_kills_nothing():
     proc = subprocess.Popen([sys.executable, "-c", "pass"])
     proc.wait(timeout=scaled(20))
     assert compat.windows_kill_process_tree(proc.pid) == []
+
+
+# --- live (Windows only): the spawn window ------------------------------------
+#
+# Every suspended spawn above assigns its child to a job AFTER Popen returns.
+# A parent hard-terminated between CreateProcess and AssignProcessToJobObject
+# leaves the child frozen forever (venv launcher pid 12144, 2026-09-18). The
+# parent is a member of its own kill-on-close job, so the child is a member
+# from birth and dies with the parent.
+
+_PARENT_IN_THE_WINDOW = (
+    # A product process the instant before its per-spawn job assignment:
+    # enrolled (or not), one child created frozen and never assigned, never
+    # thawed.
+    "import os, subprocess, sys, time;"
+    "from hermes_cli import _subprocess_compat as c;"
+    "job = c.windows_enroll_self() if sys.argv[1] == 'enrolled' else None;"
+    "frozen = subprocess.Popen([sys.executable, '-c', 'pass'], creationflags=c._CREATE_SUSPENDED);"
+    "print(os.getpid(), frozen.pid, job or 0, flush=True);"
+    "time.sleep(300)"
+)
+
+
+class _Window:
+    """A child process frozen mid-spawn under a parent we can kill, and the
+    identity of every pid it names (creation times pinned while each was
+    certainly alive), so cleanup can never reach a recycled pid."""
+
+    def __init__(self, mode: str):
+        psutil = pytest.importorskip("psutil")
+        self.launcher = subprocess.Popen(
+            [sys.executable, "-c", _PARENT_IN_THE_WINDOW, mode], stdout=subprocess.PIPE, text=True,
+        )
+        try:
+            self.parent_pid, self.frozen_pid, self.job = (int(x) for x in self.launcher.stdout.readline().split())
+            self.parent_born = psutil.Process(self.parent_pid).create_time()
+            self.frozen_born = psutil.Process(self.frozen_pid).create_time()
+        except (ValueError, psutil.Error):
+            _reap(self.launcher)
+            raise
+
+    def reap(self):
+        psutil = pytest.importorskip("psutil")
+        for pid, born in ((self.frozen_pid, self.frozen_born), (self.parent_pid, self.parent_born)):
+            try:
+                p = psutil.Process(pid)
+                if p.create_time() == born:
+                    p.kill()
+            except psutil.Error:
+                pass
+        _reap(self.launcher)
+
+
+def _still_frozen(psutil, pid: int, created: float) -> bool:
+    try:
+        p = psutil.Process(pid)
+        return p.is_running() and p.create_time() == created and p.status() == psutil.STATUS_STOPPED
+    except psutil.Error:
+        return False
+
+
+@pytest.mark.windows_only
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows only")
+@pytest.mark.timeout(scaled(60))
+def test_live_a_parent_killed_inside_the_spawn_window_takes_its_frozen_child_with_it():
+    """The 2026-09-18 shape, forced: hard-terminate the parent while a child
+    sits frozen between CreateProcess and its per-spawn job. The child dies
+    with the parent. A frozen decoy we own ourselves, outside that job, is
+    untouched -- this is membership, not a sweep by image name."""
+    psutil = pytest.importorskip("psutil")
+    decoy = subprocess.Popen([sys.executable, "-c", "pass"], creationflags=compat._CREATE_SUSPENDED)
+    w = _Window("enrolled")
+    try:
+        if not w.job:
+            pytest.skip("job assignment refused on this host (nested jobs forbidden)")
+        frozen = psutil.Process(w.frozen_pid)
+        assert frozen.status() == psutil.STATUS_STOPPED and frozen.num_threads() == 1
+        assert _still_frozen(psutil, decoy.pid, psutil.Process(decoy.pid).create_time())
+
+        psutil.Process(w.parent_pid).kill()  # the abort: TerminateProcess, no cleanup runs
+
+        deadline = time.monotonic() + scaled(10)
+        while _still_frozen(psutil, w.frozen_pid, w.frozen_born) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _still_frozen(psutil, w.frozen_pid, w.frozen_born), "frozen child outlived the parent that spawned it"
+        assert _still_frozen(psutil, decoy.pid, psutil.Process(decoy.pid).create_time())
+    finally:
+        w.reap()
+        _reap(decoy)
+
+
+@pytest.mark.windows_only
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows only")
+@pytest.mark.timeout(scaled(60))
+def test_live_falsifier_without_the_self_job_the_frozen_child_is_orphaned_forever():
+    """The same abort against a parent in no job of its own: the frozen child
+    outlives it (parent gone, 1 thread, no children -- pid 12144's shape).
+    This is what the assertion above is sensitive to."""
+    psutil = pytest.importorskip("psutil")
+    w = _Window("bare")
+    try:
+        assert w.job == 0
+        psutil.Process(w.parent_pid).kill()
+        w.launcher.wait(timeout=scaled(20))
+        time.sleep(scaled(1))
+        orphan = psutil.Process(w.frozen_pid)
+        assert _still_frozen(psutil, w.frozen_pid, w.frozen_born)
+        assert orphan.num_threads() == 1 and not orphan.children()
+        assert not psutil.pid_exists(orphan.ppid()) or psutil.Process(orphan.ppid()).create_time() != w.parent_born
+    finally:
+        w.reap()
+
+
+_ENROLLED_PARENT_WITH_DETACHED_CHILDREN = (
+    # An enrolled parent that spawns the product's two detach shapes: the
+    # gateway / watcher idiom (windows_detach_flags: CREATE_BREAKAWAY_FROM_JOB)
+    # and a console-only detach (DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP).
+    "import os, subprocess, sys, time;"
+    "from hermes_cli import _subprocess_compat as c;"
+    "job = c.windows_enroll_self();"
+    "sleeper = [sys.executable, '-c', 'import time; time.sleep(300)'];"
+    "away = subprocess.Popen(sleeper, creationflags=c.windows_detach_flags());"
+    "console_only = subprocess.Popen(sleeper, creationflags=0x8 | 0x200);"
+    "print(os.getpid(), away.pid, console_only.pid, job or 0, flush=True);"
+    "time.sleep(300)"
+)
+
+
+@pytest.mark.windows_only
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows only")
+@pytest.mark.timeout(scaled(60))
+def test_live_breakaway_spawns_outlive_an_enrolled_parent_and_console_only_detaches_do_not():
+    """What the enrolment changes for descendants, measured: a child spawned
+    with ``windows_detach_flags()`` (the gateway the CLI launches, the restart
+    watcher) escapes the parent's job and survives its death; a child that only
+    detached its console dies with the parent. This is why
+    ``launch_gateway_detached`` and the Chrome launch carry the breakaway bit."""
+    psutil = pytest.importorskip("psutil")
+    launcher = subprocess.Popen(
+        [sys.executable, "-c", _ENROLLED_PARENT_WITH_DETACHED_CHILDREN], stdout=subprocess.PIPE, text=True,
+    )
+    born = {}
+    try:
+        parent, away, console_only, job = (int(x) for x in launcher.stdout.readline().split())
+        for pid in (parent, away, console_only):
+            born[pid] = psutil.Process(pid).create_time()
+        if not job:
+            pytest.skip("job assignment refused on this host (nested jobs forbidden)")
+        psutil.Process(parent).kill()
+        deadline = time.monotonic() + scaled(10)
+        while psutil.pid_exists(console_only) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not psutil.pid_exists(console_only) or psutil.Process(console_only).create_time() != born[console_only]
+        survivor = psutil.Process(away)
+        assert survivor.is_running() and survivor.create_time() == born[away]
+    finally:
+        for pid, created in born.items():
+            try:
+                p = psutil.Process(pid)
+                if p.create_time() == created:
+                    p.kill()
+            except psutil.Error:
+                pass
+        _reap(launcher)

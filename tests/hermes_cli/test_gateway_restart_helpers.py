@@ -233,10 +233,14 @@ class TestLaunchGatewayDetached:
         assert captured["cmd"] == ["python.exe", "-m", "hermes_cli.main", "gateway", "run"]
         assert captured["close_fds"] is True
         if sys.platform == "win32":
-            # Both flags must be set: CREATE_NEW_PROCESS_GROUP=0x200,
-            # DETACHED_PROCESS=0x8
+            # All three flags must be set: CREATE_NEW_PROCESS_GROUP=0x200,
+            # DETACHED_PROCESS=0x8, CREATE_BREAKAWAY_FROM_JOB=0x01000000 (a CLI
+            # enrolled in its own kill-on-close job must not take the gateway
+            # down with it at exit -- DETACHED_PROCESS alone is a console
+            # property, not a job one).
             assert captured["creationflags"] & 0x200 == 0x200
             assert captured["creationflags"] & 0x008 == 0x008
+            assert captured["creationflags"] & 0x01000000 == 0x01000000
             assert captured["start_new_session"] is False
         else:
             assert captured["creationflags"] == 0
@@ -271,3 +275,37 @@ class TestLaunchGatewayDetached:
         monkeypatch.setattr(gw.subprocess, "Popen", fake_popen)
         pid = gw.launch_gateway_detached()
         assert pid is None
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows creationflags path")
+    def test_retries_without_breakaway_when_the_parent_job_refuses_it(self, monkeypatch):
+        """A parent job object without BREAKAWAY_OK rejects
+        CREATE_BREAKAWAY_FROM_JOB with ERROR_ACCESS_DENIED; the launch then
+        spawns exactly as it did before the bit existed, once."""
+        flags_seen = []
+
+        class FakeProc:
+            pid = 777
+
+        def fake_popen(cmd, *, creationflags=0, **kwargs):
+            flags_seen.append(creationflags)
+            if creationflags & 0x01000000:
+                raise PermissionError(13, "Access is denied")
+            return FakeProc()
+
+        monkeypatch.setattr(gw.subprocess, "Popen", fake_popen)
+        assert gw.launch_gateway_detached() == 777
+        assert len(flags_seen) == 2
+        assert flags_seen[0] & 0x01000000 and not flags_seen[1] & 0x01000000
+        assert flags_seen[1] == flags_seen[0] & ~0x01000000
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows creationflags path")
+    def test_the_no_breakaway_retry_happens_once(self, monkeypatch):
+        calls = []
+
+        def fake_popen(cmd, *, creationflags=0, **kwargs):
+            calls.append(creationflags)
+            raise OSError("fork failed")
+
+        monkeypatch.setattr(gw.subprocess, "Popen", fake_popen)
+        assert gw.launch_gateway_detached() is None
+        assert len(calls) == 2  # with the bit, then once without; never a third
