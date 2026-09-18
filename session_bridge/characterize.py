@@ -3430,6 +3430,60 @@ def run_live_characterization(
     return report_path
 
 
+def _file_backed_claude_run(
+    args: Sequence[str],
+    *,
+    capture_output: bool = True,
+    text: bool = True,
+    timeout: float,
+    stdin: Any = subprocess.DEVNULL,
+    shell: bool = False,
+    check: bool = False,
+    cwd: str | os.PathLike[str] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """``subprocess.run``-shaped runner for the disposable Claude session.
+
+    Not ``subprocess.run(capture_output=True, timeout=…)``: the disposable
+    session runs with ``cwd`` = the project under characterization, so it
+    starts that project's configured MCP servers (observed 2026-09-18: the
+    codegraph ``node.exe … serve --mcp`` server of agent-src). Those servers
+    inherit the capture pipe handles and outlive ``claude.exe`` — after the CLI
+    exits (in ~6 s on a 429 reply) the pipe never reaches EOF, ``subprocess.run``
+    raises ``TimeoutExpired`` at ``timeout`` and its except path then calls
+    ``communicate()`` with NO timeout, joining the reader threads until the
+    grandchild dies on its own (~30 min per turn under codegraph's watchdog;
+    py-spy: ``join <- _communicate <- communicate <- run <-
+    _resume_claude_characterization``). ``run_text_capture`` captures into
+    temp files (no reader thread, nothing to drain) and tree-kills on timeout,
+    so ``timeout`` is the bound. Same ``CompletedProcess`` (decoded ``stdout``
+    for ``_claude_result_metrics``), same ``TimeoutExpired`` /
+    ``FileNotFoundError``, so the ``PlaceholderCreationError`` codes are
+    unchanged.
+
+    Accepts the keyword set ``ClaudeTargetAdapter.create_placeholder`` and
+    ``_resume_claude_characterization`` pass to a runner; ``capture_output``
+    and ``check`` exist only for that shape and must keep their defaults.
+    """
+    if not capture_output or check:
+        raise ValueError(
+            "_file_backed_claude_run only runs capture_output=True, check=False"
+        )
+    # Imported at the call, not at module load, so tests stub the helper by
+    # patching hermes_cli._subprocess_compat.run_text_capture.
+    from hermes_cli._subprocess_compat import run_text_capture
+
+    return run_text_capture(
+        list(args),
+        timeout=timeout,
+        cwd=cwd,
+        env=env,
+        stdin=stdin,
+        shell=shell,
+        text=text,
+    )
+
+
 def _characterize_claude(
     status: dict[str, Any],
     *,
@@ -3451,7 +3505,7 @@ def _characterize_claude(
     def _run_creation(
         args: list[str], **kwargs: Any
     ) -> subprocess.CompletedProcess[str]:
-        completed = subprocess.run(args, **kwargs)
+        completed = _file_backed_claude_run(args, **kwargs)
         creation_processes.append(completed)
         return completed
 
@@ -3561,7 +3615,7 @@ def _resume_claude_characterization(
     resume_nonce: str,
     executable: str | Sequence[str],
     cwd: Path,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = _file_backed_claude_run,
     process_timeout: float = 180.0,
     verification_timeout: float = 30.0,
     verification_poll_interval: float = 0.1,
