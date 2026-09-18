@@ -4167,9 +4167,28 @@ def _single_native_executable(command: Sequence[str], *, label: str) -> str:
 
 
 def _codex_schema_advertises_archive(executable: Sequence[str]) -> bool:
+    """Whether this codex advertises ``thread/archive`` in its app-server schema.
+
+    ``run_text_capture``, not ``subprocess.run(capture_output=True)``: when the
+    Desktop-shipped codex is absent, ``resolve_codex_command`` returns the npm
+    ``codex.cmd`` shim verbatim (explicit-path and PATH branches alike), so on
+    Windows cmd.exe is the direct child and node.exe the grandchild holding the
+    capture pipe. A wedged ``generate-json-schema`` then outlives the 60 s:
+    ``subprocess.run`` raises ``TimeoutExpired`` at the budget and its except
+    path calls ``communicate()`` with NO timeout, joining the reader threads
+    until the grandchild exits on its own (the same class as the disposable
+    Claude session's runners, ``_file_backed_claude_run``). The file-backed
+    helper has no reader thread to drain and tree-kills on timeout, so the
+    60 s is the bound; it raises the same ``TimeoutExpired`` /
+    ``FileNotFoundError``, which the ``except`` below still maps to ``False``.
+    """
     try:
+        # Imported at the call, not at module load, so tests stub the helper
+        # by patching hermes_cli._subprocess_compat.run_text_capture.
+        from hermes_cli._subprocess_compat import run_text_capture
+
         with tempfile.TemporaryDirectory(prefix="hermes-codex-schema-") as directory:
-            completed = subprocess.run(
+            completed = run_text_capture(
                 [
                     *executable,
                     "app-server",
@@ -4177,12 +4196,10 @@ def _codex_schema_advertises_archive(executable: Sequence[str]) -> bool:
                     "--out",
                     directory,
                 ],
-                capture_output=True,
-                text=True,
                 timeout=60.0,
                 stdin=subprocess.DEVNULL,
                 shell=False,
-                check=False,
+                text=True,
             )
             if completed.returncode != 0:
                 return False
