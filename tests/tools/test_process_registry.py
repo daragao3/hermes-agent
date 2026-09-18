@@ -9,6 +9,8 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from tests.timeout_budget import scaled
@@ -681,9 +683,13 @@ class TestStdinHelpers:
         )
 
         try:
+            # Start window for a real login shell + interpreter under a PTY:
+            # READY measured 1.2-14.2 s on a 100%-loaded Windows host
+            # (2026-09-18), so the old 15 s window was one slow spawn away
+            # from a false "startup failed".
             assert _wait_until(
                 lambda: "READY" in registry.poll(session.id)["output_preview"],
-                timeout=15.0,
+                timeout=30.0,
             ), (
                 "PTY child never printed READY — startup failed: "
                 f"{registry.poll(session.id)!r}"
@@ -691,7 +697,13 @@ class TestStdinHelpers:
             assert registry.submit_stdin(session.id, "hello")["status"] == "ok"
             assert registry.close_stdin(session.id)["status"] == "ok"
 
-            deadline = time.time() + 5
+            # Net, not a bound: a healthy exit is observed in well under a
+            # second; the subject is that EOF reaches the child at all. A
+            # child whose tree is gone but that never reaches "exited" is the
+            # reader thread stuck in pywinpty's blocking read (ConPTY does
+            # not signal EOF on child exit) -- a product defect on Windows,
+            # not load, and no window makes it pass.
+            deadline = time.time() + 30
             while time.time() < deadline:
                 poll = registry.poll(session.id)
                 if poll["status"] == "exited":
@@ -947,7 +959,12 @@ class TestEnvPollerIncrementalRead:
         assert "O=0" in cmd
 
     @pytest.mark.skipif(not shutil.which("sh"), reason="needs a POSIX sh")
-    @pytest.mark.timeout(scaled(120))  # ~23 real sh spawns; Git Bash on a loaded host exceeds 30s
+    # 23 real sh invocations, each forking a dozen-odd coreutils; on a loaded
+    # Windows host one invocation measured 1.3-11.5 s (avg 5.3 s), so run
+    # serially they overran the old 120 s net (2026-09-17 acceptance). The
+    # prefixes are independent, so they run 8-wide (12.7 s vs 110.8 s
+    # serial under the same load). Bounds ordered inner < outer < cap.
+    @pytest.mark.timeout(scaled(180))
     def test_read_command_holds_back_a_split_utf8_sequence(self, tmp_path):
         """A multibyte character straddling two polls must not be split.
 
@@ -959,13 +976,13 @@ class TestEnvPollerIncrementalRead:
         nothing held back once the trailing character is complete.
         """
         full = "hé😀中a\n€bz🚀".encode()
-        log = tmp_path / "bg.log"
-        quoted = shlex.quote(str(log))
-        for n in range(1, len(full) + 1):
+
+        def _check_prefix(n: int) -> None:
+            log = tmp_path / f"bg-{n}.log"
             log.write_bytes(full[:n])
             out = subprocess.run(
-                ["sh", "-c", ProcessRegistry._log_delta_command(quoted, 0)],
-                capture_output=True, timeout=30,
+                ["sh", "-c", ProcessRegistry._log_delta_command(shlex.quote(str(log)), 0)],
+                capture_output=True, timeout=120,
             ).stdout
             header, _, delta = out.partition(b"\n")
             size, _offset = map(int, header.split())
@@ -973,6 +990,10 @@ class TestEnvPollerIncrementalRead:
             assert delta == full[:size]
             complete = full[:n].decode("utf-8", "ignore").encode() == full[:n]
             assert (n - size) == 0 if complete else 0 < (n - size) <= 3
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for _ in pool.map(_check_prefix, range(1, len(full) + 1)):
+                pass  # re-raises the first failing prefix's assertion
 
     def test_first_poll_reads_from_the_start(self, registry):
         session = _make_session(sid="proc_delta")
