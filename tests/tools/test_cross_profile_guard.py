@@ -174,7 +174,11 @@ class TestSkillManageCrossProfileErrorUX:
         err = _skill_not_found_error("default-only-skill")
         assert "not found in active profile 'hermes-security'" in err
         assert "default" in err
-        assert "cross_profile" not in err  # retired vocabulary
+        # Retired vocabulary must be gone from the PROSE; the message also embeds
+        # the skill path, and the parallel runner names temp dirs after this test
+        # FILE (…test_cross_profile_guard.py…), so strip the path before checking.
+        prose = err.replace(str(fake_hermes["root"]), "<root>")
+        assert "cross_profile" not in prose
         assert "file tools / terminal" in err
 
 
