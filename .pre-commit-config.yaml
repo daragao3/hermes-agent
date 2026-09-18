@@ -4,13 +4,24 @@
 # place. Install the hook with `pre-commit install` after cloning (the generated
 # .git/hooks/pre-commit is not tracked; this file is). gitleaks 8.30 uses `git`,
 # not the deprecated `protect`.
+#
+# The ruleset is reached through gitleaks' own GITLEAKS_CONFIG env var (its
+# precedence: --config, GITLEAKS_CONFIG, GITLEAKS_CONFIG_TOML, <repo>/.gitleaks.toml,
+# then the built-in defaults), NOT a --config= arg: until 2026-09-17 this file
+# carried --config=C:/Users/diego/.config/gitleaks/gitleaks.toml, which no other
+# user profile or machine can resolve, and pre-commit never expands env vars or
+# ~ in args. On this box it is a User environment variable pointing at
+# ~/.config/gitleaks/gitleaks.toml (the XDG default); a host without it scans
+# with gitleaks' stock rules, which is strictly noisier -- the shared file only
+# ADDS allowlists on top of the defaults, so a missing config can never hide a
+# secret, only flag a known-safe fixture. A GITLEAKS_CONFIG that names a missing
+# file is a hard gitleaks fatal and refuses the commit.
+# tests/test_upgrade_hook_closure.py resolves the ruleset the same way.
 repos:
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
     hooks:
       - id: gitleaks
-        args:
-          - --config=C:/Users/diego/.config/gitleaks/gitleaks.toml
 
   # ruff lint gate (Pyflakes "F" group + PLW1514).
   #
