@@ -247,18 +247,17 @@ def _transcribe_local_command(
             # local-whisper path previously inherited the full process environment).
             from tools.environments.local import hermes_subprocess_env
             from hermes_cli._subprocess_compat import run_text_capture
-            # A user-supplied template (env var) may carry shell syntax (pipes, &&) and
-            # runs under shell=True as a STRING; auto-detected commands are safe in list
-            # mode. run_text_capture rather than subprocess.run: whisper shells out to
-            # ffmpeg, so a grandchild inherits the capture pipes and holds their write
-            # end open, which makes `timeout` unenforceable on Windows (and under
-            # shell=True cmd.exe is the direct child, so the grandchild is guaranteed).
-            # The helper supplies CREATE_NO_WINDOW itself and has no `check=`, hence
-            # the explicit check_returncode() so the command's own stderr surfaces.
-            # Fork carry (dbd5d5cba4) that the 0.21.1 merge had flattened to list mode.
-            use_shell = bool(os.getenv(LOCAL_STT_COMMAND_ENV, "").strip())
+            # Always list mode, never a shell: the template's placeholders are shlex.quote'd
+            # above and split back here, so metacharacters in a user template or a
+            # substituted path are literal argv (TestShellSafety). The fork's shell=True
+            # branch for env-var templates (dbd5d5cba4, briefly restored by 4189514b41) is
+            # retired on purpose. run_text_capture rather than subprocess.run: whisper
+            # shells out to ffmpeg, so a grandchild inherits the capture pipes and holds
+            # their write end open, which makes `timeout` unenforceable on Windows. The
+            # helper supplies CREATE_NO_WINDOW itself and has no `check=`, hence the
+            # explicit check_returncode() so the command's own stderr surfaces.
             completed = run_text_capture(
-                command if use_shell else shlex.split(command), shell=use_shell, timeout=300,
+                shlex.split(command), timeout=300,
                 env=hermes_subprocess_env(inherit_credentials=False))
             completed.check_returncode()
             txt_files = sorted(Path(output_dir).glob("*.txt"))
