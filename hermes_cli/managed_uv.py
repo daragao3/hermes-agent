@@ -765,21 +765,133 @@ def _release_repair_lock(lock: _RepairLock) -> None:
             os.close(lock.fd)
 
 
-def _windows_runtime_holders() -> tuple[bool, str]:
+# Holder policy for the whole-venv park rename on Windows (see _windows_runtime_holders).
+_RUNTIME_HOLDER_POLICY_ENV = "HERMES_RUNTIME_REPAIR_HOLDER_POLICY"
+_HOLDER_POLICY_STRICT = "strict"
+_HOLDER_POLICY_TRANSIENT_OK = "transient-ok"
+# Long-lived Hermes processes: certain to lazily import after a swap, so they are STRUCTURAL holders
+# under every policy. Subcommands as _hermes_holder_subcommand reports them; exe basenames for
+# launchers that carry no subcommand.
+_SERVICE_HOLDER_SUBCOMMANDS = frozenset({"gateway", "serve", "dashboard", "acp", "mcp", "cron", "kanban"})
+_SERVICE_HOLDER_EXE_PREFIXES = ("hermes-session-bridge",)
+
+
+def _runtime_holder_policy() -> str:
+    value = os.environ.get(_RUNTIME_HOLDER_POLICY_ENV, "").strip().lower()
+    return _HOLDER_POLICY_TRANSIENT_OK if value == _HOLDER_POLICY_TRANSIENT_OK else _HOLDER_POLICY_STRICT
+
+
+def _holder_cwd(pid: int) -> str:
+    """Lower-cased cwd of *pid*, ``""`` when unreadable (then the cwd rule cannot fire)."""
+    try:
+        import psutil
+        return str(psutil.Process(int(pid)).cwd() or "").lower()
+    except Exception:
+        return ""
+
+
+def _holder_subcommand(cmdline: str) -> str | None:
+    try:
+        from hermes_cli.update_cmd_windows import _hermes_holder_subcommand
+        return _hermes_holder_subcommand(cmdline)
+    except Exception:
+        return None
+
+
+def _classify_runtime_holder(
+    pid: int, name: str, cmdline: str, *, live_prefix: str, cwd_of: Callable[[int], str] | None = None,
+) -> str | None:
+    """Why a venv holder is STRUCTURAL (a short reason), or ``None`` when it is transient.
+
+    Structural = the swap cannot or must not proceed under it: a long-lived Hermes service (it WILL
+    lazily import from the new tree later), or a process whose cwd is inside the venv (Windows keeps
+    a directory handle open for a cwd, so the park rename fails). Everything else — test runners,
+    one-shot scripts, bare ``python -c`` children — is transient: bounded lifetime, measured to
+    survive the rename (see _windows_runtime_holders).
+    """
+    low = (name or "").lower()
+    if low.startswith(_SERVICE_HOLDER_EXE_PREFIXES):
+        return f"service launcher {name}"
+    subcommand = _holder_subcommand(cmdline)
+    if subcommand in _SERVICE_HOLDER_SUBCOMMANDS:
+        return f"long-lived `hermes {subcommand}`"
+    cwd = (cwd_of or _holder_cwd)(pid)
+    if cwd and (cwd.rstrip(os.sep) + os.sep).startswith(live_prefix):
+        return "cwd inside the venv (an open directory handle makes the rename fail)"
+    return None
+
+
+def _windows_runtime_holders(
+    live: Path | None = None, *, detector: Callable[[], list] | None = None) -> tuple[bool, str]:
+    """Gate the whole-venv park rename on other Hermes processes holding the venv.
+
+    Returns ``(blocked, detail)``; ``detail`` may be a warning even when not blocked. ``detector``
+    defaults to ``hermes_cli.main._detect_venv_python_processes`` (``(pid, name, cmdline)`` rows).
+
+    MEASURED 2026-09-18 during the PBS 3.12.13 → 3.13.15 cut-over (loops
+    pbs-cpython-313-cutover-20260917; evidence ~/.hermes/evidence/pbs-313-upgrade-plan-20260917/cutover/
+    rename_probe.py): on NTFS a directory rename SUCCEEDS while another process executes ``python.exe``
+    from inside it — the child keeps running (its image stays mapped under the new name) and new
+    launches from the renamed path work. The only structural filesystem blockers are the updater's
+    own image (#93032, ``_windows_runtime_self_lock``) and a process whose cwd is inside the venv (an
+    open directory handle). The cut-over that night swapped under 14 transient pytest holders, by hand.
+
+    The real residual hazard is semantic, not a rename error: a still-running OLD-interpreter process
+    keeps the ``sys.prefix`` string that now names the NEW tree, so its next lazy import comes from
+    the new site-packages (cp313 ``.pyd`` under a 3.12 interpreter, different module sets) and fails
+    in ways unrelated to its own code. That is certain for long-lived services (gateway, serve,
+    dashboard, session bridge) and bounded by lifetime for test runners and scripts.
+
+    Policy (``HERMES_RUNTIME_REPAIR_HOLDER_POLICY``): the default ``strict`` keeps the conservative
+    rule — ANY holder defers — but now names which holders are structural and which are transient so
+    the operator knows what actually stands in the way. ``transient-ok`` narrows the gate to the
+    structural classes (self-lock, cwd inside the venv, services) and prints the transient holders
+    together with the hazard above instead of deferring on them.
+    """
     if host_system() != "Windows":
         return False, ""
-    main_module = sys.modules.get("hermes_cli.main")
-    detector = getattr(main_module, "_detect_venv_python_processes", None)
+    if detector is None:
+        main_module = sys.modules.get("hermes_cli.main")
+        detector = getattr(main_module, "_detect_venv_python_processes", None)
     if detector is None:
         return True, "cannot verify Windows venv holders from this update context"
     try:
         holders = detector()
     except Exception as exc:
         return True, f"could not verify Windows venv holders: {exc}"
-    if holders:
-        pids = ", ".join(str(item[0]) for item in holders[:6])
-        return True, f"other Hermes processes still hold the venv (PID {pids})"
-    return False, ""
+    if not holders:
+        return False, ""
+    live_prefix = ""
+    if live is not None:
+        try:
+            live_prefix = str(live.resolve()).lower().rstrip(os.sep) + os.sep
+        except OSError:
+            live_prefix = str(live).lower().rstrip(os.sep) + os.sep
+    structural: list[str] = []
+    transient: list[int] = []
+    for pid, name, cmdline in holders:
+        why = _classify_runtime_holder(int(pid), str(name), str(cmdline), live_prefix=live_prefix)
+        if why is None:
+            transient.append(int(pid))
+        else:
+            structural.append(f"PID {pid}: {why}")
+    summary = (
+        f"{len(structural)} structural, {len(transient)} transient "
+        f"(structural: {'; '.join(structural[:6]) or 'none'}; "
+        f"transient PID {', '.join(str(p) for p in transient[:6]) or 'none'})")
+    if structural:
+        return True, f"other Hermes processes still hold the venv — {summary}"
+    if _runtime_holder_policy() == _HOLDER_POLICY_TRANSIENT_OK:
+        return False, (
+            f"swapping the venv under {len(transient)} transient holder(s) "
+            f"(PID {', '.join(str(p) for p in transient[:6])}; {_RUNTIME_HOLDER_POLICY_ENV}="
+            f"{_HOLDER_POLICY_TRANSIENT_OK}): a still-running old-interpreter process that lazily "
+            "imports from the new site-packages after the swap may fail; the rename itself succeeds "
+            "under running children (measured 2026-09-18)")
+    return True, (
+        f"other Hermes processes still hold the venv — {summary}; only transient holders remain, so "
+        f"{_RUNTIME_HOLDER_POLICY_ENV}={_HOLDER_POLICY_TRANSIENT_OK} would let the swap proceed "
+        "(the rename succeeds under running children; their later lazy imports may fail)")
 
 
 def _windows_runtime_self_lock(live: Path) -> tuple[bool, str]:
@@ -917,11 +1029,17 @@ def _result(
 
 def _repair_windows_preflight(
     root: Path, live: Path, current: SQLiteRuntimeInfo) -> RuntimeRepairResult | None:
-    """Defer the repair when Windows holders make the venv rename impossible; else ``None``."""
-    blocked, detail = _windows_runtime_holders()
+    """Defer the repair when Windows holders make the venv rename impossible; else ``None``.
+
+    Under the default holder policy any holder defers; ``transient-ok`` lets the swap proceed under
+    transient holders and only WARNS (see ``_windows_runtime_holders`` for the measurement).
+    """
+    blocked, detail = _windows_runtime_holders(live)
     if blocked:
         print(f"  ⚠ Python runtime repair deferred: {detail}")
         return _result("skipped", current, detail)
+    if detail:
+        print(f"  ⚠ {detail}")
     self_locked, self_detail = _windows_runtime_self_lock(live)
     if self_locked:
         # Structural, not transient: this process maps the live venv's own executable, so the
