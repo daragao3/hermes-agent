@@ -16,6 +16,7 @@ shell running ``hermes kanban complete``) still held the cwd.
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -194,6 +195,49 @@ def test_dispatch_tick_runs_the_sweep(kanban_home):
 
 
 # ---------------------------------------------------------------------------
+# `hermes kanban gc` reaps archived scratch workspaces with the same removal
+# ---------------------------------------------------------------------------
+
+
+def _gc_args() -> argparse.Namespace:
+    return argparse.Namespace(event_retention_days=30, log_retention_days=30)
+
+
+def test_gc_removes_an_archived_scratch_dir_that_is_the_process_cwd(kanban_home, monkeypatch, capsys):
+    """Running gc from inside an archived task's leftover workspace removes the dir itself."""
+    from hermes_cli import kanban_ops
+
+    with kbc.connect() as conn:
+        task_id, ws = _scratch_task(conn, "archived")
+        kb.archive_task(conn, task_id)
+    ws.mkdir(exist_ok=True)  # the empty leftover a held cwd leaves behind
+    monkeypatch.chdir(ws)
+
+    assert kanban_ops._cmd_gc(_gc_args()) == 0
+
+    assert not ws.exists()
+    assert Path(os.getcwd()).resolve() == ws.parent.resolve()
+    assert "GC complete: 1 workspace(s)" in capsys.readouterr().out
+
+
+def test_gc_leaves_non_archived_scratch_dirs_alone(kanban_home, capsys):
+    from hermes_cli import kanban_ops
+
+    with kbc.connect() as conn:
+        running_id, running_ws = _scratch_task(conn, "running")
+        kb.claim_task(conn, running_id)
+        done_id, done_ws = _scratch_task(conn, "done")
+        kb.complete_task(conn, done_id, result="DONE")
+        done_ws.mkdir(exist_ok=True)
+
+    assert kanban_ops._cmd_gc(_gc_args()) == 0
+
+    assert running_ws.exists(), "a running task's workspace is live"
+    assert done_ws.exists(), "gc only reaps ARCHIVED tasks; done leftovers are the dispatcher sweep's"
+    assert "GC complete: 0 workspace(s)" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
 # The real Windows semantic: a foreign process's cwd pins the directory
 # ---------------------------------------------------------------------------
 
@@ -243,3 +287,29 @@ class TestForeignCwdHolder:
 
         assert removed == [task_id]
         assert not ws.exists()
+
+    def test_gc_does_not_count_a_dir_pinned_by_a_foreign_cwd(self, kanban_home, capsys):
+        from hermes_cli import kanban_ops
+
+        with kbc.connect() as conn:
+            task_id, ws = _scratch_task(conn, "archived")
+            kb.archive_task(conn, task_id)
+        ws.mkdir(exist_ok=True)
+        holder = subprocess.Popen(
+            [
+                sys.executable, "-c",
+                "import os, sys, time; os.getcwd(); "
+                "sys.stdout.write('ready\\n'); sys.stdout.flush(); time.sleep(60)",
+            ],
+            cwd=str(ws), stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        )
+        try:
+            assert holder.stdout.readline().strip() == "ready"
+            assert kanban_ops._cmd_gc(_gc_args()) == 0
+            assert ws.is_dir(), "pinned by the holder's cwd"
+            assert "GC complete: 0 workspace(s)" in capsys.readouterr().out
+        finally:
+            holder.kill()
+            holder.wait(timeout=30)
+            holder.stdout.close()
