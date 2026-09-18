@@ -1373,10 +1373,15 @@ def extract_reasoning(agent, assistant_message) -> Optional[str]:
 
         if text is None:
             return
-        if not isinstance(text, (str, list)):
-            _usable_reasoning_text(text, "reasoning field")
-            return
-        text = flatten_message_text(text, sep="")
+        if isinstance(text, (str, list)):
+            text = flatten_message_text(text, sep="")
+        else:
+            # A single structured part ({"type": "text", "text": ...}, a typed object) is
+            # real reasoning (upstream 37fb7adfd6): wrap it so the flattener takes its text
+            # key. Anything else -- MagicMock, int, a dict with no text key -- flattens to ""
+            # and is dropped with the warning; flattening it BARE would str() it and inject
+            # "<MagicMock id=...>" / "{'a': 1}" into the transcript.
+            text = flatten_message_text([text], sep="") or _usable_reasoning_text(text, "reasoning field")
         if text and text not in parts:
             parts.append(text)
     _add(getattr(assistant_message, "reasoning", None))
