@@ -164,7 +164,11 @@ async def test_scout_activation_stops_later_firecrawl_and_emits_one_credits_acti
 
         search_result = json.loads(web_tools.web_search_tool("first-402", 3))
         assert search_result["success"] is True
-        assert client.search_calls == [{"query": "first-402", "limit": 3}]
+        # The paid vendor is asked for the BUCKETED count (tools/web_result_cache.py:
+        # 3 -> 10, so near-identical limits share a memo entry; pinned by
+        # tests/tools/test_web_result_cache.py) and the caller's count is sliced
+        # out; the run-scoped credit fallback still gets the caller's 3.
+        assert client.search_calls == [{"query": "first-402", "limit": 10}]
         assert search_fallback.calls == [("first-402", 3)]
         assert run.circuit_open is True
 
