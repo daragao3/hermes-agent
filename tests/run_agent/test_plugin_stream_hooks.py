@@ -49,6 +49,17 @@ def test_stream_observer_hooks_are_valid_plugin_hooks():
     }.issubset(VALID_HOOKS)
 
 
+# The queued-vs-inline discriminator: an inline dispatch would make
+# _fire_stream_delta take at least the hook's hold; a queued one returns after
+# an enqueue plus, on the FIRST fire, the dispatcher's lazy Thread.start(),
+# which measured 0.156 s on a host at 100% CPU (2026-09-17). The bound must
+# sit well above that and the hold well above the bound, or the assertion
+# reads host load as an inline dispatch.
+_QUEUED_FIRE_BOUND_S = 1.0
+_INLINE_HOLD_S = 2.0
+_HANG_NET_S = 30.0
+
+
 def test_stream_delta_plugin_hook_is_queued_off_token_path(monkeypatch):
     from agent.plugin_stream_hooks import shutdown_plugin_stream_hook_dispatcher
 
@@ -56,7 +67,7 @@ def test_stream_delta_plugin_hook_is_queued_off_token_path(monkeypatch):
     calls = []
 
     def on_stream_delta(**kwargs):
-        time.sleep(0.2)
+        time.sleep(_INLINE_HOLD_S)
         calls.append(("on_stream_delta", kwargs))
 
     monkeypatch.setattr("hermes_cli.plugins.iter_hook_callbacks", _callbacks({"on_stream_delta": [on_stream_delta]}))
@@ -67,8 +78,8 @@ def test_stream_delta_plugin_hook_is_queued_off_token_path(monkeypatch):
     agent._fire_stream_delta("hello")
     elapsed = time.monotonic() - started
 
-    assert elapsed < 0.05
-    _wait_for(lambda: calls)
+    assert elapsed < _QUEUED_FIRE_BOUND_S, f"hook ran inline? fire took {elapsed:.3f}s"
+    _wait_for(lambda: calls, timeout=_HANG_NET_S)
     shutdown_plugin_stream_hook_dispatcher()
 
     assert calls[0][0] == "on_stream_delta"

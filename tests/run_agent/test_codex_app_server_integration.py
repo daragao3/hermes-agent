@@ -165,8 +165,11 @@ class TestRunConversationCodexPath:
         with patch.object(agent, "_spawn_background_review", return_value=None):
             agent.run_conversation("hello")
 
-        session_db.update_token_counts.assert_called_once()
-        kwargs = session_db.update_token_counts.call_args.kwargs
+        # Per-call accounting goes through the SessionDB background writer
+        # (queue_token_counts, 174ad45939), not the synchronous update_token_counts.
+        session_db.queue_token_counts.assert_called_once()
+        session_db.update_token_counts.assert_not_called()
+        kwargs = session_db.queue_token_counts.call_args.kwargs
         assert kwargs["source"] == "cron"
         assert kwargs["model_config"] is agent._session_init_model_config
 
