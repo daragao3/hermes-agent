@@ -92,12 +92,23 @@ def _resolve_gitleaks(repo, rev):
 
 
 def _resolve_gitleaks_config(args):
-    """The --config the hook passes, else the XDG location that path lives at."""
+    """The ruleset the hook runs with, in gitleaks' own precedence.
+
+    --config= in the hook's args first, then GITLEAKS_CONFIG (which is how the
+    hook reaches the shared laptop ruleset since 2026-09-17 -- the args carry no
+    host path any more), then the XDG location that variable points at on this
+    box, so the test still finds the ruleset in a pytest process that predates
+    the variable. None when none of them names a file; the caller skips.
+    """
     for arg in args:
         if arg.startswith("--config="):
             configured = Path(arg[len("--config="):]).expanduser()
             if configured.is_file():
                 return configured
+    if os.environ.get("GITLEAKS_CONFIG"):
+        configured = Path(os.environ["GITLEAKS_CONFIG"]).expanduser()
+        if configured.is_file():
+            return configured
     xdg = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     fallback = xdg / "gitleaks" / "gitleaks.toml"
     return fallback if fallback.is_file() else None
@@ -121,7 +132,7 @@ def test_exact_fixture_exceptions_keep_unallowlisted_secret_detection():
         pytest.skip(f"no gitleaks binary: not in {_pre_commit_home()} for {repo}@{rev}, not on PATH")
     config = _resolve_gitleaks_config(args)
     if config is None:
-        pytest.skip("no gitleaks.toml: neither the hook's --config nor ~/.config/gitleaks/gitleaks.toml exists")
+        pytest.skip("no gitleaks.toml: none of the hook's --config, GITLEAKS_CONFIG or ~/.config/gitleaks/gitleaks.toml exists")
     synthetic = "api_key = '" + uuid.uuid4().hex + uuid.uuid4().hex + "'\n"
     result = subprocess.run(
         [str(scanner), "stdin", "--redact", "--no-banner",

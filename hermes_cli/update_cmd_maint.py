@@ -47,6 +47,9 @@ _PRE_UPDATE_SNAPSHOT_KEEP = 1
 _PRE_UPDATE_SNAPSHOT_MAX_FILE_SIZE = 1 << 30  # 1 GiB
 
 _SQLITE_WAL_BUG_DETAIL = "SQLite {} still has the WAL-reset corruption bug"
+_WMI_STRAY_THREAD_ADVISORY = (
+    "⚠ Python {} still abandons platform.uname()'s WMI thread on Windows (CPython gh-130727): "
+    "bare Python children can die with 0xC000070A under load.")
 
 
 def _load_updates_cfg() -> dict:
@@ -380,7 +383,15 @@ def _update_complete_message(pre_version: str | None) -> str:
 
 
 def _post_update_sqlite_runtime_status():
-    """Return whether the interpreter used after update has safe SQLite."""
+    """Return whether the interpreter used after update has safe SQLite, plus the probe.
+
+    Only the SQLite verdict withholds ``✓ Update complete!`` (a vulnerable SQLite corrupts data).
+    The interpreter's own WMI-thread defect (``SQLiteRuntimeInfo.wmi_stray_thread_vulnerable``)
+    is provisioned on by the same runtime repair but reported as an advisory — see
+    ``_print_runtime_advisories`` — because failing every ``hermes update`` on a Windows 3.12
+    install would strand automated updates over a crash-under-load bug the bootstrap stub
+    already contains for Hermes' own entry points.
+    """
     from hermes_cli.update_cmd import _m
     from hermes_constants import project_venv_dir
     from hermes_cli.sqlite_runtime import probe_sqlite_runtime
@@ -388,6 +399,16 @@ def _post_update_sqlite_runtime_status():
     python = (venv_python_path(venv_dir, windows=_m()._is_windows()) if venv_dir is not None else Path(sys.executable))
     info = probe_sqlite_runtime(python)
     return info is not None and not info.wal_reset_vulnerable, info
+
+
+def _print_runtime_advisories(info) -> None:
+    """Non-blocking runtime findings the completion line must not hide (see
+    ``_post_update_sqlite_runtime_status``). Silent when there is nothing to say."""
+    if info is None or not getattr(info, "wmi_stray_thread_vulnerable", False):
+        return
+    print(_WMI_STRAY_THREAD_ADVISORY.format(info.python_version_string))
+    print("  `hermes update` provisions a fixed Python runtime when the venv is not held by "
+          "running Hermes processes; check with `hermes doctor`.")
 
 
 def _print_verified_update_completion(message: str) -> bool:
@@ -403,6 +424,7 @@ def _print_verified_update_completion(message: str) -> bool:
         logger.debug("Post-update SQLite runtime probe unavailable; not blocking")
     if sqlite_info is None or sqlite_runtime_ok:
         _print_update_completion(message)
+        _print_runtime_advisories(sqlite_info)
         return True
     print()
     print(f"⚠ Update partially complete — {_SQLITE_WAL_BUG_DETAIL.format(sqlite_info.sqlite_version_string)}.")
@@ -457,6 +479,7 @@ def _print_update_summary(*, node_failures: list, desktop_build_ok: bool, pre_up
             )
     else:
         _print_update_completion(_update_complete_message(pre_update_version))
+    _print_runtime_advisories(sqlite_info)
     return desktop_build_ok and sqlite_runtime_ok
 
 

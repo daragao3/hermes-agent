@@ -159,7 +159,7 @@ def blocking_provider():
                 self.end_headers()
                 return
             state["started"].set()
-            deadline = time.monotonic() + 30
+            deadline = time.monotonic() + scaled(30)  # outlasts the scaled command timeout + unwind
             while not state["release"].is_set() and time.monotonic() < deadline:
                 readable, _, _ = select.select([self.connection], [], [], 0.05)
                 if readable and self.connection.recv(1, socket.MSG_PEEK) == b"":
@@ -213,7 +213,11 @@ def test_console_cancel_stops_forked_agent_request_before_reporting(console_clie
 
     monkeypatch.setattr(chat_ws, "_execute_console_line", observed_execute)
     if stop == "timeout":
-        monkeypatch.setattr(chat_ws, "_CONSOLE_COMMAND_TIMEOUT_SECONDS", 2.0)
+        # The clock starts at submit, and the forked agent has to REACH the provider before it
+        # fires: with 2 s, a loaded box saw the timeout cancel the agent during construction and
+        # "forked agent never reached the provider". 10 s (scaled) still lands well inside the
+        # provider's 30 s hold and the 30 s frame deadline once the <=10 s unwind is added.
+        monkeypatch.setattr(chat_ws, "_CONSOLE_COMMAND_TIMEOUT_SECONDS", scaled(10.0))
     line = "curator run --consolidate --dry-run"
 
     with console_client.websocket_connect(_url()) as conn:
@@ -226,7 +230,7 @@ def test_console_cancel_stops_forked_agent_request_before_reporting(console_clie
         assert blocking_provider["started"].wait(60), "forked agent never reached the provider"
         if stop == "cancel":
             conn.send_json({"type": "cancel"})
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + scaled(30)
         while time.monotonic() < deadline:
             frame = conn.receive_json()
             if frame.get("type") == "complete" and frame.get("status") in {"cancelled", "timeout"}:

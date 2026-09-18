@@ -24,6 +24,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import types
 
 import pytest
 
@@ -486,3 +487,102 @@ class TestSuppressPlatformWmiQueries:
             and isinstance(node.value.func, ast.Name)
         }
         assert "suppress_platform_wmi_queries" in module_level_calls
+
+    # --- the CPU answer: IsWow64Process2 first, GetNativeSystemInfo fallback ---
+    #
+    # This box is AMD64, so the emulated branch (an x64 interpreter on ARM64 Windows,
+    # where GetNativeSystemInfo lies and IsWow64Process2 reports 0xAA64) can only be
+    # exercised by faking the kernel32 answers, never the host.
+
+    @pytest.fixture
+    def fake_kernel32(self, monkeypatch):
+        """Swap ``ctypes.WinDLL("kernel32")`` for a fake whose two probes write through the
+        ``byref`` arguments the way the real API does. ``install(...)`` returns the fake."""
+        import ctypes
+        try:
+            import ctypes.wintypes  # noqa: F401 — the shared block binds HANDLE/USHORT/BOOL
+        except Exception as exc:  # pragma: no cover — ancient non-Windows ctypes
+            pytest.skip(f"ctypes.wintypes unavailable: {exc}")
+        holder = {}
+
+        def _windll(name, *args, **kwargs):
+            assert name == "kernel32"
+            return holder["dll"]
+
+        monkeypatch.setattr(ctypes, "WinDLL", _windll, raising=False)
+
+        def install(native_pe_machine=None, native_system_info=9, has_iswow64=True):
+            dll = types.SimpleNamespace(calls=[])
+
+            def GetCurrentProcess():
+                return -1
+
+            def IsWow64Process2(handle, p_process, p_native):
+                dll.calls.append("IsWow64Process2")
+                if native_pe_machine is None:
+                    return 0  # FALSE: the caller must fall back
+                p_native._obj.value = native_pe_machine
+                return 1
+
+            def GetNativeSystemInfo(p_info):
+                dll.calls.append("GetNativeSystemInfo")
+                p_info._obj.wProcessorArchitecture = native_system_info
+
+            # Plain functions, not methods: the shared block assigns .argtypes/.restype.
+            dll.GetCurrentProcess = GetCurrentProcess
+            dll.GetNativeSystemInfo = GetNativeSystemInfo
+            if has_iswow64:
+                dll.IsWow64Process2 = IsWow64Process2
+            holder["dll"] = dll
+            return dll
+
+        return install
+
+    @pytest.mark.parametrize("pe_machine, wmi_code", [
+        (0xAA64, 12),  # IMAGE_FILE_MACHINE_ARM64: the x64-on-ARM64 case this host cannot show
+        (0x8664, 9),   # AMD64
+        (0x014C, 0),   # I386
+        (0x01C4, 5),   # ARMNT
+    ])
+    def test_cpu_answer_comes_from_iswow64process2_first(self, fake_kernel32, pe_machine, wmi_code):
+        """The native machine IsWow64Process2 reports wins; GetNativeSystemInfo (which would say
+        AMD64 from an emulated interpreter) is not consulted."""
+        hb = _fresh_import()
+        dll = fake_kernel32(native_pe_machine=pe_machine, native_system_info=9)
+        assert hb._native_processor_architecture() == wmi_code
+        assert dll.calls == ["IsWow64Process2"]
+        assert list(hb._offline_wmi_query("CPU", "Architecture")) == [str(wmi_code)]
+
+    def test_cpu_answer_falls_back_when_iswow64process2_returns_false(self, fake_kernel32):
+        hb = _fresh_import()
+        dll = fake_kernel32(native_pe_machine=None, native_system_info=12)
+        assert hb._native_processor_architecture() == 12
+        assert dll.calls == ["IsWow64Process2", "GetNativeSystemInfo"]
+
+    def test_cpu_answer_falls_back_when_iswow64process2_is_absent(self, fake_kernel32):
+        """Pre-1709 kernel32 has no IsWow64Process2 export: ctypes raises AttributeError on the
+        attribute lookup and the answer comes from GetNativeSystemInfo."""
+        hb = _fresh_import()
+        dll = fake_kernel32(native_system_info=9, has_iswow64=False)
+        assert hb._native_processor_architecture() == 9
+        assert dll.calls == ["GetNativeSystemInfo"]
+
+    def test_cpu_answer_falls_back_on_an_unmapped_machine_code(self, fake_kernel32):
+        hb = _fresh_import()
+        dll = fake_kernel32(native_pe_machine=0x0200, native_system_info=6)  # IA64: not in the table
+        assert hb._native_processor_architecture() == 6
+        assert dll.calls == ["IsWow64Process2", "GetNativeSystemInfo"]
+
+    @pytest.mark.windows_only
+    def test_iswow64_agrees_with_main_desktop_on_this_host(self):
+        """Both readers bind the same API: on this host they must name the same machine, and the
+        stub's whole answer must be that code (the IsWow64Process2 branch, not the fallback)."""
+        from hermes_cli import main_desktop
+        hb = _fresh_import()
+
+        code = hb._native_machine_from_iswow64()
+        assert code in {0, 5, 9, 12}, code
+        name = main_desktop._windows_native_machine_from_iswow64()
+        assert name is not None
+        assert {0: "X86", 5: "ARM", 9: "AMD64", 12: "ARM64"}[code] == name.upper()
+        assert hb._native_processor_architecture() == code

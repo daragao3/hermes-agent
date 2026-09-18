@@ -72,6 +72,10 @@ def repo(tmp_path, monkeypatch):
     d = tmp_path / "repo"
     d.mkdir()
     _git(d, "init", "-q")
+    # The fixture commits under a scrubbed env (no global gitconfig) but /diff runs git with
+    # the real one; on a host with core.autocrlf=true the LF file then reads as modified.
+    # Pin the repo so both sides normalize the same way.
+    _git(d, "config", "core.autocrlf", "false")
     (d / "main.py").write_text("print('hello')\n", encoding="utf-8")
     _git(d, "add", "-A")
     _git(d, "commit", "-q", "-m", "init")

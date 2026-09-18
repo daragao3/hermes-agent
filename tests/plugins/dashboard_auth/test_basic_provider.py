@@ -159,6 +159,35 @@ class TestProvider:
 # ---------------------------------------------------------------------------
 
 
+class TestDummyHashPlacement:
+    """The constant-time dummy is not computed at import (every process pays) and not
+    left for the first unknown-user login (a one-shot timing skew): construction warms it."""
+
+    def test_import_does_not_compute_the_dummy(self, basic):
+        # Module attribute is an accessor, not a precomputed string.
+        assert callable(basic._dummy_hash)
+        assert not hasattr(basic, "_DUMMY_HASH")
+
+    def test_construction_warms_the_dummy_once(self, basic, monkeypatch):
+        basic._dummy_hash.cache_clear()
+        calls = []
+        real = basic.hash_password
+
+        def counting(password):
+            calls.append(password)
+            return real(password)
+
+        monkeypatch.setattr(basic, "hash_password", counting)
+        h = real("hunter2")
+        provider = basic.BasicAuthProvider(username="admin", password_hash=h, secret=secrets.token_bytes(32))
+        assert calls == ["dummy-password-for-constant-time-verify"]
+        # The first unknown-user login hashes nothing new -- only the verify runs.
+        with pytest.raises(basic.InvalidCredentialsError):
+            provider.complete_password_login(username="nobody", password="x")
+        assert len(calls) == 1
+        basic._dummy_hash.cache_clear()
+
+
 class TestRegister:
     def test_skips_when_no_username(self, basic, monkeypatch):
         monkeypatch.setattr(basic, "_load_config_basic_auth_section", lambda: {})

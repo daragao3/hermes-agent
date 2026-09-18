@@ -82,32 +82,91 @@ os.environ["HERMES_OTEL_DISABLE"] = "1"
 # not reach the children tests spawn: entry points get it from hermes_bootstrap,
 # and a bare ``python -c "from hermes_state import SessionDB"`` child no longer
 # touches ``platform`` at all (hermes_state_dbfile.quarantine_cross_process_lock).
+# The runner's ``env -i`` allowlist drops PROCESSOR_ARCHITECTURE, so the stdlib's
+# own env fallback for ``machine()`` would be '' here: the one CPU query is
+# answered from kernel32 by the shared block below (defined unconditionally so
+# the three copies stay byte-identical; only ever called on Windows).
+# --- wmi-stub shared block (byte-identical in hermes_bootstrap.py, hermes_cli/_subprocess_compat.py
+# and tests/conftest.py; tests/hermes_cli/test_host_platform_helpers.py::TestWmiStubCopies diffs them) ---
+# IsWow64Process2's IMAGE_FILE_MACHINE_* codes -> WMI ``Win32_Processor.Architecture`` codes, the
+# space ``platform.uname()`` maps (0 x86, 5 ARM, 9 AMD64, 12 ARM64).
+_PE_MACHINE_TO_WMI_ARCHITECTURE = {0xAA64: 12, 0x8664: 9, 0x014C: 0, 0x01C4: 5}
+
+
+def _native_machine_from_iswow64():
+    """The OS-native machine as a WMI architecture code via ``IsWow64Process2``, or ``None`` (API
+    absent before Windows 10 1709, call failed, unmapped machine code). It is the one kernel32 API
+    that tells the truth from an x64 interpreter emulated on ARM64 Windows, where
+    ``GetNativeSystemInfo`` returns the emulated details (AMD64) and the real WMI query would have
+    said 12. HANDLE types are bound explicitly: ctypes' default ``c_int`` truncates the
+    ``(HANDLE)-1`` pseudo-handle and ``IsWow64Process2`` then fails with ERROR_INVALID_HANDLE on
+    Win64 (the residual Windows-on-ARM failure ``main_desktop._windows_native_machine_from_iswow64``
+    documents)."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    try:
+        is_wow64_process2 = kernel32.IsWow64Process2
+    except AttributeError:
+        return None
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.GetCurrentProcess.argtypes = []
+    is_wow64_process2.argtypes = [
+        wintypes.HANDLE, ctypes.POINTER(wintypes.USHORT), ctypes.POINTER(wintypes.USHORT)]
+    is_wow64_process2.restype = wintypes.BOOL
+    process_machine = wintypes.USHORT(0)
+    native_machine = wintypes.USHORT(0)
+    if not is_wow64_process2(
+            kernel32.GetCurrentProcess(), ctypes.byref(process_machine), ctypes.byref(native_machine)):
+        return None
+    return _PE_MACHINE_TO_WMI_ARCHITECTURE.get(native_machine.value)
+
+
+def _native_processor_architecture() -> int:
+    """The host's native CPU architecture in WMI's ``Win32_Processor.Architecture`` code space,
+    read from kernel32 -- no thread, no environment. ``IsWow64Process2`` first (truthful under
+    x64-on-ARM64 emulation), then ``GetNativeSystemInfo().wProcessorArchitecture`` (same code
+    space; emulated details on such a host, exact everywhere else)."""
+    import ctypes
+
+    try:
+        code = _native_machine_from_iswow64()
+    except (OSError, AttributeError, TypeError, ValueError):
+        code = None  # DLL load failure or a mistyped binding: fall back, never raise
+
+    if code is not None:
+        return code
+
+    class _SYSTEM_INFO(ctypes.Structure):
+        _fields_ = [("wProcessorArchitecture", ctypes.c_ushort), ("wReserved", ctypes.c_ushort),
+                    ("dwPageSize", ctypes.c_uint32), ("lpMinimumApplicationAddress", ctypes.c_void_p),
+                    ("lpMaximumApplicationAddress", ctypes.c_void_p), ("dwActiveProcessorMask", ctypes.c_void_p),
+                    ("dwNumberOfProcessors", ctypes.c_uint32), ("dwProcessorType", ctypes.c_uint32),
+                    ("dwAllocationGranularity", ctypes.c_uint32), ("wProcessorLevel", ctypes.c_ushort),
+                    ("wProcessorRevision", ctypes.c_ushort)]
+
+    info = _SYSTEM_INFO()
+    ctypes.WinDLL("kernel32").GetNativeSystemInfo(ctypes.byref(info))
+    return int(info.wProcessorArchitecture)
+
+
+def _offline_wmi_query(table, *keys):
+    """Stand-in for ``platform._wmi_query``: answer the CPU-architecture query from kernel32 and
+    refuse the rest, so ``platform.machine()`` stays correct in a process whose environment lacks
+    ``PROCESSOR_ARCHITECTURE`` (``env -i`` test runners) while ``win32_ver()`` takes its documented
+    ``sys.getwindowsversion()`` fallback."""
+    if table == "CPU" and tuple(keys) == ("Architecture",):
+        return iter([str(_native_processor_architecture())])
+    raise OSError("not supported")
+# --- end wmi-stub shared block ---
+
+
 if sys.platform == "win32" and sys.version_info < (3, 13, 4):
     sys.modules["_wmi"] = None  # type: ignore[assignment]
     import platform as _platform
 
-    def _no_wmi_query(table, *keys):
-        # The runner's ``env -i`` allowlist drops PROCESSOR_ARCHITECTURE, so the
-        # stdlib's own env fallback for ``machine()`` would be '' here: answer
-        # the one CPU query from kernel32 (same code space as WMI) and refuse
-        # the OS one, which falls back to sys.getwindowsversion().
-        if table == "CPU" and tuple(keys) == ("Architecture",):
-            import ctypes
-
-            class _SYSTEM_INFO(ctypes.Structure):
-                _fields_ = [("wProcessorArchitecture", ctypes.c_ushort), ("wReserved", ctypes.c_ushort),
-                            ("dwPageSize", ctypes.c_uint32), ("lpMinimumApplicationAddress", ctypes.c_void_p),
-                            ("lpMaximumApplicationAddress", ctypes.c_void_p), ("dwActiveProcessorMask", ctypes.c_void_p),
-                            ("dwNumberOfProcessors", ctypes.c_uint32), ("dwProcessorType", ctypes.c_uint32),
-                            ("dwAllocationGranularity", ctypes.c_uint32), ("wProcessorLevel", ctypes.c_ushort),
-                            ("wProcessorRevision", ctypes.c_ushort)]
-
-            info = _SYSTEM_INFO()
-            ctypes.WinDLL("kernel32").GetNativeSystemInfo(ctypes.byref(info))
-            return iter([str(int(info.wProcessorArchitecture))])
-        raise OSError("not supported")
-
-    _platform._wmi_query = _no_wmi_query
+    _platform._wmi_query = _offline_wmi_query
     del _platform
 
 # Ensure project root is importable

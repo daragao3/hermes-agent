@@ -11,6 +11,7 @@ basic_auth.{username,password_hash|password,secret,session_ttl_seconds}`` or the
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import hmac
 import json
@@ -77,9 +78,14 @@ def _verify_password(password: str, encoded: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-# Verified against when the username is unknown so "no such user" and "wrong
-# password" take comparable time.
-_DUMMY_HASH = hash_password("dummy-password-for-constant-time-verify")
+@functools.lru_cache(maxsize=1)
+def _dummy_hash() -> str:
+    """Verified against when the username is unknown so "no such user" and "wrong
+    password" take comparable time. Computed on the first unknown-user login, not at
+    import: this module is loaded by plugin discovery in EVERY hermes process, and the
+    16 MiB scrypt cost 0.8-2.3 s on a loaded Windows box (2026-09-17) -- paid by a CLI
+    invocation or a delegate timeout teardown that never authenticates anyone."""
+    return hash_password("dummy-password-for-constant-time-verify")
 
 
 # ---- Token signing (stateless HMAC-signed blobs) ----
@@ -133,6 +139,12 @@ class BasicAuthProvider(NonInteractiveMixin, DashboardAuthProvider):
         self._password_hash = password_hash
         self._secret = secret
         self._ttl = max(60, int(ttl_seconds))
+        # Warm the constant-time dummy now, in the one process that actually serves
+        # basic auth: computed lazily on the first unknown-username login, that
+        # request would pay KDF+verify while a wrong password pays verify only -- a
+        # one-shot, process-start timing skew. The accessor stays cached, so this
+        # is one scrypt per process, before any request is served.
+        _dummy_hash()
 
     # ---- password login ----------------------------------------------------
 
@@ -141,7 +153,7 @@ class BasicAuthProvider(NonInteractiveMixin, DashboardAuthProvider):
         # and compare the username with compare_digest too, so neither the username nor
         # its length leaks via timing.
         username_ok = hmac.compare_digest(username.encode("utf-8"), self._username.encode("utf-8"))
-        password_ok = _verify_password(password, self._password_hash if username_ok else _DUMMY_HASH)
+        password_ok = _verify_password(password, self._password_hash if username_ok else _dummy_hash())
         if not (username_ok and password_ok):
             raise InvalidCredentialsError("invalid username or password")
         return self._mint_session(self._username)

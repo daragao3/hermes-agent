@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -323,8 +324,10 @@ def test_relay_rewrite_precedes_sequential_policy_approval_checkpoint_and_dispat
     assert observed["approval"] == expected
     assert observed["start"] == expected
     assert observed["dispatch"] == expected
+    # The checkpoint sees the approved path after _resolve_path_for_task, i.e.
+    # a pathlib path str()-ed in the platform spelling (backslashes on win32).
     assert observed["checkpoint"] == [
-        ("/approved/path", "before write_file")
+        (str(Path(final_args["path"])), "before write_file")
     ]
 
 
