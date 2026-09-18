@@ -460,8 +460,11 @@ def test_heal_preserves_independent_grants_for_same_account(fleet, shape, claims
     from hermes_cli.auth import heal_forked_single_use_oauth_grants
 
     def pair(tag):
+        # Well past CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS (1h since R57, restored by
+        # 5d040a911f): an `exp` of exactly +3600 sits on the proactive-refresh boundary
+        # and select() would treat the grant as expiring, which is not what this pins.
         payload = base64.urlsafe_b64encode(json.dumps({
-            "sub": "same-account", "exp": int(time.time()) + 3600, "jti": tag,
+            "sub": "same-account", "exp": int(time.time()) + 86400, "jti": tag,
         }).encode()).decode().rstrip("=")
         return {"access_token": "h." + payload + ".s" if claims else tag,
                 "refresh_token": "independent-" + tag}
