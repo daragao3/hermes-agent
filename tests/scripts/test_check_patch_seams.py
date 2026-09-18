@@ -157,7 +157,8 @@ def _demo_repo(tmp_path: Path) -> Path:
             return getattr(sys.modules["pkg.compat"], name)
         """)
     _write(repo, "pkg/lazy_opaque.py", """
-        _RESOLVERS = {"HERMES_HOME": str, **{k: str for k in ("A", "B")}}
+        import os
+        _RESOLVERS = {"HERMES_HOME": str, **{k: str for k in os.environ}}
 
 
         def __getattr__(name):
@@ -165,6 +166,124 @@ def _demo_repo(tmp_path: Path) -> Path:
             if resolver is not None:
                 return resolver()
             raise AttributeError(name)
+        """)
+    # tools/skills_hub.py + tools/mcp_tool.py: the hook's container is built,
+    # not spelled -- a dict display unpacking a comprehension re-keyed from a
+    # tuple of module-level names, and a frozenset() of a union with a
+    # comprehension over a module-level display; ``globals()[name]`` in the
+    # hook serves nothing new.
+    _write(repo, "pkg/lazy_built.py", """
+        _FAMILIES = (
+            ("mcp.types", ("CreateMessageResult", "ErrorData"), "sampling types not available"),
+            ("mcp.types", ("ElicitResult",), "elicitation types not available"),
+        )
+        _SDK = frozenset({"stdio_client", "StdioServerParameters"} | {n for _mod, names, _msg in _FAMILIES for n in names})
+        _ALSO = _SDK | {"extra"}
+
+
+        def _path_resolver(name, parent, leaf):
+            def resolve():
+                return name
+            resolve.__name__ = f"_{name.lower()}"
+            return resolve
+
+
+        _skills_dir = _path_resolver("SKILLS_DIR", "HERMES_HOME", "skills")
+        _hub_dir = _path_resolver("HUB_DIR", "SKILLS_DIR", ".hub")
+        _RESOLVERS = {"HERMES_HOME": str, **{
+            r.__name__[1:].upper(): r for r in (_skills_dir, _hub_dir)
+        }, **{k: str for k in ("INLINE_A",)}}
+
+
+        def __getattr__(name):
+            if name in _ALSO:
+                try:
+                    return globals()[name]
+                except KeyError:
+                    pass
+            resolver = _RESOLVERS.get(name)
+            if resolver is not None:
+                return resolver()
+            raise AttributeError(name)
+        """)
+    # agent/*_registry.py: an instance of a repo class is handed the namespace
+    # dict; its method writes through the dict protocol.
+    _write(repo, "pkg/provider_registry.py", """
+        class ProviderRegistry:
+            def __init__(self, label):
+                self._providers = {}
+                self._lock = None
+
+            def register(self, name, provider):
+                self._providers[name] = provider
+
+            def export(self, namespace):
+                namespace.update(
+                    _providers=self._providers, _lock=self._lock,
+                    register_provider=self.register, _reset_for_tests=self.reset,
+                )
+                namespace.update({"registry_generation": 0})
+                namespace["snapshot_registration"] = self.snapshot
+                namespace.setdefault("restore_registration", self.restore)
+                namespace.get("nothing")
+
+            def reset(self):
+                self._providers.clear()
+
+            def snapshot(self):
+                return dict(self._providers)
+
+            def restore(self, snap):
+                self._providers = snap
+
+        class StaticReg:
+            @staticmethod
+            def export(namespace):
+                namespace.update(STATIC_NAME=1)
+
+
+        class Opaque:
+            def export(self, namespace):
+                namespace.update(**self.__dict__)
+
+            def export_computed(self, namespace):
+                namespace.update(self._computed())
+
+            def export_pop(self, namespace):
+                namespace.pop("register_provider", None)
+        """)
+    _write(repo, "pkg/image_registry.py", """
+        import logging
+        from pkg.provider_registry import ProviderRegistry
+
+        logger = logging.getLogger(__name__)
+        _registry: ProviderRegistry = ProviderRegistry(label="Image gen")
+        _registry.export(globals())
+
+
+        def get_active_provider():
+            return _registry
+
+
+        _PLUGIN_COMPAT_LAZY = {"hermes_home_key": ("pkg.compat", "host_system")}
+
+
+        def __getattr__(name):
+            target = _PLUGIN_COMPAT_LAZY.get(name)
+            if target is None:
+                raise AttributeError(name)
+            import importlib
+            return getattr(importlib.import_module(target[0]), target[1])
+        """)
+    _write(repo, "pkg/attr_registry.py", """
+        from pkg import provider_registry
+        _registry = provider_registry.ProviderRegistry(label="x")
+        _registry.export(globals())
+        """)
+    _write(repo, "pkg/static_registry.py", """
+        from pkg.provider_registry import StaticReg
+        _registry = StaticReg()
+        _registry.export(globals())
         """)
     _write(repo, "pkg/shared.py", """
         import sys
@@ -539,6 +658,158 @@ def test_pep562_hook_names_are_read_from_its_body(tmp_path):
     facts = cps.Repo(repo).facts("pkg.lazy")
     assert facts.lazy == {"platform", "legacy_helper", "requests", "tick", "tock"}
     assert cps.Repo(repo).facts("pkg.lazy_opaque").lazy is None
+
+
+def test_pep562_hook_containers_built_from_calls_unions_and_unpacks_are_read(tmp_path):
+    """tools/skills_hub.py looks ``name`` up in ``{"HERMES_HOME": f, **{...
+    for r in (_skills_dir, _hub_dir)}}`` and tools/mcp_tool.py in
+    ``frozenset({...} | {n for ... in _FAMILIES for n in names})`` then
+    returns ``globals()[name]``: 63 + 16 seams skipped as not_static until
+    the container was read as far as the source spells it.  A name the
+    built container carries verifies; one it dropped is reported."""
+    repo = _demo_repo(tmp_path)
+    facts = cps.Repo(repo).facts("pkg.lazy_built")
+    assert facts.static
+    served = {
+        "stdio_client", "StdioServerParameters",        # the literal half of the union
+        "CreateMessageResult", "ErrorData", "ElicitResult",  # the comprehension over _FAMILIES
+        "HERMES_HOME",                                  # the dict display's own key
+        "SKILLS_DIR", "HUB_DIR",                        # re-keyed from the resolver tuple's values
+        "INLINE_A",                                     # a comprehension over an inline display
+        "extra",                                        # ``_ALSO = _SDK | {"extra"}``: a union by name
+    }
+    assert facts.lazy >= served
+    # The documented over-approximation, and no more: every string in the
+    # display a comprehension iterates, every identifier in a re-keyed value.
+    assert facts.lazy - served == {"mcp.types", "sampling types not available", "elicitation types not available", "skills"}
+    _write(repo, "tests/test_built.py", """
+        from unittest.mock import patch
+        import pkg.lazy_built as built
+
+
+        def test_it(monkeypatch):
+            with patch.object(built, "SKILLS_DIR"), patch.object(built, "HUB_DIR"):
+                pass
+            monkeypatch.setattr(built, "stdio_client", None)
+            monkeypatch.setattr(built, "ErrorData", None)
+            monkeypatch.setattr(built, "_skills_dir", None)
+            monkeypatch.setattr(built, "gone", None)
+        """)
+    findings, stats = _scan(repo, "tests/test_built.py")
+    assert findings == [("tests/test_built.py", 11, "setattr", "built.gone")]
+    assert stats.verified == 5 and stats.not_static == 0
+    # Drop one resolver (a rename of HUB_DIR) and the patch on it is the finding.
+    source = (repo / "pkg/lazy_built.py").read_text(encoding="utf-8")
+    _write(repo, "pkg/lazy_built.py", source.replace("for r in (_skills_dir, _hub_dir)", "for r in (_skills_dir,)"))
+    findings, _ = _scan(repo, "tests/test_built.py")
+    assert [f[3] for f in findings] == ["built.HUB_DIR", "built.gone"]
+    # Every escape keeps the hook opaque: a comprehension over something the
+    # source does not spell, a ``**`` of a call, a container built by a call
+    # the scan does not follow, a union with an opaque side.
+    for body in (
+        "import os\n_C = {**{k: 1 for k in os.environ}}\n",
+        "_C = {'A': 1, **_more()}\n",
+        "_C = frozenset(_names())\n",
+        "_C = {'A'} | _other()\n",
+        "_T = (_f,)\n_C = {k: 1 for k in _T}\n",           # a tuple of names bound by nothing readable
+    ):
+        _write(repo, "pkg/opaque_c.py", body + "\n\ndef __getattr__(name):\n    if name in _C:\n        return 1\n    raise AttributeError(name)\n")
+        assert cps.Repo(repo).facts("pkg.opaque_c").lazy is None, body
+
+
+def test_instance_registrar_method_is_read_through_the_dict_protocol(tmp_path):
+    """agent/*_registry.py: ``_registry = ProviderRegistry(...)`` then
+    ``_registry.export(globals())`` -- 243 seams on seven modules skipped as
+    not_static.  The registrar is the imported class's method, read past
+    ``self``; the names it writes into the namespace dict (``update(x=v)``,
+    ``update({...})``, ``ns["x"] = v``, ``setdefault``) verify, a name it
+    dropped is reported, and the module's own PLUGIN-COMPAT hook still
+    serves its keys."""
+    repo = _demo_repo(tmp_path)
+    facts = cps.Repo(repo).facts("pkg.image_registry")
+    assert facts.static
+    assert facts.registrars == (("pkg.provider_registry", "ProviderRegistry.export"),)
+    assert facts.registered == {
+        "_providers", "_lock", "register_provider", "_reset_for_tests",   # update(x=v)
+        "registry_generation",                                           # update({"x": v})
+        "snapshot_registration",                                         # ns["x"] = v
+        "restore_registration",                                          # setdefault
+    }
+    assert facts.lazy == {"hermes_home_key"}
+    # ``from pkg import provider_registry`` + ``provider_registry.ProviderRegistry(...)``
+    # and a @staticmethod registrar (no ``self`` to skip) resolve the same way.
+    assert cps.Repo(repo).facts("pkg.attr_registry").registered == facts.registered
+    assert cps.Repo(repo).facts("pkg.static_registry").registered == {"STATIC_NAME"}
+    _write(repo, "tests/test_registry.py", """
+        from unittest.mock import patch
+        import pkg.image_registry as image_gen_registry
+        import pkg.attr_registry as attr_registry
+
+
+        def test_it(monkeypatch):
+            with patch.object(image_gen_registry, "register_provider"), patch.object(image_gen_registry, "_reset_for_tests"):
+                pass
+            monkeypatch.setattr(image_gen_registry, "_providers", {})
+            monkeypatch.setattr(image_gen_registry, "snapshot_registration", None)
+            monkeypatch.setattr(image_gen_registry, "restore_registration", None)
+            monkeypatch.setattr(image_gen_registry, "registry_generation", 0)
+            monkeypatch.setattr(image_gen_registry, "get_active_provider", None)
+            monkeypatch.setattr(image_gen_registry, "hermes_home_key", None)
+            monkeypatch.setattr(attr_registry, "_lock", None)
+            monkeypatch.setattr(image_gen_registry, "list_providers", None)
+            monkeypatch.setattr(image_gen_registry, "export", None)
+            monkeypatch.setattr(image_gen_registry, "reset", None)
+        """)
+    findings, stats = _scan(repo, "tests/test_registry.py")
+    assert [f[3] for f in findings] == [
+        "image_gen_registry.list_providers",   # never exported
+        "image_gen_registry.export",           # the registrar's own method, not a published name
+        "image_gen_registry.reset",            # published as _reset_for_tests, not under its own name
+    ]
+    assert stats.verified == 9 and stats.not_static == 0
+    # Drop ``register_provider`` from export (a rename) and the patch on it is the finding.
+    source = (repo / "pkg/provider_registry.py").read_text(encoding="utf-8")
+    _write(repo, "pkg/provider_registry.py", source.replace("register_provider=self.register, ", ""))
+    findings, _ = _scan(repo, "tests/test_registry.py")
+    assert [f[3] for f in findings][0] == "image_gen_registry.register_provider"
+    # Every escape keeps the host non-static: ``update(**computed)``, a
+    # positional the scan cannot read, ``pop``, an instance of a class from
+    # outside the repo, a class the module defines itself, a rebound alias.
+    cases = {
+        "star": "from pkg.provider_registry import Opaque\n_r = Opaque()\n_r.export(globals())\n",
+        "computed": "from pkg.provider_registry import Opaque\n_r = Opaque()\n_r.export_computed(globals())\n",
+        "pop": "from pkg.provider_registry import Opaque\n_r = Opaque()\n_r.export_pop(globals())\n",
+        "outside": "import third_party\n_r = third_party.Registry()\n_r.export(globals())\n",
+        "own": "class R:\n    def export(self, ns):\n        ns.update(x=1)\n_r = R()\n_r.export(globals())\n",
+        "rebound": "from pkg.provider_registry import ProviderRegistry\n_r = ProviderRegistry(label='x')\n_r = None\n_r.export(globals())\n",
+        "no_method": "from pkg.provider_registry import ProviderRegistry\n_r = ProviderRegistry(label='x')\n_r.missing(globals())\n",
+    }
+    for name, body in cases.items():
+        _write(repo, f"pkg/host_{name}.py", body)
+        facts = cps.Repo(repo).facts(f"pkg.host_{name}")
+        assert not facts.static, name
+        assert facts.registered is None, name
+
+
+def test_the_live_registry_modules_and_built_hooks_are_static():
+    """Against the real tree: the seven ``agent.*_registry`` modules resolve
+    through ProviderRegistry.export, tools.skills_hub through its resolver
+    table and tools.mcp_tool through its SDK symbol set, so the 341 seams
+    the 2026-09-18 breakdown counted as not_static verify, and a name none
+    of them binds is a finding."""
+    repo = cps.Repo(REPO_ROOT)
+    for module in ("image_gen", "tts", "transcription", "web_search", "terminal_env", "video_gen", "browser"):
+        facts = repo.facts(f"agent.{module}_registry")
+        assert facts.static, module
+        assert facts.registrars == (("agent.provider_registry", "ProviderRegistry.export"),), module
+        assert facts.binds("register_provider") and facts.binds("_reset_for_tests") and facts.binds("_providers"), module
+        assert not facts.binds("_this_name_is_exported_by_nothing"), module
+    hub = repo.facts("tools.skills_hub")
+    assert hub.static and hub.binds("SKILLS_DIR") and hub.binds("QUARANTINE_DIR") and hub.binds("HERMES_HOME")
+    assert not hub.binds("_this_path_has_no_resolver")
+    mcp = repo.facts("tools.mcp_tool")
+    assert mcp.static and mcp.binds("stdio_client") and mcp.binds("StdioServerParameters") and mcp.binds("streamable_http_client")
+    assert not mcp.binds("_this_symbol_is_not_lazy")
 
 
 def test_names_written_through_globals_are_bound_by_key_or_pattern(tmp_path):
