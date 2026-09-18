@@ -18,18 +18,19 @@ def test_passive_dependency_check_never_spawns(monkeypatch):
 
 
 @pytest.mark.parametrize("verified", [False, True])
-def test_port_kill_retains_identity_guard_with_windows_budget(monkeypatch, verified):
+def test_port_kill_retains_identity_guard_without_a_spawn(monkeypatch, verified):
     monkeypatch.setattr(wa, "_IS_WINDOWS", True)
     monkeypatch.setattr(wa, "_listener_pids_on_port", lambda port: [456])
     monkeypatch.setattr(wa, "_pid_looks_like_node_bridge", lambda pid: verified)
-    run = Mock(return_value=subprocess.CompletedProcess([], 0))
+    monkeypatch.setattr(capture, "windows_process_created", lambda pid: 1789765314.24)
+    walks = []
+    monkeypatch.setattr(capture, "windows_kill_process_tree",
+                        lambda pid, *, root_created=None: walks.append((pid, root_created)) or [pid])
+    run = Mock(side_effect=AssertionError("the port sweep spawned a process"))
     monkeypatch.setattr(wa.subprocess, "run", run)
     wa._kill_port_process(9999)
-    if verified:
-        assert run.call_args.args[0] == ["taskkill", "/PID", "456", "/F"]
-        assert run.call_args.kwargs["timeout"] == 30
-    else:
-        run.assert_not_called()
+    run.assert_not_called()
+    assert walks == ([(456, 1789765314.24)] if verified else [])
 
 
 def test_npm_capture_and_fresh_dependency_stamp(tmp_path, monkeypatch):

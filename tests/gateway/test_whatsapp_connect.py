@@ -371,11 +371,14 @@ class TestKillPortProcess:
     """Verify _kill_port_process uses platform-appropriate commands."""
 
     @pytest.mark.windows_only
-    def test_uses_netstat_and_taskkill_on_windows(self):
-        """``windows_only``: netstat/taskkill are Windows binaries. The old
-        ``_IS_WINDOWS`` patch selected this branch on Linux, where neither
-        exists, so the mocked argv was the only thing under test."""
+    def test_uses_netstat_and_the_pinned_walk_on_windows(self):
+        """``windows_only``: netstat is a Windows binary. The old ``_IS_WINDOWS``
+        patch selected this branch on Linux, where it does not exist, so the
+        mocked argv was the only thing under test. The kill itself is the
+        creation-time-pinned in-process walk, never a ``taskkill`` spawn
+        (7-9 s at 100% CPU here, 2026-09-18)."""
         from plugins.platforms.whatsapp.adapter import _kill_port_process
+        from hermes_cli import _subprocess_compat as compat
 
         netstat_output = (
             "  Proto  Local Address          Foreign Address        State           PID\n"
@@ -383,17 +386,18 @@ class TestKillPortProcess:
             "  TCP    0.0.0.0:3001           0.0.0.0:0              LISTENING       99999\n"
         )
         mock_netstat = MagicMock(stdout=netstat_output)
-        mock_taskkill = MagicMock()
 
         def run_side_effect(cmd, **kwargs):
             if cmd[0] == "netstat":
                 return mock_netstat
-            if cmd[0] == "taskkill":
-                return mock_taskkill
-            return MagicMock()
+            raise AssertionError(f"unexpected spawn {cmd[0]!r}")
 
+        walks = []
         with patch("psutil.net_connections", side_effect=OSError("mock table unavailable")), \
              patch("plugins.platforms.whatsapp.adapter.subprocess.run", side_effect=run_side_effect) as mock_run, \
+             patch.object(compat, "windows_process_created", return_value=1789765314.24), \
+             patch.object(compat, "windows_kill_process_tree",
+                          side_effect=lambda pid, *, root_created=None: walks.append((pid, root_created)) or [pid]), \
              patch("plugins.platforms.whatsapp.adapter._pid_looks_like_node_bridge",
                    return_value=True):
             _kill_port_process(3000)
@@ -402,17 +406,15 @@ class TestKillPortProcess:
         assert any(
             call.args[0][0] == "netstat" for call in mock_run.call_args_list
         )
-        # taskkill called with correct PID
-        assert any(
-            call.args[0] == ["taskkill", "/PID", "12345", "/F"]
-            for call in mock_run.call_args_list
-        )
+        # the walk ran for the right PID, pinned to the creation time read before the check
+        assert walks == [(12345, 1789765314.24)]
 
     @pytest.mark.windows_only
-    def test_windows_refuses_taskkill_on_non_bridge_pid(self):
+    def test_windows_refuses_the_walk_on_non_bridge_pid(self):
         """#89614 class: the netstat-scanned PID is a bare number — if the
-        live process is not a node bridge, taskkill must never fire."""
+        live process is not a node bridge, the kill walk must never run."""
         from plugins.platforms.whatsapp.adapter import _kill_port_process
+        from hermes_cli import _subprocess_compat as compat
 
         netstat_output = (
             "  Proto  Local Address          Foreign Address        State           PID\n"
@@ -422,17 +424,17 @@ class TestKillPortProcess:
         def run_side_effect(cmd, **kwargs):
             if cmd[0] == "netstat":
                 return MagicMock(stdout=netstat_output)
-            return MagicMock()
+            raise AssertionError(f"unexpected spawn {cmd[0]!r}")
 
         with patch("psutil.net_connections", side_effect=OSError("mock table unavailable")), \
-             patch("plugins.platforms.whatsapp.adapter.subprocess.run", side_effect=run_side_effect) as mock_run, \
+             patch("plugins.platforms.whatsapp.adapter.subprocess.run", side_effect=run_side_effect), \
+             patch.object(compat, "windows_process_created", return_value=1789765314.24), \
+             patch.object(compat, "windows_kill_process_tree") as walk, \
              patch("plugins.platforms.whatsapp.adapter._pid_looks_like_node_bridge",
                    return_value=False):
             _kill_port_process(3000)
 
-        assert not any(
-            call.args[0][0] == "taskkill" for call in mock_run.call_args_list
-        )
+        walk.assert_not_called()
 
 
     @pytest.mark.linux_only
@@ -478,8 +480,10 @@ class TestKillPortProcess:
         assert kills == []
 
     def test_psutil_is_the_primary_discovery_path(self):
-        """A LISTEN row for the port is killed without ever shelling out."""
+        """A LISTEN row for the port is killed without ever shelling out --
+        neither to find the PID nor to kill it."""
         from plugins.platforms.whatsapp.adapter import _kill_port_process
+        from hermes_cli import _subprocess_compat as compat
         import psutil
 
         conns = [
@@ -487,20 +491,19 @@ class TestKillPortProcess:
             _sconn(3001, 99999, psutil.CONN_LISTEN),
         ]
 
+        walks = []
         with patch("plugins.platforms.whatsapp.adapter._pid_looks_like_node_bridge", return_value=True), \
              patch("plugins.platforms.whatsapp.adapter._IS_WINDOWS", True), \
              patch("psutil.net_connections", return_value=conns), \
+             patch.object(compat, "windows_process_created", return_value=1789765314.24), \
+             patch.object(compat, "windows_kill_process_tree",
+                          side_effect=lambda pid, *, root_created=None: walks.append(pid) or [pid]), \
              patch("plugins.platforms.whatsapp.adapter.subprocess.run") as mock_run:
             _kill_port_process(3000)
 
-        assert any(
-            call.args[0] == ["taskkill", "/PID", "12345", "/F"]
-            for call in mock_run.call_args_list
-        )
-        # The whole point of psutil-first: no process spawned to find the PID.
-        assert not any(
-            call.args[0][0] == "netstat" for call in mock_run.call_args_list
-        )
+        assert walks == [12345]
+        # The whole point of psutil-first: no process spawned at all.
+        mock_run.assert_not_called()
 
     def test_never_signals_a_mere_client_of_the_port(self):
         """Only LISTEN sockets. A client whose connection merely involves this
@@ -512,15 +515,15 @@ class TestKillPortProcess:
 
         conns = [_sconn(3000, 4242, psutil.CONN_ESTABLISHED)]
 
+        from hermes_cli import _subprocess_compat as compat
         with patch("plugins.platforms.whatsapp.adapter._IS_WINDOWS", True), \
              patch("psutil.net_connections", return_value=conns), \
+             patch.object(compat, "windows_kill_process_tree") as walk, \
              patch("plugins.platforms.whatsapp.adapter.subprocess.run",
-                   return_value=MagicMock(stdout="")) as mock_run:
+                   return_value=MagicMock(stdout="")):
             _kill_port_process(3000)
 
-        assert not any(
-            call.args[0][0] == "taskkill" for call in mock_run.call_args_list
-        )
+        walk.assert_not_called()
 
     def test_falls_back_to_netstat_when_psutil_is_unavailable(self):
         """psutil missing or denied the table -> the Windows shell fallback."""
@@ -537,9 +540,14 @@ class TestKillPortProcess:
                 return MagicMock(stdout=netstat_output)
             return MagicMock()
 
+        from hermes_cli import _subprocess_compat as compat
+        walks = []
         with patch("plugins.platforms.whatsapp.adapter._pid_looks_like_node_bridge", return_value=True), \
              patch("plugins.platforms.whatsapp.adapter._IS_WINDOWS", True), \
              patch("psutil.net_connections", side_effect=OSError("no table")), \
+             patch.object(compat, "windows_process_created", return_value=1789765314.24), \
+             patch.object(compat, "windows_kill_process_tree",
+                          side_effect=lambda pid, *, root_created=None: walks.append(pid) or [pid]), \
              patch("plugins.platforms.whatsapp.adapter.subprocess.run",
                    side_effect=run_side_effect) as mock_run:
             _kill_port_process(3000)
@@ -547,10 +555,7 @@ class TestKillPortProcess:
         assert any(
             call.args[0][0] == "netstat" for call in mock_run.call_args_list
         )
-        assert any(
-            call.args[0] == ["taskkill", "/PID", "12345", "/F"]
-            for call in mock_run.call_args_list
-        )
+        assert walks == [12345]
 
     def test_netstat_fallback_budget_is_not_five_seconds(self):
         """The fallback's cap must exceed netstat's measured cost here.
@@ -577,15 +582,18 @@ class TestKillPortProcess:
             "netstat ran under a %r-second budget" % seen.get("timeout")
         )
 
-    def test_does_not_kill_wrong_port(self):
+    @pytest.mark.parametrize("table", ["psutil", "netstat"])
+    def test_does_not_kill_wrong_port(self, table):
         """A listener on 30000 must not be mistaken for one on 3000.
 
-        Both discovery paths are exercised: psutil returns no match for 3000,
-        which falls through to the netstat fallback, whose line matching is a
-        string suffix test and so is exactly where ``:30000`` could be read as
-        ``:3000``.
+        Both discovery paths are exercised separately: a completed psutil scan
+        with no match for 3000 is the answer on Windows (no netstat spawn), and
+        a psutil scan that raises falls through to netstat, whose line matching
+        is a string suffix test and so is exactly where ``:30000`` could be read
+        as ``:3000``.
         """
         from plugins.platforms.whatsapp.adapter import _kill_port_process
+        from hermes_cli import _subprocess_compat as compat
         import psutil
 
         netstat_output = (
@@ -597,17 +605,18 @@ class TestKillPortProcess:
                 return MagicMock(stdout=netstat_output)
             return MagicMock()
 
-        with patch("plugins.platforms.whatsapp.adapter._IS_WINDOWS", True), \
-             patch("psutil.net_connections",
-                   return_value=[_sconn(30000, 55555, psutil.CONN_LISTEN)]), \
+        if table == "psutil":
+            conns = patch("psutil.net_connections", return_value=[_sconn(30000, 55555, psutil.CONN_LISTEN)])
+        else:
+            conns = patch("psutil.net_connections", side_effect=OSError("no table"))
+        with patch("plugins.platforms.whatsapp.adapter._IS_WINDOWS", True), conns, \
+             patch.object(compat, "windows_kill_process_tree") as walk, \
              patch("plugins.platforms.whatsapp.adapter.subprocess.run",
                    side_effect=run_side_effect) as mock_run:
             _kill_port_process(3000)
 
-        assert not any(
-            call.args[0][0] == "taskkill"
-            for call in mock_run.call_args_list
-        )
+        walk.assert_not_called()
+        assert (table == "netstat") == any(call.args[0][0] == "netstat" for call in mock_run.call_args_list)
 
 
 # ---------------------------------------------------------------------------

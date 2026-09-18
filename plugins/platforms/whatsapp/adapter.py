@@ -54,7 +54,13 @@ def _listener_pids_on_port(port: int) -> list:
     burned the full ``_wait_for_port_release`` window and failed to bind.
 
     The shell probes stay as the fallback for a host where psutil is missing or
-    the platform denies the connection table.
+    the platform denies the connection table. On Windows a scan that *completed*
+    is the kernel's whole answer (``GetExtendedTcpTable`` names every owning
+    pid), so an empty one means no listener -- the old bridge just left the
+    table, or the port is bound for some other reason -- and netstat could only
+    re-read the same table for the price of a spawn (8-21 s here, 13 s measured
+    on 2026-09-18 for the first scan after a kill). POSIX keeps falling through
+    on empty: ``/proc/net/tcp`` cannot attribute another user's socket to a pid.
     """
     pids: list = []
     try:
@@ -68,7 +74,7 @@ def _listener_pids_on_port(port: int) -> list:
                 and conn.pid
             ):
                 pids.append(conn.pid)
-        if pids:
+        if pids or _IS_WINDOWS:
             return pids
     except Exception:
         # ImportError, or AccessDenied on a platform that gates the table.
@@ -125,28 +131,67 @@ def _pid_looks_like_node_bridge(pid: int) -> bool:
     including a critical system process). Before any kill, require the live process to actually look like
     our Baileys bridge: a ``node`` executable. Any ambiguity (process gone, unreadable cmdline) refuses the
     kill.
+
+    Cost: ``psutil.Process`` + ``exe()`` + ``cmdline()`` are one ``OpenProcess`` each and measured 0.0-0.2 ms
+    on an owned node child at 100% CPU (2026-09-18); the seconds the port sweep used to spend were the
+    ``taskkill`` spawn and the netstat fallback, not this check. A pid that has already exited is the
+    common refusal (its LISTEN row outlives the process by a moment), so it is logged apart from a
+    stranger or an access-denied identity. ``argv[0]`` is compared whole: the old first-whitespace-token
+    parse of the joined cmdline read ``C:\\Program Files\\nodejs\\node.exe`` as ``C:\\Program``.
     """
     try:
         import psutil
+    except ImportError:
+        return False
+    try:
         proc = psutil.Process(pid)
-        return "node" in (proc.name() or "").lower() or "node" in " ".join(proc.cmdline() or []).lower().split(" ", 1)[0]
-    except Exception:
+        with proc.oneshot():
+            if "node" in (proc.name() or "").lower():
+                return True
+            argv = proc.cmdline() or []
+        return bool(argv) and "node" in os.path.basename(str(argv[0])).lower()
+    except psutil.NoSuchProcess:
+        logger.debug("[whatsapp] PID %s exited before its identity could be checked", pid)
+        return False
+    except Exception as exc:  # AccessDenied, ZombieProcess, a partial psutil
+        logger.debug("[whatsapp] PID %s identity unverifiable: %r", pid, exc)
         return False
 
 
 def _kill_port_process(port: int) -> None:
-    """Kill any node bridge *listening* on the given TCP port (never a client); SIGTERM on POSIX, taskkill /F on Windows."""
+    """Kill any node bridge *listening* on the given TCP port (never a client).
+
+    SIGTERM on POSIX. On Windows the creation-time-pinned walk
+    (:func:`hermes_cli._subprocess_compat.windows_kill_process_tree`, the primitive
+    :func:`_terminate_bridge_process` already uses) -- never ``taskkill``: that spawn
+    measured 7.4 s and 8.7 s against an owned node child at 100% CPU on 2026-09-18, and
+    was the whole cost of the "7-9 s identity check" (the check itself is sub-millisecond).
+    The creation time is read BEFORE the identity check so a pid recycled at any point
+    between the scan and the kill is refused by the pin; one that cannot be read is not
+    killed at all (fail closed, the same refusal as ``gateway.status.terminate_pid``).
+    """
     with suppress(Exception):
         for pid in _listener_pids_on_port(port):
+            if pid <= 0:
+                continue
+            created = None
+            if _IS_WINDOWS:
+                from hermes_cli._subprocess_compat import windows_process_created
+                created = windows_process_created(pid)
             # Killing a mistyped or recycled PID is unrecoverable — verify first.
-            if pid <= 0 or not _pid_looks_like_node_bridge(pid):
+            if not _pid_looks_like_node_bridge(pid):
                 logger.warning("[whatsapp] Not killing PID %s on port %d: process is not a node bridge (or identity unverifiable)", pid, port)
                 continue
             if _IS_WINDOWS:
-                from hermes_cli._subprocess_compat import windows_hide_flags
-                # Only SubprocessError is swallowed per-PID; an OSError (e.g. taskkill missing) aborts the scan.
-                with suppress(subprocess.SubprocessError):
-                    subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, stdin=subprocess.DEVNULL, timeout=30, creationflags=windows_hide_flags())
+                if created is None:
+                    logger.warning("[whatsapp] Not killing PID %s on port %d: creation time unreadable, identity cannot be pinned", pid, port)
+                    continue
+                from hermes_cli._subprocess_compat import windows_kill_process_tree
+                killed: list = []
+                with suppress(Exception):
+                    killed = windows_kill_process_tree(pid, root_created=created)
+                if pid not in killed:
+                    logger.info("[whatsapp] PID %s on port %d left the walk untouched (exited or identity changed)", pid, port)
             else:
                 with suppress(OSError):  # ProcessLookupError/PermissionError are OSError subclasses
                     os.kill(pid, signal.SIGTERM)
@@ -317,8 +362,9 @@ def _port_is_free(port: int) -> bool:
     """One bind on ``127.0.0.1:port`` — the exact operation bridge.js performs (it listens on 127.0.0.1 only).
 
     Sub-millisecond even at 100% CPU (measured 0.1-1.2 ms on 2026-09-18), where the listener scan behind
-    ``_kill_port_process`` costs a psutil TCP-table walk plus a per-PID identity check that measured 7-9 s
-    on the same host. ``connect()`` asks this first: a free port means there is no bridge to adopt, none
+    ``_kill_port_process`` costs a psutil TCP-table walk (15-300 ms) and the sweep measured 7-9 s on the
+    same host -- later traced to its ``taskkill``/netstat spawns, since replaced (the per-PID identity
+    check is sub-millisecond). ``connect()`` asks this first: a free port means there is no bridge to adopt, none
     to kill and no release to wait for, so none of those probes run. A bind refused for any other reason
     (TIME_WAIT on Linux, EACCES) reads as "bound" and takes the slow path — the safe direction.
     """
