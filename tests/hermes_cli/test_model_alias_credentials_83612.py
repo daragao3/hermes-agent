@@ -758,7 +758,9 @@ class TestNoProductionCodeMutatesTheAliasCacheInPlace:
         import pathlib
 
         repo = pathlib.Path(__file__).resolve().parents[2]
-        skip = {".git", "node_modules", "tests", "build", "dist", ".venv"}
+        # .worktrees / .claude: sibling agent worktrees live inside the checkout and would be
+        # scanned as if they were this tree's sources (re-reporting every copy, ~8 min).
+        skip = {".git", "node_modules", "tests", "build", "dist", ".venv", ".worktrees", ".claude"}
         for path in repo.rglob("*.py"):
             if any(part in skip for part in path.parts):
                 continue

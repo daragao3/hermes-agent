@@ -17,10 +17,6 @@ import subprocess
 import sys
 from typing import IO, Iterable, Mapping, NamedTuple, Optional, Sequence
 
-# Stdlib-only module, so importing it keeps this one import-light; the same constant gates the
-# managed-runtime repair (``managed_uv``) and ``hermes doctor``.
-from hermes_cli.sqlite_runtime import WMI_STRAY_THREAD_FIXED
-
 __all__ = [
     "IS_WINDOWS",
     "resolve_node_command",
@@ -302,6 +298,12 @@ def suppress_platform_wmi_queries() -> None:
     ``PROCESSOR_ARCHITECTURE`` env fallback an ``env -i`` runner strips: same values, no thread.
     Mirrors ``hermes_bootstrap.suppress_platform_wmi_queries``; double application is harmless.
     """
+    # Imported here, not at module scope: this is an early-bootstrap helper that runs before the
+    # profile override, and tests/hermes_cli/test_profile_override_import_order.py pins that it
+    # has NO module-level repo-owned imports. The same constant gates the managed-runtime
+    # repair (``managed_uv``) and ``hermes doctor``.
+    from hermes_cli.sqlite_runtime import WMI_STRAY_THREAD_FIXED
+
     if not IS_WINDOWS or sys.version_info >= WMI_STRAY_THREAD_FIXED:
         return
     try:

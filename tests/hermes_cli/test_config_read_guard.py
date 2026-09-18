@@ -67,6 +67,9 @@ ALLOWLIST = {
 EXCLUDED_DIR_PARTS = {
     "tests", ".venv", ".git", ".worktrees", "node_modules", "website",
     "docs", "scripts", "examples", "apps",
+    # Agent sessions keep their worktrees under .claude/worktrees/ inside the checkout;
+    # scanning them re-reports every sibling's copy of the tree (and takes ~10 min).
+    ".claude",
     # Compiled bytecode is not source. Sibling test processes also create
     # and delete these directories while this scan walks the tree.
     "__pycache__",
