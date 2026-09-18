@@ -26,7 +26,8 @@ from typing import Callable, Optional
 from hermes_cli._subprocess_compat import host_system
 from hermes_constants import get_hermes_home
 from hermes_cli.sqlite_runtime import (
-    SQLiteRuntimeInfo, isolated_interpreter_env, probe_sqlite_runtime)
+    REPAIR_REASON_SQLITE_WAL_RESET, REPAIR_REASON_WMI_STRAY_THREAD, SQLiteRuntimeInfo,
+    WMI_STRAY_THREAD_FIXED, isolated_interpreter_env, probe_sqlite_runtime)
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,8 @@ class RuntimeRepairResult:
     sqlite_before: str = ""
     sqlite_after: str = ""
     backup_venv: Path | None = None
+    # ``SQLiteRuntimeInfo.repair_reasons`` of the live interpreter when the repair was decided.
+    reasons: tuple[str, ...] = ()
 
     @property
     def repaired(self) -> bool:
@@ -134,13 +137,42 @@ class _RepairLock:
     fd: int
 
 
+def _describe_repair_reasons(info: SQLiteRuntimeInfo) -> list[str]:
+    """One human-readable line per reason the live interpreter must be replaced."""
+    lines = []
+    if REPAIR_REASON_SQLITE_WAL_RESET in info.repair_reasons:
+        lines.append(
+            f"Hermes venv links SQLite {info.sqlite_version_string}, which has the WAL-reset bug.")
+    if REPAIR_REASON_WMI_STRAY_THREAD in info.repair_reasons:
+        lines.append(
+            f"Hermes venv runs CPython {info.python_version_string} on Windows, whose "
+            "platform.uname() abandons its WMI thread and can crash children with 0xC000070A "
+            f"(CPython gh-130727; fixed in {_dotted(WMI_STRAY_THREAD_FIXED)}).")
+    return lines
+
+
+def _interim_protection_lines(reasons: tuple[str, ...]) -> list[str]:
+    """What still protects sessions while the runtime is NOT replaced — per reason, because the
+    SQLite reassurance says nothing about the interpreter bug."""
+    lines = []
+    if REPAIR_REASON_SQLITE_WAL_RESET in reasons:
+        lines.append(
+            "Sessions stay protected meanwhile: Hermes keeps databases out of WAL mode on this "
+            "SQLite build.")
+    if REPAIR_REASON_WMI_STRAY_THREAD in reasons:
+        lines.append(
+            "Hermes entry points run with WMI queries stubbed meanwhile; bare Python children "
+            "(scripts, test runners) stay exposed until the runtime is replaced.")
+    return lines
+
+
 def _report_runtime_repair_failure(repair: RuntimeRepairResult) -> None:
     if repair.backup_venv is None:
         print("  ℹ Managed Python runtime was not replaced; "
               f"the existing venv is unchanged ({repair.detail}).")
-        print("    Sessions stay protected meanwhile: Hermes keeps databases "
-              "out of WAL mode on this SQLite build. The next `hermes update` "
-              "will retry.")
+        for line in _interim_protection_lines(repair.reasons):
+            print(f"    {line}")
+        print("    The next `hermes update` will retry.")
         return
     print(f"  ✗ Managed Python runtime cutover needs manual recovery: {repair.detail}")
     print(f"    Previous venv: {repair.backup_venv}")
@@ -339,8 +371,16 @@ def _make_world_traversable(path: Path) -> None:
 
 def _runtime_request(info: SQLiteRuntimeInfo) -> str:
     """Pin the candidate to the current CPython minor line (e.g. ``3.11``): requesting the exact
-    patch can never repair installs whose patch has no fixed-SQLite artifact at all."""
-    return _dotted(info.python_version[:2])
+    patch can never repair installs whose patch has no fixed-SQLite artifact at all.
+
+    When the interpreter itself is the defect (``wmi-stray-thread``) no patch of a minor below
+    ``WMI_STRAY_THREAD_FIXED`` can carry the fix, so the request starts at that minor instead —
+    every attempt on the current line would be a certain rejection costing a full
+    download+install+probe+delete cycle."""
+    minor = info.python_version[:2]
+    if REPAIR_REASON_WMI_STRAY_THREAD in info.repair_reasons:
+        minor = max(minor, WMI_STRAY_THREAD_FIXED[:2])
+    return _dotted(minor)
 
 
 # Cap on newer patches tried, newest-first, before giving up: each attempt is a real
@@ -444,6 +484,14 @@ def _attempt_install_generation(
         return reject(
             "candidate Python still links vulnerable SQLite %s (%s)",
             candidate.sqlite_version_string, candidate.sqlite_source_id)
+    if candidate.wmi_stray_thread_vulnerable:
+        # Only reachable when the request pinned a minor below the fix (a caller-supplied
+        # request) or uv resolved off the requested line: the fix is a property of the
+        # interpreter, so no dependency sync can make this candidate acceptable.
+        return reject(
+            "candidate Python %s still abandons platform.uname()'s WMI thread "
+            "(gh-130727; fixed in %s)",
+            candidate.python_version_string, _dotted(WMI_STRAY_THREAD_FIXED))
     return generation, python, candidate
 
 
@@ -511,21 +559,26 @@ def _install_safe_python_generation(
     common = dict(project_root=project_root, python_root=python_root, current=current)
 
     request = _runtime_request(current)
-    print(f"  → Provisioning a private Python {request} runtime with fixed SQLite...")
+    # The interpreter-bug reason moves the request off the current minor line: then the first
+    # line is already a minor upgrade and the current line is never tried (see _runtime_request).
+    minor_upgrade = tuple(int(p) for p in request.split(".")) > current.python_version[:2]
+    what = "a fixed interpreter" if minor_upgrade else "fixed SQLite"
+    print(f"  → Provisioning a private Python {request} runtime with {what}...")
     tried_versions = {current.python_version[:3]}
     # If the bare minor-line request resolves to a still-vulnerable (or otherwise rejected)
     # candidate, the default resolution may have picked an older cached/indexed patch even though
     # a newer, non-vulnerable one exists: retry with explicit newer patches, newest-first.
     result = _provision_line(
-        uv_bin, request, tried=tried_versions, skip_at_or_below=current.python_version[:3], **common
+        uv_bin, request, tried=tried_versions, allow_minor_upgrade=minor_upgrade,
+        skip_at_or_below=None if minor_upgrade else current.python_version[:3], **common
     )
     if result is not None:
         return result
-    # All patches on the current minor line are vulnerable or rejected. Fall forward to the next
+    # All patches on the requested minor line are vulnerable or rejected. Fall forward to the next
     # supported minor (e.g. 3.11 → 3.12) so the user isn't stuck on every `hermes update`. The
     # requires-python window (>=3.11,<3.14) and the import smoke-test gate compatibility.
     # See #76106.
-    cur_major, cur_minor = current.python_version[:2]
+    cur_major, cur_minor = (int(p) for p in request.split("."))
     fb_tried: set[tuple[int, int, int]] = set(tried_versions)
     for next_minor in range(cur_minor + 1, 14):  # up to 3.13
         next_request = f"{cur_major}.{next_minor}"
@@ -547,6 +600,10 @@ def _smoke_candidate_venv(venv_dir: Path) -> tuple[bool, str, SQLiteRuntimeInfo 
         return False, f"could not execute {python}", None
     if info.wal_reset_vulnerable:
         return False, f"candidate still links vulnerable SQLite {info.sqlite_version_string}", info
+    if info.wmi_stray_thread_vulnerable:
+        return False, (
+            f"candidate Python {info.python_version_string} still abandons platform.uname()'s "
+            "WMI thread (gh-130727)"), info
     check = (
         "import dotenv, fastapi, openai, prompt_toolkit, pydantic, rich, uvicorn, yaml\n"
         "import hermes_state\n")
@@ -853,7 +910,9 @@ def _sweep_stale_runtime_backups(
 
 def _result(
     status: str, current: SQLiteRuntimeInfo, detail: str = "", **extra) -> RuntimeRepairResult:
-    return RuntimeRepairResult(status, detail, sqlite_before=current.sqlite_version_string, **extra)
+    return RuntimeRepairResult(
+        status, detail, sqlite_before=current.sqlite_version_string,
+        reasons=current.repair_reasons, **extra)
 
 
 def _repair_windows_preflight(
@@ -861,7 +920,7 @@ def _repair_windows_preflight(
     """Defer the repair when Windows holders make the venv rename impossible; else ``None``."""
     blocked, detail = _windows_runtime_holders()
     if blocked:
-        print(f"  ⚠ SQLite runtime repair deferred: {detail}")
+        print(f"  ⚠ Python runtime repair deferred: {detail}")
         return _result("skipped", current, detail)
     self_locked, self_detail = _windows_runtime_self_lock(live)
     if self_locked:
@@ -869,7 +928,7 @@ def _repair_windows_preflight(
         # park rename fails identically on every run. Defer BEFORE provisioning — a candidate
         # staged for a cutover that can never run only leaks an incomplete generation.
         for line in (
-            f"  ⚠ SQLite runtime repair deferred: {self_detail}.",
+            f"  ⚠ Python runtime repair deferred: {self_detail}.",
             # See #93032.
             "    Retrying `hermes update` from inside this venv cannot help: "
             "the mapped executable is released only when this process exits.",
@@ -877,8 +936,7 @@ def _repair_windows_preflight(
             "that lives outside this venv, e.g.:",
             f"      cd {root}",
             "      <system Python> -m hermes_cli.main update",
-            "    Sessions stay protected meanwhile: Hermes keeps databases "
-            "out of WAL mode on this SQLite build."):
+            *(f"    {line}" for line in _interim_protection_lines(current.repair_reasons))):
             print(line)
         return _result("skipped", current, self_detail)
     return None
@@ -893,11 +951,10 @@ def _repair_under_lock(
     current = probe_sqlite_runtime(live_python)
     if current is None:
         return RuntimeRepairResult("skipped", "live interpreter probe failed")
-    if not current.wal_reset_vulnerable:
+    if not current.needs_repair:
         return _result("safe", current, sqlite_after=current.sqlite_version_string)
-    print(
-        "  ⚠ Hermes venv links SQLite "
-        f"{current.sqlite_version_string}, which has the WAL-reset bug.")
+    for line in _describe_repair_reasons(current):
+        print(f"  ⚠ {line}")
     provisioned = _install_safe_python_generation(uv_bin, project_root=root, current=current)
     # Likely a stale managed-uv catalog: python-build-standalone re-releases the same patch
     # versions with fixed SQLite, but a frozen catalog keeps resolving the old vulnerable build
@@ -929,10 +986,12 @@ def _repair_under_lock(
             "failed", current, cutover_detail,
             sqlite_after=final_info.sqlite_version_string if final_info is not None else "",
             backup_venv=backup)
-    final_version = (final_info if final_info is not None else candidate_info).sqlite_version_string
+    final = final_info if final_info is not None else candidate_info
+    final_version = final.sqlite_version_string
     print(
         "  ✓ Managed Python runtime repaired "
-        f"(SQLite {current.sqlite_version_string} → {final_version})")
+        f"(Python {current.python_version_string} → {final.python_version_string}, "
+        f"SQLite {current.sqlite_version_string} → {final_version})")
     if backup is not None and backup.exists():
         _remove_tree(backup, boundary=root)
     return _result("repaired", current, sqlite_after=final_version, backup_venv=backup)
@@ -954,7 +1013,7 @@ def repair_vulnerable_runtime(
     current = probe_sqlite_runtime(live_python)
     if current is None:
         return RuntimeRepairResult("skipped", f"could not probe live interpreter {live_python}")
-    if not current.wal_reset_vulnerable:
+    if not current.needs_repair:
         # Already fixed: any venv.stale.runtime-* markers next to the live venv are leftovers
         # from a past repair and will never be rolled back to. Sweep them so they don't leak
         # ~1 GB each forever. Age-gated to avoid racing an in-flight repair in a sibling process.

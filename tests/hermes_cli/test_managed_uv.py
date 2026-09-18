@@ -32,16 +32,21 @@ def _make_executable(path: Path) -> None:
 def _runtime_info(
     executable: Path,
     sqlite_version: tuple[int, int, int],
+    python_version: tuple[int, int, int] = (3, 11, 15),
+    platform: str = "linux",
 ):
+    """A probe result for tests. ``platform`` is pinned (not the host's) so the SQLite-themed
+    tests read the same on Windows, where a 3.11 interpreter would also carry the WMI reason."""
     from hermes_cli.sqlite_runtime import SQLiteRuntimeInfo
 
     return SQLiteRuntimeInfo(
         executable=executable,
         base_prefix=executable.parent.parent,
-        python_version=(3, 11, 15),
+        python_version=python_version,
         sqlite_version=sqlite_version,
         sqlite_version_string=".".join(str(part) for part in sqlite_version),
         sqlite_source_id=f"source-{sqlite_version}",
+        platform=platform,
     )
 
 
@@ -762,7 +767,7 @@ class TestRuntimeRequestMinorLine:
                 python_version=candidate_version,
                 sqlite_version=(3, 53, 1),
                 sqlite_version_string="3.53.1",
-                sqlite_source_id="fixed",
+                sqlite_source_id="fixed", platform="linux",
             )
 
         current = SQLiteRuntimeInfo(
@@ -771,7 +776,7 @@ class TestRuntimeRequestMinorLine:
             python_version=current_version,
             sqlite_version=(3, 50, 4),
             sqlite_version_string="3.50.4",
-            sqlite_source_id="old",
+            sqlite_source_id="old", platform="linux",
         )
         monkeypatch.setattr(managed_uv.subprocess, "run", fake_run)
         monkeypatch.setattr(managed_uv, "probe_sqlite_runtime", fake_probe)
@@ -833,14 +838,14 @@ class TestPatchRetryOnVulnerableCandidate:
                 return SQLiteRuntimeInfo(
                     executable=Path(python), base_prefix=Path(python).parent.parent,
                     python_version=version, sqlite_version=(3, 50, 4),
-                    sqlite_version_string="3.50.4", sqlite_source_id="vulnerable",
+                    sqlite_version_string="3.50.4", sqlite_source_id="vulnerable", platform="linux",
                 )
             version = tuple(int(p) for p in requested.split("."))
             return SQLiteRuntimeInfo(
                 executable=Path(python), base_prefix=Path(python).parent.parent,
                 python_version=version, sqlite_version=sqlite_fixed,
                 sqlite_version_string=".".join(str(p) for p in sqlite_fixed),
-                sqlite_source_id="fixed",
+                sqlite_source_id="fixed", platform="linux",
             )
 
         return fake_run, fake_probe
@@ -853,7 +858,7 @@ class TestPatchRetryOnVulnerableCandidate:
         current = SQLiteRuntimeInfo(
             executable=Path("/venv/bin/python"), base_prefix=Path("/venv"),
             python_version=(3, 11, 14), sqlite_version=(3, 50, 4),
-            sqlite_version_string="3.50.4", sqlite_source_id="old",
+            sqlite_version_string="3.50.4", sqlite_source_id="old", platform="linux",
         )
         monkeypatch.setattr(managed_uv.subprocess, "run", fake_run)
         monkeypatch.setattr(managed_uv, "probe_sqlite_runtime", fake_probe)
@@ -892,7 +897,7 @@ class TestPatchRetryOnVulnerableCandidate:
         current = SQLiteRuntimeInfo(
             executable=Path("/venv/bin/python"), base_prefix=Path("/venv"),
             python_version=(3, 11, 14), sqlite_version=(3, 50, 4),
-            sqlite_version_string="3.50.4", sqlite_source_id="old",
+            sqlite_version_string="3.50.4", sqlite_source_id="old", platform="linux",
         )
         # 20 vulnerable patches -- far more than _MAX_PATCH_RETRIES.
         huge_patch_list = [(3, 11, v) for v in range(30, 10, -1)]
@@ -984,13 +989,13 @@ class TestMinorLineFallForward:
                     executable=Path(python),
                     base_prefix=Path(python).parent.parent,
                     python_version=version, sqlite_version=(3, 53, 1),
-                    sqlite_version_string="3.53.1", sqlite_source_id="fixed",
+                    sqlite_version_string="3.53.1", sqlite_source_id="fixed", platform="linux",
                 )
             return SQLiteRuntimeInfo(
                 executable=Path(python),
                 base_prefix=Path(python).parent.parent,
                 python_version=version, sqlite_version=(3, 50, 4),
-                sqlite_version_string="3.50.4", sqlite_source_id="vulnerable",
+                sqlite_version_string="3.50.4", sqlite_source_id="vulnerable", platform="linux",
             )
 
         return fake_run, fake_probe
@@ -1002,7 +1007,7 @@ class TestMinorLineFallForward:
         return SQLiteRuntimeInfo(
             executable=Path("/venv/bin/python"), base_prefix=Path("/venv"),
             python_version=(3, 11, 14), sqlite_version=(3, 50, 4),
-            sqlite_version_string="3.50.4", sqlite_source_id="old",
+            sqlite_version_string="3.50.4", sqlite_source_id="old", platform="linux",
         )
 
     def test_explicit_patch_fallback_when_bare_next_minor_is_vulnerable(
@@ -1461,7 +1466,7 @@ class TestWindowsRuntimeSelfLock:
         assert not (root / ".hermes-runtime").exists()
 
         out = capsys.readouterr().out
-        assert "SQLite runtime repair deferred" in out
+        assert "runtime repair deferred" in out
         assert "will retry" not in out, (
             "the structural self-lock must not promise that retrying helps"
         )
@@ -1541,3 +1546,171 @@ class TestWindowsRuntimeSelfLock:
 
         assert locked
         assert "999" in detail
+
+
+class TestWmiStrayThreadTrigger:
+    """The interpreter itself is the second reason a managed runtime gets replaced.
+
+    Windows CPython before 3.13.4 abandons ``platform.uname()``'s WMI query thread after a 100 ms
+    timeout and lets it close a random live handle of the process (CPython gh-130727, never
+    backported to 3.12); under host load that kills bare children with ``0xC000070A``. The
+    ``hermes_bootstrap`` stub only covers bootstrapped entry points, so the repair must provision
+    a fixed interpreter even when SQLite is already fine -- and it must request the fixed minor
+    line directly, because no 3.12 patch can ever pass the probe.
+    """
+
+    @staticmethod
+    def _win_info(python: Path, python_version, sqlite=(3, 53, 1)):
+        return _runtime_info(python, sqlite, python_version=python_version, platform="win32")
+
+    def test_reasons_are_reported_independently(self):
+        from hermes_cli.sqlite_runtime import (
+            REPAIR_REASON_SQLITE_WAL_RESET, REPAIR_REASON_WMI_STRAY_THREAD)
+
+        python = Path("/venv/Scripts/python.exe")
+        both = self._win_info(python, (3, 12, 13), sqlite=(3, 50, 4))
+        assert both.repair_reasons == (
+            REPAIR_REASON_SQLITE_WAL_RESET, REPAIR_REASON_WMI_STRAY_THREAD)
+        only_wmi = self._win_info(python, (3, 12, 13))
+        assert only_wmi.repair_reasons == (REPAIR_REASON_WMI_STRAY_THREAD,)
+        assert only_wmi.needs_repair
+        fixed = self._win_info(python, (3, 13, 15))
+        assert fixed.repair_reasons == ()
+        assert not fixed.needs_repair
+        posix = _runtime_info(Path("/venv/bin/python"), (3, 53, 1), python_version=(3, 12, 13))
+        assert posix.repair_reasons == ()
+
+    def test_request_starts_at_the_fixed_minor_line(self):
+        from hermes_cli.managed_uv import _runtime_request
+
+        python = Path("/venv/Scripts/python.exe")
+        assert _runtime_request(self._win_info(python, (3, 12, 13))) == "3.13"
+        # Both reasons at once: the interpreter reason wins the request line.
+        assert _runtime_request(self._win_info(python, (3, 11, 14), sqlite=(3, 50, 4))) == "3.13"
+        # A 3.13 patch below the fix stays on its own line (newer patches carry it).
+        assert _runtime_request(self._win_info(python, (3, 13, 3))) == "3.13"
+        # Off Windows the same interpreter keeps the SQLite behaviour: pin the current minor.
+        posix = _runtime_info(Path("/venv/bin/python"), (3, 50, 4), python_version=(3, 12, 13))
+        assert _runtime_request(posix) == "3.12"
+
+    def test_generation_skips_the_current_minor_line(self, tmp_path, monkeypatch):
+        """No 3.12 build can carry the fix, so the first uv request is the fixed minor with the
+        minor-upgrade guard relaxed -- not five certain rejections on 3.12 first."""
+        import hermes_cli.managed_uv as managed_uv
+
+        install_calls = []
+        fake_run, fake_probe = TestMinorLineFallForward._mapped_run(
+            resolutions={"3.13": (3, 13, 15)}, fixed_versions={(3, 13, 15)},
+            install_calls=install_calls)
+        monkeypatch.setattr(managed_uv.subprocess, "run", fake_run)
+        monkeypatch.setattr(managed_uv, "probe_sqlite_runtime", fake_probe)
+        monkeypatch.setattr(
+            managed_uv, "_list_available_patches",
+            lambda uv_bin, minor, **kw: pytest.fail(f"no patch retry expected on {minor}"))
+
+        current = self._win_info(Path("/venv/Scripts/python.exe"), (3, 12, 13))
+        result = managed_uv._install_safe_python_generation(
+            "uv", project_root=tmp_path, current=current)
+
+        assert result is not None
+        _, _, candidate = result
+        assert candidate.python_version == (3, 13, 15)
+        assert install_calls == ["3.13"]
+
+    def test_candidate_below_the_fix_is_rejected(self, tmp_path, monkeypatch, caplog):
+        """A caller-pinned request (or a uv resolution off the line) that lands below 3.13.4 is
+        refused like a vulnerable SQLite: the fix is a property of the interpreter."""
+        import logging
+
+        import hermes_cli.managed_uv as managed_uv
+
+        def fake_run(cmd, **kwargs):
+            if "install" in cmd:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            python = Path(kwargs["env"]["UV_PYTHON_INSTALL_DIR"]) / "cpython" / "python.exe"
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.touch()
+            return SimpleNamespace(returncode=0, stdout=str(python), stderr="")
+
+        monkeypatch.setattr(managed_uv.subprocess, "run", fake_run)
+        monkeypatch.setattr(
+            managed_uv, "probe_sqlite_runtime",
+            lambda python, **kw: self._win_info(Path(python), (3, 13, 3)))
+        current = self._win_info(Path("/venv/Scripts/python.exe"), (3, 12, 13))
+        python_root = tmp_path / ".hermes-runtime" / "python"
+
+        with caplog.at_level(logging.WARNING, logger="hermes_cli.managed_uv"):
+            result = managed_uv._attempt_install_generation(
+                "uv", "3.13.3", project_root=tmp_path, python_root=python_root,
+                current=current, allow_minor_upgrade=True)
+
+        assert result is None
+        assert "abandons platform.uname()" in caplog.text
+        assert not list(python_root.glob("generation-*")), "a rejected generation is removed"
+
+    def test_smoke_refuses_a_candidate_below_the_fix(self, tmp_path, monkeypatch):
+        import hermes_cli.managed_uv as managed_uv
+
+        monkeypatch.setattr(
+            managed_uv, "probe_sqlite_runtime",
+            lambda python, **kw: self._win_info(Path(python), (3, 12, 13)))
+        healthy, detail, info = managed_uv._smoke_candidate_venv(tmp_path / "venv")
+
+        assert not healthy
+        assert "WMI thread" in detail
+        assert info is not None and info.wmi_stray_thread_vulnerable
+
+    def test_repair_runs_for_the_interpreter_reason_alone(self, tmp_path, capsys):
+        """Safe SQLite no longer means 'safe': a Windows 3.12 interpreter provisions."""
+        from hermes_cli.managed_uv import repair_vulnerable_runtime
+        from hermes_cli.sqlite_runtime import REPAIR_REASON_WMI_STRAY_THREAD
+
+        root, live, sentinel = _make_runtime_install(tmp_path, windows=sys.platform == "win32")
+        live_python = next(live.rglob("python*"))
+        current = self._win_info(live_python, (3, 12, 13))
+        with patch("hermes_cli.managed_uv.probe_sqlite_runtime", return_value=current), \
+             patch("hermes_cli.managed_uv._repair_windows_preflight", return_value=None), \
+             patch("hermes_cli.managed_uv._install_safe_python_generation",
+                   return_value=None) as mock_install:
+            result = repair_vulnerable_runtime("uv", project_root=root)
+
+        assert result.status == "failed"
+        assert result.reasons == (REPAIR_REASON_WMI_STRAY_THREAD,)
+        mock_install.assert_called_once()
+        assert mock_install.call_args.kwargs["current"] is current
+        assert sentinel.read_text(encoding="utf-8") == "live"
+        out = capsys.readouterr().out
+        assert "gh-130727" in out
+        assert "WAL-reset" not in out, "the SQLite reason must not be claimed when absent"
+
+    def test_same_interpreter_off_windows_is_safe(self, tmp_path):
+        from hermes_cli.managed_uv import repair_vulnerable_runtime
+
+        root, live, sentinel = _make_runtime_install(tmp_path, windows=sys.platform == "win32")
+        live_python = next(live.rglob("python*"))
+        current = _runtime_info(live_python, (3, 53, 1), python_version=(3, 12, 13))
+        with patch("hermes_cli.managed_uv.probe_sqlite_runtime", return_value=current), \
+             patch("hermes_cli.managed_uv._install_safe_python_generation") as mock_install:
+            result = repair_vulnerable_runtime("uv", project_root=root)
+
+        assert result.status == "safe"
+        assert result.reasons == ()
+        mock_install.assert_not_called()
+
+    def test_failure_report_names_the_interim_protection_per_reason(self, capsys):
+        from hermes_cli.managed_uv import RuntimeRepairResult, _report_runtime_repair_failure
+        from hermes_cli.sqlite_runtime import (
+            REPAIR_REASON_SQLITE_WAL_RESET, REPAIR_REASON_WMI_STRAY_THREAD)
+
+        _report_runtime_repair_failure(RuntimeRepairResult(
+            "failed", "could not provision", reasons=(REPAIR_REASON_WMI_STRAY_THREAD,)))
+        wmi_only = capsys.readouterr().out
+        assert "WMI queries stubbed" in wmi_only
+        assert "WAL mode" not in wmi_only
+        assert "will retry" in wmi_only
+
+        _report_runtime_repair_failure(RuntimeRepairResult(
+            "failed", "could not provision",
+            reasons=(REPAIR_REASON_SQLITE_WAL_RESET, REPAIR_REASON_WMI_STRAY_THREAD)))
+        both = capsys.readouterr().out
+        assert "WAL mode" in both and "WMI queries stubbed" in both

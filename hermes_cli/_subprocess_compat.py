@@ -17,6 +17,10 @@ import subprocess
 import sys
 from typing import IO, Mapping, Optional, Sequence
 
+# Stdlib-only module, so importing it keeps this one import-light; the same constant gates the
+# managed-runtime repair (``managed_uv``) and ``hermes doctor``.
+from hermes_cli.sqlite_runtime import WMI_STRAY_THREAD_FIXED
+
 __all__ = [
     "IS_WINDOWS",
     "resolve_node_command",
@@ -298,7 +302,7 @@ def suppress_platform_wmi_queries() -> None:
     ``PROCESSOR_ARCHITECTURE`` env fallback an ``env -i`` runner strips: same values, no thread.
     Mirrors ``hermes_bootstrap.suppress_platform_wmi_queries``; double application is harmless.
     """
-    if not IS_WINDOWS or sys.version_info >= (3, 13, 4):
+    if not IS_WINDOWS or sys.version_info >= WMI_STRAY_THREAD_FIXED:
         return
     try:
         sys.modules["_wmi"] = None  # type: ignore[assignment]

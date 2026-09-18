@@ -21,10 +21,11 @@ def test_play_audio_file_scrubbed_env(tmp_path, monkeypatch):
 
     import tools.voice_mode as vm
 
-    with patch.object(vm, "platform") as plat, patch.object(
+    # voice_mode resolves the host through _subprocess_compat.host_system() since the
+    # platform.* sweep (cfd903802b); it no longer binds a `platform` module to patch.
+    with patch.object(vm, "host_system", return_value="Linux"), patch.object(
         vm.shutil, "which", return_value="/usr/bin/ffplay"
     ), patch.object(vm.subprocess, "Popen", side_effect=fake_popen):
-        plat.system.return_value = "Linux"
         ok = vm.play_audio_file(str(audio))
 
     assert ok is True
