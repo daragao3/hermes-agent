@@ -125,12 +125,18 @@ class TestBareChildNeverQueriesWmi:
         ("hermes_cli._subprocess_compat", "host_system() + host_machine()"),
     ])
     def test_converted_site_makes_no_wmi_query(self, probe):
+        """On an interpreter below the gh-130727 fix the stub must have taken over and no query
+        may run. From 3.13.4 the stub is a no-op by design (the abandoned thread can no longer
+        touch the caller's handles), so the contract there is the inverse: ``platform`` keeps its
+        own ``_wmi_query`` and the real query is allowed."""
         module, expr = probe
         code = self._COUNTER + textwrap.dedent(
             f"""
             import {module} as _m
             _ = eval({expr!r}, vars(_m))
+            import platform
             print("WMI_CALLS", len(calls))
+            print("WMI_QUERY_OWNER", platform._wmi_query.__module__)
             """
         )
         env = dict(os.environ)
@@ -140,4 +146,9 @@ class TestBareChildNeverQueriesWmi:
             errors="replace", timeout=120, cwd=str(REPO_ROOT), env=env,
         )
         assert proc.returncode == 0, proc.stderr[-2000:]
-        assert "WMI_CALLS 0" in proc.stdout, proc.stdout
+        if sys.version_info < compat.WMI_STRAY_THREAD_FIXED:
+            # Sites answered from sys.platform alone never load the stub; the invariant is
+            # the query count, not who owns _wmi_query.
+            assert "WMI_CALLS 0" in proc.stdout, proc.stdout
+        else:
+            assert "WMI_QUERY_OWNER platform" in proc.stdout, proc.stdout

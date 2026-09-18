@@ -787,7 +787,13 @@ that touches the OS, assume *any* platform can hit your code path.
    where a `"Windows"`/`"Darwin"`/`"Linux"` string is wanted (dict key, log
    field, test seam — tests patch `module.host_system`, not `platform`), and
    `host_machine()` / `plat = wmi_safe_platform()` for the arch and version
-   reads that genuinely need `uname()` data.
+   reads that genuinely need `uname()` data. The real cure is the interpreter:
+   `hermes_cli.sqlite_runtime.SQLiteRuntimeInfo.wmi_stray_thread_vulnerable`
+   (Windows CPython below `WMI_STRAY_THREAD_FIXED`, 3.13.4) is the second
+   reason — beside the SQLite WAL-reset bug — that `hermes update`'s managed
+   runtime repair provisions a replacement venv, and `hermes doctor` warns on
+   it. The stub and the checker rule stay regardless: 3.11/3.12 installs of
+   this tree remain exposed until their runtime moves.
 
    **Preferred:** for killing a process AND its children (what `os.killpg`
    does on POSIX), use `psutil` — it works on every platform:

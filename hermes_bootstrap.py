@@ -131,6 +131,8 @@ def suppress_platform_wmi_queries() -> None:
     Fixed interpreters are left alone. Mirrors
     ``hermes_cli._subprocess_compat.suppress_platform_wmi_queries``.
     """
+    # Literal on purpose: this module imports nothing from hermes_cli. Mirrors
+    # ``hermes_cli.sqlite_runtime.WMI_STRAY_THREAD_FIXED``, which the runtime repair provisions on.
     if not _IS_WINDOWS or sys.version_info >= (3, 13, 4):
         return
     try:
