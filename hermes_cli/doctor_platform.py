@@ -36,6 +36,29 @@ def _sqlite_upgrade_hint(install_method: str | None = None) -> str:
     return f"({action}; fixed versions: 3.51.3+ / 3.50.7 / 3.44.6 — see https://sqlite.org/wal.html#walresetbug)"
 
 
+def _check_platform_wmi_stray_thread(
+    version_info: tuple[int, ...] | None = None, platform: str | None = None) -> None:
+    """Warn when the running interpreter abandons ``platform.uname()``'s WMI thread (CPython
+    gh-130727: Windows CPython < 3.13.4). Silent on other platforms and on fixed interpreters —
+    the same predicate ``hermes update``'s runtime repair provisions on, so both agree.
+
+    Warn-only: bootstrapped Hermes entry points stub the query, and the repair is best-effort."""
+    from hermes_cli.sqlite_runtime import (
+        WMI_STRAY_THREAD_FIXED, is_platform_wmi_stray_thread_vulnerable)
+    host = sys.platform if platform is None else platform
+    if host != "win32":
+        return
+    version = tuple(sys.version_info[:3]) if version_info is None else tuple(version_info[:3])
+    label = f"Python {'.'.join(map(str, version))}"
+    fixed = ".".join(map(str, WMI_STRAY_THREAD_FIXED))
+    check_bool(
+        not is_platform_wmi_stray_thread_vulnerable(version, platform=host),
+        f"{label} keeps platform.uname()'s WMI thread in bounds",
+        (f"{label} abandons platform.uname()'s WMI thread (CPython gh-130727; fixed in {fixed})",
+         "(bare Python children can die with 0xC000070A under load; "
+         "run `hermes update` to provision a fixed runtime)"))
+
+
 def _hermes_database_paths(hermes_home: Path) -> list[tuple[str, Path]]:
     """(display name, path) pairs for Hermes-managed SQLite databases: backup.py's per-profile store list + per-board kanban.db."""
     from hermes_cli.backup import _QUICK_STATE_FILES
@@ -387,6 +410,7 @@ def _check_python_environment(should_fix: bool, f: Finding) -> None:
         if src:
             check_info(f"SQLite source id: {(src[:48] + '…') if len(src) > 48 else src}")
         _report_database_journal_modes()
+    _check_platform_wmi_stray_thread()
     check_bool(sys.prefix != sys.base_prefix, "Virtual environment active", ("Not in virtual environment", "(recommended)"))
     # macOS TCC interpreter anchor (#95596): dylib-complete re-land of the mechanism reverted in #95563.
     # Silent on non-macOS.

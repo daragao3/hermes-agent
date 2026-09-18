@@ -241,6 +241,29 @@ class TestDoctorPlatformHints:
         assert f"run `{guidance}`" not in hint
         assert "hermes update" not in hint
 
+    def test_wmi_stray_thread_warns_on_windows_below_the_fix(self, capsys):
+        """CPython gh-130727: the same predicate the runtime repair provisions on."""
+        doctor_platform._check_platform_wmi_stray_thread((3, 12, 13), "win32")
+
+        out = capsys.readouterr().out
+        assert "Python 3.12.13 abandons platform.uname()'s WMI thread" in out
+        assert "gh-130727" in out
+        assert "fixed in 3.13.4" in out
+        assert "hermes update" in out
+
+    def test_wmi_stray_thread_is_green_from_the_fix(self, capsys):
+        doctor_platform._check_platform_wmi_stray_thread((3, 13, 4), "win32")
+
+        out = capsys.readouterr().out
+        assert "Python 3.13.4 keeps platform.uname()'s WMI thread in bounds" in out
+        assert "gh-130727" not in out
+
+    def test_wmi_stray_thread_is_silent_off_windows(self, capsys):
+        doctor_platform._check_platform_wmi_stray_thread((3, 12, 13), "linux")
+        doctor_platform._check_platform_wmi_stray_thread((3, 11, 9), "darwin")
+
+        assert capsys.readouterr().out == ""
+
 
 class TestInstallIntegrityRemediationIsRunnable:
     """The Install Integrity remediation doctor prints must be executable here.
