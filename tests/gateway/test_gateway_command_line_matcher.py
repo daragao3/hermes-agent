@@ -38,6 +38,9 @@ ACCEPT = [
     r'"C:\Program Files\Hermes\hermes-gateway.exe"',
     r'"C:\Program Files\Hermes\gateway\run.py" run',
     r'"C:\Program Files\Py\pythonw.exe" -m hermes_cli.main gateway run',
+    # the dedicated launcher behind a launch wrapper is still the program
+    "nohup hermes-gateway",
+    "env HERMES_HOME=/srv/hermes hermes-gateway.exe",
 ]
 
 REJECT = [
@@ -47,6 +50,9 @@ REJECT = [
     "python -m hermes_cli.main gateway stop",
     "python -m hermes_cli.main --profile x dashboard",    # non-gateway subcommand
     "some random python -m mygateway thing",
+    # "hermes-gateway" as an ARGUMENT is a systemd unit name, not the launcher
+    "systemctl --user status hermes-gateway --no-pager",
+    "journalctl --user -u hermes-gateway -n 50",
     "",
     None,
 ]
