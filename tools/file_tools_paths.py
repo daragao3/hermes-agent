@@ -39,6 +39,19 @@ def _join_home(home: str, rest: str) -> str:
         sep = os.sep
     return home.rstrip("/\\") + sep + rest
 
+def _is_rooted(path: str | Path) -> bool:
+    """True when *path* is absolute under EITHER the host's or the POSIX convention.
+
+    The file tools see host paths and in-sandbox container paths through the same
+    entry points, and a value like ``/workspace/x`` or ``/dev/zero`` is absolute
+    by contract wherever the agent runs. ``os.path.isabs`` is ntpath on Windows
+    and, since CPython 3.13, returns False for drive-less rooted paths, so a
+    host-only check would anchor a container/device path onto the task cwd.
+    """
+    text = os.fspath(path)
+    return os.path.isabs(text) or posixpath.isabs(text)
+
+
 def _expand_tilde(path: str) -> str:
     """Expand ``~`` using the effective profile home (``get_subprocess_home``) so
     gateway/cron runs, whose process HOME may differ, agree with interactive CLI sessions.
@@ -105,7 +118,7 @@ def _sentinel_free_abs_cwd(raw: str | None) -> str | None:
     if raw.lower() in _TERMINAL_CWD_SENTINELS:
         return None
     expanded = _expand_tilde(raw)
-    return expanded if os.path.isabs(expanded) else None
+    return expanded if _is_rooted(expanded) else None
 
 
 def _configured_terminal_cwd() -> str | None:
@@ -203,7 +216,7 @@ def _path_resolution_warning(filepath: str, resolved: Path, task_id: str = "defa
     edit is about to land in a different checkout than the terminal's cwd).
     ``None`` for absolute paths, an unknown root, or a path under the root."""
     try:
-        if Path(_expand_tilde(filepath)).is_absolute():
+        if _is_rooted(_expand_tilde(filepath)):
             return None
         workspace_root = _authoritative_workspace_root(task_id)
         if not workspace_root:

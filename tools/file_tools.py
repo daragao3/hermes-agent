@@ -26,7 +26,7 @@ from tools.file_operations_common import DEFAULT_READ_LIMIT
 from tools import file_state
 from agent.redact import redact_sensitive_text
 from tools.file_tools_paths import (
-    _expand_tilde, _path_resolution_warning, _resolve_base_dir, _resolve_path_for_task)
+    _expand_tilde, _is_rooted, _path_resolution_warning, _resolve_base_dir, _resolve_path_for_task)
 from tools.file_tools_write_guards import (
     _READ_DEDUP_STATUS_MESSAGE, _check_approval_required_write, _check_binary_document_write,
     _check_cross_profile_path, _check_protected_instruction_write, _check_sensitive_path,
@@ -185,7 +185,10 @@ def _is_blocked_device(filepath: str, base_dir: str | Path | None = None) -> boo
     every symlink hop is checked so an alias cannot bypass the guard.
     """
     expanded = _expand_tilde(filepath)
-    if base_dir is not None and not os.path.isabs(expanded):
+    # ``_is_rooted``, not ``os.path.isabs``: a device path is POSIX-absolute by
+    # contract, and on a Windows host (ntpath, CPython 3.13+) joining ``/dev/zero``
+    # onto the task cwd would carry it past the blocklist to a real read.
+    if base_dir is not None and not _is_rooted(expanded):
         expanded = os.path.join(os.fspath(base_dir), expanded)
     normalized = os.path.normpath(expanded)
     if _is_blocked_device_path(normalized):
@@ -198,7 +201,7 @@ def _is_blocked_device(filepath: str, base_dir: str | Path | None = None) -> boo
             target = os.readlink(current)
         except OSError:
             break
-        if not os.path.isabs(target):
+        if not _is_rooted(target):
             target = os.path.join(os.path.dirname(current), target)
         target = os.path.normpath(target)
         if _is_blocked_device_path(target):
@@ -549,7 +552,7 @@ def read_file_tool(path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT, 
     try:
         offset, limit = normalize_read_pagination(offset, limit)
 
-        device_base = None if Path(path).expanduser().is_absolute() else _resolve_base_dir(task_id)
+        device_base = None if _is_rooted(_expand_tilde(path)) else _resolve_base_dir(task_id)
         if _is_blocked_device(path, base_dir=device_base):
             return tool_error(
                 f"Cannot read '{path}': this is a device file that would "

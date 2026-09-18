@@ -51,7 +51,7 @@ def _contained_host_path(rel: str, hermes_home: Path, abs_msg: str, traversal_ms
     if "\\" in rel:
         logger.warning("credential_files: rejected path %r; declared paths must use '/' separators", rel)
         return None
-    if os.path.isabs(rel):
+    if os.path.isabs(rel) or posixpath.isabs(rel):  # '/'-separated by contract; ntpath alone misses ``/etc/x`` on 3.13
         logger.warning(abs_msg, rel)
         return None
     host_path = hermes_home / rel

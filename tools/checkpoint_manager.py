@@ -15,6 +15,7 @@ import itertools
 import json
 import logging
 import os
+import posixpath
 import re
 import shutil
 import stat as stat_mod
@@ -93,7 +94,9 @@ def _validate_file_path(file_path: str, working_dir: str) -> Optional[str]:
     """Error string if ``file_path`` is absolute or escapes ``working_dir``, else None."""
     if not file_path or not file_path.strip():
         return "Empty file path"
-    if os.path.isabs(file_path):
+    # Git spells these POSIX; check both conventions so ``/etc/passwd`` is refused
+    # as absolute on a Windows host too (ntpath.isabs is False for it since 3.13).
+    if os.path.isabs(file_path) or posixpath.isabs(file_path):
         return f"File path must be relative, got absolute path: {file_path!r}"
     abs_workdir = _normalize_path(working_dir)
     if not (abs_workdir / file_path).resolve().is_relative_to(abs_workdir):
