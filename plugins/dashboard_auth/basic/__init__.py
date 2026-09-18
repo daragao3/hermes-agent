@@ -139,6 +139,12 @@ class BasicAuthProvider(NonInteractiveMixin, DashboardAuthProvider):
         self._password_hash = password_hash
         self._secret = secret
         self._ttl = max(60, int(ttl_seconds))
+        # Warm the constant-time dummy now, in the one process that actually serves
+        # basic auth: computed lazily on the first unknown-username login, that
+        # request would pay KDF+verify while a wrong password pays verify only -- a
+        # one-shot, process-start timing skew. The accessor stays cached, so this
+        # is one scrypt per process, before any request is served.
+        _dummy_hash()
 
     # ---- password login ----------------------------------------------------
 
