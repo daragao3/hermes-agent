@@ -73,6 +73,13 @@ class _StubHandler(BaseHTTPRequestHandler):
             self._send(404, {})
 
     def do_POST(self):  # noqa: N802
+        # Drain the request body before answering, whatever the route. HTTP/1.0 closes the
+        # socket after the response, and closing with unread bytes in the receive buffer sends
+        # RST instead of FIN; on Windows loopback an RST discards the client's not-yet-read
+        # response and its read fails with [WinError 10053]/[10054] -- seen on
+        # /v1/chat/completions under the 12-worker runner (touch_generate read False).
+        length = int(self.headers.get("Content-Length", 0))
+        raw_body = self.rfile.read(length) if length else b""
         if self.path == "/v1/chat/completions":
             self._send(200, {"choices": [{"message": {
                 "role": "assistant", "content": self.chat_answer}}]})
@@ -80,8 +87,7 @@ class _StubHandler(BaseHTTPRequestHandler):
             self._send(200, {"success": True})
         elif self.path == "/models/unload":
             type(self).unloaded = getattr(type(self), "unloaded", [])
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length)) if length else {}
+            body = json.loads(raw_body) if raw_body else {}
             type(self).unloaded.append(body.get("model"))
             # Report the model gone like the real router does: unload_model polls /models for
             # up to 15 s per model until the status leaves "loaded", so a stub that keeps saying

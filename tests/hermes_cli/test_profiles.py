@@ -126,6 +126,8 @@ class TestCreateProfile:
         if sys.platform != "win32":  # NTFS carries no POSIX mode bits (reads 0o666)
             mode = stat.S_IMODE(env_path.stat().st_mode)
             assert mode == 0o600
+        # LF on every platform, like every Hermes .env writer (text-mode default is CRLF on Windows).
+        assert b"\r" not in env_path.read_bytes()
 
 
     def test_fresh_profile_inherits_a_usable_model(self, profile_env):
@@ -306,6 +308,8 @@ class TestBackfillProfileEnvs:
             line.startswith("#") or not line.strip()
             for line in content.splitlines()
         )
+        # LF on every platform, like every Hermes .env writer (text-mode default is CRLF on Windows).
+        assert b"\r" not in (p / ".env").read_bytes()
 
     def test_no_profiles_root_is_noop(self, profile_env):
         assert backfill_profile_envs(quiet=True) == []

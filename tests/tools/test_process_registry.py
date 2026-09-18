@@ -5,17 +5,20 @@ import os
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 
 import pytest
 
 from tests.timeout_budget import scaled
 from unittest.mock import MagicMock, patch
 
+import tools.process_registry as _pr
 from tools.environments.local_env_policy import _HERMES_PROVIDER_ENV_FORCE_PREFIX
 from tools.process_registry import (
     ProcessRegistry,
@@ -684,12 +687,13 @@ class TestStdinHelpers:
 
         try:
             # Start window for a real login shell + interpreter under a PTY:
-            # READY measured 1.2-14.2 s on a 100%-loaded Windows host
-            # (2026-09-18), so the old 15 s window was one slow spawn away
-            # from a false "startup failed".
+            # READY measured 1.2-14.2 s, then up to ~21 s, on a 100%-loaded
+            # Windows host (2026-09-18): a login shell plus interpreter under
+            # ConPTY. The old 15 s window was one slow spawn away from a false
+            # "startup failed"; 60 s is ~3x the worst measurement.
             assert _wait_until(
                 lambda: "READY" in registry.poll(session.id)["output_preview"],
-                timeout=30.0,
+                timeout=60.0,
             ), (
                 "PTY child never printed READY — startup failed: "
                 f"{registry.poll(session.id)!r}"
@@ -2168,6 +2172,179 @@ class TestHandleProcessRedaction:
         monkeypatch.setattr(pr, "process_registry", reg)
         out = json.loads(pr._handle_process({"action": "log", "session_id": sess.id}))
         assert "zzzopaque1234567890abcdef" in out["output"]
+
+
+# =========================================================================
+# PTY reader loop: child exits while pywinpty's read is pending (Windows)
+# =========================================================================
+
+class _StuckAfterExitPty:
+    """Models pywinpty 2.0.15 under ConPTY.
+
+    ``read()`` blocks on a socket pair fed by a forwarding side. When the child
+    exits the forwarding side delivers the output written before exit and then
+    parks forever -- ConPTY never returns the pending native read, so pywinpty
+    never reaches its ``iseof()`` check and never closes the socket. Meanwhile
+    ``isalive()`` reports False, exactly the state observed on a loaded host
+    (2026-09-18: child tree gone, isalive() False, reader in ``fileobj.recv``).
+    """
+
+    def __init__(self, output: str = "READY\r\nhello\r\n"):
+        self._forwarder, self.fileobj = socket.socketpair()
+        self._alive = True
+        self.exitstatus = None
+        self._output = output.encode("utf-8")
+        self.wait_calls = 0
+        # Set: the reader may call recv. Cleared: models a reader thread that
+        # is starved of CPU while bytes sit unread in the socket.
+        self.reader_gate = threading.Event()
+        self.reader_gate.set()
+        # Set once the reader has entered read(): tests that need the reader
+        # blocked in recv wait on this instead of sleeping.
+        self.read_entered = threading.Event()
+
+    def isalive(self):
+        return self._alive
+
+    def read(self, size=1024):
+        self.read_entered.set()
+        self.reader_gate.wait()
+        data = self.fileobj.recv(size)
+        if not data:
+            raise EOFError("Pty is closed")
+        return data.decode("utf-8")
+
+    def wait(self):
+        self.wait_calls += 1
+        return self.exitstatus
+
+    def child_exits(self, exit_code: int = 0) -> None:
+        self._forwarder.send(self._output)
+        self.exitstatus = exit_code
+        self._alive = False  # the forwarding side deliberately never closes
+
+    def natural_eof(self) -> None:
+        self._forwarder.close()
+
+    def close_fixture(self) -> None:
+        for sock in (self._forwarder, self.fileobj):
+            with suppress(OSError):
+                sock.close()
+
+
+class TestPtyReaderExitWatchdog:
+    @pytest.fixture(autouse=True)
+    def _fast_watchdog(self, monkeypatch):
+        # raising=False so a build without the watchdog fails on the hang itself.
+        monkeypatch.setattr(ProcessRegistry, "_PTY_EXIT_POLL_SECONDS", 0.05, raising=False)
+        monkeypatch.setattr(ProcessRegistry, "_PTY_EXIT_DRAIN_GRACE_SECONDS", 0.2, raising=False)
+
+    @staticmethod
+    def _start_reader(registry, pty, sid):
+        s = _make_session(sid=sid)
+        s._pty = pty
+        registry._running[s.id] = s
+        done = threading.Event()
+
+        def _run():
+            try:
+                registry._pty_reader_loop(s)
+            finally:
+                done.set()
+
+        threading.Thread(target=_run, daemon=True, name=f"test-pty-reader-{sid}").start()
+        return s, done
+
+    def test_child_exit_during_pending_read_is_observed(self, registry, monkeypatch):
+        """The session must reach 'exited' even though the PTY read never EOFs.
+
+        Without the watchdog the reader stays blocked in recv forever and the
+        session is never moved to finished (test_close_stdin_allows_eof_driven_
+        process_to_finish went red 4/5 under load for exactly this).
+        """
+        monkeypatch.setattr(_pr, "_IS_WINDOWS", True)
+        pty = _StuckAfterExitPty()
+        try:
+            s, done = self._start_reader(registry, pty, "proc_pty_stuck_exit")
+            assert pty.read_entered.wait(5.0)
+            time.sleep(0.05)  # reader is inside recv before the child dies
+            pty.child_exits(0)
+
+            assert done.wait(timeout=10.0), (
+                "_pty_reader_loop is still blocked after the child exited -- the "
+                "exit watchdog did not release pywinpty's pending recv"
+            )
+            assert s.exited is True
+            assert s.exit_code == 0
+            assert "hello" in s.output_buffer, "output in flight at exit must not be dropped"
+            assert s.id in registry._finished
+            assert pty.wait_calls == 1
+        finally:
+            pty.close_fixture()
+
+    def test_queued_output_survives_a_starved_reader(self, registry, monkeypatch):
+        """Shutdown discards queued input on Windows, so the watchdog must not
+        fire while bytes the reader has not consumed yet are waiting -- a
+        reader thread starved under host load would otherwise lose the tail
+        (seen under the 12-worker runner, 2026-09-18)."""
+        monkeypatch.setattr(_pr, "_IS_WINDOWS", True)
+        pty = _StuckAfterExitPty(output="late-tail\r\n")
+        pty.reader_gate.clear()  # the reader parks before its first recv
+        try:
+            s, done = self._start_reader(registry, pty, "proc_pty_starved_reader")
+            assert pty.read_entered.wait(5.0)  # parked at the gate, not in recv
+            pty.child_exits(0)       # bytes queued, child dead, reader never in recv
+            time.sleep(1.0)          # several poll+grace periods with input pending
+            assert not done.is_set(), "watchdog fired while output was still queued"
+            assert not pty.fileobj._closed
+            assert s.output_buffer == ""
+            pty.reader_gate.set()    # reader gets CPU back and drains
+            assert done.wait(timeout=10.0)
+            assert s.exited is True and s.exit_code == 0
+            assert "late-tail" in s.output_buffer
+        finally:
+            pty.reader_gate.set()
+            pty.close_fixture()
+
+    def test_natural_eof_inside_grace_wins_over_forced_shutdown(self, registry, monkeypatch):
+        """A child whose EOF does arrive is torn down by that EOF, not by the
+        watchdog: the socket is still open for the reader to drain."""
+        monkeypatch.setattr(_pr, "_IS_WINDOWS", True)
+        monkeypatch.setattr(ProcessRegistry, "_PTY_EXIT_DRAIN_GRACE_SECONDS", 5.0, raising=False)
+        pty = _StuckAfterExitPty(output="tail\r\n")
+        try:
+            s, done = self._start_reader(registry, pty, "proc_pty_natural_eof")
+            assert pty.read_entered.wait(5.0)
+            time.sleep(0.05)
+            pty.child_exits(0)
+            time.sleep(0.2)  # inside the grace: the watchdog has seen the dead child
+            pty.natural_eof()
+            started = time.monotonic()
+            assert done.wait(timeout=10.0)
+            assert time.monotonic() - started < 2.0, "EOF should end the reader well before the 5 s grace"
+            assert s.exited is True and s.exit_code == 0
+            assert "tail" in s.output_buffer
+            assert not pty.fileobj._closed, "the watchdog must not have forced the socket shut"
+        finally:
+            pty.close_fixture()
+
+    def test_no_watchdog_thread_off_windows(self, registry, monkeypatch):
+        """POSIX ptyprocess raises EOFError on child exit; no watchdog is spawned."""
+        monkeypatch.setattr(_pr, "_IS_WINDOWS", False)
+        pty = _StuckAfterExitPty(output="x\n")
+        try:
+            s, done = self._start_reader(registry, pty, "proc_pty_posix_no_watchdog")
+            assert pty.read_entered.wait(5.0)
+            time.sleep(0.05)
+            assert not any(
+                t.name.startswith("proc-pty-exit-watchdog-") for t in threading.enumerate()
+            )
+            pty.child_exits(0)
+            pty.natural_eof()
+            assert done.wait(timeout=10.0)
+            assert s.exited is True
+        finally:
+            pty.close_fixture()
 
 
 # =========================================================================

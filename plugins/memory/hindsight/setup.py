@@ -57,7 +57,9 @@ def _write_env(env_path: Path, env_writes: dict) -> None:
         new_lines.append(f"{key}={env_writes[key]}" if key in env_writes else line)
         updated.add(key)
     new_lines.extend(f"{k}={v}" for k, v in env_writes.items() if k not in updated)
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    # newline="\n": every .env writer keeps LF on disk (see hermes_cli.config._write_env_lines);
+    # text-mode default would rewrite the untouched lines as CRLF on Windows.
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def _prompt_embedded_llm(llm_provider: str, provider_config: dict, env_writes: dict, hermes_env: Path) -> None:

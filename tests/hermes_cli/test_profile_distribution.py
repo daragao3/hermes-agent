@@ -230,6 +230,19 @@ class TestInstall:
         assert m.name == "installed"
         assert m.source == str(staged)
 
+    def test_install_writes_env_example_with_lf(self, profile_env):
+        """The generated ``.env.EXAMPLE`` is a template users copy to ``.env``; like every
+        Hermes ``.env`` writer it keeps LF on disk on every platform."""
+        mf = DistributionManifest(
+            name="envreq", version="0.1.0",
+            env_requires=[EnvRequirement(name="OPENAI_API_KEY", required=True)],
+        )
+        staged = _make_staging_dir(profile_env, "envreq", manifest=mf)
+        plan = install_distribution(str(staged), name="envreq")
+        raw = (plan.target_dir / ".env.EXAMPLE").read_bytes()
+        assert b"\r" not in raw
+        assert b"OPENAI_API_KEY=\n" in raw
+
     def test_install_respects_distribution_owned_allowlist(self, profile_env):
         """Install must only copy paths listed in distribution_owned."""
         mf = DistributionManifest(

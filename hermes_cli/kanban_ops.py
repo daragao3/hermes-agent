@@ -284,7 +284,6 @@ def _cmd_watch(args: argparse.Namespace) -> int:
 
 def _cmd_gc(args: argparse.Namespace) -> int:
     """Remove archived tasks' scratch workspaces, old events, and old worker logs."""
-    import shutil
     scratch_root = kb.workspaces_root()
     removed_ws = 0
     with kbc.connect_closing() as conn:
@@ -314,8 +313,11 @@ def _cmd_gc(args: argparse.Namespace) -> int:
         except ValueError:
             # Safety: never delete outside the scratch root.
             continue
-        if path.exists() and path.is_dir():
-            shutil.rmtree(path, ignore_errors=True)
+        # Same removal as task completion: step out of the dir first when it
+        # is this process's cwd, and count it only once it is actually gone
+        # (a dir pinned by another process's cwd survives the rmtree on
+        # Windows and would otherwise be reported as removed).
+        if path.is_dir() and kbw._remove_scratch_dir(path):
             removed_ws += 1
 
     event_days = getattr(args, "event_retention_days", 30)

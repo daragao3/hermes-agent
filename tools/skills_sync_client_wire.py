@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import stat as _stat
 from contextlib import suppress
 from datetime import datetime, timezone
@@ -24,6 +25,15 @@ KIND_BLOB, KIND_TREE, KIND_COMMIT = "blob", "tree", "commit"
 MODE_FILE, MODE_EXEC, MODE_DIR = "file", "exec", "dir"
 ARTIFACT_TYPE_SKILL = "skill"
 _EXEC_BITS = _stat.S_IXUSR | _stat.S_IXGRP | _stat.S_IXOTH
+# NTFS carries ACLs, not mode bits: CPython's ``os.stat`` synthesizes S_IX* from the EXTENSION
+# (.exe/.bat/.cmd/.com only), so a Windows author's ``chmod(0o755)`` on run.sh is unobservable
+# and the skill would ship it as ``file`` -- a POSIX pull then materializes it without +x and
+# ``./run.sh`` fails with EACCES. On such a host the build side infers the intent from the file
+# itself (``#!`` shebang or a ``.sh`` suffix). Hosts with real mode bits record ONLY the stat, so a
+# POSIX-authored skill stays byte-identical on the wire. Restore side is unchanged: an ``exec``
+# entry pulled onto Windows gets a no-op chmod.
+_HOST_LACKS_MODE_BITS = os.name == "nt"
+_INFERRED_EXEC_SUFFIXES = frozenset({".sh"})
 
 # `sync-manifest`: per-skill opt-in is CONTENT in the object model, not a device-local flag --
 # a root-level blob in the tree at refs/user/<owner>/HEAD recording {name, enabled}. The plane
@@ -98,10 +108,20 @@ def _add_tree(entries: List[Dict[str, str]], objects: ObjectSet) -> str:
     return objects.add(KIND_TREE, canonical_json_bytes({"type": KIND_TREE, "entries": entries}))
 
 
-def _file_mode(path: Path) -> str:
-    """``exec`` if +x else ``file``. No symlink / other modes are emitted."""
+def _file_mode(path: Path, head: Optional[bytes] = None) -> str:
+    """``exec`` if +x else ``file``. No symlink / other modes are emitted. On a host without mode
+    bits (``_HOST_LACKS_MODE_BITS``) a ``#!`` shebang or an ``_INFERRED_EXEC_SUFFIXES`` suffix is
+    also ``exec``; *head* is the file's leading bytes when the caller already read them."""
     with suppress(OSError):
         if path.stat().st_mode & _EXEC_BITS:
+            return MODE_EXEC
+    if _HOST_LACKS_MODE_BITS:
+        if path.suffix.lower() in _INFERRED_EXEC_SUFFIXES:
+            return MODE_EXEC
+        if head is None:
+            with suppress(OSError), path.open("rb") as fh:
+                head = fh.read(2)
+        if head is not None and head[:2] == b"#!":
             return MODE_EXEC
     return MODE_FILE
 
@@ -120,7 +140,7 @@ def build_tree(dir_path: Path, objects: ObjectSet, *, max_object_bytes: int) -> 
             data = child.read_bytes()
             if len(data) > max_object_bytes:
                 raise ValueError(f"file {child} is {len(data)} bytes > max_object_bytes {max_object_bytes}")
-            entries.append(_entry(child.name, KIND_BLOB, objects.add(KIND_BLOB, data), _file_mode(child)))
+            entries.append(_entry(child.name, KIND_BLOB, objects.add(KIND_BLOB, data), _file_mode(child, data)))
     return _add_tree(entries, objects)
 
 

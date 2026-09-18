@@ -2728,7 +2728,11 @@ def _write_env_lines(env_path: Path, lines: list, *, preserve_mode: bool) -> Non
         pass
     fd, tmp_path = tempfile.mkstemp(dir=str(env_path.parent), suffix=".tmp", prefix=".env_")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        # newline="\n": ``_sanitize_env_lines`` already made every line LF-terminated, and that is
+        # the byte the file must carry. Text-mode default would rewrite each LF as CRLF on Windows,
+        # touching every line a save/remove never changed and leaving a ``\r`` in every value for
+        # a POSIX shell / Docker bind-mount that sources the same file. Matches the plugin writers.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.writelines(lines)
             f.flush()
             os.fsync(f.fileno())

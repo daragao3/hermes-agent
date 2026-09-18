@@ -141,7 +141,8 @@ def _secure_write_profile_env(profile_env: Path, content: str) -> None:
         with contextlib.suppress(OSError):
             os.chmod(profile_env, 0o600)
     fd = os.open(str(profile_env), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    # newline="\n": every .env writer keeps LF on disk (see hermes_cli.config._write_env_lines).
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(content)
 
 

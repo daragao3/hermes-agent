@@ -14,10 +14,14 @@ stop ``CronStaleMonitor`` missing GATEWAY_STOPPED on a 60s poll. Measured
 2026-08-17, the premise fails: PID 10168 was force-killed INSIDE
 ``_drain_active_agents`` (logged ``notify_active_sessions done at +1.76s``,
 never ``drain done``), so ``shutdown()`` never ran and two genuinely-killed
-crons went unreported. Generally, the gateway's drain budget and
-``_TASKKILL_TIMEOUT_S`` are both ~30s, so any hook at or after the drain is
-reachable only when the drain ended EARLY — i.e. only when nothing was killed
-and there is nothing to report.
+crons went unreported. Generally, whatever cuts a teardown short — the shutdown
+watchdog's ``os._exit(1)`` past ``agent.restart_drain_timeout + 60s``, or the
+stopper's tree kill past ``_windows_stop_drain_timeout()`` (a sub-second
+TerminateProcess walk since 51ef1feed3; the 30s ``_TASKKILL_TIMEOUT_S`` it
+replaced was a ``taskkill`` subprocess timeout, never a grace period) — fires
+while a drain is still waiting on live work, so any hook at or after the drain
+is reachable only when the drain ended EARLY — i.e. only when nothing was
+killed and there is nothing to report.
 
 Attribution therefore lives in the SUCCESSOR: ``CronStaleMonitor.startup()``
 rebuilds it by QUERYING the bus, where every input is already durable

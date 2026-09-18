@@ -113,7 +113,24 @@ def normalize_reasoning_effort(effort: Optional[str]) -> Optional[str]:
     raise ValueError(f"reasoning_effort must be one of {allowed}, got {effort!r}")
 
 
-KNOWN_TOOLSET_NAMES = frozenset(name.casefold() for name in get_toolset_names())
+_known_toolset_names_memo: Optional[frozenset[str]] = None
+
+
+def _known_toolset_names() -> frozenset[str]:
+    """Casefolded toolset names, resolved on first use and memoized.
+
+    Resolved lazily rather than at import on purpose: ``get_toolset_names()``
+    walks the tool registry (``tools.registry``, i.e. tool discovery), which
+    every importer of this module -- the dispatcher, the dashboard, the test
+    suite's conftest -- would otherwise pay at startup for a check that only
+    ``_normalize_task_skills`` makes. Resolving at first use also sees toolsets
+    a plugin registered after this module was imported, which the import-time
+    constant it replaced could not.
+    """
+    global _known_toolset_names_memo
+    if _known_toolset_names_memo is None:
+        _known_toolset_names_memo = frozenset(name.casefold() for name in get_toolset_names())
+    return _known_toolset_names_memo
 _IS_WINDOWS = sys.platform == "win32"
 KANBAN_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024  # one cap for dashboard, tools and CLI
 
@@ -1249,7 +1266,7 @@ def _normalize_task_skills(skills: Optional[Iterable[str]]) -> Optional[list[str
                 f"skill name cannot contain comma: {name!r} "
                 f"(pass a list of separate names instead of a comma-joined string)"
             )
-        if name.casefold() in KNOWN_TOOLSET_NAMES:
+        if name.casefold() in _known_toolset_names():
             toolset_typos.append(name)
             continue
         if name in seen:

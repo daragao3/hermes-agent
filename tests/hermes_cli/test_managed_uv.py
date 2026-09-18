@@ -80,6 +80,20 @@ def _make_runtime_install(
     return root, live, sentinel
 
 
+def _park_backup(root: Path, live: Path, *, epoch: int, mtime: float | None = None) -> Path:
+    """A parked venv next to *live*, named the way ``_cut_over_candidate`` names it
+    (``<live>.stale.runtime-<epoch>-<pid>-<hex8>``). *epoch* is the parking time the
+    sweep must read; *mtime* (default: now) is the directory stat, which on a real
+    parked venv is the build time and says nothing about when it was parked."""
+    import os
+
+    backup = root / f"{live.name}.stale.runtime-{epoch}-{os.getpid()}-{'%08x' % epoch}"
+    (backup / "bin").mkdir(parents=True)
+    if mtime is not None:
+        os.utime(backup, (mtime, mtime))
+    return backup
+
+
 # ---------------------------------------------------------------------------
 # managed_uv_path
 # ---------------------------------------------------------------------------
@@ -531,21 +545,19 @@ class TestRuntimeRepair:
 
     def test_safe_runtime_sweeps_old_stale_backups(self, tmp_path):
         """A fixed runtime reclaims aged venv.stale.runtime-* leftovers
-        (issue #73109) but leaves fresh ones (possible in-flight repair)."""
-        import os
+        (issue #73109) but leaves fresh ones (possible in-flight repair).
+
+        "Aged" and "fresh" are the token epoch in the NAME (what ``_cut_over_candidate``
+        mints at parking time), not directory mtime -- see the class of tests below."""
         import time as _time
 
         from hermes_cli.managed_uv import repair_vulnerable_runtime
 
         root, live, sentinel = _make_runtime_install(tmp_path)
-        old_backup = root / f"{live.name}.stale.runtime-1-2-aaaa"
-        (old_backup / "bin").mkdir(parents=True)
+        old_backup = _park_backup(root, live, epoch=int(_time.time()) - 7200)
         (old_backup / "bin" / "python").write_text("old", encoding="utf-8")
-        stale_mtime = _time.time() - 7200
-        os.utime(old_backup, (stale_mtime, stale_mtime))
 
-        fresh_backup = root / f"{live.name}.stale.runtime-9-9-bbbb"
-        (fresh_backup / "bin").mkdir(parents=True)
+        fresh_backup = _park_backup(root, live, epoch=int(_time.time()))
 
         current = _runtime_info(live / "bin" / "python", (3, 53, 1))
         with patch(
@@ -602,6 +614,121 @@ class TestRuntimeRepair:
         )
         leftovers = list(root.glob(f"{live.name}.stale.runtime-*"))
         assert leftovers == [], f"no stale markers may remain: {leftovers}"
+
+
+class TestStaleBackupAgeIsTheParkingTime:
+    """The sweep's age gate reads the token epoch in the backup's NAME, never directory stat.
+
+    A rename preserves ``st_mtime`` (NTFS also keeps ``st_ctime`` = creation time), so the
+    parked copy of a venv built weeks ago stats as weeks old the moment it is parked. Measured
+    2026-09-18: the rollback backup of a 3.12->3.13 cut-over, parked at 00:50, was reaped by
+    a 24 h-gated sweep at 03:52 with a reported age of 52 days. The token epoch is minted by
+    ``_token()`` at parking time and is the only record of it.
+    """
+
+    def test_fresh_token_with_old_directory_mtime_survives(self, tmp_path):
+        """THE 2026-09-18 CASE: built long ago, parked just now -> still a rollback path."""
+        import time as _time
+
+        from hermes_cli.managed_uv import _sweep_stale_runtime_backups
+
+        root, live, _sentinel = _make_runtime_install(tmp_path)
+        weeks_ago = _time.time() - 52 * 86400
+        backup = _park_backup(root, live, epoch=int(_time.time()), mtime=weeks_ago)
+        assert _time.time() - backup.stat().st_mtime > 24 * 3600, "fixture must stat as old"
+
+        _sweep_stale_runtime_backups(live, root=root, min_age_seconds=24 * 3600)
+
+        assert backup.is_dir(), "a backup parked seconds ago was reaped on its directory mtime"
+
+    def test_old_token_with_fresh_directory_mtime_is_reclaimed(self, tmp_path):
+        """The converse: parked days ago, touched since (an rmtree that gave up half-way,
+        a scan writing a marker) -> still a leftover; mtime must not resurrect it."""
+        import time as _time
+
+        from hermes_cli.managed_uv import _sweep_stale_runtime_backups
+
+        root, live, _sentinel = _make_runtime_install(tmp_path)
+        backup = _park_backup(root, live, epoch=int(_time.time()) - 3 * 86400, mtime=_time.time())
+
+        _sweep_stale_runtime_backups(live, root=root, min_age_seconds=24 * 3600)
+
+        assert not backup.exists(), "an old backup was kept because its directory mtime was fresh"
+
+    def test_unparseable_name_falls_back_to_the_stat_rule(self, tmp_path, monkeypatch):
+        """A hand-named ``.stale.runtime-<something>`` has no epoch to read: the NEWEST of
+        st_mtime/st_ctime decides. Old on both -> reclaimed; old mtime but a newer ctime
+        (POSIX: the rename itself bumps ctime) -> kept.
+
+        The stat is a seam here, not the filesystem: ``os.utime`` cannot age st_ctime on any
+        host (NTFS reports creation time there; POSIX resets it to now on the utime call),
+        so the aged directory cannot be built for real. The freshly created one can."""
+        import os
+        import time as _time
+
+        from hermes_cli.managed_uv import _sweep_stale_runtime_backups
+
+        root, live, _sentinel = _make_runtime_install(tmp_path)
+        old = root / f"{live.name}.stale.runtime-manual-old"
+        touched = root / f"{live.name}.stale.runtime-manual-touched"
+        fresh = root / f"{live.name}.stale.runtime-manual-fresh"
+        for d in (old, touched, fresh):
+            (d / "bin").mkdir(parents=True)
+        now = _time.time()
+        days3 = now - 3 * 86400
+        stamps = {old: (days3, days3), touched: (days3, now)}  # (st_mtime, st_ctime)
+        real_stat = Path.stat
+
+        def stat_with_stamps(self, *args, **kwargs):
+            st = real_stat(self, *args, **kwargs)
+            if self not in stamps:
+                return st
+            mtime, ctime = stamps[self]
+            return os.stat_result(tuple(st)[:7] + (st.st_atime, mtime, ctime))
+
+        monkeypatch.setattr(Path, "stat", stat_with_stamps)
+        _sweep_stale_runtime_backups(live, root=root, min_age_seconds=24 * 3600)
+
+        assert not old.exists(), "unparseable + old on both stat fields must be reclaimed"
+        assert touched.is_dir(), "a newer st_ctime must win over an old st_mtime"
+        assert fresh.is_dir(), "unparseable + fresh stat must be kept"
+
+    def test_parked_at_reads_exactly_the_token_shape(self, tmp_path):
+        """``_token()``'s own output parses to its epoch; anything looser (a date-like
+        ``2026-09-18-manual``) must NOT be read as an epoch, or a hand-parked backup
+        would count as 56 years old."""
+        import time as _time
+
+        from hermes_cli.managed_uv import _stale_backup_parked_at, _token
+
+        root, live, _sentinel = _make_runtime_install(tmp_path)
+        before = int(_time.time())
+        token = _token()
+        minted = root / f"{live.name}.stale.runtime-{token}"
+        minted.mkdir()
+        assert before <= _stale_backup_parked_at(minted, live.name) <= _time.time()
+
+        datelike = root / f"{live.name}.stale.runtime-2026-09-18-manual"
+        datelike.mkdir()
+        assert _stale_backup_parked_at(datelike, live.name) >= before, (
+            "a date-like name was parsed as an epoch")
+
+        missing = root / f"{live.name}.stale.runtime-gone"
+        assert _stale_backup_parked_at(missing, live.name) >= before, (
+            "an unstat-able candidate must read as fresh, never as reapable")
+
+    def test_keep_still_exempts_the_backup_this_repair_created(self, tmp_path):
+        """``keep=`` semantics are untouched by the age source: exempt even when old."""
+        import time as _time
+
+        from hermes_cli.managed_uv import _sweep_stale_runtime_backups
+
+        root, live, _sentinel = _make_runtime_install(tmp_path)
+        kept = _park_backup(root, live, epoch=int(_time.time()) - 3 * 86400)
+
+        _sweep_stale_runtime_backups(live, root=root, keep=kept, min_age_seconds=24 * 3600)
+
+        assert kept.is_dir()
 
 
 class TestStageCandidateVenvCrossPlatform:
@@ -1844,3 +1971,226 @@ class TestWindowsRuntimeHoldersPolicy:
         assert "swapping the venv under 1 transient holder(s)" in out
         assert "repair deferred" not in out
         assert sentinel.read_text(encoding="utf-8") == "live"
+
+
+class TestSmokeTimeoutIsNotAVerdict:
+    """A timed-out import smoke is host load, never a rejection of the candidate.
+
+    Measured 2026-09-18 (loops pbs-cpython-313-cutover-20260917): the same import list took
+    46.6 s cold / 51.7 s warm on 3.13 with the host at 100 % CPU, at parity with 3.12 under the
+    same load; the fixed 90 s bound tripped and ``_reject`` deleted a fully synced candidate.
+    """
+
+    @staticmethod
+    def _safe_info(python: Path):
+        return _runtime_info(python, (3, 53, 1), python_version=(3, 13, 15))
+
+    def _real_interpreter(self, monkeypatch, tmp_path, script: str) -> Path:
+        """Point the smoke at the REAL interpreter running *script* in place of the import list."""
+        from hermes_cli import managed_uv
+
+        venv = tmp_path / "venv-candidate-1-2-abcd"
+        venv.mkdir()
+        monkeypatch.setattr(managed_uv, "_venv_python", lambda venv_dir: Path(sys.executable))
+        monkeypatch.setattr(managed_uv, "_SMOKE_IMPORT_CHECK", script)
+        monkeypatch.setattr(
+            managed_uv, "probe_sqlite_runtime", lambda python, **kw: self._safe_info(Path(python)))
+        return venv
+
+    def test_one_timeout_is_retried_at_a_longer_bound(self, tmp_path, monkeypatch, capsys):
+        """First attempt sleeps past the bound and is killed; the retry (marker present) passes."""
+        from hermes_cli import managed_uv
+
+        marker = tmp_path / "second-attempt"
+        script = (
+            "import os, sys, time\n"
+            f"p = {marker.as_posix()!r}\n"
+            "if os.path.exists(p):\n"
+            "    sys.exit(0)\n"
+            "open(p, 'w').close()\n"
+            "time.sleep(30)\n")
+        venv = self._real_interpreter(monkeypatch, tmp_path, script)
+
+        # 3 s: interpreter start-up alone can exceed 1 s on a loaded host, and the first attempt
+        # must get as far as writing the marker before it is killed.
+        healthy, detail, info = managed_uv._smoke_candidate_venv(venv, timeout_s=3.0)
+
+        assert (healthy, detail) == (True, "")
+        assert info is not None and info.python_version == (3, 13, 15)
+        assert marker.exists(), "the first attempt must have run (and been killed) for real"
+        out = capsys.readouterr().out
+        assert "did not finish within 3 s" in out and "retrying once with 6 s" in out
+
+    def test_two_timeouts_are_inconclusive_not_a_rejection(self, tmp_path, monkeypatch):
+        """A real child that never finishes: the smoke raises, it does NOT return ``False``."""
+        from hermes_cli import managed_uv
+
+        venv = self._real_interpreter(monkeypatch, tmp_path, "import time\ntime.sleep(30)\n")
+
+        with pytest.raises(managed_uv.CandidateSmokeInconclusive) as excinfo:
+            managed_uv._smoke_candidate_venv(venv, timeout_s=0.5)
+
+        exc = excinfo.value
+        assert exc.venv_dir == venv
+        assert exc.info is not None and exc.info.python_version == (3, 13, 15)
+        assert "timed out twice" in exc.detail and "0 s, then 1 s" in exc.detail
+
+    def test_a_real_import_failure_is_still_a_verdict(self, tmp_path, monkeypatch):
+        """The discriminator: a child that FAILS (not stalls) keeps the old ``(False, detail)`` shape."""
+        from hermes_cli import managed_uv
+
+        venv = self._real_interpreter(
+            monkeypatch, tmp_path, "import sys\nprint('boom', file=sys.stderr)\nsys.exit(3)\n")
+
+        healthy, detail, info = managed_uv._smoke_candidate_venv(venv, timeout_s=5.0)
+
+        assert healthy is False and detail == "boom"
+
+    def test_stage_keeps_the_synced_candidate_on_an_inconclusive_smoke(self, tmp_path, caplog):
+        """Pre-fix, ``_reject`` removed the tree on any ``(False, ...)`` — including a timeout."""
+        import logging
+
+        from hermes_cli import managed_uv
+
+        root = tmp_path / "checkout"
+        root.mkdir()
+        (root / "uv.lock").write_text("# lock\n", encoding="utf-8")
+        generation = root / ".hermes-runtime" / "python" / "gen"
+        python = generation / "bin" / "python"
+        python.parent.mkdir(parents=True)
+        python.write_text("py", encoding="utf-8")
+        created: list[Path] = []
+
+        def fake_uv(argv, **kwargs):
+            if argv[:2] == ["uv", "venv"]:
+                candidate = Path(argv[2])
+                candidate.mkdir(parents=True)
+                (candidate / "sentinel").write_text("synced", encoding="utf-8")
+                created.append(candidate)
+            return MagicMock(returncode=0)
+
+        def inconclusive(venv_dir, **kw):
+            raise managed_uv.CandidateSmokeInconclusive(
+                "core import smoke timed out twice (90 s, then 180 s)", venv_dir=venv_dir, info=None)
+
+        with patch("hermes_cli.managed_uv.subprocess.run", side_effect=fake_uv), \
+             patch("hermes_cli.managed_uv._smoke_candidate_venv", side_effect=inconclusive), \
+             caplog.at_level(logging.WARNING, logger="hermes_cli.managed_uv"), \
+             pytest.raises(managed_uv.CandidateSmokeInconclusive) as excinfo:
+            managed_uv._stage_candidate_venv(
+                "uv", project_root=root, generation=generation, python=python)
+
+        (candidate,) = created
+        assert excinfo.value.venv_dir == candidate
+        assert (candidate / "sentinel").read_text(encoding="utf-8") == "synced", (
+            "an inconclusive smoke must not delete the ~6 min uv sync")
+        assert "keeping" in caplog.text
+
+        # Control: a real verdict still rejects and removes (the old contract is intact).
+        created.clear()
+        with patch("hermes_cli.managed_uv.subprocess.run", side_effect=fake_uv), \
+             patch("hermes_cli.managed_uv._smoke_candidate_venv",
+                   return_value=(False, "ImportError: no module named yaml", None)):
+            result = managed_uv._stage_candidate_venv(
+                "uv", project_root=root, generation=generation, python=python)
+        assert result is None
+        assert not created[0].exists(), "a genuine import failure still rejects the candidate"
+
+    def test_repair_reports_inconclusive_as_deferred_and_keeps_the_generation(
+            self, tmp_path, capsys):
+        """End to end: status ``skipped`` (not ``failed``), candidate + generation on disk, live untouched."""
+        from hermes_cli import managed_uv
+        from hermes_cli.managed_uv import repair_vulnerable_runtime
+
+        root, live, sentinel = _make_runtime_install(tmp_path, windows=sys.platform == "win32")
+        current = _runtime_info(next(live.rglob("python*")), (3, 50, 4))
+        generation = root / ".hermes-runtime" / "python" / "generation-1-2-cafe"
+        candidate_python = generation / "bin" / "python"
+        candidate_python.parent.mkdir(parents=True)
+        candidate_python.write_text("candidate interpreter", encoding="utf-8")
+        fixed = _runtime_info(candidate_python, (3, 53, 1))
+        candidate = root / ".hermes-runtime" / "venv-candidate-1-2-beef"
+
+        def stage(uv_bin, *, project_root, generation, python):
+            candidate.mkdir(parents=True)
+            raise managed_uv.CandidateSmokeInconclusive(
+                "core import smoke timed out twice (90 s, then 180 s)", venv_dir=candidate, info=fixed)
+
+        with patch("hermes_cli.managed_uv.probe_sqlite_runtime", return_value=current), \
+             patch("hermes_cli.managed_uv._repair_windows_preflight", return_value=None), \
+             patch("hermes_cli.managed_uv._install_safe_python_generation",
+                   return_value=(generation, candidate_python, fixed)), \
+             patch("hermes_cli.managed_uv._stage_candidate_venv", side_effect=stage):
+            result = repair_vulnerable_runtime("uv", project_root=root)
+
+        assert result.status == "skipped", result
+        assert str(candidate) in result.detail and str(generation) in result.detail
+        assert candidate.is_dir(), "the synced candidate is kept for a quiet-window retry"
+        assert generation.is_dir(), "its interpreter generation must survive with it"
+        assert sentinel.read_text(encoding="utf-8") == "live"
+        out = capsys.readouterr().out
+        assert "runtime repair deferred" in out and "host load" in out
+        assert str(candidate) in out
+
+    def test_post_cutover_inconclusive_rolls_back_but_keeps_the_tree(self, tmp_path):
+        """Through the real path the smoke stalls: live is restored, the demoted tree survives."""
+        from hermes_cli import managed_uv
+        from hermes_cli.managed_uv import _cut_over_candidate
+
+        root, live, sentinel = _make_runtime_install(tmp_path)
+        runtime_root = root / ".hermes-runtime"
+        candidate = runtime_root / "venv-candidate-test"
+        candidate.mkdir(parents=True)
+        (candidate / "sentinel").write_text("candidate", encoding="utf-8")
+        info = _runtime_info(candidate / "bin" / "python", (3, 53, 1))
+
+        def inconclusive(venv_dir, **kw):
+            raise managed_uv.CandidateSmokeInconclusive(
+                "core import smoke timed out twice (90 s, then 180 s)", venv_dir=venv_dir, info=info)
+
+        with patch("hermes_cli.managed_uv._smoke_candidate_venv", side_effect=inconclusive), \
+             pytest.raises(managed_uv.CandidateSmokeInconclusive) as excinfo:
+            _cut_over_candidate(candidate, project_root=root)
+
+        assert sentinel.read_text(encoding="utf-8") == "live", "live venv must be restored"
+        assert not list(root.glob(f"{live.name}.stale.runtime-*")), "no parked backup lingers"
+        kept = excinfo.value.venv_dir
+        assert kept.parent == runtime_root and kept.name.startswith("venv-rejected-")
+        assert (kept / "sentinel").read_text(encoding="utf-8") == "candidate"
+        assert "live venv restored" in excinfo.value.detail
+
+    def test_retained_candidates_are_reclaimed_by_token_age(self, tmp_path):
+        """Aged by the token epoch (a rename preserves st_mtime); the live generation is spared."""
+        import time as _time
+
+        from hermes_cli import managed_uv
+
+        runtime_root = tmp_path / ".hermes-runtime"
+        python_root = runtime_root / "python"
+        old_epoch = int(_time.time() - 2 * 24 * 3600)
+        fresh_epoch = int(_time.time() - 60)
+
+        def make(name: str, generation: str) -> tuple[Path, Path]:
+            gen = python_root / generation
+            home = gen / "cpython-3.13-x" / "bin"
+            home.mkdir(parents=True, exist_ok=True)
+            cand = runtime_root / name
+            cand.mkdir(parents=True)
+            (cand / "pyvenv.cfg").write_text(f"home = {home}\nversion_info = 3.13\n", encoding="utf-8")
+            return cand, gen
+
+        old, old_gen = make(f"venv-candidate-{old_epoch}-1-aaaa", "generation-1-1-aaaa")
+        fresh, fresh_gen = make(f"venv-candidate-{fresh_epoch}-1-bbbb", "generation-1-1-bbbb")
+        shared, live_gen = make(f"venv-candidate-{old_epoch}-1-cccc", "generation-1-1-cccc")
+        odd = runtime_root / "venv-candidate-not-a-token"
+        odd.mkdir()
+
+        managed_uv._sweep_retained_candidates(
+            runtime_root, python_root=python_root,
+            live_home=live_gen / "cpython-3.13-x")
+
+        assert not old.exists() and not old_gen.exists(), "aged candidate goes with its generation"
+        assert fresh.exists() and fresh_gen.exists(), "a fresh candidate may be mid-repair"
+        assert not shared.exists() and live_gen.exists(), (
+            "the generation the live venv runs from is never removed")
+        assert odd.exists(), "an unparseable token is never aged"

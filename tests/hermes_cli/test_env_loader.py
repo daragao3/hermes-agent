@@ -620,3 +620,17 @@ def test_other_profile_home_does_not_bridge_process_config(tmp_path, monkeypatch
 
     # The other profile's .env value stands; the process config was not applied.
     assert os.getenv("TERMINAL_ENV") == "docker"
+
+
+def test_sanitize_rewrite_keeps_lf_line_endings(tmp_path):
+    """A pre-load sanitize rewrite (here: trailing whitespace on one assignment) leaves every line
+    LF-terminated on every platform, matching ``hermes_cli.config._write_env_lines``. Fixture via
+    ``write_bytes``: ``write_text`` would emit CRLF on Windows and hide the defect."""
+    from hermes_cli.env_loader import _sanitize_env_file_if_needed
+
+    env_file = tmp_path / ".env"
+    env_file.write_bytes(b"FIRST=1\nPADDED = 2 \nLAST=3\n")
+
+    _sanitize_env_file_if_needed(env_file)
+
+    assert env_file.read_bytes() == b"FIRST=1\nPADDED = 2\nLAST=3\n"

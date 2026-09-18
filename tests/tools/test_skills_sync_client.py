@@ -16,6 +16,7 @@ in-memory object store + ref table. No live server, no network.
 import hashlib
 import json
 import os
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -387,13 +388,12 @@ class TestObjectBuilding:
         tree = json.loads(data)
         entries = {e["name"]: e for e in tree["entries"]}
         assert entries["SKILL.md"]["mode"] == wire.MODE_FILE
-        if os.name == "nt":
-            # NTFS carries no exec bit for a .sh (CPython sets S_IXUSR only for
-            # .exe/.bat/.cmd/.com), so a skill synced FROM Windows ships run.sh
-            # as a plain file; the mode is what the host reports, not the intent.
-            assert entries["run.sh"]["mode"] == wire.MODE_FILE
-        else:
-            assert entries["run.sh"]["mode"] == wire.MODE_EXEC
+        # Same answer on every host: POSIX reads the +x bit; NTFS carries no exec bit
+        # for a .sh (CPython synthesizes S_IX* only for .exe/.bat/.cmd/.com), so the
+        # Windows build side infers it from the shebang / .sh suffix instead
+        # (TestBuildSideExecInference) -- a skill pushed FROM Windows must not ship
+        # run.sh as a plain file that EACCESes on a POSIX pull.
+        assert entries["run.sh"]["mode"] == wire.MODE_EXEC
         # entries sorted by name (byte order)
         names = [e["name"] for e in tree["entries"]]
         assert names == sorted(names)
@@ -445,6 +445,86 @@ class TestObjectBuilding:
         assert commit["parents"] == ["sha256:p"]
         assert commit["author"] == {"owner": "o", "device": "dev"}
         assert commit["artifact_type"] == "skill"
+
+
+class TestBuildSideExecInference:
+    """``_file_mode`` on a host without POSIX mode bits (``_HOST_LACKS_MODE_BITS``).
+
+    The seam is the module constant, not ``os.name``, so BOTH branches run on every host:
+    the inference branch proves a Windows author's run.sh records ``exec``; the mode-bit
+    branch proves a POSIX host never infers (a POSIX-authored skill stays byte-identical on
+    the wire -- an unmarked .sh is ``file`` there, as before)."""
+
+    @staticmethod
+    def _modes(tmp_path):
+        d = tmp_path / "skill"
+        d.mkdir()
+        (d / "SKILL.md").write_text("# hello", encoding="utf-8")
+        (d / "run.sh").write_bytes(b"#!/bin/sh\necho hi\n")
+        (d / "start.sh").write_bytes(b"echo no shebang\n")  # suffix alone
+        (d / "tool.py").write_bytes(b"#!/usr/bin/env python3\nprint(1)\n")  # shebang alone
+        (d / "helper.py").write_bytes(b"import os\n")  # neither: a module, not a script
+        (d / "entry").write_bytes(b"#!/usr/bin/env bash\n")  # extensionless shebang
+        (d / "data.json").write_bytes(b"{}")
+        (d / "empty.sh").write_bytes(b"")
+        (d / "empty").write_bytes(b"")
+        (d / "hash.txt").write_bytes(b"#not a shebang\n")
+        objects = ssc.ObjectSet()
+        tree_hash = ssc.build_tree(d, objects, max_object_bytes=ssc.DEFAULT_MAX_OBJECT_BYTES)
+        _, data = objects.objects[tree_hash]
+        return {e["name"]: e["mode"] for e in json.loads(data)["entries"]}
+
+    def test_no_mode_bits_host_infers_exec_from_shebang_or_sh_suffix(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wire, "_HOST_LACKS_MODE_BITS", True)
+        modes = self._modes(tmp_path)
+        assert modes["run.sh"] == wire.MODE_EXEC
+        assert modes["start.sh"] == wire.MODE_EXEC
+        assert modes["empty.sh"] == wire.MODE_EXEC
+        assert modes["tool.py"] == wire.MODE_EXEC
+        assert modes["entry"] == wire.MODE_EXEC
+        # non-scripts stay `file`: no suffix match, no shebang
+        assert modes["SKILL.md"] == wire.MODE_FILE
+        assert modes["helper.py"] == wire.MODE_FILE
+        assert modes["data.json"] == wire.MODE_FILE
+        assert modes["empty"] == wire.MODE_FILE
+        assert modes["hash.txt"] == wire.MODE_FILE
+
+    def test_mode_bits_host_records_only_the_stat(self, tmp_path, monkeypatch):
+        # A POSIX host must not start inferring: without +x every entry is `file`,
+        # shebang or not (on Windows the stat reads 0o666 for all of these, so the
+        # branch is exercised identically there).
+        monkeypatch.setattr(wire, "_HOST_LACKS_MODE_BITS", False)
+        modes = self._modes(tmp_path)
+        assert all(m == wire.MODE_FILE for m in modes.values()), modes
+
+    def test_stat_exec_bit_wins_before_inference(self, tmp_path, monkeypatch):
+        # The host-reported +x is checked first on every host; inference only fills the gap.
+        monkeypatch.setattr(wire, "_HOST_LACKS_MODE_BITS", False)
+        d = tmp_path / "skill"
+        d.mkdir()
+        script = d / "go.cmd" if os.name == "nt" else d / "go"
+        script.write_bytes(b"echo go\n")
+        script.chmod(0o755)  # NTFS: no-op, but CPython synthesizes +x for .cmd
+        assert wire._file_mode(script) == wire.MODE_EXEC
+
+    def test_head_bytes_avoid_a_second_read(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wire, "_HOST_LACKS_MODE_BITS", True)
+        f = tmp_path / "tool"
+        f.write_bytes(b"not a script")
+        # build_tree hands the blob bytes it already read; the caller's bytes decide.
+        assert wire._file_mode(f, b"#!/bin/sh\n") == wire.MODE_EXEC
+        assert wire._file_mode(f, b"") == wire.MODE_FILE
+        assert wire._file_mode(f) == wire.MODE_FILE
+
+    @pytest.mark.windows_only
+    def test_windows_host_lacks_mode_bits_by_default(self):
+        # The live constant, not a patched one: this box is the host the fix exists for.
+        assert wire._HOST_LACKS_MODE_BITS is True
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="subject is the POSIX mode-bit host default")
+    def test_posix_host_has_mode_bits_by_default(self):
+        assert wire._HOST_LACKS_MODE_BITS is False
+
 
 
 # ---------------------------------------------------------------------------
