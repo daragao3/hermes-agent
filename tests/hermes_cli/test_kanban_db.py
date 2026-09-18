@@ -1223,8 +1223,13 @@ def test_resolve_hermes_argv_module_actually_runs():
 
     with mock.patch.dict(os.environ, {}, clear=False):
         os.environ.pop("HERMES_BIN", None)
-        with mock.patch.object(shutil, "which", return_value=None):
+        # Windows resolves through the PATH walk in ``_safe_which_no_cwd``, not
+        # ``shutil.which``; stub both so the MODULE fallback is what runs, not
+        # whatever ``hermes.EXE`` this box has on PATH (a stale Store-Python
+        # stub here, which boots the whole install and blows 30 s under load).
+        with mock.patch.object(shutil, "which", return_value=None),              mock.patch.object(kbd, "_safe_which_no_cwd", return_value=None):
             argv = kbd._resolve_hermes_argv()
+    assert argv[:2] == [sys.executable, "-m"], f"expected the module fallback, got {argv!r}"
     r = subprocess.run(argv + ["--version"], capture_output=True, text=True, timeout=30, encoding="utf-8")
     assert r.returncode == 0, (
         f"`{' '.join(argv)} --version` failed (rc={r.returncode}); "
