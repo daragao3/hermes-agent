@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import datetime as _dt
+import functools
 import json
 import os
 import threading
@@ -53,8 +54,15 @@ _manifest_lock = threading.Lock()
 _manifest_cache: Optional[Dict[str, Dict[str, str]]] = None   # facade -> {name: new_path}
 
 
+@functools.lru_cache(maxsize=1)
+def _repo_root() -> Path:
+    # Resolved once: ``Path.resolve()`` is a real syscall (3-9 ms on a filtered Windows filesystem) and
+    # ``removal_in_effect()`` used to pay it per plugin the loader touched.
+    return Path(__file__).resolve().parent.parent
+
+
 def manifest_path() -> Path:
-    return Path(__file__).resolve().parent.parent / _MANIFEST_NAME
+    return _repo_root() / _MANIFEST_NAME
 
 
 def load_manifest() -> Dict[str, Dict[str, str]]:
@@ -274,9 +282,15 @@ def allow_deprecated_imports(config: Optional[dict] = None) -> bool:
 
 def disable_reason(manifest, *, today: Optional[_dt.date] = None) -> Optional[str]:
     """Why the loader must skip this plugin now, or None. Only ever non-None after the removal date."""
+    # Nothing to scan (bundled, or no path) can never hit, so answer before the gates: the loader asks for
+    # every plugin it imports, and each gate is syscalls -- the compat-manifest resolve + stat and a
+    # ``load_config_readonly()`` -- that ran 29 times per discovery for the bundled backends alone.
+    scan_root = _scan_root(manifest)
+    if scan_root is None:
+        return None
     if not removal_in_effect(today) or allow_deprecated_imports():
         return None
-    hits = plugin_hits(manifest)
+    hits = scan_plugin(scan_root)
     if not hits:
         return None
     return (f"uses {len(hits)} import path(s) removed on {COMPAT_REMOVAL}; run `hermes plugins compat` "
