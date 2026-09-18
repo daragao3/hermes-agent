@@ -478,10 +478,10 @@ class TestThrottleBuffer:
         assert len(sent) == 1
         assert "Acme" in sent[0]
 
-    def _buffered(self, bus, quiet_config, queue_path, sent):
+    def _buffered(self, bus, quiet_config, queue_path, sent, send_fn=None):
         escalator = WhatsAppEscalator(
             bus, quiet_config_path=quiet_config, queue_path=queue_path,
-            send_fn=lambda msg: sent.append(msg),
+            send_fn=send_fn or (lambda msg: sent.append(msg)),
         )
         event = Event.create(
             EventType.APPROVAL_REQUEST, "tracker",
@@ -554,6 +554,66 @@ class TestThrottleBuffer:
         assert sent == []
         assert len(escalator._throttle_buffer) == 1
         assert "shutdown flush budget spent" in caplog.text
+
+    @staticmethod
+    def _refusing_send(msg):
+        raise RuntimeError('503 Not connected to WhatsApp')
+
+    def test_shutdown_keeps_the_buffer_when_the_bridge_listens_but_the_send_fails(
+        self, bus, quiet_config, queue_path, caplog,
+    ):
+        """A listening bridge can still refuse the send (2026-07-11 11:29:
+        bridge 503 "Not connected to WhatsApp"). At poll time that failure
+        is requeued into the QUIET queue -- the 7am morning flush. At
+        shutdown that is the wrong destination: the buffer is persisted on
+        every append and the successor restores it with a fresh window, so
+        leaving it in place delivers within ~15 min of the restart. The
+        Telegram fallback (P8: the escalation lane monitors itself) still
+        fires from _deliver."""
+        escalator = self._buffered(
+            bus, quiet_config, queue_path, sent=[], send_fn=self._refusing_send,
+        )
+        started = escalator._throttle_start
+
+        with (
+            patch.object(escalator, "_bridge_listening", return_value=True),
+            patch.object(escalator, "_telegram_fallback") as fallback,
+            caplog.at_level(logging.WARNING, logger="events.subscribers.whatsapp_escalator"),
+        ):
+            escalator.shutdown()
+
+        fallback.assert_called_once()
+        assert len(escalator._throttle_buffer) == 1, "the buffer is the successor's"
+        assert escalator._throttle_start == started
+        assert not queue_path.exists(), "must not be misrouted to the morning queue"
+        assert "throttle flush failed at shutdown" in caplog.text
+        assert "stay persisted" in caplog.text
+        successor = WhatsAppEscalator(
+            bus, quiet_config_path=quiet_config, queue_path=queue_path,
+            send_fn=lambda msg: None,
+        )
+        assert len(successor._throttle_buffer) == 1
+        assert "Acme" in successor._throttle_buffer[0]
+
+    def test_poll_time_flush_failure_still_requeues_into_the_quiet_queue(
+        self, bus, quiet_config, queue_path,
+    ):
+        """The 2026-07-11 poll-time contract is untouched: when the window
+        ages out and the send fails, the combined message goes to the
+        bounded quiet queue and the buffer is cleared."""
+        escalator = self._buffered(
+            bus, quiet_config, queue_path, sent=[], send_fn=self._refusing_send,
+        )
+        escalator._throttle_start -= escalator.THROTTLE_WINDOW_SECONDS + 1
+
+        with patch.object(escalator, "_is_quiet_hours", return_value=False):
+            escalator.poll()
+
+        assert escalator._throttle_buffer == []
+        assert escalator._throttle_start is None
+        queued = json.loads(queue_path.read_text(encoding="utf-8"))
+        assert len(queued) == 1
+        assert "Acme" in queued[0]["message"]
 
     def test_shutdown_with_an_empty_buffer_never_probes(
         self, bus, quiet_config, queue_path,
