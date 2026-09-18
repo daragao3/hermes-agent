@@ -70,6 +70,9 @@ EXAMPLES = {
     "bare os.sysconf / os.getloadavg / os.uname / os.sched_getaffinity": (  # windows-footgun: ok -- sample line for the rule under test, not a call
         '        return int(os.sysconf("SC_PAGE_SIZE")) * int(os.sysconf("SC_PHYS_PAGES"))'  # windows-footgun: ok -- sample line for the rule under test, not a call
     ),
+    "bare platform.system / platform.uname / platform.machine / platform.release (WMI thread)": (  # windows-footgun: ok -- sample line for the rule under test, not a call
+        '        return "uv.exe" if platform.system() == "Windows" else "uv"'  # windows-footgun: ok -- sample line for the rule under test, not a call
+    ),
     "bare os.WNOHANG / os.WIFEXITED / os.WIFSIGNALED / os.WEXITSTATUS / os.WTERMSIG": (  # windows-footgun: ok -- sample line for the rule under test, not a call
         "                    pid, status = os.waitpid(-1, os.WNOHANG)"  # windows-footgun: ok -- sample line for the rule under test, not a call
     ),

@@ -16,8 +16,8 @@ import hashlib
 import json
 import logging
 import os
-import platform
 import re
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -27,6 +27,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from hermes_cli._subprocess_compat import host_machine, host_system
 
 from agent.secret_sources._cache import (
     CachedFetch as _CachedFetch, SecretCache, atomic_write_json, entry_from_payload,
@@ -114,13 +116,13 @@ def find_bws(*, install_if_missing: bool = False) -> Optional[Path]:
 
 
 def _platform_binary_name() -> str:
-    return "bws.exe" if platform.system() == "Windows" else "bws"
+    return "bws.exe" if sys.platform == "win32" else "bws"
 
 
 def _platform_asset_name() -> str:
     """Map (uname, arch, libc) → upstream asset filename (Rust target-triple style)."""
-    system = platform.system()
-    machine = platform.machine().lower()
+    system = host_system()
+    machine = host_machine().lower()
     arch = "aarch64" if machine in ("arm64", "aarch64") else "x86_64"
 
     if system == "Darwin":  # universal binary covers Intel + Apple Silicon

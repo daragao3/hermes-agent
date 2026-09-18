@@ -13,13 +13,13 @@ import argparse
 import contextlib
 import importlib.util
 import json
-import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
+from hermes_cli._subprocess_compat import host_system
 from hermes_constants import get_hermes_home, real_executable
 
 from plugins.google_meet import process_manager as pm
@@ -114,7 +114,7 @@ def meet_command(args: argparse.Namespace) -> int:
 
 def _cmd_setup() -> int:
     print("google_meet preflight\n---------------------")
-    system = platform.system()
+    system = host_system()
     system_ok = system in {"Linux", "Darwin"}
     print(f"  platform       : {system}  [{'ok' if system_ok else 'unsupported'}]")
     pw_ok = importlib.util.find_spec("playwright") is not None
@@ -142,7 +142,7 @@ def _cmd_setup() -> int:
 def _cmd_install(*, realtime: bool, assume_yes: bool) -> int:
     """pip deps + Chromium; ``--realtime`` adds the platform audio bridge deps.
     Prompts before every package-manager invocation unless ``--yes``. Linux/macOS only."""
-    system = platform.system()
+    system = host_system()
     if system not in {"Linux", "Darwin"}:
         print(f"google_meet install: {system} is not supported (linux/macos only)")
         return 1

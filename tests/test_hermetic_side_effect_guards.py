@@ -39,7 +39,7 @@ def _isolate_anthropic_credentials(monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_TOKEN", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     monkeypatch.setattr(ac.Path, "home", lambda: tmp_path)
-    monkeypatch.setattr(ac.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(ac, "host_system", lambda: "Darwin")
 
     def _real_keychain_reached(*_args, **_kwargs):
         raise AssertionError("test reached the real macOS Keychain command")

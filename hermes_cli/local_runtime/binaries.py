@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import os
-import platform
 import shutil
 import subprocess
 import urllib.request
@@ -14,6 +13,8 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+
+from hermes_cli._subprocess_compat import host_machine, host_system
 
 
 logger = logging.getLogger(__name__)
@@ -91,9 +92,9 @@ def _host_os_arch() -> tuple[str, str]:
     """(os, arch) normalized to release-asset vocabulary. PITFALL: PROCESSOR_ARCHITECTURE lies
     under x64 emulation on ARM64 Windows, and platform.machine() reads the same env on some
     Pythons — so on Windows prefer PROCESSOR_IDENTIFIER's text when present."""
-    system = platform.system().lower()
+    system = host_system().lower()
     os_name = {"windows": "win", "darwin": "macos", "linux": "ubuntu"}.get(system, system)
-    arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+    arch = "arm64" if host_machine().lower() in ("arm64", "aarch64") else "x64"
     if os_name == "win":
         ident = os.environ.get("PROCESSOR_IDENTIFIER", "").lower()
         if "armv8" in ident or "arm " in ident:

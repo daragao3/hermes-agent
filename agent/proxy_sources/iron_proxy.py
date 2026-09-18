@@ -14,10 +14,10 @@ import ipaddress
 import json
 import logging
 import os
-import platform
 import shutil
 import signal
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -28,6 +28,8 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from hermes_cli._subprocess_compat import host_machine, host_system
 
 logger = logging.getLogger(__name__)
 
@@ -173,17 +175,18 @@ def _proxy_state_dir() -> Path:
 
 
 def _platform_binary_name() -> str:
-    return "iron-proxy.exe" if platform.system() == "Windows" else "iron-proxy"
+    return "iron-proxy.exe" if sys.platform == "win32" else "iron-proxy"
 
 
 def _platform_asset_name() -> str:
     """Map (uname, arch) -> ``iron-proxy_<version>_<os>_<arch>.tar.gz``; no Windows builds upstream."""
-    system, machine = platform.system(), platform.machine().lower()
+    system = host_system()
+    if system == "Windows":  # decided before any uname() read: no WMI on the unsupported host
+        raise RuntimeError(f"iron-proxy does not ship native Windows binaries as of v{_IRON_PROXY_VERSION}. Run the proxy on a Linux/macOS host, or inside WSL.")
+    machine = host_machine().lower()
     if os_name := {"Linux": "linux", "Darwin": "darwin"}.get(system):
         arch = "arm64" if machine in ("arm64", "aarch64") else "amd64"
         return f"iron-proxy_{_IRON_PROXY_VERSION}_{os_name}_{arch}.tar.gz"
-    if system == "Windows":
-        raise RuntimeError(f"iron-proxy does not ship native Windows binaries as of v{_IRON_PROXY_VERSION}. Run the proxy on a Linux/macOS host, or inside WSL.")
     raise RuntimeError(f"Unsupported platform for iron-proxy auto-install: {system} {machine}")
 
 
@@ -477,7 +480,7 @@ def _default_http_listen(tunnel_port: int) -> List[str]:
     """Single bind (v0.39 allows one): docker bridge on Linux (what ``host.docker.internal`` resolves to; loopback is
     unreachable from containers), loopback on Docker Desktop (VPNkit).  NEVER 0.0.0.0: a LAN peer with a leaked
     sandbox token could spend the operator's API quota."""
-    if platform.system() == "Linux":
+    if sys.platform.startswith("linux"):
         if (bridge_ip := _detect_docker_bridge_ip()) and bridge_ip != "127.0.0.1":
             return [f"{bridge_ip}:{tunnel_port}"]
         logger.warning(
@@ -706,7 +709,7 @@ def _pid_alive(pid: int) -> bool:
         if not psutil.pid_exists(pid):
             return False
     except ImportError:
-        if platform.system() != "Windows":
+        if sys.platform != "win32":
             try:
                 os.kill(pid, 0)  # windows-footgun: ok — POSIX-only branch
             except (ProcessLookupError, PermissionError, OSError):
@@ -790,7 +793,7 @@ def start_proxy(
 @contextmanager
 def _interrupt_guard(handler):
     """Route SIGINT/SIGTERM to ``handler`` for the block (POSIX main thread only); previous handlers restored after."""
-    if platform.system() == "Windows" or threading.current_thread() is not threading.main_thread():
+    if sys.platform == "win32" or threading.current_thread() is not threading.main_thread():
         yield
         return
     prev = [(sig, signal.signal(sig, handler)) for sig in (signal.SIGINT, signal.SIGTERM)]
@@ -816,7 +819,7 @@ def _spawn_daemon(bin_path: Path, cfg: Path, env: Dict[str, str], log_path: Path
         # start_new_session is POSIX-only (Windows isn't supported anyway — no upstream binary).
         return subprocess.Popen(  # noqa: S603
             [str(bin_path), "-config", str(cfg)], env=env, stdin=subprocess.DEVNULL, stdout=log_fd, stderr=subprocess.STDOUT,
-            **({} if platform.system() == "Windows" else {"start_new_session": True}),
+            **({} if sys.platform == "win32" else {"start_new_session": True}),
         )
     except OSError as exc:
         raise RuntimeError(f"failed to spawn iron-proxy: {exc}") from exc

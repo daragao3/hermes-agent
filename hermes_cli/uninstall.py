@@ -164,7 +164,7 @@ def remove_node_symlinks(hermes_home: Path) -> list:
 def uninstall_gateway_service():
     """Kill standalone gateways, then remove the per-platform service (systemd user+system /
     launchd / Scheduled Task + Startup folder). Termux/Android has neither: only the kill applies."""
-    import platform
+    from hermes_cli._subprocess_compat import host_system
     stopped_something = False
     # 1. Kill any standalone gateway processes (all platforms, including Termux)
     try:
@@ -181,7 +181,7 @@ def uninstall_gateway_service():
         return stopped_something
 
     # 2. Per-platform service removal (systemd / launchd / Scheduled Task).
-    remover, warn_label = _GATEWAY_SERVICE_REMOVERS.get(platform.system(), (None, ""))
+    remover, warn_label = _GATEWAY_SERVICE_REMOVERS.get(host_system(), (None, ""))
     if remover is not None:
         try:
             stopped_something = remover() or stopped_something
@@ -248,7 +248,7 @@ def _remove_windows_gateway() -> bool:
         return False
 
 
-# platform.system() -> (remover, warning label when the remover itself blows up)
+# host_system() -> (remover, warning label when the remover itself blows up)
 _GATEWAY_SERVICE_REMOVERS = {
     "Linux": (_remove_systemd_gateway, "Could not check systemd gateway services"),
     "Darwin": (_remove_launchd_gateway, "Could not remove launchd gateway service"),

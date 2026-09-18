@@ -32,8 +32,8 @@ faked-Windows tests run on any host; the live ones are Windows+rg only.
 """
 
 import os
-import platform
 import shutil
+import sys
 
 import pytest
 
@@ -50,7 +50,7 @@ from tools.file_operations import (
 
 from tools.file_operations_search import _split_rg_files_output
 
-IS_WINDOWS = platform.system() == "Windows"
+IS_WINDOWS = sys.platform == "win32"
 HAS_RG = shutil.which("rg") is not None
 
 windows_live = pytest.mark.skipif(

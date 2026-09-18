@@ -102,7 +102,7 @@ class TestMacOSManagedPythonSigning:
             calls.append((cmd, kwargs))
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(managed_uv.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(managed_uv, "host_system", lambda: "Darwin")
         monkeypatch.setattr(managed_uv.shutil, "which", lambda name: "/usr/bin/codesign")
         monkeypatch.setattr(managed_uv.subprocess, "run", fake_run)
 
@@ -132,7 +132,7 @@ class TestMacOSManagedPythonSigning:
         import hermes_cli.managed_uv as managed_uv
 
         python = tmp_path / "python3.11"
-        monkeypatch.setattr(managed_uv.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(managed_uv, "host_system", lambda: "Darwin")
         monkeypatch.setattr(managed_uv.shutil, "which", lambda name: "/usr/bin/codesign")
         monkeypatch.setattr(
             managed_uv.subprocess,
@@ -147,7 +147,7 @@ class TestMacOSManagedPythonSigning:
     def test_skips_non_macos(self, tmp_path, monkeypatch):
         import hermes_cli.managed_uv as managed_uv
 
-        monkeypatch.setattr(managed_uv.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(managed_uv, "host_system", lambda: "Linux")
         monkeypatch.setattr(
             managed_uv.subprocess,
             "run",
@@ -258,7 +258,7 @@ class TestEnsureUvUpdateBoundary:
 
     The dual contract is intentionally **not** offered on Windows — see
     ``TestEnsureUvWindowsSafe`` for why — so these tests are POSIX-only: the
-    host's real ``platform.system()`` selects the wrapper branch, nothing is
+    host's real ``host_system()`` selects the wrapper branch, nothing is
     faked.
     """
 
@@ -1435,7 +1435,7 @@ class TestWindowsRuntimeSelfLock:
 
         root, live, sentinel, scripts_python = self._checkout(tmp_path)
         current = _runtime_info(scripts_python, (3, 50, 4))
-        monkeypatch.setattr(managed_uv.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(managed_uv, "host_system", lambda: "Windows")
         monkeypatch.setattr(sys, "executable", str(scripts_python))
 
         with patch(
@@ -1476,7 +1476,7 @@ class TestWindowsRuntimeSelfLock:
 
         root, live, sentinel, scripts_python = self._checkout(tmp_path)
         current = _runtime_info(scripts_python, (3, 50, 4))
-        monkeypatch.setattr(managed_uv.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(managed_uv, "host_system", lambda: "Windows")
         monkeypatch.setattr(
             sys, "executable", str(tmp_path / "outside" / "python.exe")
         )
@@ -1506,7 +1506,7 @@ class TestWindowsRuntimeSelfLock:
         from hermes_cli import managed_uv
 
         root, live, sentinel, scripts_python = self._checkout(tmp_path)
-        monkeypatch.setattr(managed_uv.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(managed_uv, "host_system", lambda: "Linux")
         monkeypatch.setattr(sys, "executable", str(scripts_python))
 
         locked, detail = managed_uv._windows_runtime_self_lock(live)
@@ -1518,7 +1518,7 @@ class TestWindowsRuntimeSelfLock:
         from hermes_cli import managed_uv
 
         root, live, sentinel, scripts_python = self._checkout(tmp_path)
-        monkeypatch.setattr(managed_uv.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(managed_uv, "host_system", lambda: "Windows")
         monkeypatch.setattr(
             sys, "executable", str(tmp_path / "outside" / "python.exe")
         )

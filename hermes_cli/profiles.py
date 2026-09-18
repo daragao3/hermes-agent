@@ -1261,7 +1261,7 @@ def _maybe_unregister_gateway_service(profile_name: str) -> None:
 
 def _cleanup_gateway_service(name: str, profile_dir: Path) -> None:
     """Disable and remove systemd/launchd service for a profile."""
-    import platform as _platform
+    from hermes_cli._subprocess_compat import host_system
 
     # HERMES_HOME is set temporarily so _profile_suffix resolves the service name.
     old_home = os.environ.get("HERMES_HOME")
@@ -1272,7 +1272,7 @@ def _cleanup_gateway_service(name: str, profile_dir: Path) -> None:
         def _run(*cmd: str) -> None:
             subprocess.run(list(cmd), capture_output=True, check=False, timeout=10)
 
-        system = _platform.system()
+        system = host_system()
         if system == "Linux":
             svc_name = get_service_name()
             svc_file = Path.home() / ".config" / "systemd" / "user" / f"{svc_name}.service"

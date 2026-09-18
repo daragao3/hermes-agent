@@ -12,7 +12,6 @@ import json
 import logging
 import ntpath
 import os
-import platform
 import posixpath
 import re
 import shlex
@@ -26,6 +25,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from hermes_cli._subprocess_compat import host_system
 from hermes_constants import get_hermes_home
 
 logger = logging.getLogger(__name__)
@@ -183,7 +183,7 @@ def real_profile_data_dir(browser: str, system: str | None = None) -> str | None
     b = _BROWSER_BY_KEY.get(browser)
     if b is None:
         return None
-    system = system or platform.system()
+    system = system or host_system()
     home = os.path.expanduser("~")
     if system == "Darwin":
         return posixpath.join(home, "Library", "Application Support", *b.mac_support)
@@ -210,7 +210,7 @@ def chromium_executable(browser: str, system: str | None = None) -> str | None:
     b = _BROWSER_BY_KEY.get(browser)
     if b is None:
         return None
-    system = system or platform.system()
+    system = system or host_system()
     if system == "Darwin":
         return _first_present((b.mac_app,))
     if system == "Windows":
@@ -307,7 +307,7 @@ def _detect_default_linux() -> str | None:
 def detect_default_chromium(system: str | None = None) -> str | None:
     """Return the canonical key of the default Chromium browser, or None."""
     detect = {"Windows": _detect_default_windows, "Darwin": _detect_default_darwin}
-    return detect.get(system or platform.system(), _detect_default_linux)()
+    return detect.get(system or host_system(), _detect_default_linux)()
 
 
 # --- Real-profile SNAPSHOT launch -------------------------------------------------------
@@ -946,7 +946,7 @@ def find_free_debug_port(preferred: int = DEFAULT_BROWSER_CDP_PORT, attempts: in
 
 
 def manual_chrome_debug_command(port: int = DEFAULT_BROWSER_CDP_PORT, system: str | None = None) -> str | None:
-    system = system or platform.system()
+    system = system or host_system()
     candidates = get_chrome_debug_candidates(system)
     if candidates:
         argv = [candidates[0], *_chrome_debug_args(port)]
@@ -1033,7 +1033,7 @@ def launch_chrome_debug(
     """Launch a Chromium-family browser with remote debugging, trying each candidate in turn. One
     that exits before the CDP port opens (crash, singleton forward, bad profile dir) is logged with
     exit code + stderr tail and the next is tried."""
-    system = system or platform.system()
+    system = system or host_system()
     result = ChromeDebugLaunch()
     candidates = get_chrome_debug_candidates(system)
     if not candidates:

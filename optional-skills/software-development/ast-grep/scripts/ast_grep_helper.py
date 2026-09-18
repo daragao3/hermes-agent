@@ -61,6 +61,15 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# Windows, CPython < 3.13.4: ``platform.uname()`` (behind ``system()``/``machine()``/``release()``)
+# abandons its WMI query thread after a 100 ms timeout; the stray thread later closes a random
+# live handle and the process dies with exit 0xC000070A under host load (CPython gh-130727,
+# never backported to 3.12). This script runs standalone -- no hermes_bootstrap -- so opt out
+# of the WMI path here: ``platform`` then answers from ``sys.getwindowsversion()`` and the
+# ``PROCESSOR_ARCHITECTURE`` environment instead. Same values, no thread.
+if sys.platform == "win32" and sys.version_info < (3, 13, 4):
+    sys.modules.setdefault("_wmi", None)  # type: ignore[arg-type]
+
 VERSION = "0.1.0"
 
 # 25 CLI languages supported by ast-grep, with their aliases (mirrors official docs)

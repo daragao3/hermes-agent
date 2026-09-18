@@ -271,8 +271,8 @@ class TestUnsupportedPlatform:
         # host to falsify. Two of the rows (Windows/AMD64, Linux/riscv64)
         # could never execute honestly anyway — the second has no CI runner
         # on any lane.
-        with patch("tools.tirith_security.platform.system", return_value=system), \
-             patch("tools.tirith_security.platform.machine", return_value=machine):
+        with patch("tools.tirith_security.host_system", return_value=system), \
+             patch("tools.tirith_security.host_machine", return_value=machine):
             assert _tirith_mod.is_platform_supported() is expected
 
 

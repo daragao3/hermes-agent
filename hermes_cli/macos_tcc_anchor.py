@@ -15,7 +15,6 @@ import contextlib
 import errno
 import logging
 import os
-import platform
 import re
 import shutil
 import subprocess
@@ -24,6 +23,7 @@ import tempfile
 from pathlib import Path
 
 from hermes_constants import venv_python_path
+from hermes_cli._subprocess_compat import host_system
 from hermes_cli.managed_uv import _RUNTIME_DIR_NAME
 from utils import atomic_write_text
 
@@ -50,7 +50,7 @@ def _marker_value(source_file: Path) -> str:
 
 
 def is_macos() -> bool:
-    return platform.system() == "Darwin"
+    return host_system() == "Darwin"
 
 
 def _is_uv_macos_store(path: str) -> bool:

@@ -81,8 +81,8 @@ def _bundled_wakeword_path(framework: str = "onnx") -> str:
 
 
 def _is_macos_arm64() -> bool:
-    import platform
-    return sys.platform == "darwin" and platform.machine() == "arm64"
+    from hermes_cli._subprocess_compat import host_machine
+    return sys.platform == "darwin" and host_machine() == "arm64"
 
 
 def default_inference_framework() -> str:

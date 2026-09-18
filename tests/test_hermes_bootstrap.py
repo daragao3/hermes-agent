@@ -440,14 +440,14 @@ class TestSuppressPlatformWmiQueries:
         if sys.version_info >= (3, 13, 4):
             pytest.skip("interpreter carries the gh-130727 fix; stub is a no-op by design")
 
-        info = platform.uname()
+        info = platform.uname()  # windows-footgun: ok — exercises the stub itself
         assert info.system == "Windows"
         assert info.machine in {"x86", "ARM", "ia64", "AMD64", "ARM64"}
         env_arch = os.environ.get("PROCESSOR_ARCHITEW6432", "") or os.environ.get("PROCESSOR_ARCHITECTURE", "")
         if env_arch:  # absent under scripts/run_tests.sh's env -i; kernel32 answers either way
             assert info.machine == env_arch
         assert info.release  # from sys.getwindowsversion(), not WMI
-        assert platform.system() == "Windows"
+        assert platform.system() == "Windows"  # windows-footgun: ok — stubbed above
 
     @pytest.mark.windows_only
     def test_machine_survives_a_stripped_environment(self, monkeypatch):
@@ -466,7 +466,7 @@ class TestSuppressPlatformWmiQueries:
         if sys.version_info >= (3, 13, 4):
             pytest.skip("interpreter carries the gh-130727 fix; stub is a no-op by design")
 
-        assert platform.machine() in {"x86", "ARM", "ia64", "AMD64", "ARM64"}
+        assert platform.machine() in {"x86", "ARM", "ia64", "AMD64", "ARM64"}  # windows-footgun: ok — stubbed above
         # The OS query still refuses -> win32_ver() takes sys.getwindowsversion().
         with pytest.raises(OSError):
             platform._wmi_query("OS", "Version")

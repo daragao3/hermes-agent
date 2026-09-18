@@ -12,7 +12,6 @@ import importlib
 import json
 import logging
 import os
-import platform
 import shutil
 import subprocess
 import sys
@@ -24,6 +23,7 @@ from functools import partial
 from pathlib import Path
 from typing import Callable, Optional
 
+from hermes_cli._subprocess_compat import host_system
 from hermes_constants import get_hermes_home
 from hermes_cli.sqlite_runtime import (
     SQLiteRuntimeInfo, isolated_interpreter_env, probe_sqlite_runtime)
@@ -42,7 +42,7 @@ _Provisioned = tuple[Path, Path, SQLiteRuntimeInfo]
 
 def managed_uv_path() -> Path:
     """Path of Hermes' own uv binary (``$HERMES_HOME/bin/uv[.exe]``); may not exist yet."""
-    return get_hermes_home() / "bin" / ("uv.exe" if platform.system() == "Windows" else "uv")
+    return get_hermes_home() / "bin" / ("uv.exe" if host_system() == "Windows" else "uv")
 
 
 def resolve_uv() -> Optional[str]:
@@ -82,7 +82,7 @@ def _macos_sign_managed_python(python: Path) -> bool:
     changes every runtime generation; an identifier-pinned designated requirement keeps it stable
     without a Developer ID. Best effort: a missing/incompatible ``codesign`` must not block repair.
     """
-    if platform.system() != "Darwin":
+    if host_system() != "Darwin":
         return False
     codesign = shutil.which("codesign")
     if not codesign:
@@ -220,7 +220,7 @@ def ensure_uv(
     unpackable as ``(path, fresh_bootstrap)`` for older call sites.
     """
     result = _ensure_uv_path(repair_observer=repair_observer)
-    if platform.system() == "Windows":
+    if host_system() == "Windows":
         # See _UvResult: the __iter__ override is unsafe as a Windows subprocess argument.
         return result
     return _UvResult(result)
@@ -304,7 +304,7 @@ def _venv_python(venv_dir: Path) -> Path:
         from hermes_constants import venv_python_path
     except ImportError:
         venv_python_path = _reload_hermes_constants().venv_python_path
-    return venv_python_path(venv_dir, windows=platform.system() == "Windows")
+    return venv_python_path(venv_dir, windows=host_system() == "Windows")
 
 
 def _remove_tree(path: Path, *, boundary: Path) -> None:
@@ -709,7 +709,7 @@ def _release_repair_lock(lock: _RepairLock) -> None:
 
 
 def _windows_runtime_holders() -> tuple[bool, str]:
-    if platform.system() != "Windows":
+    if host_system() != "Windows":
         return False, ""
     main_module = sys.modules.get("hermes_cli.main")
     detector = getattr(main_module, "_detect_venv_python_processes", None)
@@ -738,7 +738,7 @@ def _windows_runtime_self_lock(live: Path) -> tuple[bool, str]:
     inside the updater. The retry loop in ``_cut_over_candidate`` cannot help against that — the lock is
     structural, not transient (#93032).
     """
-    if platform.system() != "Windows":
+    if host_system() != "Windows":
         return False, ""
     try:
         live_res = str(live.resolve())
@@ -985,7 +985,7 @@ def _install_uv(target: Path) -> None:
     """
     env = {**os.environ, "UV_UNMANAGED_INSTALL": str(target.parent),
            "UV_INSTALL_DIR": str(target.parent)}
-    (_install_uv_windows if platform.system() == "Windows" else _install_uv_posix)(env)
+    (_install_uv_windows if host_system() == "Windows" else _install_uv_posix)(env)
 
 
 def _install_uv_posix(env: dict[str, str]) -> None:

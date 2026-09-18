@@ -432,8 +432,10 @@ def inspect_hermes(hermes_path: str) -> dict[str, Any]:
 
 
 def _probe(*_: str) -> dict[str, Any]:
-    import platform
-    return {"os": "Windows", "arch": platform.machine(), "hermesHome": str(get_default_hermes_root()), "python": sys.executable}
+    # Runs as ``python -m hermes_cli.windows_ssh_runtime`` from the desktop app: no hermes_bootstrap,
+    # so the WMI stub has to be applied here before the uname() read.
+    from hermes_cli._subprocess_compat import host_machine
+    return {"os": "Windows", "arch": host_machine(), "hermesHome": str(get_default_hermes_root()), "python": sys.executable}
 
 
 def _read_log(ownership_id: str, spawn_nonce: str) -> dict[str, Any]:

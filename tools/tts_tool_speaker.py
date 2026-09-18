@@ -13,8 +13,8 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import platform
 import queue
+import sys
 import tempfile
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -158,7 +158,7 @@ class _StreamerPlayback:
         # kTCCServiceMediaLibrary prompt though output needs no media-library access.
         # None routes every sentence through tempfile -> afplay.
         # See PR #62601 / #13291.
-        if platform.system() == "Darwin":
+        if sys.platform == "darwin":
             return None
         try:
             return self._create_output_stream()

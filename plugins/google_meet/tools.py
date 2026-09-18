@@ -19,8 +19,8 @@ def check_meet_requirements() -> bool:
     """True when the plugin can run LOCALLY: Linux/macOS + importable ``playwright``.
     Remote-node operation only needs ``websockets``; handlers relax this gate when a node is addressed."""
     import importlib.util
-    import platform as _p
-    return (_p.system().lower() in {"linux", "darwin"}
+    from hermes_cli._subprocess_compat import host_system
+    return (host_system().lower() in {"linux", "darwin"}
             and importlib.util.find_spec("playwright") is not None)
 
 

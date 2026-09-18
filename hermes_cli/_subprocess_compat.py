@@ -23,6 +23,9 @@ __all__ = [
     "split_command_line",
     "suppress_platform_ver_console",
     "suppress_platform_wmi_queries",
+    "host_system",
+    "host_machine",
+    "wmi_safe_platform",
     "windows_detach_flags",
     "windows_detach_flags_without_breakaway",
     "windows_hide_flags",
@@ -257,6 +260,50 @@ def suppress_platform_wmi_queries() -> None:
         platform._wmi_query = _offline_wmi_query
     except Exception:
         pass  # Hardening only — never let it break startup.
+
+
+_HOST_SYSTEM_BY_SYS_PLATFORM = {"win32": "Windows", "darwin": "Darwin", "linux": "Linux"}
+
+
+def host_system() -> str:
+    """``platform.system()``'s answer without ``platform.uname()``: ``"Windows"``, ``"Darwin"``
+    or ``"Linux"`` from ``sys.platform``, ``platform.system()`` itself on anything else.
+
+    The point is what it does NOT do on Windows: ``platform.system()`` goes through
+    ``uname()``, whose WMI query thread CPython < 3.13.4 abandons after 100 ms and which then
+    closes a random live handle of the process (exit 0xC000070A under load; see
+    ``suppress_platform_wmi_queries``). The stub only covers processes that applied it —
+    entry points via ``hermes_bootstrap`` — while every module in this tree is importable
+    from a bare ``python -c``/``-m`` child (desktop ``-m hermes_cli.windows_ssh_runtime``,
+    ``hermes-session-bridge``, ops scripts, skill scripts run by the terminal tool). An OS
+    name test never needs the thread. Same spellings as ``platform.system()``, so dict keys
+    and comparisons written against it keep working; tests patch this name, not ``platform``.
+    """
+    name = _HOST_SYSTEM_BY_SYS_PLATFORM.get(sys.platform)
+    if name is None and sys.platform.startswith("linux"):
+        name = "Linux"
+    if name is not None:
+        return name
+    import platform
+
+    return platform.system()  # windows-footgun: ok — unreachable on win32 (mapped above)
+
+
+def wmi_safe_platform():
+    """The ``platform`` module with the WMI stub applied first (idempotent; no-op elsewhere).
+
+    For the reads that genuinely need ``uname()`` data on Windows — ``machine()``,
+    ``release()``, ``version()``, ``node()``, ``platform()`` — in code a non-bootstrapped
+    process can reach. Use ``host_system()`` for an OS-name test instead."""
+    suppress_platform_wmi_queries()
+    import platform
+
+    return platform
+
+
+def host_machine() -> str:
+    """``platform.machine()`` with the WMI stub applied first; see ``wmi_safe_platform``."""
+    return wmi_safe_platform().machine()
 
 
 def windows_detach_popen_kwargs() -> dict:
