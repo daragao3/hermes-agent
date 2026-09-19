@@ -8,6 +8,7 @@ from threading import Thread
 from unittest.mock import patch, MagicMock
 
 from hermes_cli.nous_account import NousPortalAccountInfo
+from tests.timeout_budget import scaled
 from hermes_cli.models import (
     OPENROUTER_MODELS, fetch_openrouter_models, model_ids, detect_provider_for_model,
     partition_nous_models_by_tier,
@@ -557,6 +558,12 @@ def _start_fake_ollama_server(models=None):
     return server, server.server_address[1]
 
 
+# Backstop only (tests/timeout_budget shape): every picker build here walks each
+# provider's credential pool in-process (measured 2026-09-18 at 100% host CPU:
+# 185 load_pool -> 1575 Path.resolve() syscalls per build, see
+# test_local_picker_identity); eight picker ids here tripped the suite-wide cap under a shared
+# box. Nothing here asserts a duration.
+@pytest.mark.timeout(scaled(300))
 class TestLocalOllamaModelDiscovery:
     def test_provider_model_ids_uses_ollama_api_tags_from_provider_config(self):
         """Local Ollama discovery should use /api/tags from providers.ollama.base_url."""

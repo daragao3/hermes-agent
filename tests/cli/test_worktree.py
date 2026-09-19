@@ -955,6 +955,11 @@ class TestWorktreeLockPredicate:
         assert worktree_ops._worktree_lock_is_live(str(tmp_path), str(tmp_path / "x")) == "live"
 
 
+# Backstop only (see TestWorktreeLockReaping): real git per test, and the pruner's
+# PR-merged escape hatch spawns the REAL `gh pr list` (network) for every diverged
+# tree; one id tripped the suite-wide cap inside that communicate() while a sibling
+# suite held all 12 slots (2026-09-18 proof run). Nothing here asserts a duration.
+@pytest.mark.timeout(scaled(300))
 class TestWidenedPruner:
     """Behavior contracts for the widened pruner (#all-.worktrees coverage,
     squash-merge escape hatch, kanban exclusion, preserved-work warning).
@@ -1070,6 +1075,9 @@ class TestWidenedPruner:
 
 
 
+# Backstop only: same real-git + real-gh shape as TestWidenedPruner; two ids tripped
+# the cap in the same window.
+@pytest.mark.timeout(scaled(300))
 class TestMergeVerdictCache:
     """The ``git cherry`` patch-equivalence probe is memoized on disk because it
     dominates ``hermes -w`` startup (~0.2-1.0s per worktree, re-run on every
@@ -1396,6 +1404,11 @@ class TestShallowCloneDeepening:
         )
 
 
+# Backstop only (see TestWorktreeLockReaping): each test builds a diverged
+# worktree with real git and runs the real pruner over it; two ids tripped the
+# suite-wide cap inside git communicate() under a shared box (2026-09-18,
+# file at 2235 s). The gh answer is stubbed, so nothing here times a network.
+@pytest.mark.timeout(scaled(300))
 class TestPrMergedEscapeHatch:
     """Rebase-merged PRs whose diff changed during salvage defeat ``git
     cherry`` (patch-id mismatch), so the pruner asks GitHub whether the

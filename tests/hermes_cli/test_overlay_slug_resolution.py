@@ -10,8 +10,17 @@ Covers: #5223, #6492
 import os
 from unittest.mock import patch
 
+import pytest
 
 from hermes_cli.model_switch import list_authenticated_providers
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): every picker build here walks each
+# provider's credential pool in-process (measured 2026-09-18 at 100% host CPU:
+# 185 load_pool -> 1575 Path.resolve() syscalls per build, see
+# test_local_picker_identity); both ids here tripped the suite-wide cap under a shared
+# box. Nothing here asserts a duration.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 # -- Copilot slug resolution (env var path) ----------------------------------

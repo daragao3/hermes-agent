@@ -3,6 +3,8 @@
 
 import pytest
 
+from tests.timeout_budget import scaled
+
 # tiktoken is not in core/[all] deps — skip estimation tests when unavailable
 _has_tiktoken = True
 try:
@@ -27,6 +29,10 @@ _needs_tiktoken = pytest.mark.skipif(not _has_tiktoken, reason="tiktoken not ins
 
 
 
+# Backstop only (tests/timeout_budget shape): _estimate_tool_tokens imports every tool
+# module and loads the tiktoken encoding before the assertion; tripped the suite-wide
+# cap under a shared box (2026-09-18). The contract is the ~0 tokens label.
+@pytest.mark.timeout(scaled(300))
 def test_status_fn_empty_selection():
     """Status function with no tools selected should return ~0 tokens."""
     import hermes_cli.tools_config as tc

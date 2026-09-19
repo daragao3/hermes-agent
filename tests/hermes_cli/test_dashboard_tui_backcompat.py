@@ -20,18 +20,31 @@ import os
 import subprocess
 import sys
 
+import pytest
+
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): the one test spawns a cold
+# `python -m hermes_cli.main dashboard --status` (full CLI import plus a
+# process-table scan). Its own 60 s bound tripped under a shared box
+# (2026-09-18, 100% host CPU); the contract is the parse outcome, not a
+# duration, so both the pytest cap and the child bound scale with load.
+pytestmark = pytest.mark.timeout(scaled(300))
+
 REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
 )
 
 
-def _run_cli(args, timeout=60):
+def _run_cli(args, timeout=None):
     """Invoke the real hermes_cli.main parser in a subprocess.
 
     Uses ``--status`` so the dashboard command exits immediately after parsing
     (it scans the process table and returns) instead of starting a server.
     Returns the CompletedProcess.
     """
+    if timeout is None:
+        timeout = scaled(240)
     env = dict(os.environ)
     env["PYTHONPATH"] = REPO_ROOT + os.pathsep + env.get("PYTHONPATH", "")
     return subprocess.run(

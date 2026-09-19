@@ -1209,7 +1209,8 @@ def test_resolve_hermes_argv_falls_back_to_module_form_when_no_path_shim(monkeyp
 
 
 # Backstop only: spawns a real `python -m hermes_cli...` child, which on a freshly provisioned
-# venv compiles its bytecode cold (tripped the suite cap right after the 3.13 cut-over).
+# venv compiles its bytecode cold (tripped the suite cap right after the 3.13 cut-over). The
+# child's own bound scales too: a fixed 30 s tripped first under a shared box (2026-09-18).
 @pytest.mark.timeout(scaled(300))
 def test_resolve_hermes_argv_module_actually_runs():
     """The fallback module name must be importable + runnable.
@@ -1234,7 +1235,9 @@ def test_resolve_hermes_argv_module_actually_runs():
         with mock.patch.object(shutil, "which", return_value=None),              mock.patch.object(kbd, "_safe_which_no_cwd", return_value=None):
             argv = kbd._resolve_hermes_argv()
     assert argv[:2] == [sys.executable, "-m"], f"expected the module fallback, got {argv!r}"
-    r = subprocess.run(argv + ["--version"], capture_output=True, text=True, timeout=30, encoding="utf-8")
+    r = subprocess.run(
+        argv + ["--version"], capture_output=True, text=True, timeout=scaled(240), encoding="utf-8"
+    )
     assert r.returncode == 0, (
         f"`{' '.join(argv)} --version` failed (rc={r.returncode}); "
         f"stderr={r.stderr[:200]!r}"

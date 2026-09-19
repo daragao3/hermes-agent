@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.timeout_budget import scaled
+
 
 @pytest.fixture
 def isolated_home(tmp_path, monkeypatch):
@@ -391,6 +393,12 @@ class TestIntegrationWithModelsModule:
         assert nous_row is not None, "nous row must appear when authed"
         assert nous_row["models"] == expected
 
+    # Backstop only (tests/timeout_budget shape): three picker builds, each walking
+    # every provider's credential pool in-process (185 load_pool -> 1575
+    # Path.resolve() syscalls per build measured at 100% host CPU, 2026-09-18);
+    # tripped the suite-wide cap under a shared box. The contract is the cap
+    # semantics of the rows, not a duration.
+    @pytest.mark.timeout(scaled(300))
     def test_picker_max_models_cap_semantics(self, tmp_path, monkeypatch):
         """The cap argument has three distinct meanings on the real slicing
         path: ``None`` = unlimited (the cap-removal fix, #48297), ``0`` = no
