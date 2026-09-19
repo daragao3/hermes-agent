@@ -126,13 +126,17 @@ class GatewayAdapterLifecycleMixin:
         override = self._env_timeout_override("HERMES_GATEWAY_ADAPTER_DISCONNECT_TIMEOUT")
         return _ADAPTER_DISCONNECT_TIMEOUT_SECS_DEFAULT if override is None else override
 
-    def _platform_connect_timeout_secs(self, platform=None, *, initial: bool = False) -> float:
+    def _platform_connect_timeout_secs(self, platform=None, *, initial: bool = False, adapter=None) -> float:
         """Per-platform connect timeout. Telegram's full 180s is NOT spent at cold start (it would
         hold the gateway out of ``running``); the watcher retries with the full budget.
 
         ``initial=True`` marks the cold-start connect awaited before the gateway reaches ``running``. The
         cold-start wait is capped and the platform is handed to the reconnect watcher, which retries with
         the full budget (and ``is_reconnect=True``, preserving the offline update queue — #46621).
+        ``adapter.connect_timeout_secs`` (a positive number) replaces the platform default for both the
+        cold start and reconnects: the adapter knows its own phases (WhatsApp: pre-spawn probes + a 30 s
+        bridge readiness poll, which the 30 s default could never cover on a loaded host). The env
+        override still wins over it.
         """
         from gateway.run import (
             _PLATFORM_CONNECT_TIMEOUT_SECS_DEFAULT, _TELEGRAM_CONNECT_TIMEOUT_SECS_DEFAULT,
@@ -141,9 +145,21 @@ class GatewayAdapterLifecycleMixin:
         override = self._env_timeout_override("HERMES_GATEWAY_PLATFORM_CONNECT_TIMEOUT")
         if override is not None:
             return override
+        declared = self._adapter_declared_connect_timeout(adapter)
+        if declared is not None:
+            return declared
         if platform != Platform.TELEGRAM:
             return _PLATFORM_CONNECT_TIMEOUT_SECS_DEFAULT
         return _TELEGRAM_INITIAL_CONNECT_TIMEOUT_SECS_DEFAULT if initial else _TELEGRAM_CONNECT_TIMEOUT_SECS_DEFAULT
+
+    @staticmethod
+    def _adapter_declared_connect_timeout(adapter) -> Optional[float]:
+        """``adapter.connect_timeout_secs`` as a positive float, else ``None`` (unset, non-numeric, <= 0)."""
+        try:
+            declared = float(getattr(adapter, "connect_timeout_secs", None))
+        except (TypeError, ValueError):
+            return None
+        return declared if declared > 0 else None
 
     async def _connect_adapter_with_timeout(
         self, adapter, platform, *, is_reconnect: bool = False, initial: bool = False
@@ -158,7 +174,7 @@ class GatewayAdapterLifecycleMixin:
         ``initial`` selects the capped cold-start budget for platforms whose full connect budget is too long
         to spend before the gateway reaches ``running`` (#85993 — Telegram's 180s).
         """
-        timeout = self._platform_connect_timeout_secs(platform, initial=initial)
+        timeout = self._platform_connect_timeout_secs(platform, initial=initial, adapter=adapter)
         if timeout <= 0:
             return await adapter.connect(is_reconnect=is_reconnect)
         task = asyncio.ensure_future(adapter.connect(is_reconnect=is_reconnect))

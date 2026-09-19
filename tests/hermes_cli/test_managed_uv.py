@@ -480,11 +480,6 @@ class TestManagedPythonStore:
         assert base_env["PYTHONHOME"] == "/poison/home"
 
 
-_POSIX_LAYOUT_SKIP = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="POSIX-only: fixtures build the bin/ (not Scripts/) venv layout")
-
-
 def _host_venv_python(live: Path) -> Path:
     """The interpreter ``_make_runtime_install(windows=sys.platform == "win32")`` laid down:
     what ``_venv_python`` resolves on this host, so the repair path finds a live interpreter."""
@@ -493,12 +488,13 @@ def _host_venv_python(live: Path) -> Path:
 
 
 class TestRuntimeRepair:
-    @_POSIX_LAYOUT_SKIP
     def test_safe_runtime_is_a_noop(self, tmp_path):
+        """Runs on every host: the fixture builds the host's venv layout, and the "safe"
+        branch returns before ``_repair_windows_preflight`` (no seam to stub)."""
         from hermes_cli.managed_uv import repair_vulnerable_runtime
 
-        root, live, sentinel = _make_runtime_install(tmp_path)
-        current = _runtime_info(live / "bin" / "python", (3, 53, 1))
+        root, live, sentinel = _make_runtime_install(tmp_path, windows=sys.platform == "win32")
+        current = _runtime_info(_host_venv_python(live), (3, 53, 1))
         with patch(
                  "hermes_cli.managed_uv.probe_sqlite_runtime",
                  return_value=current,
@@ -515,16 +511,19 @@ class TestRuntimeRepair:
         assert not (root / ".hermes-runtime").exists()
         mock_install.assert_not_called()
 
-    @_POSIX_LAYOUT_SKIP
     def test_failed_candidate_preserves_live_venv(self, tmp_path):
+        """Runs on every host. ``_repair_windows_preflight`` is stubbed to "clear" for the
+        same reason as in ``test_successful_repair_removes_parked_backup`` below: on Windows
+        its default holder detector answers for the checkout's real venv and sibling runners,
+        never the fixture; the subject here is the live venv surviving a failed candidate."""
         from hermes_cli.managed_uv import (
             _acquire_repair_lock,
             _release_repair_lock,
             repair_vulnerable_runtime,
         )
 
-        root, live, sentinel = _make_runtime_install(tmp_path)
-        current = _runtime_info(live / "bin" / "python", (3, 50, 4))
+        root, live, sentinel = _make_runtime_install(tmp_path, windows=sys.platform == "win32")
+        current = _runtime_info(_host_venv_python(live), (3, 50, 4))
         generation = root / ".hermes-runtime" / "python" / "generation-test"
         candidate_python = generation / "bin" / "python"
         candidate_python.parent.mkdir(parents=True)
@@ -535,6 +534,7 @@ class TestRuntimeRepair:
                  "hermes_cli.managed_uv.probe_sqlite_runtime",
                  side_effect=[current, current],
              ), \
+             patch("hermes_cli.managed_uv._repair_windows_preflight", return_value=None), \
              patch(
                  "hermes_cli.managed_uv._install_safe_python_generation",
                  return_value=(generation, candidate_python, fixed),
@@ -548,7 +548,7 @@ class TestRuntimeRepair:
         assert result.status == "failed"
         assert "replacement environment" in result.detail
         assert sentinel.read_text(encoding="utf-8") == "live"
-        assert (live / "bin" / "python").read_text(encoding="utf-8") == (
+        assert _host_venv_python(live).read_text(encoding="utf-8") == (
             "live interpreter"
         )
         assert not generation.exists()
@@ -1349,15 +1349,17 @@ class TestRefreshManagedUvCatalog:
             assert managed_uv._refresh_managed_uv_catalog(str(uv_path)) is False
 
 
-@pytest.mark.skipif(sys.platform == "win32",
-                    reason="POSIX-only: fixtures build the bin/ (not Scripts/) venv layout")
 class TestRepairRetriesAfterUvRefresh:
+    """Runs on every host: the driver builds the host's venv layout and stubs
+    ``_repair_windows_preflight`` to "clear" (see ``TestRuntimeRepair`` for why the
+    Windows holders gate cannot see the fixture). The subject is the uv-refresh retry."""
+
     def _run_repair(self, tmp_path, *, refresh_result, second_attempt):
         """Drive repair with the first provisioning attempt failing."""
         from hermes_cli.managed_uv import repair_vulnerable_runtime
 
-        root, live, sentinel = _make_runtime_install(tmp_path)
-        current = _runtime_info(live / "bin" / "python", (3, 50, 4))
+        root, live, sentinel = _make_runtime_install(tmp_path, windows=sys.platform == "win32")
+        current = _runtime_info(_host_venv_python(live), (3, 50, 4))
 
         attempts = []
 
@@ -1371,6 +1373,7 @@ class TestRepairRetriesAfterUvRefresh:
                  "hermes_cli.managed_uv.probe_sqlite_runtime",
                  return_value=current,
              ), \
+             patch("hermes_cli.managed_uv._repair_windows_preflight", return_value=None), \
              patch(
                  "hermes_cli.managed_uv._install_safe_python_generation",
                  side_effect=fake_install,

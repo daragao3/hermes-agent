@@ -18,6 +18,14 @@ import yaml
 from hermes_cli.model_switch import list_authenticated_providers, switch_model
 from hermes_cli.model_switch_providers import _fetch_picker_live_models, _save_discovered_models_to_config
 from hermes_cli.providers import resolve_provider_full
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): every test here builds the picker, and
+# each build walks every provider's credential pool in-process (measured 2026-09-18
+# at 100% host CPU: 185 load_pool -> 1575 Path.resolve() syscalls per build, see
+# test_local_picker_identity); 33 ids tripped the suite-wide cap under a shared box
+# (file at 2780 s). Nothing here asserts a duration.
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 _MOCK_VALIDATION = {

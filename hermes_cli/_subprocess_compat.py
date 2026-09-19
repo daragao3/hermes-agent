@@ -15,6 +15,7 @@ import signal
 import tempfile
 import subprocess
 import sys
+import threading
 from typing import IO, Iterable, Mapping, NamedTuple, Optional, Sequence
 
 __all__ = [
@@ -1046,7 +1047,11 @@ __all__ += ["resolve_windows_git_bash", "is_wsl_bash_launcher", "windows_pipe_re
 #    grandchild is the point (the agent-browser session daemon), and a
 #    kill-on-close handle closed at return would reap it. ``BREAKAWAY_OK``
 #    keeps ``CREATE_BREAKAWAY_FROM_JOB`` spawns (the detached gateway /
-#    watcher idiom) escaping exactly as they do today.
+#    watcher idiom) escaping exactly as they do today. The assignment
+#    happens after ``Popen`` returns, so the parent is itself a member of a
+#    kill-on-close job (``windows_enroll_self``): a child frozen in that gap
+#    is already a member of THAT job by inheritance and dies with a parent
+#    that never got to assign it.
 #
 # 2. When there is no job (a bare pid, a Popen we did not spawn, ctypes
 #    trouble), a ppid walk over one Toolhelp32 snapshot, guarded: a child is
@@ -1266,7 +1271,21 @@ def windows_job_for(proc: "subprocess.Popen", *, kill_on_close: bool = False) ->
     they do outside the job. ``kill_on_close`` is off by default: see the
     block comment above -- a job closed at the end of a successful capture
     must not reap a grandchild the command deliberately left behind.
+
+    Popen's own handle names exactly the process we spawned, whatever its
+    pid means by now. No OpenProcess-by-pid fallback: a Popen with no handle
+    is a test stub, and its pid may be a stranger's.
     """
+    handle = _popen_handle(proc)
+    if handle is None:
+        return None
+    return _windows_job_assign(handle, kill_on_close=kill_on_close)
+
+
+def _windows_job_assign(handle: int, *, kill_on_close: bool) -> int | None:
+    """Create a ``BREAKAWAY_OK`` job and assign the process behind ``handle``
+    to it. Job handle, or None when anything refuses (no ctypes, a host that
+    forbids nesting, an assignment the kernel rejects)."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -1311,16 +1330,81 @@ def windows_job_for(proc: "subprocess.Popen", *, kill_on_close: bool = False) ->
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_BREAKAWAY_OK | (
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE if kill_on_close else 0)
         ok = kernel32.SetInformationJobObject(job, JobObjectExtendedLimitInformation, ctypes.byref(info), ctypes.sizeof(info))
-        # Popen's own handle names exactly the process we spawned, whatever
-        # its pid means by now. No OpenProcess-by-pid fallback: a Popen with
-        # no handle is a test stub, and its pid may be a stranger's.
-        handle = _popen_handle(proc)
-        if not ok or handle is None or not kernel32.AssignProcessToJobObject(job, handle):
+        if not ok or not kernel32.AssignProcessToJobObject(job, handle):
             kernel32.CloseHandle(job)
             return None
         return int(job)
     except Exception:
         return None
+
+
+# The job this process put ITSELF in (see ``windows_enroll_self``), held for
+# the life of the process. Closing it kills the process: it is never handed to
+# ``windows_job_close``.
+_SELF_JOB: int | None = None
+_SELF_JOB_TRIED = False
+_SELF_JOB_LOCK = threading.Lock()
+
+
+def windows_enroll_self() -> int | None:
+    """Put this process in its own kill-on-close job, once. Handle, or None.
+
+    Every suspended spawn above assigns its child to a per-spawn job AFTER
+    ``Popen`` returns. Between ``CreateProcess`` and
+    ``AssignProcessToJobObject`` the child exists, frozen by
+    ``CREATE_SUSPENDED``, in no job of ours -- 0.3 ms on a quiet box, 170 ms+
+    at 100% CPU (measured on the test runner, 2026-09-18). A parent
+    hard-terminated inside that window (``TerminateProcess`` from a session
+    abort, ``gateway --replace``, the laptop monitor, anything) can never
+    thaw the child, and nothing else owns it: it stays frozen forever, one
+    thread, 0 CPU, ~2 MB, parent gone, no children (venv launcher pid 12144,
+    created 2026-09-18 01:46:02, found alive eight hours later).
+
+    Job membership is inherited at ``CreateProcess``, so a parent that is a
+    member of its own job closes the window: the kernel closes the parent's
+    handles when it dies, however it dies, and ``KILL_ON_JOB_CLOSE`` reaps
+    every member by membership -- frozen or not, with no pid, image name or
+    ppid walk involved. This is ``scripts/run_tests_parallel.py``'s
+    ``_win_enroll_runner`` (c1c5e37d83), ported.
+
+    What it changes for the process's descendants: every child spawned
+    WITHOUT ``CREATE_BREAKAWAY_FROM_JOB``, and everything under it, now dies
+    with this process. ``BREAKAWAY_OK`` is set, so the deliberately detached
+    spawns (:func:`windows_detach_flags`: the gateway spawned by the CLI,
+    the restart watcher, the web gateway) escape exactly as before -- with
+    the immediate job allowing breakaway the flag can no longer be refused,
+    and the child keeps whatever outer (Electron / Tauri / terminal) job
+    membership it would have had anyway. A child meant to outlive this
+    process must carry that flag; ``DETACHED_PROCESS`` alone is a console
+    property, not a job one. Stdio MCP helpers, terminal shells and
+    agent-browser's session daemon are bound to the process that spawned
+    them from here on, which is the intended lifetime for the first two.
+
+    Nested inside whatever job the host already has us in (Windows 8+
+    allows nesting; ``process_identity``'s silent-breakaway identity job
+    included). One attempt per process: a refused assignment leaves today's
+    behaviour and is not retried on every spawn. Off Windows: None.
+    """
+    global _SELF_JOB, _SELF_JOB_TRIED
+    if not IS_WINDOWS:
+        return None
+    with _SELF_JOB_LOCK:
+        if _SELF_JOB_TRIED:
+            return _SELF_JOB
+        _SELF_JOB_TRIED = True
+        try:
+            _SELF_JOB = _windows_job_assign(_self_process_handle(), kill_on_close=True)
+        except Exception:
+            _SELF_JOB = None
+        return _SELF_JOB
+
+
+def _self_process_handle() -> int:
+    """``GetCurrentProcess()``: the pseudo-handle for this process."""
+    import ctypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    return int(kernel32.GetCurrentProcess())
 
 
 def windows_job_terminate(job: int) -> bool:
@@ -1375,8 +1459,19 @@ def windows_suspended_spawn_flag() -> int:
     :func:`windows_tree_capture` with ``suspended=True`` before touching it.
     A child left frozen would sit out its caller's whole timeout, so the flag
     is only offered when the thaw is known to be available.
+
+    Asking for the flag also enrols THIS process in its own kill-on-close
+    job (:func:`windows_enroll_self`, once), so a child created frozen is a
+    job member from birth and cannot outlive a parent that dies before
+    assigning it. A refused enrolment does not withhold the flag: the window
+    it leaves open is milliseconds wide and needs a hard-killed parent,
+    while a child that runs before its job is assigned can father a
+    grandchild the timeout kill will never see.
     """
-    return _CREATE_SUSPENDED if IS_WINDOWS and windows_can_resume() else 0
+    if not (IS_WINDOWS and windows_can_resume()):
+        return 0
+    windows_enroll_self()
+    return _CREATE_SUSPENDED
 
 
 def windows_tree_capture(proc: "subprocess.Popen", suspended: bool = False) -> WindowsProcessTree:

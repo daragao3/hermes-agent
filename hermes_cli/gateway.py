@@ -3755,6 +3755,7 @@ def launch_gateway_detached(extra_args: list[str] | None = None) -> int | None:
     gateway-restart-cluster-2026-04-30.md.
     """
     import subprocess
+    from hermes_cli._subprocess_compat import _CREATE_BREAKAWAY_FROM_JOB
 
     cmd = _gateway_run_command()
     # This API follows an explicit stop; preserve its original non-replacing launch.
@@ -3765,10 +3766,16 @@ def launch_gateway_detached(extra_args: list[str] | None = None) -> int | None:
     creationflags = 0
     start_new_session = False
     if sys.platform == "win32":
-        # CREATE_NEW_PROCESS_GROUP=0x00000200, DETACHED_PROCESS=0x00000008
+        # CREATE_NEW_PROCESS_GROUP=0x00000200, DETACHED_PROCESS=0x00000008. Plus
+        # CREATE_BREAKAWAY_FROM_JOB: DETACHED_PROCESS is a console property, not a job one -- a
+        # CLI that has enrolled itself in its kill-on-close job (_subprocess_compat.
+        # windows_enroll_self, done by every suspended probe spawn) would otherwise take this
+        # gateway down with it at exit. A parent job that forbids breakaway refuses the flag
+        # with ERROR_ACCESS_DENIED; the retry below then spawns as before.
         creationflags = (
             getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
             | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | _CREATE_BREAKAWAY_FROM_JOB
         )
     else:
         start_new_session = True
@@ -3794,19 +3801,24 @@ def launch_gateway_detached(extra_args: list[str] | None = None) -> int | None:
     except Exception:
         stderr_handle = subprocess.DEVNULL
 
+    popen_kwargs = dict(
+        stdin=subprocess.DEVNULL,
+        stdout=stdout_handle,
+        stderr=stderr_handle,
+        start_new_session=start_new_session,
+        close_fds=True,
+        cwd=str(installed_package_root()),
+        env={**os.environ, "HERMES_HOME": str(get_hermes_home()),
+             "HERMES_GATEWAY_DETACHED": "1", GATEWAY_SPAWN_SITE_ENV: "cli:launch-detached"},
+    )
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=stdout_handle,
-            stderr=stderr_handle,
-            creationflags=creationflags,
-            start_new_session=start_new_session,
-            close_fds=True,
-            cwd=str(installed_package_root()),
-            env={**os.environ, "HERMES_HOME": str(get_hermes_home()),
-                 "HERMES_GATEWAY_DETACHED": "1", GATEWAY_SPAWN_SITE_ENV: "cli:launch-detached"},
-        )
+        try:
+            proc = subprocess.Popen(cmd, creationflags=creationflags, **popen_kwargs)
+        except OSError:
+            if not creationflags & _CREATE_BREAKAWAY_FROM_JOB:
+                raise
+            # The parent's job object refuses breakaway (ERROR_ACCESS_DENIED); spawn as before.
+            proc = subprocess.Popen(cmd, creationflags=creationflags & ~_CREATE_BREAKAWAY_FROM_JOB, **popen_kwargs)
         return proc.pid
     except Exception as exc:
         print(f"⚠ Failed to launch detached gateway: {exc}")

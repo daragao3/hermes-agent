@@ -74,13 +74,17 @@ POLL_LOOP_ERROR_COOLDOWN_SECONDS = 900
 # is a TerminateProcess walk (hermes_cli._subprocess_compat.windows_kill_process_
 # tree) that completes in well under a second and grants nothing; the 30s figure
 # older comments cite (_TASKKILL_TIMEOUT_S, removed 51ef1feed3) was the taskkill
-# subprocess timeout, never a grace period.  10s keeps this tail a small slice
-# of the 70s the stopper grants.
+# subprocess timeout, never a grace period.  Since 2026-09-18 that grace is
+# leash + 10s + a 60s teardown margin (_STOP_TEARDOWN_MARGIN_S; 130s by
+# default) precisely because of this tail: the 38-stop census in gateway.log
+# measured shutdown() at p50 7.4s / p90 13.5s / max 32.0s, and none of it was
+# the drain poll this constant bounds -- it was _registry.shutdown_all(),
+# TelegramNotifier and WhatsAppEscalator flushing their pending batches one
+# round-trip per topic.  10s keeps the poll pass a small slice of that margin.
 #
-# This bounds the DRAIN (one last poll per subscriber) only. The other half of
-# shutdown()'s tail — SubscriberRegistry.shutdown_all(), where TelegramNotifier
-# flushes its per-topic batches and WhatsAppEscalator its throttle buffer —
-# has its own budget below; this one never applied to it.
+# So this bounds the DRAIN (one last poll per subscriber) only, and never
+# applied to that flush.  The flush half has its own deadline now:
+# SHUTDOWN_FLUSH_BUDGET_SECONDS below, shared by every subscriber.
 SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 10.0
 # Budget for shutdown_all()'s flushes, shared by every subscriber (see
 # SubscriberRegistry.shutdown_all / shutdown_time_remaining). Census 2026-09-18
@@ -97,9 +101,9 @@ SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 10.0
 # 15-min window), so past the budget they stop STARTING sends and leave the
 # rest. 30s covers every observed stop; the worst case is ~30s + one 30s send,
 # which with the 10s drain above just fits the stopper's 70s default grace and
-# sits well inside the 130s it grants once the 2026-09-18 teardown margin
-# (claude/stop-grace-covers-shutdown-tail-20260918, _STOP_TEARDOWN_MARGIN_S)
-# lands. Not configurable on purpose: it is sized against those clocks.
+# sits well inside the 130s it grants since the 2026-09-18 teardown margin
+# (99c86bcae1, _STOP_TEARDOWN_MARGIN_S) landed. Not configurable on purpose:
+# it is sized against those clocks.
 SHUTDOWN_FLUSH_BUDGET_SECONDS = 30.0
 # Heartbeat write interval — external watchers stat gateway_heartbeat_path()
 # and alert on staleness > a few minutes, so this cadence must be tight

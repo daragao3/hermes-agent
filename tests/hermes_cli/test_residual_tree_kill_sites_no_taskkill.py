@@ -764,7 +764,6 @@ def _argv_words(path: Path) -> set[str]:
 def test_no_taskkill_tree_argv_in_the_fixed_sites(rel):
     words = _argv_words(_REPO / rel)
     assert "/T" not in words and "/IM" not in words, rel
-    # The whatsapp port sweep keeps a single-pid ``taskkill /F`` after an identity check;
-    # everywhere else the binary is gone entirely.
-    if rel != "plugins/platforms/whatsapp/adapter.py":
-        assert "taskkill" not in words, rel
+    # The whatsapp port sweep kept a single-pid ``taskkill /F`` after an identity check until
+    # 2026-09-18 (7-9 s per spawn at 100% CPU); the binary is now gone from every site.
+    assert "taskkill" not in words, rel

@@ -31,6 +31,12 @@ _SPAWN_SITE_TASK_SCRIPT = "windows-task-script"
 _SPAWN_SITE_STARTUP_FOLDER = "windows-startup-folder"
 _SPAWN_SITE_UNSPECIFIED = GATEWAY_SPAWN_SITE_UNSPECIFIED
 _STOP_ESCALATION_MARGIN_S = 10.0
+# Headroom for the teardown that runs AFTER the dying gateway's _stop_impl
+# (gateway/run.py's post-wait_for_shutdown tail plus interpreter exit), which
+# the shutdown watchdog does not cover.  Sized from the data, not picked: see
+# _windows_stop_drain_timeout.  gateway/run.py's --replace path pays the same
+# figure through this function; keep them one number.
+_STOP_TEARDOWN_MARGIN_S = 60.0
 _STOP_GRACE_CEILING_S = 300.0
 _STOP_FALLBACK_DRAIN_TIMEOUT_S = 30.0
 
@@ -1374,8 +1380,34 @@ def _windows_stop_drain_timeout() -> float:
     only an ABSENT lookup result falls back.
 
     Honouring 0 does not collapse the escalation ordering: no drain is not no
-    shutdown, so the grace is still ``60 + 10 = 70s`` — past the watchdog,
-    which fires on its own grace regardless of the drain budget.
+    shutdown, so the grace is still ``60 + 10 + 60 = 130s`` — past the
+    watchdog, which fires on its own grace regardless of the drain budget.
+
+    **The leash is not the whole teardown** (2026-09-18).  The watchdog covers
+    ``_stop_impl`` only; ``gateway/run.py`` then runs a tail AFTER
+    ``wait_for_shutdown`` returns — control socket, cron/housekeeping thread
+    waits, ``events.gateway_integration.shutdown()``, MCP — and the
+    interpreter's own exit follows that.  Nothing internal bounds the tail, so
+    the grace granted here is the only clock it runs against.  A census over
+    the 38 stops in ``profiles/main/logs/gateway.log`` (2026-08-31..09-18,
+    correlated with ``gateway-exit-diag.log``) measured that tail, from
+    ``Gateway stopped`` to ``asyncio.run.returned``, at p50 7.4s, p90 13.5s,
+    max 32.0s.  The cron/housekeeping waits (65s + 35s on paper) cost nothing
+    in all 38 — ``_stop_impl`` has already drained or interrupted the in-flight
+    cron by then — and the whole tail was ``TelegramNotifier`` /
+    ``WhatsAppEscalator`` flushing their pending batches from
+    ``SubscriberRegistry.shutdown_all()``, serially, one Telegram round-trip
+    per topic.  Until then the tail had only the 10s escalation margin, so a
+    gateway whose ``_stop_impl`` ran to its leash would have been tree-killed
+    mid-flush by a plain ``hermes gateway stop`` — while ``--replace`` had paid
+    a 60s teardown margin since b6fec07e66 (2026-08-25, sized from 582
+    teardowns: p90 0.0s, non-wedge tail to ~46s, wedges 356-753s deliberately
+    NOT covered).  ``_STOP_TEARDOWN_MARGIN_S`` moves that margin here so both
+    stoppers grant the same ``leash + 10 + 60``; ``gateway/run.py``'s
+    ``_replace_drain_timeout`` reuses this value rather than adding its own.
+    Same cost model as before: ``_drain_gateway_pid`` polls until the PID
+    exits, so the margin is paid only by a gateway that needs it, and the
+    ceiling still kills a wedge in five minutes.
     """
     configured = _STOP_FALLBACK_DRAIN_TIMEOUT_S
     try:
@@ -1394,8 +1426,10 @@ def _windows_stop_drain_timeout() -> float:
         # Mirrors resolve_shutdown_watchdog_delay's own drain + grace.
         leash = configured + 60.0
     # Windows CLI stop must not wedge forever: give the watchdog room to fire
-    # and be seen, then escalate to the known PID regardless.
-    return max(1.0, min(leash + _STOP_ESCALATION_MARGIN_S, _STOP_GRACE_CEILING_S))
+    # and be seen, then the post-_stop_impl tail its measured headroom, then
+    # escalate to the known PID regardless.
+    granted = leash + _STOP_ESCALATION_MARGIN_S + _STOP_TEARDOWN_MARGIN_S
+    return max(1.0, min(granted, _STOP_GRACE_CEILING_S))
 
 
 def _force_terminate_known_gateway_pids(pids: list[int]) -> int:

@@ -4828,6 +4828,10 @@ async def _wait_for_pid_exit(pid: int, attempts: int, delay: float) -> bool:
 DEFAULT_REPLACE_MIN_INCUMBENT_AGE_S = 120.0
 _REPLACE_MIN_AGE_ENV = "HERMES_GATEWAY_REPLACE_MIN_AGE_SECONDS"
 _REPLACE_DRAIN_CEILING_S = 600.0
+# Fallback-only mirror of hermes_cli.gateway_windows._STOP_TEARDOWN_MARGIN_S,
+# used when that module cannot be imported.  The primary path gets the same
+# margin from _windows_stop_drain_timeout() itself (2026-09-18) so `stop` and
+# --replace grant one budget; do not add it twice.
 _REPLACE_TEARDOWN_MARGIN_S = 60.0
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -4875,16 +4879,21 @@ def _replace_drain_timeout() -> float:
     drift apart, and falls back to a directly-derived value otherwise.  Bounded
     so a misconfigured budget cannot hang a replace forever; waiting costs
     nothing in the common case because the caller polls until the PID exits.
+
+    The drain finishing is not the process being gone: the post-loop tail
+    (``_start_gateway_shutdown_tail`` — chiefly the EventBus subscribers
+    flushing their pending batches — then interpreter exit) runs after the
+    leash and was force-killed on 2026-08-25 (gateway 14572, b6fec07e66).
+    Since 2026-09-18 the 60s teardown margin sized for that lives inside
+    ``_windows_stop_drain_timeout`` (``_STOP_TEARDOWN_MARGIN_S``) so a plain
+    ``hermes gateway stop`` grants it too; only the fallback below adds it
+    here.
     """
-    granted: Optional[float] = None
     try:
         from hermes_cli.gateway_windows import _windows_stop_drain_timeout
 
         granted = float(_windows_stop_drain_timeout())
     except Exception:
-        granted = None
-
-    if granted is None:
         try:
             from hermes_cli.gateway import _get_restart_drain_timeout
 
@@ -4894,10 +4903,9 @@ def _replace_drain_timeout() -> float:
         # Outlast the incumbent's own budget rather than matching it exactly;
         # a drain that finishes at the buzzer still needs to write its records.
         granted *= 1.5
-
-    # Both sources bound the DRAIN. Teardown runs after it and needs its own
-    # headroom -- see _REPLACE_TEARDOWN_MARGIN_S for the measurement.
-    granted += _REPLACE_TEARDOWN_MARGIN_S
+        # The fallback bounds the DRAIN only; give the teardown tail the same
+        # headroom the primary path already carries.
+        granted += _REPLACE_TEARDOWN_MARGIN_S
 
     return max(15.0, min(granted, _REPLACE_DRAIN_CEILING_S))
 
@@ -5300,7 +5308,17 @@ async def _start_gateway_shutdown_tail(
     cron_thread: threading.Thread, housekeeping_thread: threading.Thread,
     _planned_stop_watcher_stop: threading.Event, _planned_stop_watcher_thread: threading.Thread,
     _signal_initiated_shutdown: list) -> bool:
-    """Post-``wait_for_shutdown`` teardown; returns the process exit verdict (True = exit 0)."""
+    """Post-``wait_for_shutdown`` teardown; returns the process exit verdict (True = exit 0).
+
+    Runs OUTSIDE the shutdown watchdog leash (that covers ``_stop_impl`` only) and
+    has no internal bound of its own; the only clock against it is the stopper's
+    grace, ``hermes_cli.gateway_windows._windows_stop_drain_timeout()``, whose
+    ``_STOP_TEARDOWN_MARGIN_S`` exists for this tail.  Measured 2026-09-18 over
+    the 38 stops in gateway.log: ``Gateway stopped`` -> ``asyncio.run.returned``
+    p50 7.4s / p90 13.5s / max 32.0s, all of it the EventBus subscribers flushing
+    pending batches in ``events.gateway_integration.shutdown()``; the cron and
+    housekeeping waits below exited within 0.1s every time.
+    """
     # Control socket first: once shutdown begins we are no longer a truthful "serving here" answer and a
     # successor must be able to bind. Early-exit paths rely on the atexit cleanup_files hook instead.
     if _control_server is not None:

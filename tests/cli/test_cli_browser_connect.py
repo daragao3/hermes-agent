@@ -215,3 +215,52 @@ class TestChromeDebugLaunch:
         assert "'" not in command
 
 
+
+
+class TestDetachedBrowserSpawn:
+    """The launched browser must outlive this process. On Windows that is a
+    job-object question, not a console one: a process enrolled in its own
+    kill-on-close job (every suspended probe spawn does that) takes every
+    non-breakaway descendant with it at exit."""
+
+    def test_windows_detach_carries_the_breakaway_bit(self):
+        from hermes_cli.browser_connect import _detach_kwargs
+
+        assert _detach_kwargs("Windows")["creationflags"] & 0x01000000
+        assert _detach_kwargs("Windows")["creationflags"] & 0x8  # DETACHED_PROCESS kept
+        assert not _detach_kwargs("Windows", breakaway=False)["creationflags"] & 0x01000000
+        assert _detach_kwargs("Linux") == {"start_new_session": True}
+        assert _detach_kwargs("Darwin", breakaway=False) == {"start_new_session": True}
+
+    def test_windows_spawn_retries_without_breakaway_when_the_parent_job_refuses(self):
+        from hermes_cli.browser_connect import _popen_detached
+
+        seen = []
+
+        def fake_popen(argv, **kwargs):
+            seen.append(kwargs["creationflags"])
+            if kwargs["creationflags"] & 0x01000000:
+                raise PermissionError(13, "Access is denied")
+            return "proc"
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            assert _popen_detached(["chrome.exe"], "Windows", stdout=None) == "proc"
+        assert len(seen) == 2 and seen[0] & 0x01000000 and not seen[1] & 0x01000000
+
+    def test_posix_spawn_failure_is_not_retried(self):
+        from hermes_cli.browser_connect import _popen_detached
+
+        calls = []
+
+        def fake_popen(argv, **kwargs):
+            calls.append(kwargs)
+            raise OSError("no such binary")
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            try:
+                _popen_detached(["google-chrome"], "Linux", stdout=None)
+            except OSError:
+                pass
+            else:  # pragma: no cover
+                raise AssertionError("OSError must propagate")
+        assert len(calls) == 1

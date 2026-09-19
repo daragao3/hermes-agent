@@ -31,7 +31,8 @@ staging time rather than at the flush.
 
 **The flush only happens on a graceful teardown.** If the process is
 force-killed — tree-killed by the stopper past `_windows_stop_drain_timeout()`
-(leash + 10s; the kill itself is instantaneous), or the shutdown
+(leash + 10s + a 60s teardown margin since 2026-09-18, 130s by default; the
+kill itself is instantaneous), or the shutdown
 watchdog's `exit_code=1` (leash = `agent.restart_drain_timeout` + 60s) —
 neither `_drain_subscribers_for_shutdown()` nor `SubscriberRegistry.
 shutdown_all()` runs, and the staged reports die with the process. Nothing is
@@ -41,6 +42,27 @@ Priority.NORMAL") and named this work as the real fix.
 
 Scale: the 2026-08-12 census found six shutdowns started that day and three
 completed — roughly half of shutdowns on this box, not an edge case.
+
+**Where the flush sits on the clock (measured 2026-09-18).** The shutdown
+watchdog leash covers `_stop_impl` only. `SubscriberRegistry.shutdown_all()`
+runs in `gateway/run.py`'s post-`wait_for_shutdown` tail
+(`_start_gateway_shutdown_tail`), which has no internal bound and runs only
+against the stopper's grace. A census over the 38 stops in
+`profiles/main/logs/gateway.log` (2026-08-31..09-18, correlated with
+`gateway-exit-diag.log`) measured that tail, `Gateway stopped` ->
+`asyncio.run.returned`, at p50 7.4s / p90 13.5s / max 32.0s. The cron and
+housekeeping thread waits (65s + 35s on paper) exited within 0.1s in all 38 —
+`_stop_impl` has already drained or interrupted the in-flight cron by then —
+and the whole tail was `TelegramNotifier` / `WhatsAppEscalator` flushing their
+pending batches from `shutdown_all()`, one Telegram round-trip per topic,
+which `SHUTDOWN_DRAIN_TIMEOUT_SECONDS` (10s) does not gate: that deadline
+bounds only whether the poll pass STARTS a subscriber. Until 2026-09-18 a
+plain `hermes gateway stop` granted this tail only the 10s escalation margin
+(`--replace` had paid a 60s teardown margin since b6fec07e66); the margin now
+lives in `_windows_stop_drain_timeout` (`_STOP_TEARDOWN_MARGIN_S`) so both
+stoppers grant leash + 10 + 60. Nothing in this design changes: a kill past
+that grace still lands inside a flush, and the successor still reconstructs
+from the bus.
 
 ### Why the successor cannot do it today
 

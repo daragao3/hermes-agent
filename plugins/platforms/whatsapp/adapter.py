@@ -54,7 +54,13 @@ def _listener_pids_on_port(port: int) -> list:
     burned the full ``_wait_for_port_release`` window and failed to bind.
 
     The shell probes stay as the fallback for a host where psutil is missing or
-    the platform denies the connection table.
+    the platform denies the connection table. On Windows a scan that *completed*
+    is the kernel's whole answer (``GetExtendedTcpTable`` names every owning
+    pid), so an empty one means no listener -- the old bridge just left the
+    table, or the port is bound for some other reason -- and netstat could only
+    re-read the same table for the price of a spawn (8-21 s here, 13 s measured
+    on 2026-09-18 for the first scan after a kill). POSIX keeps falling through
+    on empty: ``/proc/net/tcp`` cannot attribute another user's socket to a pid.
     """
     pids: list = []
     try:
@@ -68,7 +74,7 @@ def _listener_pids_on_port(port: int) -> list:
                 and conn.pid
             ):
                 pids.append(conn.pid)
-        if pids:
+        if pids or _IS_WINDOWS:
             return pids
     except Exception:
         # ImportError, or AccessDenied on a platform that gates the table.
@@ -125,28 +131,67 @@ def _pid_looks_like_node_bridge(pid: int) -> bool:
     including a critical system process). Before any kill, require the live process to actually look like
     our Baileys bridge: a ``node`` executable. Any ambiguity (process gone, unreadable cmdline) refuses the
     kill.
+
+    Cost: ``psutil.Process`` + ``exe()`` + ``cmdline()`` are one ``OpenProcess`` each and measured 0.0-0.2 ms
+    on an owned node child at 100% CPU (2026-09-18); the seconds the port sweep used to spend were the
+    ``taskkill`` spawn and the netstat fallback, not this check. A pid that has already exited is the
+    common refusal (its LISTEN row outlives the process by a moment), so it is logged apart from a
+    stranger or an access-denied identity. ``argv[0]`` is compared whole: the old first-whitespace-token
+    parse of the joined cmdline read ``C:\\Program Files\\nodejs\\node.exe`` as ``C:\\Program``.
     """
     try:
         import psutil
+    except ImportError:
+        return False
+    try:
         proc = psutil.Process(pid)
-        return "node" in (proc.name() or "").lower() or "node" in " ".join(proc.cmdline() or []).lower().split(" ", 1)[0]
-    except Exception:
+        with proc.oneshot():
+            if "node" in (proc.name() or "").lower():
+                return True
+            argv = proc.cmdline() or []
+        return bool(argv) and "node" in os.path.basename(str(argv[0])).lower()
+    except psutil.NoSuchProcess:
+        logger.debug("[whatsapp] PID %s exited before its identity could be checked", pid)
+        return False
+    except Exception as exc:  # AccessDenied, ZombieProcess, a partial psutil
+        logger.debug("[whatsapp] PID %s identity unverifiable: %r", pid, exc)
         return False
 
 
 def _kill_port_process(port: int) -> None:
-    """Kill any node bridge *listening* on the given TCP port (never a client); SIGTERM on POSIX, taskkill /F on Windows."""
+    """Kill any node bridge *listening* on the given TCP port (never a client).
+
+    SIGTERM on POSIX. On Windows the creation-time-pinned walk
+    (:func:`hermes_cli._subprocess_compat.windows_kill_process_tree`, the primitive
+    :func:`_terminate_bridge_process` already uses) -- never ``taskkill``: that spawn
+    measured 7.4 s and 8.7 s against an owned node child at 100% CPU on 2026-09-18, and
+    was the whole cost of the "7-9 s identity check" (the check itself is sub-millisecond).
+    The creation time is read BEFORE the identity check so a pid recycled at any point
+    between the scan and the kill is refused by the pin; one that cannot be read is not
+    killed at all (fail closed, the same refusal as ``gateway.status.terminate_pid``).
+    """
     with suppress(Exception):
         for pid in _listener_pids_on_port(port):
+            if pid <= 0:
+                continue
+            created = None
+            if _IS_WINDOWS:
+                from hermes_cli._subprocess_compat import windows_process_created
+                created = windows_process_created(pid)
             # Killing a mistyped or recycled PID is unrecoverable — verify first.
-            if pid <= 0 or not _pid_looks_like_node_bridge(pid):
+            if not _pid_looks_like_node_bridge(pid):
                 logger.warning("[whatsapp] Not killing PID %s on port %d: process is not a node bridge (or identity unverifiable)", pid, port)
                 continue
             if _IS_WINDOWS:
-                from hermes_cli._subprocess_compat import windows_hide_flags
-                # Only SubprocessError is swallowed per-PID; an OSError (e.g. taskkill missing) aborts the scan.
-                with suppress(subprocess.SubprocessError):
-                    subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, stdin=subprocess.DEVNULL, timeout=30, creationflags=windows_hide_flags())
+                if created is None:
+                    logger.warning("[whatsapp] Not killing PID %s on port %d: creation time unreadable, identity cannot be pinned", pid, port)
+                    continue
+                from hermes_cli._subprocess_compat import windows_kill_process_tree
+                killed: list = []
+                with suppress(Exception):
+                    killed = windows_kill_process_tree(pid, root_created=created)
+                if pid not in killed:
+                    logger.info("[whatsapp] PID %s on port %d left the walk untouched (exited or identity changed)", pid, port)
             else:
                 with suppress(OSError):  # ProcessLookupError/PermissionError are OSError subclasses
                     os.kill(pid, signal.SIGTERM)
@@ -274,6 +319,11 @@ def _file_content_hash(path: Path) -> str:
 
 
 _NODE_PROBE_TIMEOUT_S = 60
+# ``(path, size, mtime_ns)`` of every node binary that answered ``--version`` in this process. Each connect
+# attempt re-ran the probe — a process spawn that costs 0.5-1.4 s at 100% CPU here (2026-09-18) and sits
+# inside the runner's connect budget. A binary that answered once is installed until it changes on disk;
+# a timed-out or failed probe is never cached (the next attempt re-verifies).
+_node_probe_ok: set = set()
 _ENV_FATAL_RETRY_CEILING = 12
 _env_fatal_attempts = 0
 
@@ -308,6 +358,26 @@ def _listener_pids_on_port_netstat(port: int) -> list:
                     pass
     return pids
 
+def _port_is_free(port: int) -> bool:
+    """One bind on ``127.0.0.1:port`` — the exact operation bridge.js performs (it listens on 127.0.0.1 only).
+
+    Sub-millisecond even at 100% CPU (measured 0.1-1.2 ms on 2026-09-18), where the listener scan behind
+    ``_kill_port_process`` costs a psutil TCP-table walk (15-300 ms) and the sweep measured 7-9 s on the
+    same host -- later traced to its ``taskkill``/netstat spawns, since replaced (the per-PID identity
+    check is sub-millisecond). ``connect()`` asks this first: a free port means there is no bridge to adopt, none
+    to kill and no release to wait for, so none of those probes run. A bind refused for any other reason
+    (TIME_WAIT on Linux, EACCES) reads as "bound" and takes the slow path — the safe direction.
+    """
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+
+
 async def _wait_for_port_release(port: int, timeout_s: float = 15.0) -> bool:
     """Wait until ``port`` can actually be bound on 127.0.0.1.
 
@@ -316,19 +386,14 @@ async def _wait_for_port_release(port: int, timeout_s: float = 15.0) -> bool:
     and the fresh bridge crashed with EADDRINUSE.  Probe with a real bind —
     the exact operation the bridge is about to perform.
     """
-    import socket
-
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout_s
     while True:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-                probe.bind(("127.0.0.1", port))
+        if _port_is_free(port):
             return True
-        except OSError:
-            if loop.time() >= deadline:
-                return False
-            await asyncio.sleep(0.5)
+        if loop.time() >= deadline:
+            return False
+        await asyncio.sleep(0.5)
 
 def _rotate_bridge_log_if_large(log_path: "Path") -> None:
     """Rotate bridge.log at (re)start if it has grown past a size cap.
@@ -399,6 +464,15 @@ def whatsapp_deps_available() -> bool:
     """
     return node_executable_present("node")
 
+def _node_probe_key(node_path: str):
+    """Identity of the node binary for :data:`_node_probe_ok`; ``None`` (never cached) when it cannot be stat'ed."""
+    try:
+        st = os.stat(node_path)
+    except OSError:
+        return None
+    return (node_path, st.st_size, st.st_mtime_ns)
+
+
 def check_whatsapp_requirements() -> bool:
     """
     Check if WhatsApp dependencies are available.
@@ -410,6 +484,9 @@ def check_whatsapp_requirements() -> bool:
     _node = find_node_executable("node")
     if not _node:
         return False
+    probe_key = _node_probe_key(_node)
+    if probe_key in _node_probe_ok:
+        return True
     try:
         result = subprocess.run(
             [_node, "--version"],
@@ -417,6 +494,8 @@ def check_whatsapp_requirements() -> bool:
             text=True,
             timeout=_NODE_PROBE_TIMEOUT_S,
         )
+        if result.returncode == 0 and probe_key is not None:
+            _node_probe_ok.add(probe_key)
         return result.returncode == 0
     except subprocess.TimeoutExpired:
         # Node resolved to a real executable above — that IS the installation
@@ -470,6 +549,11 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
     bridge_port (3000) / session_path, dm_policy / group_policy (open|allowlist|disabled|pairing), allow_from / group_allow_from, send_read_receipts."""
 
     _DEFAULT_BRIDGE_DIR = None  # resolved in __init__
+    # Runner connect budget, sized from connect()'s own phases rather than the 30 s platform default:
+    # pre-spawn on a bound port (2 s health probe + kill + <=15 s port release) plus ``_wait_for_bridge``'s
+    # two 15-poll phases, with room for a loop other tasks are blocking. Attempt 6 on 2026-09-18 needed
+    # 22 s end to end under load with a FREE port; 30 s left nothing for a bound one.
+    connect_timeout_secs = 90.0
     splits_long_messages = True  # send() chunks via truncate_message()
 
     def __init__(self, config: PlatformConfig):
@@ -690,12 +774,21 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             if not self._ensure_bridge_deps(bridge_path.parent):
                 return False
             self._session_path.mkdir(parents=True, exist_ok=True)
-            if await self._reuse_running_bridge(bridge_path):
-                return True
-            _kill_stale_bridge_by_pidfile(self._session_path)
-            _kill_port_process(self._bridge_port)
-            if not await _wait_for_port_release(self._bridge_port):
-                logger.warning("[%s] Port %s remains bound; bridge will retry EADDRINUSE", self.name, self._bridge_port)
+            # A free port settles the whole adopt/kill/wait question in one bind. On 2026-09-18 the first
+            # five connects after a --replace timed out at the runner's budget without ever spawning
+            # node: the pre-spawn probes ran on a loop already blocked by a 100%-CPU host, and the
+            # cancellation landed at the health probe's await. With the port free that await no longer
+            # exists — the path to Popen is synchronous, so a spawned bridge is the worst case and the
+            # next attempt adopts it via ``_reuse_running_bridge``.
+            if not _port_is_free(self._bridge_port):
+                if await self._reuse_running_bridge(bridge_path):
+                    return True
+                _kill_stale_bridge_by_pidfile(self._session_path)
+                _kill_port_process(self._bridge_port)
+                if not await _wait_for_port_release(self._bridge_port):
+                    logger.warning("[%s] Port %s remains bound; bridge will retry EADDRINUSE", self.name, self._bridge_port)
+            else:
+                _kill_stale_bridge_by_pidfile(self._session_path)  # a recorded bridge that never bound is still ours to reap
             # Bridge output goes to a log file so QR codes, errors, and reconnection messages survive for troubleshooting.
             self._bridge_log = self._session_path.parent / "bridge.log"
             _rotate_bridge_log_if_large(self._bridge_log)

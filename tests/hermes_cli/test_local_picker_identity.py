@@ -14,6 +14,16 @@ import dataclasses
 
 import pytest
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): each payload build walks every
+# provider's credential pool in-process (measured 2026-09-18 at 100% host CPU:
+# 185 load_pool calls -> 1575 Path.resolve() syscalls, 12.6 s) and the first
+# build in a fresh HERMES_HOME also fetches and dumps the models.dev registry.
+# 18-30 s per file in four earlier full runs, then two ids tripped the
+# suite-wide cap under a shared box. Nothing here asserts a duration.
+pytestmark = pytest.mark.timeout(scaled(300))
+
 
 MANAGED = {"base_url": "http://127.0.0.1:18434/v1", "api_key": "k"}
 STAGED = {"Qwen-A-UD-Q4_K_M", "Qwen-B-UD-Q4_K_M"}

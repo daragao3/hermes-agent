@@ -21,8 +21,17 @@ code whenever the box happened to be idle.
 
 import subprocess
 
+import pytest
 
 from plugins.platforms.whatsapp import adapter as wa
+
+
+@pytest.fixture(autouse=True)
+def _no_cached_node_probe():
+    """``/usr/bin/node`` is real on Linux hosts: a cached success from one test must not answer the next."""
+    wa._node_probe_ok.clear()
+    yield
+    wa._node_probe_ok.clear()
 
 
 def test_node_version_probe_budget_is_not_five_seconds(monkeypatch):

@@ -375,59 +375,25 @@ def reap_orphaned_mcp_helpers(*, project_root: Optional[Path] = None, kill_fn=No
 def attach_self_to_kill_on_close_job() -> bool:
     """Place this process in a job that dies (whole tree) when we die. Windows-only, idempotent.
 
-    ``BREAKAWAY_OK`` keeps children spawned with ``CREATE_BREAKAWAY_FROM_JOB`` (gateway relaunch
-    during update, detached watchers) escaping exactly as before.
+    Delegates to :func:`hermes_cli._subprocess_compat.windows_enroll_self`, the one self-job per
+    process: ``KILL_ON_JOB_CLOSE | BREAKAWAY_OK``, handle held for life. Children spawned with
+    ``CREATE_BREAKAWAY_FROM_JOB`` (gateway relaunch during update, detached watchers) escape
+    exactly as before; every other descendant -- stdio MCP helpers included -- dies with us.
+
+    Until 2026-09-18 this job also set ``SILENT_BREAKAWAY_OK``, which kept every child OUT of it:
+    the job held this process alone and the "whole tree" above was not true. Dropping the bit is
+    what lets a child created frozen (``CREATE_SUSPENDED``) be a member from birth, see
+    ``windows_enroll_self``.
     """
     global _JOB_HANDLE
-    if not _IS_WINDOWS or _JOB_HANDLE is not None:
-        return _JOB_HANDLE is not None
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
-        JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x0800
-        JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x1000
-        JobObjectExtendedLimitInformation = 9
-
-        class IO_COUNTERS(ctypes.Structure):
-            _fields_ = [(n, ctypes.c_ulonglong) for n in (
-                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
-                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
-
-        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER), ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
-                ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
-                ("Affinity", ctypes.POINTER(wintypes.ULONG)), ("PriorityClass", wintypes.DWORD),
-                ("SchedulingClass", wintypes.DWORD),
-            ]
-
-        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-                ("IoInfo", IO_COUNTERS),
-                *((n, ctypes.c_size_t) for n in (
-                    "ProcessMemoryLimit", "JobMemoryLimit", "PeakProcessMemoryUsed", "PeakJobMemoryUsed")),
-            ]
-
-        job = kernel32.CreateJobObjectW(None, None)
-        if not job:
-            return False
-        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        info.BasicLimitInformation.LimitFlags = (
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK
-        )
-        ok = kernel32.SetInformationJobObject(job, JobObjectExtendedLimitInformation, ctypes.byref(info), ctypes.sizeof(info))
-        if not ok or not kernel32.AssignProcessToJobObject(job, kernel32.GetCurrentProcess()):
-            kernel32.CloseHandle(job)
-            return False
-        _JOB_HANDLE = job  # keep alive for the life of the process — never close
-        logger.debug("attached to kill-on-close job object")
-        return True
-    except Exception:
-        logger.debug("job object self-attach failed", exc_info=True)
+    if not _IS_WINDOWS:
         return False
+    if _JOB_HANDLE is not None:
+        return True
+    from hermes_cli._subprocess_compat import windows_enroll_self
+    _JOB_HANDLE = windows_enroll_self()  # keep alive for the life of the process -- never close
+    if _JOB_HANDLE is None:
+        logger.debug("job object self-attach failed")
+        return False
+    logger.debug("attached to kill-on-close job object")
+    return True

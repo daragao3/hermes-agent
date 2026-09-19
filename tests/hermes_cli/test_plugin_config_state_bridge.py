@@ -10,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+
+from tests.timeout_budget import scaled
 import yaml
 
 from hermes_constants import reset_hermes_home_override, set_hermes_home_override
@@ -159,6 +161,10 @@ def test_concurrent_config_writes_do_not_drop_sibling_settings(
     }
 
 
+# Backstop only (tests/timeout_budget shape): two cold `python -c` children that import
+# hermes_cli.plugins and take the file lock 20 times each; a fixed 30 s wait tripped
+# under a shared box (2026-09-18). The contract is that no setting is lost.
+@pytest.mark.timeout(scaled(300))
 def test_config_cross_process_lock_preserves_every_setting(isolated_home: Path) -> None:
     script = """
 import sys
@@ -176,7 +182,7 @@ for i in range(int(sys.argv[1]), int(sys.argv[2])):
         )
         for start in (0, 20)
     ]
-    assert [process.wait(timeout=30) for process in processes] == [0, 0]
+    assert [process.wait(timeout=scaled(240)) for process in processes] == [0, 0]
 
     ctx = _context()
     assert {f"process_{i}": ctx.get_config(f"process_{i}") for i in range(40)} == {
@@ -230,6 +236,8 @@ def test_concurrent_state_updates_do_not_drop_keys(isolated_home: Path) -> None:
     assert state == {f"cursor_{i}": i for i in range(40)}
 
 
+# Same shape as test_config_cross_process_lock_preserves_every_setting.
+@pytest.mark.timeout(scaled(300))
 def test_state_cross_process_lock_preserves_every_update(isolated_home: Path) -> None:
     script = """
 import sys
@@ -247,7 +255,7 @@ for i in range(int(sys.argv[1]), int(sys.argv[2])):
         )
         for start in (0, 20)
     ]
-    assert [process.wait(timeout=30) for process in processes] == [0, 0]
+    assert [process.wait(timeout=scaled(240)) for process in processes] == [0, 0]
 
     state = json.loads(_context().state.path.read_text(encoding="utf-8"))
     assert state == {f"process_{i}": i for i in range(40)}

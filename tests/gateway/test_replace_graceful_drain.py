@@ -133,17 +133,46 @@ def test_replace_budget_covers_teardown_not_just_the_drain():
     that data -- those are what the force-kill is FOR, and waiting them out
     would turn a restart into a twelve-minute outage.
     """
-    from hermes_cli.gateway_windows import _windows_stop_drain_timeout
+    from gateway.shutdown_watchdog import resolve_shutdown_watchdog_delay
+    from hermes_cli.gateway import _get_restart_drain_timeout
 
     granted = gateway_run._replace_drain_timeout()
-    leash_based = float(_windows_stop_drain_timeout())
+    configured = _get_restart_drain_timeout()
+    leash = float(resolve_shutdown_watchdog_delay(
+        0.0 if configured is None else max(float(configured), 0.0)))
 
-    assert granted >= leash_based + 50.0, (
-        f"replace grants {granted}s against a leash-derived {leash_based}s -- "
+    # Compared against the LEASH itself, not against _windows_stop_drain_timeout:
+    # since 2026-09-18 that function carries the teardown margin too (so a plain
+    # `hermes gateway stop` covers the tail), and replace reuses it rather than
+    # stacking a second margin on top.
+    assert granted >= leash + 50.0, (
+        f"replace grants {granted}s against a {leash}s leash -- "
         "too thin to absorb the post-drain teardown tail"
     )
     # The live failure needed >130s end to end. Pin that specific case.
     assert granted >= 130.0, "must cover the observed 2026-08-25 teardown"
+
+
+def test_stop_and_replace_grant_the_incumbent_one_budget():
+    """``hermes gateway stop`` and ``--replace`` kill the same teardown.
+
+    The stop path granted leash + 10s while replace granted leash + 70s, so the
+    post-``_stop_impl`` tail (measured 2026-09-18 at up to 32s, all of it the
+    EventBus notifiers flushing) was covered on one path and not the other.  One
+    function now owns the margin; replace must not add it again (that would be
+    leash + 130s, a budget that waits out a wedge), and stop must not lack it.
+    """
+    from hermes_cli.gateway_windows import (
+        _STOP_TEARDOWN_MARGIN_S,
+        _windows_stop_drain_timeout,
+    )
+
+    assert gateway_run._replace_drain_timeout() == pytest.approx(
+        float(_windows_stop_drain_timeout())
+    )
+    assert _STOP_TEARDOWN_MARGIN_S == pytest.approx(gateway_run._REPLACE_TEARDOWN_MARGIN_S), (
+        "the fallback mirror must track the primary margin"
+    )
 
 
 def test_replace_budget_does_not_wait_out_a_wedge():

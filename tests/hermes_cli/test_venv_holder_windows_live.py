@@ -30,8 +30,15 @@ from pathlib import Path
 
 import pytest
 
+from tests.timeout_budget import scaled
+
 pytestmark = [
     pytest.mark.skipif(sys.platform != "win32", reason="live Windows venv-holder E2E"),
+    # Backstop only (tests/timeout_budget shape): every test spawns real python chains
+    # (a parent that runs a child that imports gateway.status and scans the process
+    # table); one id tripped the suite-wide cap inside communicate() under a shared box
+    # (2026-09-18). Nothing here asserts a duration.
+    pytest.mark.timeout(scaled(300)),
     # ``_spawn`` sleepers carry a "gateway run" argv tail as inert data (the guard's real-gateway
     # spawn check matches it); every child is ``_kill``ed by the test.
     pytest.mark.spawns_gateway_lookalike,
@@ -236,7 +243,7 @@ class TestAncestorExclusion:
             capture_output=True,
             text=True,
             cwd=str(PROJECT_ROOT),
-            timeout=120,
+            timeout=scaled(240),
         )
         import json
 
@@ -461,7 +468,7 @@ class TestUpdaterOwnedBackendDeferral:
                 capture_output=True,
                 text=True,
                 cwd=str(PROJECT_ROOT),
-                timeout=120,
+                timeout=scaled(240),
                 env={**os.environ, "HERMES_HOME": str(tmp_path)},
             )
             line = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else "{}"
