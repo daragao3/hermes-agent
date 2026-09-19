@@ -1223,6 +1223,73 @@ class TestLowPriorityBatching:
 
         assert len(sent) == 1
 
+    def test_shutdown_flush_stops_starting_sends_once_the_registry_budget_is_spent(
+        self, bus, topics_config, verbosity_config, monkeypatch, caplog,
+    ):
+        """2026-09-18 census: 4-5 per-topic batches, sent serially at 1-8s
+        each from the stopping gateway, were the whole measured stop tail.
+        The registry's shutdown budget gates whether the NEXT send starts;
+        the keys it leaves stay buffered, persisted with their age, and the
+        successor flushes them — delayed, never lost."""
+        import logging
+        import time
+        import events.subscribers.telegram_notifier as tn
+
+        sent = []
+        notifier = TelegramNotifier(
+            bus, topics_path=topics_config, verbosity_path=verbosity_config,
+            send_fn=lambda chat_id, thread_id, msg: sent.append(thread_id),
+        )
+        now = time.monotonic()
+        for thread in ("101", "102", "103"):
+            notifier._batch_buffer[f"-1001234567890:{thread}"] = [f"msg {thread}"]
+            notifier._batch_timestamps[f"-1001234567890:{thread}"] = now
+        # Budget seen before each send: the first starts, the second finds
+        # it spent (the first send burned it), the third is never consulted.
+        remaining = iter([12.0, 0.0])
+        monkeypatch.setattr(tn, "shutdown_time_remaining", lambda: next(remaining))
+
+        with caplog.at_level(logging.WARNING, logger=tn.logger.name):
+            notifier.shutdown()
+
+        assert sent == ["101"]
+        assert set(notifier._batch_buffer) == {
+            "-1001234567890:102", "-1001234567890:103",
+        }, "unflushed batches must stay buffered, not be dropped"
+        assert "2 batch(es) left for the successor" in caplog.text
+        # And they are on disk for the successor, which resumes them.
+        successor = TelegramNotifier(
+            bus, topics_path=topics_config, verbosity_path=verbosity_config,
+            send_fn=lambda *a, **k: None,
+        )
+        assert set(successor._batch_buffer) == {
+            "-1001234567890:102", "-1001234567890:103",
+        }
+
+    def test_handle_time_flush_is_never_budgeted(
+        self, bus, topics_config, verbosity_config,
+    ):
+        """Outside shutdown_all() shutdown_time_remaining() is None and every
+        stale key flushes, exactly as before the budget existed."""
+        import time
+        from events.subscribers.base import shutdown_time_remaining
+
+        assert shutdown_time_remaining() is None
+        sent = []
+        notifier = TelegramNotifier(
+            bus, topics_path=topics_config, verbosity_path=verbosity_config,
+            send_fn=lambda chat_id, thread_id, msg: sent.append(thread_id),
+        )
+        stale = time.monotonic() - 10_000
+        for thread in ("101", "102", "103"):
+            notifier._batch_buffer[f"-1001234567890:{thread}"] = [f"msg {thread}"]
+            notifier._batch_timestamps[f"-1001234567890:{thread}"] = stale
+
+        notifier._flush_stale_batches()
+
+        assert sorted(sent) == ["101", "102", "103"]
+        assert notifier._batch_buffer == {}
+
 
 class TestAgentFailureClusterDedup:
     """Receiver-side LRU dedup for AGENT_FAILURE_CLUSTER (Option C in
