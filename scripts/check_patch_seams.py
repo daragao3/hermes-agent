@@ -105,7 +105,14 @@ Deliberately NOT reported (each is counted under ``--verbose``):
   not_static, and a rename was exactly the head-only red this file exists
   for).  Any shape the walk does not follow (a computed key, ``server.
   __dict__``, ``vars(server)``, the server handed to an unresolvable call)
-  keeps the old non-static verdict;
+  keeps the old non-static verdict.  An INSTANCE registrar is read the same
+  way (since 2026-09-18): ``_registry = ProviderRegistry(...)`` then
+  ``_registry.export(globals())`` -- agent/*_registry.py, seven modules --
+  resolves to that repo class's method, read past ``self``, and a namespace
+  dict is written through the dict protocol (``namespace.update(x=v)``,
+  ``.update({"x": v})``, ``namespace["x"] = v``, ``.setdefault("x", v)``);
+  ``register_provider`` / ``_reset_for_tests`` and the other names export
+  publishes verify instead of being skipped;
 * an ``if TYPE_CHECKING:`` body never runs, so its imports bind nothing (the
   split modules declare the names bind_module supplies there); ``if not
   TYPE_CHECKING:`` is the runtime branch.  First run of this rule over the
@@ -116,8 +123,16 @@ Deliberately NOT reported (each is counted under ``--verbose``):
 * a PEP 562 ``__getattr__`` IS read: the names it compares ``name`` with and the
   keys of the module-level literal it looks ``name`` up in (``_PLUGIN_COMPAT_LAZY
   .get(name)``, ``name not in __all__``) count as bound -- tools/voice_mode.py,
-  the incident module, has one.  A hook that inspects ``name`` some other way
-  makes the module non-static like a wildcard import;
+  the incident module, has one.  The literal is read as far as the source
+  spells it (since 2026-09-18): a ``frozenset(...)`` / ``set`` / ``tuple`` /
+  ``list`` / ``dict`` / ``sorted`` wrap, a ``|`` / ``+`` union, a ``**``
+  unpack inside a dict display, a comprehension over module-level displays
+  or over a tuple of module-level names (every identifier-shaped string in
+  each name's value: ``_path_resolver("SKILLS_DIR", ...)``) -- tools/
+  skills_hub.py's ``_DYNAMIC_PATH_RESOLVERS`` and tools/mcp_tool.py's
+  ``_MCP_SDK_LAZY_SYMBOLS`` -- and ``globals()[name]`` in the hook serves
+  nothing beyond what is bound.  A hook that inspects ``name`` some other
+  way makes the module non-static like a wildcard import;
 * ``create=True`` / ``raising=False``: the caller allows a missing attribute.
 
 Findings the model is known to get wrong go in ``ALLOWLIST`` (``path::target``),
@@ -475,6 +490,36 @@ def _namespace_effects(stmt: ast.stmt) -> tuple[set[str], list[re.Pattern[str]],
     return names, patterns, unknown, registrars
 
 
+def _dict_protocol_names(node: ast.Call, param: str) -> set[str] | None:
+    """Names a call on a namespace DICT parameter binds: ``ns.update(x=v)``
+    and ``ns.update({"x": v})`` bind their keys, ``ns.setdefault("x", v)``
+    binds x, ``ns.get`` / ``.keys`` / ``.items`` / ``.values`` / ``.copy``
+    read.  None for ``**computed``, a non-literal positional, a computed
+    key, or any other method (``ns.pop``, ``ns.__dict__.update``)."""
+    chain = _dotted_chain(node.func)
+    if chain is None or len(chain) != 2 or chain[0] != param:
+        return None
+    method = chain[1]
+    if method in ("get", "keys", "items", "values", "copy"):
+        return set()
+    if method == "setdefault" and node.args and not node.keywords:
+        key = node.args[0]
+        return {key.value} if isinstance(key, ast.Constant) and isinstance(key.value, str) else None
+    if method != "update" or len(node.args) > 1:
+        return None
+    out: set[str] = set()
+    for kw in node.keywords:
+        if kw.arg is None:
+            return None  # ``**computed``
+        out.add(kw.arg)
+    if node.args:
+        keys = _literal_strings(node.args[0]) if isinstance(node.args[0], ast.Dict) else None
+        if keys is None:
+            return None
+        out |= keys
+    return out
+
+
 def _parse(source: bytes, filename: str) -> ast.Module | None:
     """``ast.parse`` without the SyntaxWarnings a docstring's stray backslash
     would print (they are the file's business, not this scan's)."""
@@ -520,12 +565,27 @@ def _display_strings(node: ast.expr) -> set[str] | None:
     return out
 
 
-def _comprehension_strings(node: ast.expr, deep: dict[str, set[str] | None]) -> set[str] | None:
+def _all_strings(node: ast.expr) -> set[str] | None:
+    """Every identifier-shaped string constant anywhere in an expression
+    (``_path_resolver("SKILLS_DIR", "HERMES_HOME", "skills")`` -> all three,
+    not ``".hub"``); None when there is none.  The widest over-approximation
+    of what a value could contribute as a name, used only where a
+    comprehension re-keys such values."""
+    out = {sub.value for sub in ast.walk(node)
+           if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and sub.value.isidentifier()}
+    return out or None
+
+
+def _comprehension_strings(node: ast.expr, deep: dict[str, set[str] | None],
+                           strings: dict[str, set[str] | None] | None = None) -> set[str] | None:
     """A dict/set comprehension re-keyed from module-level literal displays
     (``{attr: mod for mod, attrs in SURFACE.items() for attr in attrs}``):
     every string in the displays it iterates, an over-approximation that only
-    ever makes MORE names count as served.  None when a generator iterates
-    anything else."""
+    ever makes MORE names count as served.  A generator over a tuple of
+    module-level NAMES (``{r.__name__[1:].upper(): r for r in (_skills_dir,
+    _hub_dir)}``, tools/skills_hub.py) contributes every string constant in
+    each name's assigned value (``strings``), the same over-approximation one
+    step removed.  None when a generator iterates anything else."""
     if not isinstance(node, (ast.DictComp, ast.SetComp)):
         return None
     out: set[str] = set()
@@ -538,16 +598,68 @@ def _comprehension_strings(node: ast.expr, deep: dict[str, set[str] | None]) -> 
             out |= deep[source.id]
         elif isinstance(source, ast.Name) and any(source.id == t.id for g in node.generators for t in ast.walk(g.target) if isinstance(t, ast.Name)):
             continue  # the inner loop over a value of the outer display
+        elif (literal := _display_strings(source)) is not None:
+            out |= literal  # an inline display: ``for k in ("A", "B")``
+        elif (strings is not None and isinstance(source, (ast.Tuple, ast.List)) and source.elts
+              and all(isinstance(e, ast.Name) and strings.get(e.id) is not None for e in source.elts)):
+            for elt in source.elts:
+                out |= strings[elt.id]  # type: ignore[index]
         else:
             return None
     return out
+
+
+_CONTAINER_CALLS = frozenset({"frozenset", "set", "tuple", "list", "dict", "sorted"})
+
+
+def _container_strings(node: ast.expr, literals: dict[str, set[str] | None], deep: dict[str, set[str] | None],
+                       strings: dict[str, set[str] | None]) -> set[str] | None:
+    """The string keys/elements of a module-level container expression, as far
+    as the source spells them: a literal display; a comprehension over
+    module-level displays (``_comprehension_strings``); a ``frozenset(...)``
+    / ``set`` / ``tuple`` / ``list`` / ``dict`` / ``sorted`` wrap of one; a
+    ``|`` / ``+`` union of two; another module-level container by name; a
+    dict display whose ``**`` entries are any of these (tools/skills_hub.py's
+    ``{"HERMES_HOME": f, **{...comprehension...}}``, tools/mcp_tool.py's
+    ``frozenset({...} | {...comprehension...})``).  None the moment any part
+    is something else (``**_computed()``, ``dict(os.environ)``)."""
+    lit = _literal_strings(node)
+    if lit is not None:
+        return lit
+    if isinstance(node, ast.Name):
+        return literals.get(node.id)
+    if isinstance(node, (ast.DictComp, ast.SetComp)):
+        return _comprehension_strings(node, deep, strings)
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _CONTAINER_CALLS
+            and len(node.args) == 1 and not node.keywords):
+        return _container_strings(node.args[0], literals, deep, strings)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.BitOr, ast.Add)):
+        left = _container_strings(node.left, literals, deep, strings)
+        right = _container_strings(node.right, literals, deep, strings)
+        return None if left is None or right is None else left | right
+    if isinstance(node, ast.Dict):
+        out: set[str] = set()
+        for key, value in zip(node.keys, node.values):
+            if key is None:  # ``**value``
+                part = _container_strings(value, literals, deep, strings)
+            elif isinstance(key, ast.Constant) and isinstance(key.value, str):
+                part = {key.value}
+            else:
+                part = None
+            if part is None:
+                return None
+            out |= part
+        return out
+    return None
 
 
 def _lazy_names(func: ast.FunctionDef, literals: dict[str, set[str] | None]) -> set[str] | None:
     """The names a PEP 562 ``__getattr__`` can serve, read from its body: every
     string ``name`` is compared with (``name == "x"``, ``name in ("x", "y")``)
     and every key of a module-level literal it looks ``name`` up in
-    (``_LAZY.get(name)``, ``_LAZY[name]``, ``name not in __all__``).  None when
+    (``_LAZY.get(name)``, ``_LAZY[name]``, ``name not in __all__``); a lookup
+    in the module's own namespace (``globals()[name]`` after the SDK import,
+    tools/mcp_tool.py) serves nothing beyond what is already bound.  None when
     the body looks ``name`` up in something the source does not spell out, or
     never inspects ``name`` at all (a proxy that serves anything)."""
     if not func.args.args:
@@ -569,7 +681,12 @@ def _lazy_names(func: ast.FunctionDef, literals: dict[str, set[str] | None]) -> 
 
     for node in ast.walk(func):
         found: set[str] | None = None
-        if isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1:
+        if isinstance(node, ast.Subscript) and _is_own_namespace(node.value) and isinstance(node.ctx, ast.Load) and is_param(node.slice):
+            found = set()  # ``globals()[name]``: serves nothing the module does not already bind
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+              and _is_own_namespace(node.func.value) and node.args and is_param(node.args[0])):
+            found = set()  # ``globals().get(name)``: likewise
+        elif isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1:
             left, op, right = node.left, node.ops[0], node.comparators[0]
             if isinstance(op, (ast.Eq, ast.NotEq)):
                 other = right if is_param(left) else left if is_param(right) else None
@@ -607,11 +724,13 @@ def module_facts(tree: ast.Module) -> ModuleFacts:
     # a name assigned twice, augmented, or mutated in place is not a literal.
     literals: dict[str, set[str] | None] = {}
     deep: dict[str, set[str] | None] = {}  # every string inside the display, for comprehensions
+    strings: dict[str, set[str] | None] = {}  # every string constant in the value, for re-keyed tuples of names
     # For the registrar pattern and for reading a registrar's bind_module call.
     defs: set[str] = set()
     imports: dict[str, tuple[str, str | None]] = {}  # name -> (import spec, leaf)
     other: set[str] = set()                 # names bound by anything but an import
     registries: set[str] = set()            # ``_registry = HandlerRegistry()``
+    instances: dict[str, tuple[str, ...]] = {}  # ``_registry = ProviderRegistry(...)`` -> the callee chain
     name_tuples: dict[str, tuple[str, ...]] = {}  # ``_MODS = (_a, _b)`` / ``for _m in (_a, _b)``
     aliases: list[tuple[str, str]] = []     # (alias, function) from _namespace_effects
     for stmt in _walk_top_level(tree.body):
@@ -626,16 +745,19 @@ def module_facts(tree: ast.Module) -> ModuleFacts:
                 isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.value is not None):
             key = stmt.targets[0].id if isinstance(stmt, ast.Assign) else stmt.target.id
             if key in literals:
-                literals[key] = deep[key] = None  # rebound: not a literal
+                literals[key] = deep[key] = strings[key] = None  # rebound: not a literal
+                instances.pop(key, None)
             else:
-                literals[key] = _literal_strings(stmt.value)
-                if literals[key] is None:
-                    literals[key] = _comprehension_strings(stmt.value, deep)
+                literals[key] = _container_strings(stmt.value, literals, deep, strings)
                 deep[key] = _display_strings(stmt.value)
+                strings[key] = _all_strings(stmt.value)
+                if isinstance(stmt.value, ast.Call) and (chain := _dotted_chain(stmt.value.func)) and len(chain) <= 2:
+                    instances[key] = chain
         elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
-            literals[stmt.target.id] = deep[stmt.target.id] = None
+            literals[stmt.target.id] = deep[stmt.target.id] = strings[stmt.target.id] = None
         elif isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
-            literals[stmt.target.id] = deep[stmt.target.id] = None
+            literals[stmt.target.id] = deep[stmt.target.id] = strings[stmt.target.id] = None
+            instances.pop(stmt.target.id, None)
         elif isinstance(stmt, ast.Assign):
             for target in stmt.targets:
                 if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
@@ -710,8 +832,10 @@ def module_facts(tree: ast.Module) -> ModuleFacts:
             break
         lazy |= served
     # A registrar alias must be bound by ONE import (or be a loop variable /
-    # tuple over such aliases); anything else is a namespace handed to code
-    # the source does not name.
+    # tuple over such aliases), or be an INSTANCE of an imported class
+    # (``_registry = ProviderRegistry(...)`` then ``_registry.export(globals())``,
+    # agent/*_registry.py: the registrar is that class's method); anything else
+    # is a namespace handed to code the source does not name.
     imports = {name: spec for name, spec in imports.items() if name not in other}
     registrars: list[tuple[str, str]] = []
     for alias, func in aliases:
@@ -725,10 +849,19 @@ def module_facts(tree: ast.Module) -> ModuleFacts:
                     registrars.append((spec[0], spec[1]))
                 continue
             spec = imports.get(member)
+            if spec is not None:
+                registrars.append((spec[0] if spec[1] is None else _join_spec(spec[0], spec[1]), func))
+                continue
+            chain = instances.get(member)
+            spec = imports.get(chain[0]) if chain else None
             if spec is None:
                 shared = True
+            elif len(chain) == 1 and spec[1] is not None:      # ``from mod import Cls``; ``Cls(...)``
+                registrars.append((spec[0], f"{spec[1]}.{func}"))
+            elif len(chain) == 2:                              # ``import mod`` / ``from pkg import mod``; ``mod.Cls(...)``
+                registrars.append((spec[0] if spec[1] is None else _join_spec(spec[0], spec[1]), f"{chain[1]}.{func}"))
             else:
-                registrars.append((spec[0] if spec[1] is None else _join_spec(spec[0], spec[1]), func))
+                shared = True
     return ModuleFacts(
         bound=bound,
         wildcard=wildcard,
@@ -832,7 +965,12 @@ class Repo:
         method_ctx.bind_module's rules; ``other.fn(server)`` for a repo module
         (imported at module scope or in the body) reads that function the same
         way; ``_registry.install(server)`` on a HandlerRegistry publishes
-        handlers into a table, not names.  Any other call handed ``server``
+        handlers into a table, not names.  A namespace DICT handed over
+        (``export(self, namespace)`` on agent/provider_registry.py's
+        ProviderRegistry, ``func`` spelled ``Cls.method`` and read past
+        ``self``) is written through the dict protocol: ``namespace.update(
+        x=v, ...)`` / ``.update({"x": v})`` / ``namespace["x"] = v`` /
+        ``.setdefault("x", v)`` bind x.  Any other call handed ``server``
         makes the result unknown (None)."""
         if (dotted, func) in seen:
             return set()
@@ -841,10 +979,18 @@ class Repo:
         facts = self.facts(dotted)
         if tree is None or facts is None:
             return None
-        fn = next((s for s in _walk_top_level(tree.body) if isinstance(s, ast.FunctionDef) and s.name == func), None)
-        if fn is None or not (fn.args.posonlyargs or fn.args.args):
+        owner, _, method = func.rpartition(".")
+        if owner:
+            cls = next((s for s in _walk_top_level(tree.body) if isinstance(s, ast.ClassDef) and s.name == owner), None)
+            fn = next((s for s in (cls.body if cls else ()) if isinstance(s, ast.FunctionDef) and s.name == method), None)
+            first = 0 if fn is not None and any(isinstance(d, ast.Name) and d.id == "staticmethod" for d in fn.decorator_list) else 1
+        else:
+            fn = next((s for s in _walk_top_level(tree.body) if isinstance(s, ast.FunctionDef) and s.name == func), None)
+            first = 0
+        params = fn.args.posonlyargs + fn.args.args if fn is not None else []
+        if len(params) <= first:
             return None
-        param = (fn.args.posonlyargs or fn.args.args)[0].arg
+        param = params[first].arg
         package = self.package_of(dotted)
         imports = dict(facts.imports)
         loops: dict[str, set[str] | None] = {}
@@ -876,12 +1022,19 @@ class Repo:
                         out.add(target.attr)
                 continue
             if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store) and (_dotted_chain(node.value) or ("",))[0] == param:
-                return None  # ``server.__dict__[k] = v``: keys this body does not spell
+                if is_param(node.value) and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                    out.add(node.slice.value)  # ``namespace["x"] = v``
+                    continue
+                return None  # ``server.__dict__[k] = v`` / a computed key: keys this body does not spell
             if not isinstance(node, ast.Call):
                 continue
             callee = node.func
             if (_dotted_chain(callee) or ("",))[0] == param:
-                return None  # ``server.__dict__.update(...)`` / ``server.install(...)``: code unseen
+                names = _dict_protocol_names(node, param)
+                if names is None:
+                    return None  # ``server.__dict__.update(...)`` / ``server.install(...)``: code unseen
+                out |= names
+                continue
             if not any(is_param(a) for a in (*node.args, *(kw.value for kw in node.keywords))):
                 continue
             if isinstance(callee, ast.Name) and callee.id == "setattr" and len(node.args) >= 2 and is_param(node.args[0]):
