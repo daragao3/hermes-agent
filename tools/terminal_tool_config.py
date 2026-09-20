@@ -9,6 +9,7 @@ so ``tools.terminal_tool.<name>`` keeps resolving (and monkeypatching) as before
 import logging
 import json
 import os
+import posixpath
 import re
 from contextlib import contextmanager
 from typing import Any
@@ -98,9 +99,14 @@ def _get_plugin_env_provider(env_type: str):
 def _is_unusable_container_cwd(cwd: str) -> bool:
     """True if *cwd* is a host or relative path that can't be a container
     workdir: ``docker run -w`` needs an absolute in-sandbox path, otherwise the
-    container fails to start (exit 125). Windows drive paths aren't ``isabs``
-    on POSIX, so they're caught by the prefix check."""
-    return bool(cwd) and (_is_host_cwd(cwd) or not os.path.isabs(cwd))
+    container fails to start (exit 125). The value names a directory INSIDE the
+    sandbox, so its contract is a POSIX path and the predicate is ``posixpath``
+    whatever the host: ``os.path.isabs`` is ntpath on Windows and, since CPython
+    3.13, rejects drive-less ``/workspace`` -- every container cwd would read as
+    unusable and recorded/override cwds would be silently discarded. Windows
+    drive paths aren't ``posixpath.isabs`` either, so they're caught by the
+    prefix check."""
+    return bool(cwd) and (_is_host_cwd(cwd) or not posixpath.isabs(cwd))
 
 
 def _tenv(name: str, default: str = "") -> str:
