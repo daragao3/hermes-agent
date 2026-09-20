@@ -188,12 +188,17 @@ class SSHEnvironment(BaseEnvironment):
         with tempfile.TemporaryDirectory(prefix="hermes-ssh-bulk-") as staging:
             for host_path, remote_path in files:
                 try:
-                    rel_remote = os.path.relpath(remote_path, base)
+                    # Remote paths are POSIX whatever the host is, so relate them with
+                    # posixpath: os.path.relpath is host-flavoured and on Windows renders an
+                    # escaping path with backslashes, which the "../" test below never matched.
+                    rel_remote = posixpath.relpath(remote_path, base)
                 except ValueError as exc:
                     raise RuntimeError(f"remote path {remote_path!r} is not under sync base {base!r}") from exc
                 if rel_remote == "." or rel_remote.startswith("../"):
                     raise RuntimeError(f"remote path {remote_path!r} escapes sync base {base!r}")
-                staged = os.path.join(staging, rel_remote)
+                # staging is a host directory: re-join the "/"-separated remainder with
+                # the host separator rather than splicing it on (mixed "C:\dir/a.md").
+                staged = os.path.join(staging, *rel_remote.split("/"))
                 os.makedirs(os.path.dirname(staged), exist_ok=True)
                 try:
                     os.symlink(os.path.abspath(host_path), staged)
