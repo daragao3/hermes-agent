@@ -49,7 +49,14 @@ def _write_env(env_path: Path, env_writes: dict) -> None:
     """Update keys in place (BOM-tolerant read: a Notepad BOM would glue U+FEFF onto
     the first key and duplicate the line), append the rest."""
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = env_path.read_text(encoding="utf-8-sig").splitlines() if env_path.exists() else []
+    # surrogateescape on both sides (same pair as the OpenViking writer): a Windows editor
+    # may have saved cp1252, and an undecodable byte on an UNRELATED line must round-trip
+    # unchanged rather than raise UnicodeDecodeError out of the wizard.
+    existing = (
+        env_path.read_text(encoding="utf-8-sig", errors="surrogateescape").splitlines()
+        if env_path.exists()
+        else []
+    )
     updated = set()
     new_lines = []
     for line in existing:
@@ -59,7 +66,9 @@ def _write_env(env_path: Path, env_writes: dict) -> None:
     new_lines.extend(f"{k}={v}" for k, v in env_writes.items() if k not in updated)
     # newline="\n": every .env writer keeps LF on disk (see hermes_cli.config._write_env_lines);
     # text-mode default would rewrite the untouched lines as CRLF on Windows.
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8", newline="\n")
+    env_path.write_text(
+        "\n".join(new_lines) + "\n", encoding="utf-8", errors="surrogateescape", newline="\n"
+    )
 
 
 def _prompt_embedded_llm(llm_provider: str, provider_config: dict, env_writes: dict, hermes_env: Path) -> None:
