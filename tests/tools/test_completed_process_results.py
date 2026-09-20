@@ -10,7 +10,40 @@ import sys
 import textwrap
 import threading
 
+import pytest
+
+from tests.timeout_budget import scaled
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Backstop only (tests/timeout_budget.py rule 2): every bound in this file is an
+# incidental safety net around a spawn. Nothing here asserts a duration -- the
+# contract is that completed work stays retrievable after its finite CLI owner
+# exits -- so each gets a generous base scaled by HERMES_TEST_TIMEOUT_SCALE.
+#
+# The 30s per-test cap from pyproject addopts is what actually fired, and both
+# in-test bounds below were INERT because they sat AT or ABOVE it: pytest-timeout
+# killed the parent first and dumped the stack of whatever the main thread was
+# blocked in, which was subprocess._communicate waiting on its reader threads.
+# That reads exactly like a TimeoutExpired raised by the child, so the bound
+# everyone reaches to raise (the 60s producer bound) is not the one that fired.
+# Same inversion as the detached-child bounds in
+# tests/session_bridge/test_claude_registrar.py: "a child bound sitting above the
+# pytest-level cap is inert". Keep them ordered inner < outer < pytest-level.
+#
+# Measured 2026-09-20 on this box at -j 1 through the canonical runner, n=10
+# spanning 32-72 concurrent python processes (CPU pinned at 100% throughout, so
+# process count is a poor load proxy -- the lowest-process sample was among the
+# SLOWEST). Whole test 46.9-76.3s (p50 57.3); producer spawn ALONE 41.6-65.9s
+# (p50 54.0). So 10 of 10 samples blow the 30s cap and its FLOOR is ~47s: this
+# test cannot meet that cap here at any load, which is why it reproduces at -j 1
+# in isolation and is not sweep contention. The old 60s producer bound was also
+# genuinely undersized, tripping in 2 of 10 samples independently of the cap.
+# `import cli` is only ~3s of that; the rest is real agent work plus the profile's
+# own terminal.oneshot_completion_wait_seconds. The bases below are ~2.7x and
+# ~10x the measured worst case at scale 1, and stay inside the unscaled 1800s
+# per-file budget at scale 4 (240 < 720 < 1200 < 1800).
+pytestmark = pytest.mark.timeout(scaled(300))
 
 
 def test_headless_terminal_result_survives_cli_exit(tmp_path):
@@ -105,7 +138,7 @@ def test_headless_terminal_result_survives_cli_exit(tmp_path):
             "oneshot=True, provider='custom', model='test-model', api_key='local-test-only', "
             f"base_url={url!r}, toolsets='terminal', max_turns=3, ignore_rules=True)",
         ], cwd=tmp_path, env=env, stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, encoding="utf-8", timeout=60)
+            capture_output=True, text=True, encoding="utf-8", timeout=scaled(180))
     finally:
         release.touch()
         server.shutdown()
@@ -132,7 +165,7 @@ def test_headless_terminal_result_survives_cli_exit(tmp_path):
         result = subprocess.run([sys.executable, "-c", consumer, process_id],
                                 cwd=tmp_path, env={**env, "HERMES_HOME": str(profile)},
                                 check=True, stdin=subprocess.DEVNULL, capture_output=True,
-                                text=True, encoding="utf-8", timeout=30)
+                                text=True, encoding="utf-8", timeout=scaled(60))
         return json.loads(result.stdout)
 
     receipt = json.loads((home / "logs" / "process-results" / f"{process_id}.json").read_text(encoding="utf-8"))
