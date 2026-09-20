@@ -95,9 +95,14 @@ class TestUnreadableIndexDegrades:
         """A writable open probes through the same helper, so the heal that
         ``_open_probed`` attempts must not raise the error it is healing.
 
-        Scoped to the OPEN. Canonical writes through this handle still fail while
-        the FTS triggers reference the unopenable index; restoring the
-        trigger/index invariant (detach-and-rebuild) is a separate change.
+        The writable open ALSO repairs the index (detach the triggers with the stale
+        breadcrumb, restore the absent ``%_config`` shadow, rebuild), so
+        ``_fts_enabled`` comes back True here while the read-only open one test above
+        stays degraded -- a ``mode=ro`` handle may repair nothing, and only
+        ``_connect_and_init`` reaches ``_init_schema``. That asymmetry is the point of
+        both tests standing next to each other. The repair itself and the canonical
+        write it exists to protect are pinned in
+        ``tests/test_fts_unopenable_index_trigger_invariant.py``.
         """
         db_path = tmp_path / "state.db"
         _bootstrap_store(db_path)
@@ -105,7 +110,7 @@ class TestUnreadableIndexDegrades:
 
         db = SessionDB(db_path=db_path)
         try:
-            assert db._fts_enabled is False
+            assert db._fts_enabled is True
             assert db.get_session("vtable-test") is not None
         finally:
             db.close()
