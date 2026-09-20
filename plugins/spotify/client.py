@@ -14,7 +14,20 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import httpx
 
-from hermes_cli.auth import AuthError, resolve_spotify_runtime_credentials
+# ``hermes_cli.auth`` is NOT imported at module scope: every ``discover_plugins()`` loads this plugin, and
+# the auth package is ~23 modules (the auth_* family, credential persistence, http.server, uuid) that only
+# a live Spotify call needs. Both names are still attributes of this module -- served lazily by
+# ``__getattr__`` below -- so ``monkeypatch.setattr(client, "resolve_spotify_runtime_credentials", ...)``
+# keeps working, and ``_credential_resolver()`` honours such a patch.
+_AUTH_NAMES = ("AuthError", "resolve_spotify_runtime_credentials")
+
+
+def _credential_resolver():
+    """The live resolver: a value patched onto this module wins, else ``hermes_cli.auth``'s."""
+    resolver = globals().get("resolve_spotify_runtime_credentials")
+    if resolver is None:
+        from hermes_cli.auth import resolve_spotify_runtime_credentials as resolver
+    return resolver
 
 
 class SpotifyError(RuntimeError): """Base Spotify tool error."""
@@ -37,8 +50,9 @@ class SpotifyClient:
         self._runtime = self._resolve_runtime(refresh_if_expiring=True)
 
     def _resolve_runtime(self, *, force_refresh: bool = False, refresh_if_expiring: bool = True) -> Dict[str, Any]:
+        from hermes_cli.auth import AuthError
         try:
-            return resolve_spotify_runtime_credentials(force_refresh=force_refresh, refresh_if_expiring=refresh_if_expiring)
+            return _credential_resolver()(force_refresh=force_refresh, refresh_if_expiring=refresh_if_expiring)
         except AuthError as exc:
             raise SpotifyAuthRequiredError(str(exc)) from exc
 
@@ -181,4 +195,9 @@ def __getattr__(name: str):
         import httpx
         globals()["httpx"] = httpx
         return httpx
+    if name in _AUTH_NAMES:
+        from hermes_cli import auth
+        value = getattr(auth, name)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
