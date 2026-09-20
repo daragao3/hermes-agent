@@ -108,3 +108,59 @@ def test_clean_env_parse_found_the_block() -> None:
     assert {"PATH", "HOME", "PYTHONUTF8"} <= names, (
         f"CLEAN_ENV parsing looks broken — expected the known baseline vars, got {sorted(names)}"
     )
+
+
+def _timeout_scale_arms() -> "list[tuple[str, str]]":
+    """The (guard, value) arms that decide HERMES_TEST_TIMEOUT_SCALE, in order.
+
+    Parsed rather than pattern-matched as a whole so the ORDER is assertable:
+    the explicit-value arm has to come first or a caller's
+    HERMES_TEST_TIMEOUT_SCALE=1 would lose to the default.
+    """
+    text = SCRIPT.read_text(encoding="utf-8")
+    arms: "list[tuple[str, str]]" = []
+    for guard, value in re.findall(
+        r"(?:if|elif) (\[[^\n]*\]); then\n\s*CLEAN_ENV\+=\(\"HERMES_TEST_TIMEOUT_SCALE=([^\"]+)\"\)",
+        text,
+    ):
+        arms.append((guard, value))
+    return arms
+
+
+def test_runner_defaults_the_timeout_scale_for_a_loaded_host() -> None:
+    """Diego 2026-09-19: the runner sets HERMES_TEST_TIMEOUT_SCALE=4.
+
+    Without it every ``scaled()`` bound written INSIDE a test is inert on this
+    host (the module's own default is 1.0), so a safety net sized for an idle
+    box trips under -j 12 and reads as a regression.
+    """
+    assert "HERMES_TEST_TIMEOUT_SCALE" in _clean_env_names(), (
+        "the runner no longer forwards HERMES_TEST_TIMEOUT_SCALE, so every "
+        "tests/timeout_budget rule-2 bound is back to its unscaled literal"
+    )
+    arms = _timeout_scale_arms()
+    assert [value for _guard, value in arms] == ["$HERMES_TEST_TIMEOUT_SCALE", "4"], (
+        f"expected an explicit-value arm then a default of 4, got {arms}"
+    )
+
+
+def test_timeout_scale_default_is_skipped_under_ci() -> None:
+    """CI must keep the module default: timeout_budget.py promises that.
+
+    Quadrupling every safety net on a CI runner would slow the kill of a
+    genuinely wedged child without the load that justifies it here.
+    """
+    arms = _timeout_scale_arms()
+    assert len(arms) == 2, f"expected two arms, got {arms}"
+    default_guard = arms[1][0]
+    assert "CI" in default_guard and "-z" in default_guard, (
+        f"the default arm is no longer gated on CI being unset: {default_guard!r}"
+    )
+
+
+def test_timeout_scale_arm_parse_found_the_block() -> None:
+    """Falsifier for the parser above: matching nothing would pass vacuously."""
+    assert _timeout_scale_arms(), (
+        "could not locate the HERMES_TEST_TIMEOUT_SCALE arms in run_tests.sh -- "
+        "re-derive what the runner sets before trusting the two tests above"
+    )
