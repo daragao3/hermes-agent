@@ -103,6 +103,19 @@ class TestUnreadableIndexDegrades:
         both tests standing next to each other. The repair itself and the canonical
         write it exists to protect are pinned in
         ``tests/test_fts_unopenable_index_trigger_invariant.py``.
+
+        Read the asymmetry as mechanism, not as drift, and do NOT "fix" the two tests
+        into agreement: in the read-only case the probe RETURNS None rather than
+        raising, so ``_open_probed`` never fails and never reaches its ``acquire()``
+        heal -- which is why False is still correct one test above. Were the probe ever
+        to raise there instead, that heal would repair the index and the read-only
+        expectation would have to move too.
+
+        The canonical-read assertion below is deliberately independent of the repair:
+        it pins "the writable open does not RAISE", which is this module's own subject.
+        If the repair is ever removed or gated, ``_fts_enabled is True`` goes red for a
+        reason that has nothing to do with the errcode classification, and that second
+        assertion is what keeps this module still testing what it was written for.
         """
         db_path = tmp_path / "state.db"
         _bootstrap_store(db_path)
