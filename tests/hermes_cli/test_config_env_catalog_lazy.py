@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -257,6 +259,76 @@ def test_a_read_from_inside_the_populator_does_not_recurse():
     catalog.set_populator(_populate)
     assert "INJECTED" in catalog
     assert calls == [1]
+
+
+# ------------------------------------------------------- concurrency / deadlock
+
+
+def test_a_second_thread_can_read_while_the_fill_is_running():
+    """The fill must NOT hold a lock across the populator.
+
+    The populator imports: `from providers import list_providers` walks 48 modules, so
+    it takes importlib's per-module locks. Meanwhile tools/environments/local_env_policy.py
+    reads this catalog AT MODULE SCOPE (line ~82, _build_provider_env_blocklist), so a
+    thread can legitimately want the catalog while already holding an import lock. Hold a
+    catalog-wide lock across the fill and those two orders invert into a hang -- the worst
+    failure mode there is. A second thread therefore has to get through a read while a fill
+    is in flight, even if that costs it a duplicate fill.
+    """
+    from hermes_cli.config_defaults import _EnvVarCatalog
+
+    in_populator = threading.Event()
+    release_populator = threading.Event()
+    reads = []
+    catalog = _EnvVarCatalog({"HAND": {"description": "hand-written"}})
+
+    def _populate(target):
+        if in_populator.is_set():
+            target["INJECTED"] = {"description": "injected"}  # the reader's own fill
+            return
+        in_populator.set()
+        release_populator.wait(30)  # stands in for `from providers import ...`
+        target["INJECTED"] = {"description": "injected"}
+
+    catalog.set_populator(_populate)
+
+    filler = threading.Thread(target=lambda: len(catalog), daemon=True)
+    filler.start()
+    assert in_populator.wait(30), "the fill never started"
+
+    reader = threading.Thread(target=lambda: reads.append("INJECTED" in catalog), daemon=True)
+    reader.start()
+    reader.join(10)
+    reader_blocked = reader.is_alive()
+
+    release_populator.set()
+    filler.join(30)
+    reader.join(30)
+
+    assert not reader_blocked, (
+        "a read from a second thread blocked behind the in-flight fill -- the catalog is "
+        "holding a lock across the populator's imports, which deadlocks against any module "
+        "that reads OPTIONAL_ENV_VARS at import scope")
+    assert reads == [True], f"the second thread read a short catalog: {reads}"
+
+
+def test_concurrent_first_reads_never_see_a_short_catalog():
+    """Eight threads racing the very first read, as the dashboard's first page load does.
+    Every one of them must observe the injected entries -- none may return the
+    hand-written half because another thread's fill was still in flight."""
+    out = _run(
+        "from concurrent.futures import ThreadPoolExecutor;"
+        "import hermes_cli.config as c;"
+        "cat = c.OPTIONAL_ENV_VARS;"
+        "probe = lambda _i: (%r in cat, %r in cat, len(cat));"
+        "pool = ThreadPoolExecutor(max_workers=8);"
+        "rows = list(pool.map(probe, range(8)));"
+        "print(sorted(set(rows)))" % (PROVIDER_INJECTED, PLATFORM_INJECTED)
+    ).stdout.strip()
+    # set() collapses agreeing threads, so one row means all eight agreed.
+    assert re.fullmatch(r"\[\(True, True, \d+\)\]", out), (
+        "the eight concurrent first readers did not all see one full catalog "
+        f"(each row is provider-entry, platform-entry, len): {out}")
 
 
 # ------------------------------------------------------------- real wiring

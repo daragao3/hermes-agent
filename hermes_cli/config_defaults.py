@@ -2424,13 +2424,22 @@ class _EnvVarCatalog(dict):
     Writes deliberately do NOT populate: the injectors fill the table through ``__setitem__``,
     and an entry seeded before the first read has to keep winning over the injected one (both
     injectors skip names already present).
+
+    **No lock is held across the fill**, and that is deliberate. The populator imports —
+    ``from providers import list_providers`` walks 48 modules and takes importlib's per-module
+    locks — while ``tools/environments/local_env_policy.py`` reads this catalog at MODULE
+    scope, so a thread can want the catalog while already holding an import lock. A
+    catalog-wide lock across the fill inverts those two orders into a hang. Instead each
+    caller fills a scratch copy and applies it with one ``dict.update``: two threads racing
+    the first read each do the work (the module imports are cached after the first, so the
+    second is cheap) and neither can ever hand back a half-filled table.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._populate = None
-        self._state = "pending"  # pending -> running -> done
-        self._lock = threading.RLock()
+        self._state = "pending"  # pending -> done
+        self._filling = threading.local()
 
     def set_populator(self, populate) -> None:
         """Install the callable that adds the injected entries (``hermes_cli.config`` does)."""
@@ -2440,29 +2449,38 @@ class _EnvVarCatalog(dict):
         """Run the fill once. Every read path below calls this first."""
         if self._state == "done":
             return
-        with self._lock:
-            # RLock, not Lock: the injectors read the table while filling it, so the filling
-            # thread must get back in — while any other thread waits for the full table
-            # instead of seeing a half-filled one.
-            if self._state != "pending":
-                return
-            self._state = "running"
+        if getattr(self._filling, "active", False):
+            return  # a read from inside our own fill: the injectors do exactly this
+        populate = self._populate
+        if populate is None:
             try:
-                if self._populate is None:
-                    # Deferred, not a module-scope import: by the time any read happens the
-                    # cycle config -> config_defaults is long closed. Without this a caller
-                    # that imported only config_defaults would read the hand-written half.
-                    import hermes_cli.config  # noqa: F401
-                if self._populate is None:
-                    self._state = "pending"
-                    return
-                self._populate(self)
+                # Deferred, not a module-scope import: by the time any read happens the
+                # cycle config -> config_defaults is long closed. Without this a caller
+                # that imported only config_defaults would read the hand-written half.
+                import hermes_cli.config  # noqa: F401
             except Exception:
-                # A read landing mid-import of hermes_cli.config must not latch a short
-                # catalog forever; stay pending so the next read retries.
-                self._state = "pending"
+                return  # stay pending; the next read retries
+            populate = self._populate
+            if populate is None:
                 return
-            self._state = "done"
+        self._filling.active = True
+        try:
+            # Seed the scratch copy with what is already here: the injectors skip names
+            # already present, which is how a hand-written or pre-seeded entry keeps
+            # winning over the injected one.
+            scratch = dict(dict.items(self))
+            populate(scratch)
+        except Exception:
+            # A read landing mid-import of hermes_cli.config must not latch a short
+            # catalog forever; stay pending so the next read retries.
+            return
+        finally:
+            self._filling.active = False
+        added = {k: v for k, v in scratch.items() if not dict.__contains__(self, k)}
+        if added:
+            # One C-level update, so no reader can catch the table half-applied.
+            dict.update(self, added)
+        self._state = "done"
 
     # ---- read paths: populate, then behave exactly like a dict ----
 
@@ -2532,8 +2550,8 @@ class _EnvVarCatalog(dict):
         """copy / deepcopy / pickle hand back a plain, filled dict.
 
         The default dict-subclass reduction would carry this instance's ``__dict__`` --
-        an RLock and a bound fill hook, neither picklable -- and callers treated this
-        name as a plain dict for years before it went lazy.
+        a thread-local and a bound fill hook, neither picklable -- and callers treated
+        this name as a plain dict for years before it went lazy.
         """
         return (dict, (dict(self),))
 

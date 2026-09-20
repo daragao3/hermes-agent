@@ -4026,20 +4026,24 @@ def config_command(args):
 # import. Doing it at import put provider discovery (48 modules) and 22 plugin.yaml parses
 # on every CLI spawn, including command families that never read the table.
 
-def _inject_profile_env_vars() -> None:
+def _inject_profile_env_vars(target: Optional[dict] = None) -> None:
     """Expose env_vars of every ``auth_type="api_key"`` provider in providers/ via OPTIONAL_ENV_VARS
-    without editing this file."""
+    without editing this file.
+
+    ``target`` is the table to fill; the catalog passes a scratch copy of itself so the fill
+    holds no lock (see ``config_defaults._EnvVarCatalog``). Default keeps the old signature."""
+    _table = OPTIONAL_ENV_VARS if target is None else target
     try:
         from providers import list_providers
         for _pp in list_providers():
             if _pp.auth_type != "api_key":
                 continue
             for _var in _pp.env_vars:
-                if _var in OPTIONAL_ENV_VARS:
+                if _var in _table:
                     continue
                 _is_key = not _var.endswith(("_BASE_URL", "_URL"))
                 _label = _pp.display_name or _pp.name
-                OPTIONAL_ENV_VARS[_var] = {
+                _table[_var] = {
                     "description": f"{_label} {'API key' if _is_key else 'base URL override'}",
                     "prompt": f"{_label} {'API key' if _is_key else 'base URL (leave empty for default)'}",
                     "url": _pp.signup_url or None,
@@ -4068,27 +4072,31 @@ def _platform_plugin_manifests():
         yield child.name, manifest
 
 
-def _inject_platform_plugin_env_vars() -> None:
+def _inject_platform_plugin_env_vars(target: Optional[dict] = None) -> None:
     """Populate OPTIONAL_ENV_VARS from bundled platform plugin manifests so Teams / IRC / Google
     Chat etc. are configurable in ``hermes config`` UI without the core knowing they exist.
 
     ``requires_env`` / ``optional_env`` entries are a bare name or a dict with ``name`` plus
     optional ``description``/``url``/``password``/``prompt``/``category``. Failures are swallowed
     so a malformed plugin.yaml can't break CLI import.
+
+    ``target`` is the table to fill; the catalog passes a scratch copy of itself so the fill
+    holds no lock (see ``config_defaults._EnvVarCatalog``). Default keeps the old signature.
     """
+    _table = OPTIONAL_ENV_VARS if target is None else target
     try:
         for dir_name, manifest in _platform_plugin_manifests():
             label = manifest.get("label") or manifest.get("name") or dir_name
             for entry in [*(manifest.get("requires_env") or []), *(manifest.get("optional_env") or [])]:
                 meta = {"name": entry} if isinstance(entry, str) else entry if isinstance(entry, dict) else {}
                 name = meta.get("name")
-                if not name or name in OPTIONAL_ENV_VARS:
+                if not name or name in _table:
                     continue  # hardcoded entry wins (back-compat)
                 # *TOKEN / *SECRET / *KEY / *PASSWORD / *JSON are password fields unless overridden.
                 is_secret = bool(meta.get("password") or meta.get("secret"))
                 if not is_secret and not meta.get("password") is False:
                     is_secret = name.upper().endswith(("_TOKEN", "_SECRET", "_KEY", "_PASSWORD", "_JSON"))
-                OPTIONAL_ENV_VARS[name] = {
+                _table[name] = {
                     "description": meta.get("description") or f"{label} configuration",
                     "prompt": meta.get("prompt") or name,
                     "url": meta.get("url") or None,
@@ -4098,10 +4106,11 @@ def _inject_platform_plugin_env_vars() -> None:
         pass
 
 
-def _populate_env_var_catalog(_catalog) -> None:
-    """Add the injected half of OPTIONAL_ENV_VARS; run on the catalog's first read."""
-    _inject_profile_env_vars()
-    _inject_platform_plugin_env_vars()
+def _populate_env_var_catalog(table) -> None:
+    """Add the injected half of OPTIONAL_ENV_VARS into ``table``, a scratch copy of the
+    catalog. Run on the catalog's first read, holding no lock."""
+    _inject_profile_env_vars(table)
+    _inject_platform_plugin_env_vars(table)
 
 
 OPTIONAL_ENV_VARS.set_populator(_populate_env_var_catalog)

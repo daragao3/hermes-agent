@@ -36,6 +36,7 @@ import importlib
 import importlib.util
 import logging
 import sys
+import threading
 from pathlib import Path
 
 from providers.base import ProviderProfile
@@ -46,6 +47,10 @@ _REGISTRY: dict[str, ProviderProfile] = {}
 _ALIASES: dict[str, str] = {}
 _PROVIDER_LIST_CACHE: list[ProviderProfile] | None = None
 _discovered = False
+# Serializes discovery so a second thread waits for a whole registry instead of reading a
+# half-built one; re-entrant because a provider module could call back in while importing.
+_DISCOVERY_LOCK = threading.RLock()
+_discovering = False
 
 # Repo-root ``plugins/model-providers/`` — populated at discovery time.
 _BUNDLED_PLUGINS_DIR = (
@@ -340,12 +345,34 @@ def _discover_providers() -> None:
 
     Each step imports its plugins, which call ``register_provider()`` at
     module-level. Later steps win on name collision.
+
+    Thread safety: the ``_discovered`` flag is set only when the registry is COMPLETE, and
+    a lock keeps a second thread out meanwhile. Setting it up front (as this did until the
+    OPTIONAL_ENV_VARS catalog went lazy and put list_providers() on the dashboard's first
+    request) let a second thread skip discovery and read a partly-built registry -- eight
+    concurrent first callers measured 0, 8 and 48 providers in the same process. Holding
+    the lock across these imports is safe because the only modules imported here are
+    provider plugins, and a plugin's job at import is to call ``register_provider()``; none
+    asks for the registry back, so there is no lock-order inversion with importlib.
     """
-    global _discovered
+    global _discovered, _discovering
     if _discovered:
         return
-    _discovered = True
+    with _DISCOVERY_LOCK:
+        if _discovered or _discovering:
+            # _discovering: a provider module we are importing called back in. It gets the
+            # registry as far as it has been built, which is what it got before too.
+            return
+        _discovering = True
+        try:
+            _run_discovery()
+        finally:
+            _discovering = False
+            _discovered = True
 
+
+def _run_discovery() -> None:
+    """The body of :func:`_discover_providers`, run once under ``_DISCOVERY_LOCK``."""
     # 0. Pip-installed plugins — entry points in the ``hermes_agent.plugins``
     #    group (the same group the general PluginManager uses). The manager
     #    records model-provider manifests for introspection but deliberately
