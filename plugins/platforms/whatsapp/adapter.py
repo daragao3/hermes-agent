@@ -596,7 +596,9 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
         self._mention_patterns = self._compile_mention_patterns()
         self._message_queue: asyncio.Queue = asyncio.Queue()
         self._bridge_log_fh = self._bridge_log = self._poll_task = self._http_session = None
-        # Set by disconnect() before SIGTERMing so _check_managed_bridge_exit() can tell an intentional exit (-15/-2/0) from a crash.
+        # Set at the top of disconnect(), before the kill, so send()/the poll loop do not report the
+        # teardown as fatal. ONE-WAY: never reset, and reconnection builds a fresh adapter -- which is
+        # why _check_managed_bridge_exit() can gate on it alone and consult no exit code at all.
         self._shutting_down = False
         # Text debounce batching: rapid bursts (forwards, paste-splits) would otherwise each trigger a separate agent turn.
         self._text_batch_delay_seconds = self._coerce_float_extra("text_batch_delay_seconds", 5.0)
@@ -975,11 +977,54 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             self._bridge_log_fh = None
 
     async def _check_managed_bridge_exit(self) -> Optional[str]:
+        """Report a managed bridge's exit as fatal -- unless we are the ones tearing it down.
+
+        THE GATE IS ``_shutting_down`` ALONE; the exit code is logged, never filtered on. It
+        used to also require ``returncode in {0, -2, -15}`` -- the POSIX "killed by signal N
+        -> -N" convention -- which made this branch DEAD CODE on Windows. ``Popen.poll()``
+        returns the raw ``TerminateProcess`` code here, and every kill this adapter issues
+        goes through ``_terminate_bridge_process`` -> ``windows_kill_popen_tree`` ->
+        ``windows_kill_pid`` -> ``psutil.Process.kill()``. Measured on this box, both
+        directions: psutil ``kill()`` and ``terminate()`` both yield +15 (so does
+        ``_terminate_bridge_process`` with force either way), while the ``Popen.terminate()``
+        / ``Popen.kill()`` fallbacks that ``_terminate_bridge_process`` and
+        ``_terminate_bridge`` drop to on a failed walk yield 1. The set could never match
+        what we produce, so every planned shutdown logged ERROR "exited unexpectedly (code
+        15)", set the ``whatsapp_bridge_exited`` fatal, fired ``_notify_fatal_error()`` and
+        queued a background reconnect -- all while ``disconnect()`` ran normally. Four such
+        lines in profiles/main/logs/errors-gateway.log on 2026-09-19/20, each matching a
+        gateway ``--replace`` (loops whatsapp-bridge-kill-attribution-20260920).
+
+        NORMALISING BY SIGN WAS CONSIDERED AND REJECTED. ``abs(returncode) in {0, 2, 15}`` is
+        the same arbitrary set in a platform-neutral coat: still blind to the exit-1 fallback
+        paths above, and still letting the shape of a crash decide. It also carries the real
+        risk the sign fix is accused of -- a node child dying of EADDRINUSE or a bad install
+        can exit 1, and 15 is not reserved to us -- so widening the numbers is where
+        over-suppression would actually come from.
+
+        The honest discriminator is the flag, because ``_shutting_down`` is ONE-WAY PER
+        INSTANCE: set only at the top of ``disconnect()``, never reset, and a queued platform
+        reconnects through a FRESH adapter built by ``_create_adapter``
+        (gateway/run_adapters.py), never by reviving this object. So while it is True this
+        adapter is terminal and no exit code it could read is actionable -- the three things
+        suppressed here are a fatal flag, a user notification, and a reconnect queued for a
+        platform the gateway is deliberately shutting down. Over-suppression is harmless BY
+        CONSTRUCTION: a genuine crash racing into the teardown window costs nothing, because
+        that child was about to be killed anyway and the next boot spawns a fresh one. The
+        code still reaches the log at INFO, so "already dead" vs. "we killed it" survives
+        where it is a diagnostic and stops driving control flow where it is not.
+
+        THIS DOES NOT COVER THE FAIL-FAST RESPAWN PATH and must not be read as covering it.
+        ``_discard_unbound_bridge`` kills with ``_shutting_down`` FALSE, so this branch never
+        fires for it; its safety is that it clears ``self._bridge_process`` BEFORE killing, so
+        the ``is not None`` guard below short-circuits. That ORDERING is the entire protection
+        there -- do not remove it on the strength of this gate.
+        """
         returncode = self._bridge_process.poll() if self._bridge_process is not None else None
         if returncode is None:
             return None
         # getattr-with-default: tests build the adapter via ``__new__`` without __init__.
-        if getattr(self, "_shutting_down", False) and returncode in {0, -2, -15}:
+        if getattr(self, "_shutting_down", False):
             logger.info("[%s] Bridge exited during shutdown (code %d).", self.name, returncode)
             return None
         message = f"WhatsApp bridge process exited unexpectedly (code {returncode})."
