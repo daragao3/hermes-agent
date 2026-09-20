@@ -110,8 +110,11 @@ def _apply_threshold_adjust(proposal: dict) -> tuple[bool, str, Optional[Path]]:
     var, new_val = m.group(1), m.group(2)
 
     if not HERMES_ENV.exists():
-        HERMES_ENV.write_text("", encoding="utf-8")
-    raw = HERMES_ENV.read_text(encoding="utf-8")
+        HERMES_ENV.write_text("", encoding="utf-8", errors="surrogateescape", newline="\n")
+    # utf-8-sig + surrogateescape: this rewrites the whole file to change ONE
+    # knob, so a Notepad BOM (which would hide the first key and duplicate it)
+    # and any cp1252 byte on an UNRELATED line must both survive the round trip.
+    raw = HERMES_ENV.read_text(encoding="utf-8-sig", errors="surrogateescape")
     lines = raw.splitlines()
 
     prior_val: Optional[str] = None
@@ -127,7 +130,11 @@ def _apply_threshold_adjust(proposal: dict) -> tuple[bool, str, Optional[Path]]:
         lines[found_idx] = new_line
     else:
         lines.append(new_line)
-    HERMES_ENV.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # newline="\n": every .env writer keeps LF on disk (see
+    # hermes_cli.config._write_env_lines); text mode would rewrite every line
+    # this call never touched as CRLF on Windows.
+    HERMES_ENV.write_text("\n".join(lines) + "\n", encoding="utf-8",
+                          errors="surrogateescape", newline="\n")
 
     pid = proposal.get("proposal_id", "unknown")
     rev = _write_reversal(pid, {
