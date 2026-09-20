@@ -39,7 +39,10 @@ WHAT IS PINNED HERE, as code paths rather than wall-clocks:
   the 09-20 recovery as a ~30 s bind instead of 11.3 s.
 * The child handle is cleared BEFORE the kill, so this design's deliberate kills cannot be reported as
   crashes by ``_check_managed_bridge_exit`` -- see test_a_discard_never_reads_as_a_crash for why that
-  ordering, and not the intentional-exit allowlist, is what holds on Windows.
+  ordering, and never the intentional-exit guard, is what holds here. (That guard's POSIX-only
+  ``{0, -2, -15}`` allowlist was dead code on Windows and has since been replaced by a
+  ``_shutting_down``-only gate, loops whatsapp-intentional-exit-guard-signfix-20260920. A discard runs
+  with ``_shutting_down`` False, so that changed nothing on this path -- the ordering still carries it.)
 
 Mutant checks. Every one was applied to the adapter and MEASURED red before this file was called
 meaningful; the named test is the one that must go red, and any collateral is listed because a mutant
@@ -304,17 +307,26 @@ class TestDiscardingAnUnboundChild:
         """The handle is cleared BEFORE the kill, so nothing can report our own kill as a crash.
 
         Cross-note on loops whatsapp-bridge-kill-attribution-20260920, verified here against
-        the code rather than taken on report: ``_check_managed_bridge_exit`` suppresses an
+        the code rather than taken on report: ``_check_managed_bridge_exit`` used to suppress an
         intentional exit only for ``{0, -2, -15}``, but on Windows this adapter kills through
-        psutil and ``Popen.poll()`` then returns **+15** -- so that allowlist can never match a
-        bridge this adapter killed, and a deliberate kill sets a fatal error, notifies, and
-        queues a background reconnect. A fail-fast design kills on purpose several times per
-        connect, so it would trip that every time.
+        psutil and ``Popen.poll()`` then returns **+15** -- so that allowlist could never match a
+        bridge this adapter killed, and a deliberate kill set a fatal error, notified, and
+        queued a background reconnect. A fail-fast design kills on purpose several times per
+        connect, so it would have tripped that every time.
 
-        What saves it is ordering, not the allowlist: the ``poll()`` in that check is guarded by
+        THAT ALLOWLIST IS GONE (loops whatsapp-intentional-exit-guard-signfix-20260920): the
+        guard now gates on ``_shutting_down`` alone and never filters on the code. It did NOT
+        make this test redundant, and the paragraph below is why -- read it before deleting
+        anything here.
+
+        What saves the respawn path is ordering, not that guard, and it still is: a discard
+        happens with ``_shutting_down`` FALSE, so the new gate is silent for it exactly as the
+        old allowlist was. The ``poll()`` in that check is guarded by
         ``self._bridge_process is not None``, and ``_discard_unbound_bridge`` clears the handle
-        first. Fixing the sign belongs to that other claim; this test pins the ordering the
-        respawn loop depends on regardless of how that is resolved.
+        first. This test pins that ordering; the sign fix changed nothing about it. Its own
+        neighbour, tests/gateway/test_whatsapp_intentional_exit_guard.py, pins the same ordering
+        against a REAL child and records that this test is what caught the clear-after-kill
+        mutant when its first draft did not.
         """
         adapter = _adapter(tmp_path)
         clock = _Clock(monkeypatch)
