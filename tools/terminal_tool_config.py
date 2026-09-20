@@ -62,6 +62,27 @@ _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 def _is_host_cwd(path: str) -> bool:
     return path.startswith(_HOST_CWD_PREFIXES) or bool(_WINDOWS_DRIVE_RE.match(path))
 
+
+# In-container roots. A value carrying one names a location INSIDE the sandbox.
+_CONTAINER_CWD_PREFIXES = ("/workspace", "/root")
+
+
+def _is_container_path(path: str) -> bool:
+    """True if *path* already names an in-container location.
+
+    The contract is a POSIX path, so the caller must hand over the value it was
+    GIVEN -- never the result of ``os.path.abspath``. On a Windows host abspath
+    re-spells ``/workspace/proj`` as ``C:\\workspace\\proj``, and that string can
+    never match this prefix test again: the check silently stops refusing and an
+    in-container cwd is misread as a host directory to mount. (``_is_host_cwd``
+    then matches the injected drive letter, so on Windows the whole containment
+    branch was unreachable.) Same seam as the ``posixpath.relpath`` fix in
+    ``tools/environments/ssh.py`` -- relate/normalize a POSIX-contract value with
+    POSIX semantics even when the result is later consumed as a host path.
+    """
+    return str(path or "").startswith(_CONTAINER_CWD_PREFIXES)
+
+
 _CONTAINER_BACKENDS = frozenset({"docker", "singularity", "modal", "daytona", "vercel_sandbox"})
 _BUILTIN_BACKENDS = _CONTAINER_BACKENDS | {"local", "ssh", "managed_modal"}
 

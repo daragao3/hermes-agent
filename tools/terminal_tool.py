@@ -48,7 +48,8 @@ from tools.terminal_tool_lifecycle import (
     _evict_environment_for_task, cleanup_all_environments, ensure_task_env as ensure_task_env,
 )
 from tools.terminal_tool_config import (
-    _is_container_backend, _is_host_cwd, _is_unusable_container_cwd, _parse_env_var,
+    _is_container_backend, _is_container_path, _is_host_cwd, _is_unusable_container_cwd,
+    _parse_env_var,
     _plugin_env_flag, _quiet, _safe_getcwd, _tenv, _tenv_bool,
 )
 from tools.terminal_tool_backends import (
@@ -653,9 +654,14 @@ def _resolve_task_host_cwd(config: Dict[str, Any], task_id: Optional[str]) -> Op
     candidate = overrides.get("cwd")
     if overrides.get("cwd_source") == "process" or not isinstance(candidate, str) or not candidate.strip():
         return None
-    candidate = os.path.abspath(os.path.expanduser(candidate))
-    # Must exist on the host and not already be an in-container path.
-    if not os.path.isdir(candidate) or candidate.startswith(("/workspace", "/root")):
+    # The in-container test runs on the value as given: abspath would drive-prefix
+    # it on a Windows host and the prefix could never match (see _is_container_path).
+    expanded = os.path.expanduser(candidate)
+    if _is_container_path(expanded):
+        return None
+    candidate = os.path.abspath(expanded)
+    # Must exist on the host.
+    if not os.path.isdir(candidate):
         return None
     return candidate
 
@@ -718,10 +724,14 @@ def _resolve_config_cwd(env_type: str, mount_docker_cwd: bool) -> tuple:
         cwd = os.path.expanduser(cwd)
     host_cwd = None
     if env_type == "docker" and mount_docker_cwd:
-        candidate = os.path.abspath(os.path.expanduser(_tenv("TERMINAL_CWD") or _safe_getcwd()))
-        if (
+        expanded = os.path.expanduser(_tenv("TERMINAL_CWD") or _safe_getcwd())
+        candidate = os.path.abspath(expanded)
+        # ``expanded``, not ``candidate``: an in-container cwd stays the container cwd
+        # and mounts nothing. Testing the abspath'd form loses that on Windows, where
+        # the injected drive letter also makes _is_host_cwd match (see _is_container_path).
+        if not _is_container_path(expanded) and (
             _is_host_cwd(candidate)
-            or (os.path.isabs(candidate) and os.path.isdir(candidate) and not candidate.startswith(("/workspace", "/root")))
+            or (os.path.isabs(candidate) and os.path.isdir(candidate))
         ):
             host_cwd = candidate
             cwd = "/workspace"
