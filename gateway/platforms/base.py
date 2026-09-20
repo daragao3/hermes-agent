@@ -854,11 +854,22 @@ def _kanban_board_db_paths() -> List[Path]:
 
 
 def _media_delivery_denied_paths() -> List[Path]:
-    """Return absolute denylist paths under which delivery is never allowed."""
+    """Return absolute denylist paths under which delivery is never allowed.
+
+    The Hermes home is resolved HERE, not from the import-time ``_HERMES_HOME``: the gateway
+    scopes a whole turn to a profile via ``set_hermes_home_override``
+    (``gateway/run.py::_profile_runtime_scope``), and delivery trusts RECENT files by default,
+    so a denylist frozen at import guards the LAUNCH profile's credentials while the turn runs
+    as another profile. ``_HERMES_ROOT`` stays frozen on purpose --
+    ``get_default_hermes_root()`` reads only the process environment and never follows the
+    override. The launch home is kept in the tuple as well so nothing that was denied before
+    stops being denied.
+    """
     home = Path(os.path.expanduser("~"))
+    hermes_homes = {_HERMES_HOME, get_hermes_home(), _HERMES_ROOT}
     return [*map(Path, _MEDIA_DELIVERY_DENIED_PREFIXES),
             *(home / sub for sub in _MEDIA_DELIVERY_DENIED_HOME_SUBPATHS),
-            *(r / rel for r in (_HERMES_HOME, _HERMES_ROOT) for rel in _ROOT_CREDENTIAL_PATHS),
+            *(r / rel for r in hermes_homes for rel in _ROOT_CREDENTIAL_PATHS),
             *_kanban_board_db_paths()]
 
 
