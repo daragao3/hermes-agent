@@ -155,6 +155,7 @@ import {
 } from './connection-registry'
 import type { RosterProfileMetadata } from './connection-registry'
 import { describeCrashReason, installCrashForensics } from './crash-forensics'
+import { installStdioResilience } from './stdio-resilience'
 import { adoptServedDashboardToken } from './dashboard-token'
 import { loadOrCreateInstallationId, sshOwnershipId } from './desktop-installation'
 import { formatDesktopLogLine } from './desktop-log-line'
@@ -1845,6 +1846,19 @@ function rememberLog(chunk) {
 
   scheduleDesktopLogFlush()
 }
+
+// Installed BEFORE the crash forensics below, because a broken stdio pipe is
+// otherwise reported *as* a main-process fault: on Windows a redirected fd is
+// a SyncWriteStream whose write throws EPIPE synchronously, so any console.*
+// call — including ones from Electron internals we do not own, such as
+// replyWithError — becomes an uncaught exception. 2026-09-19T15:15:17Z a
+// box-wide kill sweep took the backend down and produced nine such records in
+// three seconds, none of which described a real program error. rememberLog
+// writes to desktop.log by a separate path and is unaffected, so nothing is
+// lost by treating a dead log pipe as the non-event it is.
+installStdioResilience({
+  onBrokenPipe: code => rememberLog(`stdout/stderr closed (${code}); further console output is discarded`)
+})
 
 installCrashForensics({ flush: flushDesktopLogBufferSync, log: rememberLog })
 
