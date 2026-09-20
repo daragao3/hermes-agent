@@ -344,6 +344,19 @@ class SessionFtsSetupMixin:
         """SQLITE_CORRUPT (including the _VTAB extension) or SQLITE_NOTADB."""
         return cls._sqlite_primary_errcode(exc) in cls._CORRUPTION_SQLITE_PRIMARY_CODES
 
+    @classmethod
+    def _is_structural_vtable_constructor_error(cls, exc: BaseException, table_name: str) -> bool:
+        """The constructor failed for a reason neither waiting nor the heal path owns.
+
+        In practice: it could not read this index's ``%_config`` shadow table, the only read
+        a ``LIMIT 0`` probe makes. The INDEX is unusable; the store around it is intact, so
+        this degrades exactly like a missing FTS5 module rather than like damage. Named once
+        because two callers need the same answer for opposite purposes -- the probe reports
+        the index degraded, and ``_init_fts`` treats it as a repair trigger."""
+        return cls._is_bare_vtable_constructor_error(exc, table_name) and not (
+            cls._is_sqlite_corruption_class_error(exc) or cls._is_transient_sqlite_error(exc)
+        )
+
     @staticmethod
     def _is_fts_write_corruption_error(exc: sqlite3.DatabaseError) -> bool:
         """Corruption SQLite identifies as FTS-scoped (SQLITE_CORRUPT_VTAB, or an
