@@ -32,7 +32,16 @@ class _Cli(CLILoopsMixin):
 def test_idle_hook_queues_the_continuation_when_a_timed_barrier_has_elapsed(hermes_home):
     mgr = goals.GoalManager(session_id="resume-idle")
     mgr.set("finish the thing")
-    mgr.wait_for_seconds(1, reason="cooldown")
+    # A park window no test setup can outlive. The LENGTH is incidental -- the
+    # elapsed case below forces expiry explicitly by writing waiting_until into
+    # the past -- but the first assertion needs the barrier to still be in the
+    # future when it runs, and with 1 s the GoalManager construction, set() and
+    # two _save() disk writes above could themselves take longer than the window
+    # on a loaded box: the continuation was already queued and `empty()` was
+    # False (2026-09-19 flaky, green on retry, five suites sharing the runner
+    # slots). Every other wait_for_seconds() in the suite is 60-3600 for the
+    # same reason; this was the only 1.
+    mgr.wait_for_seconds(3600, reason="cooldown")
     cli = _Cli(mgr)
     with patch("cli._cprint"), patch("cli._DIM", ""), patch("cli._RST", ""):
         cli._maybe_resume_parked_goal()
