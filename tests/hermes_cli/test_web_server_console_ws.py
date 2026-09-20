@@ -187,7 +187,7 @@ def blocking_provider():
 # Backstop only: a real socket server, a forked AIAgent, a 2 s command timeout plus the product's
 # 10 s unwind and a confirm-probe worker all sit inside one test; it grazed the suite-wide
 # 30 s cap under the parallel runner's load (healed on retry twice).
-@pytest.mark.timeout(scaled(180))
+@pytest.mark.timeout(scaled(420))
 @pytest.mark.parametrize("stop", ["cancel", "timeout"])
 def test_console_cancel_stops_forked_agent_request_before_reporting(console_client, monkeypatch, blocking_provider, stop):
     """#106179: cancelling (or timing out) a console command whose worker forked an AIAgent must interrupt
@@ -224,10 +224,15 @@ def test_console_cancel_stops_forked_agent_request_before_reporting(console_clie
         assert conn.receive_json()["type"] == "ready"
         conn.send_json({"type": "input", "line": line})
         _recv_until(conn, "complete", status="confirm_required")
-        assert worker_exited.wait(10)  # the confirm probe's worker, not the one under test
+        # Both waits below are incidental (rule 2 of tests/timeout_budget): a forked console
+        # agent cold-imports run_agent and builds an AIAgent before it reaches the stubbed
+        # provider -- 9-40 s of import work alone on a saturated box -- and the 60 s literal
+        # tripped with "forked agent never reached the provider" (2026-09-18 flaky, healed on
+        # retry). The subject is that cancel/timeout stops the forked request.
+        assert worker_exited.wait(scaled(60))  # the confirm probe's worker, not the one under test
         worker_exited.clear()
         conn.send_json({"type": "confirm", "command": line})
-        assert blocking_provider["started"].wait(60), "forked agent never reached the provider"
+        assert blocking_provider["started"].wait(scaled(240)), "forked agent never reached the provider"
         if stop == "cancel":
             conn.send_json({"type": "cancel"})
         deadline = time.monotonic() + scaled(30)

@@ -160,7 +160,14 @@ class TestDeferToGatewayGuard:
         with caplog.at_level(logging.INFO, logger="hermes_cli.web_server"):
             with patch("cron.scheduler.tick", side_effect=lambda *a, **k: calls.append(k) or 0):
                 t = _run_ticker(stop)
-                time.sleep(0.25)
+                # The transition under test is deferring -> active, so the ticker must
+                # have SEEN the fresh heartbeat before it goes stale. Wait for that
+                # observation (the log line itself), not for a duration: a blind sleep
+                # loses the race whenever the thread's first iteration lands after it,
+                # and then no "deferring" line is ever emitted.
+                assert _wait_until(
+                    lambda: [r for r in caplog.records if "deferring" in r.getMessage()]
+                ), "ticker never observed the fresh gateway heartbeat"
                 stamp = time.time() - 600
                 os.utime(hb, (stamp, stamp))
                 assert _wait_until(lambda: len(calls) >= 3)

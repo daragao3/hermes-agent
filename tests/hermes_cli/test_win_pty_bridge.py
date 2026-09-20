@@ -270,8 +270,12 @@ class TestWinPtyBridgeIO:
         bridge = WinPtyBridge.spawn(["cmd.exe", "/c", "echo done"])
         try:
             _read_until(bridge, b"done")
-            # Give the child a beat to exit, then drain until EOF.
-            deadline = time.monotonic() + 5.0
+            # Give the child a beat to exit, then drain until EOF. Waiting for a real
+            # cmd.exe to exit is incidental (rule 2 of tests/timeout_budget), the same
+            # shape as _read_until's scaled(30.0) above; a 5 s literal tripped on a shared
+            # box (2026-09-18 flaky, healed on retry). The assertion is that read() returns
+            # None once the child is gone, not how soon it exits.
+            deadline = time.monotonic() + scaled(30.0)
             while bridge.is_alive() and time.monotonic() < deadline:
                 bridge.read(timeout=0.1)
             got_none = False

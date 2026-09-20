@@ -26,6 +26,15 @@ from hermes_cli.platform_actions import CAPABILITY_ID, PlatformActions
 from hermes_cli.plugin_capabilities import CAPABILITY_REGISTRY
 
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): 28 tests, each building a HERMES_HOME; the
+# first-attempt trip was inside config.ensure_hermes_home -> initialize_home ->
+# _ensure_directory (filesystem on a saturated box, 2026-09-18 flaky, healed on retry;
+# the file took 122 s). The contract is the gate's structured error.
+pytestmark = pytest.mark.timeout(scaled(300))
+
+
 def _grant(granted: bool):
     """Patch the capability check the facade performs."""
     return patch(

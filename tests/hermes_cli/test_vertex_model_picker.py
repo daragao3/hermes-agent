@@ -20,6 +20,17 @@ from unittest.mock import patch
 from hermes_cli.model_switch import list_authenticated_providers
 from hermes_cli.models import _PROVIDER_MODELS
 
+import pytest
+
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): each test builds the picker through
+# list_authenticated_providers, which walks every provider's credential pool in-process
+# (measured 2026-09-18 at 100% host CPU: 185 load_pool -> 1575 Path.resolve() syscalls per
+# build; see test_local_picker_identity). The first-attempt trip was in auth._same_path ->
+# realpath (flaky, healed on retry).
+pytestmark = pytest.mark.timeout(scaled(300))
+
 
 def test_vertex_has_curated_model_list():
     """Vertex has no /models route — the picker needs a static curated list."""

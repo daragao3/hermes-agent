@@ -598,6 +598,34 @@ def _still_frozen(psutil, pid: int, created: float) -> bool:
         return False
 
 
+def _await_frozen(psutil, pid: int, created: float, *, threads: int | None = None) -> bool:
+    """Wait until *pid* is observably suspended (optionally with *threads* threads).
+
+    CREATE_SUSPENDED takes effect at creation, but psutil derives "suspended" on
+    Windows from every thread's wait reason, and a brand-new process's initial
+    thread has not necessarily reached that state when its creator reports the pid:
+    status() read 'running' at the first inspection on an otherwise quiet box
+    (2026-09-19 flaky, green on retry). Nothing here resumes these children, so
+    waiting changes no outcome -- a child that is genuinely NOT frozen never
+    satisfies this and the caller's assertion still fails.
+    """
+    deadline = time.monotonic() + scaled(10)
+    while time.monotonic() < deadline:
+        if _still_frozen(psutil, pid, created) and (
+            threads is None or _num_threads(psutil, pid) == threads
+        ):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _num_threads(psutil, pid: int) -> int | None:
+    try:
+        return psutil.Process(pid).num_threads()
+    except psutil.Error:
+        return None
+
+
 @pytest.mark.windows_only
 @pytest.mark.skipif(sys.platform != "win32", reason="native Windows only")
 @pytest.mark.timeout(scaled(60))
@@ -613,8 +641,12 @@ def test_live_a_parent_killed_inside_the_spawn_window_takes_its_frozen_child_wit
         if not w.job:
             pytest.skip("job assignment refused on this host (nested jobs forbidden)")
         frozen = psutil.Process(w.frozen_pid)
-        assert frozen.status() == psutil.STATUS_STOPPED and frozen.num_threads() == 1
-        assert _still_frozen(psutil, decoy.pid, psutil.Process(decoy.pid).create_time())
+        assert _await_frozen(psutil, w.frozen_pid, w.frozen_born, threads=1), (
+            f"child {w.frozen_pid} never became observably suspended: "
+            f"status={frozen.status()!r} threads={_num_threads(psutil, w.frozen_pid)}"
+        )
+        decoy_born = psutil.Process(decoy.pid).create_time()
+        assert _await_frozen(psutil, decoy.pid, decoy_born)
 
         psutil.Process(w.parent_pid).kill()  # the abort: TerminateProcess, no cleanup runs
 
@@ -622,7 +654,10 @@ def test_live_a_parent_killed_inside_the_spawn_window_takes_its_frozen_child_wit
         while _still_frozen(psutil, w.frozen_pid, w.frozen_born) and time.monotonic() < deadline:
             time.sleep(0.05)
         assert not _still_frozen(psutil, w.frozen_pid, w.frozen_born), "frozen child outlived the parent that spawned it"
-        assert _still_frozen(psutil, decoy.pid, psutil.Process(decoy.pid).create_time())
+        assert _still_frozen(psutil, decoy.pid, decoy_born), (
+            "the decoy outside that job must be untouched -- this is membership, "
+            "not a sweep by image name"
+        )
     finally:
         w.reap()
         _reap(decoy)

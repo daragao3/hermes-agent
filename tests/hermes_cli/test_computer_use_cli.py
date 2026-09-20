@@ -12,12 +12,21 @@ import pytest
 from tools.computer_use import cua_backend_driver
 
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): every test spawns a cold
+# `python -m hermes_cli.main computer-use ...` child; the 30 s child bound and the
+# suite-wide cap both tripped under load (2026-09-18 flaky, healed on retry). The
+# contract is the help/argv text, not a duration.
+pytestmark = pytest.mark.timeout(scaled(300))
+
+
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "hermes_cli.main", "computer-use", *args],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=scaled(240),
     )
 
 

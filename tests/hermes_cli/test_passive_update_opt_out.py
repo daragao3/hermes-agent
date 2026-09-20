@@ -5,6 +5,16 @@ import time
 
 from hermes_constants import get_hermes_home
 
+import pytest
+
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): the explicit-check path runs real git against
+# a local origin; the first-attempt trip was inside update_cmd._is_shallow_checkout ->
+# _git_run -> communicate() (2026-09-18 flaky, healed on retry). The contract is which
+# fetch happens, not how fast.
+pytestmark = pytest.mark.timeout(scaled(300))
+
 
 def test_passive_check_obeys_config_before_using_cached_notice(monkeypatch):
     from hermes_cli import banner
