@@ -9,6 +9,19 @@ from hermes_cli.model_normalize import normalize_model_for_provider
 from agent.models_dev import PROVIDER_TO_MODELS_DEV, list_agentic_models
 
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): TestOllamaCloudAgentInit::
+# test_agent_imports_without_error does importlib.reload(run_agent), which RE-EXECUTES
+# the module -- so model_tools' discover_builtin_tools walks every tools/ module again
+# and plugin discovery re-registers all 58 plugins (both visible in the captured log of
+# the trip). A reload is heavier than the plain import that already needed this mark in
+# test_xiaomi_provider. Tripped the suite-wide --timeout=30 on a box shared with three
+# sibling suites (2026-09-20, file at 463 s). The contract is that the import raises
+# nothing, not how fast it completes.
+pytestmark = pytest.mark.timeout(scaled(300))
+
+
 # ── Provider Registry ──
 
 class TestOllamaCloudProviderRegistry:

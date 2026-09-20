@@ -11,6 +11,18 @@ Covers:
 
 import os
 
+import pytest
+
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): these drive hermes_cli.model_switch, which walks
+# every provider's credential pool in-process and opens the session store -- the first-attempt
+# trip showed that chain (web_server_sessions._open_probed -> hermes_state._open_read_only ->
+# _fts_table_probe) under a 30 s cap. Because --timeout-method=thread kills the whole FILE,
+# one hung test reported as 6 failed ids (2026-09-20 flaky, green on retry; file at 244 s).
+# See project-agent-src-picker-payload-realpath-storm-under-load for the walk's cost.
+pytestmark = pytest.mark.timeout(scaled(300))
+
 
 # ---------------------------------------------------------------------------
 # OLLAMA_API_KEY credential resolution

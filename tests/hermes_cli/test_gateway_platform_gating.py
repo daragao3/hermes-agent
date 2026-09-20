@@ -15,6 +15,15 @@ Currently:
 import pytest
 
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): the gating tests load real platform plugins, and
+# the first-attempt trip was inside plugins_loader._load_directory_module importing
+# plugins/platforms/telegram/adapter.py at module scope (2026-09-20 flaky, green on retry).
+# The contract is which platforms are present on this host, not how fast they import.
+pytestmark = pytest.mark.timeout(scaled(300))
+
+
 class TestMatrixHiddenOnWindows:
     @pytest.mark.linux_only
     def test_matrix_present_on_linux(self):

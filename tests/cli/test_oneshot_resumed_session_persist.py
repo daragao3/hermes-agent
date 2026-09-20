@@ -28,6 +28,16 @@ import pytest
 import cli as cli_mod
 
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): the durable-flush path builds the real CLI, so
+# the first-attempt trip landed inside plugins.register -> _register_scoped_provider and
+# hermes_logging._session_record_factory, i.e. plugin discovery plus per-record logging while
+# the turn is persisted (2026-09-20 flaky, green on retry; file at 65 s). Nothing here
+# asserts a duration -- the contract is that the unflushed turn survives finalize.
+pytestmark = pytest.mark.timeout(scaled(300))
+
+
 @pytest.fixture(autouse=True)
 def _reset_finalize_state(monkeypatch):
     monkeypatch.setattr(cli_mod, "_single_query_finalize_attempted_session_ids", set())
