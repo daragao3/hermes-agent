@@ -20,6 +20,23 @@ logger = logging.getLogger(__name__)
 # long after profile/HERMES_HOME overrides have been applied, so freezing is safe.
 RULES_FILE = get_hermes_home() / "feishu_comment_rules.json"
 PAIRING_FILE = get_hermes_home() / "feishu_comment_pairing.json"
+# Import-time snapshots backing the call-time accessors. A platform adapter runs inside
+# gateway/run.py::_profile_runtime_scope, which scopes a whole turn to one profile via a
+# context-local home override, so frozen paths made profile B's turn read profile A's rules
+# and -- worse -- profile A's approved-pairing allowlist. The accessors honour explicitly
+# patched module globals (tests) and otherwise re-resolve. Same fix as skills_sync (#65828).
+_RULES_FILE_AT_IMPORT = RULES_FILE
+_PAIRING_FILE_AT_IMPORT = PAIRING_FILE
+
+
+def _rules_file() -> Path:
+    return (RULES_FILE if RULES_FILE != _RULES_FILE_AT_IMPORT
+            else get_hermes_home() / "feishu_comment_rules.json")
+
+
+def _pairing_file() -> Path:
+    return (PAIRING_FILE if PAIRING_FILE != _PAIRING_FILE_AT_IMPORT
+            else get_hermes_home() / "feishu_comment_pairing.json")
 
 _VALID_POLICIES = ("allowlist", "pairing")
 
@@ -54,28 +71,44 @@ class _MtimeCache:
     """Mtime-based JSON file cache: ``stat()`` per access, re-read only on change."""
 
     def __init__(self, path: Path):
-        self._path, self._mtime, self._data = path, 0.0, None
+        # ``path`` may be a Path (tests construct it that way) or a callable resolving one
+        # per call. Cached per RESOLVED path so a profile switch cannot be served another
+        # profile's data out of a single-slot cache.
+        self._path_source = path
+        self._by_path: dict = {}
+
+    @property
+    def _path(self) -> Path:
+        src = self._path_source
+        return src() if callable(src) else src
+
+    def invalidate(self) -> None:
+        """Drop the cached payload for the currently-resolved path."""
+        self._by_path.pop(self._path, None)
 
     def load(self) -> dict:
         try:
-            mtime = self._path.stat().st_mtime
+            path = self._path
+            mtime = path.stat().st_mtime
         except FileNotFoundError:
-            self._mtime, self._data = 0.0, {}
+            self._by_path[self._path] = (0.0, {})
             return {}
-        if mtime == self._mtime and self._data is not None:
-            return self._data
+        cached = self._by_path.get(path)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
         try:
-            with open(self._path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError):
-            logger.warning("[Feishu-Rules] Failed to read %s, using empty config", self._path)
+            logger.warning("[Feishu-Rules] Failed to read %s, using empty config", path)
             data = {}
-        self._mtime, self._data = mtime, (data if isinstance(data, dict) else {})
-        return self._data
+        payload = data if isinstance(data, dict) else {}
+        self._by_path[path] = (mtime, payload)
+        return payload
 
 
-_rules_cache = _MtimeCache(RULES_FILE)
-_pairing_cache = _MtimeCache(PAIRING_FILE)
+_rules_cache = _MtimeCache(_rules_file)
+_pairing_cache = _MtimeCache(_pairing_file)
 
 
 def _parse_frozenset(raw: Any) -> Optional[frozenset]:
@@ -137,11 +170,12 @@ def _load_pairing_approved() -> set:
 
 
 def _save_pairing(data: dict) -> None:
-    PAIRING_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(PAIRING_FILE.with_suffix(".tmp"), "w", encoding="utf-8") as f:
+    pairing_file = _pairing_file()
+    pairing_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(pairing_file.with_suffix(".tmp"), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    PAIRING_FILE.with_suffix(".tmp").replace(PAIRING_FILE)
-    _pairing_cache._mtime, _pairing_cache._data = 0.0, None  # invalidate so the next load re-reads
+    pairing_file.with_suffix(".tmp").replace(pairing_file)
+    _pairing_cache.invalidate()  # so the next load re-reads
 
 
 def _mutate_pairing(user_open_id: str, add: bool) -> bool:

@@ -87,3 +87,31 @@ def test_mirror_session_lookup_uses_the_overridden_home(tmp_path):
     assert found == "sess-from-override", (
         f"mirror resolved {found!r} -- it read the launch profile's sessions.json, so a cron "
         "profile tick mirrors into the wrong profile's transcript")
+
+
+def test_media_delivery_denies_the_active_profiles_credentials(tmp_path):
+    """The credential denylist must cover the profile the turn is actually running as.
+
+    ``_media_delivery_denied_paths`` joined ``_ROOT_CREDENTIAL_PATHS`` (.env, auth.json,
+    sessions/, state.db*) onto the import-time ``_HERMES_HOME``. Media delivery trusts RECENT
+    files by default (``MEDIA_DELIVERY_TRUST_RECENT``, because artifacts land seconds before
+    delivery), so the denylist is what stops a freshly written credential file from being
+    delivered. Frozen at import, it guards the launch profile's credentials while a turn runs
+    as a different profile.
+
+    This covers the DENY side only. The allow side is already profile-complete:
+    ``_profile_cache_roots()`` enumerates every profile's cache dirs at check time.
+    """
+    import gateway.platforms.base as base
+
+    token = set_hermes_home_override(tmp_path)
+    try:
+        denied = set(base._media_delivery_denied_paths())
+    finally:
+        reset_hermes_home_override(token)
+
+    missing = [tmp_path / rel for rel in ("auth.json", ".env", "sessions")
+               if tmp_path / rel not in denied]
+    assert not missing, (
+        f"the active profile's credential paths are not denied: {missing} -- the denylist is "
+        "still built from the home the gateway launched under")
