@@ -13,6 +13,14 @@ Root cause is arithmetic, not timing luck: ``WhatsAppAdapter.connect_timeout_sec
 22529b8622 from connect()'s own phases) but ``_poll_bridge_health`` looped ``range(15)`` at 1 s, so phase 1
 could never spend more than ~15 s of it however long node took.
 
+WHAT 2026-09-20 CHANGED HERE, and why two tests in this file were rewritten rather than preserved (loops
+``whatsapp-httpup-budget-live-proof-20260920``): the first production episode under the widened phase spent
+the full 55 s on a child that never bound, and the NEXT attempt -- same host, 90.5-92.3 % commit, 52 s later
+-- bound in 11.3 s. The failure is bimodal, not slow, so "wait longer on THIS child" is the wrong lever and
+this file no longer asserts it. The budget arithmetic below is unchanged and still correct; what it now buys
+is several bounded spawn attempts (``tests/gateway/test_whatsapp_bridge_failfast_respawn.py``) instead of one
+long wait, and ``_wait_for_bridge`` therefore takes a required ``respawn`` callable.
+
 Pinned here as code paths, never a wall-clock:
 
 * ``_http_up_budget_s()`` derives phase 1 from ``connect_timeout_secs`` minus phase 2 and the pre-spawn
@@ -30,7 +38,7 @@ Mutant checks (each reverts one change; the named test goes red):
 
 import asyncio
 import logging
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -47,6 +55,10 @@ def _adapter(tmp_path, *, connect_budget: float | None = None):
         adapter.connect_timeout_secs = connect_budget
     adapter._bridge_log = tmp_path / "bridge.log"
     adapter._close_bridge_log = Mock()
+    # This file is about the BUDGET; the kill-and-replace mechanics it now sits on top of are
+    # pinned in test_whatsapp_bridge_failfast_respawn.py. Stubbing the discard keeps the mocked
+    # child alive across attempts, which is exactly the "alive but never listening" case here.
+    adapter._discard_unbound_bridge = AsyncMock()
     return adapter
 
 
@@ -95,8 +107,13 @@ class TestBudgetDerivedFromConnectTimeout:
 
 
 class TestHttpUpPhaseSpendsTheBudget:
-    def test_a_bridge_that_binds_at_40s_is_accepted(self, tmp_path, monkeypatch):
-        """The 2026-09-18 case: node alive throughout, listening well after 15 s."""
+    def test_a_bridge_that_binds_at_40s_is_still_accepted(self, tmp_path, monkeypatch):
+        """The 2026-09-18 case re-read after 09-20: 40 s is inside the budget, on a LATER child.
+
+        What changed is that no single child is waited on for 40 s. What did NOT change, and is
+        what this test protects, is that the declared budget is really spent before giving up --
+        a hardcoded 15-poll phase 1 fails this whether or not it respawns.
+        """
         adapter = _adapter(tmp_path, connect_budget=90.0)
         adapter._bridge_process = Mock(poll=Mock(return_value=None))
         clock = _Clock(monkeypatch)
@@ -108,7 +125,7 @@ class TestHttpUpPhaseSpendsTheBudget:
 
         adapter._probe_bridge_health = probe
 
-        assert asyncio.run(adapter._wait_for_bridge()) is True
+        assert asyncio.run(adapter._wait_for_bridge(Mock())) is True
         assert clock.slept >= 40
 
     def test_still_gives_up_at_the_budget(self, tmp_path, monkeypatch):
@@ -121,8 +138,9 @@ class TestHttpUpPhaseSpendsTheBudget:
 
         adapter._probe_bridge_health = never
 
-        assert asyncio.run(adapter._wait_for_bridge()) is False
-        assert clock.slept == pytest.approx(adapter._http_up_budget_s(), abs=1.5)
+        assert asyncio.run(adapter._wait_for_bridge(Mock())) is False
+        attempts = max(1, int(adapter._http_up_budget_s() // adapter._bind_attempt_budget_s()))
+        assert clock.slept == pytest.approx(attempts * adapter._bind_attempt_budget_s(), abs=1.5)
 
 
 class TestDeadBridgeStillReportedImmediately:
@@ -137,7 +155,7 @@ class TestDeadBridgeStillReportedImmediately:
 
         adapter._probe_bridge_health = never
 
-        assert asyncio.run(adapter._wait_for_bridge()) is False
+        assert asyncio.run(adapter._wait_for_bridge(Mock())) is False
         assert clock.slept <= 2
 
 
@@ -153,6 +171,6 @@ class TestDiagnosticsReachTheLogger:
         adapter._probe_bridge_health = never
 
         with caplog.at_level(logging.INFO, logger=wa.logger.name):
-            asyncio.run(adapter._wait_for_bridge())
+            asyncio.run(adapter._wait_for_bridge(Mock()))
 
         assert any("did not start in" in record.getMessage() for record in caplog.records)

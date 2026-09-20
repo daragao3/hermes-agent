@@ -295,6 +295,12 @@ _BRIDGE_POLL_INTERVAL_S = 1.0
 _BRIDGE_CONNECTED_BUDGET_S = 15.0
 _BRIDGE_PRESPAWN_RESERVE_S = 20.0
 _BRIDGE_HTTP_UP_FLOOR_S = 15.0
+# One spawn's share of the HTTP-up budget. A node child still not listening by here is
+# killed and REPLACED rather than waited on -- see _wait_for_bridge for the measurement.
+_BRIDGE_BIND_ATTEMPT_S = 18.0
+# Socket teardown grace after killing a child that never bound. It never bound, so the
+# normal cost is one free bind probe; this only pays out if the kill raced a late listen().
+_BRIDGE_RESPAWN_RELEASE_S = 3.0
 
 
 def _cache_dirs() -> tuple:
@@ -562,9 +568,10 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
     #   _BRIDGE_CONNECTED_BUDGET_S  phase 2, waiting for baileys to reach status: connected
     #   _BRIDGE_PRESPAWN_RESERVE_S  2 s health probe + kill + <=15 s port release before Popen
     #   _BRIDGE_HTTP_UP_FLOOR_S     phase 1 never drops below this, whatever the budget says
+    #   _BRIDGE_BIND_ATTEMPT_S      one spawn's slice of phase 1; phase 1 is N of these, not one long wait
     # Runner connect budget, sized from connect()'s own phases rather than the 30 s platform default:
     # pre-spawn on a bound port (2 s health probe + kill + <=15 s port release) plus ``_wait_for_bridge``'s
-    # two 15-poll phases, with room for a loop other tasks are blocking. Attempt 6 on 2026-09-18 needed
+    # phase 1 (N bind attempts) and phase 2, with room for a loop other tasks are blocking. Attempt 6 on 2026-09-18 needed
     # 22 s end to end under load with a FREE port; 30 s left nothing for a bound one.
     connect_timeout_secs = 90.0
     splits_long_messages = True  # send() chunks via truncate_message()
@@ -731,13 +738,64 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
 
         A CRASHED bridge is still reported in ~1 s -- the poll loop checks
         ``poll()`` every second and returns immediately. Only "alive but not
-        listening yet" pays this budget, which is precisely the case worth waiting on.
+        listening yet" pays this budget.
+
+        WHAT THIS BUDGET IS *NOT*, measured 2026-09-20 (loops
+        ``whatsapp-httpup-budget-live-proof-20260920``): it is not a licence to wait it out
+        on one child. The first production episode after the widening spent the full 55 s on
+        a child that never bound, and the very next attempt -- same host, 90.5-92.3 % commit,
+        52 s later -- bound in 11.3 s. So this is the budget for the PHASE, and
+        ``_wait_for_bridge`` spends it as several ``_BRIDGE_BIND_ATTEMPT_S`` attempts.
         """
         override = env_int("WHATSAPP_BRIDGE_HTTP_UP_TIMEOUT", 0)
         if override > 0:
             return float(override)
         budget = self.connect_timeout_secs - _BRIDGE_CONNECTED_BUDGET_S - _BRIDGE_PRESPAWN_RESERVE_S
         return max(_BRIDGE_HTTP_UP_FLOOR_S, budget)
+
+    def _bind_attempt_budget_s(self) -> float:
+        """How long ONE spawned child gets to bind before it is discarded for a fresh one.
+
+        Deliberately far below ``_http_up_budget_s()``: the whole point is that several
+        attempts fit inside the declared connect budget. Env override
+        ``WHATSAPP_BRIDGE_BIND_ATTEMPT_TIMEOUT`` so a host that really does bind slowly can
+        be widened without a code change.
+        """
+        override = env_int("WHATSAPP_BRIDGE_BIND_ATTEMPT_TIMEOUT", 0)
+        return float(override) if override > 0 else _BRIDGE_BIND_ATTEMPT_S
+
+    def _spawn_bridge(self, bridge_path: Path, log_fh) -> None:
+        """``Popen`` the node bridge onto ``log_fh`` and record its pid. Synchronous by contract.
+
+        ``connect()`` reaches this with no await in between on a free port (22529b8622): a
+        cancellation landing on an await before the spawn leaves the next attempt with
+        nothing to adopt. Keep it that way -- nothing in here may become a coroutine.
+        """
+        self._bridge_process = subprocess.Popen(
+            [find_node_executable("node") or "node", str(bridge_path), "--port", str(self._bridge_port),
+             "--session", str(self._session_path), "--mode", _wenv("WHATSAPP_MODE", "self-chat")],
+            stdout=log_fh, stderr=log_fh, env=self._bridge_env(), **windows_detach_popen_kwargs())
+        _write_bridge_pidfile(self._session_path, self._bridge_process.pid)
+
+    async def _discard_unbound_bridge(self) -> None:
+        """Kill the child that never bound, so the respawn starts from a clean port.
+
+        Forced, because there is nothing graceful to wait for: this child produced no listen
+        banner and (2026-09-18, 2026-09-20) not one byte of ``bridge.log``. Leaving it alive
+        is how the 09-18 outage looked from the outside -- a dead-weight node holding a
+        session lock while the adapter reported failure.
+        """
+        proc, self._bridge_process = self._bridge_process, None
+        if proc is None:
+            return
+        try:
+            _terminate_bridge_process(proc, force=True)
+        except Exception as exc:  # a walk that cannot reach it is worth saying, never raising
+            self._bridge_note(f"Could not kill the unbound bridge pid {getattr(proc, 'pid', '?')}: {exc}")
+        _unlink_quietly(self._session_path / "bridge.pid")
+        if not _port_is_free(self._bridge_port) and not await _wait_for_port_release(
+                self._bridge_port, _BRIDGE_RESPAWN_RELEASE_S):
+            self._bridge_note(f"Port {self._bridge_port} still bound after the kill; the respawn may hit EADDRINUSE")
 
     async def _poll_bridge_health(self, died_msg: str, timeout_s: float) -> tuple[Optional[bool], bool, dict]:
         """Poll /health for ``timeout_s`` at 1s → ``(connected, http_ready, data)``; connected False = process died (reported), None = timeout.
@@ -773,15 +831,52 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                 break
         return None, http_ready, data
 
-    async def _wait_for_bridge(self) -> bool:
-        """Phase 1: HTTP up (``_http_up_budget_s()``). Phase 2: ``status: connected`` (warns but proceeds if still connecting)."""
-        http_up_budget = self._http_up_budget_s()
-        connected, http_ready, data = await self._poll_bridge_health(
-            "Bridge process died (exit code {code})", http_up_budget)
-        if connected is False:
-            return False
+    async def _wait_for_bridge(self, respawn) -> bool:
+        """Phase 1: bind, failing fast onto a fresh child. Phase 2: ``status: connected``.
+
+        Phase 1 spends ``_http_up_budget_s()`` as N attempts of ``_bind_attempt_budget_s()``
+        instead of one long wait, because the observed failure is BIMODAL rather than slow:
+        on 2026-09-20 a child burned the whole 55 s phase without ever reaching its listen
+        banner while its replacement, under the same load, bound in 11.3 s. Waiting longer
+        on the first child would have delayed that recovery, not produced it.
+
+        ``respawn`` is a zero-argument callable that replaces ``self._bridge_process`` with a
+        fresh child. It is REQUIRED, not optional: an optional one would let a caller
+        silently fall back to the single-attempt behaviour this replaces.
+
+        A crashed child is NOT respawned. ``poll()`` reports it within ~1 s and its exit code
+        is deterministic (bad creds, EADDRINUSE, a broken install); three identical crashes
+        are noise, and the code plus the log pointer are the useful output.
+        """
+        total_budget = self._http_up_budget_s()
+        attempt_budget = min(self._bind_attempt_budget_s(), total_budget)
+        attempts = max(1, int(total_budget // attempt_budget))
+        connected, http_ready, data = None, False, {}
+        for attempt in range(1, attempts + 1):
+            if attempt > 1:
+                self._bridge_note(
+                    f"Bridge did not bind in {attempt_budget:.0f}s (attempt {attempt - 1} of {attempts}); "
+                    f"killing pid {getattr(self._bridge_process, 'pid', '?')} and respawning")
+                await self._discard_unbound_bridge()
+                respawn()
+                # Worded to match bin/whatsapp_httpup_watch.py's SPAWN anchor, so its
+                # spawn->ready delta is measured against THIS child. Without it the tool
+                # keeps the first "Bridge found at" and credits child 1's dead time to the
+                # child that actually bound.
+                self._bridge_note(
+                    f"Bridge started on port {self._bridge_port} (attempt {attempt} of {attempts})")
+            connected, http_ready, data = await self._poll_bridge_health(
+                "Bridge process died (exit code {code})", attempt_budget)
+            if connected is False:
+                return False
+            if http_ready:
+                break
         if not http_ready:
-            return self._bridge_died(f"Bridge HTTP server did not start in {http_up_budget:.0f}s")
+            # Keep the TOTAL in this sentence, not the per-attempt slice: bin/whatsapp_httpup_watch.py
+            # reads the number out of it and calls anything <= 15 s "OLD-CODE", i.e. "the fix never armed".
+            return self._bridge_died(
+                f"Bridge HTTP server did not start in {attempts * attempt_budget:.0f}s "
+                f"({attempts} spawn attempts of {attempt_budget:.0f}s)")
         if data.get("status") != "connected":
             self._bridge_note("Bridge HTTP ready, waiting for WhatsApp connection...")
             connected, _, _ = await self._poll_bridge_health(
@@ -789,7 +884,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             if connected is False:
                 return False
             if connected is None:
-                waited = http_up_budget + _BRIDGE_CONNECTED_BUDGET_S
+                waited = attempts * attempt_budget + _BRIDGE_CONNECTED_BUDGET_S
                 self._bridge_note(f"⚠ WhatsApp not connected after {waited:.0f}s")
                 self._bridge_note(f"  Bridge log: {self._bridge_log}")
                 self._bridge_note("  If session expired, re-pair: hermes whatsapp")
@@ -856,11 +951,8 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             self._bridge_log = self._session_path.parent / "bridge.log"
             _rotate_bridge_log_if_large(self._bridge_log)
             self._bridge_log_fh = bridge_log_fh = open(self._bridge_log, "a", encoding="utf-8")
-            self._bridge_process = subprocess.Popen(
-                [find_node_executable("node") or "node", str(bridge_path), "--port", str(self._bridge_port), "--session", str(self._session_path),
-                 "--mode", _wenv("WHATSAPP_MODE", "self-chat")], stdout=bridge_log_fh, stderr=bridge_log_fh, env=self._bridge_env(), **windows_detach_popen_kwargs())
-            _write_bridge_pidfile(self._session_path, self._bridge_process.pid)
-            if not await self._wait_for_bridge():
+            self._spawn_bridge(bridge_path, bridge_log_fh)
+            if not await self._wait_for_bridge(lambda: self._spawn_bridge(bridge_path, bridge_log_fh)):
                 return False
             self._attach_to_bridge(self._bridge_process)
             self._mark_connected()
