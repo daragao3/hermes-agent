@@ -330,7 +330,10 @@ class TestStopKillsInflightToolSubprocess:
     @pytest.mark.parametrize(
         "env_var, value, expected_error",
         [
-            ("HERMES_CRON_HARD_TIMEOUT", "1", "wall-clock"),
+            # 5s, not 1s: this limit is real elapsed time, so a 1s budget raced
+            # the subprocess spawn on Windows (measured 1 pass / 2 fail alone).
+            # The child sleeps 120s, so the arm can still only pass by a kill.
+            ("HERMES_CRON_HARD_TIMEOUT", "5", "wall-clock"),
             ("HERMES_CRON_TIMEOUT", "1", "idle for"),
         ],
     )
@@ -349,13 +352,24 @@ class TestStopKillsInflightToolSubprocess:
             # off, so only the inactivity branch can fire.
             def _idle_summary():
                 s = _active_summary()
-                s["seconds_since_activity"] = 999.0
+                # ONLY once the tool subprocess is provably in flight. Reporting
+                # 999s from the first poll let the inactivity branch fire before
+                # the child registered, so kill_run_tool_subprocesses found
+                # nothing to kill and the child outlived the run (3/3 failures
+                # alone on 2026-09-20; the nightly gate's oldest red). The
+                # scenario under test is a timeout DURING a tool call -- which is
+                # exactly what the sibling operator-stop test waits for before
+                # filing its request.
+                if pid_file.exists():
+                    s["seconds_since_activity"] = 999.0
                 return s
             agent.get_activity_summary.side_effect = _idle_summary
         child = {}
         try:
             success, _output, _final, error = _run(self.JOB, agent, tmp_cron_dir)
-            child["pid"] = _wait_for_file(pid_file, timeout=5)
+            # Generous: the assertion below is about the child being KILLED,
+            # not about how fast Windows got round to spawning it.
+            child["pid"] = _wait_for_file(pid_file, timeout=30)
             assert success is False
             assert expected_error in error
             assert _wait_dead(psutil, child["pid"]), (
