@@ -446,10 +446,7 @@ class SessionSchemaMixin:
                 return None
             if "no such table" in str(exc).lower():
                 return False
-            if self._is_bare_vtable_constructor_error(exc, table_name) and not (
-                self._is_sqlite_corruption_class_error(exc)
-                or self._is_transient_sqlite_error(exc)
-            ):
+            if self._is_structural_vtable_constructor_error(exc, table_name):
                 # Structural: the constructor could not read this index's %_config shadow
                 # table (the only read it makes for a LIMIT 0 probe). The index is
                 # unusable but the STORE is intact, so this degrades exactly like a
@@ -471,6 +468,104 @@ class SessionSchemaMixin:
             "search may return incomplete results until FTS is rebuilt: %s", table_name, decode_exc,
         )
         return None
+
+    def _fts_index_unopenable(self, cursor: sqlite3.Cursor, table_name: str) -> bool:
+        """True when *table_name* is still in the schema but its fts5 constructor cannot run.
+
+        ``_fts_table_probe`` deliberately reports that as a plain ``None`` -- "degraded", the
+        same answer a missing FTS5 module gets -- because a READ-ONLY open must survive it and
+        may repair nothing. The writable open needs the distinction back, so it re-asks. One
+        ``LIMIT 0`` on a path that has already failed; the classification stays in the single
+        predicate both callers share."""
+        try:
+            cursor.execute(f"SELECT * FROM {table_name} LIMIT 0")
+        except sqlite3.DatabaseError as exc:
+            return self._is_structural_vtable_constructor_error(exc, table_name)
+        except UnicodeDecodeError:
+            # Undecodable indexed CONTENT: the vtable constructed, so the triggers it feeds
+            # still work and the invariant this asks about is not the one at risk.
+            return False
+        return False
+
+    @staticmethod
+    def _fts5_config_version(cursor: sqlite3.Cursor) -> Optional[int]:
+        """The ``%_config`` format version THIS build's fts5 writes, read from a throwaway
+        temp index rather than hard-coded: the number is an fts5 internal and has changed
+        (4 and 5 are both current). Same publish-nothing idiom as
+        :meth:`_trigram_tokenizer_available`."""
+        probe = "temp.hermes_fts5_config_version_probe"
+        with contextlib.suppress(sqlite3.DatabaseError):
+            cursor.execute(f"DROP TABLE IF EXISTS {probe}")
+        try:
+            cursor.execute(f"CREATE VIRTUAL TABLE {probe} USING fts5(x)")
+            row = cursor.execute(f"SELECT v FROM {probe}_config WHERE k = 'version'").fetchone()
+            return int(row[0]) if row and row[0] is not None else None
+        except (sqlite3.DatabaseError, TypeError, ValueError):
+            return None
+        finally:
+            with contextlib.suppress(sqlite3.DatabaseError):
+                cursor.execute(f"DROP TABLE IF EXISTS {probe}")
+
+    def _restore_missing_fts_config_shadow(self, cursor: sqlite3.Cursor, table_name: str) -> bool:
+        """Recreate an ABSENT ``<index>_config`` so the index can be constructed -- and therefore
+        DROPPED. Nothing else can remove it: ``DROP TABLE`` runs xDestroy, which runs xConnect
+        first, so an index whose ``%_config`` is gone cannot be dropped at all. Measured
+        2026-09-20 on SQLite 3.53.1; it DOES drop from a connection that instantiated the vtable
+        before the shadow table went away, which is how a hand-check misses this.
+
+        The index this resurrects is empty and untrustworthy -- the caller drops and rebuilds it
+        in the next statement, and the stale breadcrumb is already committed for every path where
+        that rebuild is deferred. Never rewrites existing bytes: absence is the precondition.
+        """
+        config_table = f"{table_name}_config"
+        if self._sqlite_table_exists(cursor, config_table):
+            return False
+        version = self._fts5_config_version(cursor)
+        if version is None:
+            return False
+        try:
+            cursor.execute(f"CREATE TABLE {config_table}(k PRIMARY KEY, v) WITHOUT ROWID")
+            cursor.execute(f"INSERT INTO {config_table} VALUES('version', ?)", (version,))
+        except sqlite3.DatabaseError as exc:
+            logger.error("Could not rebuild the %s shadow table: %s", config_table, exc)
+            return False
+        logger.warning(
+            "Rebuilt the missing %s shadow table (fts5 format version %s) so the unusable "
+            "index can be dropped and recreated.", config_table, version,
+        )
+        return True
+
+    def _repair_unopenable_fts_index(self, cursor: sqlite3.Cursor, *, legacy: bool) -> bool:
+        """Restore "base FTS triggers present => the base index is writable" and, if allowed,
+        rebuild the index rather than leaving the store degraded forever.
+
+        DETACH FIRST, rebuild second, never the reverse. ``_persist_fts_deferral`` commits the
+        stale breadcrumb and the trigger drop together, so every way the rebuild can decline --
+        a store over the foreground size limit, foreign holders, another process owning the
+        rebuild authority, or the DDL itself failing -- leaves canonical writes free of an
+        index nobody can open, with ``retry_deferred_fts_recovery`` owning the next attempt.
+        Doing it the other way round would keep the triggers live across a deferral and the
+        write path would still be dead.
+
+        This is the same arm the other two index families already have: ``_init_schema`` drops
+        the FTS triggers when the runtime has no FTS5, and ``_ensure_fts_cjk_schema`` drops the
+        cjk triggers when its tokenizer will not load, both so "INSERTs must not fail at
+        trigger time". The base index was the one family without it."""
+        logger.error(
+            "messages_fts cannot be opened by a fresh connection, but its sync triggers are "
+            "still attached, so every canonical write through this store would fail. "
+            "Detaching the triggers and rebuilding the index from canonical messages.",
+        )
+        self._persist_fts_deferral(cursor, reason="fts_index_unopenable")
+        self._fts_stale = True
+        self._fts_enabled = self._trigram_available = self._fts_cjk_available = False
+        # Must precede the rebuild: its very first statement is the DROP that cannot run.
+        self._restore_missing_fts_config_shadow(cursor, "messages_fts")
+        if not self._recover_stale_fts(cursor, legacy=legacy):
+            return False
+        # CJK was detached alongside the base indexes; its own ensure path decides when it returns.
+        self._ensure_fts_cjk_schema(cursor)
+        return True
 
     # ── Stale-FTS recovery ─────────────────────────────────────────────────
 
@@ -1288,6 +1383,13 @@ class SessionSchemaMixin:
                                 cursor, legacy=legacy_fts, include_trigram=trigram_enabled,
                             ),
                         )
+            if not self._fts_enabled and not self._fts_stale and self._fts_index_unopenable(
+                cursor, "messages_fts"
+            ):
+                # The ensure above declined for a reason that leaves live triggers pointing at
+                # an index no connection can instantiate. Anything already stale is the stale
+                # machinery's to own, so this arm is only for the case it cannot see.
+                self._repair_unopenable_fts_index(cursor, legacy=legacy_fts)
             if self._fts_enabled and not legacy_fts and not base_triggers_missing:
                 # CJK-bigram index: strictly additive, gated on the loadable tokenizer.
                 self._ensure_fts_cjk_schema(cursor)
