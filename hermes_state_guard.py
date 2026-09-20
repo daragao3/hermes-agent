@@ -125,6 +125,46 @@ def _is_production_state_db(resolved: Path, root: Path) -> bool:
     return len(parts) == 3 and parts[0] == "profiles"
 
 
+def refuse_mock_db_path(db_path: Any, *, where: str) -> None:
+    """Refuse a ``unittest.mock`` double handed in where a database PATH is expected.
+
+    A ``MagicMock`` satisfies ``os.PathLike``: ``unittest.mock`` gives it an
+    ``__fspath__`` returning ``"MagicMock/<mock name>/<id(mock)>"``, so
+    ``Path(mock)`` is an ordinary RELATIVE path and every downstream check passes.
+    A caller that reads ``db_path`` off a duck-typed object therefore materialises a
+    REAL database three levels under the process CWD -- the repo or worktree root
+    during a test run -- together with its ``.fts_rebuild.lock`` and
+    ``.quarantine.lock`` siblings. Measured 2026-09-19: ``tests/tools`` left
+    ``MagicMock/mock._session_db.db_path/<id>`` at the worktree root, and
+    ``git worktree remove`` then refuses with the SAME message a sibling session's
+    unsaved edits produce -- so cleanup either stalls on a false alarm or reaches
+    for ``--force`` on a message that sometimes means real work.
+
+    ``_ensure_test_isolation`` cannot catch this: it only refuses paths under the
+    real Hermes root, and this one lands under the CWD.
+
+    Costs nothing in production: ``unittest.mock`` is not imported there, and an
+    absent module short-circuits before any isinstance. No import is forced.
+    """
+    mock_mod = sys.modules.get("unittest.mock")
+    if mock_mod is None:
+        return
+    if not isinstance(db_path, mock_mod.NonCallableMock):
+        return
+    # Only the magic-method flavours (MagicMock/AsyncMock) actually carry __fspath__ --
+    # a plain Mock() is refused here too, but naming its would-be path would itself raise.
+    try:
+        would_be = f" at {os.fspath(db_path)!r}"
+    except TypeError:
+        would_be = ""
+    raise TypeError(
+        f"{where}: db_path is a {type(db_path).__name__}, not a path. unittest.mock "
+        f"implements __fspath__, so this would have created a real database"
+        f"{would_be} under the current working directory. Pass a real tmp_path "
+        f"(or None) instead of a bare mock."
+    )
+
+
 # Last SessionDB() init error, per-process; surfaced by /resume-style slash
 # commands so users know WHY. Only SessionDB.__init__ writes it.
 _last_init_error: Optional[str] = None
