@@ -23,6 +23,10 @@ from urllib.request import Request, urlopen
 
 
 def probe(surface, scenario, directory):
+    # Imported here, like every other import in this function: main() inserts the repo
+    # root into sys.path for the standalone entrypoint, so a module-scope import of a
+    # repo package would run too early to resolve.
+    from tests.timeout_budget import scaled
     from cli import HermesCLI
     from tools import process_registry as pr
     from tools.process_registry_notifications import format_process_notification
@@ -97,7 +101,11 @@ def probe(surface, scenario, directory):
                 process.notify_on_complete = True
                 processes.append(process)
             gate.touch()
-            deadline = time.monotonic() + 30
+            # Waiting for 12 real interpreter children to finish and report: incidental
+            # (rule 2 of tests/timeout_budget), and the literal 30 s expired under a box
+            # shared with three sibling suites, so qsize() was short of count at the
+            # assertion below (2026-09-20 flaky, green on retry; the file took 471 s).
+            deadline = time.monotonic() + scaled(30)
             while registry.completion_queue.qsize() < count and time.monotonic() < deadline:
                 time.sleep(.01)
             assert registry.completion_queue.qsize() == count
@@ -146,7 +154,12 @@ def probe(surface, scenario, directory):
                 poller = threading.Thread(target=server._notification_poller_loop,
                                           args=(stop, 'ui-owner', session))
                 poller.start()
-                deadline = time.monotonic() + (1 if scenario == 'foreign' else 10)
+                # The non-foreign branch waits for the poller to DRAIN the queue and breaks
+                # as soon as it is empty, so that bound is incidental and scales. The
+                # 'foreign' 1 s is deliberately NOT scaled: nothing breaks that loop early,
+                # so the second IS the observation -- it gives the poller a fixed window in
+                # which it must not consume another owner's completion (rule 1).
+                deadline = time.monotonic() + (1 if scenario == 'foreign' else scaled(10))
                 while time.monotonic() < deadline:
                     if scenario != 'foreign' and registry.completion_queue.empty():
                         break
