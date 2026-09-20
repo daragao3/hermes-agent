@@ -37,10 +37,13 @@ WHAT IS PINNED HERE, as code paths rather than wall-clocks:
 * Each respawn logs a line that matches that tool's SPAWN anchor, so its spawn->ready delta is measured
   against the child that actually bound. Without it the tool keeps the first "Bridge found at" and reports
   the 09-20 recovery as a ~30 s bind instead of 11.3 s.
+* The child handle is cleared BEFORE the kill, so this design's deliberate kills cannot be reported as
+  crashes by ``_check_managed_bridge_exit`` -- see test_a_discard_never_reads_as_a_crash for why that
+  ordering, and not the intentional-exit allowlist, is what holds on Windows.
 
 Mutant checks. Every one was applied to the adapter and MEASURED red before this file was called
 meaningful; the named test is the one that must go red, and any collateral is listed because a mutant
-that only ever kills one test by accident is not evidence. Seven are surgical, three revert the design.
+that only ever kills one test by accident is not evidence. Eight are surgical, three revert the design.
 
   surgical:
   - drop ``WHATSAPP_BRIDGE_BIND_ATTEMPT_TIMEOUT``       -> TestAttemptBudgetFitsTheDeclaredBudget::test_env_override_wins
@@ -52,6 +55,9 @@ that only ever kills one test by accident is not evidence. Seven are surgical, t
         (also kills test_whatsapp_bridge_http_up_budget.py::TestDeadBridgeStillReportedImmediately, which is
          the point: the ~1 s crash report is inherited behaviour and must survive this file's arrival)
   - drop the per-respawn watcher anchor note            -> TestFailureMessageStaysClassifiable::test_each_respawn_re_anchors_the_watcher
+  - clear ``_bridge_process`` AFTER the kill, not before -> TestDiscardingAnUnboundChild::test_a_discard_never_reads_as_a_crash
+        (also kills that class's test_a_kill_that_cannot_reach_the_child_is_reported_not_raised, which
+         asserts the handle is gone even when the kill itself failed)
   design reverts, listed with their full blast radius:
   - ``attempts = 1`` at the whole budget, i.e. 1f12f8d8c4 -> 7 red: TestNonBindingChildIsReplaced (both),
         TestARespawnedChildRecovers, TestFailureMessageStaysClassifiable (all three), TestConnectWiresTheRespawn
@@ -293,6 +299,40 @@ class TestDiscardingAnUnboundChild:
 
         assert not (adapter._session_path / "bridge.pid").exists()
         assert adapter._bridge_process is None
+
+    def test_a_discard_never_reads_as_a_crash(self, tmp_path, monkeypatch):
+        """The handle is cleared BEFORE the kill, so nothing can report our own kill as a crash.
+
+        Cross-note on loops whatsapp-bridge-kill-attribution-20260920, verified here against
+        the code rather than taken on report: ``_check_managed_bridge_exit`` suppresses an
+        intentional exit only for ``{0, -2, -15}``, but on Windows this adapter kills through
+        psutil and ``Popen.poll()`` then returns **+15** -- so that allowlist can never match a
+        bridge this adapter killed, and a deliberate kill sets a fatal error, notifies, and
+        queues a background reconnect. A fail-fast design kills on purpose several times per
+        connect, so it would trip that every time.
+
+        What saves it is ordering, not the allowlist: the ``poll()`` in that check is guarded by
+        ``self._bridge_process is not None``, and ``_discard_unbound_bridge`` clears the handle
+        first. Fixing the sign belongs to that other claim; this test pins the ordering the
+        respawn loop depends on regardless of how that is resolved.
+        """
+        adapter = _adapter(tmp_path)
+        clock = _Clock(monkeypatch)
+        bench = _Bench(adapter, clock, [None], monkeypatch)
+        seen = []
+
+        def terminate(proc, *, force=False):
+            seen.append(adapter._bridge_process)
+            proc.returncode = 15  # what psutil kill() actually yields on Windows
+
+        monkeypatch.setattr(wa, "_terminate_bridge_process", terminate)
+
+        asyncio.run(adapter._discard_unbound_bridge())
+
+        assert seen == [None], "the handle must be cleared before the kill, not after"
+        assert asyncio.run(adapter._check_managed_bridge_exit()) is None
+        assert not adapter.has_fatal_error
+        assert bench.children[0].returncode == 15
 
     def test_a_kill_that_cannot_reach_the_child_is_reported_not_raised(self, tmp_path, monkeypatch):
         adapter = _adapter(tmp_path)
