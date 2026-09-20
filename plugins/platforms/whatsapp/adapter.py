@@ -287,6 +287,11 @@ from gateway.platforms.event import MessageEvent, MessageType
 from utils import env_int
 from reply_handlers import parse as parse_reply_command, execute as execute_reply_command, ParseError
 
+_BRIDGE_POLL_INTERVAL_S = 1.0
+_BRIDGE_CONNECTED_BUDGET_S = 15.0
+_BRIDGE_PRESPAWN_RESERVE_S = 20.0
+_BRIDGE_HTTP_UP_FLOOR_S = 15.0
+
 
 def _cache_dirs() -> tuple:
     """``(image, audio, video, document)`` cache dirs, resolved per call so a profile override's cache matches."""
@@ -549,6 +554,10 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
     bridge_port (3000) / session_path, dm_policy / group_policy (open|allowlist|disabled|pairing), allow_from / group_allow_from, send_read_receipts."""
 
     _DEFAULT_BRIDGE_DIR = None  # resolved in __init__
+    # Phase budgets inside connect_timeout_secs, spent by _wait_for_bridge:
+    #   _BRIDGE_CONNECTED_BUDGET_S  phase 2, waiting for baileys to reach status: connected
+    #   _BRIDGE_PRESPAWN_RESERVE_S  2 s health probe + kill + <=15 s port release before Popen
+    #   _BRIDGE_HTTP_UP_FLOOR_S     phase 1 never drops below this, whatever the budget says
     # Runner connect budget, sized from connect()'s own phases rather than the 30 s platform default:
     # pre-spawn on a bound port (2 s health probe + kill + <=15 s port release) plus ``_wait_for_bridge``'s
     # two 15-poll phases, with room for a loop other tasks are blocking. Attempt 6 on 2026-09-18 needed
@@ -687,18 +696,61 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
         bridge_env.update(HERMES_IMAGE_CACHE_DIR=str(img_dir), HERMES_AUDIO_CACHE_DIR=str(audio_dir), HERMES_DOCUMENT_CACHE_DIR=str(doc_dir))
         return bridge_env
 
-    def _bridge_died(self, detail: str) -> bool:
+    def _bridge_note(self, detail: str) -> None:
+        """Bridge-wait diagnostics to stdout AND the logger.
+
+        print() alone reaches the gateway's stdout, which for a watchdog-launched
+        gateway is nowhere: on 2026-09-18 the first connect after the 20:55Z boot
+        spawned nothing for 90 s and left no explanation anywhere on disk, because
+        every line in this path was a bare print. The logger lands in
+        profiles/<profile>/logs/errors-gateway.log, which survives the supervisor.
+        """
         print(f"[{self.name}] {detail}")
-        print(f"[{self.name}] Check log: {self._bridge_log}")
+        logger.info("[%s] %s", self.name, detail)
+
+    def _bridge_died(self, detail: str) -> bool:
+        self._bridge_note(detail)
+        self._bridge_note(f"Check log: {self._bridge_log}")
         self._close_bridge_log()
         return False
 
-    async def _poll_bridge_health(self, died_msg: str) -> tuple[Optional[bool], bool, dict]:
-        """Poll /health up to 15×1s → ``(connected, http_ready, data)``; connected False = process died (reported), None = timeout."""
+    def _http_up_budget_s(self) -> float:
+        """Seconds to wait for the spawned bridge to BIND, sized from the declared connect budget.
+
+        This phase was a hardcoded 15 polls while the adapter declares 90 s
+        (``connect_timeout_secs``), so the budget was never spent on the phase that
+        needs it. On 2026-09-18 that cost ~4.7 h of WhatsApp: node+baileys took 27 s
+        spawn->listen even before the host filled up, and under load every reconnect
+        (17:31-20:31Z, one per 5 min) gave up at 15 s and killed the child it had just
+        spawned 1 s later (Security 4689 exit 0xf), so :3000 never came up and 22
+        escalations failed with "Cannot connect to host localhost:3000".
+
+        A CRASHED bridge is still reported in ~1 s -- the poll loop checks
+        ``poll()`` every second and returns immediately. Only "alive but not
+        listening yet" pays this budget, which is precisely the case worth waiting on.
+        """
+        override = env_int("WHATSAPP_BRIDGE_HTTP_UP_TIMEOUT", 0)
+        if override > 0:
+            return float(override)
+        budget = self.connect_timeout_secs - _BRIDGE_CONNECTED_BUDGET_S - _BRIDGE_PRESPAWN_RESERVE_S
+        return max(_BRIDGE_HTTP_UP_FLOOR_S, budget)
+
+    async def _poll_bridge_health(self, died_msg: str, timeout_s: float) -> tuple[Optional[bool], bool, dict]:
+        """Poll /health for ``timeout_s`` at 1s → ``(connected, http_ready, data)``; connected False = process died (reported), None = timeout.
+
+        Bounded by BOTH a tick count and a wall deadline, and it needs both: the
+        deadline alone cannot terminate where ``asyncio.sleep`` is stubbed out (the
+        loop clock then never advances and the poll spins forever -- which is exactly
+        what tests/gateway/test_whatsapp_connect.py's ``_connect_patches`` does), and
+        the tick count alone would let a probe that takes seconds per call overshoot
+        the budget by that factor.
+        """
         http_ready = False
         data: dict = {}
-        for attempt in range(15):
-            await asyncio.sleep(1)
+        ticks = max(1, int(timeout_s // _BRIDGE_POLL_INTERVAL_S) + (1 if timeout_s % _BRIDGE_POLL_INTERVAL_S else 0))
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        for _tick in range(ticks):
+            await asyncio.sleep(_BRIDGE_POLL_INTERVAL_S)
             if self._bridge_process.poll() is not None:
                 return self._bridge_died(died_msg.format(code=self._bridge_process.returncode)), http_ready, data
             try:
@@ -708,28 +760,35 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                     if d is not None:
                         data = d
                         if data.get("status") == "connected":
-                            print(f"[{self.name}] Bridge ready (status: connected)")
+                            self._bridge_note("Bridge ready (status: connected)")
                             return True, http_ready, data
             except Exception:
-                continue
+                pass
+            # Checked AFTER a probe so a bridge that binds on the last tick still counts.
+            if asyncio.get_running_loop().time() >= deadline:
+                break
         return None, http_ready, data
 
     async def _wait_for_bridge(self) -> bool:
-        """Phase 1: HTTP up (≤15s). Phase 2: ``status: connected`` (≤15s more; warns but proceeds if still connecting)."""
-        connected, http_ready, data = await self._poll_bridge_health("Bridge process died (exit code {code})")
+        """Phase 1: HTTP up (``_http_up_budget_s()``). Phase 2: ``status: connected`` (warns but proceeds if still connecting)."""
+        http_up_budget = self._http_up_budget_s()
+        connected, http_ready, data = await self._poll_bridge_health(
+            "Bridge process died (exit code {code})", http_up_budget)
         if connected is False:
             return False
         if not http_ready:
-            return self._bridge_died("Bridge HTTP server did not start in 15s")
+            return self._bridge_died(f"Bridge HTTP server did not start in {http_up_budget:.0f}s")
         if data.get("status") != "connected":
-            print(f"[{self.name}] Bridge HTTP ready, waiting for WhatsApp connection...")
-            connected, _, _ = await self._poll_bridge_health("Bridge process died during connection")
+            self._bridge_note("Bridge HTTP ready, waiting for WhatsApp connection...")
+            connected, _, _ = await self._poll_bridge_health(
+                "Bridge process died during connection", _BRIDGE_CONNECTED_BUDGET_S)
             if connected is False:
                 return False
             if connected is None:
-                print(f"[{self.name}] ⚠ WhatsApp not connected after 30s")
-                print(f"[{self.name}]   Bridge log: {self._bridge_log}")
-                print(f"[{self.name}]   If session expired, re-pair: hermes whatsapp")
+                waited = http_up_budget + _BRIDGE_CONNECTED_BUDGET_S
+                self._bridge_note(f"⚠ WhatsApp not connected after {waited:.0f}s")
+                self._bridge_note(f"  Bridge log: {self._bridge_log}")
+                self._bridge_note("  If session expired, re-pair: hermes whatsapp")
         return True
 
     def _preflight(self) -> bool:
