@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from events.delivery_loss import DELIVERY_LOSS_SOURCE
 from events.outcomes import OutcomeState, evaluate_outcome
 from events.schema import Event, EventType
 
@@ -50,6 +51,18 @@ def failure_cluster_eligible(event: Event | Mapping[str, Any]) -> bool:
     # These describe a monitored condition, not a failed execution of the
     # reporting agent. Keep their normal routing and raw event history.
     if candidate.event_type in {EventType.MODEL_RATE_LIMITED, EventType.SECRET_DETECTED}:
+        return False
+    # An abandoned delivery is the same kind of thing one layer down: the cron
+    # scheduler OBSERVING that a message it rendered never left, not the
+    # scheduler failing to execute. Clustering it would page Diego on WhatsApp
+    # after 3 drops in 15 minutes -- over a lane that also delivers through
+    # cron.scheduler._deliver_result, i.e. the one that is already dropping
+    # messages -- and at the measured rates (peak 37/day, 51 repeats of a
+    # single Telegram timeout in three days of logs) that threshold is routine,
+    # not exceptional. The signal is not lost: it is counted in the digest's
+    # SYSTEM HEALTH section instead. See events/delivery_loss.py.
+    if (candidate.event_type == EventType.AGENT_ERROR
+            and candidate.source == DELIVERY_LOSS_SOURCE):
         return False
     if (candidate.event_type == EventType.DEVFLOW_BUILD_FAILED
             and candidate.source == "ruff-gate-probe" and payload.get("gate") == "ruff"):
