@@ -234,10 +234,10 @@ class TestAuthJsonSiblingReaders:
 
         import agent.auxiliary_client as aux
 
-        # _AUTH_JSON_PATH is resolved at module import time, so the
-        # HERMES_HOME env from the fixture doesn't reach it — point it at
-        # the tmp store explicitly.
-        monkeypatch.setattr(aux, "_AUTH_JSON_PATH", hermes_home / "auth.json")
+        # The auth path is resolved per call (_auth_json_path), so the fixture's
+        # HERMES_HOME reaches it with no pinning here. It used to be a module-scope
+        # snapshot that this test had to monkeypatch around; see
+        # tests/agent/test_auxiliary_auth_path_resolution.py.
 
         # _read_nous_auth consults the credential pool FIRST and returns early
         # when a pool entry exists, never reaching the auth.json read. Force the

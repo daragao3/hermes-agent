@@ -1120,7 +1120,20 @@ _OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 _NOUS_MODEL = "google/gemini-3.6-flash"
 _NOUS_DEFAULT_BASE_URL = "https://inference-api.nousresearch.com/v1"
 _ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
-_AUTH_JSON_PATH = get_hermes_home() / "auth.json"
+
+
+def _auth_json_path() -> Path:
+    """The active home's ``auth.json``, resolved per call.
+
+    NOT a module-scope constant. ``get_hermes_home()`` reads a context-local override
+    first, and ``probe_credential_scope()`` sets exactly that override so the auth store
+    follows the active profile -- a snapshot taken at import can never follow it. The
+    snapshot also made this module unimportable wherever a harness stubs the home to a
+    str (69 of tests/tui_gateway/test_protocol.py's 70 tests errored on it). Resolving
+    per call costs a ContextVar read; nothing here is cached at import.
+    """
+    return get_hermes_home() / "auth.json"
+
 
 # Hosts exposing BOTH ``…/anthropic`` and a sibling OpenAI ``…/v1``. Matched on the URL *host*
 # only: unconditional rewrites break Anthropic-only gateways.
@@ -2058,9 +2071,10 @@ def _read_nous_auth() -> Optional[dict]:
             "source": "pool",
         }
     try:
-        if not _AUTH_JSON_PATH.is_file():
+        auth_json = _auth_json_path()
+        if not auth_json.is_file():
             return None
-        data = json.loads(_AUTH_JSON_PATH.read_text(encoding="utf-8-sig"))
+        data = json.loads(auth_json.read_text(encoding="utf-8-sig"))
         if data.get("active_provider") != "nous":
             return None
         provider = data.get("providers", {}).get("nous", {})
