@@ -203,6 +203,23 @@ def test_resume_step_defaults_to_file_backed_capture_and_keeps_metrics(
     argv, kwargs = calls[0]
     assert argv[:1] == ["C:/bin/claude.cmd"]
     assert argv.count("--resume") == 1 and CLAUDE_ID in argv
+    assert argv[:-1] == [
+        "C:/bin/claude.cmd",
+        "--print",
+        "--mcp-config",
+        '{"mcpServers":{}}',
+        "--strict-mcp-config",
+        "--resume",
+        CLAUDE_ID,
+        "--tools",
+        "",
+        "--permission-mode",
+        "dontAsk",
+        "--max-budget-usd",
+        "0.50",
+        "--output-format",
+        "json",
+    ]
     assert kwargs["timeout"] == 180.0
     assert kwargs["cwd"] == str(tmp_path)
     assert kwargs["stdin"] is subprocess.DEVNULL

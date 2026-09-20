@@ -79,6 +79,29 @@ _CURSOR_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _SUBAGENT_STEM_RE = re.compile(r"^agent-([A-Za-z0-9_-]{1,128})$")
 _DESCRIPTOR_UNSAFE_RE = re.compile(r"[^A-Za-z0-9._/+;-]+")
 CLAUDE_PLACEHOLDER_MAX_BUDGET_USD = "0.50"
+# Every bridge-driven ``claude`` process starts with MCP servers disabled.
+#
+# A ``--print`` placeholder runs with ``--tools ""`` and ``cwd`` = the mirrored
+# project, so without these flags the CLI still starts that project's
+# configured MCP servers (observed 2026-09-18 under agent-src: the codegraph
+# ``node.exe … serve --mcp`` server and context7) for a turn that can never
+# call them.  They cost startup time and outlive ``claude.exe``, so every
+# runner had to tree-kill grandchildren it never asked for.  With the pair,
+# the same argv under the same cwd spawns no MCP server at all (measured,
+# Claude Code 2.1.271).  The flags are process-level: nothing about them
+# persists into the session file, so a later interactive resume of the
+# placeholder starts its own servers from its own configuration as before.
+#
+# ``--mcp-config`` is VARIADIC (``<configs...>``): it swallows every following
+# token up to the next ``--`` option, so the pair must never be the last
+# option before the positional prompt.  Callers splice it right after
+# ``--print``.  ``claude_registrar`` composes its interactive isolation argv
+# from this same tuple, so the shape has one source of truth.
+CLAUDE_NO_MCP_ARGS: tuple[str, ...] = (
+    "--mcp-config",
+    '{"mcpServers":{}}',
+    "--strict-mcp-config",
+)
 
 
 def claude_project_directory_name(cwd: str) -> str:
@@ -590,6 +613,7 @@ class ClaudeTargetAdapter:
         args = [
             *self._claude_command,
             "--print",
+            *CLAUDE_NO_MCP_ARGS,
             "--session-id",
             native_id,
             "--name",

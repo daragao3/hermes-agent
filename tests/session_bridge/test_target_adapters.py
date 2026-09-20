@@ -22,6 +22,7 @@ if os.name == "nt" and "USERPROFILE" not in os.environ:
 import session_bridge.characterize as characterize_module
 import session_bridge.sidebar as sidebar_module
 from session_bridge.claude_adapter import (
+    CLAUDE_NO_MCP_ARGS,
     AmbiguousPlaceholderCreation,
     ClaudeSourceAdapter,
     ClaudeTargetAdapter,
@@ -2239,6 +2240,9 @@ def test_claude_uses_exact_no_shell_argv_and_verifies_the_signed_target() -> Non
     assert args[:-1] == [
         "C:/bin/claude.exe",
         "--print",
+        "--mcp-config",
+        '{"mcpServers":{}}',
+        "--strict-mcp-config",
         "--session-id",
         CLAUDE_ID,
         "--name",
@@ -2275,6 +2279,27 @@ def test_claude_uses_exact_no_shell_argv_and_verifies_the_signed_target() -> Non
         verified_at=1234.5,
     )
     assert source.find_calls == [CLAUDE_ID]
+
+
+def test_claude_no_mcp_pair_is_one_parseable_shape_shared_with_the_registrar() -> None:
+    """The placeholder starts with MCP servers disabled, by ONE shared tuple.
+
+    ``--mcp-config`` is variadic, so the JSON must be immediately followed by
+    ``--strict-mcp-config`` (the next ``--`` token ends the list) and the pair
+    must sit ahead of the positional prompt: the exact-argv test above pins
+    that placement, this one pins the tuple itself and that the interactive
+    registration argv is composed from the same tuple rather than restating it.
+    """
+
+    from session_bridge.claude_registrar import _CLAUDE_STARTUP_ISOLATION_ARGS
+
+    assert CLAUDE_NO_MCP_ARGS[0] == "--mcp-config"
+    assert json.loads(CLAUDE_NO_MCP_ARGS[1]) == {"mcpServers": {}}
+    assert CLAUDE_NO_MCP_ARGS[2] == "--strict-mcp-config"
+    assert len(CLAUDE_NO_MCP_ARGS) == 3
+    isolation = list(_CLAUDE_STARTUP_ISOLATION_ARGS)
+    start = isolation.index("--mcp-config")
+    assert tuple(isolation[start : start + 3]) == CLAUDE_NO_MCP_ARGS
 
 
 def test_claude_direct_node_runtime_keeps_registration_as_one_literal_argv_entry(
