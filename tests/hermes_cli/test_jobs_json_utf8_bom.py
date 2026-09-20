@@ -6,6 +6,15 @@ each open jobs.json themselves — keep them on the same utf-8-sig dialect.
 
 from types import SimpleNamespace
 
+import pytest
+
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): the status path imports the scheduled-jobs
+# stack and the first-attempt trip was inside _compile_bytecode (cold bytecode on a
+# shared box, 2026-09-18 flaky, healed on retry). The contract is BOM tolerance.
+pytestmark = pytest.mark.timeout(scaled(300))
+
 
 def test_dump_cron_summary_accepts_utf8_bom(tmp_path):
     from hermes_cli.dump import _cron_summary

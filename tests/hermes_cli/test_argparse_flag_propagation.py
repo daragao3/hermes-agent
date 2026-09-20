@@ -18,6 +18,15 @@ import sys
 import pytest
 
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): test_accepted_at_every_position spawns a
+# `python -c` driver that builds every agent subparser; its own child bound is 180 s but
+# the suite-wide --timeout=30 fired first under load (2026-09-18 flaky, healed on retry,
+# first-attempt stack in _readerthread). Nothing here asserts a duration.
+pytestmark = pytest.mark.timeout(scaled(300))
+
+
 def _build_parser():
     """Build the hermes argument parser from the real code.
 

@@ -17,6 +17,15 @@ import yaml
 from hermes_cli.plugins import PluginManager
 
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): scanning a plugin tree resolves every hook
+# source, and the first-attempt trip was inside plugins_loader._load_plugin_scoped ->
+# plugins_ledger._hook_source_of -> ntpath.realpath -- the same realpath cost documented
+# for the picker pool walk (2026-09-18 flaky, healed on retry; the file took 199 s).
+pytestmark = pytest.mark.timeout(scaled(300))
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 

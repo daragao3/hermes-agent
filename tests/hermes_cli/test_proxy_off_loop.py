@@ -55,9 +55,13 @@ from hermes_cli.proxy.server import create_app  # noqa: E402
 # assertions do not depend on this value at all.
 _STALL_SECONDS = 0.5
 
-# Heartbeat cadence. A healthy loop fires ~50 ticks across the stall above; a
-# blocked one fires exactly 0, so the threshold has three orders of magnitude
-# of headroom on a loaded runner.
+# Heartbeat cadence. A healthy loop fires ~50 ticks across the stall above and a
+# blocked one fires exactly 0, so 0 vs >0 is the whole distinguishing observation.
+# The ceiling below is what we demand of a loop that has the headroom for it; the
+# floor actually asserted is derived per run from a measured control window, because
+# "~50 ticks" is a property of an idle box: a saturated 12-worker runner fired 2 and
+# the fixed 3 read as "the event loop was frozen" when the loop was merely slow
+# (2026-09-18, flaky then green on retry). See _idle_tick_capability / _tick_floor.
 _HEARTBEAT_INTERVAL = 0.01
 _MIN_TICKS_ACROSS_STALL = 3
 
@@ -204,6 +208,29 @@ async def _heartbeat(ticks: List[int], running: List[bool]) -> None:
         await asyncio.sleep(_HEARTBEAT_INTERVAL)
 
 
+async def _idle_tick_capability(ticks: List[int]) -> int:
+    """Heartbeats this loop achieves across an IDLE window of one stall length.
+
+    Measured on the same loop, with the same heartbeat task, under the same host
+    load as the observation it calibrates, so it answers 'how many ticks were even
+    available here' without assuming an idle box.
+    """
+    before = ticks[0]
+    await asyncio.sleep(_STALL_SECONDS)
+    return ticks[0] - before
+
+
+def _tick_floor(capability: int) -> int:
+    """Ticks to demand across a blocking call, given the measured idle capability.
+
+    Never above _MIN_TICKS_ACROSS_STALL (an idle box still gets the strong check)
+    and never below 1, because a loop blocked by a synchronous adapter call cannot
+    tick at all -- that is the regression this file exists to catch, and it fails
+    this floor at any capability.
+    """
+    return max(1, min(_MIN_TICKS_ACROSS_STALL, capability // 2))
+
+
 # ---------------------------------------------------------------------------
 # handle_proxy -> get_credential
 # ---------------------------------------------------------------------------
@@ -268,10 +295,11 @@ def test_event_loop_keeps_running_while_credentials_resolve():
                 ) as resp:
                     await resp.read()
 
+            capability = await _idle_tick_capability(ticks)
             assert adapter.ticks_across_credential is not None
-            assert adapter.ticks_across_credential >= _MIN_TICKS_ACROSS_STALL, (
+            assert adapter.ticks_across_credential >= _tick_floor(capability), (
                 f"only {adapter.ticks_across_credential} loop iterations ran during a "
-                f"{_STALL_SECONDS}s credential resolution — the event loop was frozen"
+                f"{_STALL_SECONDS}s credential resolution — the event loop was frozen (this loop's idle capability across the same window: {capability} ticks)"
             )
         finally:
             running[0] = False
@@ -404,10 +432,11 @@ def test_event_loop_keeps_running_while_the_retry_credential_resolves():
                 ) as resp:
                     await resp.read()
 
+            capability = await _idle_tick_capability(ticks)
             assert adapter.ticks_across_retry is not None
-            assert adapter.ticks_across_retry >= _MIN_TICKS_ACROSS_STALL, (
+            assert adapter.ticks_across_retry >= _tick_floor(capability), (
                 f"only {adapter.ticks_across_retry} loop iterations ran during a "
-                f"{_STALL_SECONDS}s 429 credential rotation — the event loop was frozen"
+                f"{_STALL_SECONDS}s 429 credential rotation — the event loop was frozen (this loop's idle capability across the same window: {capability} ticks)"
             )
         finally:
             running[0] = False
@@ -509,10 +538,12 @@ def test_event_loop_keeps_running_while_health_resolves_auth_state():
                 async with session.get(f"{proxy_base}/health") as resp:
                     await resp.read()
 
+            capability = await _idle_tick_capability(ticks)
             assert adapter.ticks_across_is_authenticated is not None
-            assert adapter.ticks_across_is_authenticated >= _MIN_TICKS_ACROSS_STALL, (
+            assert adapter.ticks_across_is_authenticated >= _tick_floor(capability), (
                 f"only {adapter.ticks_across_is_authenticated} loop iterations ran during "
-                f"a {_STALL_SECONDS}s /health auth check — the event loop was frozen"
+                f"a {_STALL_SECONDS}s /health auth check — the event loop was frozen "
+                f"(this loop's idle capability across the same window: {capability} ticks)"
             )
         finally:
             running[0] = False

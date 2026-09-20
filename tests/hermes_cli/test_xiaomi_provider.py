@@ -10,6 +10,15 @@ from hermes_cli.auth import (
 )
 
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): TestXiaomiAgentInit::test_no_syntax_errors is a
+# cold importlib.import_module("run_agent"), which pulls model_tools'
+# discover_builtin_tools over every tools/ module; it tripped the suite-wide cap under load
+# (2026-09-18 flaky, healed on retry). The contract is that the import succeeds.
+pytestmark = pytest.mark.timeout(scaled(300))
+
+
 # =============================================================================
 # Provider Registry
 # =============================================================================

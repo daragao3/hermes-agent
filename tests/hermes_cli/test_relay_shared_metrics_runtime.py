@@ -18,6 +18,15 @@ from hermes_cli.observability import relay_shared_metrics
 from hermes_cli.plugins import PluginManager
 
 
+from tests.timeout_budget import scaled
+
+# Backstop only (tests/timeout_budget shape): the real-binding lifecycle tests build the
+# instrumented relay runtime in-process (the file took 154 s); two ids tripped the
+# suite-wide cap under load (2026-09-18 flaky, healed on retry). Nothing here asserts a
+# duration.
+pytestmark = pytest.mark.timeout(scaled(300))
+
+
 class _Request:
     def __init__(self, headers: dict[str, Any], content: dict[str, Any]) -> None:
         self.headers = headers
