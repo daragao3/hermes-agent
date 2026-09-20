@@ -154,6 +154,11 @@ done
 # No credential var can leak — you'd have to explicitly add it here.
 echo "▶ running per-file parallel test suite via run_tests_parallel.py"
 echo "  (TZ=UTC LANG=C.UTF-8 PYTHONHASHSEED=0 PYTHONUTF8=1; clean env)"
+if [ -n "${HERMES_TEST_TIMEOUT_SCALE:-}" ]; then
+  echo "  (HERMES_TEST_TIMEOUT_SCALE=$HERMES_TEST_TIMEOUT_SCALE from the caller)"
+elif [ -z "${CI:-}" ]; then
+  echo "  (HERMES_TEST_TIMEOUT_SCALE=4: tests/timeout_budget rule-2 deadlines x4 for a loaded host)"
+fi
 
 cd "$REPO_ROOT"
 
@@ -254,6 +259,33 @@ for _var in HERMES_TEST_WORKERS HERMES_TEST_PATHS HERMES_TEST_FILE_TIMEOUT \
     CLEAN_ENV+=("$_var=$_val")
   fi
 done
+
+# ── Load-tolerant safety-net deadlines (HERMES_TEST_TIMEOUT_SCALE) ──────────
+# tests/timeout_budget.py multiplies every RULE-2 deadline by this -- an
+# incidental safety net around a spawn, never a deadline that is itself the
+# assertion (rule 1 bounds stay literal and unscaled by design). The module
+# defaults it to 1.0 and documents raising it "on hosts that routinely run
+# under memory/CPU pressure, e.g. 4", which is this runner's normal working
+# condition: -j 12 per-file workers, often beside a sibling suite or an
+# acceptance ceremony at 100% CPU. Left unset, every `scaled()` bound written
+# INSIDE a test is inert (scaled(N) == N), so a bound sized for an idle box
+# trips on load and reads as a regression -- measured repeatedly in the
+# 2026-09-18/19 tests/cli + tests/hermes_cli sweep.
+#
+# Precedence: an explicit value always wins (HERMES_TEST_TIMEOUT_SCALE=1 for a
+# strict run). CI is left at the module default so timeout_budget.py's "CI and
+# clean checkouts are unchanged" promise stays true -- GitHub Actions sets CI,
+# and this decision is read here, BEFORE `env -i` drops it.
+#
+# This cannot let a wedged child run forever: the per-file budget is NOT
+# scaled (_DEFAULT_FILE_TIMEOUT_SECONDS = 1800 s, --file-timeout /
+# HERMES_TEST_FILE_TIMEOUT), so a `scaled(300)` mark becomes 1200 s inside an
+# unchanged 1800 s per-attempt file cap.
+if [ -n "${HERMES_TEST_TIMEOUT_SCALE:-}" ]; then
+  CLEAN_ENV+=("HERMES_TEST_TIMEOUT_SCALE=$HERMES_TEST_TIMEOUT_SCALE")
+elif [ -z "${CI:-}" ]; then
+  CLEAN_ENV+=("HERMES_TEST_TIMEOUT_SCALE=4")
+fi
 if [ -n "$EXTRA_PYTHONPATH" ]; then
   CLEAN_ENV+=("PYTHONPATH=$EXTRA_PYTHONPATH")
 fi
