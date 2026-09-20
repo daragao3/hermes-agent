@@ -171,6 +171,31 @@ class TestSSHBulkUpload:
             mock_env._ssh_bulk_upload(files)
 
 
+    def test_bulk_upload_refuses_remote_path_outside_sync_base(self, mock_env, tmp_path):
+        """The "escapes sync base" guard (eb51fb6f50) must fire on every host.
+
+        Remote paths are POSIX by contract, but ``os.path.relpath`` is
+        host-flavoured: on Windows it renders a path above the base with
+        backslash separators, so the POSIX-spelled ``startswith("../")`` test
+        never matched. The escaping path then reached ``os.path.join`` and the
+        staging symlink was written outside the temporary directory.
+        Red on Windows before the fix; byte-identical on POSIX hosts.
+        """
+        source = tmp_path / "evil.txt"
+        source.write_text("evil", encoding="utf-8")
+        # One level above the sync base (``/home/testuser/.hermes``).
+        files = [(str(source), "/home/testuser/evil.txt")]
+
+        with patch.object(subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 0)), \
+             patch.object(subprocess, "Popen") as mock_popen:
+            with pytest.raises(RuntimeError, match="escapes sync base"):
+                mock_env._ssh_bulk_upload(files)
+
+        # The guard must refuse before any tar/ssh process is spawned.
+        mock_popen.assert_not_called()
+
+
     def test_timeout_kills_both_processes(self, mock_env, tmp_path):
         """TimeoutExpired during communicate should kill both processes."""
         f1 = tmp_path / "t.txt"
