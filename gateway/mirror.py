@@ -8,6 +8,7 @@ agent knows what was sent.  Standalone: works from CLI, cron and gateway context
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from hermes_cli.config import get_hermes_home
@@ -16,6 +17,23 @@ logger = logging.getLogger(__name__)
 
 _SESSIONS_DIR = get_hermes_home() / "sessions"
 _SESSIONS_INDEX = _SESSIONS_DIR / "sessions.json"
+# Import-time snapshots backing the call-time accessors. This module runs "from CLI, cron and
+# gateway contexts" (see the module docstring), and cron/scheduler_delivery.py calls it inside a
+# per-profile tick that sets a context-local home override, so frozen paths would look up the
+# session in the launch profile's sessions.json. The accessors honour explicitly patched module
+# globals (tests) and otherwise re-resolve. Same fix as skills_sync (#65828).
+_SESSIONS_DIR_AT_IMPORT = _SESSIONS_DIR
+_SESSIONS_INDEX_AT_IMPORT = _SESSIONS_INDEX
+
+
+def _sessions_dir() -> Path:
+    return (_SESSIONS_DIR if _SESSIONS_DIR != _SESSIONS_DIR_AT_IMPORT
+            else get_hermes_home() / "sessions")
+
+
+def _sessions_index() -> Path:
+    return (_SESSIONS_INDEX if _SESSIONS_INDEX != _SESSIONS_INDEX_AT_IMPORT
+            else _sessions_dir() / "sessions.json")
 
 
 def _origin_user_id(entry: dict) -> str:
@@ -86,10 +104,11 @@ def _find_session_id(platform: str, chat_id: str, thread_id: Optional[str] = Non
     except Exception as e:
         logger.debug("Mirror state.db session lookup failed: %s", e)
 
-    if not _SESSIONS_INDEX.exists():
+    sessions_index = _sessions_index()
+    if not sessions_index.exists():
         return None
     try:
-        data = json.loads(_SESSIONS_INDEX.read_text(encoding="utf-8"))
+        data = json.loads(sessions_index.read_text(encoding="utf-8"))
     except Exception:
         return None
 

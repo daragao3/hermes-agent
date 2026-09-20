@@ -21,7 +21,15 @@ from tools.environments.remote_common import bash_argv, run_capture
 
 logger = logging.getLogger(__name__)
 
-_SNAPSHOT_STORE = get_hermes_home() / "singularity_snapshots.json"
+def _snapshot_store() -> Path:
+    """``singularity_snapshots.json`` under the ACTIVE home, resolved per call.
+
+    NOT a module-scope constant: ``gateway/run.py::_profile_runtime_scope`` sets a
+    context-local home override around a whole turn of a multiplexed profile, so a path
+    frozen at import would make one profile's turn read and write the launch profile's
+    store. Same fix as skills_tool / skill_manager_tool / skills_sync (#65828).
+    """
+    return get_hermes_home() / "singularity_snapshots.json"
 
 
 def _find_singularity_executable() -> str:
@@ -51,11 +59,11 @@ def _ensure_singularity_available() -> str:
 
 
 def _load_snapshots() -> dict:
-    return _load_json_store(_SNAPSHOT_STORE)
+    return _load_json_store(_snapshot_store())
 
 
 def _save_snapshots(data: dict) -> None:
-    _save_json_store(_SNAPSHOT_STORE, data)
+    _save_json_store(_snapshot_store(), data)
 
 
 def _get_scratch_dir(*, create: bool = True) -> Path:

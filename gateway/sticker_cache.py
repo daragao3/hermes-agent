@@ -6,12 +6,26 @@ Stickers are described via the vision tool once and cached by file_unique_id
 
 import json
 import time
+from pathlib import Path
 from typing import Optional
 
 from hermes_cli.config import get_hermes_home
 from utils import atomic_json_write
 
 CACHE_PATH = get_hermes_home() / "sticker_cache.json"
+# Import-time snapshot backing the call-time accessor. The gateway scopes a whole turn to a
+# profile via set_hermes_home_override (gateway/run.py::_profile_runtime_scope), and this cache
+# is reached from the Telegram adapter inside that turn, so a frozen path would read AND write
+# the launch profile's cache. The accessor honours an explicitly patched CACHE_PATH (tests) and
+# otherwise re-resolves. Same fix as skills_tool (f8723c478), skill_manager_tool (c6a3d412d)
+# and skills_sync (#65828).
+_CACHE_PATH_AT_IMPORT = CACHE_PATH
+
+
+def _cache_path() -> Path:
+    """The patched module global if it changed since import, else the live path."""
+    return (CACHE_PATH if CACHE_PATH != _CACHE_PATH_AT_IMPORT
+            else get_hermes_home() / "sticker_cache.json")
 
 # Kept concise to save tokens.
 STICKER_VISION_PROMPT = (
@@ -22,13 +36,13 @@ STICKER_VISION_PROMPT = (
 
 def _load_cache() -> dict:
     try:
-        return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        return json.loads(_cache_path().read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
 
 
 def _save_cache(cache: dict) -> None:
-    atomic_json_write(CACHE_PATH, cache)
+    atomic_json_write(_cache_path(), cache)
 
 
 def get_cached_description(file_unique_id: str) -> Optional[dict]:
