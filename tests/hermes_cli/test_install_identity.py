@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import multiprocessing
+import os
 from pathlib import Path
 import time
 
@@ -110,3 +111,76 @@ def test_concurrent_corrupt_file_repair_returns_one_committed_identity(tmp_path)
     persisted = (tmp_path / "install_id").read_text(encoding="utf-8").strip()
 
     assert returned == [persisted, persisted]
+
+
+def test_transient_read_failure_recovers_the_committed_identity(tmp_path, monkeypatch):
+    committed = "c" * 32
+    path = tmp_path / "install_id"
+    path.write_text(committed + "\n", encoding="utf-8")
+    real_read_text, injected = Path.read_text, []
+
+    def collide_once(self, *args, **kwargs):
+        if self == path and not injected:
+            injected.append(self)
+            raise PermissionError(13, "open collided with a publisher's replace")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", collide_once)
+
+    value = read_or_create_install_id(tmp_path)
+
+    assert injected, "the transient read failure was never exercised"
+    assert value == committed
+    assert real_read_text(path, encoding="utf-8").strip() == committed
+
+
+def test_persistent_read_failure_returns_none_without_minting(tmp_path, monkeypatch):
+    committed = "c" * 32
+    path = tmp_path / "install_id"
+    path.write_text(committed + "\n", encoding="utf-8")
+    real_read_text = Path.read_text
+
+    def always_refuse(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError(13, "unreadable for the life of the call")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", always_refuse)
+
+    assert read_or_create_install_id(tmp_path) is None
+    assert real_read_text(path, encoding="utf-8").strip() == committed
+    assert list(tmp_path.glob(".install_id-*")) == []
+
+
+def test_transient_replace_failure_still_publishes_the_identity(tmp_path, monkeypatch):
+    real_replace, injected = os.replace, []
+
+    def collide_once(src, dst, *args, **kwargs):
+        if str(dst).endswith("install_id") and not injected:
+            injected.append(dst)
+            raise PermissionError(13, "a reader holds the destination open")
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(install_identity.os, "replace", collide_once)
+
+    value = read_or_create_install_id(tmp_path)
+
+    assert injected, "the transient replace failure was never exercised"
+    assert value and install_identity._INSTALL_ID_RE.fullmatch(value)
+    assert (tmp_path / "install_id").read_text(encoding="utf-8").strip() == value
+    assert list(tmp_path.glob(".install_id-*")) == []
+
+
+def test_persistent_replace_failure_returns_none_and_leaves_no_temp_file(tmp_path, monkeypatch):
+    real_replace = os.replace
+
+    def always_refuse(src, dst, *args, **kwargs):
+        if str(dst).endswith("install_id"):
+            raise PermissionError(13, "the destination stays held")
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(install_identity.os, "replace", always_refuse)
+
+    assert read_or_create_install_id(tmp_path) is None
+    assert not (tmp_path / "install_id").exists()
+    assert list(tmp_path.glob(".install_id-*")) == []
