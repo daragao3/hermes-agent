@@ -6,6 +6,8 @@ import time
 
 import pytest
 
+from tests.timeout_budget import scaled
+
 from hermes_cli import main_dashboard as output
 from hermes_cli import update_cmd
 
@@ -80,4 +82,17 @@ def test_cancelled_output_reader_reaps_child(tmp_path, monkeypatch):
         update_cmd._run_logged_subprocess([sys.executable, str(child)])
     assert time.monotonic() - started < 10
     import psutil
-    assert not psutil.pid_exists(int(pidfile.read_text(encoding="utf-8")))
+    child_pid = int(pidfile.read_text(encoding="utf-8"))
+    # The reap is not observable the instant the cancellation unwinds: the product
+    # kills the tree and then waits with its own 5 s bound, and Windows keeps a pid
+    # resolvable for a while after termination anyway (for as long as any handle to
+    # the process is open). pid_exists still answered True here once (2026-09-19
+    # flaky, green on retry). Wait for the state, bounded well inside the child's
+    # 30 s sleep so a child that was NOT reaped still fails this assertion. The
+    # cancellation's own latency is asserted above and is untouched.
+    deadline = time.monotonic() + scaled(10)
+    while psutil.pid_exists(child_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not psutil.pid_exists(child_pid), (
+        f"cancelled child {child_pid} survived the reap"
+    )
