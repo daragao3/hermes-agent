@@ -2698,7 +2698,7 @@ def sanitize_env_file() -> int:
     env_path = get_env_path()
     if not env_path.exists():
         return 0
-    with open(env_path, encoding="utf-8-sig", errors="replace") as f:
+    with open(env_path, encoding="utf-8-sig", errors="surrogateescape") as f:
         original_lines = f.readlines()
     sanitized = _sanitize_env_lines(original_lines)
     if sanitized == original_lines:
@@ -2712,8 +2712,9 @@ def sanitize_env_file() -> int:
 
 def _read_env_lines(env_path: Path) -> list:
     """Read ``.env`` lines, normalized. Explicit UTF-8 (Windows defaults to cp1252) with BOM
-    tolerance (Notepad adds one)."""
-    with open(env_path, encoding="utf-8-sig", errors="replace") as f:
+    tolerance (Notepad adds one) and ``surrogateescape`` so an undecodable byte on an unrelated
+    line round-trips through ``_write_env_lines`` instead of being replaced with U+FFFD."""
+    with open(env_path, encoding="utf-8-sig", errors="surrogateescape") as f:
         return _sanitize_env_lines(f.readlines())
 
 
@@ -2732,7 +2733,7 @@ def _write_env_lines(env_path: Path, lines: list, *, preserve_mode: bool) -> Non
         # the byte the file must carry. Text-mode default would rewrite each LF as CRLF on Windows,
         # touching every line a save/remove never changed and leaving a ``\r`` in every value for
         # a POSIX shell / Docker bind-mount that sources the same file. Matches the plugin writers.
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape", newline="\n") as f:
             f.writelines(lines)
             f.flush()
             os.fsync(f.fileno())
