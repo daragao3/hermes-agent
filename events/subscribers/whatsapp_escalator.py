@@ -851,12 +851,24 @@ class WhatsAppEscalator(BaseSubscriber):
                 data.get("topics", {}), "action_required")
             if not chat_id or not thread_id:
                 return
-            _deliver_result(
+            # The error is RETURNED, not raised (see _deliver above, which
+            # has read this correctly since 2026-04-30). Discarding it here
+            # made the log line below unconditional -- so the ONE record an
+            # operator has of a both-transports-down escalation asserted
+            # delivery for a send that was abandoned. No retry, and no bus
+            # event: this is the last-resort lane and must stay silent-safe.
+            delivery_error = _deliver_result(
                 {"deliver": f"telegram:{chat_id}:{thread_id}",
                  "id": "event-bus", "name": "event-bus"},
                 f"📵 WhatsApp unreachable — escalation delivered here instead:\n\n{message}",
                 skip_cron_framing=True,
             )
+            if delivery_error:
+                logger.error(
+                    "WhatsAppEscalator: bridge send failed AND the Telegram "
+                    "action_required fallback failed: %s — this escalation "
+                    "reached nobody", delivery_error)
+                return
             logger.warning(
                 "WhatsAppEscalator: bridge send failed; message delivered "
                 "to Telegram action_required as fallback")

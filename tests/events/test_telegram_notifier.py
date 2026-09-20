@@ -802,7 +802,7 @@ class TestModelRateLimitedButtons:
         )
         event = self._diverted_event()
 
-        with patch("cron.scheduler._deliver_result") as deliver_result_mock:
+        with patch("cron.scheduler._deliver_result", return_value=None) as deliver_result_mock:
             notifier.handle(event)
 
         deliver_result_mock.assert_called_once()
@@ -825,7 +825,7 @@ class TestModelRateLimitedButtons:
             priority=Priority.CRITICAL,
         )
 
-        with patch("cron.scheduler._deliver_result") as deliver_result_mock:
+        with patch("cron.scheduler._deliver_result", return_value=None) as deliver_result_mock:
             notifier.handle(event)
 
         deliver_result_mock.assert_called_once()
@@ -860,7 +860,7 @@ class TestModelRateLimitedButtons:
         event = self._diverted_event()
 
         try:
-            with patch("cron.scheduler._deliver_result") as deliver_result_mock:
+            with patch("cron.scheduler._deliver_result", return_value=None) as deliver_result_mock:
                 notifier.handle(event)
 
             deliver_result_mock.assert_called_once()

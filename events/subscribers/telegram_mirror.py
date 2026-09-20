@@ -63,10 +63,20 @@ class TelegramMirror(BaseSubscriber):
                 return
 
             from cron.scheduler import _deliver_result
-            _deliver_result(
+            # RETURNS its error rather than raising, so the except below
+            # never fired on an abandoned mirror. Log only: no retry, and no
+            # bus event (this subscriber is RETIRED per
+            # events/subscriber_roster.json, and events/delivery_loss.py
+            # already counts the drop). Fixed anyway because this file is a
+            # template, and a retired subscriber still demonstrating the
+            # defect is how the defect comes back.
+            delivery_error = _deliver_result(
                 {"deliver": f"telegram:{chat_id}:{thread_id}", "id": "event-bus", "name": "event-bus"},
                 message,
                 skip_cron_framing=True,
             )
+            if delivery_error:
+                logger.error(
+                    "TelegramMirror delivery failed: %s", delivery_error)
         except Exception as e:
             logger.error("TelegramMirror delivery failed: %s", e)
