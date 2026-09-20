@@ -426,7 +426,10 @@ class SessionSchemaMixin:
         undecodable (index degraded, store accessible). Invalid UTF-8 surfaces as a bare
         UnicodeDecodeError on some builds and OperationalError("Could not decode to UTF-8")
         on others; both are caught so the probe never raises into init/recovery flows.
-        Anything else (malformed schema, corrupt vtable) re-raises."""
+        A bare "vtable constructor failed" is classified by errcode, not by that text
+        (SQLite destroys the constructor's own message): structural -> None, transient ->
+        re-raised for the caller's bounded retry. Anything else (malformed schema,
+        corrupt content) re-raises."""
         try:
             cursor.execute(f"SELECT * FROM {table_name} LIMIT 0")
             return True
@@ -443,6 +446,23 @@ class SessionSchemaMixin:
                 return None
             if "no such table" in str(exc).lower():
                 return False
+            if self._is_bare_vtable_constructor_error(exc, table_name) and not (
+                self._is_sqlite_corruption_class_error(exc)
+                or self._is_transient_sqlite_error(exc)
+            ):
+                # Structural: the constructor could not read this index's %_config shadow
+                # table (the only read it makes for a LIMIT 0 probe). The index is
+                # unusable but the STORE is intact, so this degrades exactly like a
+                # missing FTS5 module. Both opens must survive it — a writable open
+                # probes through here too, and that open IS the heal _open_probed takes
+                # after a read-only failure. Transient codes and corruption fall through
+                # to the raise below: the first so _open_read_only's bounded retry owns
+                # the window, the second so the heal/forensic backup still runs.
+                logger.warning(
+                    "%s could not be opened (%s); the index is degraded and search "
+                    "falls back to LIKE until it is rebuilt.", table_name, exc,
+                )
+                return None
             if "decode to utf-8" not in str(exc).lower():
                 raise
             decode_exc = exc

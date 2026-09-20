@@ -575,7 +575,14 @@ class SessionDB(
                 # SQLITE_IOERR to a mode=ro reader (it can't do the -shm recovery the read
                 # needs). Closes in milliseconds: retry a bounded number of times before
                 # classifying the store as failed (#100436; see _READ_ONLY_IOERR_RETRY_ATTEMPTS).
-                transient = _DISK_IO_ERROR_MARKER in str(ioerr).lower()
+                # The SAME window reached through an FTS5 vtable constructor carries no
+                # "disk I/O error" text at all — SQLite replaces the constructor's message
+                # with "vtable constructor failed: <name>" and keeps only the errcode — so
+                # the marker test is paired with the code test, which sees through it.
+                transient = (
+                    _DISK_IO_ERROR_MARKER in str(ioerr).lower()
+                    or self._is_transient_sqlite_error(ioerr)
+                )
                 if attempt >= _READ_ONLY_IOERR_RETRY_ATTEMPTS or not transient:
                     raise
                 time.sleep(_READ_ONLY_IOERR_RETRY_BACKOFF_S)

@@ -6,6 +6,7 @@ import logging
 import os
 import sqlite3
 from pathlib import Path
+from typing import Optional
 
 from hermes_constants import get_hermes_home
 from hermes_state_common import FTS_CJK_STALE_KEY, FTS_STALE_KEY, _FTS_CJK_TRIGGERS, _FTS_TRIGGERS
@@ -297,6 +298,51 @@ class SessionFtsSetupMixin:
             else:
                 self._warn_fts5_unavailable(exc)
             return False
+
+    # SQLite substitutes "vtable constructor failed: <name>" whenever an fts5 xConnect
+    # returns an error it did not annotate itself, so the ORIGINAL message is destroyed
+    # and only ``sqlite_errorcode`` survives. Measured on 3.53.1 with one injected fault
+    # (an authorizer returning SQLITE_DENY): a plain table reads "access to messages.id
+    # is prohibited", the same fault through the constructor reads "vtable constructor
+    # failed: messages_fts". Classify these on the CODE — the text carries no more than
+    # "something failed inside the constructor".
+    _TRANSIENT_SQLITE_PRIMARY_CODES = frozenset({
+        getattr(sqlite3, "SQLITE_BUSY", 5),
+        getattr(sqlite3, "SQLITE_LOCKED", 6),
+        getattr(sqlite3, "SQLITE_READONLY", 8),
+        getattr(sqlite3, "SQLITE_IOERR", 10),
+        getattr(sqlite3, "SQLITE_CANTOPEN", 14),
+        getattr(sqlite3, "SQLITE_PROTOCOL", 15),
+    })
+    _CORRUPTION_SQLITE_PRIMARY_CODES = frozenset({
+        getattr(sqlite3, "SQLITE_CORRUPT", 11),
+        getattr(sqlite3, "SQLITE_NOTADB", 26),
+    })
+
+    @staticmethod
+    def _sqlite_primary_errcode(exc: BaseException) -> Optional[int]:
+        """Low byte of ``sqlite_errorcode`` (SQLITE_CORRUPT_VTAB 267 -> SQLITE_CORRUPT 11),
+        or None where the runtime does not carry one (pre-3.11, or a non-sqlite error)."""
+        code = getattr(exc, "sqlite_errorcode", None)
+        return None if code is None else code & 0xFF
+
+    @staticmethod
+    def _is_bare_vtable_constructor_error(exc: BaseException, table_name: str) -> bool:
+        """True for SQLite's own substitute message, and only for that table."""
+        return str(exc) == f"vtable constructor failed: {table_name}"
+
+    @classmethod
+    def _is_transient_sqlite_error(cls, exc: BaseException) -> bool:
+        """Codes a bounded retry can clear: a writer's checkpoint/reset/frame-flush
+        window, a lock, or a ``mode=ro`` reader that cannot perform the ``-shm``
+        recovery a read needs (#100436). Corruption is deliberately ABSENT — it never
+        becomes true by waiting, and retrying it would delay the forensic backup."""
+        return cls._sqlite_primary_errcode(exc) in cls._TRANSIENT_SQLITE_PRIMARY_CODES
+
+    @classmethod
+    def _is_sqlite_corruption_class_error(cls, exc: BaseException) -> bool:
+        """SQLITE_CORRUPT (including the _VTAB extension) or SQLITE_NOTADB."""
+        return cls._sqlite_primary_errcode(exc) in cls._CORRUPTION_SQLITE_PRIMARY_CODES
 
     @staticmethod
     def _is_fts_write_corruption_error(exc: sqlite3.DatabaseError) -> bool:
