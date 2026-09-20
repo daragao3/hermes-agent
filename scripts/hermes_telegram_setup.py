@@ -185,10 +185,14 @@ def main():
     # Update .env with home channel
     env_path = Path.home() / ".hermes" / "profiles" / "main" / ".env"
     if env_path.exists():
-        content = env_path.read_text(encoding="utf-8")
+        # utf-8-sig + surrogateescape on the read, newline="\n" on the write:
+        # appending one key rewrites the whole file, so the untouched lines must
+        # survive a BOM, a cp1252 byte and the CRLF rewrite text mode would do.
+        content = env_path.read_text(encoding="utf-8-sig", errors="surrogateescape")
         if "TELEGRAM_HOME_CHANNEL" not in content:
             content += f"\nTELEGRAM_HOME_CHANNEL={chat_id}\n"
-            env_path.write_text(content, encoding="utf-8")
+            env_path.write_text(content, encoding="utf-8",
+                                errors="surrogateescape", newline="\n")
             logger.info("\nAdded TELEGRAM_HOME_CHANNEL=%s to .env", chat_id)
 
     logger.info("\nSetup complete! Restart the gateway to activate notifications.")

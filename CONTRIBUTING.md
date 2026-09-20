@@ -228,6 +228,23 @@ python scripts/check_orphaned_fixtures.py --static-only tests/x/test_y.py   # AS
 # whole tree (--no-reads: patch forms only, about half that).
 python scripts/check_patch_seams.py                       # all tracked tests/**/*.py
 python scripts/check_patch_seams.py tests/x/test_y.py     # just the files you touched
+
+# Cheap guard for a branch that touches a `.env` writer -- a function that
+# reads an existing .env, updates some keys and writes the file back. Every
+# untouched line round-trips through it, so the read and the write carry a
+# THREE-property contract: `encoding="utf-8-sig"` on the read (a Notepad BOM
+# otherwise hides the first key and the writer duplicates that line),
+# `errors="surrogateescape"` on BOTH sides (one cp1252 byte otherwise raises
+# UnicodeDecodeError before any key is written; `errors="replace"` does not
+# raise but writes U+FFFD back over an unrelated value), and `newline="\n"` on
+# the write (text mode otherwise rewrites every untouched LF as CRLF on
+# Windows). Each landed reactively after its own incident, and for a day the
+# Hindsight and Mem0 writers carried two of the three with nothing to notice.
+# This DISCOVERS writers by AST rather than listing them; read-only pre-checks
+# and whole-file creates are out of scope and reported under --verbose.
+python scripts/check_env_writer_contract.py               # all tracked .py (~20-35s)
+python scripts/check_env_writer_contract.py --verbose     # + what it skipped and why
+python scripts/check_env_writer_contract.py --list        # just the writers it found
 ```
 
 ---

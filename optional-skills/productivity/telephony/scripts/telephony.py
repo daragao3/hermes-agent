@@ -174,7 +174,10 @@ def _upsert_env_file(updates: dict[str, str], env_path: Path | None = None) -> P
     path = env_path or _env_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        lines = path.read_text(encoding="utf-8").splitlines()
+        # utf-8-sig + surrogateescape: the rewrite below re-emits every line,
+        # so a Notepad BOM must not hide the first key and a cp1252 byte on an
+        # unrelated line must round-trip instead of raising.
+        lines = path.read_text(encoding="utf-8-sig", errors="surrogateescape").splitlines()
     else:
         lines = []
 
@@ -199,7 +202,10 @@ def _upsert_env_file(updates: dict[str, str], env_path: Path | None = None) -> P
         if key not in seen:
             new_lines.append(f"{key}={_quote_env_value(str(value))}")
 
-    path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+    # newline="\n": every .env writer keeps LF on disk (see
+    # hermes_cli.config._write_env_lines).
+    path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8",
+                    errors="surrogateescape", newline="\n")
     return path
 
 
