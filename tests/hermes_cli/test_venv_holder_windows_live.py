@@ -5,6 +5,11 @@ lane). Spawns REAL processes with realistic Hermes argv shapes and drives
 the actual detection / classification / exemption code against the live
 process table — no mocked psutil, no faked cmdlines.
 
+Checkout-location-neutral: it passes from the install that owns ``.venv``
+and from a worktree that borrows it. See ``_chain_pids`` — a spawn here is a
+trampoline/interpreter CHAIN and only the chain, never one link's PID, is
+what the holder contract is about.
+
 Each test documents which cluster issue it probes. Tests written BEFORE
 the consolidation fix intentionally pin the CORRECT behavior, so on
 unfixed main the buggy ones fail — that failure on the Windows runner is
@@ -71,6 +76,61 @@ def _detect() -> list[tuple[int, str, str]]:
     return _detect_venv_python_processes()
 
 
+def _chain_pids(proc: subprocess.Popen) -> set[int]:
+    """Every live PID of the chain ``_spawn`` started: *proc* plus its descendants.
+
+    ``sys.executable`` is a uv venv TRAMPOLINE (``.venv\\Scripts\\python.exe``,
+    ``relocatable = true``): it spawns the real managed-runtime interpreter as a
+    child and stays alive as its parent, so one ``Popen`` is a two-link chain.
+    Only the child runs with the cwd we asked for — the trampoline's own cwd is
+    ``%TEMP%`` — so WHICH link the holder scan nominates depends on where the
+    checkout under test sits relative to that venv: on the checkout that owns
+    ``.venv`` the trampoline's exe path is itself under the install root and both
+    links match, from a worktree (which has no venv of its own and borrows the
+    main one) only the child's cwd ties it to the root.
+
+    The product contract is that a live holder is VISIBLE to the scan, not that
+    one particular link of its chain owns the PID, so every assertion below is
+    made against the chain. Asserting ``proc.pid`` directly pinned the
+    trampoline, which made the file passable only from the checkout that owns
+    the interpreter.
+    """
+    import psutil
+
+    pids = {int(proc.pid)}
+    try:
+        pids.update(int(child.pid) for child in psutil.Process(proc.pid).children(recursive=True))
+    except Exception:  # process gone / unreadable — the caller's assertion reports it
+        pass
+    return pids
+
+
+def _chain_matches(proc: subprocess.Popen) -> list[tuple[int, str, str]]:
+    """One scan, filtered to *proc*'s chain."""
+    chain = _chain_pids(proc)
+    return [m for m in _detect() if m[0] in chain]
+
+
+def _detect_chain(proc: subprocess.Popen) -> list[tuple[int, str, str]]:
+    """Scan matches that belong to *proc*'s chain (empty when the scan misses it).
+
+    The trampoline's child can appear a moment after ``Popen`` returns, so re-read
+    both the chain and the scan until they intersect rather than trusting the
+    first observation. Bound only — nothing here asserts a duration.
+    """
+    deadline = time.monotonic() + scaled(10)
+    while True:
+        matches = _chain_matches(proc)
+        if matches or time.monotonic() >= deadline:
+            return matches
+        time.sleep(0.25)
+
+
+def _missed(proc: subprocess.Popen) -> str:
+    """Assertion detail for a chain the scan did not report."""
+    return f"chain={sorted(_chain_pids(proc))} scan={_detect()}"
+
+
 def _kill(*procs: subprocess.Popen) -> None:
     for proc in procs:
         try:
@@ -86,12 +146,10 @@ class TestDetection:
         cwd under the install root is detected as a venv holder."""
         proc = _spawn(["-m", "hermes_cli.main", "serve"])
         try:
-            matches = _detect()
-            pids = [pid for pid, _, _ in matches]
-            assert proc.pid in pids, f"holder scan missed live process: {matches}"
-            cmdline = next(c for p, _, c in matches if p == proc.pid)
+            matches = _detect_chain(proc)
+            assert matches, f"holder scan missed live process: {_missed(proc)}"
             # Full cmdline, not a 120-char prefix (#78089 regression guard).
-            assert "hermes_cli.main" in cmdline
+            assert all("hermes_cli.main" in cmdline for _, _, cmdline in matches), matches
         finally:
             _kill(proc)
 
@@ -103,8 +161,8 @@ class TestDetection:
         outside = Path(tempfile.mkdtemp())
         proc = _spawn(["totally", "unrelated"], cwd=outside)
         try:
-            pids = [pid for pid, _, _ in _detect()]
-            assert proc.pid not in pids
+            # No link of the chain, not merely the pid we hold (see _chain_pids).
+            assert not _chain_matches(proc), f"foreign chain nominated: {_missed(proc)}"
         finally:
             _kill(proc)
 
@@ -116,12 +174,12 @@ class TestDetection:
         padding = os.path.join("C:\\", "Users", "x" * 90, ".hermes-runtime")
         proc = _spawn([padding, "-m", "hermes_cli.main", "gateway", "run"])
         try:
-            matches = _detect()
-            cmdline = next((c for p, _, c in matches if p == proc.pid), None)
-            assert cmdline is not None, "long-path gateway missed by scan"
-            assert "gateway run" in cmdline.lower(), (
-                f"argv truncated before `gateway run`: {cmdline!r}"
-            )
+            matches = _detect_chain(proc)
+            assert matches, f"long-path gateway missed by scan: {_missed(proc)}"
+            for _pid, _name, cmdline in matches:
+                assert "gateway run" in cmdline.lower(), (
+                    f"argv truncated before `gateway run`: {cmdline!r}"
+                )
         finally:
             _kill(proc)
 
@@ -135,11 +193,11 @@ class TestClassification:
         padding = os.path.join("C:\\", "Users", "y" * 90, ".hermes-runtime")
         proc = _spawn([padding, "-m", "hermes_cli.main", "gateway", "run"])
         try:
-            matches = [m for m in _detect() if m[0] == proc.pid]
-            assert matches, "gateway not detected"
+            matches = _detect_chain(proc)
+            assert matches, f"gateway not detected: {_missed(proc)}"
             pids = _leftover_pausable_gateway_pids(matches)
-            assert pids == [proc.pid], (
-                f"pausable exemption failed for long-path gateway: {pids}"
+            assert pids == [pid for pid, _, _ in matches], (
+                f"pausable exemption failed for long-path gateway: {pids} vs {matches}"
             )
         finally:
             _kill(proc)
@@ -151,8 +209,8 @@ class TestClassification:
 
         proc = _spawn(["-m", "hermes_cli.main", "serve"])
         try:
-            matches = [m for m in _detect() if m[0] == proc.pid]
-            assert matches, "serve backend not detected"
+            matches = _detect_chain(proc)
+            assert matches, f"serve backend not detected: {_missed(proc)}"
             assert _leftover_pausable_gateway_pids(matches) is None
         finally:
             _kill(proc)
@@ -166,8 +224,8 @@ class TestHolderMessage:
 
         proc = _spawn(["-m", "hermes_cli.main", "dashboard"])
         try:
-            matches = [m for m in _detect() if m[0] == proc.pid]
-            assert matches, "dashboard process not detected"
+            matches = _detect_chain(proc)
+            assert matches, f"dashboard process not detected: {_missed(proc)}"
             message = _format_venv_python_holders_message(matches)
             assert "close the desktop app" not in message.lower(), (
                 "standalone `hermes dashboard` mislabeled as the Desktop "
@@ -183,8 +241,8 @@ class TestHolderMessage:
 
         proc = _spawn(["-m", "hermes_cli.main", "kanban", "--preserve-cache"])
         try:
-            matches = [m for m in _detect() if m[0] == proc.pid]
-            assert matches, "kanban process not detected"
+            matches = _detect_chain(proc)
+            assert matches, f"kanban process not detected: {_missed(proc)}"
             message = _format_venv_python_holders_message(matches)
             assert "close the desktop app" not in message.lower(), (
                 f"substring match mislabeled `--preserve-cache` (#90778):\n{message}"
