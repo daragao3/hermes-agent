@@ -4021,7 +4021,10 @@ def config_command(args):
     sys.exit(1)
 
 
-# ---- OPTIONAL_ENV_VARS injection from provider profiles and platform plugins (once, at import) ----
+# ---- OPTIONAL_ENV_VARS injection from provider profiles and platform plugins ----
+# Registered below as the catalog's populator and run ONCE, on its first read — not at
+# import. Doing it at import put provider discovery (48 modules) and 22 plugin.yaml parses
+# on every CLI spawn, including command families that never read the table.
 
 def _inject_profile_env_vars() -> None:
     """Expose env_vars of every ``auth_type="api_key"`` provider in providers/ via OPTIONAL_ENV_VARS
@@ -4045,9 +4048,6 @@ def _inject_profile_env_vars() -> None:
                     "advanced": True}
     except Exception:
         pass
-
-
-_inject_profile_env_vars()
 
 
 def _platform_plugin_manifests():
@@ -4098,7 +4098,13 @@ def _inject_platform_plugin_env_vars() -> None:
         pass
 
 
-_inject_platform_plugin_env_vars()
+def _populate_env_var_catalog(_catalog) -> None:
+    """Add the injected half of OPTIONAL_ENV_VARS; run on the catalog's first read."""
+    _inject_profile_env_vars()
+    _inject_platform_plugin_env_vars()
+
+
+OPTIONAL_ENV_VARS.set_populator(_populate_env_var_catalog)
 
 
 # ---- BEGIN PLUGIN-COMPAT (revert-scheduled; see COMPAT_MANIFEST.md) ----

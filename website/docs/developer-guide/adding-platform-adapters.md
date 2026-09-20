@@ -420,7 +420,7 @@ The function receives the same `pconfig` and `chat_id` that the live adapter wou
 
 ## Surfacing Env Vars in `hermes config`
 
-`hermes_cli/config.py` scans `plugins/platforms/*/plugin.yaml` at import time and auto-populates `OPTIONAL_ENV_VARS` from `requires_env` and (optional) `optional_env` blocks. Use the rich-dict form to contribute proper descriptions, prompts, password flags, and URLs — the CLI setup UI picks them up for free.
+`hermes_cli/config.py` scans `plugins/platforms/*/plugin.yaml` on the first read of `OPTIONAL_ENV_VARS` and auto-populates `OPTIONAL_ENV_VARS` from `requires_env` and (optional) `optional_env` blocks. Use the rich-dict form to contribute proper descriptions, prompts, password flags, and URLs — the CLI setup UI picks them up for free.
 
 ```yaml
 # plugins/platforms/my_platform/plugin.yaml

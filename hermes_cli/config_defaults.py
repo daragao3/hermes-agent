@@ -1,8 +1,11 @@
 """Default configuration data for Hermes Agent: DEFAULT_CONFIG and OPTIONAL_ENV_VARS.
 
-Pure-data leaf module — must not import from hermes_cli.config. Comments are the user-facing
-docs of config.yaml.
+Pure-data leaf module — must not import from hermes_cli.config at module scope. Comments are
+the user-facing docs of config.yaml. (``_EnvVarCatalog.ensure_populated`` holds the one
+narrowly-scoped exception: a deferred import on first read, which cannot cycle.)
 """
+
+import threading
 
 
 def _aux(timeout, *, reasoning_effort=True, **extra):
@@ -2398,10 +2401,170 @@ def _base_url(name, prompt_name=None):
     return _prov(f"{name} base URL override", prompt, None, password=False)
 
 
+class _EnvVarCatalog(dict):
+    """``OPTIONAL_ENV_VARS``: hand-written entries at import, injected ones on first read.
+
+    ``hermes_cli.config`` contributes ~178 further entries, from the ``providers/`` profiles
+    and from the bundled ``plugins/platforms/*/plugin.yaml`` manifests. It used to do that at
+    module scope, which put provider discovery (48 module imports) and 22 YAML parses on the
+    startup path of every ``python -m hermes_cli.main <anything>`` spawn, every gateway/worker
+    start and every test process — ~0.5 s median idle for the provider half alone, and 6.9 s of
+    a 9.3 s config import under load — including the whole ``kanban`` and ``plugins`` command
+    families, which never read this table (loops
+    ``hermes-cli-config-import-optional-env-vars-lazy-20260919``).
+
+    So the fill is deferred to the first READ. Readers take this object by value
+    (``from hermes_cli.config import OPTIONAL_ENV_VARS``), so there is no import hook to hang
+    the fill on; every read path is overridden below instead. That covers the C-level readers
+    too — for a dict SUBCLASS, ``dict(c)``, ``{**c}``, ``f(**c)`` and ``json.dumps(c)`` all
+    route back through ``keys``/``__getitem__``/``items`` rather than walking the table
+    directly — which is what keeps ``hermes config`` and the dashboard Keys page from ever
+    observing a short catalog.
+
+    Writes deliberately do NOT populate: the injectors fill the table through ``__setitem__``,
+    and an entry seeded before the first read has to keep winning over the injected one (both
+    injectors skip names already present).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._populate = None
+        self._state = "pending"  # pending -> running -> done
+        self._lock = threading.RLock()
+
+    def set_populator(self, populate) -> None:
+        """Install the callable that adds the injected entries (``hermes_cli.config`` does)."""
+        self._populate = populate
+
+    def ensure_populated(self) -> None:
+        """Run the fill once. Every read path below calls this first."""
+        if self._state == "done":
+            return
+        with self._lock:
+            # RLock, not Lock: the injectors read the table while filling it, so the filling
+            # thread must get back in — while any other thread waits for the full table
+            # instead of seeing a half-filled one.
+            if self._state != "pending":
+                return
+            self._state = "running"
+            try:
+                if self._populate is None:
+                    # Deferred, not a module-scope import: by the time any read happens the
+                    # cycle config -> config_defaults is long closed. Without this a caller
+                    # that imported only config_defaults would read the hand-written half.
+                    import hermes_cli.config  # noqa: F401
+                if self._populate is None:
+                    self._state = "pending"
+                    return
+                self._populate(self)
+            except Exception:
+                # A read landing mid-import of hermes_cli.config must not latch a short
+                # catalog forever; stay pending so the next read retries.
+                self._state = "pending"
+                return
+            self._state = "done"
+
+    # ---- read paths: populate, then behave exactly like a dict ----
+
+    def __getitem__(self, key):
+        self.ensure_populated()
+        return super().__getitem__(key)
+
+    def __contains__(self, key):
+        self.ensure_populated()
+        return super().__contains__(key)
+
+    def __iter__(self):
+        self.ensure_populated()
+        return super().__iter__()
+
+    def __len__(self):
+        self.ensure_populated()
+        return super().__len__()
+
+    def __eq__(self, other):
+        self.ensure_populated()
+        return super().__eq__(other)
+
+    def __ne__(self, other):
+        self.ensure_populated()
+        return super().__ne__(other)
+
+    __hash__ = None  # dict is unhashable; defining __eq__ would otherwise re-state it
+
+    def __repr__(self):
+        self.ensure_populated()
+        return super().__repr__()
+
+    def __reversed__(self):
+        self.ensure_populated()
+        return super().__reversed__()
+
+    def __or__(self, other):
+        self.ensure_populated()
+        return super().__or__(other)
+
+    def __ror__(self, other):
+        self.ensure_populated()
+        return super().__ror__(other)
+
+    def get(self, key, default=None):
+        self.ensure_populated()
+        return super().get(key, default)
+
+    def keys(self):
+        self.ensure_populated()
+        return super().keys()
+
+    def values(self):
+        self.ensure_populated()
+        return super().values()
+
+    def items(self):
+        self.ensure_populated()
+        return super().items()
+
+    def copy(self):
+        self.ensure_populated()
+        return super().copy()
+
+    def __reduce__(self):
+        """copy / deepcopy / pickle hand back a plain, filled dict.
+
+        The default dict-subclass reduction would carry this instance's ``__dict__`` --
+        an RLock and a bound fill hook, neither picklable -- and callers treated this
+        name as a plain dict for years before it went lazy.
+        """
+        return (dict, (dict(self),))
+
+    # ---- removals read before they write, so they populate too ----
+
+    def __delitem__(self, key):
+        self.ensure_populated()
+        super().__delitem__(key)
+
+    def pop(self, *args):
+        self.ensure_populated()
+        return super().pop(*args)
+
+    def popitem(self):
+        self.ensure_populated()
+        return super().popitem()
+
+    def setdefault(self, key, default=None):
+        self.ensure_populated()
+        return super().setdefault(key, default)
+
+    def clear(self):
+        self.ensure_populated()
+        super().clear()
+
+
 # Optional environment variables that enhance functionality. Feeds the dashboard keys page and setup
 # checklists; category: provider|tool|skill|messaging|setting, advanced=True hides from checklists,
-# tools=[...] lists the model tools the key unlocks.
-OPTIONAL_ENV_VARS = {
+# tools=[...] lists the model tools the key unlocks. The provider-profile and platform-plugin
+# entries are added on first read — see _EnvVarCatalog.
+OPTIONAL_ENV_VARS = _EnvVarCatalog({
     # ── Provider (handled in provider selection, not shown in checklists) ──
     "NOUS_BASE_URL": _base_url("Nous Portal"),
     "OPENROUTER_API_KEY": _env("OpenRouter API key (for vision, web scraping helpers, and MoA)",
@@ -2813,4 +2976,4 @@ OPTIONAL_ENV_VARS = {
     "HERMES_EPHEMERAL_SYSTEM_PROMPT": _setting(
         "Ephemeral system prompt injected at API-call time (never persisted to sessions)",
         "Ephemeral system prompt", None),
-}
+})
