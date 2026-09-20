@@ -286,5 +286,15 @@ native/fts5_cjk/*.so
 .lazy-refresh-incomplete
 .skills_prompt_snapshot.json
 
+# Belt-and-braces only -- the FIX is hermes_state_guard.refuse_mock_db_path, which
+# refuses a unittest.mock where a db path is expected. A MagicMock satisfies
+# os.PathLike (__fspath__ -> "MagicMock/<mock name>/<id>"), so a test that hands one
+# to SessionDB/acquire materialises a real database under the CWD -- the repo or
+# worktree root under the runner -- and `git worktree remove` then refuses with the
+# same message a sibling session's unsaved edits produce. Root-anchored: a directory
+# a project legitimately named MagicMock deeper in the tree is untouched. If this
+# rule ever starts matching something, the guard has a hole -- do not just ignore it.
+/MagicMock/
+
 # Disposable profile created by scripts/probe_active_session_exclusivity.py
 .probe-home/

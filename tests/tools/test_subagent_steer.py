@@ -169,6 +169,11 @@ class TestMissedSteerRetention:
         parent._delegate_depth = 0
         parent.model = "test-model"
         parent.interactive_mode = False
+        # A bare MagicMock attribute here is NOT a harmless don't-care: a mock is
+        # os.PathLike, so _open_child_session_db would open a REAL SessionDB at
+        # MagicMock/mock._session_db.db_path/<id> under the CWD. None is the
+        # documented degradation (child gets session_db=None).
+        parent._session_db = None
 
         with patch("run_agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
@@ -206,6 +211,11 @@ class TestMissedSteerRetention:
         parent._delegate_depth = 0
         parent.model = "test-model"
         parent.interactive_mode = False
+        # A bare MagicMock attribute here is NOT a harmless don't-care: a mock is
+        # os.PathLike, so _open_child_session_db would open a REAL SessionDB at
+        # MagicMock/mock._session_db.db_path/<id> under the CWD. None is the
+        # documented degradation (child gets session_db=None).
+        parent._session_db = None
 
         with patch("run_agent.AIAgent") as MockAgent:
             mock_child = MagicMock()

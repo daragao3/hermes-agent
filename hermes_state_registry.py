@@ -188,7 +188,11 @@ def acquire(db_path: Optional[Path] = None) -> "SessionDB":
     whatever ``SessionDB.__init__`` raises; on a replacement-open failure the registry
     holds NO entry for the path."""
     from hermes_state import _default_db_path
+    from hermes_state_guard import refuse_mock_db_path
 
+    # Before Path(): a mock db_path is os.PathLike and would resolve to a real
+    # relative directory under CWD, so SessionDB downstream can no longer tell.
+    refuse_mock_db_path(db_path, where="hermes_state_registry.acquire")
     raw_path = Path(db_path) if db_path is not None else Path(_default_db_path())
     try:
         path = raw_path.resolve()
