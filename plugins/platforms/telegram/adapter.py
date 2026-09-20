@@ -32,12 +32,71 @@ def _redact_telegram_error_text(error: object) -> str:
         return "<telegram error redacted>"
 
 
+def _transport_error_root(error: object) -> str:
+    """Deepest detail in the cause graph that actually identifies the failure, or "".
+
+    httpx raises ``ConnectError`` with an EMPTY ``str()`` after a failed connect, and PTB then
+    formats the wrapped error as ``f"{type(exc).__name__}: {exc}"`` -- which collapses to the
+    string ``"httpx.ConnectError: "``, a class name and nothing else. Every distinct connect
+    failure therefore logs identically:
+
+        DNS failure          -> httpx.ConnectError:
+        routing / VPN drop   -> httpx.ConnectError:
+        blocked socket       -> httpx.ConnectError:
+
+    Those are three unrelated root causes with three different fixes, and no amount of reading
+    the log can tell them apart. Measured 2026-09-19: 115 such lines in one day (up from 21 on
+    09-17 and 66 on 09-18) with the cause undiagnosable from logs alone, which is what left the
+    escalating ramp unattributed in that day's triage.
+
+    The detail is not lost, only unreachable: ``ConnectError`` still carries the underlying
+    ``OSError`` on its ``__cause__``/``__context__`` chain. Walk it and return the first ancestor
+    that says something -- preferring an OS error number, which is the part that actually
+    discriminates (``[WinError 11001] getaddrinfo failed`` vs ``[WinError 10060] A connection
+    attempt failed`` vs ``[WinError 10013]``).
+
+    Returns "" when the whole graph is silent, so the caller can fall back to the class name
+    rather than print an empty tail.
+    """
+    if not isinstance(error, BaseException):
+        return ""
+    best = ""
+    try:
+        for cur in _iter_exception_graph(error):
+            if cur is error:
+                continue
+            errno = getattr(cur, "winerror", None) or getattr(cur, "errno", None)
+            text = _redact_telegram_error_text(cur).strip()
+            # An OS-level error number is the discriminating signal: take the first one and stop.
+            if errno is not None:
+                name = type(cur).__name__
+                return f"{name}[{errno}]: {text}" if text else f"{name}[{errno}]"
+            # Otherwise remember the first ancestor carrying real text and keep walking for an
+            # errno deeper in. A bare "ClassName:" tail is PTB's empty-wrap, not detail.
+            if text and not text.endswith(":") and not best:
+                best = f"{type(cur).__name__}: {text}"
+    except Exception:
+        # Diagnostics must never be able to break the error path they describe.
+        return best
+    return best
+
+
 def _describe_transport_error(error: object) -> str:
     """``ClassName: <redacted text>`` -- httpx transport errors often carry an EMPTY str()
-    (``httpx.ConnectError`` after a failed connect), so the class name is the only signal."""
+    (``httpx.ConnectError`` after a failed connect), so the class name is the only signal.
+
+    When the text is empty, or is PTB's empty wrap that ends in a bare ``"ClassName:"``, append
+    the root cause recovered from the exception graph (see ``_transport_error_root``) so the line
+    names WHY the connect failed instead of only THAT it failed.
+    """
     text = _redact_telegram_error_text(error)
     name = type(error).__name__ if error is not None else "None"
-    return f"{name}: {text}" if text else name
+    described = f"{name}: {text}" if text else name
+    if text and not text.rstrip().endswith(":"):
+        # Top-level text already carries detail; the graph would only add noise.
+        return described
+    root = _transport_error_root(error)
+    return f"{described} <- {root}" if root else described
 
 
 def _scoped_gate_env(name: str, default: str = "") -> str:
@@ -1801,7 +1860,7 @@ class TelegramAdapter(BasePlatformAdapter):
             return
         if self._recovery_in_flight():
             logger.debug(
-                "[%s] Telegram polling recovery already scheduled; ignoring %s: %s", self.name, reason, _redact_telegram_error_text(error))
+                "[%s] Telegram polling recovery already scheduled; ignoring %s: %s", self.name, reason, _describe_transport_error(error))
             return
         self._send_path_degraded = True
         # Polling died mid-session on an adapter that published "connected"
@@ -1811,7 +1870,7 @@ class TelegramAdapter(BasePlatformAdapter):
             self._mark_degraded()
         logger.warning(
             "[%s] Telegram polling degraded (%s); gateway stays alive and will retry. Error: %s", self.name, reason,
-            _redact_telegram_error_text(error))
+            _describe_transport_error(error))
         self._spawn_polling_recovery(asyncio.get_running_loop(), self._handle_polling_network_error(error))
 
     async def _delete_webhook_best_effort(self, *, require_success: bool = False) -> bool:
@@ -1974,12 +2033,12 @@ class TelegramAdapter(BasePlatformAdapter):
                 "Telegram polling could not reconnect after %d network error retries. "
                 "Re-initializing the Telegram adapter via the reconnect watcher; "
                 "the gateway and other platforms stay up." % MAX_NETWORK_RETRIES)
-            await self._go_fatal_network(message, "[%s] %s Last error: %s", self.name, message, _redact_telegram_error_text(error))
+            await self._go_fatal_network(message, "[%s] %s Last error: %s", self.name, message, _describe_transport_error(error))
             return
         delay = min(BASE_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
         logger.warning(
             "[%s] Telegram network error (attempt %d/%d), reconnecting in %ds. Error: %s", self.name, attempt,
-            MAX_NETWORK_RETRIES, delay, _redact_telegram_error_text(error))
+            MAX_NETWORK_RETRIES, delay, _describe_transport_error(error))
         await asyncio.sleep(delay)
         if self._teardown_started:
             return
@@ -2009,7 +2068,7 @@ class TelegramAdapter(BasePlatformAdapter):
         except Exception as retry_err:
             if self._teardown_started:
                 return
-            logger.warning("[%s] Telegram polling reconnect failed: %s", self.name, _redact_telegram_error_text(retry_err))
+            logger.warning("[%s] Telegram polling reconnect failed: %s", self.name, _describe_transport_error(retry_err))
             # Polling is dead and no more error callbacks will fire — chain the retry ourselves.
             if not self.has_fatal_error and not self._teardown_started:
                 task = asyncio.ensure_future(self._handle_polling_network_error(retry_err))
