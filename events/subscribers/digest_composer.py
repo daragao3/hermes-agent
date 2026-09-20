@@ -227,11 +227,23 @@ class DigestComposer(BaseSubscriber):
                 thread_id = data.get("topics", {}).get("scribe_daily", {}).get("thread_id", "")
                 if chat_id and thread_id:
                     target = f"telegram:{chat_id}:{thread_id}"
-                    _deliver_result(
+                    # Returns the error rather than raising, so the except
+                    # below never saw an abandoned digest: the send was
+                    # dropped and NOTHING recorded it, here or anywhere.
+                    # Log only -- no retry (an ambiguous TimedOut may have
+                    # landed) and no bus event (DigestComposer delivers
+                    # THROUGH this path, and events/delivery_loss.py already
+                    # counts the drop; a second counter would double it).
+                    delivery_error = _deliver_result(
                         {"deliver": target, "id": "digest-composer", "name": "digest-composer"},
                         digest,
                         skip_cron_framing=True,
                     )
+                    if delivery_error:
+                        logger.error(
+                            "DigestComposer: Telegram delivery failed: %s",
+                            delivery_error,
+                        )
         except Exception as e:
             logger.error("DigestComposer: Telegram delivery failed: %s", e)
 
@@ -280,11 +292,17 @@ class DigestComposer(BaseSubscriber):
             return
         try:
             from cron.scheduler import _deliver_result
-            _deliver_result(
+            # See _deliver_telegram: the error is RETURNED, not raised.
+            delivery_error = _deliver_result(
                 {"deliver": "whatsapp", "id": "digest-composer", "name": "digest-composer"},
                 condensed,
                 skip_cron_framing=True,
             )
+            if delivery_error:
+                logger.error(
+                    "DigestComposer: WhatsApp delivery failed: %s",
+                    delivery_error,
+                )
         except Exception as e:
             logger.error("DigestComposer: WhatsApp delivery failed: %s", e)
 

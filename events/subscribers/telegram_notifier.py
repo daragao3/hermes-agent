@@ -1036,12 +1036,39 @@ class TelegramNotifier(BaseSubscriber):
                     f"telegram:{chat_id}:{thread_id}" if thread_id
                     else f"telegram:{chat_id}"
                 )
-                _deliver_result(
+                # _deliver_result REPORTS failure by RETURNING an error
+                # string -- it does not raise ("Returns None on success, else
+                # an error", its own docstring). Discarding that return is
+                # how an abandoned send came to record NOTIFICATION_DELIVERED
+                # and return True: the except below never fired, because
+                # nothing was ever thrown. 158 such drops sat in the rotated
+                # gateway error logs on 2026-09-20, one false success each.
+                #
+                # Re-raising as RuntimeError routes the error string through
+                # the SAME failure path as a raising send_fn, so the two can
+                # never drift apart -- and matches WhatsAppEscalator._deliver,
+                # which has read this return correctly since 2026-04-30.
+                #
+                # NOT A RETRY, and must not become one. A generic TimedOut may
+                # ALREADY have reached Telegram; plugins/platforms/telegram/
+                # adapter.py retries only the provably-pre-send classes and
+                # fails closed on the rest so an ambiguous timeout cannot
+                # duplicate an alert. This layer cannot tell the cases apart.
+                #
+                # The loss COUNTER is not emitted here either: events/
+                # delivery_loss.py already emits one AGENT_ERROR per
+                # abandoned standalone send, from inside _deliver_result's
+                # own lane. What this method owns is the per-event reverse
+                # signal, and emitting a second counter would double-count
+                # every drop in the digest's SYSTEM HEALTH rollup.
+                delivery_error = _deliver_result(
                     {"deliver": target_str, "id": "event-bus", "name": "event-bus"},
                     message,
                     skip_cron_framing=True,
                     buttons=buttons,
                 )
+                if delivery_error:
+                    raise RuntimeError(str(delivery_error))
             latency_ms = int((time.monotonic() - t0) * 1000)
             if event is not None:
                 self._safe_emit_delivered(
