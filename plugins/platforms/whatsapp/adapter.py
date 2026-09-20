@@ -16,6 +16,10 @@ from typing import Dict, Optional, Any
 from gateway.platforms._shared import get_scoped_secret
 from hermes_cli._subprocess_compat import windows_detach_popen_kwargs
 from hermes_constants import (find_node_executable, get_hermes_dir, node_executable_present, with_hermes_node_path)
+# Shared "absolute under EITHER convention" predicate: the bridge is a separate
+# process whose paths need not follow the host's convention, and CPython 3.13
+# made ntpath.isabs("/etc/passwd") False on Windows.
+from tools.file_tools_paths import _is_rooted
 
 _IS_WINDOWS = os.name == "nt"
 
@@ -300,7 +304,7 @@ def _cache_dirs() -> tuple:
 
 
 def _is_allowed_bridge_path(url: str) -> bool:
-    """Absolute bridge path resolves (symlinks included) inside a Hermes cache dir — a rogue bridge could hand back /etc/passwd."""
+    """Bridge path (absolute under either convention) resolves, symlinks included, inside a Hermes cache dir — a rogue bridge could hand back /etc/passwd."""
     try:
         resolved = Path(url).resolve()
     except (OSError, ValueError):
@@ -1121,7 +1125,16 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
         return next((kind for needle, kind in _MEDIA_NEEDLES if needle in media_type), MessageType.DOCUMENT)
 
     async def _collect_bridge_media(self, data: Dict[str, Any], msg_type: MessageType) -> tuple[list, list]:
-        """``mediaUrls`` → ``(cached_urls, media_types)``: remote image/audio cached locally; absolute paths only inside a cache dir."""
+        """``mediaUrls`` → ``(cached_urls, media_types)``: remote image/audio cached locally; absolute paths only inside a cache dir.
+
+        "Absolute" is tested under BOTH conventions. The bridge is a separate
+        process (it may run under WSL/a container, and a rogue one is the threat
+        model ``_is_allowed_bridge_path`` exists for), so a POSIX-rooted path is a
+        legitimate spelling here. Since CPython 3.13 ``ntpath.isabs("/etc/passwd")``
+        is False on Windows, a host-only check routed such a path to the
+        accept-anything branch below — straight past the cache-dir containment
+        check and into ``_inject_document_text``.
+        """
         accepted: list[tuple] = []  # (url_or_path, mime)
         label, default_mime = _MEDIA_INFO.get(msg_type, (None, ""))
         bridge_mime = str(data.get("mime") or "").strip()
@@ -1135,7 +1148,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                 except Exception as e:
                     print(f"[{self.name}] Failed to cache {label}: {e}", flush=True)
                 accepted.append((url, mime))
-            elif label is not None and os.path.isabs(url):
+            elif label is not None and _is_rooted(url):
                 if _is_allowed_bridge_path(url):
                     accepted.append((url, mime))
                     print(f"[{self.name}] Using bridge-cached {label}: {url}", flush=True)
