@@ -323,7 +323,7 @@ ctx.register_platform(
 
 ## 在 `hermes config` 中暴露环境变量 {#surfacing-env-vars-in-hermes-config}
 
-`hermes_cli/config.py` 在导入时扫描 `plugins/platforms/*/plugin.yaml`，并从 `requires_env` 和（可选的）`optional_env` 块自动填充 `OPTIONAL_ENV_VARS`。使用富字典形式可提供完整的描述、prompt、password 标志和 URL — CLI 设置 UI 会自动识别。
+`hermes_cli/config.py` 在首次读取 `OPTIONAL_ENV_VARS` 时扫描 `plugins/platforms/*/plugin.yaml`，并从 `requires_env` 和（可选的）`optional_env` 块自动填充 `OPTIONAL_ENV_VARS`。使用富字典形式可提供完整的描述、prompt、password 标志和 URL — CLI 设置 UI 会自动识别。
 
 ```yaml
 # plugins/platforms/my_platform/plugin.yaml
