@@ -174,3 +174,70 @@ class TestDiagnosticsReachTheLogger:
             asyncio.run(adapter._wait_for_bridge(Mock()))
 
         assert any("did not start in" in record.getMessage() for record in caplog.records)
+
+
+class TestBridgeLifecycleDecisionsReachTheLogger:
+    """The pre-spawn decisions (adopt / restart-because-not-connected / restart-because-stale) and
+    the post-spawn "Bridge started" line were still bare print() after 1f12f8d8c4 routed the
+    bridge-WAIT diagnostics. On 2026-09-18 attempt 1 spawned nothing for 90 s and the reason
+    could only have been on one of these lines, which never reached disk."""
+
+    async def _probe(self, data):
+        return True, data
+
+    def test_not_connected_bridge_decision_is_logged(self, tmp_path, caplog):
+        adapter = _adapter(tmp_path)
+        adapter._probe_bridge_health = lambda: self._probe({"status": "close"})
+
+        with caplog.at_level(logging.INFO, logger=wa.logger.name):
+            assert asyncio.run(adapter._reuse_running_bridge(tmp_path / "bridge.js")) is False
+
+        assert any("Bridge found but not connected" in r.getMessage() for r in caplog.records)
+
+    def test_stale_bridge_decision_is_logged(self, tmp_path, caplog):
+        adapter = _adapter(tmp_path)
+        bridge_path = tmp_path / "bridge.js"
+        bridge_path.write_text("// on-disk bridge", encoding="utf-8")
+        adapter._probe_bridge_health = lambda: self._probe({"status": "connected", "scriptHash": "not-the-disk-hash"})
+
+        with caplog.at_level(logging.INFO, logger=wa.logger.name):
+            assert asyncio.run(adapter._reuse_running_bridge(bridge_path)) is False
+
+        assert any("Running bridge is stale" in r.getMessage() for r in caplog.records)
+
+    def test_adopted_bridge_decision_is_logged(self, tmp_path, caplog, monkeypatch):
+        adapter = _adapter(tmp_path)
+        bridge_path = tmp_path / "bridge.js"
+        bridge_path.write_text("// on-disk bridge", encoding="utf-8")
+        adapter._probe_bridge_health = lambda: self._probe(
+            {"status": "connected", "scriptHash": wa._file_content_hash(bridge_path),
+             "sendReadReceipts": adapter._send_read_receipts})
+        adapter._attach_to_bridge = Mock()
+        adapter._wire_plugin_handlers = Mock()
+
+        with caplog.at_level(logging.INFO, logger=wa.logger.name):
+            assert asyncio.run(adapter._reuse_running_bridge(bridge_path)) is True
+
+        assert any("Using existing bridge" in r.getMessage() for r in caplog.records)
+
+    _LIFECYCLE_METHODS = (
+        "_ensure_bridge_deps", "_reuse_running_bridge", "_bridge_died", "_discard_unbound_bridge",
+        "_poll_bridge_health", "_wait_for_bridge", "connect", "_report_bridge_exit", "disconnect",
+    )
+
+    def test_no_bare_print_in_bridge_lifecycle_methods(self):
+        """Source contract: no bridge-lifecycle method calls print() directly; each goes through
+        _bridge_note, which mirrors to the logger. Reverting any one site goes red here, and a
+        renamed method fails loudly instead of silently leaving the contract vacuous."""
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(wa))
+        methods = {node.name: node for node in ast.walk(tree)
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        missing = [name for name in self._LIFECYCLE_METHODS if name not in methods]
+        assert not missing, f"lifecycle methods renamed or gone: {missing}"
+        offenders = [(name, call.lineno) for name in self._LIFECYCLE_METHODS
+                     for call in ast.walk(methods[name])
+                     if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "print"]
+        assert not offenders, f"bare print() in a bridge-lifecycle method: {offenders}"
