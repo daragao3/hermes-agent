@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from events.bus import EventBus
+from events.delivery_loss import DELIVERY_LOSS_SOURCE
 from events.noise_guards import (
     FlapGuard,
     KnownDebtGuard,
@@ -311,6 +312,21 @@ class TelegramNotifier(BaseSubscriber):
         # remain in the bus for audit-logger and the gateway log.
         if (event.event_type == EventType.AGENT_ERROR
                 and event.source == "event-bus"):
+            return
+
+        # Abandoned cron/notification delivery (2026-09-20). Same feedback-loop
+        # shape as the lag alerts above, but sharper: TelegramNotifier delivers
+        # THROUGH cron.scheduler._deliver_result, which is the function that
+        # abandons the send. Delivering this event would re-enter the lane that
+        # just dropped a message, and it would do so precisely while the
+        # transport is failing -- 158 drops sat in the rotated gateway error
+        # logs on the day this landed, 51 of them one repeating Telegram
+        # timeout. Bus-only: audit_logger still writes it to audit.jsonl and
+        # DigestComposer still rolls it into SYSTEM HEALTH, one counted row per
+        # (platform, error class). Suppressing it here is what keeps it at one
+        # digest line instead of a per-drop chat send.
+        if (event.event_type == EventType.AGENT_ERROR
+                and event.source == DELIVERY_LOSS_SOURCE):
             return
 
         # Receiver-side dedup for AGENT_FAILURE_CLUSTER. Belt-and-braces

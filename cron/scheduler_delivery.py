@@ -1624,6 +1624,14 @@ def _standalone_send(
     def _failed(e) -> tuple[None, str]:
         msg = f"delivery to {t.where} failed: {e}"
         logger.error("Job '%s': %s", job["id"], msg, exc_info=True)
+        # An attempted send that raised: the message is lost. Counted here rather than
+        # in _deliver_standalone because only this branch knows a send was actually
+        # ATTEMPTED -- _warned() also returns an error string, for the interpreter-
+        # shutdown race and the empty-payload skip, and neither of those lost a
+        # delivery. Counting them would inflate the one number this exists to make
+        # trustworthy. The exception is in hand here, so its class is exact rather
+        # than parsed back out of a message.
+        _emit_delivery_abandoned(job, t, f"{type(e).__name__}: {e}")
         return None, msg
 
     # Interpreter finalizing (SIGTERM/restart/OOM): asyncio.run and a fresh ThreadPoolExecutor both
@@ -1660,6 +1668,26 @@ def _standalone_send(
         return _failed(e)
 
 
+def _emit_delivery_abandoned(job: dict, t: _TargetDelivery, error) -> None:
+    """Record an abandoned standalone delivery on the event bus. Never raises.
+
+    Lazy import: ``events`` pulls in the bus (sqlite3) and the whole schema, and
+    ``cron.scheduler_delivery`` sits on the ``hermes send --list`` delivery path whose
+    import cost is pinned by tests/hermes_cli/test_send_import_cost.py. Importing
+    inside the function keeps the cost on the failure path, where it is already paid.
+
+    The emitter swallows its own failures; this second guard covers the import and the
+    attribute reads. A delivery that is already lost must not also take down the caller.
+    """
+    try:
+        from events.delivery_loss import emit_delivery_abandoned
+
+        emit_delivery_abandoned(
+            job_id=job.get("id"), platform=t.platform_name, target=t.where, error=error)
+    except Exception:
+        logger.debug("delivery-loss emission failed (swallowed)", exc_info=True)
+
+
 def _deliver_standalone(
     t: _TargetDelivery, content: str, media_files: list, target_errors: list, delivery_errors: list,
     *, buttons=None,
@@ -1677,6 +1705,16 @@ def _deliver_standalone(
         # Not inside an except block — the error comes from the result dict, no traceback.
         err = f"delivery error: {result['error']} (target {t.where})"
         logger.error("Job '%s': %s", job["id"], err)
+        # End of the line: this message was generated, rendered and attempted, and is
+        # now lost. It is deliberately NOT retried — an ambiguous TimedOut may already
+        # have reached the platform, and the adapters retry only the provably-pre-send
+        # classes to avoid a duplicate alert. So make the LOSS countable instead:
+        # before this the only trace was the ERROR line above, and 158 drops
+        # accumulated in the rotated gateway logs over 9+ days with nothing on the bus,
+        # in the digest or in the daily triage able to see them. (The raised-exception
+        # half of this is counted in _standalone_send._failed, which is the only place
+        # that can tell an attempted send from a skipped one.)
+        _emit_delivery_abandoned(job, t, result["error"])
     if err is not None:
         target_errors.append(err)
         delivery_errors.extend(target_errors)
