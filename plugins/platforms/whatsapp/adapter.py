@@ -643,7 +643,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                 return True
         except OSError:
             pass
-        print(f"[{self.name}] Installing WhatsApp bridge dependencies...")
+        self._bridge_note("Installing WhatsApp bridge dependencies...")
         # Hermes-managed portable Node's npm.cmd first (Windows), then PATH.
         _npm_bin = find_node_executable("npm") or "npm"
         from hermes_cli._subprocess_compat import run_text_capture
@@ -652,14 +652,14 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             install_result = run_text_capture([_npm_bin, "install", "--silent"], cwd=str(bridge_dir), timeout=env_int("WHATSAPP_NPM_INSTALL_TIMEOUT", 300),
                                             env=with_hermes_node_path())
             if install_result.returncode == 0:
-                print(f"[{self.name}] Dependencies installed")
+                self._bridge_note("Dependencies installed")
                 with suppress(OSError):  # Stamp is an optimization; install still succeeded
                     if _pkg_hash:
                         _dep_stamp.write_text(_pkg_hash, encoding="utf-8")
                 return True
-            print(f"[{self.name}] npm install failed: {install_result.stderr}")
+            self._bridge_note(f"npm install failed: {install_result.stderr}")
         except Exception as e:
-            print(f"[{self.name}] Failed to install dependencies: {e}")
+            self._bridge_note(f"Failed to install dependencies: {e}")
             detail = f" ({e})"
         self._set_fatal_error("whatsapp_npm_install_failed", f"WhatsApp bridge npm install failed{detail}. Run `cd {bridge_dir} && {_npm_bin} install` "
                               "manually, then restart `hermes gateway`.", retryable=False)
@@ -679,17 +679,17 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                 return False
             bridge_status = data.get("status", "unknown")
             if bridge_status != "connected":
-                print(f"[{self.name}] Bridge found but not connected (status: {bridge_status}), restarting")
+                self._bridge_note(f"Bridge found but not connected (status: {bridge_status}), restarting")
                 return False
             running_hash, disk_hash = data.get("scriptHash", ""), _file_content_hash(bridge_path)
             if running_hash and disk_hash and running_hash == disk_hash and bool(data.get("sendReadReceipts", False)) == self._send_read_receipts:
-                print(f"[{self.name}] Using existing bridge (status: {bridge_status})")
+                self._bridge_note(f"Using existing bridge (status: {bridge_status})")
                 self._mark_connected()
                 self._attach_to_bridge(None)  # Not managed by us
                 self._wire_plugin_handlers(None)
                 return True
             stale_reason = f"running={running_hash or 'unversioned'}, disk={disk_hash}" if running_hash != disk_hash else "send_read_receipts config changed"
-            print(f"[{self.name}] Running bridge is stale ({stale_reason}), restarting")
+            self._bridge_note(f"Running bridge is stale ({stale_reason}), restarting")
         except Exception:
             pass  # Bridge not running, start a new one
         return False
@@ -717,6 +717,12 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
         spawned nothing for 90 s and left no explanation anywhere on disk, because
         every line in this path was a bare print. The logger lands in
         profiles/<profile>/logs/errors-gateway.log, which survives the supervisor.
+
+        Every bridge-LIFECYCLE line goes through here -- deps install, the
+        pre-spawn adopt / restart decisions, the wait loop, bridge exit and
+        disconnect -- and tests/gateway/test_whatsapp_bridge_http_up_budget.py
+        pins that none of those methods carries a bare print(). Per-message
+        chatter (media cache, poll errors) is deliberately not routed.
         """
         print(f"[{self.name}] {detail}")
         logger.info("[%s] %s", self.name, detail)
@@ -958,7 +964,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                 return False
             self._attach_to_bridge(self._bridge_process)
             self._mark_connected()
-            print(f"[{self.name}] Bridge started on port {self._bridge_port}")
+            self._bridge_note(f"Bridge started on port {self._bridge_port}")
             self._wire_plugin_handlers(None)
             return True
         except Exception as e:
@@ -1045,7 +1051,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
         """Stop the WhatsApp bridge and clean up any orphaned processes."""
         self._shutting_down = True  # flip BEFORE signalling so send()/poll loop don't report the intentional exit as fatal
         if not self._bridge_process:
-            print(f"[{self.name}] Disconnecting (external bridge left running)")
+            self._bridge_note("Disconnecting (external bridge left running)")
         else:
             try:
                 self._terminate_bridge(force=False)
@@ -1053,7 +1059,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                 if self._bridge_process.poll() is None:
                     self._terminate_bridge(force=True)
             except Exception as e:
-                print(f"[{self.name}] Error stopping bridge: {e}")
+                self._bridge_note(f"Error stopping bridge: {e}")
         _unlink_quietly(self._session_path / "bridge.pid")
         if self._poll_task and not self._poll_task.done():
             self._poll_task.cancel()
@@ -1065,7 +1071,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
         self._release_platform_lock()
         self._mark_disconnected()
         self._close_bridge_log()
-        print(f"[{self.name}] Disconnected")
+        self._bridge_note("Disconnected")
 
     async def _bridge_unavailable(self) -> Optional[str]:
         return "Not connected" if not self._running or not self._http_session else (await self._check_managed_bridge_exit() or None)
@@ -1198,7 +1204,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
     async def _report_bridge_exit(self) -> bool:
         bridge_exit = await self._check_managed_bridge_exit()
         if bridge_exit:
-            print(f"[{self.name}] {bridge_exit}")
+            self._bridge_note(bridge_exit)
         return bool(bridge_exit)
 
     async def _poll_messages(self) -> None:
