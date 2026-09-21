@@ -2799,17 +2799,55 @@ def _run_one_job_admitted(
 _OWNERSHIP_LOST_INTERRUPTED = "Interrupted by shutdown before terminal completion."
 
 
-def _record_fire_ownership_lost(job_id: str, fire_owner: Optional[str], execution_id: str) -> None:
+def _emit_ownership_lost_terminal(
+    job: dict, execution_id: str, error: str, duration: float,
+) -> None:
+    """Emit the cron_failed the STORE write above already recorded.
+
+    Both branches below write a terminal state to executions.db but, before
+    2026-09-21, emitted nothing on the event bus. Measured that day: all 8
+    executions ever carrying "Interrupted by shutdown before terminal
+    completion." had a row in executions.db and NO cron_completed/cron_failed
+    on the bus -- 8 of 8. Anything that reads the bus rather than the store
+    (cron-stale-monitor, the dashboards, the daily triage) therefore saw a job
+    that started and never ended, which is exactly how this was found.
+
+    NEVER RAISES. This runs on a teardown path that has already lost its fire
+    claim; an emitter fault must not convert a recorded outcome into an
+    exception that unwinds the caller.
+    """
+    try:
+        emitter = _get_event_emitter()
+        if emitter is None:
+            return
+        emitter.on_job_completed(
+            job["id"], job.get("name") or job["id"],
+            success=False, duration=duration, error=error,
+            execution_id=execution_id,
+        )
+    except Exception:
+        logger.warning(
+            "cron: ownership-lost terminal event not emitted for %s (execution %s); "
+            "executions.db still holds the authoritative outcome",
+            job.get("name") or job.get("id"), execution_id, exc_info=True,
+        )
+
+
+def _record_fire_ownership_lost(
+    job: dict, fire_owner: Optional[str], execution_id: str, duration: float = 0.0,
+) -> None:
     """Bookkeeping after fire-claim ownership loss. A transport-level cancel (dashboard drain) is
     not a real loss — we still own the claim, so record the interruption via the owner-fenced
     terminal write instead of leaving fire_claim/last_status stale; otherwise discard."""
+    job_id = job["id"]
     if fire_owner is not None and heartbeat_fire_claim(job_id, expected_owner=fire_owner):
         mark_job_run(job_id, False, _OWNERSHIP_LOST_INTERRUPTED, expected_fire_owner=fire_owner)
         finish_execution(execution_id, success=False, error=_OWNERSHIP_LOST_INTERRUPTED)
+        _emit_ownership_lost_terminal(job, execution_id, _OWNERSHIP_LOST_INTERRUPTED, duration)
     else:
-        finish_execution(
-            execution_id, success=False,
-            error="Fire claim ownership lost; stale result was discarded.")
+        discarded = "Fire claim ownership lost; stale result was discarded."
+        finish_execution(execution_id, success=False, error=discarded)
+        _emit_ownership_lost_terminal(job, execution_id, discarded, duration)
 
 
 def _classify_delivery_outcome(
@@ -3311,7 +3349,9 @@ def _run_one_job_body(
         if _fire_claim_ownership_lost():
             _teardown_deferred()
             emit_iteration = False
-            _record_fire_ownership_lost(job["id"], fire_owner, execution_id)
+            _record_fire_ownership_lost(
+                job, fire_owner, execution_id,
+                duration=(time.monotonic() - started) if started is not None else 0.0)
             return True
 
         # Agent is still live through delivery; wrap ALL of save/compose/deliver in try/finally so a
@@ -3333,7 +3373,9 @@ def _run_one_job_body(
             return True
         if d.side_effect_ownership_lost or _fire_claim_ownership_lost():
             emit_iteration = False
-            _record_fire_ownership_lost(job["id"], fire_owner, execution_id)
+            _record_fire_ownership_lost(
+                job, fire_owner, execution_id,
+                duration=(time.monotonic() - started) if started is not None else 0.0)
             return True
 
         # Empty final_response is a soft failure so last_status is not "ok".
