@@ -40,7 +40,7 @@ def get_bot_token() -> str:
     """Load bot token from .env file."""
     env_path = Path.home() / ".hermes" / "profiles" / "main" / ".env"
     if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
+        for line in env_path.read_text(encoding="utf-8-sig", errors="surrogateescape").splitlines():
             if line.startswith("TELEGRAM_BOT_TOKEN="):
                 return line.split("=", 1)[1].strip()
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
