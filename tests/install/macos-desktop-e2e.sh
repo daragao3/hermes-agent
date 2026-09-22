@@ -11,10 +11,19 @@
 # update available exactly the way it does for a real user.
 #
 # Phases (state shared via the workroot, mirroring the windows driver):
-#   stage    bare-clone this checkout to serve.git, park main at OLD
+#   stage    bare-clone this checkout to serve.git, park main at OLD, and
+#            extract OLD's own scripts/install.sh for the install phase
 #   install  download the dmg, hdiutil attach, run the installer app's
 #            binary DIRECTLY (env inheritance: an `open`-launched app sees
-#            none of our redirect env), wait for the install to land
+#            none of our redirect env), wait for the install to land.
+#            The dmg is a thin driver that DOWNLOADS scripts/install.sh at
+#            its baked pin, and only the newest dmg is ever published, so
+#            left alone it runs TODAY's script against OLD's tree -- a
+#            pairing no user ever had. OLD's own install.sh is handed over
+#            via HERMES_SETUP_DEV_REPO_ROOT (asserted by the installer's
+#            "using local install.sh at" log line, so a silent fallback
+#            fails the leg). HERMES_E2E_NO_SCRIPT_PIN=1 forces it off; the
+#            update phase targets HEAD and keeps the real download path.
 #   update   advance served main to HEAD, apply ONE update method:
 #              open-app-update            launch the installed app binary
 #                                         under Playwright, click Update now
@@ -76,6 +85,9 @@ ASSETS="$REPO_ROOT/tests/install/e2e-assets"
 WORK_ROOT="${HERMES_E2E_WORKROOT:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/hermes-macos-desktop-e2e}"
 LOG_DIR="${HERMES_E2E_LOG_DIR:-$WORK_ROOT/logs}"
 SERVE_REPO="$WORK_ROOT/serve.git"
+# OLD's own scripts/install.sh, extracted by phase_stage and handed to the
+# Setup app via HERMES_SETUP_DEV_REPO_ROOT. See phase_stage for why.
+SCRIPT_PIN_ROOT="$WORK_ROOT/dev-script-root"
 STATE="$WORK_ROOT/shas.env"
 export HOME_SANDBOX="$WORK_ROOT/home"
 
@@ -183,6 +195,34 @@ phase_stage() {
   git -C "$SERVE_REPO" symbolic-ref HEAD refs/heads/main
   git -C "$SERVE_REPO" config uploadpack.allowAnySHA1InWant true
 
+  # Extract OLD's OWN scripts/install.sh for the install phase.
+  #
+  # The Setup app is a thin driver: it downloads scripts/install.sh from
+  # GitHub raw at its baked pin and drives it via --manifest / --stage. Only
+  # ONE dmg is ever published and it is always the newest, so installing OLD
+  # with it pairs TODAY's install.sh with OLD's tree -- a combination no user
+  # ever had, and why the desktop stage died on a helper script added after
+  # OLD was cut. Parking serve.git at OLD already makes the install land on
+  # OLD's TREE; pinning the script makes it land on OLD's INSTALLER too,
+  # which is what "the same way a user's install landed that day" means.
+  #
+  # Skipped when OLD's install.sh predates the --manifest/--stage protocol
+  # (e.g. v2026.3.12): the binary would drive it and get nothing back.
+  mkdir -p "$SCRIPT_PIN_ROOT/scripts"
+  rm -f "$SCRIPT_PIN_ROOT/scripts/install.sh"
+  if git -C "$SERVE_REPO" cat-file -e "${old_sha}:scripts/install.sh" 2>/dev/null; then
+    git -C "$SERVE_REPO" show "${old_sha}:scripts/install.sh" > "$SCRIPT_PIN_ROOT/scripts/install.sh"
+    if grep -q -- '--manifest' "$SCRIPT_PIN_ROOT/scripts/install.sh"; then
+      chmod +x "$SCRIPT_PIN_ROOT/scripts/install.sh"
+      ok "install-script pin: $SCRIPT_PIN_ROOT/scripts/install.sh (from $old_ref)"
+    else
+      rm -f "$SCRIPT_PIN_ROOT/scripts/install.sh"
+      ok "install-script pin: SKIPPED ($old_ref predates the --manifest/--stage protocol)"
+    fi
+  else
+    ok "install-script pin: SKIPPED ($old_ref carries no scripts/install.sh)"
+  fi
+
   arm_redirect
   mkdir -p "$HERMES_HOME"
   touch "$HERMES_HOME/.skip_upstream_prompt"
@@ -233,6 +273,19 @@ phase_install() {
   # screen. Launch it in the background with our env (direct exec, not
   # `open`: launchd inherits NONE of the redirect env) and drive the
   # "Install Hermes" button with native input.
+  # Hand it OLD's install.sh when we staged one (see phase_stage).
+  # HERMES_E2E_NO_SCRIPT_PIN=1 forces the as-shipped download path.
+  local pinned_sh="$SCRIPT_PIN_ROOT/scripts/install.sh"
+  local using_script_pin=0
+  if [ -f "$pinned_sh" ] && [ -z "${HERMES_E2E_NO_SCRIPT_PIN:-}" ]; then
+    export HERMES_SETUP_DEV_REPO_ROOT="$SCRIPT_PIN_ROOT"
+    using_script_pin=1
+    ok "install.sh pinned to OLD via HERMES_SETUP_DEV_REPO_ROOT=$SCRIPT_PIN_ROOT"
+  else
+    unset HERMES_SETUP_DEV_REPO_ROOT
+    ok "install.sh: as shipped (downloaded at the binary's baked pin)"
+  fi
+
   local rc=0
   bash "$ASSETS/drive-dmg-install.sh" \
     --app-bin "$app_bin" \
@@ -242,6 +295,17 @@ phase_install() {
   log_group "Hermes-Setup (dmg bootstrap) transcript" "$LOG_DIR/bootstrap-install.log"
   hdiutil detach "$mount" >/dev/null 2>&1 || true
   [ "$rc" -eq 0 ] || fail "dmg bootstrap exited $rc; transcript above"
+
+  # Prove which script the binary ran. install_script.rs logs
+  # "[bootstrap] dev mode - using local install.sh at <path>" when it honours
+  # the env var. Without this, a binary that ignores it would silently fall
+  # back to the downloaded script and the leg would pass for the wrong
+  # reason. Matched on an ASCII substring: the real line has an em dash.
+  if [ "$using_script_pin" = 1 ]; then
+    grep -q 'using local install\.sh at' "$LOG_DIR/bootstrap-install.log" \
+      || fail "installer ignored HERMES_SETUP_DEV_REPO_ROOT (fell back to the downloaded install.sh)"
+    ok "installer honoured HERMES_SETUP_DEV_REPO_ROOT (ran OLD's install.sh)"
+  fi
 
   [ -d "$INSTALL_DIR/.git" ] || fail "no checkout landed at $INSTALL_DIR"
   local got
