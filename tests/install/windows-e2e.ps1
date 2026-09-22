@@ -776,7 +776,19 @@ function Invoke-PhaseInstallGui {
 
     # AHK script + button templates side by side (ImageSearch resolves
     # relative to the script dir).
-    Copy-Item -Path (Join-Path $AssetsDir "install-and-launch.ahk"), (Join-Path $AssetsDir "install-button.png"), (Join-Path $AssetsDir "launch-button.png") -Destination $AhkDir -Force
+    # Copy EVERY template, not a hand-listed subset. A template added to
+    # e2e-assets and forgotten here is not a missed match -- TryFindImage
+    # THROWS on LoadPicture failure, so it kills the AHK driver at the
+    # Launch step, minutes into each leg. That is exactly what happened on
+    # 2026-09-22 (run 35797245568): launch-button-focused.png landed in
+    # e2e-assets but not in this list, and 8 legs died on
+    # "LoadPicture failed". The glob makes the copy self-maintaining.
+    Copy-Item -Path (Join-Path $AssetsDir "install-and-launch.ahk") -Destination $AhkDir -Force
+    Copy-Item -Path (Join-Path $AssetsDir "*.png") -Destination $AhkDir -Force
+    # Fail fast and name the file, rather than minutes later inside the AHK.
+    foreach ($t in @("install-button.png", "launch-button.png", "launch-button-focused.png")) {
+        Assert-True (Test-Path -LiteralPath (Join-Path $AhkDir $t)) "AHK template staged: $t"
+    }
 
     $env:HERMES_HOME = $HermesHome
     # Script resolution. Default is as-shipped: NO dev-root override, so a
