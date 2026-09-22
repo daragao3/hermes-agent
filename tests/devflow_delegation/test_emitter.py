@@ -1,7 +1,15 @@
 import json
+from datetime import datetime, timedelta
 
 from devflow_delegation.emitter import DelegationEmitter
 from tests.devflow_delegation.conftest import make_delegate_kwargs
+
+# make_delegate_kwargs' source agent, and the window the emitter counts over.
+SOURCE_AGENT = "critic"
+
+
+def _window_start(hours: int = 24) -> str:
+    return (datetime.now() - timedelta(hours=hours)).isoformat()
 
 
 def _bus_events(bus):
@@ -83,6 +91,72 @@ def test_rate_limit_suppresses_with_one_summarized_alert(emitter, hermes_root):
     d = em.delegate(**make_delegate_kwargs(title="Problem D"))
     assert d.status == "suppressed"
     assert len([t for t, _ in _bus_events(em.bus) if t == "devflow.work_suppressed"]) == 1
+
+
+def test_resubmitting_the_same_identities_does_not_re_alert(emitter, hermes_root):
+    """REGRESSION 2026-09-21: one summarized alert PER DROPPED REQUEST.
+
+    The test above uses a DIFFERENT title per call, so every suppression inserts
+    a new ledger row and the count walks past the limit -- which is the only
+    shape in which `count == limit` identifies a single request. It was blind to
+    the shape that actually runs in production: a source that re-submits the
+    SAME identities on a schedule.
+
+    `_insert_synthetic` is idempotent on the identity key, so a re-submitted
+    identity inserts nothing, the count stays pinned AT the limit, and
+    `first_rate_limit_crossing` returns True for every single request.
+
+    Measured on the live box: `roadmap-intake` emitted 105 `devflow.work_suppressed`
+    events, all `summarized: true`, within ONE SECOND, count pinned at 5 against
+    a max_per_window of 5, and zero new ledger rows written that day.
+    """
+    (hermes_root / "devflow").mkdir(parents=True, exist_ok=True)
+    (hermes_root / "devflow" / "policy.json").write_text(
+        json.dumps({"critic": {"mode": "queue", "max_per_window": 2}}), encoding="utf-8")
+    em = DelegationEmitter()
+
+    def n_alerts():
+        return len([t for t, _ in _bus_events(em.bus) if t == "devflow.work_suppressed"])
+
+    # Build the PRODUCTION shape, which is the part the test above misses: the
+    # in-window count must sit EXACTLY AT the limit while the re-submitted
+    # identities already hold ledger rows from OUTSIDE the window. On the live
+    # box that is 288 roadmap-intake rows of which only 5 are recent, against a
+    # max_per_window of 5. If the count instead walks PAST the limit -- which is
+    # what happens when every call carries a fresh title -- `count == limit` is
+    # False and the bug cannot appear at all.
+    old = ["Recurring A", "Recurring B", "Recurring C", "Recurring D"]
+    for t in old:
+        em.delegate(**make_delegate_kwargs(title=t))
+    # Age every existing row out of the 24h window, leaving their identities behind.
+    stale = (datetime.now() - timedelta(days=3)).isoformat()
+    conn = em.ledger._conn()
+    conn.execute("UPDATE requests SET created_at=?, updated_at=?", (stale, stale))
+    conn.commit()
+    assert em.ledger.count_since(SOURCE_AGENT, _window_start()) == 0, "window drained"
+
+    # Exactly `limit` fresh rows -> the count is pinned AT the limit.
+    for t in ["Fresh 1", "Fresh 2"]:
+        em.delegate(**make_delegate_kwargs(title=t))
+    pinned = em.ledger.count_since(SOURCE_AGENT, _window_start())
+    assert pinned == 2, f"count must sit exactly at max_per_window, got {pinned}"
+
+    rows_before = em.ledger.summary_counts()["total"]
+    before = n_alerts()
+
+    # Now re-submit the aged identities, as a scheduled producer does daily.
+    for t in old:
+        em.delegate(**make_delegate_kwargs(title=t))
+
+    assert em.ledger.summary_counts()["total"] == rows_before, (
+        "non-vacuous precondition: the re-run must insert NO new rows, which is "
+        "exactly what keeps the count pinned at the limit")
+    assert em.ledger.count_since(SOURCE_AGENT, _window_start()) == pinned, (
+        "non-vacuous precondition: the count must still be AT the limit, so "
+        "first_rate_limit_crossing is still True for every one of these requests")
+    assert n_alerts() - before == 0, (
+        f"a re-run over already-suppressed identities must emit NO further summarized "
+        f"alerts; got {n_alerts() - before} for {len(old)} requests")
 
 
 def test_cooldown_suppresses_reopen_of_declined_fingerprint(emitter, hermes_root):
