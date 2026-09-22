@@ -3518,8 +3518,23 @@ function Install-NodeDeps {
         [string]$logPath, [int]$timeoutSec
     ) {
         $cmdLine = "/d /s /c "" ""$exePath"" $argLine > ""$logPath"" 2>&1 """
-        $proc = Start-Process -FilePath $env:ComSpec -ArgumentList $cmdLine `
-            -WorkingDirectory $workDir -NoNewWindow -PassThru
+        # Start the child through System.Diagnostics.Process rather than
+        # Start-Process -PassThru.  Start-Process does not retain the process
+        # handle, so once the child exits ``$proc.ExitCode`` evaluates to
+        # $null -- silently, without throwing.  $null is neither 0 nor 124, so
+        # a SUCCESSFUL npm install was reported as
+        # "<label> npm install failed -- exit code " with a blank code (seen in
+        # every install-e2e desktop-installer run).  Owning the handle here
+        # makes HasExited/ExitCode authoritative; the redirection into
+        # $logPath is done by cmd.exe, so there are no stdout/stderr pipes to
+        # drain and no deadlock risk from not reading them.
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $env:ComSpec
+        $psi.Arguments = $cmdLine
+        $psi.WorkingDirectory = $workDir
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $proc = [System.Diagnostics.Process]::Start($psi)
         $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSec)
         $shown = 0
         function _Drain-NewLines([string]$path, [ref]$count) {
@@ -3540,6 +3555,9 @@ function Install-NodeDeps {
             _Drain-NewLines $logPath ([ref]$shown)
         }
         _Drain-NewLines $logPath ([ref]$shown)
+        # WaitForExit() after HasExited caches the exit code; without it the
+        # value can still be unavailable on a just-exited process.
+        $proc.WaitForExit()
         return $proc.ExitCode
     }
 
@@ -4115,7 +4133,13 @@ function Install-Desktop {
             & $npmExe install --include=optional 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable npmOut
             $code = $LASTEXITCODE
         }
-        if ($code -eq 0) {
+        # Guard on the script's presence: a checkout older than ae9f42accf
+        # does not carry it, and a NEWER published installer is routinely
+        # pointed at an older ref (that is the whole install-then-update
+        # matrix).  The binding repair is an optimisation, not a
+        # precondition, so a missing script must not fail the desktop stage
+        # with MODULE_NOT_FOUND.
+        if ($code -eq 0 -and (Test-Path "$InstallDir\apps\desktop\scripts\ensure-rolldown-binding.mjs")) {
             & node apps/desktop/scripts/ensure-rolldown-binding.mjs
             $code = $LASTEXITCODE
         }

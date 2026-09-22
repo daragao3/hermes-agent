@@ -3513,11 +3513,15 @@ install_desktop() {
     log_info "Installing desktop workspace dependencies (includes Electron ~150MB, 1-3min)..."
     local _deps_start _deps_remaining
     _deps_start=$(date +%s)
-    if run_with_timeout "$DESKTOP_BUILD_TIMEOUT" bash -c 'cd "$1" && npm ci --include=optional && { [ "$2" != macos ] || node apps/desktop/scripts/ensure-rolldown-binding.mjs; }' _ "$INSTALL_DIR" "$OS"; then
+    # The `[ -f ... ]` guard keeps a NEWER installer working against an OLDER
+    # checkout (any ref before ae9f42accf lacks the script): the binding
+    # repair is an optimisation, not a precondition, and MODULE_NOT_FOUND
+    # must not fail the desktop stage.
+    if run_with_timeout "$DESKTOP_BUILD_TIMEOUT" bash -c 'cd "$1" && npm ci --include=optional && { [ "$2" != macos ] || [ ! -f apps/desktop/scripts/ensure-rolldown-binding.mjs ] || node apps/desktop/scripts/ensure-rolldown-binding.mjs; }' _ "$INSTALL_DIR" "$OS"; then
         log_success "Desktop workspace dependencies installed"
     elif _deps_remaining=$(( DESKTOP_BUILD_TIMEOUT - ($(date +%s) - _deps_start) )); \
          [ "$_deps_remaining" -lt 30 ] && _deps_remaining=30; \
-         run_with_timeout "$_deps_remaining" bash -c 'cd "$1" && npm install --include=optional && { [ "$2" != macos ] || node apps/desktop/scripts/ensure-rolldown-binding.mjs; }' _ "$INSTALL_DIR" "$OS"; then
+         run_with_timeout "$_deps_remaining" bash -c 'cd "$1" && npm install --include=optional && { [ "$2" != macos ] || [ ! -f apps/desktop/scripts/ensure-rolldown-binding.mjs ] || node apps/desktop/scripts/ensure-rolldown-binding.mjs; }' _ "$INSTALL_DIR" "$OS"; then
         log_success "Desktop workspace dependencies installed"
     elif _electron_pkg_staged_missing_dist "$INSTALL_DIR"; then
         log_warn "Desktop dependency install failed with a missing Electron dist; attempting self-heal..."

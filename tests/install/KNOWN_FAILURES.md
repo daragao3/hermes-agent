@@ -37,6 +37,25 @@ These script installs have no staged updater. The released Electron code (`apps/
 
 Evidence required: an app-update leg from this released commit and those explicit manual-update log entries. A hand-off timeout without the manual message is not this limitation. Desktop-installer installs have a different staged-updater path and are not covered by this classification.
 
+## August Windows updater cannot replace a native extension it has already imported
+
+Classification: **unfixable in the update target for the exact released `hermes.exe update` path**.
+
+Starting release: `v2026.8.3`, commit `3c27eb6234bf91b8ceee9e9071591b31e9b148cb`.
+
+| Install → update | Verified failing job |
+|---|---|
+| `installer-script` → `hermes-update` | [106544714345](https://github.com/daragao3/hermes-agent/actions/runs/35663715738) |
+| `installer-script+desktop` → `hermes-update` | [106544714345](https://github.com/daragao3/hermes-agent/actions/runs/35663715738) |
+
+This is the loaded-module analogue of the launcher self-lock above, and it is a *different* file, so the launcher rule deliberately does not match it.
+
+The released updater runs inside a Python process that has already imported `cryptography`, which maps `venv/Lib/site-packages/cryptography/hazmat/bindings/_rust.pyd` into the running interpreter. The update target raises the `cryptography` floor to 50.x (`2b618fe7e5`), so uv must replace that exact `.pyd`. Windows refuses with `Access is denied. (os error 5)`, uv reports `Failed to persist temporary file`, and the editable install exits 2. The extension module belongs to the starting release's process image; nothing in the update target can unload it, and the optional-extras retry re-runs the same install against the same lock.
+
+Evidence required: the CLI update phase failed, uv reports failure to remove/persist that install's `cryptography/hazmat/bindings/_rust.pyd` with OS error 5, and the git update reports `uv.exe ... 'pip', 'install', '-e', '.'` returning exit status 2. An access-denied error on any other file does not match.
+
+Re-running the installer is a separate tested upgrade route.
+
 ## Not classified as unfixable
 
 The July desktop-installer → app-update failure was a driver lifetime bug, not a released-updater exception. The driver treated an expected page closure as failure and could exit before Playwright released its launch process. On Windows, inherited pipes delayed the `close` event even after the launch process exited with code 0. Playwright then ran its tree-kill cleanup. The driver now waits independently of the closing page, releases its pipe handles after process exit, and waits for `close` before it exits. [The real July rerun](https://github.com/ethernet8023/hermes-agent/actions/runs/34075042380/job/101599434616) reached the target commit, cleared the update marker, passed the CLI check, and relaunched the app.
