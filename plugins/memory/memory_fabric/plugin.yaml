@@ -1,0 +1,3 @@
+name: memory_fabric
+version: 0.1.0
+description: "Memory Fabric — read-only per-turn recall from the local memory-fabric gateway (GBrain canonical facts); prefetch only, never writes."
