@@ -332,6 +332,27 @@ function Save-InstallSideState([string]$Label) {
 function Test-HermesRuns([string]$Label) {
     Save-InstallSideState $Label
     $hermesExe = Join-Path $InstallDir "venv\Scripts\hermes.exe"
+    # The launcher can be TRANSIENTLY absent right after an update. When uv
+    # cannot replace a native extension it already has mapped (the
+    # cryptography _rust.pyd lock), the installer's recovery path
+    # "reinstalling base dependencies and retrying extras individually"
+    # UNINSTALLS hermes-agent -- which takes venv\Scripts\hermes.exe with it
+    # -- and only then reinstalls. The staged-updater route clears its
+    # in-progress marker and reaches the target sha BEFORE that reinstall
+    # finishes, so asserting the instant the marker clears lands inside the
+    # gap and reports a missing launcher on an update that is still running.
+    # Wait for it to come back rather than racing it; a launcher that never
+    # returns still fails, just with an honest message and 90s of evidence.
+    if (-not (Test-Path -LiteralPath $hermesExe)) {
+        Write-Host "  $Label -- hermes.exe absent; waiting up to 90s (post-update reinstall window) ..."
+        $hDeadline = (Get-Date).AddSeconds(90)
+        while ((Get-Date) -lt $hDeadline -and -not (Test-Path -LiteralPath $hermesExe)) {
+            Start-Sleep -Seconds 5
+        }
+        if (Test-Path -LiteralPath $hermesExe) {
+            Write-Host "  $Label -- hermes.exe reappeared (the reinstall had not finished)"
+        }
+    }
     Assert-True (Test-Path -LiteralPath $hermesExe) "$Label -- venv\Scripts\hermes.exe exists"
     & $hermesExe --version 2>&1 | ForEach-Object { Write-Host "    hermes --version| $_" }
     Assert-True ($LASTEXITCODE -eq 0) "$Label -- hermes --version exits 0"
