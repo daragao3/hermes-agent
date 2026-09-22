@@ -1267,6 +1267,49 @@ class TestSubmitConfirmIsNotAnOutcome:
         assert submitted[0]["company"] == "Tala"
 
 
+class TestVipDiscoveryIsNotReEmitted:
+    """Sentinel's `_emit_vip_discovery` (profiles/sentinel/workspace/
+    linkedin_scan.py) emits JOB_VIP_DISCOVERED to the bus itself, with the full
+    job, and then writes this VIP_DISCOVERY envelope for tracker. Translating
+    the envelope too paged every discovery twice. The copy was also blank,
+    because sentinel nests the job under payload["job"]. On 2026-09-21/22 that
+    was 24 events for 12 jobs, with repeat_guard hiding 10 of the blank twins.
+    """
+
+    def _sentinel_envelope(self):
+        """The inner payload exactly as linkedin_scan.py writes it."""
+        return {"job": {
+            "source": "linkedin-saved-jobs",
+            "url": "https://www.linkedin.com/jobs/view/4466370043/",
+            "title": "Senior Director, AI GTM",
+            "company": "NTT DATA North America",
+            "location": "Plano, TX",
+            "vip": True,
+        }}
+
+    def test_vip_discovery_envelope_emits_no_domain_event(self, bus):
+        _mailbox_event(bus, "VIP_DISCOVERY", self._sentinel_envelope())
+        _translate(bus)
+        assert _recent_domain_events(bus) == []
+
+    def test_one_discovery_is_one_vip_event_on_the_bus(self, bus):
+        """The whole lane: sentinel's direct emit plus its envelope must
+        leave exactly one JOB_VIP_DISCOVERED, the one carrying the job."""
+        bus.emit(
+            event_type=EventType.JOB_VIP_DISCOVERED,
+            source="sentinel",
+            payload={"vip_discovery_type": "linkedin_saved_jobs",
+                     "url": "https://www.linkedin.com/jobs/view/4466370043/",
+                     "company": "NTT DATA North America"},
+        )
+        _mailbox_event(bus, "VIP_DISCOVERY", self._sentinel_envelope())
+        _translate(bus)
+        vips = [p for et, p in _recent_domain_events(bus)
+                if et == EventType.JOB_VIP_DISCOVERED]
+        assert len(vips) == 1
+        assert vips[0]["company"] == "NTT DATA North America"
+
+
 class TestBlockedQuestionOptions:
     """`options` must reach Diego independently of the 200-char `question`.
 

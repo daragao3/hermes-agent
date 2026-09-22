@@ -131,6 +131,10 @@ class CronStaleMonitor(BaseSubscriber):
         # Suspend seconds accumulated since the ticker heartbeat last advanced.
         self._ticker_suspend_credit: float = 0.0
         self._ticker_last_age: Optional[float] = None
+        # When this monitor, and so this gateway's ticker, came to exist. The
+        # heartbeat file survives restarts, so on a fresh boot it still holds
+        # the PREVIOUS process's last beat. See _check_ticker_stale.
+        self._born_at: datetime = datetime.now(timezone.utc)
         self._default_threshold = (
             default_threshold_seconds
             if default_threshold_seconds is not None
@@ -592,7 +596,16 @@ class CronStaleMonitor(BaseSubscriber):
         if self._ticker_last_age is not None and age < self._ticker_last_age:
             self._ticker_suspend_credit = 0.0
         self._ticker_last_age = float(age)
-        age = max(0.0, float(age) - self._ticker_suspend_credit)
+        # This process's ticker cannot have been silent for longer than this
+        # process has existed. Any older part of the age is the predecessor's
+        # last beat: a reboot or restart gap, not a dead scheduler. Without
+        # this cap the first poll after boot paged with "NO cron job can fire
+        # until the gateway is restarted" about a gateway that had started 2s
+        # earlier (2026-09-22T17:46:36Z, age 680s = the 17:35Z reboot gap).
+        # A ticker that dies at startup still pages once this monitor has been
+        # alive past the threshold. That is the 2026-08-11 case.
+        alive = max(0.0, (datetime.now(timezone.utc) - self._born_at).total_seconds())
+        age = max(0.0, min(float(age), alive) - self._ticker_suspend_credit)
 
         if age <= self.TICKER_STALE_THRESHOLD_SECONDS:
             self._ticker_alerted = False
