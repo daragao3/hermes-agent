@@ -74,8 +74,16 @@ on:
 permissions:
   contents: read
 
+# Keyed on the ROUTE as well as the ref. The routes target disjoint runners
+# and share no state, but a ref-only group made them mutually exclusive:
+# on 2026-09-22 dispatching route=macos-desktop cancelled 7 in-flight legs
+# of a windows-desktop run 18s later. Schedule and tag-push carry no
+# inputs.route, so they fall to 'all' and keep today's behaviour among
+# themselves; two dispatches of the SAME route still cancel, which is what
+# the group is for. Trade-off accepted: a manual single-route dispatch no
+# longer cancels an in-flight scheduled 'all' run, so those two can overlap.
 concurrency:
-  group: install-e2e-${{ github.ref }}
+  group: install-e2e-${{ github.ref }}-${{ inputs.route || 'all' }}
   cancel-in-progress: true
 
 jobs:

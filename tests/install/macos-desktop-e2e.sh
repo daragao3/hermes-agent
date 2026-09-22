@@ -293,6 +293,15 @@ phase_install() {
     --proof-dir "$LOG_DIR" 2>&1 \
     | ts_prefix > "$LOG_DIR/bootstrap-install.log" || rc=$?
   log_group "Hermes-Setup (dmg bootstrap) transcript" "$LOG_DIR/bootstrap-install.log"
+  # The installer's OWN log -- a DIFFERENT file from the driver transcript
+  # above. paths.rs writes it to $HERMES_HOME/logs/, and hermes_home()
+  # honours $HERMES_HOME before falling back to ~/.hermes. Collect it:
+  # every question about what the binary actually did is answered here and
+  # nowhere else, and until 2026-09-22 this leg uploaded only the driver
+  # transcript, so a dmg failure could not be diagnosed after the fact.
+  local installer_log="$HERMES_HOME/logs/bootstrap-installer.log"
+  cp "$installer_log" "$LOG_DIR/bootstrap-installer.log" 2>/dev/null || true
+  log_group "Hermes-Setup (installer's own bootstrap-installer.log)" "$LOG_DIR/bootstrap-installer.log"
   hdiutil detach "$mount" >/dev/null 2>&1 || true
   [ "$rc" -eq 0 ] || fail "dmg bootstrap exited $rc; transcript above"
 
@@ -301,8 +310,20 @@ phase_install() {
   # the env var. Without this, a binary that ignores it would silently fall
   # back to the downloaded script and the leg would pass for the wrong
   # reason. Matched on an ASCII substring: the real line has an em dash.
+  #
+  # Grep the INSTALLER'S log, not the driver transcript. Until 2026-09-22
+  # this read "$LOG_DIR/bootstrap-install.log" -- one character off
+  # bootstrap-installER.log, and a file that by construction carries only
+  # drive-dmg-install.sh's own output, never an emit_log line. So it failed
+  # 100% of the time on macOS whatever the binary did, and took all five dmg
+  # legs of the first-ever macOS CI run with it (run 35774498167).
+  # windows-e2e.ps1 always read the installer's own log; only this port was wrong.
   if [ "$using_script_pin" = 1 ]; then
-    grep -q 'using local install\.sh at' "$LOG_DIR/bootstrap-install.log" \
+    # "log missing" and "line missing" are DIFFERENT failures: conflating
+    # them is exactly what disguised this bug as a product finding.
+    [ -f "$installer_log" ] \
+      || fail "installer log not found at $installer_log -- cannot tell which install.sh ran"
+    grep -q 'using local install\.sh at' "$installer_log" \
       || fail "installer ignored HERMES_SETUP_DEV_REPO_ROOT (fell back to the downloaded install.sh)"
     ok "installer honoured HERMES_SETUP_DEV_REPO_ROOT (ran OLD's install.sh)"
   fi
