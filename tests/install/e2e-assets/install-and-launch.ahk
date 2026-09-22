@@ -161,6 +161,7 @@ Log("Waiting for install to finish (bootstrap log or Launch template) ...")
 while (A_TickCount < waitDeadline) {
     if BootstrapLogContains("bootstrap complete") {
         complete := true
+        completeAt := A_TickCount
         Log("bootstrap-installer.log reports completion")
         break
     }
@@ -177,13 +178,30 @@ if (!launchFound and !complete) {
     throw Error("install did not finish within 45 minutes (no completion log line, no Launch button)")
 }
 
-; Give the button a moment to swap Install -> Launch after completion.
+; Poll for the Install -> Launch swap instead of sampling once after a
+; fixed 2s. The completion LOG LINE and the Success screen REPAINT are
+; independent events: "bootstrap complete" is written before the UI
+; renders, so one sampled check turns a rendering race into a coin flip
+; over whether we click the real button or a guessed coordinate.
+; Measured on the SAME leg both ways -- run 35743063675 matched the
+; template, run 35756238680 fell back -- and across the 14 GUI jobs of
+; green run 35781523001 the blind path won 6 of 9 post-completion
+; clicks. Polling removes the coin flip. The fallback STAYS (it is
+; load-bearing; see the header) but it now means "no Launch button in
+; 30s", not "it had not painted in the 2s we happened to look".
 if (complete and !launchFound) {
-    Sleep(2000)
-    try rect := WaitForRealWindow(installerWin, 10000)
-    if TryFindImage(rect, A_ScriptDir "\launch-button.png", &launchX, &launchY) {
-        launchFound := true
-        Log("Launch template matched after completion")
+    launchDeadline := A_TickCount + 30000
+    while (A_TickCount < launchDeadline) {
+        try rect := WaitForRealWindow(installerWin, 2000)
+        if TryFindImage(rect, A_ScriptDir "\launch-button.png", &launchX, &launchY) {
+            launchFound := true
+            Log(Format("Launch template matched after completion (+{1}ms)", A_TickCount - completeAt))
+            break
+        }
+        Sleep(500)
+    }
+    if (!launchFound) {
+        Log(Format("Launch template never matched in the 30s after completion (+{1}ms); falling back to the window-relative position", A_TickCount - completeAt))
     }
 }
 
@@ -194,6 +212,7 @@ if launchFound {
 } else {
     lx := rect.x + Floor(rect.w * BTN_FX)
     ly := rect.y + Floor(rect.h * BTN_FY)
+    Log(Format("FALLBACK: no Launch template; guessing from rect x={1} y={2} w={3} h={4} at fractions {5},{6}", rect.x, rect.y, rect.w, rect.h, BTN_FX, BTN_FY))
     ClickWithMarker(lx, ly)
     Log("FALLBACK: clicked Launch at window-relative position")
 }
