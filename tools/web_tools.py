@@ -126,8 +126,11 @@ def _get_backend() -> str:
             return backend
 
     # Plugin-contributed providers (built-ins are covered above); probe the held object directly.
+    # The shared backend serves web_search too, so an extract-only provider (local-extract is always
+    # available) must not win it; it still resolves per capability via web.extract_backend.
     for provider in _list_registered_web_providers():
-        if provider.name not in _LEGACY_WEB_BACKENDS and _probe(provider, "is_available"):
+        if (provider.name not in _LEGACY_WEB_BACKENDS and _probe(provider, "supports_search")
+                and _probe(provider, "is_available")):
             return provider.name
 
     # Keyless free tier — strictly last so it never pre-empts a keyed backend. Discovery must run
@@ -429,7 +432,7 @@ def _provider_is_ready(provider) -> bool:
 
 
 def check_web_api_key() -> bool:
-    """``check_fn`` gate for web_search / web_extract: is any web backend available?
+    """``check_fn`` gate for web_search (and the base of web_extract's): is a search-capable web backend available?
 
     A plugin-registered provider reporting ``is_available()`` must light the tools up even with no
     built-in credentials; resolution funnels through :func:`_is_backend_available`.
@@ -443,12 +446,28 @@ def check_web_api_key() -> bool:
     # Plugin path. Discovery must run first: check_fn fires at tool-registration time, before any dispatch.
     try:
         _ensure_web_plugins_loaded()
-        from agent.web_search_registry import get_active_search_provider, get_active_extract_provider
-        return _provider_is_ready(get_active_search_provider()) or _provider_is_ready(
-            get_active_extract_provider()
-        )
+        from agent.web_search_registry import get_active_search_provider
+        return _provider_is_ready(get_active_search_provider())
     except Exception as exc:  # noqa: BLE001 — registry optional; never fatal
         logger.debug("web provider registry availability check failed: %s", exc)
+        return False
+
+
+def check_web_extract_available() -> bool:
+    """``check_fn`` gate for web_extract: anything that gates web_search, or an extract-only provider.
+
+    Split from :func:`check_web_api_key` when local-extract (always available, extract-only) arrived:
+    on one shared gate it would have lit web_search up on an install with no search backend. Every
+    vendor that extracts also searches, so for them the two gates agree.
+    """
+    if check_web_api_key():
+        return True
+    try:
+        _ensure_web_plugins_loaded()
+        from agent.web_search_registry import get_active_extract_provider
+        return _provider_is_ready(get_active_extract_provider())
+    except Exception as exc:  # noqa: BLE001 — registry optional; never fatal
+        logger.debug("web extract provider availability check failed: %s", exc)
         return False
 
 
@@ -511,7 +530,7 @@ registry.register(
         args.get("urls", [])[:5] if isinstance(args.get("urls"), list) else [], "markdown",
         char_limit=args.get("char_limit"),
     ),
-    check_fn=check_web_api_key, requires_env=_web_requires_env(), is_async=True, emoji="📄",
+    check_fn=check_web_extract_available, requires_env=_web_requires_env(), is_async=True, emoji="📄",
     max_result_size_chars=100_000,
 )
 

@@ -1,0 +1,7 @@
+name: web-local-extract
+version: 1.0.0
+description: "Local page extraction: fetches the URL directly and reduces it to readable text (JSON-LD JobPosting first, then the page body). No API key, no vendor, no quota. Extract-only; pair with any search backend. Uses trafilatura when it is installed, otherwise the standard library."
+author: Hermes (local)
+kind: backend
+provides_web_providers:
+  - local-extract
