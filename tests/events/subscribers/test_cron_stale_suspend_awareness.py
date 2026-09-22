@@ -169,6 +169,9 @@ def test_ticker_dead_before_the_suspend_still_pages(bus, monkeypatch):
     """A heartbeat that was already 400s stale when the host slept is still
     400s stale (over the 300s threshold) after the suspend is discounted."""
     mon = _monitor(bus)
+    # Alive since before the suspend, so the age cap (born_at) is not what
+    # these assertions measure.
+    mon._born_at = datetime.now(timezone.utc) - SUSPEND - timedelta(hours=1)
     _patch_ticker_age(monkeypatch, SUSPEND.total_seconds() + 400)
     mon._credit_suspend_gap(datetime.now(timezone.utc) - SUSPEND)
     mon.poll()
@@ -178,6 +181,9 @@ def test_ticker_dead_before_the_suspend_still_pages(bus, monkeypatch):
 
 def test_ticker_credit_retires_once_the_heartbeat_advances(bus, monkeypatch):
     mon = _monitor(bus)
+    # Alive since before the suspend, so the age cap (born_at) is not what
+    # these assertions measure.
+    mon._born_at = datetime.now(timezone.utc) - SUSPEND - timedelta(hours=1)
     _patch_ticker_age(monkeypatch, SUSPEND.total_seconds() + 15)
     mon._credit_suspend_gap(datetime.now(timezone.utc) - SUSPEND)
     mon.poll()

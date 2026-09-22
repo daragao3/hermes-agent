@@ -758,10 +758,22 @@ class MailboxTranslator(BaseSubscriber):
         elif message_type == "FOLLOWUP_ALERT":
             results.extend(self._followup_emissions(inner))
 
-        elif message_type == "VIP_DISCOVERY":
-            p = _job_payload(inner)
-            p.setdefault("source", "linkedin-saved")
-            results.append((EventType.JOB_VIP_DISCOVERED, p, None))
+        # VIP_DISCOVERY deliberately absent (2026-09-22). Its only producer,
+        # sentinel's linkedin_scan.py `_emit_vip_discovery`, already emits
+        # JOB_VIP_DISCOVERED straight to the bus (source "sentinel") with the
+        # full job, and THEN writes this envelope for tracker's intake. Mapping
+        # it again made every discovery page twice. The second copy was also
+        # empty: sentinel nests the job under payload["job"], and
+        # `_job_payload` reads flat keys, so it carried no title, company or
+        # url. Because every empty twin looked the same, the notifier's
+        # repeat_guard suppressed most of them and let the first of each
+        # burst through (24 events, 12 twins, 10 suppressed, 2 delivered
+        # blank on 2026-09-21/22, loops
+        # triage-20260922-vip-twin-and-stale-boot-grace). The digest's
+        # discovered count (scribe_digest.py) double-counted the same way.
+        # Same resolution as SUBMIT_CONFIRM above: the envelope still reaches
+        # the bus as `mailbox_message` for audit, and tracker still consumes
+        # the file.
 
         elif message_type == "HIGH_SCORE_ALERT":
             results.append((EventType.JOB_HIGH_SCORE, _score_payload(inner), None))

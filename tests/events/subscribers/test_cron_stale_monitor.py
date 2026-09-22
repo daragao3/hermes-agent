@@ -339,9 +339,17 @@ def _patch_age(monkeypatch, value):
     monkeypatch.setattr(cron.jobs, "get_ticker_heartbeat_age", lambda: value)
 
 
+def _long_lived(mon, seconds: float = 86_400):
+    """Make ``mon`` look ``seconds`` old. The ticker age is capped at the
+    monitor's own lifetime (see the boot tests below), so a test about a
+    ticker dying mid-run needs a monitor that was alive before it died."""
+    mon._born_at = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    return mon
+
+
 def test_stale_ticker_heartbeat_emits_cron_stale(bus, monkeypatch):
     """A heartbeat older than the threshold means the ticker thread is gone."""
-    mon = _monitor(bus)
+    mon = _long_lived(_monitor(bus))
     _patch_age(monkeypatch, mon.TICKER_STALE_THRESHOLD_SECONDS + 60)
 
     mon.poll()
@@ -379,7 +387,7 @@ def test_unknown_ticker_heartbeat_age_is_silent(bus, monkeypatch):
 
 def test_stale_ticker_alerts_once_then_rearms_after_recovery(bus, monkeypatch):
     """One alert per outage — but a NEW outage after recovery alerts again."""
-    mon = _monitor(bus)
+    mon = _long_lived(_monitor(bus))
 
     _patch_age(monkeypatch, mon.TICKER_STALE_THRESHOLD_SECONDS + 60)
     mon.poll()
@@ -410,6 +418,44 @@ def test_ticker_check_failure_does_not_break_job_staleness_check(bus, monkeypatc
     mon.poll()  # must not raise
 
     assert _stale_events(bus) == []
+
+
+# ---------------------------------------------------------------------------
+# Boot: the heartbeat file outlives the process that wrote it.
+#
+# 2026-09-22T17:46:36Z: 38s after a gateway came up from a reboot, its first
+# poll read the PREVIOUS gateway's last beat (680s old, the 17:35Z reboot gap)
+# and paged CRITICAL "NO cron job can fire until the gateway is restarted"
+# about a gateway that had just been started. Crons ran normally from 18:00Z.
+# ---------------------------------------------------------------------------
+
+def test_predecessors_heartbeat_does_not_page_on_a_fresh_boot(bus, monkeypatch):
+    mon = _monitor(bus)  # born now, like a gateway that just started
+    _patch_age(monkeypatch, 680.0)
+
+    mon.poll()
+
+    assert _stale_events(bus) == [], (
+        "a fresh monitor blamed its own ticker for the predecessor's silence"
+    )
+
+
+def test_ticker_that_never_starts_still_pages_once_past_the_threshold(bus, monkeypatch):
+    """The 2026-08-11 shape: the scheduler thread died AT startup. The cap
+    must delay that page by at most one threshold, never suppress it."""
+    mon = _monitor(bus)
+    _patch_age(monkeypatch, 10_000.0)  # nothing has beaten since long ago
+    mon.poll()
+    assert _stale_events(bus) == []
+
+    _long_lived(mon, mon.TICKER_STALE_THRESHOLD_SECONDS + 30)
+    mon.poll()
+
+    stale = _stale_events(bus)
+    assert len(stale) == 1 and stale[0].payload["scope"] == "ticker"
+    assert stale[0].payload["age_seconds"] <= mon.TICKER_STALE_THRESHOLD_SECONDS + 60, (
+        "the reported age must be this process's silence, not the file's"
+    )
 
 
 # =========================================================================
