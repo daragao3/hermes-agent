@@ -37,7 +37,7 @@ describe('known install failures', () => {
     expect(matchKnownFailure({ ...base, ...change })).toBeNull()
   })
 
-  it('matches manual-only app updates only for the three proven July script cases', () => {
+  it('matches manual-only app updates only for the proven script cases', () => {
     const sample = {
       ...base, commit: '7c1a029553d87c43ecff8a3821336bc95872213b',
       updateMethod: 'hermes-desktop-app-update',
@@ -49,6 +49,44 @@ describe('known install failures', () => {
     expect(matchKnownFailure({ ...sample, installMethod: 'desktop-installer@latest' })).toBeNull()
     expect(matchKnownFailure({ ...sample, error: 'onboarding timed out' })).toBeNull()
     expect(matchKnownFailure({ ...sample, logs: { desktop: '[updates] manual: hermes update' } })).toBeNull()
+  })
+
+  // v2026.8.3 reaches the identical no-staged-updater branch
+  // (apps/desktop/electron/main.ts:2891-2894), so the same three script cases
+  // are covered from that release too. Run 35663715738 proved all three.
+  it('covers the same script cases from the August release', () => {
+    const august = {
+      ...base, commit: '3c27eb6234bf91b8ceee9e9071591b31e9b148cb',
+      logs: { desktop: '[hermes] [updates] no staged updater; surfacing manual `hermes update` for CLI install at D:/install\n[hermes] [updates] manual: hermes update\n' },
+    }
+    const cases = [
+      { installMethod: 'installer-script', updateMethod: 'hermes-desktop-app-update', error: 'E2E ASSERTION FAILED: app driven via captured hermes desktop spec; update completed' },
+      { installMethod: 'installer-script+desktop', updateMethod: 'hermes-desktop-app-update', error: 'E2E ASSERTION FAILED: app driven via captured hermes desktop spec; update completed' },
+      { installMethod: 'installer-script+desktop', updateMethod: 'open-app-update', error: 'E2E ASSERTION FAILED: GUI driver clicked Update now and the app quit for hand-off' },
+    ]
+    for (const c of cases) {
+      expect(matchKnownFailure({ ...august, ...c })?.id).toBe('windows-july-manual-app-update')
+    }
+    // A desktop-installer install has a staged updater: still not covered.
+    expect(matchKnownFailure({ ...august, ...cases[0], installMethod: 'desktop-installer@latest' })).toBeNull()
+    // An August CLI-update failure must fall to the loaded-extension rule, not this one.
+    expect(matchKnownFailure({ ...august, updateMethod: 'hermes-update', error: 'E2E ASSERTION FAILED: hermes update exited 1 (expected 0)' })).toBeNull()
+  })
+
+  it('recognizes the August loaded-native-extension self-lock, not a generic access denied', () => {
+    const rustLock = [
+      'error: failed to remove file `D:/install/venv/Lib/site-packages/cryptography/hazmat/bindings/_rust.pyd`: Access is denied. (os error 5)',
+      'cause: Failed to persist temporary file to D:/install/venv/Lib/site-packages/cryptography/hazmat/bindings/_rust.pyd: Access is denied. (os error 5)',
+      "Git update failed: Command '['D:/install/bin/uv.exe', 'pip', 'install', '-e', '.']' returned non-zero exit status 2.",
+    ].join('\n')
+    const august = {
+      ...base, commit: '3c27eb6234bf91b8ceee9e9071591b31e9b148cb', logs: { update: rustLock },
+    }
+
+    expect(matchKnownFailure(august)?.id).toBe('windows-loaded-native-extension-self-lock')
+    expect(matchKnownFailure({ ...base, logs: { update: rustLock } })).toBeNull()
+    expect(matchKnownFailure({ ...august, logs: { update: rustLock.replaceAll('_rust.pyd', '_other.pyd') } })).toBeNull()
+    expect(matchKnownFailure({ ...august, logs: { update: rustLock.replaceAll('(os error 5)', '(os error 32)') } })).toBeNull()
   })
 
   it('CLI writes a receipt and exits zero only on a confirmed match', () => {

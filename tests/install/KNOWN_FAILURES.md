@@ -21,19 +21,24 @@ The March call is in the released `hermes_cli/main.py:1678-1683`, with the ZIP f
 
 Re-running the installer is a separate tested upgrade route. Invoking the old CLI through its venv Python is a possible recovery route, but is not silently substituted for the console-launcher leg.
 
-## July Windows app offers only a manual update for script installs
+## Windows app offers only a manual update for script installs
 
 Classification: **unfixable in the update target for the exact released app-button path**.
 
-Starting release: `v2026.7.1`, commit `7c1a029553d87c43ecff8a3821336bc95872213b`.
+Starting releases: `v2026.7.1`, commit `7c1a029553d87c43ecff8a3821336bc95872213b`; and `v2026.8.3`, commit `3c27eb6234bf91b8ceee9e9071591b31e9b148cb`.
 
 | Install → update | Verified failing job |
 |---|---|
 | `installer-script` → `hermes-desktop-app-update` | [101514755236](https://github.com/ethernet8023/hermes-agent/actions/runs/34043635705/job/101514755236) |
 | `installer-script+desktop` → `hermes-desktop-app-update` | [101514760893](https://github.com/ethernet8023/hermes-agent/actions/runs/34043635705/job/101514760893) |
 | `installer-script+desktop` → `open-app-update` | [101514756508](https://github.com/ethernet8023/hermes-agent/actions/runs/34043635705/job/101514756508) |
+| all three, from `v2026.8.3` | [35663715738](https://github.com/daragao3/hermes-agent/actions/runs/35663715738) |
 
-These script installs have no staged updater. The released Electron code (`apps/desktop/electron/main.cjs:2212-2214`) logs `no staged updater; surfacing manual` and returns `{ ok: true, manual: true, command }`. It does not start an update. Each job's `logs/desktop.log` records that branch followed by `[updates] manual: hermes update`; no target checkout/result signal appears.
+These script installs have no staged updater. The released Electron code logs `no staged updater; surfacing manual` and returns `{ ok: true, manual: true, command }`. It does not start an update. Each job's `logs/desktop.log` records that branch followed by `[updates] manual: hermes update`; no target checkout/result signal appears.
+
+The branch is unchanged between the two releases — July's `apps/desktop/electron/main.cjs:2212-2214` is `apps/desktop/electron/main.ts:2891-2894` at `v2026.8.3`. The August jobs reach it the same way and then spend the driver's full poll window waiting for a result file that the manual branch never writes, ending in `update completion signal never appeared`.
+
+**This is not an onboarding failure.** The overlay loop in `launch-from-spec.mjs` succeeds first (`dismissed onboarding overlay`), and the `[overlay] iter N ... click failed` lines that precede it are the loop's designed retry behaviour during the boot window, not a defect. Read past them to the `[updates]` lines in `logs/desktop.log` before classifying.
 
 Evidence required: an app-update leg from this released commit and those explicit manual-update log entries. A hand-off timeout without the manual message is not this limitation. Desktop-installer installs have a different staged-updater path and are not covered by this classification.
 
@@ -60,4 +65,8 @@ Re-running the installer is a separate tested upgrade route.
 
 The July desktop-installer → app-update failure was a driver lifetime bug, not a released-updater exception. The driver treated an expected page closure as failure and could exit before Playwright released its launch process. On Windows, inherited pipes delayed the `close` event even after the launch process exited with code 0. Playwright then ran its tree-kill cleanup. The driver now waits independently of the closing page, releases its pipe handles after process exit, and waits for `close` before it exits. [The real July rerun](https://github.com/ethernet8023/hermes-agent/actions/runs/34075042380/job/101599434616) reached the target commit, cleared the update marker, passed the CLI check, and relaunched the app.
 
+The `desktop-installer@latest` **install** legs against a ref older than the published installer are a harness anachronism, not an upgrade limitation, and must not be given a label here. Run [35663715738](https://github.com/daragao3/hermes-agent/actions/runs/35663715738) lost 11 install-phase jobs (macOS dmg ×5, Windows ×6) because the published installer runs `node apps/desktop/scripts/ensure-rolldown-binding.mjs` — added upstream on 2026-09-01 — against a `v2026.8.3` checkout that predates it, so the desktop stage dies `MODULE_NOT_FOUND`. No user meets this: the published installer always clones the repo's current `main`, which carries the script. Only the matrix pairs today's installer with yesterday's tree, because just one installer binary is published and it is always the newest. The class recurs whenever the installer gains a dependency on a file newer than the oldest pinned ref, so the fix belongs in how the matrix pairs installers with refs — or in a presence guard inside the installer (added to this repo's `scripts/install.ps1` and `install.sh`, though the *published* binary is built upstream) — never in a rule in `known-failures.json`. The matcher could not express it anyway: `known-failures.cjs` classifies only `platform === 'windows'` **and** `phase === 'update'`, so install-phase and macOS failures never reach a rule.
+
 Onboarding click failures, zoom drift, native permission dialogs, AutoHotkey window waits, stale update markers, autostash conflicts, network failures, and generic timeouts remain actionable or unclassified until diagnosed. They must not inherit a historical label because they occurred on an old release.
+
+One caution on onboarding specifically: `[overlay] iter N ... click failed` lines are the dismiss loop's **designed** retry behaviour during the boot window, and are routinely followed by `dismissed onboarding overlay`. They are not themselves a failure. Before blaming onboarding, confirm the run never reached `dismissed onboarding overlay`, and read `logs/desktop.log` for what happened after `clicked Update now`.
