@@ -84,6 +84,13 @@ describe('known install failures', () => {
     }
 
     expect(matchKnownFailure(august)?.id).toBe('windows-loaded-native-extension-self-lock')
+    // The CLI updater is the same released code regardless of how the install
+    // was produced, so all three install methods are covered. Run
+    // 35743063675 proved the desktop-installer one once its install phase
+    // stopped failing and the update leg could finally be observed.
+    for (const installMethod of ['installer-script', 'installer-script+desktop', 'desktop-installer@latest']) {
+      expect(matchKnownFailure({ ...august, installMethod })?.id).toBe('windows-loaded-native-extension-self-lock')
+    }
     expect(matchKnownFailure({ ...base, logs: { update: rustLock } })).toBeNull()
     expect(matchKnownFailure({ ...august, logs: { update: rustLock.replaceAll('_rust.pyd', '_other.pyd') } })).toBeNull()
     expect(matchKnownFailure({ ...august, logs: { update: rustLock.replaceAll('(os error 5)', '(os error 32)') } })).toBeNull()

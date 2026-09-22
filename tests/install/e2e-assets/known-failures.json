@@ -25,11 +25,11 @@
     "id": "windows-loaded-native-extension-self-lock",
     "title": "Released Windows updater cannot replace a native extension it has already imported",
     "commits": ["3c27eb6234bf91b8ceee9e9071591b31e9b148cb"],
-    "cases": [["installer-script", "hermes-update"], ["installer-script+desktop", "hermes-update"]],
+    "cases": [["installer-script", "hermes-update"], ["installer-script+desktop", "hermes-update"], ["desktop-installer@latest", "hermes-update"]],
     "errors": ["^E2E ASSERTION FAILED: hermes update exited [1-9][0-9]* \\(expected 0\\)$"],
     "log": "update",
     "signatures": ["failed to remove file[^\\r\\n]*cryptography[/\\\\]hazmat[/\\\\]bindings[/\\\\]_rust\\.pyd[^\\r\\n]*Access is denied\\. \\(os error 5\\)", "Failed to persist temporary file[^\\r\\n]*cryptography[/\\\\]hazmat[/\\\\]bindings[/\\\\]_rust\\.pyd", "Git update failed[^\\r\\n]*uv\\.exe[^\\r\\n]*'pip', 'install', '-e', '\\.'[^\\r\\n]*returned non-zero exit status 2"],
-    "explanation": "The August updater runs in a Python process that has already imported cryptography, so cryptography/hazmat/bindings/_rust.pyd is mapped into the running interpreter. The update target raises the cryptography floor to 50.x, so uv must replace that exact .pyd and Windows refuses. The loaded extension module belongs to the starting release's process; no change in the update target can unload it. Re-running the installer is a separate tested recovery route. This is the loaded-module analogue of windows-launcher-self-lock and does not cover an access-denied error on any other file.",
+    "explanation": "The August updater runs in a Python process that has already imported cryptography, so cryptography/hazmat/bindings/_rust.pyd is mapped into the running interpreter. The update target raises the cryptography floor to 50.x, so uv must replace that exact .pyd and Windows refuses. The loaded extension module belongs to the starting release's process; no change in the update target can unload it. Re-running the installer is a separate tested recovery route. This is the loaded-module analogue of windows-launcher-self-lock and does not cover an access-denied error on any other file. The CLI updater is the same released code whichever way the install was produced, so all three install methods are covered here -- unlike the app-button exception, where a desktop-installer install really does take a different (staged-updater) path.",
     "evidence": "https://github.com/daragao3/hermes-agent/actions/runs/35663715738"
   }
 ]

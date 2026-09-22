@@ -52,6 +52,14 @@ Starting release: `v2026.8.3`, commit `3c27eb6234bf91b8ceee9e9071591b31e9b148cb`
 |---|---|
 | `installer-script` → `hermes-update` | [106544714345](https://github.com/daragao3/hermes-agent/actions/runs/35663715738) |
 | `installer-script+desktop` → `hermes-update` | [106544714345](https://github.com/daragao3/hermes-agent/actions/runs/35663715738) |
+| `desktop-installer@latest` → `hermes-update` | [106797719590](https://github.com/daragao3/hermes-agent/actions/runs/35743063675) |
+
+All three install methods are covered: `hermes update` is the same released
+code whichever way the install was produced, and the third case was only
+observable once the install-phase anachronism was fixed and that leg reached
+its update step at all. This is the opposite of the app-button exception
+below, where a desktop-installer install genuinely takes a different
+(staged-updater) path and is therefore NOT covered there.
 
 This is the loaded-module analogue of the launcher self-lock above, and it is a *different* file, so the launcher rule deliberately does not match it.
 
@@ -68,5 +76,16 @@ The July desktop-installer → app-update failure was a driver lifetime bug, not
 The `desktop-installer@latest` **install** legs against a ref older than the published installer are a harness anachronism, not an upgrade limitation, and must not be given a label here. Run [35663715738](https://github.com/daragao3/hermes-agent/actions/runs/35663715738) lost 11 install-phase jobs (macOS dmg ×5, Windows ×6) because the published installer runs `node apps/desktop/scripts/ensure-rolldown-binding.mjs` — added upstream on 2026-09-01 — against a `v2026.8.3` checkout that predates it, so the desktop stage dies `MODULE_NOT_FOUND`. No user meets this: the published installer always clones the repo's current `main`, which carries the script. Only the matrix pairs today's installer with yesterday's tree, because just one installer binary is published and it is always the newest. The class recurs whenever the installer gains a dependency on a file newer than the oldest pinned ref, so the fix belongs in how the matrix pairs installers with refs — or in a presence guard inside the installer (added to this repo's `scripts/install.ps1` and `install.sh`, though the *published* binary is built upstream) — never in a rule in `known-failures.json`. The matcher could not express it anyway: `known-failures.cjs` classifies only `platform === 'windows'` **and** `phase === 'update'`, so install-phase and macOS failures never reach a rule.
 
 Onboarding click failures, zoom drift, native permission dialogs, AutoHotkey window waits, stale update markers, autostash conflicts, network failures, and generic timeouts remain actionable or unclassified until diagnosed. They must not inherit a historical label because they occurred on an old release.
+
+A second caution, for the staged-updater (`desktop-installer` → app-button)
+route: `venv\Scripts\hermes.exe` can be **transiently absent** after a
+successful update. When uv hits the `_rust.pyd` lock above, the recovery path
+("reinstalling base dependencies and retrying extras individually")
+uninstalls `hermes-agent` — taking the console launcher with it — and only
+then reinstalls. That route clears its in-progress marker and reaches the
+target sha *before* the reinstall finishes, so a post-update check that fires
+the moment the marker clears lands inside the gap. `Test-HermesRuns` now
+waits up to 90s for the launcher to reappear. A missing launcher after that
+wait is a real failure, not this window.
 
 One caution on onboarding specifically: `[overlay] iter N ... click failed` lines are the dismiss loop's **designed** retry behaviour during the boot window, and are routinely followed by `dismissed onboarding overlay`. They are not themselves a failure. Before blaming onboarding, confirm the run never reached `dismissed onboarding overlay`, and read `logs/desktop.log` for what happened after `clicked Update now`.
