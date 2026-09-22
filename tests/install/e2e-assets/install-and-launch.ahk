@@ -99,6 +99,28 @@ WaitForRealWindow(winTitle, timeoutMs) {
     throw Error(Format("no real-sized window matched {} within {}ms", winTitle, timeoutMs))
 }
 
+; The Launch button renders in TWO states and no single template covers both:
+; plain, and wrapped in a :focus-visible ring. AHK clicks Install at the same
+; window position the Launch button later occupies, so the element can keep
+; focus and paint the ring. TryFindImage runs ImageSearch at *20, a per-channel
+; SHADE tolerance -- it absorbs antialiasing but NOT a high-contrast border
+; drawn where the template has flat background, so a focused button never
+; matched at any wait. That is why the misses were BIMODAL rather than slow:
+; measured on run 35792656146, every match landed in 0.8-1.4s while the misses
+; never matched once across ~60 samples in 30s. Raising *20 far enough to
+; bridge a border would risk false matches, so cover the states explicitly.
+; launch-button-focused.png is cropped from a REAL CI capture of a failing leg
+; (proof/install-gui/launch-template-miss.png), not hand-made.
+TryFindLaunchButton(rect, &outX, &outY) {
+    for name in ["launch-button.png", "launch-button-focused.png"] {
+        if TryFindImage(rect, A_ScriptDir "\" name, &outX, &outY) {
+            Log("Launch template matched: " name)
+            return true
+        }
+    }
+    return false
+}
+
 ; Image search inside a rect. Returns true + center coords.
 TryFindImage(rect, imageFile, &outX, &outY) {
     hBitmap := LoadPicture(imageFile)
@@ -191,7 +213,7 @@ while (A_TickCount < waitDeadline) {
     }
     ; refresh the rect (window can move/resize between stages)
     try rect := WaitForRealWindow(installerWin, 2000)
-    if TryFindImage(rect, A_ScriptDir "\launch-button.png", &launchX, &launchY) {
+    if TryFindLaunchButton(rect, &launchX, &launchY) {
         launchFound := true
         Log("Install finished (Launch template visible)")
         break
@@ -217,7 +239,7 @@ if (complete and !launchFound) {
     launchDeadline := A_TickCount + 30000
     while (A_TickCount < launchDeadline) {
         try rect := WaitForRealWindow(installerWin, 2000)
-        if TryFindImage(rect, A_ScriptDir "\launch-button.png", &launchX, &launchY) {
+        if TryFindLaunchButton(rect, &launchX, &launchY) {
             launchFound := true
             Log(Format("Launch template matched after completion (+{1}ms)", A_TickCount - completeAt))
             break
