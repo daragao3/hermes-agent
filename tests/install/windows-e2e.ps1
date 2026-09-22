@@ -9,10 +9,21 @@
 #   INSTALL   - downloads the production Hermes-Setup.exe from the website,
 #               launches it HEADED, and AutoHotkey clicks Install, waits,
 #               then clicks Launch. The real Electron Hermes.exe must appear.
-#               The exe runs EXACTLY as shipped against serve.git, whose
-#               `main` is parked at OLD (-InstallRef, default: the newest
-#               release tag) -- so the install lands on OLD the same way a
-#               user's install landed on whatever main served that day.
+#               The exe runs as shipped against serve.git, whose `main` is
+#               parked at OLD (-InstallRef, default: the newest release tag)
+#               -- so the install lands on OLD the same way a user's install
+#               landed on whatever main served that day. ONE deliberate
+#               exception makes that true rather than approximately true:
+#               the exe is a thin driver that DOWNLOADS scripts/install.ps1
+#               at its baked pin, and only the newest exe is ever published,
+#               so left alone it runs TODAY's script against OLD's tree --
+#               a pairing no user ever had. The stage phase extracts OLD's
+#               own install.ps1 and the install phase hands it over via
+#               HERMES_SETUP_DEV_REPO_ROOT, asserting the installer's
+#               "using local install.ps1 at" log line so a fallback cannot
+#               pass silently. Update mode targets HEAD, where the
+#               downloaded script IS era-correct, so it keeps the real
+#               download path. HERMES_E2E_NO_SCRIPT_PIN=1 forces it off.
 #   UPDATE    - OLD -> HEAD through the route selected by -Route:
 #                 desktop    (implemented) launch the installed Hermes.exe
 #                            under Playwright's Electron driver and CLICK
@@ -126,6 +137,9 @@ if (-not $RepoRoot) {
 }
 
 $ServeRepo   = Join-Path $WorkRoot "serve.git"
+# OLD's own scripts/install.ps1, extracted by the stage phase and handed to
+# the installer via HERMES_SETUP_DEV_REPO_ROOT. See Set-InstallScriptPin.
+$ScriptPinRoot = Join-Path $WorkRoot "dev-script-root"
 $HermesHome  = Join-Path $WorkRoot "hermes-home"
 $InstallDir  = Join-Path $HermesHome "hermes-agent"
 $StatePath   = Join-Path $WorkRoot "shas.json"
@@ -580,6 +594,57 @@ function Invoke-PhaseStage {
     Invoke-Git @("-C", $ServeRepo, "config", "uploadpack.allowAnySHA1InWant", "true") | Out-Null
     Write-Host "  serve.git: uploadpack.allowAnySHA1InWant=true (installer commit pin, if any)"
 
+    # Extract OLD's OWN scripts/install.ps1 for the GUI install phase.
+    #
+    # The installer binary is a thin driver: it downloads scripts/install.ps1
+    # from GitHub raw at its baked pin (branch main, no commit) and then
+    # drives it via -Manifest / -Stage. Only ONE installer binary is ever
+    # published and it is always the newest, so "install OLD with the
+    # published exe" pairs TODAY's install.ps1 with OLD's tree -- a
+    # combination no user ever had, and the reason this phase broke when the
+    # script started calling apps/desktop/scripts/ensure-rolldown-binding.mjs
+    # (added after OLD was cut, so MODULE_NOT_FOUND killed the desktop
+    # stage). This phase's stated contract is that "the install lands on OLD
+    # the same way a user's install landed on whatever main served that day",
+    # and that user also got THAT DAY's install.ps1. Pinning the script to
+    # OLD is what makes the contract true; it is not a fidelity compromise.
+    #
+    # Only pinned when OLD's script speaks the -Manifest/-Stage protocol the
+    # binary drives. Pre-protocol releases (e.g. v2026.3.12) would hang or
+    # fail opaquely, so they keep the downloaded script -- their
+    # desktop-installer legs are already skipped as pre-desktop anyway.
+    New-Item -ItemType Directory -Path (Join-Path $ScriptPinRoot "scripts") -Force | Out-Null
+    $pinnedPs1 = Join-Path $ScriptPinRoot "scripts\install.ps1"
+    Remove-Item -LiteralPath $pinnedPs1 -Force -ErrorAction SilentlyContinue
+    $hasOldScript = $true
+    try {
+        Invoke-Git @("-C", $ServeRepo, "cat-file", "-e", "${old}:scripts/install.ps1") | Out-Null
+    } catch {
+        $hasOldScript = $false
+    }
+    if (-not $hasOldScript) {
+        Write-Host "  install-script pin: SKIPPED (OLD carries no scripts/install.ps1)"
+    } else {
+        # Redirect through cmd.exe rather than Invoke-Git: that helper runs
+        # the output through Out-String, which is line-oriented formatting,
+        # not a byte-faithful copy of a 4000-line script. cmd's `>` writes
+        # git's stdout verbatim.
+        $gitShow = "`"$script:RealGitExe`" -C `"$ServeRepo`" show `"${old}:scripts/install.ps1`""
+        & $env:ComSpec /d /s /c "$gitShow > `"$pinnedPs1`"" | Out-Null
+        $pinnedBody = if (Test-Path -LiteralPath $pinnedPs1) { Get-Content -LiteralPath $pinnedPs1 -Raw } else { "" }
+        if (-not $pinnedBody) {
+            Remove-Item -LiteralPath $pinnedPs1 -Force -ErrorAction SilentlyContinue
+            Write-Host "  install-script pin: SKIPPED (extraction produced nothing)"
+        } elseif ($pinnedBody -notmatch '\$Manifest') {
+            # Pre-protocol release: the binary would drive it with
+            # -Manifest/-Stage and get nothing back. Leave it downloading.
+            Remove-Item -LiteralPath $pinnedPs1 -Force -ErrorAction SilentlyContinue
+            Write-Host "  install-script pin: SKIPPED (OLD's install.ps1 predates the -Manifest/-Stage protocol)"
+        } else {
+            Write-Host "  install-script pin: $pinnedPs1 (from $oldRef, $([math]::Round((Get-Item $pinnedPs1).Length / 1KB)) KB)"
+        }
+    }
+
     @{ old = $old; old_ref = $oldRef; current = $current } |
         ConvertTo-Json | Set-Content -LiteralPath $StatePath -Encoding UTF8
     Write-Host "  state written: $StatePath"
@@ -631,9 +696,29 @@ function Invoke-PhaseInstallGui {
     Copy-Item -Path (Join-Path $AssetsDir "install-and-launch.ahk"), (Join-Path $AssetsDir "install-button.png"), (Join-Path $AssetsDir "launch-button.png") -Destination $AhkDir -Force
 
     $env:HERMES_HOME = $HermesHome
-    # As shipped: NO dev-root override, no pin override. Ensure a stray
-    # local dev checkout can't hijack resolution.
-    Remove-Item Env:HERMES_SETUP_DEV_REPO_ROOT -ErrorAction SilentlyContinue
+    # Script resolution. Default is as-shipped: NO dev-root override, so a
+    # stray local dev checkout cannot hijack resolution and the binary
+    # downloads install.ps1 from GitHub raw at its baked pin.
+    #
+    # EXCEPTION, install mode only: hand it OLD's own install.ps1 (staged by
+    # Invoke-PhaseStage). Only one installer binary is published and it is
+    # always the newest, so the default pairs TODAY's script with OLD's tree
+    # -- an anachronism no user ever had, and the reason the desktop stage
+    # died on a helper script added after OLD was cut. Update mode targets
+    # HEAD, where the downloaded script IS the era-correct one, so it keeps
+    # the real download path and this whole branch is skipped.
+    #
+    # Set HERMES_E2E_NO_SCRIPT_PIN=1 to force the download path even for
+    # install mode (useful to test script resolution itself).
+    $pinnedPs1 = Join-Path $ScriptPinRoot "scripts\install.ps1"
+    $usingScriptPin = ($Mode -eq "install") -and (Test-Path -LiteralPath $pinnedPs1) -and -not $env:HERMES_E2E_NO_SCRIPT_PIN
+    if ($usingScriptPin) {
+        $env:HERMES_SETUP_DEV_REPO_ROOT = $ScriptPinRoot
+        Write-Host "  install.ps1 pinned to $ExpectedLabel via HERMES_SETUP_DEV_REPO_ROOT=$ScriptPinRoot"
+    } else {
+        Remove-Item Env:HERMES_SETUP_DEV_REPO_ROOT -ErrorAction SilentlyContinue
+        Write-Host "  install.ps1: as shipped (downloaded at the binary's baked pin)"
+    }
     New-Item -ItemType Directory -Path $HermesHome -Force | Out-Null
 
     $recorder = Start-DesktopRecorder (Join-Path $proof "desktop-frames")
@@ -688,6 +773,20 @@ function Invoke-PhaseInstallGui {
 
     # Close the freshly launched app (user quits after first look).
     Stop-HermesAppProcesses "post-install"
+
+    # Prove which script the binary actually ran. install_script.rs logs
+    # "[bootstrap] dev mode - using local install.ps1 at <path>" when it
+    # honours HERMES_SETUP_DEV_REPO_ROOT. Without this assertion a binary
+    # that ignores the env var would silently fall back to the downloaded
+    # script and the leg would pass or fail for the wrong reason -- the
+    # exact failure mode the pin exists to remove. Matched on an ASCII
+    # substring: the real line contains an em dash.
+    if ($usingScriptPin) {
+        $bootLogPath = Join-Path $HermesHome "logs\bootstrap-installer.log"
+        $bootLogText = if (Test-Path -LiteralPath $bootLogPath) { Get-Content -LiteralPath $bootLogPath -Raw } else { "" }
+        Assert-True ($bootLogText -match 'using local install\.ps1 at') `
+            "installer honoured HERMES_SETUP_DEV_REPO_ROOT (ran $ExpectedLabel's install.ps1, not the downloaded one)"
+    }
 
     # The installer cloned/updated from serve.git's `main`; the phase's
     # expected sha says where that must land (install: OLD; update: HEAD).
