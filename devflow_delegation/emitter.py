@@ -191,11 +191,34 @@ class DelegationEmitter:
             is_critical=(severity == "critical"),
         )
         if not decision.allowed:
-            suppressed_row = self._record_suppressed(
+            suppressed_row, suppressed_inserted = self._record_suppressed(
                 payload, reason=decision.reason, fingerprint=fingerprint,
                 target_repo=target_repo, target_subsystem=target_subsystem)
-            if decision.reason == "rate_limit_source" and first_rate_limit_crossing(
-                    source_count, policy.max_per_window):
+            # `first_rate_limit_crossing` is count == limit, which identifies the
+            # single request that crosses the line ONLY IF every suppression
+            # advances the count. A suppression advances it only when it actually
+            # INSERTS a ledger row, and `_insert_synthetic` is idempotent on the
+            # identity key -- so for a source that re-submits STABLE keys, every
+            # request finds its row already there, nothing is inserted, the count
+            # stays pinned at the limit, and `count == limit` is true for ALL of
+            # them. The guard then does the exact opposite of its contract: one
+            # alert per dropped request instead of one per episode.
+            #
+            # Measured 2026-09-21: source `roadmap-intake` (keys of the stable
+            # form `roadmap:sr-<n>:v1:...`) emitted 105 `devflow.work_suppressed`
+            # events, all `summarized: true`, inside ONE SECOND, with count
+            # pinned at 5 against a max_per_window of 5 and ZERO new ledger rows
+            # written that day. It recurred daily (172 events on 09-20). The
+            # batch those alerts filled then overflowed a Telegram flush that was
+            # abandoned in transport, so 20 of them were lost outright.
+            #
+            # Requiring a real insert restores "once per episode": the crossing
+            # request on the day fresh work is suppressed emits, and a re-run
+            # over already-suppressed identities emits nothing, because nothing
+            # new was suppressed.
+            if (decision.reason == "rate_limit_source"
+                    and suppressed_inserted
+                    and first_rate_limit_crossing(source_count, policy.max_per_window)):
                 self._emit_lifecycle_event(
                     "SUPPRESSED", suppressed_row["request_id"],
                     extra={"reason": decision.reason, "source": source_agent, "summarized": True})
@@ -253,12 +276,19 @@ class DelegationEmitter:
         return req
 
     def _insert_synthetic(self, req, *, state, terminal_reason):
+        """``(row, inserted)`` -- inserted is False when the key already had a row.
+
+        Callers need the flag, not just the row: a repeat submission of an
+        identity that was already terminalized adds NOTHING to the ledger, so
+        anything that reasons about the ledger COUNT advancing must not treat it
+        as a new record. See the summarized-alert gate in ``delegate``.
+        """
         existing = self.ledger.find_by_idempotency_key(req.idempotency_key)
         if existing is not None:
-            return existing
+            return existing, False
         self.ledger.insert_request(req)
         self.ledger.set_state(req.request_id, state, terminal_reason=terminal_reason)
-        return self.ledger.get_request(req.request_id)
+        return self.ledger.get_request(req.request_id), True
 
     def write_envelope(self, req) -> Path:
         self.inbox_dir.mkdir(parents=True, exist_ok=True)
