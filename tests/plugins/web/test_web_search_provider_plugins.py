@@ -81,6 +81,7 @@ class TestBundledPluginsRegister:
             "exa",
             "firecrawl",
             "keenable",
+            "local-extract",
             "parallel",
             "perplexity",
             "searxng",
@@ -102,6 +103,8 @@ class TestBundledPluginsRegister:
             ("firecrawl", True, True),
             # xai: search-only via Grok's agentic web_search tool.
             ("xai", True, False),
+            # local-extract: extract-only, fetches pages itself (no vendor).
+            ("local-extract", False, True),
         ],
     )
     def test_capability_flags_match_spec(
