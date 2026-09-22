@@ -48,6 +48,30 @@ SetWorkingDir(A_ScriptDir)
 CoordMode("Pixel", "Screen")
 CoordMode("Mouse", "Screen")
 
+; Capture the screen to a PNG at a decisive moment. AHK v2 has no native
+; screenshot, so shell out to the SAME System.Drawing CopyFromScreen call the
+; PowerShell recorder uses -- one capture mechanism in this suite, not two.
+; The script goes to a temp .ps1 run with -File rather than inline -Command:
+; inline means nesting quotes around a Windows path, which is exactly where
+; this kind of helper breaks. Returns true only if the file really landed.
+SaveScreenshot(path) {
+    ps := A_Temp "\ahk-launch-miss-shot.ps1"
+    body := "Add-Type -AssemblyName System.Windows.Forms, System.Drawing`n"
+          . "$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds`n"
+          . "$bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)`n"
+          . "$g = [System.Drawing.Graphics]::FromImage($bmp)`n"
+          . "$g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)`n"
+          . "$bmp.Save('" path "', [System.Drawing.Imaging.ImageFormat]::Png)`n"
+          . "$g.Dispose(); $bmp.Dispose()`n"
+    try {
+        if FileExist(ps)
+            FileDelete(ps)
+        FileAppend(body, ps)
+        RunWait('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' ps '"', , "Hide")
+    }
+    return FileExist(path) ? true : false
+}
+
 ClickWithMarker(x, y) {
     Click(x, y)
     Sleep(10)
@@ -202,6 +226,18 @@ if (complete and !launchFound) {
     }
     if (!launchFound) {
         Log(Format("Launch template never matched in the 30s after completion (+{1}ms); falling back to the window-relative position", A_TickCount - completeAt))
+        ; The residual case is NOT a timing problem -- measured on run
+        ; 35789653670, every match landed in 0.8-1.4s while the misses never
+        ; matched across ~60 samples in 30s. So the template genuinely does not
+        ; match this rendering state, and the only way to find out why is to
+        ; look at the screen it failed on. Re-capturing launch-button.png blind
+        ; has already been tried twice (60493c9e7e, 100abc953e).
+        SplitPath(logPath, , &logDir)
+        shot := logDir "\launch-template-miss.png"
+        if SaveScreenshot(shot)
+            Log("saved the unmatched screen to " shot " -- diff it against launch-button.png")
+        else
+            Log("WARNING: could not capture the unmatched screen")
     }
 }
 
