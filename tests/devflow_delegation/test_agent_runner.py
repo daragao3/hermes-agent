@@ -562,6 +562,27 @@ def _run_main_self_check_catches_a_leaked_env_secret(monkeypatch, git_worktree, 
     meta_dir = tmp_path_factory.mktemp("main_self_check_meta")
     request_path, allowlist_path = _write_request_and_allowlist(meta_dir)
 
+    # HERMES_HOME MUST LIVE OUTSIDE THE SCANNED WORKTREE. conftest's autouse
+    # _hermetic_environment points it at ``tmp_path / "hermes_test"``, and
+    # git_worktree's repo root IS that same tmp_path -- so anything the run
+    # writes into the Hermes home lands inside the tree self_check then scans,
+    # and surfaces as an out-of-scope path the "agent" never wrote. The
+    # get_provider stub below was added for one such writer (the models.dev
+    # cache); a second one appeared later and turned this test red with
+    # "agent wrote out-of-scope paths: hermes_test/SOUL.md" -- the identity
+    # SOUL.md that prompt_builder resolves from HERMES_HOME.
+    #
+    # Stubbing each new writer one at a time loses that race by construction.
+    # Moving the home out of the worktree removes the whole class: the scan
+    # then sees only what fake_run_agent actually wrote.
+    isolated_home = tmp_path_factory.mktemp("main_self_check_home")
+    for sub in ("sessions", "cron", "memories", "skills"):
+        (isolated_home / sub).mkdir(exist_ok=True)
+    monkeypatch.setenv("HERMES_HOME", str(isolated_home))
+    # Keep the subprocess-surviving live-DB guard pointed at THIS home, exactly
+    # as the autouse fixture does -- otherwise it still names the old path.
+    monkeypatch.setenv("HERMES_TEST_ISOLATION", str(isolated_home))
+
     # A value that is both secret-shaped (its env var name has "KEY" in it,
     # so secret_values() collects it) AND long enough to clear scan_for_secrets'
     # exact-match floor. Assembled at runtime, not a literal.

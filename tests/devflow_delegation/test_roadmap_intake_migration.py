@@ -104,6 +104,34 @@ def fixture_env(hermes_root, allowlist_file, tmp_path):
 
 
 @pytest.fixture
+def lifecycle_file(intake, tmp_path):
+    """Lifecycle metadata covering EXACTLY the fixture roadmap's SR ids.
+
+    Without this, every test below fell back to `--lifecycle`'s default, which
+    is the PRODUCTION file `~/architecture-blueprint/roadmap/lifecycle.v1.json`.
+    `hermes_root` redirects Hermes paths into tmp_path but NOTHING redirects
+    architecture-blueprint, so these tests read 248 real SR entries against a
+    2-row fixture roadmap -- every one an orphan identity -- and main() returned
+    2 from the `lifecycle metadata contains orphan SR identities` branch. They
+    were measuring a file outside the repo, and passed or failed on its content.
+
+    Built with the reader's own `bootstrap()` rather than hand-written, so the
+    `row_sha256` fingerprints are correct BY CONSTRUCTION. A hand-written
+    fixture with missing/stale fingerprints parses fine and returns rc 0, but
+    every row lands in "needs evidence reconciliation" and `effective_status`
+    stops being OPEN -- which silently emits nothing and reads as a passing
+    dry-run rather than an error.
+    """
+    roadmap = tmp_path / "_lifecycle_source_roadmap.md"
+    roadmap.write_text(FIXTURE_ROADMAP, encoding="utf-8")
+    rows = intake.parse_roadmap(roadmap)
+    metadata = intake._lifecycle_reader().bootstrap(rows, str(roadmap))
+    path = tmp_path / "lifecycle.v1.json"
+    path.write_text(json.dumps(metadata), encoding="utf-8")
+    return path
+
+
+@pytest.fixture
 def dry_run_policy_env(hermes_root, allowlist_file, tmp_path):
     # Identical to fixture_env but WITHOUT a policy.json override, so arch-review
     # inherits the shipped default mode="dry_run" — the stock-machine posture.
@@ -112,8 +140,9 @@ def dry_run_policy_env(hermes_root, allowlist_file, tmp_path):
     return roadmap
 
 
-def test_default_mode_still_dry_run(intake, fixture_env, hermes_root, capsys):
+def test_default_mode_still_dry_run(intake, fixture_env, lifecycle_file, hermes_root, capsys):
     rc = intake.main(["--roadmap", str(fixture_env),
+                      "--lifecycle", str(lifecycle_file),
                       "--mailbox", str(hermes_root / "mailbox" / "devflow"),
                       "--no-canvas"])
     assert rc == 0
@@ -121,8 +150,9 @@ def test_default_mode_still_dry_run(intake, fixture_env, hermes_root, capsys):
     assert not inbox.exists() or not list(inbox.glob("*.json"))
 
 
-def test_emit_writes_v3_through_shared_emitter(intake, fixture_env, hermes_root, capsys):
+def test_emit_writes_v3_through_shared_emitter(intake, fixture_env, lifecycle_file, hermes_root, capsys):
     rc = intake.main(["--roadmap", str(fixture_env),
+                      "--lifecycle", str(lifecycle_file),
                       "--mailbox", str(hermes_root / "mailbox" / "devflow"),
                       "--emit", "--no-canvas"])
     assert rc == 0
@@ -141,11 +171,12 @@ def test_emit_writes_v3_through_shared_emitter(intake, fixture_env, hermes_root,
 
 
 def test_emit_under_dry_run_policy_reports_shadow_not_emitted(
-        intake, dry_run_policy_env, hermes_root, capsys):
+        intake, dry_run_policy_env, lifecycle_file, hermes_root, capsys):
     """Under the shipped dry_run default, --emit classifies but writes NOTHING.
     The script must not report those as EMITTED requests (that would make the
     sentinel-gated cron on a stock machine lie about queueing work)."""
     rc = intake.main(["--roadmap", str(dry_run_policy_env),
+                      "--lifecycle", str(lifecycle_file),
                       "--mailbox", str(hermes_root / "mailbox" / "devflow"),
                       "--emit", "--no-canvas"])
     assert rc == 0
@@ -159,13 +190,14 @@ def test_emit_under_dry_run_policy_reports_shadow_not_emitted(
         "the shadow-classified count must be surfaced so the no-op is visible"
 
 
-def test_emit_twice_dedups_via_ledger(intake, fixture_env, hermes_root, capsys):
+def test_emit_twice_dedups_via_ledger(intake, fixture_env, lifecycle_file, hermes_root, capsys):
     """Positive control for the emitter's durable dedup: delete the queued
     envelope between runs so the script's inbox pre-filter CANNOT be what
     dedups run #2 — only the shared emitter's ledger can. Under the
     pre-migration v2 code the ledger stays empty (total == 0), so this fails
     on revert."""
     argv = ["--roadmap", str(fixture_env),
+            "--lifecycle", str(lifecycle_file),
             "--mailbox", str(hermes_root / "mailbox" / "devflow"),
             "--emit", "--no-canvas"]
     intake.main(argv)
@@ -186,7 +218,7 @@ def test_emit_twice_dedups_via_ledger(intake, fixture_env, hermes_root, capsys):
 
 
 def test_terminal_ledger_row_does_not_get_reblocked_by_legacy_processed_file(
-        intake, fixture_env, hermes_root, capsys):
+        intake, fixture_env, lifecycle_file, hermes_root, capsys):
     """A terminal DDP record must reach the emitter's cooldown/reopen policy.
 
     Legacy v2 mailbox files are a migration fallback only. If their key is
@@ -223,7 +255,8 @@ def test_terminal_ledger_row_does_not_get_reblocked_by_legacy_processed_file(
         queued.unlink()
 
     rc = intake.main([
-        "--roadmap", str(fixture_env), "--mailbox", str(mailbox),
+        "--roadmap", str(fixture_env), "--lifecycle", str(lifecycle_file),
+        "--mailbox", str(mailbox),
         "--emit", "--no-canvas",
     ])
     out = capsys.readouterr().out
