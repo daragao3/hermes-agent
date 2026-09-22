@@ -538,6 +538,68 @@ function Stop-DesktopRecorder($proc, [string]$OutDir) {
     }
 }
 
+function Save-LaunchHandoffState([string]$Label, [string]$ProofDir) {
+    # Evidence for the 'installer stuck on LAUNCHING' failure: the AHK reports
+    # only that no Hermes.exe window appeared, and the installer's own log stops
+    # at 'bootstrap complete', so the artifact could not distinguish the three
+    # possibilities -- exe never built, exe built but never spawned, or spawned
+    # but no window. Seen in run 35756238680, leg desktop-installer@latest ->
+    # desktop-installer@latest, where the UI sat in LAUNCHING for the full 300s
+    # with no error shown. NOTE the installer under test is the PUBLISHED
+    # Hermes-Setup.exe downloaded from the website, so the fork cannot add
+    # logging inside it; this driver-side snapshot is the only lever we have.
+    $dest = Join-Path $ProofDir "launch-handoff-$Label"
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+
+    # 1. Did the desktop exe the installer looks for actually exist? These are
+    #    the exact candidates resolve_hermes_desktop_exe() walks, in its order.
+    $candidates = @(
+        (Join-Path $InstallDir 'apps\desktop\release\win-unpacked\Hermes.exe'),
+        (Join-Path $InstallDir 'apps\desktop\release\win-arm64-unpacked\Hermes.exe')
+    )
+    $exeReport = foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c) {
+            $fi = Get-Item -LiteralPath $c
+            "PRESENT  $c  ($($fi.Length) bytes, $($fi.LastWriteTime.ToString('o')))"
+        } else {
+            "MISSING  $c"
+        }
+    }
+    $exeReport | Set-Content -LiteralPath (Join-Path $dest 'desktop-exe-candidates.txt')
+    $exeReport | ForEach-Object { Write-Host "  [$Label] $_" }
+
+    # 2. Was anything spawned, and is the installer still up? Read-only: this
+    #    lists processes, it never stops them.
+    try {
+        Get-Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -in @('Hermes', 'Hermes-Setup', 'hermes') } |
+            Select-Object Name, Id, StartTime, MainWindowTitle |
+            Format-Table -AutoSize | Out-String |
+            Set-Content -LiteralPath (Join-Path $dest 'processes.txt')
+        $running = @(Get-Process -Name 'Hermes' -ErrorAction SilentlyContinue)
+        Write-Host "  [$Label] Hermes.exe processes running: $($running.Count)"
+    } catch {}
+
+    # 3. What the release dir actually contains, so a partial or relocated
+    #    electron-builder output is visible rather than inferred.
+    $releaseDir = Join-Path $InstallDir 'apps\desktop\release'
+    if (Test-Path -LiteralPath $releaseDir) {
+        Get-ChildItem -LiteralPath $releaseDir -ErrorAction SilentlyContinue |
+            Select-Object Name, Length, LastWriteTime |
+            Format-Table -AutoSize | Out-String |
+            Set-Content -LiteralPath (Join-Path $dest 'release-dir-ls.txt')
+    }
+
+    # 4. The app's own log. Absent means it never got far enough to log.
+    $desktopLog = Join-Path $HermesHome 'logs\desktop.log'
+    if (Test-Path -LiteralPath $desktopLog) {
+        Copy-Item $desktopLog $dest -Force -ErrorAction SilentlyContinue
+        Write-Host "  [$Label] desktop.log present (app started and logged)"
+    } else {
+        Write-Host "  [$Label] desktop.log ABSENT (app never started, or died before logging)"
+    }
+}
+
 function Stop-HermesAppProcesses([string]$Label) {
     # Close the desktop app the blunt way between phases (a user quitting).
     # Only Hermes.exe (Electron) -- never hermes.exe (the venv CLI shim).
@@ -781,6 +843,9 @@ function Invoke-PhaseInstallGui {
         Assert-True $installer.HasExited "Hermes-Setup.exe exited after Launch"
     }
     finally {
+        # Snapshot the launch hand-off BEFORE anything else in this block:
+        # win or lose, and while the machine state is still the failure state.
+        try { Save-LaunchHandoffState $Mode $proof } catch {}
         Stop-DesktopRecorder $recorder (Join-Path $proof "desktop-frames")
         # Surface the installer's own log win or lose, full and folded.
         $bootLog = Join-Path $HermesHome "logs\bootstrap-installer.log"
