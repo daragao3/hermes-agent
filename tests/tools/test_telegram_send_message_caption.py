@@ -30,6 +30,8 @@ def _install_telegram_mock(monkeypatch: pytest.MonkeyPatch, bot_factory: MagicMo
     )
     monkeypatch.setitem(sys.modules, "telegram", telegram_mod)
     monkeypatch.setitem(sys.modules, "telegram.constants", constants_mod)
+    # Standalone sends build an HTTPXRequest with the adapter's timeouts (2026-09-22).
+    monkeypatch.setitem(sys.modules, "telegram.request", SimpleNamespace(HTTPXRequest=lambda **kw: SimpleNamespace(_kw=kw)))
 
 
 def _make_bot() -> MagicMock:

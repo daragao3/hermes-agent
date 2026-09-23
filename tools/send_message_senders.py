@@ -124,21 +124,39 @@ def _is_telegram_thread_not_found(error: Exception) -> bool:
     return "thread not found" in str(error).lower()
 
 
+def _telegram_request_kwargs() -> dict:
+    """The live adapter's HTTP timeouts (plugins/platforms/telegram/adapter.py ``_build_ptb_requests``,
+    same env overrides). PTB's own defaults -- 5 s read/write, 1 s pool -- are what that adapter moved
+    off because they trip on flaky networks; this standalone path never got the change. Measured
+    2026-09-22: the event-bus notifier's 20-event (~10.7 KB, 3-chunk) batch for one topic failed
+    "Timed out" ~6 s in, every 3 min for 25+ min, while a fresh getMe took 0.5 s."""
+    from utils import env_float
+    return {
+        "connection_pool_size": 8,
+        "pool_timeout": env_float("HERMES_TELEGRAM_HTTP_POOL_TIMEOUT", 8.0),
+        "connect_timeout": env_float("HERMES_TELEGRAM_HTTP_CONNECT_TIMEOUT", 10.0),
+        "read_timeout": env_float("HERMES_TELEGRAM_HTTP_READ_TIMEOUT", 20.0),
+        "write_timeout": env_float("HERMES_TELEGRAM_HTTP_WRITE_TIMEOUT", 20.0),
+        "media_write_timeout": 60.0,
+    }
+
+
 def _telegram_bot(token):
     """Bot honouring TELEGRAM_PROXY (standalone sends time out where api.telegram.org is
-    blocked); falls back to a direct connection."""
+    blocked); falls back to a direct connection. Both use the live adapter's timeouts."""
     from telegram import Bot
+    from telegram.request import HTTPXRequest
+    kwargs = _telegram_request_kwargs()
     try:
         from gateway.platforms.base import resolve_proxy_url
         proxy = resolve_proxy_url("TELEGRAM_PROXY", target_hosts=["api.telegram.org"])
-        if not proxy:
-            return Bot(token=token)
-        from telegram.request import HTTPXRequest
-        logger.info("send_message: standalone Telegram send routed through proxy %s", proxy)
-        return Bot(token=token, request=HTTPXRequest(proxy=proxy), get_updates_request=HTTPXRequest(proxy=proxy))
+        if proxy:
+            logger.info("send_message: standalone Telegram send routed through proxy %s", proxy)
+            return Bot(token=token, request=HTTPXRequest(proxy=proxy, **kwargs),
+                       get_updates_request=HTTPXRequest(proxy=proxy, **kwargs))
     except Exception as proxy_err:
         logger.warning("send_message: failed to attach Telegram proxy (%s), falling back to direct connection", proxy_err)
-    return Bot(token=token)
+    return Bot(token=token, request=HTTPXRequest(**kwargs))
 
 
 def _telegram_thread_kwargs(thread_id):
