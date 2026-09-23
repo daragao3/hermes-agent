@@ -257,7 +257,8 @@ def _install_telegram_mock(monkeypatch, bot):
     # inspect it but the import must succeed.
     _MessageEntity = lambda **_kw: SimpleNamespace(**_kw)
     telegram_mod = SimpleNamespace(
-        Bot=lambda token: bot,
+        # ``request=``: standalone sends carry the adapter's HTTP timeouts (2026-09-22).
+        Bot=lambda token, **_kw: bot,
         MessageEntity=_MessageEntity,
         constants=constants_mod,
         # Needed by _send_telegram's local `from telegram import
@@ -266,8 +267,10 @@ def _install_telegram_mock(monkeypatch, bot):
         InlineKeyboardButton=_FakeInlineKeyboardButton,
         InlineKeyboardMarkup=_FakeInlineKeyboardMarkup,
     )
+    request_mod = SimpleNamespace(HTTPXRequest=lambda **kw: SimpleNamespace(_kw=kw))
     monkeypatch.setitem(sys.modules, "telegram", telegram_mod)
     monkeypatch.setitem(sys.modules, "telegram.constants", constants_mod)
+    monkeypatch.setitem(sys.modules, "telegram.request", request_mod)
 
 
 def _ensure_slack_mock(monkeypatch):

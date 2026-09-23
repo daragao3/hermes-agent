@@ -113,8 +113,9 @@ class TestSendTelegramStandaloneProxy:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Without TELEGRAM_PROXY (and no inherited HTTPS_PROXY/etc), Bot()
-        is constructed plainly — no ``request``/``get_updates_request``
-        kwargs, and HTTPXRequest is not invoked at all.
+        gets NO proxy -- but it does get a ``request`` carrying the live
+        adapter's timeouts (2026-09-22: PTB's 5 s defaults made the
+        notifier's 3-chunk batches fail "Timed out" for 25+ minutes).
         """
         from tools.send_message_tool import _send_telegram
 
@@ -130,6 +131,8 @@ class TestSendTelegramStandaloneProxy:
             "all_proxy",
             "NO_PROXY",
             "no_proxy",
+            "HERMES_TELEGRAM_HTTP_READ_TIMEOUT",
+            "HERMES_TELEGRAM_HTTP_WRITE_TIMEOUT",
         ):
             monkeypatch.delenv(var, raising=False)
         monkeypatch.setattr("gateway.run._gateway_runner_ref", lambda: None)
@@ -156,7 +159,9 @@ class TestSendTelegramStandaloneProxy:
         call_args = bot_factory.call_args.args
         # token may be passed positionally or as a kwarg; either is fine.
         assert call_kwargs.get("token", call_args[0] if call_args else None) == "tok"
-        assert "request" not in call_kwargs
         assert "get_updates_request" not in call_kwargs
-        httpx_request_factory.assert_not_called()
+        req_kw = call_kwargs["request"]._kw
+        assert "proxy" not in req_kw
+        assert (req_kw["read_timeout"], req_kw["write_timeout"]) == (20.0, 20.0)
+        httpx_request_factory.assert_called_once()
         bot.send_message.assert_awaited_once()
