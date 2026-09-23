@@ -198,11 +198,30 @@ _basetemp_lock = threading.Lock()
 # env var would silently no-op through the primary entry point.
 _SLOT_DIR_NAME = Path(".hermes") / "locks" / "test-slots"
 
-# How long to wait for commit headroom before giving up and spawning
-# anyway (loudly). Bounded on purpose: if the box is out of commit for a
-# reason unrelated to us, blocking forever converts a slow suite into a
-# hung one, which is a worse failure than the one we are preventing.
+# How long to wait for commit headroom before the runner may proceed WITHOUT
+# it -- and since 2026-09-23 it only proceeds when none of its OWN workers is
+# running (see _await_commit_headroom). Blocking forever would convert a slow
+# suite into a hung one; spawning anyway while our own workers hold the memory
+# is how 2026-09-18 happened, so the escape is: run serially, never pile on.
 _DEFAULT_COMMIT_WAIT_SECONDS = 120.0
+
+# Commit ceiling as a percentage of the BASE commit limit (physical RAM plus the
+# pagefiles' INITIAL size). Measured 2026-09-23 (loops test-runner-memory-gate-
+# 20260923): the free-bytes check alone reads ullAvailPageFile, and that grows
+# as Windows expands the pagefile toward its MAXIMUM -- 32 -> 52 GB on
+# 2026-09-18 while python went 10 -> 40 GB in ten minutes during two 12-worker
+# runs. Against the growing limit the box always looked like it had "4 GB
+# free", even at ~96% of what it has without thrashing the disk.
+_DEFAULT_MAX_COMMIT_PCT = 85.0
+
+# Per-worker commit cap (Windows job object ProcessMemoryLimit) applied to each
+# pytest worker's job -- never to the runner's own job. A worker normally costs
+# 200-400 MB; one that reaches this gets allocation failures (MemoryError, a
+# loud red test) instead of paging the whole host.
+_DEFAULT_WORKER_MEMORY_LIMIT_BYTES = 4 * 1024**3
+
+# Heartbeat while holding for memory, so a held run never looks hung.
+_COMMIT_HOLD_HEARTBEAT_SECONDS = 60.0
 
 # Commit headroom required before spawning another pytest subprocess.
 # A worker costs roughly 200-400MB here, so ~4GB keeps a full complement
@@ -223,6 +242,12 @@ _SLOT_CAPACITY = max(1, os.cpu_count() or 4)
 # default risks scattering lock files into whatever cwd an importer has.
 _SLOT_DIR: "Path | None" = None
 _MIN_FREE_COMMIT = _DEFAULT_MIN_FREE_COMMIT_BYTES
+_MAX_COMMIT_PCT = _DEFAULT_MAX_COMMIT_PCT
+_WORKER_MEMORY_LIMIT = _DEFAULT_WORKER_MEMORY_LIMIT_BYTES
+# pytest workers of THIS invocation currently alive; the memory gate may only
+# proceed without headroom when this is zero.
+_ACTIVE_WORKERS = 0
+_active_workers_lock = threading.Lock()
 
 
 def _default_worker_count() -> int:
@@ -455,38 +480,162 @@ def _available_commit_bytes() -> "int | None":
         return None
 
 
+def _base_commit_limit_bytes() -> "int | None":
+    """Physical RAM + the pagefiles' configured INITIAL size, or None if unknown.
+
+    This is the commit the box has WITHOUT growing its pagefile. None when the
+    pagefile is system-managed (no explicit sizes), unreadable, or not Windows
+    -- callers then skip the percentage ceiling and keep the free-bytes check.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        import winreg
+
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management",
+        )
+        try:
+            entries, _ = winreg.QueryValueEx(key, "PagingFiles")
+        finally:
+            winreg.CloseKey(key)
+        initial_mb = _parse_initial_pagefile_mb(entries)
+        if initial_mb is None:
+            return None
+
+        class _MemoryStatusEx(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + [
+                (n, ctypes.c_ulonglong) for n in (
+                    "ullTotalPhys", "ullAvailPhys", "ullTotalPageFile", "ullAvailPageFile",
+                    "ullTotalVirtual", "ullAvailVirtual", "ullAvailExtendedVirtual")
+            ]
+
+        status = _MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+        return int(status.ullTotalPhys) + initial_mb * 1024**2
+    except Exception:
+        return None
+
+
+def _parse_initial_pagefile_mb(entries) -> "int | None":
+    """Sum the INITIAL sizes (MB) from a PagingFiles REG_MULTI_SZ value.
+
+    Each entry is ``<path> <initialMB> <maximumMB>``. ``?:\\pagefile.sys`` or an
+    entry without sizes (or ``0 0``) means system-managed -> None.
+    """
+    if isinstance(entries, str):
+        entries = [entries]
+    total = 0
+    for entry in entries or []:
+        parts = str(entry).split()
+        if len(parts) < 3 or parts[0].startswith("?"):
+            return None
+        try:
+            initial = int(parts[1])
+        except ValueError:
+            return None
+        if initial <= 0:
+            return None
+        total += initial
+    return total or None
+
+
+def _committed_bytes() -> "int | None":
+    """Commit charge in use (Windows), or None."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        class _Perf(ctypes.Structure):
+            _fields_ = [("cb", ctypes.c_ulong)] + [
+                (n, ctypes.c_size_t) for n in (
+                    "CommitTotal", "CommitLimit", "CommitPeak", "PhysicalTotal", "PhysicalAvailable",
+                    "SystemCache", "KernelTotal", "KernelPaged", "KernelNonpaged", "PageSize")
+            ] + [("HandleCount", ctypes.c_ulong), ("ProcessCount", ctypes.c_ulong), ("ThreadCount", ctypes.c_ulong)]
+
+        perf = _Perf()
+        perf.cb = ctypes.sizeof(_Perf)
+        if not ctypes.windll.psapi.GetPerformanceInfo(ctypes.byref(perf), perf.cb):
+            return None
+        return int(perf.CommitTotal) * int(perf.PageSize)
+    except Exception:
+        return None
+
+
+def _commit_ok(min_free_bytes: int, max_commit_pct: float) -> "tuple[bool, str]":
+    """(ok, reason). ok when free commit >= min_free AND commit <= pct of base."""
+    available = _available_commit_bytes()
+    if available is not None and min_free_bytes > 0 and available < min_free_bytes:
+        return False, (f"only {available / 1024**3:.1f}GB commit free "
+                       f"(want {min_free_bytes / 1024**3:.1f}GB)")
+    if max_commit_pct and max_commit_pct > 0:
+        base, used = _base_commit_limit_bytes(), _committed_bytes()
+        if base and used is not None:
+            pct = 100.0 * used / base
+            if pct > max_commit_pct:
+                return False, (f"commit {used / 1024**3:.1f}GB = {pct:.1f}% of the "
+                               f"{base / 1024**3:.1f}GB base limit (ceiling {max_commit_pct:.0f}%)")
+    return True, ""
+
+
 def _await_commit_headroom(
     min_free_bytes: int = _DEFAULT_MIN_FREE_COMMIT_BYTES,
     deadline_seconds: float = _DEFAULT_COMMIT_WAIT_SECONDS,
+    max_commit_pct: float = _DEFAULT_MAX_COMMIT_PCT,
 ) -> bool:
-    """Wait for *min_free_bytes* of commit headroom.
+    """Wait until spawning another worker will not push the host over the edge.
 
-    Returns True once headroom is available, False if the deadline passed
-    first — in which case the caller spawns anyway. Returning False rather
-    than raising is deliberate: a runner that refuses to run tests when
-    memory looks tight would be its own outage.
+    Two conditions (see _commit_ok): at least *min_free_bytes* of commit free,
+    and commit at or below *max_commit_pct* of the BASE limit (RAM + initial
+    pagefile, not the pagefile-grown limit).
+
+    Returns True once both hold. Past *deadline_seconds* it returns False (the
+    caller then spawns without headroom) ONLY when none of this invocation's
+    own workers is alive: then we are not the ones holding the memory, and
+    running serially guarantees progress instead of a hang. While our own
+    workers are alive it keeps holding -- they will finish and free memory --
+    and prints a heartbeat every minute so a held run never looks hung.
+    (Until 2026-09-23 it spawned anyway after the deadline regardless; that is
+    how two 12-worker runs took python from 10 to 40 GB on 2026-09-18.)
 
     Also returns True when headroom is unmeasurable, so an unsupported
     platform degrades to today's behaviour rather than stalling.
     """
-    if min_free_bytes <= 0:
+    if min_free_bytes <= 0 and not (max_commit_pct and max_commit_pct > 0):
         return True
-    deadline = time.monotonic() + max(0.0, deadline_seconds)
+    start = time.monotonic()
+    deadline = start + max(0.0, deadline_seconds)
+    next_beat = deadline
     while True:
-        available = _available_commit_bytes()
-        if available is None or available >= min_free_bytes:
+        ok, reason = _commit_ok(min_free_bytes, max_commit_pct)
+        if ok:
             return True
-        if time.monotonic() >= deadline:
-            if not _commit_warned.is_set():
-                _commit_warned.set()
+        now = time.monotonic()
+        if now >= deadline:
+            with _active_workers_lock:
+                idle = _ACTIVE_WORKERS == 0
+            if idle:
+                if not _commit_warned.is_set():
+                    _commit_warned.set()
+                    print(
+                        f"  [host-limit] {reason} after {deadline_seconds:.0f}s and no worker "
+                        f"of this run is alive -- spawning ONE anyway so the suite makes "
+                        f"progress. Expect slow tests.",
+                        flush=True,
+                    )
+                return False
+            if now >= next_beat:
+                next_beat = now + _COMMIT_HOLD_HEARTBEAT_SECONDS
                 print(
-                    f"  [host-limit] only {available / 1024**3:.1f}GB commit free "
-                    f"(want {min_free_bytes / 1024**3:.1f}GB) after "
-                    f"{deadline_seconds:.0f}s — spawning anyway. Expect slow "
-                    f"tests and starved background services.",
+                    f"  [host-limit] holding new workers {now - start:.0f}s: {reason}; "
+                    f"waiting for this run's own workers to finish.",
                     flush=True,
                 )
-            return False
         time.sleep(0.5)
 
 
@@ -936,12 +1085,14 @@ def _win_job_for(proc: "subprocess.Popen") -> int | None:
     """Create a kill-on-close job and put ``proc`` in it. Handle, or None.
 
     Popen's own handle names exactly the process we spawned, whatever its
-    pid means by now; only fall back to a pid lookup without it.
+    pid means by now; only fall back to a pid lookup without it. This is the
+    WORKER job, so it also carries the per-process memory cap.
     """
-    return _win_kill_on_close_job(getattr(proc, "_handle", None), proc.pid)
+    return _win_kill_on_close_job(getattr(proc, "_handle", None), proc.pid,
+                                  process_memory_limit=_WORKER_MEMORY_LIMIT)
 
 
-def _win_kill_on_close_job(handle, pid: int | None) -> int | None:
+def _win_kill_on_close_job(handle, pid: int | None, process_memory_limit: int = 0) -> int | None:
     """Create a kill-on-close job and put the process ``handle`` (or, without
     one, ``pid``) in it. Returns the job handle, or None when the job could
     not be created or the process could not be assigned.
@@ -957,6 +1108,7 @@ def _win_kill_on_close_job(handle, pid: int | None) -> int | None:
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x0100
         JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x0800
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
         JobObjectExtendedLimitInformation = 9
@@ -993,6 +1145,9 @@ def _win_kill_on_close_job(handle, pid: int | None) -> int | None:
             return None
         info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK
+        if process_memory_limit and process_memory_limit > 0:
+            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY
+            info.ProcessMemoryLimit = int(process_memory_limit)
         ok = kernel32.SetInformationJobObject(job, JobObjectExtendedLimitInformation, ctypes.byref(info), ctypes.sizeof(info))
         if handle is None and pid is not None:
             kernel32.OpenProcess.restype = ctypes.c_void_p
@@ -1254,10 +1409,17 @@ def _run_one_file_once(
     # subprocess rather than just its spawn. A slot released at spawn time
     # would bound the spawn rate but not the number of workers actually
     # resident, which is the quantity that exhausts commit.
+    global _ACTIVE_WORKERS  # noqa: PLW0603 — invocation-scoped counter
     with _acquire_global_slot(_SLOT_CAPACITY, _SLOT_DIR, enabled=_HOST_LIMIT_ENABLED):
         if _HOST_LIMIT_ENABLED:
-            _await_commit_headroom(min_free_bytes=_MIN_FREE_COMMIT)
-        return _spawn_pytest(file, pytest_args, repo_root, file_timeout)
+            _await_commit_headroom(min_free_bytes=_MIN_FREE_COMMIT, max_commit_pct=_MAX_COMMIT_PCT)
+        with _active_workers_lock:
+            _ACTIVE_WORKERS += 1
+        try:
+            return _spawn_pytest(file, pytest_args, repo_root, file_timeout)
+        finally:
+            with _active_workers_lock:
+                _ACTIVE_WORKERS -= 1
 
 
 def _child_python() -> str:
@@ -1702,6 +1864,7 @@ _OUR_FLAGS = {
     "-j", "--jobs", "--paths", "--include-integration",
     "--file-timeout", "--file-retries", "--slice", "--generate-slices", "--files",
     "--no-host-limit", "--host-slots", "--min-free-commit-gb",
+    "--max-commit-pct", "--worker-memory-limit-gb",
 }
 # pytest short flags that consume the NEXT token as their value.
 _PYTEST_VALUE_FLAGS = {"-k", "-m", "-p", "-o", "-c", "-r", "-W"}
@@ -1831,9 +1994,34 @@ def main() -> int:
         help=(
             "Wait for this much free commit charge before spawning a worker "
             "(0 disables). After "
-            f"{_DEFAULT_COMMIT_WAIT_SECONDS:.0f}s the runner spawns anyway "
-            "with a warning rather than hanging. Default: "
+            f"{_DEFAULT_COMMIT_WAIT_SECONDS:.0f}s the runner proceeds without it "
+            "only when none of its own workers is alive (serial progress); "
+            "otherwise it keeps holding. Default: "
             f"{_DEFAULT_MIN_FREE_COMMIT_BYTES / 1024**3:.0f}GB."
+        ),
+    )
+    parser.add_argument(
+        "--max-commit-pct",
+        type=float,
+        default=_DEFAULT_MAX_COMMIT_PCT,
+        metavar="PCT",
+        help=(
+            "Hold new workers while commit charge exceeds this percentage of "
+            "the BASE commit limit (RAM + the pagefile's initial size, i.e. "
+            "before Windows grows the pagefile). 0 disables. Default: "
+            f"{_DEFAULT_MAX_COMMIT_PCT:.0f}."
+        ),
+    )
+    parser.add_argument(
+        "--worker-memory-limit-gb",
+        type=float,
+        default=_DEFAULT_WORKER_MEMORY_LIMIT_BYTES / 1024**3,
+        metavar="GB",
+        help=(
+            "Windows: cap each pytest worker process at this much committed "
+            "memory via its job object; a worker that reaches it gets "
+            "MemoryError instead of paging the host. 0 disables. Default: "
+            f"{_DEFAULT_WORKER_MEMORY_LIMIT_BYTES / 1024**3:.0f}GB."
         ),
     )
     parser.add_argument(
@@ -1979,10 +2167,13 @@ def main() -> int:
 
     # Publish limiter config for the worker threads before any spawn.
     global _HOST_LIMIT_ENABLED, _SLOT_CAPACITY, _SLOT_DIR, _MIN_FREE_COMMIT  # noqa: PLW0603 — config knobs
+    global _MAX_COMMIT_PCT, _WORKER_MEMORY_LIMIT  # noqa: PLW0603 — config knobs
     _HOST_LIMIT_ENABLED = not args.no_host_limit
     _SLOT_CAPACITY = max(1, args.host_slots or _global_slot_capacity())
     _SLOT_DIR = _default_slot_dir()
     _MIN_FREE_COMMIT = int(max(0.0, args.min_free_commit_gb) * 1024**3)
+    _MAX_COMMIT_PCT = max(0.0, args.max_commit_pct)
+    _WORKER_MEMORY_LIMIT = int(max(0.0, args.worker_memory_limit_gb) * 1024**3)
 
     repo_root = Path(__file__).resolve().parent.parent
 
