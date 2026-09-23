@@ -417,6 +417,21 @@ def prune_orphaned_pages(
                 zh_twin.unlink()
                 removed.append(zh_twin)
 
+    # A zh-Hans page can outlive its English twin: a commit that deletes the
+    # skill AND its English page (an upstream restructure did exactly this to
+    # productivity-petdex) never gives the loop above a page to walk. Sweep
+    # the zh tree on its own for anything no skill backs.
+    for root_name in GENERATED_PAGE_ROOTS:
+        root = zh_skills_pages / root_name
+        if not root.is_dir():
+            continue
+        for page in sorted(root.rglob("*.md")):
+            rel = page.relative_to(zh_skills_pages)
+            if rel in expected or page.name in HAND_WRITTEN or not page.is_file():
+                continue
+            page.unlink()
+            removed.append(page)
+
     # A category that lost its last skill leaves an empty directory behind,
     # which Docusaurus does not mind but git will not track either -- drop it
     # so the tree matches what a fresh generation would produce.

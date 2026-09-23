@@ -1,3 +1,8 @@
+---
+title: Terminal Environment Provider Plugins
+description: "Add a third-party terminal backend to Hermes as a plugin"
+---
+
 # Terminal Environment Provider Plugins
 
 Hermes runs shell commands through a pluggable set of **terminal backends**.

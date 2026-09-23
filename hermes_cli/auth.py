@@ -2330,7 +2330,7 @@ def _codex_cli_import_is_superseded() -> bool:
     actionable failure, never a silently poisoned credential store.
     """
     try:
-        payload = json.loads(_codex_cli_auth_path().read_text())
+        payload = json.loads(_codex_cli_auth_path().read_text(encoding="utf-8"))
     except Exception:
         return False
     if not isinstance(payload, dict):

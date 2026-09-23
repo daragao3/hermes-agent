@@ -1,6 +1,7 @@
 ---
 title: Background completion backlogs
 sidebar_label: Completion backlogs
+description: "How interactive surfaces coalesce ready background-process completions into a single notification turn"
 ---
 
 # Background completion backlogs

@@ -303,6 +303,23 @@ def test_prune_tolerates_a_missing_zh_twin(gen_module, page_trees):
     assert removed == [orphan]
 
 
+def test_prune_removes_a_zh_page_whose_english_twin_is_already_gone(gen_module, page_trees):
+    """A skill deleted in a commit that also deleted its English page (e.g. an
+    upstream restructure) leaves only the zh-Hans twin. Walking the English
+    tree never reaches it, so the zh tree has to be swept on its own."""
+    en, zh = page_trees
+    keep = _entry(gen_module, "bundled", "productivity", "airtable")
+    keep_rel = gen_module.page_output_path(keep[0]).relative_to(gen_module.SKILLS_PAGES)
+    kept_zh = _make_page(zh, "bundled", "productivity", keep_rel.stem, "skills/productivity/airtable")
+    orphan_zh = _make_page(zh, "bundled", "productivity", "productivity-petdex", "skills/productivity/petdex")
+
+    removed = gen_module.prune_orphaned_pages([keep], skills_pages=en, zh_skills_pages=zh)
+
+    assert removed == [orphan_zh]
+    assert not orphan_zh.exists()
+    assert kept_zh.exists()
+
+
 # ---------------------------------------------------------------------------
 # check-orphaned-skill-pages.py -- the gate that FAILS on a committed orphan.
 # The prune above repairs the tree; nothing in CI would fail on it, because

@@ -1,6 +1,7 @@
 ---
 title: Public Subagent Lifecycle API
 sidebar_label: Subagent lifecycle API
+description: "Launch and supervise fresh Hermes child sessions from a plugin without touching delegate, gateway or TUI internals"
 ---
 
 # Public Subagent Lifecycle API

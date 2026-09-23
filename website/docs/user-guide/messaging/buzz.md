@@ -1,3 +1,8 @@
+---
+title: Buzz
+description: "Connect Hermes to a Buzz community on the Nostr protocol and relay channel and DM messages"
+---
+
 # Buzz
 
 The Buzz adapter connects Hermes to a [Buzz](https://github.com/block/buzz) community — Block's open-source human+agent collaboration platform built on the Nostr protocol — and relays messages between Buzz channels (or DMs) and the agent. Outbound traffic shells out to the `buzz` CLI binary ("JSON in, JSON out"); inbound uses a native Nostr WebSocket subscription (via the already-bundled `websockets` package) with CLI polling as fallback. **No extra Python packages are required** — just the `buzz` binary.

@@ -1,5 +1,7 @@
 ---
 sidebar_position: 5
+title: Connecting Desktop to Many Hermes Instances
+description: "Register local, LAN, SSH and Hermes Cloud backends in one desktop app and use them side by side"
 ---
 
 # Connecting Desktop to Many Hermes Instances

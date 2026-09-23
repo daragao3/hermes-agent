@@ -43,7 +43,7 @@ def build_gateway_parser(
             "and why.")
     _flag(
         gateway_run, "--ignore-restart-claim", dest="ignore_restart_claim",
-        help="Proceed even when another session's restart claim is still open (a bounce in "
+        help="Proceed even when another session's restart claim is still held (a bounce in "
             "progress). Only for a claim whose holder died mid-restart; otherwise wait for "
             ":8642 and re-check your deploy.")
     gateway_run.add_argument("-v", "--verbose", action="count", default=0,
@@ -92,7 +92,7 @@ def build_gateway_parser(
             "and why.")
     _flag(
         gateway_restart, "--ignore-restart-claim", dest="ignore_restart_claim",
-        help="Proceed even when another session's restart claim is still open (a bounce in "
+        help="Proceed even when another session's restart claim is still held (a bounce in "
             "progress). Only for a claim whose holder died mid-restart; otherwise wait for "
             ":8642 and re-check your deploy.")
     _add_system_flag(gateway_restart)

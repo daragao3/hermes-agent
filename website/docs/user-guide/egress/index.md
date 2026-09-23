@@ -1,6 +1,7 @@
 ---
-title: Egress proxy
 sidebar_position: 1
+title: Egress proxy
+description: "Optional outbound credential-injection firewall for remote terminal sandboxes"
 ---
 
 # Egress proxy

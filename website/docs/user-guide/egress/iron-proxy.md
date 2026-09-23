@@ -1,3 +1,8 @@
+---
+title: Egress credential-injection proxy (iron-proxy)
+description: "Keep real API keys out of Docker terminal sandboxes with the iron-proxy credential-injection proxy"
+---
+
 # Egress credential-injection proxy (iron-proxy)
 
 When Hermes runs your agent inside a Docker terminal sandbox, that sandbox normally holds your real upstream API keys (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, etc.). A prompt-injected agent in that sandbox can `cat ~/.config/openrouter/auth.json` or `printenv | grep -i key` and exfiltrate them.
