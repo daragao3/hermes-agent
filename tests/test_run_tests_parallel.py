@@ -916,7 +916,7 @@ def test_run_tests_sh_forwards_the_windows_os_path_vars():
 
     This test previously asserted the OPPOSITE: that SYSTEMDRIVE must never
     enter the clean env, because `env -i` dropping it is the condition that
-    makes a process expand `%SystemDrive%\ProgramData` as a RELATIVE path
+    makes a process expand `%SystemDrive%\\ProgramData` as a RELATIVE path
     and build the junk tree under its cwd. Preserving that was deliberate --
     it kept a reproducer alive while the writer was unknown.
 

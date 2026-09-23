@@ -94,7 +94,7 @@ class TestDetectDangerousRm:
 
     @pytest.mark.skipif(
         os.name == "nt",
-        reason="POSIX-rooted paths only: the danger rule is r'\brm\s+(-[^\s]*\s+)*/' "
+        reason="POSIX-rooted paths only: the danger rule is r'\brm\\s+(-[^\\s]*\\s+)*/' "
                "(approval_detection.py), so it never fires for a Windows path, and "
                "_is_verification_artifact_cleanup's os.path.join can never match a "
                "/-rooted operand. Neither the danger nor its exemption is "
@@ -111,7 +111,7 @@ class TestDetectDangerousRm:
 
     @pytest.mark.skipif(
         os.name == "nt",
-        reason="POSIX-rooted paths only: the danger rule is r'\brm\s+(-[^\s]*\s+)*/' "
+        reason="POSIX-rooted paths only: the danger rule is r'\brm\\s+(-[^\\s]*\\s+)*/' "
                "(approval_detection.py), so it never fires for a Windows path, and "
                "_is_verification_artifact_cleanup's os.path.join can never match a "
                "/-rooted operand. Neither the danger nor its exemption is "

@@ -184,6 +184,9 @@ class JobFlowState(TypedDict, total=False):
     # Input
     job: dict  # raw Scout-shaped JD
     job_id: str
+    # False = evaluation replay: score and route, but never upsert pipeline.json
+    # (Critic's golden-set measurement; see invoke(persist=False)). Absent = True.
+    persist_pipeline: bool
 
     # After load_profile
     profile_summary: str
@@ -297,27 +300,34 @@ def match_score_node(state: JobFlowState) -> dict:
         # dashboard + bridge + DevFlow know this job exists with its score.
         # If it's brand new, gets stage=discovered; if it already exists
         # (e.g. imported from Scout), only fills in missing fields + updates score.
-        try:
-            from pipeline_state import PipelineManager
+        if state.get("persist_pipeline", True) is False:
+            # Evaluation replay (Critic golden set): measure, never write. The
+            # golden items are REAL pipeline jobs, so an upsert here would
+            # overwrite their live score with an evaluation run's.
+            span.set_attribute("pipeline_json.upserted", False)
+            span.set_attribute("pipeline_json.skipped", "evaluation_replay")
+        else:
+            try:
+                from pipeline_state import PipelineManager
 
-            PipelineManager().upsert_metadata(
-                job_id=str(state.get("job_id") or job.get("id") or ""),
-                metadata={
-                    "title": job.get("title"),
-                    "company": job.get("company"),
-                    "location": job.get("location"),
-                    "score": result.score,
-                    "recommendation": result.recommendation,
-                    "url": job.get("url") or job.get("source_url"),
-                    "apply_url": job.get("apply_url"),
-                    "source": job.get("source_board") or job.get("source"),
-                },
-                actor="langgraph",
-                source="matcher",
-            )
-            span.set_attribute("pipeline_json.upserted", True)
-        except Exception as exc:
-            span.set_attribute("pipeline_json.upsert_error", str(exc)[:200])
+                PipelineManager().upsert_metadata(
+                    job_id=str(state.get("job_id") or job.get("id") or ""),
+                    metadata={
+                        "title": job.get("title"),
+                        "company": job.get("company"),
+                        "location": job.get("location"),
+                        "score": result.score,
+                        "recommendation": result.recommendation,
+                        "url": job.get("url") or job.get("source_url"),
+                        "apply_url": job.get("apply_url"),
+                        "source": job.get("source_board") or job.get("source"),
+                    },
+                    actor="langgraph",
+                    source="matcher",
+                )
+                span.set_attribute("pipeline_json.upserted", True)
+            except Exception as exc:
+                span.set_attribute("pipeline_json.upsert_error", str(exc)[:200])
 
         # Capture prompt + completion as span events for Langfuse's LLM UI.
         # Using span events keeps the large payloads out of the attribute table
@@ -979,11 +989,15 @@ def build_full_graph(use_checkpointer: bool = True):
 # ---------------------------------------------------------------------------
 
 
-def invoke(job: dict, job_id: Optional[str] = None) -> JobFlowState:
+def invoke(job: dict, job_id: Optional[str] = None, *, persist: bool = True) -> JobFlowState:
     """Stage-1 entry point: Matcher-only graph. Stateless.
 
     Wraps the whole run in a parent span so Langfuse groups the child node
     spans under a single trace.
+
+    ``persist=False`` is the evaluation replay mode (Critic's golden-set
+    measurement): identical scoring and routing, but ``match_score_node`` skips
+    its pipeline.json upsert, because the golden items are live pipeline jobs.
     """
     jid = job_id or job.get("id") or job.get("url") or "unknown"
     with _TRACER.start_as_current_span(f"jobflow.run:{jid}") as parent:
@@ -991,8 +1005,11 @@ def invoke(job: dict, job_id: Optional[str] = None) -> JobFlowState:
         parent.set_attribute("job.title", (job.get("title") or "")[:120])
         parent.set_attribute("job.company", (job.get("company") or "")[:80])
         parent.set_attribute("graph.variant", "matcher-only")
+        parent.set_attribute("graph.persist_pipeline", bool(persist))
         graph = build_jobflow_graph()
         initial: JobFlowState = {"job": job, "job_id": jid}
+        if not persist:
+            initial["persist_pipeline"] = False
         result = graph.invoke(initial)
         parent.set_attribute("final.score", float(result.get("score") or 0.0))
         parent.set_attribute("final.decision", str(result.get("decision") or ""))

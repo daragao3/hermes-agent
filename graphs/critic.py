@@ -1,5 +1,15 @@
 """Critic LangGraph (Phase C of ADR-0020).
 
+CALIBRATION SOURCE (2026-09-23, loops critic-golden-set-calibration-20260923): the labelled
+golden set, Langfuse ``hermes-jobs-v3``, with the PRODUCTION Matcher replayed against it every
+run (``graphs/critic_golden.py``). Critic reports accuracy per difficulty and protected-positive
+false excludes -- the release gate's own measures -- instead of prod-vs-shadow agreement, which
+the Phase-B cutover ended (there is no shadow any more; bin/matcher_diff.py is retired). The old
+diff-report input is kept ONLY as a fallback that is used while fresh (newest report < 36 h and
+no Phase-B marker); it is never used to compute drift from frozen pairs. If the golden set cannot
+be read, the run says so loudly (error, AGENT_ERROR event, non-zero runner exit) and never
+reports "no drift".
+
 Subgraph that consumes JobFlow calibration data + the Langfuse evaluation
 dataset, runs LLM-driven drift detection, generates proposals, classifies
 each proposal against allowed_knobs.json, auto-applies the safe ones, and
@@ -205,6 +215,12 @@ class CriticState(TypedDict, total=False):
     rec_agreement: int
     dim_stats: dict
     diff_reports_used: list
+    # Golden-set calibration (graphs/critic_golden.evaluate_production output) and the
+    # overall verdict on whether this run had ANY trustworthy input:
+    #   ok | unavailable | degraded (golden) -- prior-path status is in prior_path_note.
+    golden: dict
+    calibration_status: str
+    prior_path_note: str
 
     # Drift detection output
     clusters: list  # serialized DriftCluster
@@ -293,39 +309,154 @@ def _load_dataset_items(name: str) -> list:
         return []
 
 
+# The prior (prod-vs-shadow) path is a FALLBACK: usable only while its reports are fresh and no
+# Phase-B cutover has made the shadow lane production. Frozen pairs are never drift evidence.
+PRIOR_PATH_MAX_AGE_S = 36 * 3600
+
+
+def phase_b_marker_path() -> Path:
+    return _hermes() / "infra" / "phase-b" / "shadow_is_live.json"
+
+
+def _prior_path_status() -> tuple[bool, str]:
+    """(usable, reason) for the diff-report fallback."""
+    if phase_b_marker_path().exists():
+        return False, "retired: Phase-B cutover marker present (graph lane is the only Matcher)"
+    reports_dir = diff_reports_dir()
+    newest = max((p.stat().st_mtime for p in reports_dir.glob("*.json")), default=None) \
+        if reports_dir.exists() else None
+    if newest is None:
+        return False, "absent: no diff reports"
+    age = time.time() - newest
+    if age > PRIOR_PATH_MAX_AGE_S:
+        return False, f"stale: newest diff report is {age / 3600:.0f}h old"
+    return True, "fresh"
+
+
+def _golden_loud_failure(golden: dict) -> None:
+    """Unavailable/degraded golden calibration is an operator-visible failure, not 'no drift'."""
+    _emit_event("agent_error", "critic", {
+        "component": "critic.load_calibration",
+        "reason": f"golden-set calibration {golden.get('status')}",
+        "dataset": golden.get("dataset"),
+        "error": str(golden.get("error") or "")[:500],
+        "impact": "Critic measured NOTHING this run; absence of proposals is not evidence of no drift",
+    }, priority="high")
+
+
 def load_calibration_node(state: CriticState) -> dict:
-    """Aggregate diff reports + Langfuse dataset into a calibration corpus."""
+    """Golden-set evaluation of the production Matcher (+ the diff-report fallback while fresh)."""
+    from .critic_golden import evaluate_production
+
     with _TRACER.start_as_current_span("critic.load_calibration") as span:
         window = int(state.get("diff_report_window_days") or 7)
-        ds_name = state.get("dataset_name") or "hermes-jobs-v1"
 
-        pairs, summary, files = _load_diff_reports(window)
-        dataset = _load_dataset_items(ds_name)
+        prior_ok, prior_note = _prior_path_status()
+        pairs, summary, files = _load_diff_reports(window) if prior_ok else ([], {}, [])
+
+        golden = evaluate_production(state.get("dataset_name"))
+        status = golden.get("status", "unavailable")
 
         span.set_attribute("calibration.window_days", window)
+        span.set_attribute("calibration.prior_path", prior_note)
         span.set_attribute("calibration.diff_reports_count", len(files))
         span.set_attribute("calibration.paired_jobs", len(pairs))
-        span.set_attribute("calibration.dataset_items", len(dataset))
-        span.set_attribute("calibration.dataset_name", ds_name)
+        span.set_attribute("calibration.golden_status", status)
+        span.set_attribute("calibration.dataset_name", golden.get("dataset") or "")
+        if status == "ok":
+            span.set_attribute("calibration.golden_items", golden.get("items", 0))
+            span.set_attribute("calibration.golden_passed", bool(golden["evaluation"]["passed"]))
 
-        return {
+        out = {
             "paired_jobs": pairs,
-            "dataset_items": dataset,
+            "dataset_items": [],  # the unlabelled v1 table is gone; golden carries the labelled set
             "paired_count": summary.get("paired_count", len(pairs)),
             "mean_abs_score_delta": summary.get("mean_abs_score_delta", 0.0),
             "rec_agreement": summary.get("recommendation_agreement", 0),
             "dim_stats": summary.get("dimension_stats") or {},
             "diff_reports_used": files,
+            "golden": golden,
+            "calibration_status": status,
+            "prior_path_note": prior_note,
         }
+        if status != "ok":
+            _golden_loud_failure(golden)
+            out["error"] = f"golden-set calibration {status}: {golden.get('error')}"
+        return out
+
+
+def _golden_clusters(golden: Optional[dict]) -> list:
+    """Deterministic drift clusters from the golden evaluation -- no LLM needed to see a miss.
+
+    Built as plain dicts (not DriftCluster): a single protected positive lost is already a
+    finding, and DriftCluster's two-job evidence floor exists to stop an LLM inventing a pattern."""
+    if not golden or golden.get("status") != "ok":
+        return []
+    ev = golden.get("evaluation") or {}
+    clusters: list = []
+
+    def _mean_score(rows):
+        scores = [r["score"] for r in rows if isinstance(r.get("score"), (int, float))]
+        return round(sum(scores) / len(scores), 2) if scores else 0.0
+
+    fe = golden.get("false_exclude_rows") or []
+    if fe:
+        clusters.append({
+            "pattern_name": "golden_protected_positive_excluded",
+            "description": (f"The production Matcher archived {len(fe)} job(s) Diego approved "
+                            f"(golden set {golden.get('dataset')}): "
+                            + "; ".join(f"{r['company']} / {r['title']} (score {r['score']})" for r in fe[:6])),
+            "evidence_job_ids": [r["job_id"] for r in fe],
+            "affected_dimensions": [],
+            "direction": "golden_false_exclude",
+            "mean_delta": _mean_score(fe),
+            "severity": "high",
+            "hypothesized_root_cause": ("A human-approved job fell below the review threshold or tripped "
+                                        "the compensation veto; the release gate treats any such exclude as "
+                                        "a hard failure."),
+        })
+    for difficulty, acc in sorted((ev.get("accuracy_by_difficulty") or {}).items()):
+        if acc <= 0.5:
+            rows = [r for r in (fe + (golden.get("false_advance_rows") or []))
+                    if r.get("difficulty") == difficulty]
+            clusters.append({
+                "pattern_name": f"golden_accuracy_floor_{difficulty}",
+                "description": (f"Production Matcher accuracy on the {difficulty} half of the golden set is "
+                                f"{acc:.1%}, at or below chance (50%)."),
+                "evidence_job_ids": [r["job_id"] for r in rows],
+                "affected_dimensions": [],
+                "direction": "golden_accuracy_floor",
+                "mean_delta": round(acc, 3),
+                "severity": "high",
+                "hypothesized_root_cause": "Routing no longer separates this half of the set.",
+            })
+    fa = golden.get("false_advance_rows") or []
+    if fa:
+        clusters.append({
+            "pattern_name": "golden_false_advances",
+            "description": (f"{len(fa)} job(s) the golden set excludes (a stated fact below the bail line) "
+                            "were routed to tailor/review: "
+                            + "; ".join(f"{r['company']} / {r['title']} (score {r['score']})" for r in fa[:6])),
+            "evidence_job_ids": [r["job_id"] for r in fa],
+            "affected_dimensions": ["comp_alignment"],
+            "direction": "golden_false_advance",
+            "mean_delta": _mean_score(fa),
+            "severity": "medium" if len(fa) >= 3 else "low",
+            "hypothesized_root_cause": ("The compensation veto or review threshold let a sub-floor posting "
+                                        "through; costs a model call, not an opportunity."),
+        })
+    return clusters
 
 
 def detect_drift_node(state: CriticState) -> dict:
     """LLM-driven cluster detection over paired jobs."""
     with _TRACER.start_as_current_span("critic.detect_drift") as span:
+        golden_clusters = _golden_clusters(state.get("golden"))
+        span.set_attribute("drift.golden_clusters", len(golden_clusters))
         pairs = state.get("paired_jobs") or []
         if len(pairs) < 2:
             span.set_attribute("drift.skipped", "n<2")
-            return {"clusters": []}
+            return {"clusters": golden_clusters}
 
         # Build compact paired table (one line per job)
         lines = []
@@ -379,9 +510,9 @@ def detect_drift_node(state: CriticState) -> dict:
             span.record_exception(exc)
             from opentelemetry.trace import Status, StatusCode
             span.set_status(Status(StatusCode.ERROR, str(exc)[:200]))
-            return {"clusters": [], "error": f"detect_drift LLM failed: {exc}"}
+            return {"clusters": golden_clusters, "error": f"detect_drift LLM failed: {exc}"}
 
-        clusters_raw = [c.model_dump() for c in result.clusters]
+        clusters_raw = golden_clusters + [c.model_dump() for c in result.clusters]
         span.set_attribute("drift.clusters_found", len(clusters_raw))
         span.add_event(
             "gen_ai.content.completion",
@@ -1235,7 +1366,11 @@ def finalize_node(state: CriticState) -> dict:
 
         diff_reports = state.get("diff_reports_used") or []
         paired = state.get("paired_jobs") or []
-        empty_input = not diff_reports and not paired
+        golden = state.get("golden") or {}
+        golden_ok = golden.get("status") == "ok"
+        # A golden-set measurement IS input. An unavailable/degraded one is not, so such a run
+        # writes no changelog entry and the >30h staleness alarm stays honest.
+        empty_input = not diff_reports and not paired and not golden_ok
 
         if empty_input:
             span.set_attribute("finalize.empty_input", True)
@@ -1253,6 +1388,14 @@ def finalize_node(state: CriticState) -> dict:
                 "auto_applied_count": sum(1 for a in applied if a.get("executed")),
                 "auto_apply_deferred_count": sum(1 for a in applied if not a.get("executed")),
                 "propose_only_count": len(emitted),
+                "calibration_source": "golden_set" if golden_ok else "diff_reports",
+                "golden_dataset": golden.get("dataset"),
+                "golden_passed": (golden.get("evaluation") or {}).get("passed") if golden_ok else None,
+                "golden_accuracy_by_difficulty": (golden.get("evaluation") or {}).get("accuracy_by_difficulty")
+                if golden_ok else None,
+                "golden_false_excludes": len(golden.get("false_exclude_rows") or []) if golden_ok else None,
+                "golden_false_advances": len(golden.get("false_advance_rows") or []) if golden_ok else None,
+                "golden_scorer_errors": len(golden.get("scorer_errors") or []) if golden_ok else None,
             }
             with open(changelog, "a", encoding="utf-8") as f:
                 f.write(json.dumps(log_entry, default=str) + "\n")
@@ -1270,12 +1413,42 @@ def finalize_node(state: CriticState) -> dict:
             f"- Dataset items: {len(state.get('dataset_items') or [])}",
             f"- Mean |score delta|: {state.get('mean_abs_score_delta')}",
             f"- Recommendation agreement: {state.get('rec_agreement')}/{state.get('paired_count')}",
-            "",
-            f"## Drift clusters ({len(clusters)})",
+            f"- Prior (diff-report) path: {state.get('prior_path_note') or '(not evaluated)'}",
             "",
         ]
-        if not clusters:
-            lines.append("_No systematic drift detected. Sample may be too small or the graph and mailbox Matchers are well-aligned._")
+        ev = golden.get("evaluation") or {}
+        if golden_ok:
+            lines += [
+                f"## Golden-set calibration ({golden.get('dataset')})",
+                "",
+                f"- Production Matcher vs {golden.get('items')} labelled items: gate "
+                f"**{'PASS' if ev.get('passed') else 'FAIL'}**, {ev.get('correct')}/{ev.get('total')} correct",
+                "- Accuracy by difficulty: " + ", ".join(
+                    f"{k} {v:.1%}" for k, v in sorted((ev.get('accuracy_by_difficulty') or {}).items())),
+                f"- Protected positives lost (Diego-approved jobs archived): {len(ev.get('false_excludes') or [])}",
+                f"- False advances: {len(ev.get('false_advances') or [])}; scorer errors: "
+                f"{len(golden.get('scorer_errors') or [])}; wall {golden.get('wall_seconds')}s",
+            ]
+            for reason in ev.get("reasons") or []:
+                lines.append(f"- Gate reason: {reason}")
+            if golden.get("note"):
+                lines.append(f"- Note: {golden['note']}")
+            lines.append("")
+        else:
+            lines += [
+                "## CALIBRATION UNAVAILABLE",
+                "",
+                f"**Golden-set calibration {golden.get('status') or 'did not run'}**: {golden.get('error')}",
+                "",
+                "Critic measured nothing from the golden set this run. The absence of clusters below "
+                "is NOT evidence of no drift.",
+                "",
+            ]
+        lines += [f"## Drift clusters ({len(clusters)})", ""]
+        if not clusters and golden_ok:
+            lines.append("_No drift: the production Matcher's golden-set misses produced no cluster._")
+        elif not clusters:
+            lines.append("_No clusters -- and no trustworthy input either; see CALIBRATION UNAVAILABLE above._")
         for c in clusters:
             lines += [
                 f"### {c.get('pattern_name')}",
@@ -1375,7 +1548,7 @@ def build_critic_graph():
     return g.compile()
 
 
-def invoke_critic(window_days: int = 7, dataset_name: str = "hermes-jobs-v1") -> CriticState:
+def invoke_critic(window_days: int = 7, dataset_name: str = "hermes-jobs-v3") -> CriticState:
     """Run the Critic graph end-to-end. Returns final state.
 
     Wraps everything in a top-level span so Langfuse groups child spans under one trace.

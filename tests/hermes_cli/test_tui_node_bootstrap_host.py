@@ -3,7 +3,7 @@
 ``scripts/lib/node-bootstrap.sh`` is POSIX-only, and on Windows a bare ``bash``
 argv resolves through ``CreateProcess`` to ``System32\bash.exe`` -- the WSL
 launcher -- so the old code booted the default Linux distro just to fail
-``source``-ing a ``C:\`` path.  Windows now takes ``hermes_constants``'
+``source``-ing a ``C:\\`` path.  Windows now takes ``hermes_constants``'
 portable-zip bootstrap, the same split ``bootstrap_hermes_managed_node`` makes.
 """
 
