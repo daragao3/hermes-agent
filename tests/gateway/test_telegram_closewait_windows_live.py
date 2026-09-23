@@ -233,7 +233,14 @@ async def test_drain_bounded_and_functional_when_close_wedges_live(monkeypatch):
     server = _LiveBotApiServer()
     await server.start()
     try:
-        polling_req = HTTPXRequest(
+        # PTB >= 22.x declares __slots__ on HTTPXRequest, so an instance has no
+        # __dict__ and monkeypatch.setattr(instance, "shutdown", ...) raises
+        # "attribute 'shutdown' is read-only". A slot-less subclass restores a
+        # per-instance __dict__, keeping the wedge scoped to THIS object only.
+        class _WedgeableHTTPXRequest(HTTPXRequest):
+            pass
+
+        polling_req = _WedgeableHTTPXRequest(
             connection_pool_size=1,
             read_timeout=5.0,
             connect_timeout=5.0,
