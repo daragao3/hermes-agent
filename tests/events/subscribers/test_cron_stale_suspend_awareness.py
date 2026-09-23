@@ -151,6 +151,33 @@ def test_ordinary_poll_jitter_is_charged_in_full(bus, monkeypatch):
     assert mon._suspend_credit.get("j", 0.0) == 0.0
 
 
+@pytest.mark.parametrize("gap", [60.4, 61.0, 90.0, 119.0])
+def test_the_monitors_own_poll_cadence_is_not_a_suspend(bus, monkeypatch, gap):
+    """The monitor polls every 60s, so a 60-119s gap is one ordinary poll plus
+    jitter. Against the scheduler's bare 60s bar every normal poll read as a
+    host suspend: 1,402 INFO lines and a steady credit leak on 2026-09-23."""
+    mon = _monitor(bus)
+    _patch_ticker_age(monkeypatch, 5.0)
+    now = datetime.now(timezone.utc)
+    _start(bus, "j", now - timedelta(seconds=10))
+    mon.poll()  # track the run with no gap history
+    mon._last_poll_at = datetime.now(timezone.utc) - timedelta(seconds=gap)
+    mon._ticker_suspend_credit = 0.0
+    mon.poll()
+    assert mon._suspend_credit.get("j", 0.0) == 0.0
+    assert mon._ticker_suspend_credit == 0.0
+
+
+def test_a_gap_past_one_poll_plus_the_threshold_is_still_a_suspend(bus, monkeypatch):
+    mon = _monitor(bus)
+    _patch_ticker_age(monkeypatch, 5.0)
+    _start(bus, "j", datetime.now(timezone.utc) - timedelta(seconds=10))
+    mon.poll()
+    mon._last_poll_at = datetime.now(timezone.utc) - timedelta(seconds=300)
+    mon.poll()
+    assert mon._suspend_credit["j"] == pytest.approx(240.0, abs=5.0)
+
+
 # --- monitor: the ticker -----------------------------------------------------
 
 

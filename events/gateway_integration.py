@@ -18,6 +18,7 @@ from events.bus import EventBus
 from events.paths import (
     cron_stale_thresholds_path,
     digest_state_path,
+    gateway_health_state_path,
     gateway_heartbeat_path,
     whatsapp_flush_state_path,
 )
@@ -268,7 +269,7 @@ def startup(adapters: Optional[Dict] = None) -> None:
     _startup_monotonic = time.monotonic()
     _bus = EventBus()
     _registry = SubscriberRegistry()
-    _health_monitor = GatewayHealthMonitor(_bus)
+    _health_monitor = GatewayHealthMonitor(_bus, state_path=gateway_health_state_path())
     _resource_monitor = ResourcePressureMonitor(_bus)
     # Resident AI-usage collection. Default mode is 'shadow': it writes to
     # ai-tokens-resident.json while the AIUsageCollector scheduled task keeps

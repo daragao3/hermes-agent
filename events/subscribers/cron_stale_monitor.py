@@ -551,7 +551,12 @@ class CronStaleMonitor(BaseSubscriber):
         if last is None:
             return
         gap = (now - last).total_seconds()
-        credit = _suspended_seconds(gap, float(self.poll_interval_seconds))
+        # The scheduler's 60s threshold assumes its own 5s poll. This monitor
+        # polls every 60s, so an ordinary 60.4s gap crossed that bar and was
+        # read as a suspend on every single poll (1,402 INFO lines on
+        # 2026-09-23). Jitter here is measured ABOVE this loop's own interval.
+        poll = float(self.poll_interval_seconds)
+        credit = _suspended_seconds(gap, poll, threshold=poll + _SUSPEND_GAP_SECS)
         if credit <= 0:
             return
         for job_id in self._open_jobs:
