@@ -184,11 +184,11 @@ def _hold_read_then_queue_writer(lock):
     return writer_in, t, order
 
 
-def _queue_reader(lock, order):
+def _queue_reader(lock, order, long=False):
     entered = threading.Event()
 
     def reader():
-        lock.acquire_read()
+        lock.acquire_read(long=long)
         try:
             order.append("reader")
             entered.set()
@@ -219,6 +219,111 @@ def test_readers_keep_entering_while_a_writer_waits_inside_the_grace_period():
     assert writer_in.wait(timeout=5), "writer never ran after the readers drained"
     tw.join(timeout=5)
     assert order == ["reader", "writer"]
+
+
+def test_long_reader_waits_for_a_waiting_writer_even_inside_the_grace_period():
+    """THE 2026-09-22 CONVOY (11:12-11:29Z; same shape twice on 09-17). A profile
+    writer queued; inside its 600 s grace an AGENT reader entered and ran 849.8 s,
+    the writer waited 1043 s behind it, two short readers queued behind the writer,
+    and those four filled every pool slot for 9 minutes. A long reader must not be
+    admitted while a writer waits, grace period or not."""
+    import cron.scheduler as sched
+
+    lock = sched._ReadWriteLock(prefer_writer_after_s=30)
+    writer_in, tw, order = _hold_read_then_queue_writer(lock)
+    entered, tr = _queue_reader(lock, order, long=True)
+    assert not entered.wait(timeout=0.5), (
+        "a LONG reader jumped a waiting writer inside the grace period -- the 09-22 convoy")
+    lock.release_read()
+    assert writer_in.wait(timeout=5), "writer never ran after the reader already inside drained"
+    tw.join(timeout=5)
+    assert entered.wait(timeout=5), "long reader never ran after the writer released"
+    tr.join(timeout=5)
+    assert order == ["writer", "reader"]
+
+
+def test_short_reader_still_enters_while_a_writer_waits_inside_the_grace_period():
+    """The 09-13 convoy fix stands for SHORT (no_agent) readers."""
+    import cron.scheduler as sched
+
+    lock = sched._ReadWriteLock(prefer_writer_after_s=30)
+    writer_in, tw, order = _hold_read_then_queue_writer(lock)
+    entered, tr = _queue_reader(lock, order, long=False)
+    assert entered.wait(timeout=2), "a short reader queued behind a writer inside the grace period"
+    tr.join(timeout=5)
+    lock.release_read()
+    assert writer_in.wait(timeout=5)
+    tw.join(timeout=5)
+    assert order == ["reader", "writer"]
+
+
+def test_long_reader_enters_once_the_waiting_writer_has_finished():
+    """Waiting on a writer is not waiting forever: release_write wakes it."""
+    import cron.scheduler as sched
+
+    lock = sched._ReadWriteLock(prefer_writer_after_s=30)
+    writer_in, tw, order = _hold_read_then_queue_writer(lock)
+    entered, tr = _queue_reader(lock, order, long=True)
+    assert not entered.wait(timeout=0.3)
+    lock.release_read()
+    tw.join(timeout=5)
+    assert writer_in.is_set()
+    assert entered.wait(timeout=5), "long reader stranded after the writer finished"
+    tr.join(timeout=5)
+    assert order == ["writer", "reader"]
+
+
+def test_long_reader_enters_immediately_when_no_writer_waits():
+    """No writer queued: long readers are ordinary readers and share the lock."""
+    import cron.scheduler as sched
+
+    lock = sched._ReadWriteLock(prefer_writer_after_s=30)
+    lock.acquire_read()  # another reader already inside
+    try:
+        entered, tr = _queue_reader(lock, [], long=True)
+        assert entered.wait(timeout=2), "a long reader waited with no writer anywhere"
+        tr.join(timeout=5)
+    finally:
+        lock.release_read()
+
+
+def test_long_reader_is_not_stranded_when_a_waiting_writer_leaves_by_exception():
+    """acquire_write's finally must wake readers waiting on _writers_waiting alone."""
+    import time
+    import cron.scheduler as sched
+
+    lock = sched._ReadWriteLock(prefer_writer_after_s=30)
+    lock.acquire_read()
+    failed = threading.Event()
+    real_wait = lock._cond.wait
+
+    def writer():
+        def boom(*a, **k):
+            raise RuntimeError("writer thread interrupted")
+        lock._cond.wait = boom
+        try:
+            lock.acquire_write()
+        except RuntimeError:
+            failed.set()
+        finally:
+            lock._cond.wait = real_wait
+
+    entered, tr = None, None
+    # queue the long reader first, then make a writer arrive and die while waiting
+    lock._writers_waiting += 1  # simulate: a writer is queued
+    lock._writer_wait_started.append(time.monotonic())
+    entered, tr = _queue_reader(lock, [], long=True)
+    assert not entered.wait(timeout=0.3)
+    with lock._cond:
+        lock._writers_waiting -= 1
+        lock._writer_wait_started.pop()
+    tw = threading.Thread(target=writer, daemon=True)
+    tw.start()
+    tw.join(timeout=5)
+    assert failed.is_set()
+    assert entered.wait(timeout=5), "long reader stranded after a waiting writer died"
+    tr.join(timeout=5)
+    lock.release_read()
 
 
 def test_writer_preference_returns_once_the_grace_period_elapses():
@@ -347,3 +452,36 @@ def test_cron_lock_release_runs_exactly_once():
     rel()
 
     assert calls == [1], f"release ran {len(calls)} times, expected exactly 1"
+
+
+def test_run_job_classifies_agent_jobs_as_long_readers(monkeypatch):
+    """The wiring: run_job passes long = not job["no_agent"] for readers."""
+    import pytest
+    import cron.scheduler as sched
+
+    seen = []
+
+    class _Stop(Exception):
+        pass
+
+    class _FakeLock:
+        def acquire_read(self, long=False):
+            seen.append(long)
+            raise _Stop
+
+        def acquire_write(self):
+            seen.append("write")
+            raise _Stop
+
+        def release_read(self):
+            pass
+
+        def release_write(self):
+            pass
+
+    monkeypatch.setattr(sched, "_terminal_cwd_lock", _FakeLock())
+    for job in ({"id": "agent-job", "prompt": "hi"},
+                {"id": "script-job", "no_agent": True, "script": "x.py"}):
+        with pytest.raises(_Stop):
+            sched.run_job(job)
+    assert seen == [True, False]
