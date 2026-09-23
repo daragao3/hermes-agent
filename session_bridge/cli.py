@@ -4441,7 +4441,9 @@ class ProductionBackend:
             registry_sync = (
                 DesktopRegistrySyncWorker(
                     self._require_store(),
-                    registry_roots=convergence_roots,
+                    # A provider, not the tuple: re-discovered every cycle so an
+                    # account-switch store flip needs no bridge restart.
+                    registry_roots=discover_ccd_convergence_roots,
                 )
                 if should_run_desktop_registry_sync(
                     effective_config,
