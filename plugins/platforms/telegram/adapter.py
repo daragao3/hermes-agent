@@ -17,6 +17,39 @@ from hermes_cli import setup_platforms
 
 logger = logging.getLogger(__name__)
 
+
+class _PtbRetryLoopNetworkNoise(logging.Filter):
+    """Demote PTB's own "Network Retry Loop (...): Failed run number N of M. Aborting." record.
+
+    The adapter runs its own reconnect loop (``_handle_polling_network_error``) and logs every
+    transport failure itself, so PTB's ERROR + full ~90-line traceback for the SAME transient
+    NetworkError only duplicated it on the console (2026-09-22). Only the plain transport classes
+    are demoted -- BadRequest subclasses NetworkError in PTB and must stay loud -- and the record
+    is kept, as a one-line INFO, for the full log.
+    """
+
+    _TRANSIENT = frozenset({"NetworkError", "TimedOut"})
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        if record.levelno < logging.ERROR or exc is None or type(exc).__name__ not in self._TRANSIENT:
+            return True
+        try:
+            rendered = record.getMessage()  # PTB passes the "Network Retry Loop (...):" prefix as an ARG
+        except Exception:
+            return True
+        if rendered.startswith("Network Retry Loop"):
+            record.msg = "%s (%s; the Telegram adapter handles the reconnect)" % (rendered, type(exc).__name__)
+            record.args = ()
+            record.levelno, record.levelname = logging.INFO, "INFO"
+            record.exc_info, record.exc_text = None, None
+        return True
+
+
+_PTB_RETRY_NOISE_FILTER = _PtbRetryLoopNetworkNoise()
+if not any(isinstance(f, _PtbRetryLoopNetworkNoise) for f in logging.getLogger("telegram.ext").filters):
+    logging.getLogger("telegram.ext").addFilter(_PTB_RETRY_NOISE_FILTER)
+
 from agent.deadline import run_bounded_async
 
 
@@ -2036,7 +2069,11 @@ class TelegramAdapter(BasePlatformAdapter):
             await self._go_fatal_network(message, "[%s] %s Last error: %s", self.name, message, _describe_transport_error(error))
             return
         delay = min(BASE_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
-        logger.warning(
+        # INFO on the first attempt: a single transient drop (VPN/TLS, 1-13/h on this box, measured
+        # 2026-09-22) recovers on it and printed two WARNING lines per blip to the console. A second
+        # consecutive failure is what an operator needs to see.
+        logger.log(
+            logging.WARNING if attempt > 1 else logging.INFO,
             "[%s] Telegram network error (attempt %d/%d), reconnecting in %ds. Error: %s", self.name, attempt,
             MAX_NETWORK_RETRIES, delay, _describe_transport_error(error))
         await asyncio.sleep(delay)
@@ -3004,7 +3041,9 @@ class TelegramAdapter(BasePlatformAdapter):
                 # a04fcbf779 pasted the redactor's NAME into the format string and passed the
                 # raw error, so every line read "Telegram network _redact_telegram_error_text(error)
                 # ... httpx.ConnectError: " (str() of a ConnectError is empty). Name the class too.
-                logger.warning(
+                # INFO: the "(attempt N/10)" line that follows carries the same error at the level
+                # the attempt warrants; this one duplicated it at WARNING on every blip.
+                logger.info(
                     "[%s] Telegram network error, scheduling reconnect: %s", self.name,
                     _describe_transport_error(error))
                 self._spawn_polling_recovery(loop, self._handle_polling_network_error(error))

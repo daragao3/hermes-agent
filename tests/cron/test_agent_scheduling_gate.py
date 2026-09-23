@@ -29,18 +29,18 @@ ALWAYS_DISABLED = ["messaging", "clarify"]
 class TestGateOffDefault:
     def test_empty_config_denies_cronjob(self):
         assert _resolve_cron_disabled_toolsets({}) == [
-            "cronjob", "messaging", "clarify",
+            "cronjob", "messaging", "clarify", "code_execution",
         ]
 
     def test_none_config_denies_cronjob(self):
         assert _resolve_cron_disabled_toolsets(None) == [
-            "cronjob", "messaging", "clarify",
+            "cronjob", "messaging", "clarify", "code_execution",
         ]
 
     def test_cron_section_present_but_gate_absent(self):
         cfg = {"cron": {"preflight": True}}
         assert _resolve_cron_disabled_toolsets(cfg) == [
-            "cronjob", "messaging", "clarify",
+            "cronjob", "messaging", "clarify", "code_execution",
         ]
 
     def test_explicit_false_matches_default(self):
@@ -115,3 +115,32 @@ class TestUserLayerUnchanged:
         disabled = _resolve_cron_disabled_toolsets(cfg)
         assert "browser" in disabled
         assert "" not in disabled
+
+
+class TestCodeExecutionNotOfferedWhenAlwaysBlocked:
+    """execute_code in cron on a local backend under approvals.cron_mode=deny is BLOCKED on every
+    call (tools/approval.py); offering it cost a wasted turn per try -- 83 from jaum-inbox-sweeper
+    alone in three days of logs (2026-09-22). It is withheld exactly when it could never run."""
+
+    def test_default_config_withholds_it(self):
+        assert "code_execution" in _resolve_cron_disabled_toolsets({})
+
+    @pytest.mark.parametrize("cfg", [
+        {"approvals": {"cron_mode": "approve"}},
+        {"approvals": {"cron_mode": "off"}},
+        {"approvals": {"mode": "off"}},
+        {"terminal": {"backend": "modal"}},
+        {"terminal": {"backend": "singularity"}},
+        {"terminal": {"backend": "docker"}},  # may skip the guard without host mounts: keep it
+    ])
+    def test_offered_when_it_could_actually_run(self, cfg):
+        assert "code_execution" not in _resolve_cron_disabled_toolsets(cfg)
+
+    @pytest.mark.parametrize("backend", ["local", "LOCAL", "ssh", None])
+    def test_withheld_on_non_isolated_backends_under_deny(self, backend):
+        cfg = {"approvals": {"cron_mode": "deny"}, "terminal": {"backend": backend}}
+        assert "code_execution" in _resolve_cron_disabled_toolsets(cfg)
+
+    def test_not_duplicated_when_user_also_denies_it(self):
+        cfg = {"agent": {"disabled_toolsets": ["code_execution"]}}
+        assert _resolve_cron_disabled_toolsets(cfg).count("code_execution") == 1
