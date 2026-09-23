@@ -43,8 +43,33 @@ def _missing_command_hint(missing: str) -> str:
         "or use an absolute path instead of retrying the same command.")
 
 
+# `python -c` one-liners: the two shapes behind half of the cron agents' failed one-liners
+# (2026-09-21..23: 4 of 10 were a typed "\n" read as a line continuation, 1 a `; for` compound).
+_PY_C = re.compile(r"\bpython(?:3(?:\.\d+)?)?(?:\.exe)?\b[^|&;]*?\s-c\s", re.I)
+_COMPOUND_AFTER_SEMI = re.compile(r";\s*(?:for|while|if|try|with|def|class|elif|else|except|finally)\b")
+_PY_FILE_ADVICE = ("Write the code to a .py file with write_file (or use a heredoc: python - <<'EOF') "
+                   "and run that instead of retrying the one-liner.")
+
+
+def _python_c_continuation_hint(command: str, output: str) -> Optional[str]:
+    if ("unexpected character after line continuation character" in output
+            and _PY_C.search(command) and "\\n" in command):
+        return ("SyntaxError from a literal \\n inside `python -c`: Python reads backslash-n as a line "
+                "continuation, not a newline. " + _PY_FILE_ADVICE)
+    return None
+
+
+def _python_c_compound_hint(command: str, output: str) -> Optional[str]:
+    if "SyntaxError" in output and _PY_C.search(command) and _COMPOUND_AFTER_SEMI.search(command):
+        return ("SyntaxError from a compound statement (for/if/try/with/...) after `;` in `python -c`: "
+                "Python only allows simple statements to be chained with `;`. " + _PY_FILE_ADVICE)
+    return None
+
+
 # Ordered by production frequency — first match wins.
 _OUTPUT_HINTS: list[Callable[[str, str], Optional[str]]] = [
+    _python_c_continuation_hint,
+    _python_c_compound_hint,
     # gh version drift; gh already prints the valid field list.
     _regex_hint(r'Unknown JSON field: "?(\w+)',
                 "The installed gh does not support the JSON field '{0}'. The valid field list is "

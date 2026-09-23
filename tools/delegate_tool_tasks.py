@@ -17,6 +17,17 @@ _TEMPLATE_MARKER_RE = re.compile(
     r"<[A-Za-z][A-Za-z0-9]*(?:[ _-][A-Za-z0-9]+)+>|\{[A-Za-z][A-Za-z0-9]*(?:[ _-][A-Za-z0-9]+)+\}"
 )
 _MIN_BATCH_GOAL_LEN = 10
+# A marker used as a PATH SEGMENT (`applications/{job_id}/resume.md`) inside a goal that explicitly iterates
+# ("for each"/"for every" over values it lists) is a per-item pattern the subagent resolves, not a leftover
+# template. 2026-09-22: the tailor's valid "Jobs: 4459647437, ... For each, read applications/{job_id}/..."
+# fan-out was refused and had to be rewritten. A lone unexpanded marker is still refused.
+_ITERATION_RE = re.compile(r"\bfor (?:each|every)\b", re.IGNORECASE)
+
+
+def _is_iterated_path_pattern(goal: str, marker: re.Match) -> bool:
+    before = goal[marker.start() - 1] if marker.start() > 0 else ""
+    after = goal[marker.end()] if marker.end() < len(goal) else ""
+    return before in "/\\" and after in "/\\." and bool(_ITERATION_RE.search(goal))
 
 def _recover_tasks_from_json_string(tasks: Any) -> tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
     """``(parsed_list, None)`` for a JSON-array string, ``(None, error)`` for a bad string, ``(None, None)`` otherwise."""
@@ -49,7 +60,7 @@ def _validate_batch_tasks(task_list: List[Dict[str, Any]]) -> Optional[str]:
                 f"Task {i} has a placeholder goal ({goal!r}). Replace it "
                 "with a specific, self-contained description of what the subagent should accomplish."
             )
-        marker = _TEMPLATE_MARKER_RE.search(goal)
+        marker = next((m for m in _TEMPLATE_MARKER_RE.finditer(goal) if not _is_iterated_path_pattern(goal, m)), None)
         if marker:
             return (
                 f"Task {i} goal contains an unexpanded template marker "
