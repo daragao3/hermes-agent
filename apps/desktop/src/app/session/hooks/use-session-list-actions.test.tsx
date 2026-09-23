@@ -3,8 +3,6 @@ import { Suspense } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SessionInfo, SidebarSessionsRequest, SidebarSessionsResponse } from '@/hermes'
-import { $sessionsLimit, resetSessionsLimit, SIDEBAR_SESSIONS_INITIAL_LIMIT } from '@/store/layout'
-import { $showAllProfiles, setShowAllProfiles } from '@/store/profile'
 import { $cronJobs, setCronJobs } from '@/store/cron'
 import {
   beginGatewaySwitch,
@@ -12,15 +10,17 @@ import {
   recoverActiveSourceAfterFailedGatewaySwitch,
   registerGatewaySwitchLifecycle
 } from '@/store/gateway-switch'
+import { $sessionsLimit, resetSessionsLimit, SIDEBAR_SESSIONS_INITIAL_LIMIT } from '@/store/layout'
+import { $showAllProfiles, setShowAllProfiles } from '@/store/profile'
 import {
   $cronSessions,
   $messagingPlatformTotals,
   $messagingSessions,
-  $sessionAllProfileTotals,
-  $sessionProfileTotals,
   $messagingTruncated,
+  $sessionAllProfileTotals,
   $sessionProfilesTruncated,
   $sessionProfilesUsage,
+  $sessionProfileTotals,
   $sessions,
   $sessionsLoading,
   setCronSessions,

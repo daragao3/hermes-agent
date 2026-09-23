@@ -21,6 +21,7 @@ could serve the predicate is swapped for a proxy whose ``path.isabs`` is
 """
 
 import os
+import sys
 
 import pytest
 
@@ -91,7 +92,9 @@ class TestBridgePathPredicate:
     @pytest.mark.windows_only
     def test_windows_host_treats_posix_root_as_absolute(self):
         assert whatsapp_adapter._is_rooted("/etc/passwd") is True
-        assert os.path.isabs("/etc/passwd") is False  # the 3.13 ntpath delta itself
+        # The 3.13 ntpath delta itself. Before 3.13 (CI's 3.11 lane) ntpath still
+        # called a root-only path absolute; the predicate above must hold either way.
+        assert os.path.isabs("/etc/passwd") is (sys.version_info < (3, 13))
 
 
 class TestBridgeMediaContainment:

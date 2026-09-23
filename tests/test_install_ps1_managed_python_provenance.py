@@ -11,9 +11,14 @@ import subprocess
 import pytest
 
 from tests.install_ps1_fake_uv import compile_fake_uv
+from tests.timeout_budget import scaled
 
 
-pytestmark = pytest.mark.windows_only
+# Every test drives the real install.ps1 under Windows PowerShell (45 s bound per stage run),
+# and the find-timeout test waits out install.ps1's own $PythonFindTimeoutMs = 30000 by
+# design, so the suite-wide --timeout=30 cannot hold them. Same shape as
+# tests/test_install_autostash_conflict_recovery.py's runs_installer_stage.
+pytestmark = [pytest.mark.windows_only, pytest.mark.timeout(scaled(180))]
 
 _INSTALL_PS1 = Path(__file__).resolve().parents[1] / "scripts" / "install.ps1"
 

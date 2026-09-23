@@ -38,7 +38,7 @@ const real = (p: string): string | null => {
 // DEDUPING react to one instance — without pinning where that instance lives.
 const requireFrom = createRequire(path.join(__dirname, 'package.json'))
 
-// Package root (react → …/node_modules/react). 'react/package.json' is an
+// Package root (react → the resolved `react` package directory). 'react/package.json' is an
 // explicit export of react 19, so this survives the exports map.
 const pkgDir = (id: string): string | null => {
   try {
@@ -48,7 +48,7 @@ const pkgDir = (id: string): string | null => {
   }
 }
 
-// Resolved entry FILE (react/jsx-runtime → …/node_modules/react/jsx-runtime.js).
+// Resolved entry FILE (react/jsx-runtime → jsx-runtime.js inside that directory).
 const pkgEntry = (id: string): string | null => {
   try {
     return requireFrom.resolve(id)

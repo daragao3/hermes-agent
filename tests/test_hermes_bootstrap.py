@@ -466,6 +466,10 @@ class TestSuppressPlatformWmiQueries:
         hb.suppress_platform_wmi_queries()
         if sys.version_info >= (3, 13, 4):
             pytest.skip("interpreter carries the gh-130727 fix; stub is a no-op by design")
+        if sys.version_info < (3, 12):
+            # 3.11's platform.machine() reads PROCESSOR_ARCHITECTURE[W6432] only and never calls
+            # _wmi_query (WMI arrived in 3.12): '' here is the stdlib's own answer, not a stub miss.
+            pytest.skip("CPython < 3.12 platform has no WMI query; the stub has nothing to feed")
 
         assert platform.machine() in {"x86", "ARM", "ia64", "AMD64", "ARM64"}  # windows-footgun: ok — stubbed above
         # The OS query still refuses -> win32_ver() takes sys.getwindowsversion().

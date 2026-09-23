@@ -117,8 +117,8 @@ import {
   $messagingSessions,
   $messagingTruncated,
   $sessionAllProfileTotals,
-  $sessionProfileTotals,
   $sessionProfilesTruncated,
+  $sessionProfileTotals,
   $sessions,
   $sessionsLoading,
   $unreadFinishedSessionIds,
@@ -1848,6 +1848,9 @@ export function ChatSidebar({
             {!trimmedQuery && (
               <SidebarSessionsSection
                 activeSessionId={activeSidebarSessionId}
+                // Date rhythm only makes sense over the recency sort — a manual
+                // drag-order would make "Today"/"Yesterday" dividers lie.
+                card={cardRows}
                 contentClassName={cn(
                   'flex min-h-0 flex-1 flex-col pb-1.75',
                   SCROLL_Y,
@@ -1858,11 +1861,7 @@ export function ChatSidebar({
                   // virtualized long list, which must keep its own scroller.
                   !recentsVirtualizes && COMPACT_FLAT
                 )}
-                // Date rhythm only makes sense over the recency sort — a manual
-                // drag-order would make "Today"/"Yesterday" dividers lie.
-                card={cardRows}
                 dateSections={!showAllProfiles && !agentOrderManual && !showArchived && !rankedGlobally && grouping !== 'status'}
-                grouping={showArchived || rankedGlobally ? 'none' : grouping === 'status' ? 'status' : 'date'}
                 dndSensors={dndSensors}
                 emptyState={
                   showSessionSkeletons ? (
@@ -1904,6 +1903,7 @@ export function ChatSidebar({
                   ) : null
                 }
                 forceEmptyState={showSessionSkeletons}
+                grouping={showArchived || rankedGlobally ? 'none' : grouping === 'status' ? 'status' : 'date'}
                 groups={displayAgentGroups}
                 headerAction={
                   <div className="flex shrink-0 items-center gap-0.5">
@@ -1943,11 +1943,11 @@ export function ChatSidebar({
                 label={s.sessions}
                 labelMeta={recentsMeta}
                 manualOrderIds={agentOrderManual ? agentOrderIds : sortOrderIds}
-                onNewSessionInWorkspace={onNewSessionInWorkspace}
-                onNewSessionSplit={onNewSessionSplit}
                 onArchiveSession={onArchiveSession}
                 onBranchSession={onBranchSession}
                 onDeleteSession={onDeleteSession}
+                onNewSessionInWorkspace={onNewSessionInWorkspace}
+                onNewSessionSplit={onNewSessionSplit}
                 onReorderSessions={showAllProfiles ? undefined : reorderSessions}
                 onResumeSession={onResumeSession}
                 onToggle={() => setSidebarRecentsOpen(!agentsOpen)}
