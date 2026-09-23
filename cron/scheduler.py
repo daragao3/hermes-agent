@@ -4197,9 +4197,133 @@ def _process_due_job_admitted(job: dict, adapters, loop, verbose: bool) -> bool:
             admission.release()
 
 
-def _submit_with_guard(job: dict, pool: concurrent.futures.ThreadPoolExecutor, process_job):
+# -- Agent-slot cap -----------------------------------------------------------------------------
+# THE 2026-09-18 STARVATION (13:03-14:03 local, profiles/main/cron/executions.db): with
+# HERMES_CRON_MAX_PARALLEL=4, all four pool workers were held by long AGENT jobs (tailor, applier,
+# scout, ats-url-resolve, researcher, daytime-relay, inbox-sweeper; scout and ats-url-resolve ran
+# to the 3600 s wall clock). Short no_agent scripts (tracker-operator-drain */5, postgres-sync,
+# devflow-pr-build-poll, approved-release...) were CLAIMED on time and then waited 1,063-2,003 s
+# for a worker. No writer was involved, so the readers-writer lock rules could not help.
+#
+# Rule: with a bounded pool of N >= 2 workers, at most N-1 AGENT jobs (not ``no_agent``) are ever
+# handed to the pool, so one worker is always left for no_agent jobs. Total concurrency is still
+# the pool's N (the box is memory-bound; nothing here adds threads). An agent job over the cap is
+# NOT dropped and does NOT take a pool worker while it waits: it sits in ``_agent_waiting`` and is
+# handed to the pool, FIFO, the moment an admitted agent run returns. Its running-set claim and
+# execution row are taken at submission exactly as for a job waiting in the pool's own queue, so
+# duplicate-fire semantics are unchanged (a later tick sees it "already running"), its future is
+# not done (the stale sweep leaves it alone), and its deadline clock, isolation-wait budget and
+# cron_started all start inside the pool worker, i.e. only when it really starts.
+# Unbounded (max_parallel None) and N == 1 are ungated: behaviour unchanged.
+# Residual: a pool worker blocked in the readers-writer lock still counts as busy, and a waiting
+# agent job's lateness is visible only as claim-to-start delay, exactly as for pool-queued jobs.
+_agent_gate_lock = threading.Lock()
+_agent_slots_in_use = 0
+_agent_gate_cap: Optional[int] = None
+_agent_waiting: list = []  # FIFO of _AgentWaiter
+
+
+@dataclass
+class _AgentWaiter:
+    pool: Any
+    run: Callable[[], Any]
+    proxy: concurrent.futures.Future
+    job_label: str
+    on_fail: Callable[[str], None]
+
+
+def _agent_slot_cap(max_workers: Optional[int]) -> Optional[int]:
+    """Max concurrent AGENT jobs for a pool of ``max_workers``: N-1 when N >= 2, else ungated."""
+    if not max_workers or max_workers < 2:
+        return None
+    return max_workers - 1
+
+
+def _chain_future(real: concurrent.futures.Future, proxy: concurrent.futures.Future) -> None:
+    def _copy(f: concurrent.futures.Future) -> None:
+        if f.cancelled():
+            proxy.set_exception(concurrent.futures.CancelledError())
+            return
+        exc = f.exception()
+        if exc is not None:
+            proxy.set_exception(exc)
+        else:
+            proxy.set_result(f.result())
+    real.add_done_callback(_copy)
+
+
+def _agent_slot_run(run: Callable[[], Any]) -> Callable[[], Any]:
+    """Pool-side wrapper: the admitted run holds one agent slot until it RETURNS (a soft-deadline
+    abandonment returns too, so a wedged worker never pins a slot), then the next waiter goes in."""
+    def _wrapped():
+        global _agent_slots_in_use
+        try:
+            return run()
+        finally:
+            with _agent_gate_lock:
+                _agent_slots_in_use -= 1
+            _agent_gate_pump()
+    return _wrapped
+
+
+def _agent_gate_pump(raise_for: Optional["_AgentWaiter"] = None) -> None:
+    """Hand waiting agent jobs to their pool, FIFO, while agent slots are free.
+
+    A waiter whose ``pool.submit`` raises is failed through its ``on_fail`` (claim released,
+    execution finished) and its proxy future carries the exception -- except ``raise_for``, the
+    waiter being submitted synchronously by ``_submit_with_guard``, whose error is re-raised so the
+    caller's existing dispatch-failure path handles it exactly as before."""
+    global _agent_slots_in_use
+    while True:
+        with _agent_gate_lock:
+            if not _agent_waiting:
+                return
+            if _agent_gate_cap is not None and _agent_slots_in_use >= _agent_gate_cap:
+                return
+            waiter = _agent_waiting.pop(0)
+            _agent_slots_in_use += 1
+        if not waiter.proxy.set_running_or_notify_cancel():
+            with _agent_gate_lock:
+                _agent_slots_in_use -= 1
+            waiter.on_fail("cancelled while queued for an agent slot")
+            continue
+        try:
+            real = waiter.pool.submit(_agent_slot_run(waiter.run))
+        except Exception as exc:
+            with _agent_gate_lock:
+                _agent_slots_in_use -= 1
+            if waiter is raise_for:
+                raise
+            waiter.on_fail(f"Executor dispatch failed: {exc}")
+            waiter.proxy.set_exception(exc)
+            continue
+        _chain_future(real, waiter.proxy)
+
+
+def _agent_gated_submit(pool, run: Callable[[], Any], cap: int, job_label: str,
+                        on_fail: Callable[[str], None]) -> concurrent.futures.Future:
+    """Queue an agent run behind the N-1 cap; returns a future that completes with the run."""
+    global _agent_gate_cap
+    waiter = _AgentWaiter(pool, run, concurrent.futures.Future(), job_label, on_fail)
+    with _agent_gate_lock:
+        _agent_gate_cap = cap
+        _agent_waiting.append(waiter)
+    _agent_gate_pump(raise_for=waiter)
+    if not waiter.proxy.running() and not waiter.proxy.done():
+        logger.info("Job '%s' queued for an agent slot (%d of %d pool workers may run agent jobs)",
+                    job_label, cap, cap + 1)
+    return waiter.proxy
+
+
+def _submit_with_guard(job: dict, pool: concurrent.futures.ThreadPoolExecutor, process_job, *,
+                       agent_cap: Optional[int] = None):
     """Submit with the in-flight dedup guard; None if a prior tick's run is still in flight.
-    Running-set membership is released in the worker's finally."""
+    Running-set membership is released in the worker's finally.
+
+    ``agent_cap`` (from :func:`_agent_slot_cap`) routes an AGENT job through the agent-slot gate:
+    it is handed to ``pool`` only while fewer than ``agent_cap`` agent runs are admitted, and
+    otherwise waits WITHOUT holding a pool worker (the 2026-09-18 starvation; see the
+    agent-slot cap note above)."""
     job_id = job["id"]
     job_label = job.get("name", job_id)
 
@@ -4275,8 +4399,19 @@ def _submit_with_guard(job: dict, pool: concurrent.futures.ThreadPoolExecutor, p
         finally:
             release_running_job(j["id"])
 
+    def _fail_queued(reason: str) -> None:
+        """A waiter that never reached the pool: undo the claim like the submit-failure path."""
+        release_running_job(job_id)
+        _clear_run_claim_best_effort()
+        with contextlib.suppress(Exception):
+            finish_execution(execution["id"], success=False, error=reason)
+        logger.error("Job '%s' not dispatched: %s", job_label, reason)
+
     try:
-        fut = pool.submit(_run_and_release)
+        if agent_cap is not None and not job.get("no_agent"):
+            fut = _agent_gated_submit(pool, _run_and_release, agent_cap, job_label, _fail_queued)
+        else:
+            fut = pool.submit(_run_and_release)
     except Exception as submit_err:
         release_running_job(job_id)
         _clear_run_claim_best_effort()
@@ -4423,8 +4558,9 @@ def _tick_admitted(
         _results: list = []
         _all_futures: list = []
         pool = _get_parallel_pool(_max_workers)
+        _agent_cap = _agent_slot_cap(_max_workers)  # N-1 agent jobs; >= 1 worker kept for no_agent
         for job in due_jobs:
-            fut = _submit_with_guard(job, pool, _process_job)
+            fut = _submit_with_guard(job, pool, _process_job, agent_cap=_agent_cap)
             if fut is None:
                 continue
             _all_futures.append(fut)
