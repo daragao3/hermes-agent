@@ -376,8 +376,12 @@ async def web_extract_tool(urls: List[Any], format: str = None, char_limit: Opti
                 safe_urls.append(url)
                 safe_indices.append(index)
             else:
+                # The hint is what an agent needs next: cron agents kept re-trying web_extract on
+                # local JobFlow/Canvas URLs (2026-09-23), a blocked-by-design path, not a transient.
                 ssrf_blocked[index] = _result_entry(
-                    url, "Blocked: URL targets a private or internal network address"
+                    url, "Blocked: URL targets a private or internal network address. web_extract "
+                    "never fetches localhost/LAN URLs; for a local service use the terminal tool "
+                    "(e.g. curl) or read the file it serves directly."
                 )
 
         results = []

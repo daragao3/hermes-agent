@@ -261,6 +261,22 @@ def _split_rg_files_output(output: str) -> tuple[str, list[str]]:
             paths.append(line)
     return '\n'.join(diagnostics), paths
 
+_ACCESS_DENIED_MARKERS = ("access is denied", "permission denied", "os error 5)", "os error 13)")
+
+
+def _access_denied_only(diagnostics: str) -> Optional[str]:
+    """When EVERY diagnostic line is an unreadable-path complaint, a warning naming the skipped
+    paths; else None. ripgrep exits 2 on any unreadable entry even when the rest of the walk ran,
+    so "no matches + one locked dir" used to come back as a failed search (2026-09-22: a cron
+    agent's search over %TEMP% failed outright on a live pytest dir, ``Access is denied``)."""
+    lines = [ln.strip() for ln in (diagnostics or "").splitlines() if ln.strip()]
+    if not lines or not all(any(m in ln.lower() for m in _ACCESS_DENIED_MARKERS) for ln in lines):
+        return None
+    shown = "; ".join(ln.removeprefix("rg: ")[:160] for ln in lines[:3])
+    more = f" (+{len(lines) - 3} more)" if len(lines) > 3 else ""
+    return f"Skipped {len(lines)} unreadable path(s): {shown}{more}"
+
+
 def _parse_search_output(result, output_mode: str, limit: int, offset: int,
                          context: int, warning: Optional[str] = None) -> SearchResult:
     """Parse rg/grep ``| head`` output into a SearchResult (shared by both engines).
@@ -270,6 +286,9 @@ def _parse_search_output(result, output_mode: str, limit: int, offset: int,
     stdout, limit_reason = _search_stdout_and_limit(result)
     diagnostics, payload = _split_tool_diagnostics(stdout)
     if result.exit_code == 2 and not payload.strip():
+        skipped = _access_denied_only(diagnostics)
+        if skipped:
+            return SearchResult(total_count=0, warning="; ".join(w for w in (warning, skipped) if w))
         error_msg = diagnostics.strip() or result.stdout.strip() or "Search error"
         return SearchResult(error=f"Search failed: {error_msg}", total_count=0)
     lines = [ln.rstrip('\r') for ln in payload.strip().split('\n') if ln]
@@ -857,6 +876,9 @@ class SearchMixin:
                 f if posixpath.isabs(f) else posixpath.normpath(posixpath.join(scoped_common, f))
                 for f in all_files]
         bounded_sigpipe = result.exit_code == 141 and len(all_files) >= fetch_limit
+        skipped = _access_denied_only(diagnostics) if result.exit_code == 2 and not all_files else None
+        if skipped:
+            return SearchResult(files=[], total_count=0, warning=skipped)
         if result.exit_code not in {0, 1, 124} and not bounded_sigpipe and not (result.exit_code == 2 and all_files and order == "discovery"):
             if order == "modified":
                 return SearchResult(error=(

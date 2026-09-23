@@ -1180,7 +1180,9 @@ class ShellFileOperations(LintMixin, SearchMixin, FileOperations):
         basename_no_ext = os.path.splitext(filename)[0].lower()
         ext = os.path.splitext(filename)[1].lower()
         lower_name = filename.lower()
-        ls_result = self._exec(f"ls -1 {self._escape_shell_arg(dir_path)} 2>/dev/null | head -50")
+        # 1000, not 50: `ls` is alphabetical, so in a timestamp-named mailbox/log dir the first 50 are the
+        # OLDEST entries and a near-miss of a recent file was never scored (2026-09-23, mailbox/main/inbox).
+        ls_result = self._exec(f"ls -1 {self._escape_shell_arg(dir_path)} 2>/dev/null | head -1000")
         scored: list = []  # (score, filepath) — higher is better
         if ls_result.exit_code == 0 and ls_result.stdout.strip():
             for f in ls_result.stdout.strip().split('\n'):
