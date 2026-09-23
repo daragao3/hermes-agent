@@ -72,6 +72,27 @@ def test_filter_is_installed_once_on_the_ptb_logger():
     assert len(filters) >= 1
 
 
+def test_updater_stop_cleanup_error_is_demoted():
+    """2026-09-23 11:30: PTB's Updater logs its stop-time get_updates failure at ERROR (with a traceback)
+    while the adapter is already reconnecting from the same blip."""
+    try:
+        raise _named("NetworkError")
+    except BaseException:
+        exc_info = sys.exc_info()
+    record = logging.LogRecord(
+        "telegram.ext.Updater", logging.ERROR, __file__, 1,
+        "Error while calling `get_updates` one more time to mark all fetched updates. Suppressing error "
+        "to ensure graceful shutdown.", (), exc_info)
+    tg._PtbRetryLoopNetworkNoise().filter(record)
+    assert record.levelno == logging.INFO and record.exc_info is None
+
+
+def test_filter_is_on_the_updater_child_logger_too():
+    """Logger filters do not propagate to children, so "telegram.ext" alone never saw the Updater record."""
+    assert any(type(f).__name__ == "_PtbRetryLoopNetworkNoise"
+               for f in logging.getLogger("telegram.ext.Updater").filters)
+
+
 def _log_calls(fragment: str):
     tree = ast.parse(ADAPTER.read_text(encoding="utf-8"))
     for node in ast.walk(tree):

@@ -299,7 +299,7 @@ TERMINAL_TOOL_DESCRIPTION = """Execute shell commands. The host OS, shell, and t
 
 Do NOT use cat/head/tail (use read_file), grep/rg/find/ls (use search_files), sed/awk (use patch), or echo/heredoc file creation (use write_file). Reserve terminal for: builds, installs, git, processes, scripts, network, package managers — anything that needs a shell. Output is auto-truncated with the full text saved to a file — never pipe through tail/head to shorten it.
 Environment state persists: activate a virtualenv or export variables once per session, not before every command.
-Multi-line Python: write a .py file with write_file and run it. In `python -c "..."` a typed \\n is a backslash, not a newline, and for/if/try/with can never follow `;` on one line.
+Multi-line Python: write a .py file with write_file and run it. In `python -c "..."` a typed \\n is a backslash, not a newline, inside the double quotes the shell eats a backslash that precedes \\, ", $ or ` before Python sees it, and for/if/try/with can never follow `;` on one line.
 
 Foreground (default): returns INSTANTLY when the command finishes, even with a high timeout — set timeout generously for long builds.
 Background: set background=true (returns a session_id); add notify=true for bounded tasks, leave silent only for servers/daemons that never exit. After starting a server, verify readiness with a health check in a separate call (no blind sleep loops); manage with process(action="poll"/"wait").

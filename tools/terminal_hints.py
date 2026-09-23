@@ -59,6 +59,19 @@ def _python_c_continuation_hint(command: str, output: str) -> Optional[str]:
     return None
 
 
+def _python_c_backslash_quote_hint(command: str, output: str) -> Optional[str]:
+    """Third shape, seen 2026-09-23 12:02 once the first two were fixed: inside a double-quoted
+    `python -c "..."` the shell halves backslashes, so `x.replace('\\\\','/')` reaches Python as
+    `x.replace('\\','/')` -- an unterminated string."""
+    if ("unterminated string literal" in output or "EOL while scanning string literal" in output) \
+            and _PY_C.search(command) and "\\" in command:
+        return ("SyntaxError from shell quoting: inside a double-quoted `python -c \"...\"` the shell "
+                "consumes backslashes before Python sees them, so a string ending in \\ is left "
+                "unterminated. For paths use forward slashes (os.path/pathlib accept them) or chr(92). "
+                + _PY_FILE_ADVICE)
+    return None
+
+
 def _python_c_compound_hint(command: str, output: str) -> Optional[str]:
     if "SyntaxError" in output and _PY_C.search(command) and _COMPOUND_AFTER_SEMI.search(command):
         return ("SyntaxError from a compound statement (for/if/try/with/...) after `;` in `python -c`: "
@@ -69,6 +82,7 @@ def _python_c_compound_hint(command: str, output: str) -> Optional[str]:
 # Ordered by production frequency — first match wins.
 _OUTPUT_HINTS: list[Callable[[str, str], Optional[str]]] = [
     _python_c_continuation_hint,
+    _python_c_backslash_quote_hint,
     _python_c_compound_hint,
     # gh version drift; gh already prints the valid field list.
     _regex_hint(r'Unknown JSON field: "?(\w+)',

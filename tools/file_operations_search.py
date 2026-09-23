@@ -585,8 +585,11 @@ class SearchMixin:
             ls_result = self._exec(f"ls -1 {self._escape_shell_arg(parent)} 2>/dev/null | head -20")
             if ls_result.exit_code == 0 and ls_result.stdout.strip():
                 lq = basename_query.lower()
+                # Join with the caller's own separator: os.path.join on Windows appended "\" to a
+                # forward-slash parent ("mailbox/researcher\processed", 2026-09-23).
+                sep = "/" if "/" in parent and "\\" not in parent else os.sep
                 candidates = [
-                    os.path.join(parent, e) for e in ls_result.stdout.strip().split('\n')
+                    parent.rstrip("/\\") + sep + e.rstrip("\r") for e in ls_result.stdout.strip().split('\n')
                     if e and (lq in e.lower() or e.lower() in lq or e.lower().startswith(lq[:3]))]
                 if candidates:
                     hint_parts.append("Similar paths: " + ", ".join(candidates[:5]))

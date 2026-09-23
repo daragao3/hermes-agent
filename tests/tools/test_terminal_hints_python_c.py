@@ -40,6 +40,17 @@ def test_compound_after_semicolon_gets_its_own_hint():
     assert hint and "compound statement" in hint
 
 
+def test_shell_eaten_backslash_gets_the_quoting_hint():
+    """2026-09-23 12:02, tracker: the command held x.replace('\\\\','/') inside a double-quoted
+    python -c; the shell halved it and Python saw an unterminated string."""
+    cmd = ("C:/Users/diego/.hermes/agent-src/.venv/Scripts/python.exe -c \"import glob,json; fs=[]\n"
+           "print(json.dumps([x.replace('\\\\\\\\','/') for x in fs]))\"")
+    out = ("File \"<string>\", line 2\r\n    print(json.dumps([x.replace('\\','/') for x in fs]))\r\n"
+           "                          ^\r\nSyntaxError: unterminated string literal (detected at line 2)")
+    hint = th.annotate_failure(cmd, 1, out)
+    assert hint and "shell quoting" in hint and "forward slashes" in hint
+
+
 def test_no_hint_for_real_newlines_or_other_errors():
     # A heredoc / real newline is fine; the continuation hint must not fire on it.
     real_newlines = CONTINUATION_CMD.replace("\\n", "\n")
