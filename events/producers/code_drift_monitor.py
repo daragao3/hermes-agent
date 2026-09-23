@@ -65,6 +65,13 @@ logger = logging.getLogger(__name__)
 # One git probe per 15 min; a sustained episode re-pings every 6 h.
 DEFAULT_CHECK_INTERVAL_SECONDS = 900.0
 DEFAULT_RE_ALERT_COOLDOWN_SECONDS = 6 * 3600.0
+# A landing that is merely awaiting its acceptance ceremony (git in sync with
+# trunk, deployment "unaccepted") is the normal middle of every deploy: on
+# 2026-09-23 all 13 agent-src drift pages had this shape and each resolved at
+# acceptance within ~50 min, so they paged twice (drift + resolved) about work
+# that was going exactly as designed. Hold that ONE shape this long before
+# paging; any other drift shape still pages on the first sample.
+DEFAULT_UNACCEPTED_GRACE_SECONDS = 3600.0
 MISSED_SUBJECTS_CAP = 5
 
 _AGENT_SRC_DEFAULT = Path.home() / ".hermes" / "agent-src"
@@ -306,6 +313,12 @@ class DriftSample:
         return True
 
 
+def _awaiting_acceptance(sample: "DriftSample") -> bool:
+    """The checkout matches trunk and only the acceptance receipt lags: the
+    normal state between a landing and its acceptance ceremony."""
+    return sample.state == "in_sync" and sample.deployment_state == "unaccepted"
+
+
 def _git(repo: Path, *args: str) -> Tuple[int, str]:
     """Run a read-only git command; returns (returncode, stdout)."""
     try:
@@ -482,6 +495,7 @@ class CodeDriftMonitor:
         state_path: Optional[Path] = None,
         check_interval_seconds: float = DEFAULT_CHECK_INTERVAL_SECONDS,
         re_alert_cooldown_seconds: float = DEFAULT_RE_ALERT_COOLDOWN_SECONDS,
+        unaccepted_grace_seconds: float = DEFAULT_UNACCEPTED_GRACE_SECONDS,
     ):
         self.bus = bus
         # One monitor instance per watched repo: each keeps its own episode
@@ -507,6 +521,7 @@ class CodeDriftMonitor:
         )
         self.check_interval_seconds = check_interval_seconds
         self.re_alert_cooldown_seconds = re_alert_cooldown_seconds
+        self.unaccepted_grace_seconds = unaccepted_grace_seconds
 
         self._last_check: Optional[float] = None
         state = load_state(self._state_path, {})
@@ -518,6 +533,10 @@ class CodeDriftMonitor:
         last_shape = state.get("last_shape")
         self._last_shape: Optional[List] = (
             list(last_shape) if isinstance(last_shape, list) else None
+        )
+        pending = state.get("pending_since_wall")
+        self._pending_since: Optional[float] = (
+            float(pending) if isinstance(pending, (int, float)) else None
         )
 
     @property
@@ -549,6 +568,10 @@ class CodeDriftMonitor:
         """Pure edge core given (sample, wall-clock now) + persisted state."""
         if not sample.alerts:
             if not self._alerting:
+                if self._pending_since is not None:
+                    # Accepted inside the grace: never paged, nothing to resolve.
+                    self._pending_since = None
+                    self._save()
                 return None
             # Falling edge: the episode alerted, so close the loop.
             self._alerting = False
@@ -559,6 +582,13 @@ class CodeDriftMonitor:
 
         shape = sample.shape
         rising_edge = not self._alerting
+        if rising_edge and _awaiting_acceptance(sample):
+            if self._pending_since is None:
+                self._pending_since = now
+                self._save()
+            if now - self._pending_since < self.unaccepted_grace_seconds:
+                return None
+        self._pending_since = None
         shape_changed = self._last_shape is not None and shape != self._last_shape
         cooldown_elapsed = (
             self._last_emit is None
@@ -579,6 +609,7 @@ class CodeDriftMonitor:
                 "alerting": self._alerting,
                 "last_emit_wall": self._last_emit,
                 "last_shape": self._last_shape,
+                "pending_since_wall": self._pending_since,
             })
         except Exception:  # pragma: no cover - defensive
             logger.exception("CodeDriftMonitor: state persist failed")

@@ -9,10 +9,12 @@ Telegram bot connectivity (cached 5 min).
 
 import logging
 import time
+from pathlib import Path
 from typing import Dict, Optional
 
 from events.bus import EventBus
 from events.schema import EventType
+from events.state import load_state, save_state
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +32,21 @@ class GatewayHealthMonitor:
     # single 60s cycle during a Baileys resync; one blip is not an outage.
     WHATSAPP_DOWN_THRESHOLD = 2
 
-    def __init__(self, bus: EventBus):
+    def __init__(self, bus: EventBus, *, state_path: Optional[Path] = None):
         self.bus = bus
         self._last_state: Dict[str, bool] = {}  # platform -> healthy
+        # Last-known state survives a gateway restart when a path is given, so
+        # a platform that was up before the restart and is up after it does not
+        # page "-> up" (21 such pages from 10 planned restarts on 2026-09-23).
+        # Without a path (tests, ad-hoc use) the first report still emits.
+        self._state_path = Path(state_path) if state_path else None
+        if self._state_path is not None:
+            platforms = load_state(self._state_path, {}).get("platforms")
+            if isinstance(platforms, dict):
+                self._last_state = {
+                    name: value for name, value in platforms.items()
+                    if isinstance(name, str) and isinstance(value, bool)
+                }
         self._telegram_cache: Optional[bool] = None
         self._telegram_cache_ts: float = 0
         self._whatsapp_fail_streak: int = 0
@@ -122,6 +136,12 @@ class GatewayHealthMonitor:
 
         if prev == healthy:
             return None  # No state change
+
+        if self._state_path is not None:
+            try:
+                save_state(self._state_path, {"platforms": dict(self._last_state)})
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("GatewayHealthMonitor: state persist failed")
 
         status = "up" if healthy else "down"
         logger.info("Gateway health: %s -> %s", platform, status)

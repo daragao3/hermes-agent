@@ -793,3 +793,48 @@ class TestAgentSrcTrunkResolution:
         assert by_name["agent-src"].trunk_name == "codex/wave2-hermes-accepted"
         # ~/.hermes is unaffected by agent-src's declaration.
         assert by_name["hermes"].trunk_ref == "refs/heads/master"
+
+
+def awaiting_acceptance():
+    return DriftSample(state="in_sync", head="b" * 9, trunk="b" * 9,
+                       deployment_state="unaccepted", accepted_commit="a" * 40)
+
+
+def accepted():
+    return DriftSample(state="in_sync", head="b" * 9, trunk="b" * 9,
+                       deployment_state="accepted", accepted_commit="b" * 40)
+
+
+class TestUnacceptedGrace:
+    """A landing awaiting its acceptance ceremony is the normal middle of a
+    deploy (2026-09-23: 13 pages, each resolved at acceptance in <~50 min)."""
+
+    def test_accepted_inside_the_grace_never_pages(self, bus, tmp_path):
+        m = make_monitor(bus, tmp_path)
+        assert m.evaluate(awaiting_acceptance(), now=1000.0) is None
+        assert m.evaluate(awaiting_acceptance(), now=1000.0 + 2700) is None
+        assert m.evaluate(accepted(), now=1000.0 + 3000) is None
+        assert _drift_events(bus) == []
+        assert bus.query(event_type=EventType.CODE_DRIFT) == []
+
+    def test_still_unaccepted_after_the_grace_pages_once(self, bus, tmp_path):
+        m = make_monitor(bus, tmp_path)
+        assert m.evaluate(awaiting_acceptance(), now=1000.0) is None
+        assert m.evaluate(awaiting_acceptance(), now=1000.0 + 3600)
+        assert len(_drift_events(bus)) == 1
+        assert m.evaluate(awaiting_acceptance(), now=1000.0 + 4500) is None
+
+    def test_grace_survives_a_gateway_restart(self, bus, tmp_path):
+        make_monitor(bus, tmp_path).evaluate(awaiting_acceptance(), now=1000.0)
+        restarted = make_monitor(bus, tmp_path)
+        assert restarted.evaluate(awaiting_acceptance(), now=1000.0 + 3600)
+
+    def test_other_drift_shapes_still_page_immediately(self, bus, tmp_path):
+        m = make_monitor(bus, tmp_path)
+        assert m.evaluate(behind(2), now=1000.0)
+
+    def test_unverified_is_not_held(self, bus, tmp_path):
+        m = make_monitor(bus, tmp_path)
+        sample = DriftSample(state="in_sync", head="b" * 9, trunk="b" * 9,
+                             deployment_state="unverified")
+        assert m.evaluate(sample, now=1000.0)

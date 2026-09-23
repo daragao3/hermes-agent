@@ -190,6 +190,18 @@ def code_drift_state_path(repo_name: Optional[str] = None) -> Path:
     return notifications_home() / f"code_drift_state.{slug}.json"
 
 
+def gateway_health_state_path() -> Path:
+    """GatewayHealthMonitor last-known platform state (2026-09-23).
+
+    Holds {"platforms": {name: healthy}} so a gateway restart does not page
+    "whatsapp -> up" / "telegram -> up" for platforms that were never down:
+    21 of those on 2026-09-23 from 10 planned restarts. A platform that WAS
+    down when the old gateway exited still gets its recovery page.
+    Cross-profile, so canonical root.
+    """
+    return notifications_home() / "gateway_health_state.json"
+
+
 def ruff_gate_state_path() -> Path:
     """RuffGateProbe episode persistence (2026-08-17).
 
