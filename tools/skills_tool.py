@@ -495,9 +495,15 @@ def _locate_skill(name: str, local_category_name: Optional[str], project_dirs: l
                 hint="Inspect the skill in the repo checkout, or untrust the repo with "
                 "`hermes skills untrust`."), None, None
     if not skill_md or not skill_md.exists():
-        available = [s["name"] for s in _sort_skills(_find_all_skills())[:20]]
-        return _fail(f"Skill '{name}' not found.", available_skills=available,
-                     hint="Use skills_list to see all available skills"), None, None
+        all_names = [s["name"] for s in _sort_skills(_find_all_skills())]
+        close = _close_skill_names(name, all_names)
+        # The alphabetical first 20 alone never reach a misremembered name further down the list
+        # (2026-09-22: 'orchestrator:tailor-tailoring-quality-control' for jobflow-tailoring-quality-control).
+        available = close + [n for n in all_names if n not in close][: max(0, 20 - len(close))]
+        extra = {"did_you_mean": close} if close else {}
+        return _fail(f"Skill '{name}' not found.", available_skills=available, **extra,
+                     hint=(f"Closest match: '{close[0]}'. " if close else "") +
+                     "Use skills_list to see all available skills"), None, None
     return None, skill_dir, skill_md
 
 
@@ -689,3 +695,19 @@ def __getattr__(name):  # PEP 562 — lazy so no import cycles
     warn_once(__name__, name, *target)
     return getattr(importlib.import_module(target[0]), target[1])
 # ---- END PLUGIN-COMPAT ----
+
+
+def _close_skill_names(requested: str, names: list, limit: int = 3) -> list:
+    """Near-miss suggestions for a not-found skill: the bare name (any ``category:``/``category/``
+    prefix dropped) fuzzy-matched against every skill name, plus names sharing its distinctive tail."""
+    import difflib
+
+    bare = str(requested or "").replace("\\", "/").split(":")[-1].split("/")[-1].strip().lower()
+    if not bare:
+        return []
+    lowered = {n.lower(): n for n in names}
+    picks = difflib.get_close_matches(bare, list(lowered), n=limit, cutoff=0.6)
+    tail = "-".join(bare.split("-")[-2:])
+    if len(tail) >= 8:
+        picks += [k for k in lowered if k.endswith(tail) and k not in picks]
+    return [lowered[k] for k in picks[:limit]]

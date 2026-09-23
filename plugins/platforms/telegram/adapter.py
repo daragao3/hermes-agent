@@ -1901,7 +1901,10 @@ class TelegramAdapter(BasePlatformAdapter):
         # connected for as long as the recovery ladder runs (#101391: 11 h).
         if getattr(self, "_running", False):
             self._mark_degraded()
-        logger.warning(
+        # INFO: the reconnect ladder spawned below logs "(attempt N/10)" and escalates to WARNING from
+        # attempt 2, so a blip that heals on the first retry stays off the console (6 of these a night on
+        # 2026-09-22, every one recovered) while a real outage still surfaces.
+        logger.info(
             "[%s] Telegram polling degraded (%s); gateway stays alive and will retry. Error: %s", self.name, reason,
             _describe_transport_error(error))
         self._spawn_polling_recovery(asyncio.get_running_loop(), self._handle_polling_network_error(error))

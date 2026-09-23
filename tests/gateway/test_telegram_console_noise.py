@@ -91,3 +91,10 @@ def test_attempt_line_escalates_only_after_the_first_attempt():
     assert len(calls) == 1 and calls[0].func.attr == "log"
     level = ast.unparse(calls[0].args[0])
     assert level == "logging.WARNING if attempt > 1 else logging.INFO"
+
+
+def test_heartbeat_degraded_line_is_info():
+    """The ladder it spawns escalates to WARNING from attempt 2; the degraded notice itself was
+    6 WARNINGs a night for blips that all healed (2026-09-22)."""
+    calls = list(_log_calls("Telegram polling degraded (%s)"))
+    assert len(calls) == 1 and calls[0].func.attr == "info"

@@ -125,6 +125,25 @@ BATCH_MAX_MESSAGES = 20
 BATCH_RETRY_BACKOFF_SECONDS = 120.0
 
 
+
+# One notifier page must fit ONE Telegram message: 4096 UTF-16 units after MarkdownV2 escaping, which
+# can grow text by ~10-15%. 3500 leaves that headroom.
+BATCH_PAGE_CHAR_BUDGET = 3500
+
+
+def _batch_pages(items, latest, started_at, budget: int = BATCH_PAGE_CHAR_BUDGET):
+    """``[(start, end), ...]`` covering ``items`` in order, each page rendering within ``budget``.
+    A single item larger than the budget is its own page (the sender still chunks that one)."""
+    pages, start = [], 0
+    while start < len(items):
+        end = start + 1
+        while end < len(items) and len(render_batch(items[start:end + 1], latest, started_at)[0]) <= budget:
+            end += 1
+        pages.append((start, end))
+        start = end
+    return pages
+
+
 class TelegramNotifier(BaseSubscriber):
     subscriber_id = "telegram-notifier"
     poll_interval_seconds = 5
@@ -1389,20 +1408,29 @@ class TelegramNotifier(BaseSubscriber):
             return
         parts = key.split(":", 1)
         chat_id, thread_id = parts[0], parts[1] if len(parts) > 1 else ""
-        combined, batch_context = render_batch(
-            [metadata[i] if i < len(metadata) and isinstance(metadata[i], dict)
-             and metadata[i].get("message") == message else message
-             for i, message in enumerate(messages)],
-            self._latest_observations, prior_started_at,
-        )
-        if self._deliver(
-            chat_id, thread_id, combined,
-            topic_key=self._thread_id_to_key(thread_id),
-            batch_count=len(messages),
-            batch_context=batch_context,
-        ):
+        items = [metadata[i] if i < len(metadata) and isinstance(metadata[i], dict)
+                 and metadata[i].get("message") == message else message
+                 for i, message in enumerate(messages)]
+        # One Telegram message per page, sent in order; a failure requeues only the pages not yet
+        # delivered. Pre-2026-09-23 the whole batch was ONE message that the sender split into
+        # 4096-char chunks, so a timeout on chunk 2 re-sent chunk 1 on every retry (topic 9631,
+        # 22:18-22:50 on 09-22: a ~10.7 KB 3-chunk batch retried every 3 min).
+        sent = 0
+        for start, end in _batch_pages(items, self._latest_observations, prior_started_at):
+            combined, batch_context = render_batch(
+                items[start:end], self._latest_observations, prior_started_at)
+            if not self._deliver(
+                chat_id, thread_id, combined,
+                topic_key=self._thread_id_to_key(thread_id),
+                batch_count=end - start,
+                batch_context=batch_context,
+            ):
+                break
+            sent = end
+        if sent == len(messages):
             self._batch_retry_at.pop(key, None)
             return
+        messages, metadata = messages[sent:], metadata[sent:]
         # Restore to the FRONT (nothing can have appended mid-flush —
         # handle() is synchronous — but stay order-safe regardless) and
         # keep the key's original age so the retry isn't treated as a
