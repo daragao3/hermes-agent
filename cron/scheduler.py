@@ -408,12 +408,37 @@ def _resolve_cron_disabled_toolsets(cfg: dict) -> list[str]:
     agent_cfg = (cfg or {}).get("agent") or {}
     from agent.skill_utils import parse_config_string_list
 
+    if _cron_code_execution_always_denied(cfg):
+        disabled.append("code_execution")
     user_disabled = parse_config_string_list(agent_cfg.get("disabled_toolsets"))
     for name in user_disabled:
         name = str(name).strip()
         if name and name not in disabled:
             disabled.append(name)
     return disabled
+
+
+# Backends on which execute_code ALWAYS reaches the approval guard. Isolated ones (modal,
+# singularity, daytona, vercel_sandbox, docker without host bind-mounts) can skip it
+# (tools/approval.py ``_should_skip_container_guards``), so anything not listed keeps the tool.
+_CRON_EXEC_GUARDED_BACKENDS = frozenset({"local", "ssh"})
+
+
+def _cron_code_execution_always_denied(cfg: dict) -> bool:
+    """True when every execute_code call from a cron agent would come back BLOCKED.
+
+    With ``approvals.cron_mode`` deny (the default) and approvals not ``off``, tools/approval.py
+    rejects execute_code in cron on a local backend unconditionally -- nobody is present to approve.
+    Offering the tool anyway cost a wasted turn per attempt: 120+ BLOCKED results in three days of
+    gateway logs, 83 from one job (jaum-inbox-sweeper), measured 2026-09-22. So it is not offered.
+    """
+    approvals = (cfg or {}).get("approvals") or {}
+    if str(approvals.get("mode", "")).strip().lower() == "off":
+        return False
+    if str(approvals.get("cron_mode", "deny")).strip().lower() in {"approve", "off", "allow", "yes"}:
+        return False
+    backend = str(((cfg or {}).get("terminal") or {}).get("backend") or "local").strip().lower()
+    return backend in _CRON_EXEC_GUARDED_BACKENDS
 
 
 def _merge_mcp_into_per_job_toolsets(per_job: list[str], cfg: dict) -> list[str]:

@@ -137,8 +137,11 @@ def _scan_cron_skill_assembled(assembled: str) -> tuple[str, str]:
     cleaned, removed = _strip_invisible_unicode(assembled)
     if removed:
         logger.warning(
-            "Cron skill-assembled prompt: stripped %d invisible-unicode "
-            "char(s) (%s) from vetted skill content",
+            # "skill content" alone misled triage: the assembled prompt also carries pre-run
+            # script output / injected data (2026-09-22: a scraped company name, "Bloomin'<U+200B>
+            # Brands", in jobflow-applier's ready-sweep JSON -- the job has no skills at all).
+            "Cron assembled prompt: stripped %d invisible-unicode "
+            "char(s) (%s) from skill content or injected script/context data",
             len(removed), ", ".join(removed),
         )
     return cleaned, _first_pattern_error(_strip_cron_safe_constructs(cleaned), _CRON_SKILL_ASSEMBLED_PATTERNS)
