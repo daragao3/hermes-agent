@@ -38,7 +38,9 @@ class _PtbRetryLoopNetworkNoise(logging.Filter):
             rendered = record.getMessage()  # PTB passes the "Network Retry Loop (...):" prefix as an ARG
         except Exception:
             return True
-        if rendered.startswith("Network Retry Loop"):
+        # Second shape (2026-09-23 11:30): when the adapter stops polling to reconnect, PTB's Updater makes
+        # one last get_updates to mark updates read and logs its failure at ERROR -- same transient blip.
+        if rendered.startswith(("Network Retry Loop", "Error while calling `get_updates` one more time")):
             record.msg = "%s (%s; the Telegram adapter handles the reconnect)" % (rendered, type(exc).__name__)
             record.args = ()
             record.levelno, record.levelname = logging.INFO, "INFO"
@@ -47,8 +49,11 @@ class _PtbRetryLoopNetworkNoise(logging.Filter):
 
 
 _PTB_RETRY_NOISE_FILTER = _PtbRetryLoopNetworkNoise()
-if not any(isinstance(f, _PtbRetryLoopNetworkNoise) for f in logging.getLogger("telegram.ext").filters):
-    logging.getLogger("telegram.ext").addFilter(_PTB_RETRY_NOISE_FILTER)
+# Logger filters do not propagate to children: the retry loop logs on "telegram.ext", the Updater's
+# stop-time cleanup on "telegram.ext.Updater", so the filter sits on both.
+for _ptb_logger_name in ("telegram.ext", "telegram.ext.Updater"):
+    if not any(isinstance(f, _PtbRetryLoopNetworkNoise) for f in logging.getLogger(_ptb_logger_name).filters):
+        logging.getLogger(_ptb_logger_name).addFilter(_PTB_RETRY_NOISE_FILTER)
 
 from agent.deadline import run_bounded_async
 
