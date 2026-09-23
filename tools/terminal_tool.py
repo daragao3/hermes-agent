@@ -1450,7 +1450,59 @@ TERMINAL_SCHEMA = {
 }
 
 
+CRON_MAX_SLEEP_SECONDS = 120
+_SLEEP_UNITS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+_SLEEP_PATTERNS = (
+    # (pattern, fixed unit or None = read the "u" suffix group)
+    # POSIX sleep: "sleep 300", "sleep 5m", "sleep 1.5h"
+    (re.compile(r"(?<![\w-])sleep\s+(?P<n>\d+(?:\.\d+)?)(?P<u>[smhd]?)(?![\w.])", re.I), None),
+    # PowerShell: "Start-Sleep 300", "Start-Sleep -Seconds 300", "Start-Sleep -s 300"
+    (re.compile(r"start-sleep\s+(?:-s(?:econds)?\s+)?(?P<n>\d+(?:\.\d+)?)(?![\w.])", re.I), "s"),
+    # PowerShell milliseconds: "Start-Sleep -Milliseconds 300000", "Start-Sleep -m 300000"
+    (re.compile(r"start-sleep\s+-m(?:illiseconds)?\s+(?P<n>\d+)", re.I), "ms"),
+    # cmd.exe: "timeout /t 300"
+    (re.compile(r"(?<![\w-])timeout\s+/t\s+(?P<n>\d+)", re.I), "s"),
+)
+
+
+def _longest_single_sleep_seconds(command: str) -> float:
+    """Longest single sleep/wait literal in ``command`` (0 when none)."""
+    longest = 0.0
+    for pattern, fixed_unit in _SLEEP_PATTERNS:
+        for m in pattern.finditer(command or ""):
+            unit = fixed_unit if fixed_unit is not None else (m.group("u") or "").lower()
+            n = float(m.group("n"))
+            seconds = n / 1000.0 if unit == "ms" else n * _SLEEP_UNITS.get(unit, 1)
+            longest = max(longest, seconds)
+    return longest
+
+
+def _in_cron_session() -> bool:
+    from tools.approval_context import _is_cron_approval_context
+    try:
+        return _is_cron_approval_context()
+    except Exception:
+        return False
+
+
+def _cron_sleep_refusal(seconds: float, what: str) -> str:
+    return tool_error(
+        f"Refused: {what} of {seconds:g}s in a cron session. Cron jobs run against a hard "
+        f"wall-clock timeout, and long sleeps/waits were the main way cron agents ran out of time "
+        f"(loops cron-agent-job-timeouts-20260923), so a single sleep or wait is capped at "
+        f"{CRON_MAX_SLEEP_SECONDS}s here. Instead: check the thing you are waiting for now and act "
+        f"on what is ready; if it genuinely is not ready, record that for the next scheduled run and "
+        f"finish; or wait in steps of at most {CRON_MAX_SLEEP_SECONDS}s, checking between them, "
+        f"while watching the [cron time budget] note.")
+
+
 def _handle_terminal(args, **kw):
+    # Cron sessions only (2026-09-23): refuse a single long sleep instead of silently truncating it,
+    # so the agent adapts. Interactive sessions are unaffected.
+    if _in_cron_session() and not args.get("background", False):
+        _longest = _longest_single_sleep_seconds(str(args.get("command") or ""))
+        if _longest > CRON_MAX_SLEEP_SECONDS:
+            return _cron_sleep_refusal(_longest, "a sleep")
     # Models sometimes send execute_code's ``code`` here; name the stray
     # argument and the right tool instead of failing on command=None.
     if "command" not in args and "code" in args:

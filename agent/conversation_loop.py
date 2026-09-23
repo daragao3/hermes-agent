@@ -150,6 +150,59 @@ def _maybe_inject_run_budget_wrapup(agent: Any, messages: List[Dict[str, Any]]) 
     return False
 
 
+CRON_TIME_NOTE_MARKER = "[cron time budget]"
+CRON_TIME_WRAPUP_SECONDS = 600.0
+
+
+def _cron_time_note(remaining_s: float) -> str:
+    minutes = max(0, int(remaining_s // 60))
+    if remaining_s <= CRON_TIME_WRAPUP_SECONDS:
+        return (f"{CRON_TIME_NOTE_MARKER} About {minutes} min of wall-clock time left before this "
+                "cron job is killed at its timeout. WRAP UP NOW: stop waiting, sleeping or polling; "
+                "record what you have (outputs, state, a handoff note for the next run) and give "
+                "your final answer within the next few tool calls.")
+    return (f"{CRON_TIME_NOTE_MARKER} About {minutes} min of wall-clock time left before this "
+            "cron job's timeout. Do not sleep or poll for long; plan to finish well inside it.")
+
+
+def _maybe_inject_cron_time_note(agent: Any, messages: List[Dict[str, Any]]) -> bool:
+    """Cron sessions only: append the wall-clock time left to the NEWEST tool result.
+
+    2026-09-23 (loops cron-agent-job-timeouts-20260923): cron agent jobs hit their 3600 s
+    wall clock because the agent slept and polled without knowing how long it had left
+    (ats-url-resolve slept 300-1380 s at a time; tracker/tailor polled long runners). The cron
+    scheduler attaches ``agent._cron_time_remaining`` (seconds left on the job's soft deadline);
+    no other surface sets it, so interactive sessions are untouched. Same cache contract as
+    ``_maybe_inject_run_budget_wrapup``: only an unpersisted newest ``role:"tool"`` row is
+    mutated, and at most one note per tool result (the marker is the latch)."""
+    remaining_fn = getattr(agent, "_cron_time_remaining", None)
+    if not callable(remaining_fn) or getattr(agent, "_interrupt_requested", False):
+        return False
+    try:
+        remaining = float(remaining_fn())
+    except Exception:
+        return False
+    from agent.context_compressor import _DB_PERSISTED_MARKER
+    if not messages or not isinstance(messages[-1], dict) or messages[-1].get("role") != "tool":
+        return False
+    msg = messages[-1]
+    if msg.get(_DB_PERSISTED_MARKER):
+        return False
+    existing = msg.get("content", "")
+    if isinstance(existing, str):
+        if CRON_TIME_NOTE_MARKER in existing:
+            return False
+        msg["content"] = existing + "\n\n" + _cron_time_note(remaining)
+    elif isinstance(existing, list) or existing is None:
+        if any(isinstance(b, dict) and CRON_TIME_NOTE_MARKER in str(b.get("text", ""))
+               for b in (existing or [])):
+            return False
+        msg["content"] = [*(existing or []), {"type": "text", "text": _cron_time_note(remaining)}]
+    else:
+        return False
+    return True
+
+
 def _restore_user_after_reference_handoff(
     messages: List[Dict[str, Any]], user_message: Any
 ) -> bool:

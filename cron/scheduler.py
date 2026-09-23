@@ -2257,6 +2257,23 @@ def _resolve_cron_agent_setup(job: dict, job_id: str, job_name: str, jc) -> _Cro
     return setup
 
 
+def _attach_cron_time_budget(agent: Any, deadline_box: Optional[dict]) -> None:
+    """Give the agent loop the seconds left on this run's soft deadline.
+
+    ``agent.conversation_loop._maybe_inject_cron_time_note`` reads it on every tool result so a
+    cron agent knows its wall clock (loops cron-agent-job-timeouts-20260923: agents slept and
+    polled into the 3600 s timeout). The clock is the watchdog's own: the execution start that
+    ``_note_isolation_acquired`` re-based plus the job timeout, so lock wait never counts."""
+    if not deadline_box or not deadline_box.get("timeout_s"):
+        return
+
+    def _remaining() -> float:
+        return (deadline_box["execution_started_monotonic"] + float(deadline_box["timeout_s"])
+                - time.monotonic())
+
+    agent._cron_time_remaining = _remaining
+
+
 def _construct_cron_agent(AIAgent, job: dict, _cfg: dict, setup: _CronAgentSetup, *, workdir, session_id, session_db):
     runtime = setup.runtime
     pr = _cfg.get("provider_routing") or {}
@@ -2558,6 +2575,7 @@ def _run_job_impl(
         agent = _construct_cron_agent(
             AIAgent, job, _cfg, setup, workdir=scope.workdir, session_id=_cron_session_id,
             session_db=_session_db)
+        _attach_cron_time_budget(agent, _deadline_current.get()[1])
         _audit = _FireAudit(job, job_id, model)
 
         result = _run_agent_with_watchdog(
