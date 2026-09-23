@@ -503,7 +503,8 @@ class TestTickProfilePartition:
 
         monkeypatch.setattr(sched, "_terminal_cwd_lock", SimpleNamespace(
             acquire_write=lambda: acquire(isolation.acquire_write),
-            acquire_read=lambda: acquire(isolation.acquire_read),
+            # run_job passes long= (agent jobs are long readers); forward it.
+            acquire_read=lambda long=False: acquire(lambda: isolation.acquire_read(long=long)),
             release_write=isolation.release_write,
             release_read=isolation.release_read,
         ))

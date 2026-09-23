@@ -2387,7 +2387,12 @@ def run_job(
     from cron.scheduler_diagnostics import set_stage
 
     writes_globals = _job_mutates_process_globals(job)
-    acquire = _terminal_cwd_lock.acquire_write if writes_globals else _terminal_cwd_lock.acquire_read
+    if writes_globals:
+        acquire = _terminal_cwd_lock.acquire_write
+    else:
+        # Agent jobs are LONG readers: they never jump a waiting writer (see _ReadWriteLock).
+        _long_reader = not job.get("no_agent")
+        acquire = lambda: _terminal_cwd_lock.acquire_read(long=_long_reader)  # noqa: E731
     release = _terminal_cwd_lock.release_write if writes_globals else _terminal_cwd_lock.release_read
     deadline_box = _deadline_current.get()[1]
     set_stage("isolation_wait")
@@ -4598,6 +4603,24 @@ class _ReadWriteLock:
     the runtime of the readers already inside when it arrived.  Nothing here
     shortens the wait behind a reader that is ALREADY holding the lock; that
     is the pool size's problem, not the lock's.
+
+    LONG readers never enter while a writer waits (2026-09-22 11:12-11:29Z,
+    also twice on 09-17).  Bounded preference alone still let the grace period
+    admit a long reader: financier-canvas-am (a profile writer) queued, and
+    inside its 600 s grace jobflow-ats-url-resolve -- an AGENT job -- entered
+    and ran 849.8 s.  Once the grace period elapsed, two short readers queued
+    behind the writer, which itself waited 1043 s for that long reader; writer
+    + 2 queued readers + the long reader filled all 4 pool slots and nothing
+    dispatched for 9 minutes.  So :meth:`acquire_read` takes ``long``: a long
+    reader (an agent job; ``run_job`` passes ``not job.get("no_agent")``)
+    waits whenever ANY writer is waiting or active, grace period or not,
+    while a short reader (``no_agent`` / script-only) keeps the bounded
+    preference above.  A short reader delays a writer by seconds; a long one
+    by its whole run, which is exactly what the grace period must not buy.
+    Residual: a long reader already INSIDE when the writer arrives still
+    blocks it for the rest of its run -- again the pool size's problem.  And a
+    long reader now waits out every queued writer, which is cheap only
+    because writers (``workdir``/``profile`` jobs) are few and short.
     """
 
     def __init__(self, prefer_writer_after_s: Optional[float] = None) -> None:
@@ -4617,12 +4640,16 @@ class _ReadWriteLock:
             bound = _writer_preference_after_seconds()
         return time.monotonic() - min(self._writer_wait_started) >= bound
 
-    def acquire_read(self) -> None:
+    def acquire_read(self, long: bool = False) -> None:
         with self._cond:
             # Preference is time-based, but readers never wait for it to
             # BEGIN -- only for it to end, and that ends with release_write's
-            # notify_all, so an untimed wait cannot strand a reader.
-            while self._writer_active or self._writer_preferred_locked():
+            # notify_all, so an untimed wait cannot strand a reader.  A LONG
+            # reader also waits while any writer is merely waiting; that wait
+            # ends when the writer becomes active (then release_write's
+            # notify_all) or leaves the queue (acquire_write's finally).
+            while (self._writer_active or self._writer_preferred_locked()
+                   or (long and self._writers_waiting > 0)):
                 self._cond.wait()
             self._readers += 1
 
@@ -4643,6 +4670,9 @@ class _ReadWriteLock:
             finally:
                 self._writers_waiting -= 1
                 self._writer_wait_started.remove(waited_since)
+                # A long reader may be waiting on _writers_waiting alone; if this
+                # writer leaves the queue by exception it must not strand it.
+                self._cond.notify_all()
             self._writer_active = True
 
     def release_write(self) -> None:
