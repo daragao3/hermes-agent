@@ -72,6 +72,8 @@ DEFAULT_RE_ALERT_COOLDOWN_SECONDS = 6 * 3600.0
 # that was going exactly as designed. Hold that ONE shape this long before
 # paging; any other drift shape still pages on the first sample.
 DEFAULT_UNACCEPTED_GRACE_SECONDS = 3600.0
+# One daily master_trunk_ff.py cycle (05:25 local) plus two hours of slack.
+HERMES_AHEAD_HOLD_SECONDS = 26 * 3600.0
 MISSED_SUBJECTS_CAP = 5
 
 _AGENT_SRC_DEFAULT = Path.home() / ".hermes" / "agent-src"
@@ -216,12 +218,23 @@ class WatchedRepo:
     drift that actually touches executed code. agent-src leaves it empty:
     the editable install imports the whole package, so every file is
     executed surface.
+
+    ahead_hold_seconds, when non-zero, holds the "ahead" shape (checkout
+    ahead of trunk, NOT behind it) that long before paging. ~/.hermes needs
+    it: its trunk `master` FOLLOWS the live branch via the daily
+    scripts/master_trunk_ff.py fast-forward, so "ahead of master" is the
+    normal state between two FFs, not unlanded work. On 2026-09-23 it paged
+    4 times ("hermes drifting ahead 7/14/6/22") and cleared only at the
+    05:25 FF. The hold outlasts one FF cycle, so an FF that stopped
+    running still pages; behind/diverged -- master holding commits the
+    live branch lacks, the incident that script alarms on -- is never held.
     """
 
     name: str
     path: Path
     trunk_ref: str = DEFAULT_TRUNK_REF
     executed_dirs: Tuple[str, ...] = ()
+    ahead_hold_seconds: float = 0.0
 
     @property
     def trunk_name(self) -> str:
@@ -239,7 +252,8 @@ def watched_repos() -> List[WatchedRepo]:
     return [
         WatchedRepo("agent-src", _agent_src_root(), agent_src_trunk_ref()),
         WatchedRepo("hermes", _hermes_root(), "refs/heads/master",
-                    executed_dirs=HERMES_EXECUTED_DIRS),
+                    executed_dirs=HERMES_EXECUTED_DIRS,
+                    ahead_hold_seconds=HERMES_AHEAD_HOLD_SECONDS),
     ]
 
 
@@ -508,6 +522,7 @@ class CodeDriftMonitor:
         self._trunk_ref = repo.trunk_ref if repo else DEFAULT_TRUNK_REF
         self._repo_name = repo.name if repo else "agent-src"
         self._executed_dirs = repo.executed_dirs if repo else ()
+        self._ahead_hold_seconds = repo.ahead_hold_seconds if repo else 0.0
         self._sampler = sampler or (
             lambda: sample_code_drift(self._repo_path, self._trunk_ref,
                                       repo_name=self._repo_name,
@@ -582,11 +597,12 @@ class CodeDriftMonitor:
 
         shape = sample.shape
         rising_edge = not self._alerting
-        if rising_edge and _awaiting_acceptance(sample):
+        hold = self._hold_seconds(sample)
+        if rising_edge and hold > 0:
             if self._pending_since is None:
                 self._pending_since = now
                 self._save()
-            if now - self._pending_since < self.unaccepted_grace_seconds:
+            if now - self._pending_since < hold:
                 return None
         self._pending_since = None
         shape_changed = self._last_shape is not None and shape != self._last_shape
@@ -602,6 +618,16 @@ class CodeDriftMonitor:
         self._last_shape = shape
         self._save()
         return self._emit_drift(sample)
+
+    def _hold_seconds(self, sample: "DriftSample") -> float:
+        """How long this sample's shape is held before its first page (0 = never)."""
+        if _awaiting_acceptance(sample):
+            return self.unaccepted_grace_seconds
+        if (self._ahead_hold_seconds > 0 and sample.state == "ahead"
+                and not sample.behind_count
+                and sample.deployment_state not in {"unaccepted", "unverified"}):
+            return self._ahead_hold_seconds
+        return 0.0
 
     def _save(self) -> None:
         try:

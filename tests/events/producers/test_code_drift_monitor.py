@@ -838,3 +838,47 @@ class TestUnacceptedGrace:
         sample = DriftSample(state="in_sync", head="b" * 9, trunk="b" * 9,
                              deployment_state="unverified")
         assert m.evaluate(sample, now=1000.0)
+
+
+def ahead(n=3, behind_count=0):
+    return DriftSample(state="ahead", head="c" * 9, trunk="b" * 9,
+                       ahead_count=n, behind_count=behind_count,
+                       deployment_state="unknown")
+
+
+class TestHermesAheadHold:
+    """~/.hermes's master FOLLOWS the live branch via a daily fast-forward
+    (scripts/master_trunk_ff.py), so 'ahead of master' is the normal state
+    between FFs. 2026-09-23: 4 pages, each cleared by the 05:25 FF."""
+
+    def _hermes(self, bus, tmp_path):
+        return make_monitor(bus, tmp_path, repo=WatchedRepo(
+            "hermes", tmp_path, "refs/heads/master",
+            ahead_hold_seconds=26 * 3600.0))
+
+    def test_ahead_inside_one_ff_cycle_never_pages(self, bus, tmp_path):
+        m = self._hermes(bus, tmp_path)
+        assert m.evaluate(ahead(7), now=1000.0) is None
+        assert m.evaluate(ahead(22), now=1000.0 + 20 * 3600) is None
+        assert m.evaluate(in_sync(), now=1000.0 + 21 * 3600) is None
+        assert _drift_events(bus) == []
+
+    def test_ahead_past_the_hold_pages_so_a_dead_ff_is_seen(self, bus, tmp_path):
+        m = self._hermes(bus, tmp_path)
+        assert m.evaluate(ahead(7), now=1000.0) is None
+        assert m.evaluate(ahead(30), now=1000.0 + 26 * 3600)
+        assert len(_drift_events(bus)) == 1
+
+    def test_behind_is_never_held(self, bus, tmp_path):
+        """master holding commits the live branch lacks is the real incident."""
+        m = self._hermes(bus, tmp_path)
+        assert m.evaluate(behind(2), now=1000.0)
+
+    def test_agent_src_has_no_ahead_hold(self, bus, tmp_path):
+        m = make_monitor(bus, tmp_path)
+        assert m.evaluate(ahead(1), now=1000.0)
+
+    def test_production_hermes_entry_carries_the_hold(self):
+        repos = {r.name: r for r in watched_repos()}
+        assert repos["hermes"].ahead_hold_seconds >= 25 * 3600
+        assert repos["agent-src"].ahead_hold_seconds == 0.0
