@@ -63,7 +63,7 @@ $HERMES_HOME/SOUL.md
 $HERMES_HOME/SOUL.md
 ```
 
-## SOUL.md 应该写什么？
+## SOUL.md 应该写什么？ {#what-should-go-in-soulmd}
 
 用于持久的语气和个性指导，例如：
 - 语气

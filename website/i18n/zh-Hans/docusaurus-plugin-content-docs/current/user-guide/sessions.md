@@ -263,7 +263,7 @@ hermes sessions rename 20250305_091523_a1b2c3d4 "refactoring auth module"
 - **净化处理**——控制字符、零宽字符和 RTL 覆盖字符会被自动去除
 - **普通 Unicode 均可**——emoji、CJK 字符、带重音字符均支持
 
-### 压缩时的自动谱系
+### 压缩时的自动谱系 {#auto-lineage-on-compression}
 
 当 session 的上下文被压缩（通过 `/compress` 手动或自动触发）时，Hermes 会创建一个新的续接 session。如果原 session 有标题，新 session 会自动获得带编号的标题：
 

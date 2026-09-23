@@ -208,7 +208,7 @@ test/description       # 测试
 refactor/description   # 代码重构
 ```
 
-### 提交前检查
+### 提交前检查 {#before-submitting}
 
 1. **运行测试**：`scripts/run_tests.sh` 以确保 CI 一致性。仅当 wrapper 不可用或您有意在 wrapper 之外调试时，才使用直接 `python -m pytest ...`。
 2. **手动测试**：运行 `hermes` 并验证您修改的代码路径

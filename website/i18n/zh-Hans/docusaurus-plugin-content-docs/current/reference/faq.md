@@ -49,7 +49,7 @@ Hermes Agent 可与任何兼容 OpenAI 的 API 配合使用。支持的提供商
 - [在 Hermes 中使用 MCP](../guides/use-mcp-with-hermes.md#wsl2-bridge-hermes-in-wsl-to-windows-chrome)
 - [浏览器自动化](../user-guide/features/browser.md#wsl2--windows-chrome-prefer-mcp-over-browser-connect)
 
-### 我的数据会被发送到哪里？
+### 我的数据会被发送到哪里？ {#is-my-data-sent-anywhere}
 
 API 调用**仅发送至您配置的 LLM 提供商**（例如 OpenRouter、您本地的 Ollama 实例）。Hermes Agent 不收集遥测数据、使用数据或分析数据。您的对话、记忆和技能均存储在本地 `~/.hermes/` 目录中。
 

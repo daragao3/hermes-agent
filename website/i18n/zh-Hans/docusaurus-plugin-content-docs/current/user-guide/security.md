@@ -352,7 +352,7 @@ export HERMES_WRITE_SAFE_ROOT=/path/to/project:/home/you/.hermes
 写入防护仅适用于 `write_file` 和 `patch`。`terminal` 工具以同一操作系统用户身份运行，仍可通过 shell 命令 `cat` 或覆盖被拒绝的路径。拒绝列表可减少意外损害，并向模型给出明确的停止信号；它并不能沙箱化一个怀有敌意或已被攻陷的 Agent。
 :::
 
-## 用户授权（Gateway）
+## 用户授权（Gateway） {#user-authorization-gateway}
 
 运行消息 gateway 时，Hermes 通过分层授权系统控制谁可以与机器人交互。
 
@@ -777,7 +777,7 @@ chmod 600 ~/.hermes/.env
 # 切勿将 .env 文件提交到版本控制
 ```
 
-### 网络隔离
+### 网络隔离 {#network-isolation}
 
 为获得最高安全性，请在独立的机器或虚拟机上运行 gateway。在 `config.yaml` 中设置 `terminal.backend: ssh`，然后通过 `~/.hermes/.env` 中的环境变量提供主机详情：
 
