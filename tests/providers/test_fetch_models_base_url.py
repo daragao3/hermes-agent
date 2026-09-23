@@ -210,3 +210,24 @@ class TestModelPickerBaseUrlIntegration:
             mock_profile.fetch_models.assert_called_once()
             call_kwargs = mock_profile.fetch_models.call_args
             assert call_kwargs.kwargs.get("base_url") == "https://custom.proxy.com"
+
+
+def test_supports_model_listing_defaults_true_and_is_a_constructor_kwarg():
+    """Backport of upstream d364473620's field: out-of-tree provider plugins built against
+    upstream (e.g. jev-approvals) pass ``supports_model_listing=`` to ProviderProfile; before
+    the backport that raised TypeError at import and the provider silently never registered."""
+    assert ProviderProfile(name="t-default").supports_model_listing is True
+    profile = ProviderProfile(name="t-off", base_url="https://example.invalid/v1",
+                              supports_model_listing=False)
+    assert profile.supports_model_listing is False
+
+
+def test_profile_without_model_listing_never_hits_the_network():
+    """The flag short-circuits fetch_models before any URL is derived or opened."""
+    profile = ProviderProfile(name="t-off", base_url="https://example.invalid/v1",
+                              supports_model_listing=False)
+    with patch("urllib.request.urlopen") as bare,             patch("hermes_cli.urllib_security.open_credentialed_url") as opener:
+        assert profile.fetch_models(api_key="k", base_url=profile.base_url) is None
+        assert profile.fetch_models(api_key="k", base_url="https://custom.invalid/v1") is None
+    bare.assert_not_called()
+    opener.assert_not_called()
