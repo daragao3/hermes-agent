@@ -80,10 +80,12 @@ curl http://localhost:8644/health
 |----------|----------|-------------|
 | `events` | 否 | 要接受的事件类型列表（例如 `["pull_request"]`）。若为空，则接受所有事件。事件类型从 `X-GitHub-Event`、`X-GitLab-Event` 或 payload 中的 `event_type` 读取。 |
 | `secret` | **是** | 用于签名验证的 HMAC secret。若路由未设置，则回退到全局 `secret`。仅用于测试时可设为 `"INSECURE_NO_AUTH"`（跳过验证）。 |
+| `profile` | 否 | 启用 `gateway.multiplex_profiles` 时，被授权执行此路由的 profile。省略时该路由仅限默认 profile；设置 profile 名称（例如 `coder`）可将该路由及其 secret 绑定到 `/p/coder/webhooks/<route>`。 |
 | `prompt` | 否 | 使用点号表示法访问 payload 字段的模板字符串（例如 `{pull_request.title}`）。若省略，则将完整 JSON payload 转储到 prompt 中。payload 字段不可信——参见[已认证不等于可信](#authenticated-does-not-mean-trusted)。 |
 | `filters` | 否 | 声明式 payload 过滤器，在认证/请求体/事件过滤之后、agent 或直接投递之前求值。不匹配时返回 `{"status":"ignored","reason":"filter"}`（HTTP 200）。 |
 | `script` | 否 | 位于 `~/.hermes/scripts/` 下的过滤/转换脚本。webhook payload 以 JSON 形式通过 stdin 传入。stdout 为 JSON 对象时会在模板渲染前替换 payload；文本 stdout 以 `script_output` 形式暴露；空 stdout、`[SILENT]` 或非零退出码会忽略该 webhook。 |
 | `skills` | 否 | agent 运行时加载的 skill 名称列表。 |
+| `toolsets` | 否 | toolset 键列表（例如 `["terminal", "file", "web"]`），仅对由此路由触发的运行**替换**平台级 webhook toolset。只能手动编辑配置——无法通过 `hermes webhook subscribe` 设置，因此 agent 创建的订阅无法自行授予更高权限的工具。名称的校验方式与 `platform_toolsets` 条目相同（未知名称或受平台限制的名称会被丢弃）。参见[按路由配置 toolset](#per-route-toolsets)。 |
 | `deliver` | 否 | 响应发送目标：`github_comment`、`telegram`、`discord`、`slack`、`signal`、`sms`、`whatsapp`、`matrix`、`mattermost`、`homeassistant`、`email`、`dingtalk`、`feishu`、`wecom`、`weixin`、`bluebubbles`、`qqbot`，或 `log`（默认）。 |
 | `deliver_extra` | 否 | 额外的投递配置——键取决于 `deliver` 类型（例如 `repo`、`pr_number`、`chat_id`）。值支持与 `prompt` 相同的 `{dot.notation}` 模板语法。 |
 | `deliver_only` | 否 | 若为 `true`，完全跳过 agent——渲染后的 `prompt` 模板直接作为消息体投递。零 LLM token 消耗，亚秒级投递。参见[直接投递模式](#direct-delivery-mode)了解使用场景。要求 `deliver` 为真实目标（非 `log`）。 |
@@ -445,6 +447,47 @@ agent 可通过 terminal 工具在 `webhook-subscriptions` skill 的引导下创
 
 ---
 
+## 按路由配置 toolset {#per-route-toolsets}
+
+Webhook agent 运行默认使用一套刻意收紧的 toolset（`web_search`、`web_extract`、`vision_analyze`、`clarify`），因为 webhook payload 可能携带不可信的第三方内容——公开 PR 的标题或 issue 评论绝不应该能够通过 prompt 注入进入你的终端。
+
+对于**可信**路由——例如推送系统告警的本机监控守护进程、内部 CI 系统——你可以只为该路由授予更宽的 toolset，而不必放宽其他所有 webhook 路由：
+
+```yaml
+platforms:
+  webhook:
+    enabled: true
+    extra:
+      routes:
+        oom-emergency:
+          secret: "monitor-secret"
+          prompt: "Memory emergency: {detail}. Diagnose with ps/free/py-spy and report."
+          toolsets: ["terminal", "file", "code_execution", "web"]
+          deliver: "telegram"
+```
+
+对于动态订阅，请直接编辑 `~/.hermes/webhook_subscriptions.json` 来添加 `toolsets` 键：
+
+```json
+{
+  "oom-emergency": {
+    "secret": "...",
+    "prompt": "...",
+    "toolsets": ["terminal", "file", "web"],
+    "deliver": "telegram"
+  }
+}
+```
+
+行为与安全特性：
+
+- 路由列表会**替换**该路由运行时的平台级 webhook toolset 解析结果（而不是合并）。
+- 名称通过与 `platform_toolsets` 配置相同的路径进行校验——未知名称和受平台限制的 toolset 会被丢弃。
+- `hermes webhook subscribe` 刻意**不**接受 toolset 参数。授予更高权限的工具必须手动编辑配置文件，因此在运行时创建自身订阅的 agent 无法自行授予 `terminal`。
+- 只为发送方完全由你掌控、且配置了真实 HMAC secret 的路由授予更高权限的 toolset。任何能向该路由 POST 有效签名 payload 的人，实际上就是在运行一个拥有这些工具的 agent。
+
+---
+
 ## 安全性 {#security}
 
 webhook 适配器包含多层安全机制：
@@ -455,6 +498,7 @@ webhook 适配器包含多层安全机制：
 
 - **GitHub**：`X-Hub-Signature-256` 请求头——以 `sha256=` 为前缀的 HMAC-SHA256 十六进制摘要
 - **GitLab**：`X-Gitlab-Token` 请求头——明文 secret 字符串匹配
+- **Standard Webhooks**：`webhook-id`、`webhook-timestamp` 和 `webhook-signature` 请求头——签名内容为 `{id}.{timestamp}.{raw_body}`，签名格式为 `v1,<base64-hmac-sha256>`
 - **通用（V2，推荐）**：`X-Webhook-Signature-V2` + `X-Webhook-Timestamp` 请求头——对 `<timestamp>.<body>` 计算的 HMAC-SHA256 十六进制摘要。时间戳（Unix 秒）必须在服务器时钟的 ±300 秒之内，这可防止被截获的请求在之后被重放。
 - **通用（V1，遗留）**：`X-Webhook-Signature` 请求头——仅对请求体计算的原始 HMAC-SHA256 十六进制摘要。出于向后兼容仍被接受，但没有重放保护（被截获的请求可无限期重放）；gateway 会对每个路由记录一次弃用警告。请将发送方切换到 V2。
 
@@ -463,6 +507,11 @@ webhook 适配器包含多层安全机制：
 ### Secret 为必填项
 
 每个路由必须有 secret——直接设置在路由上或从全局 `secret` 继承。没有 secret 的路由会导致适配器在启动时报错退出。仅用于开发/测试时，可将 secret 设为 `"INSECURE_NO_AUTH"` 以完全跳过验证。
+
+启用多 profile 路由时，路由的 `profile` 字段还会把该 secret
+绑定到唯一的执行目标。没有 `profile` 的路由仅限
+默认 profile。即使请求携带了有效的路由签名，只要其 `/p/<profile>/`
+前缀与路由绑定不匹配，仍会被拒绝。
 
 `INSECURE_NO_AUTH` 仅在 gateway 绑定到回环地址（`127.0.0.1`、`localhost`、`::1`）时被接受。若与非回环绑定（如 `0.0.0.0` 或局域网 IP）组合使用，适配器拒绝启动——这可防止在公共接口上意外暴露未认证的端点。
 
@@ -481,7 +530,7 @@ platforms:
 
 ### 幂等性
 
-投递 ID（来自 `X-GitHub-Delivery`、`X-Request-ID` 或时间戳回退）缓存 **1 小时**。重复投递（例如 webhook 重试）会被静默跳过并返回 `200` 响应，防止重复触发 agent 运行。
+投递 ID（来自 `X-GitHub-Delivery`、`svix-id`、`webhook-id`、`X-Request-ID` 或时间戳回退）缓存 **1 小时**。重复投递（例如 webhook 重试）会被静默跳过并返回 `200` 响应，防止重复触发 agent 运行。
 
 ### 请求体大小限制
 
@@ -540,7 +589,7 @@ platforms:
 
 ### 重复响应
 
-- 幂等性缓存应能防止此问题——检查 webhook 来源是否发送了投递 ID 请求头（`X-GitHub-Delivery` 或 `X-Request-ID`）
+- 幂等性缓存应能防止此问题——检查 webhook 来源是否发送了投递 ID 请求头（`X-GitHub-Delivery`、`svix-id`、`webhook-id` 或 `X-Request-ID`）
 - 投递 ID 缓存 1 小时
 
 ### `gh` CLI 错误（GitHub 评论投递）

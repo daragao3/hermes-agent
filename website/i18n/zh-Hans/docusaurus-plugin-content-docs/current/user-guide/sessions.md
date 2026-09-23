@@ -42,7 +42,7 @@ Hermes 存储 session 历史以便恢复对话，但不会在每次对话时重�
 上下文增长最常见的原因不是媒体文件本身，而是冗长的文本：粘贴的转录、完整日志、大型工具输出、长 diff、重复的状态报告以及详细的证明转储。优先使用摘要、文件路径、重点摘录和工具支持的查找，而不是将大型内容复制到聊天中。
 
 :::tip
-当 session 变长时使用 `/compress`，用 `/new` 开启新线程，仅在需要从存储中删除旧的已结束 session 时才使用 `hermes sessions prune`。压缩会减少活跃上下文，而不是隐私删除。向 `/new` 传入名称（例如 `/new payments-refactor`）可以预先设置新 session 的初始标题——便于之后通过 `/resume <name>` 或 `/sessions` 选择器找到它。
+当 session 变长时使用 `/compress`，用 `/new` 开启新线程，仅在需要从存储中删除旧的已结束 session 时才使用 `hermes sessions prune`。如果只是 `state.db` 变得很大，请先尝试非破坏性的选项：`hermes sessions optimize` 会合并 FTS5 索引段并对数据库执行 VACUUM，不会触碰任何 session 数据。压缩会减少活跃上下文，而不是隐私删除。向 `/new` 传入名称（例如 `/new payments-refactor`）可以预先设置新 session 的初始标题——便于之后通过 `/resume <name>` 或 `/sessions` 选择器找到它。
 :::
 
 ### Session 来源
@@ -92,6 +92,10 @@ hermes chat -c
 
 这会从 SQLite 数据库中查找最近的 `cli` session 并加载其完整对话历史。
 
+#### 按终端继续 {#per-terminal-continue}
+
+不带参数的 `-c` 能感知终端：每个 CLI session 都会在 `~/.hermes/terminal-sessions/` 下留下一个小的面包屑文件，以其所在的终端为键（tty 设备、tmux 窗格、kitty 窗口、wezterm 窗格、Zellij 窗格、Windows Terminal session 等）。当你在*同一个*终端中再次运行 `hermes -c` 时，Hermes 会恢复该终端自己的 session——因此并排的两个窗格会各自继续自己的对话，而不是都抢占全局最近的那一个。如果该终端没有面包屑（首次使用、session 已删除，或面包屑已超过 30 天而过期），`-c` 会回退到恢复最近 session 的行为。`-c "name"` 和 `--resume` 不受影响。在 `config.yaml` 中设置 `session.terminal_continue: false` 可禁用此功能。
+
 ### 按名称恢复
 
 如果你已为 session 设置了标题（见下方[Session 命名](#session-naming)），可以按名称恢复：
@@ -115,11 +119,51 @@ hermes -r 20250305_091523_a1b2c3d4
 # 按标题恢复
 hermes --resume "refactoring auth"
 
+# 恢复最近的 session——与 -c 的查找方式相同
+hermes --resume latest
+
 # 或使用 chat 子命令
 hermes chat --resume 20250305_091523_a1b2c3d4
 ```
 
 Session ID 在退出 CLI session 时显示，也可通过 `hermes sessions list` 查找。
+
+:::note
+`latest` 是 `--resume` 的保留关键字。标题恰好为 "latest" 的 session 仍可通过其 ID 或 `-c latest`（按标题匹配）访问。
+:::
+
+### 在指定目录中恢复 {#resume-in-a-specific-directory}
+
+传入 `--in <dir>` 可在启动或恢复前切换到某个目录。与 `--resume latest`（或 `-c`）组合使用时，会选取该目录所属工作区的最近 session——无需先 `cd`，也不必记住 session ID：
+
+```bash
+# 恢复属于 ./my-project 的最近 session
+hermes --resume latest --in ./my-project
+
+# 同样适用于 TUI
+hermes --tui --resume latest --in ./my-project
+```
+
+`--in` 还会把 session 固定在该目录：被恢复 session 记录的工作目录不会被还原（等同于传入了 `--no-restore-cwd`）。
+
+### 恢复时还原工作目录 {#resume-restores-the-working-directory}
+
+恢复 CLI session 时，Hermes 还会 `cd` 回该 session 记录的工作目录（其 git 仓库根目录或项目目录），使对话在它所属的工作区中继续。如果你想留在当前目录，请传入 `--no-restore-cwd`：
+
+```bash
+hermes --resume 20250305_091523_a1b2c3 --no-restore-cwd
+```
+
+一行 `↪ restored workspace dir: …` 会确认目录已切换。还原失败绝不会导致恢复本身失败。
+
+### 按工作区过滤 Session {#filtering-sessions-by-workspace}
+
+`hermes sessions list` 接受 `--workspace <needle>`，只显示工作区键（git 仓库根目录，否则为 cwd）匹配的 session——按路径子串或精确的目录名匹配：
+
+```bash
+hermes sessions list --workspace my-project
+hermes sessions list --workspace ~/code/hermes-agent
+```
 
 ### 恢复时的对话摘要 {#conversation-recap-on-resume}
 
@@ -179,7 +223,8 @@ Session ID 格式为 `YYYYMMDD_HHMMSS_<hex>`——CLI/TUI session 使用 6 位�
 
 **故障模式：**
 - 未配置主频道 → CLI 拒绝并提示 `/sethome`。
-- 平台未启用/gateway 未运行 → CLI 在 60 秒后超时并显示明确消息，CLI session 保持完整。
+- Gateway 未运行（没有任何进程认领该请求）→ CLI 在 60 秒后超时并显示明确消息，CLI session 保持完整。
+- 传输缓慢：gateway 一旦认领切换，就会通过一次真实的 agent 轮次重放你的完整 session，对于很长的 session 可能需要几分钟。CLI 会显示 "Still transferring..." 心跳并最多等待 15 分钟——它绝不会把缓慢的传输误报为 "gateway not running"。
 - 线程创建失败（权限不足、话题模式未开启）→ 直接回退到主频道并仍然完成切换；没有线程隔离，但切换本身有效。
 - `adapter.send` 失败（速率限制、临时 API 错误）→ 切换标记为失败并附带原因；行被清除以便重试。
 
@@ -371,7 +416,7 @@ hermes sessions export --format md --model sonnet --min-messages 50 --redact
 hermes sessions export --format md --session-id 20250305_091523_a1b2c3d4 --delete-after-verified --yes
 ```
 
-Markdown/QMD 导出为每个 session 写入一个 `.md` 或 `.qmd` 文件，并附带一个 `manifest.jsonl`，记录文件路径、消息数量、lineage id 和 SHA-256。批量导出必须带至少一个过滤条件，不带过滤条件的批量导出会被拒绝。`--delete-after-verified` 仅限与 `--session-id` 搭配使用，且必须加 `--yes`。`--redact` 会在写入前从消息内容和工具输出中清除密钥（API key、token、凭据）— 任何打算分享的导出都建议加上。
+Markdown/QMD 导出为每个 session 写入一个 `.md` 或 `.qmd` 文件，并附带一个 `manifest.jsonl`，记录文件路径、消息数量、lineage id 和 SHA-256。批量导出必须带至少一个过滤条件，不带过滤条件的批量导出会被拒绝。`--delete-after-verified` 仅限与 `--session-id` 搭配使用，且必须加 `--yes`。由于删除父 session 也会删除其委派/子 agent session，此模式会先将每个委派 session 导出到单独的文件并校验，然后才删除任何内容。如果导出期间委派集合发生变化，删除将被拒绝。`--redact` 会在写入前从消息内容和工具输出中清除密钥（API key、token、凭据）— 任何打算分享的导出都建议加上。
 
 ### 删除 Session
 
@@ -395,10 +440,31 @@ hermes sessions rename 20250305_091523_a1b2c3d4 debugging auth flow
 
 如果标题已被另一个 session 使用，则显示错误。
 
+### 固定 Session {#pin-a-session}
+
+固定会设置一个持久的“保留”标志：被固定的 session 不受
+`sessions.auto_archive` 过期清扫影响，并且总是出现在列表中。它与 Desktop
+侧边栏 Pinned 分区使用的是同一个标志——从任一界面固定，两边都能看到。
+
+```bash
+# 固定一个或多个 session（唯一 ID 前缀即可）
+hermes sessions pin 20250305_091523_a1b2c3d4
+hermes sessions pin 20250305 20250306
+
+# 取消固定
+hermes sessions unpin 20250305_091523_a1b2c3d4
+
+# 列出已固定的 session
+hermes sessions pinned
+
+# 机器可读输出，例如用于每晚备份你的固定集合
+hermes sessions pinned --json > pinned-sessions.json
+```
+
 ### 清理旧 Session
 
 ```bash
-# 删除 90 天前已结束的 session（默认）
+# 删除已不活跃 90 天的已结束 session（默认）
 hermes sessions prune
 
 # 自定义时间阈值——裸数字表示天数
@@ -440,7 +506,9 @@ hermes sessions prune --older-than 30 --yes
 时间值（`--older-than`、`--newer-than`、`--before`、`--after`）接受时长
 （`5h`、`30m`、`2d`、`1w`）、裸数字天数，或 ISO
 时间戳（`2026-07-05`、`2026-07-05 14:30`）。`--older-than`/`--before` 设定
-上界；`--newer-than`/`--after` 设定下界。两者组合即可构成一个窗口。
+上界；`--newer-than`/`--after` 设定下界。`--older-than`/`--newer-than`
+这一对使用最近的消息活动时间（空 session 则回退到 session 开始时间）；
+`--before`/`--after` 明确使用 session 开始时间。组合任一对即可构成一个窗口。
 
 属性过滤器：`--source`（平台，精确匹配）、`--title` / `--model` /
 `--branch`（不区分大小写的子串）、`--provider`（计费提供商，
@@ -500,11 +568,86 @@ Database size: 12.4 MB
 
 如需更深入的分析——token 用量、费用估算、工具分解和活动模式——请使用 [`hermes insights`](/reference/cli-commands#hermes-insights)。
 
+### 修复滞留的 Gateway Session {#repair-stranded-gateway-sessions}
+
+如果某个 gateway 对话在重启后“回到过去”——像最近的消息从未发生过一样
+恢复了几天前的话题——那么实时对话可能滞留在一个丢失了路由身份的 session 行中
+（这类损坏已在 v0.21 的 session 连续性工作中修复；当前版本从构造上防止它发生，
+并会在运行时自愈）。
+
+`hermes sessions repair-routing` 会找出含有消息但没有路由身份的 session 行，
+并将每一行重新挂接到它所延续的对话上——但仅在证据明确无歧义时才这样做：
+
+```bash
+# 仅报告——显示每个孤立行、拟采纳的关系以及证据
+hermes sessions repair-routing
+
+# 执行采纳（先停止 gateway——运行中的 gateway 在内存中持有
+# 旧的路由，并会把它写回覆盖修复结果）
+hermes sessions repair-routing --apply
+
+# 放宽/收窄连续性窗口（默认 900 秒）
+hermes sessions repair-routing --max-gap-seconds 300
+```
+
+证据规则：
+
+- **lineage（谱系）**——孤立行的 `parent_session_id` 指向同一平台上一个带键的行
+  （这是记录下来的事实；不适用时间窗口）
+- **contiguity（连续性）**——恰好有一个同平台的带键行在孤立行开始时间的
+  窗口内变为静默
+
+任何有歧义的情况（两个候选前驱、两个孤立行争夺同一前驱）都会附带原因报告，
+并保持不动——错误的采纳会把一个对话拼接到另一个聊天中。被取代的行会以
+`superseded_by_repair` 退役，因此重启恢复永远不会让它复活。
+
+修复刻意**不是自动的**：如果该聊天此后已经积累了第二段历史，选择它延续哪条线程
+由你决定。无论哪种情况，滞留的对话都仍可通过 `/resume` 和 session 搜索读取——
+修复唯一改变的是路由。请先备份
+（`cp ~/.hermes/state.db ~/.hermes/state.db.bak`）。
+
+
+## 从 Claude Code 和 Codex CLI 导入 Session {#importing-sessions-from-claude-code-and-codex-cli}
+
+在另一个 agent CLI 中开始了对话？你可以把它导入 Hermes 并在这里继续。
+Hermes 读取 Claude Code 的 session 日志（`~/.claude/projects/`）和 Codex CLI 的
+rollout（`~/.codex/sessions/`）——这些外部文件只会被读取，绝不会被修改。
+
+```bash
+# 跨两个工具的交互式选择器，最新的在前
+hermes sessions import
+
+# 限定为一个工具，或指向特定文件
+hermes sessions import --from claude
+hermes sessions import --from codex ~/.codex/sessions/2026/08/15/rollout-....jsonl
+
+# 一步完成导入并恢复
+hermes --resume @claude
+hermes --resume @codex
+```
+
+`hermes sessions import` 会创建一个标题为
+`Imported from Claude Code: <first user message>`（或 Codex CLI）的新 Hermes session，
+并打印其 id 以及一条可直接粘贴的 `hermes --resume <id>` 命令。
+`--resume @claude` / `--resume @codex` 显示同样的选择器，并直接把你带入
+导入的对话。
+
+**Hermes Desktop** 的命令面板中也有同样的导入器（**Import
+session**）。它列出的是所连接后端所在机器上的日志——而不是运行该应用的
+电脑——并显示只读预览，**Continue in Hermes** 会将对话复制到所选的
+profile 中。浏览绝不会写入你的 session 存储，导入绝不会触碰源文件，
+而且同一个日志导入两次会打开已有的副本，而不是再创建一份。
+
+会被带过来的内容：按顺序排列的用户/助手对话，工具活动会被压缩成助手轮次中
+简短的 `[ran tool: …]` 注释。系统 prompt、注入的上下文、推理过程和原始工具
+输出都会被舍弃——导入的是一份干净的对话记录，而不是逐字节的重放。
+
+
 ## Session 搜索工具 {#session-search-tool}
 
-Agent 内置了 `session_search` 工具，使用 SQLite 的 FTS5 引擎对所有历史对话进行全文搜索，并允许 agent 滚动浏览找到的任何 session。无需 LLM 调用、无需摘要、无截断。每种调用形式都从数据库返回实际消息。
+Agent 内置了 `session_search` 工具，使用 SQLite 的 FTS5 引擎对所有历史对话进行全文搜索，并允许 agent 滚动浏览找到的任何 session。它不调用 LLM，返回的是数据库中实际消息的视图，而不是生成的摘要。
 
-### 三种调用形式
+### 四种调用形式 {#four-calling-shapes}
 
 工具根据你设置的参数推断意图，没有 `mode` 参数。
 
@@ -514,16 +657,18 @@ Agent 内置了 `session_search` 工具，使用 SQLite 的 FTS5 引擎对所有
 session_search(query="auth refactor", limit=3)
 ```
 
-运行 FTS5，按 session 谱系去重，返回前 N 个 session。每个结果包含：
+运行 FTS5，按 session 谱系去重，并返回前 N 个 session。发现模式默认使用自适应详细度：排名最高的结果包含完整的上下文窗口和首尾消息，排名较低的结果则保持精简。传入 `detail="full"` 可完整填充每个结果。
+
+每个结果包含：
 
 - `session_id`、`title`、`when`、`source`
 - `snippet` — FTS5 高亮的匹配摘录
-- `bookend_start` — session 的前 3 条用户+助手消息（目标/开场）
-- `messages` — FTS5 匹配点前后各 ±5 条消息，锚点消息有标记（命中上下文）
-- `bookend_end` — session 的最后 3 条用户+助手消息（结论/决策）
+- `detail` — `full` 或 `compact`
+- `bookend_start` / `bookend_end` — 完整结果中为 session 的前/后 3 条用户+助手消息；精简结果中为空列表
+- `messages` — 完整结果中为 FTS5 匹配点前后各 ±5 条消息；精简结果中仅为带标记的锚点消息
 - `match_message_id`、`messages_before`、`messages_after`
 
-书签+窗口共同重建目标→命中→结论，无需加载完整对话记录。在真实 session 数据库上的典型耗时：15–50ms。
+排名第一的结果可以立即重建目标→命中→结论。如果另一个精简结果看起来更有希望，使用它的 session ID 和消息 ID 调用滚动形式。在真实 session 数据库上的典型耗时为几十毫秒。
 
 **2. 滚动——传入 `session_id` + `around_message_id`：**
 
@@ -540,7 +685,15 @@ session_search(session_id="20260510_174648_805cc2", around_message_id=590803, wi
 
 每次滚动调用的典型耗时：1–2ms。
 
-**3. 浏览——无参数：**
+**3. 读取——传入 `session_id` 但不带锚点：**
+
+```python
+session_search(session_id="20260510_174648_805cc2")
+```
+
+返回整个 session；对于大型 session，则返回有界的首部/尾部视图。解析 `@session:<profile>/<id>` 链接时也使用此形式。
+
+**4. 浏览——无参数：**
 
 ```python
 session_search()
@@ -560,6 +713,7 @@ session_search()
 ### 可选参数
 
 - `sort` — `newest` 或 `oldest`，在 FTS5 排名之上排序。省略则仅按相关性排序（默认；适合探索性召回）。对于"我们在哪里停下了 X"的问题使用 `newest`，对于"X 是怎么开始的"的问题使用 `oldest`。
+- `detail` — `adaptive`（默认）仅完整填充排名第一的发现结果；`full` 完整填充每个发现结果。
 - `role_filter` — 逗号分隔的角色列表。发现模式默认为 `user,assistant`（工具输出通常是噪音）。传入 `user,assistant,tool` 以包含工具输出（调试工具行为），或传入 `tool` 仅搜索工具输出。
 
 ### 使用时机
@@ -611,18 +765,37 @@ Gateway 不会因空闲时间或每日时间边界而重置对话。需要新对
 重启恢复的新鲜度限制仅约束自动继续执行，不会清除用户发送消息时加载的历史。
 
 
+### 崩溃和重启后的连续性 {#continuity-after-crashes-and-restarts}
+
+一个 gateway 聊天被设计为**一个连续的 session**——随着增长被反复压缩——
+直到你显式运行 `/new`（或 `/reset`）。这一点在 gateway 崩溃、重启和更新后
+依然成立：
+
+- Session 身份（路由键、聊天、来源）在创建 session 行时**原子地**写入，
+  覆盖每一条创建路径（`/new`、第一条消息、`/branch` 子 session）。如果这次写入
+  失败，下一轮的路由刷新会自动修复该行。
+- 重启后，gateway 会将每个聊天重新解析到**实际活动**最近的 session——
+  较旧的过期行永远不会压过你实际在进行的对话。
+- 恢复**尊重 `/new` 边界**：如果某个聊天最近的事件是一次有意的重置，
+  恢复会从头开始，而不会越过该重置去复活更早的 session。仅凭经过的时间
+  绝不会阻止恢复一个持久化的对话。
+
+
 ## 存储位置
 
 | 内容 | 路径 | 描述 |
 |------|------|-------------|
 | SQLite 数据库 | `~/.hermes/state.db` | 所有 session 元数据 + 带 FTS5 的消息 |
 | Gateway 消息 | `~/.hermes/state.db` | SQLite——所有 session 消息的权威存储 |
-| Gateway 路由索引 | `~/.hermes/sessions/sessions.json` | 将 session 键映射到活跃 session ID（来源元数据、过期标志） |
+| Gateway 路由索引 | `~/.hermes/state.db` 中的 `gateway_routing` 表 | 将 session 键映射到活跃 session ID（来源元数据、过期标志） |
+| 遗留路由镜像 | `~/.hermes/sessions/sessions.json` | 路由索引的向后兼容镜像，在 `gateway.write_sessions_json: true`（默认）时写入 |
 
 SQLite 数据库使用 WAL 模式支持并发读取和单写入，非常适合 gateway 的多平台架构。
 
 :::warning `sessions.json` 不是 session 列表
-`~/.hermes/sessions/sessions.json` 是 **gateway 路由索引**——它将
+Gateway 路由索引位于 `state.db` 内的 `gateway_routing` 表中；
+`~/.hermes/sessions/sessions.json` 是它的**遗留镜像**，为向后兼容而保留
+（可用 `gateway.write_sessions_json: false` 禁用）。它将
 消息 session 键（`agent:main:<platform>:...`）映射到活跃的 session ID。
 它只会包含 gateway/消息类条目，因此如果你运行了某个消息
 平台，你只会看到这些条目（例如 `agent:main:whatsapp:dm:...`）。
@@ -654,33 +827,65 @@ state.db 后可安全删除。
 
 ## Session 过期与清理
 
-### 自动清理
+### 自动清理 {#automatic-cleanup}
 
-- Gateway 会话会持续保留；请使用 `/new` 或 `/reset` 显式开始新会话
+- Gateway 对话在空闲期间持续保留；使用 `/new` 或 `/reset` 设定显式边界
 - 重置前，agent 保存即将过期 session 中的记忆和技能
-- 可选自动清理：当 `sessions.auto_prune` 为 `true` 时，在 CLI/gateway 启动时清理早于 `sessions.retention_days`（默认 90）天的已结束 session
-- 实际删除了行的清理操作完成后，如果距离上次成功执行 `VACUUM` 已达到 `sessions.min_vacuum_interval_days`（默认 30）天，`state.db` 会执行 `VACUUM` 以回收磁盘空间（SQLite 在普通 DELETE 后不会缩小文件）
+- 自动清理（自 #54189 起**默认开启**）：当 `sessions.auto_prune` 为 `true` 时，在 CLI/gateway/cron 启动时清理已不活跃达 `sessions.retention_days`（默认 90）天的已结束 session
+- 实际删除了行的清理操作完成后，仅当**两个**条件都满足时才会对 `state.db` 执行 `VACUUM` 以回收磁盘空间：距离上次成功执行 `VACUUM` 至少已过 `sessions.min_vacuum_interval_days`（默认 30）天，**并且**文件中超过 25% 的页可回收（`PRAGMA freelist_count / page_count`）。紧凑的数据库永远不会为了回收几 MB 而付出完整重写的代价（SQLite 在普通 DELETE 后不会缩小文件）
 - 清理最多每 `sessions.min_interval_hours`（默认 24）小时运行一次；上次运行时间戳记录在 `state.db` 内部，因此在同一 `HERMES_HOME` 下的所有 Hermes 进程间共享
 
-默认为**关闭**——session 历史对 `session_search` 召回很有价值，静默删除可能会让用户感到意外。在 `~/.hermes/config.yaml` 中启用：
+不进行清理的话，`state.db` 会无限增长——在 gateway + cron 部署上曾有报告在几周内增长到数 GB。如果你更希望永久保留每个已结束的 session（#54189 之前的行为），请在 `~/.hermes/config.yaml` 中关闭它：
 
 ```yaml
 sessions:
-  auto_prune: true          # 选择启用——默认为 false
-  retention_days: 90        # 保留已结束 session 的天数
+  auto_prune: false         # 默认为 true——设为 false 以保留全部历史
+  retention_days: 90        # 保留在此窗口内仍有活动的已结束 session
   vacuum_after_prune: true  # 清理后回收磁盘空间
   min_vacuum_interval_days: 30 # 数据库重写的最短间隔天数
   min_interval_hours: 24    # 清理间隔不短于此值
 ```
 
-:::caution `vacuum_after_prune` 已失效
-旧版配置和文档中列出的 `sessions.vacuum_after_prune` 键**没有任何代码读取**。
-两个自动维护调用方都硬编码了 `vacuum=False`，因为运行中的多进程 gateway 无法
-授予 `VACUUM` 所需的独占锁。将其设为 `true` 不会有任何效果；保留在配置中也无害。
-请改用下方的离线方式回收空间。
-:::
+已显式设置了其中任何键的现有安装会保留其值；只有未设置的键才会采用新的默认值。
 
-活跃 session 永远不会被自动清理，无论时间多长。
+只有**已结束**的 session 才会被删除。活跃 session 永远不会被自动清理，
+无论时间多长。已结束 session 的时长从其最新消息算起，因此最近仍在使用的
+长期对话不会仅仅因为它开始于保留窗口之前而被删除。
+
+**来自自动化的过期未结束 session。** 一些生产者——cron 任务、kanban
+worker、子 agent、一次性 CLI 运行——可能在从未将其 session 标记为结束的情况下
+就终止了，而清理只会删除*已结束*的行。为了避免这些 session 永远堆积，
+每次自动清理还会*关闭*来自这些状态自有来源（`cli`、`cron`、`kanban`、`acp`、
+`api_server`、`subagent`、`tool`）且最近活动早于 `retention_days` 的未结束 session
+（`end_reason: startup_orphan_reap`）。关闭是非破坏性的——session 仍可恢复——
+并且该行的时长从关闭时算起，因此只有在再经过一个完整保留窗口后，才会被
+*之后*的某次清理删除。消息平台 session（Telegram、Discord 等）、TUI/desktop
+session、已固定的 session，以及正在进行实时轮次或压缩的 session，永远不会
+被此清扫关闭。
+
+### 超大对话记录保护 {#oversized-transcript-guards}
+
+两个限制可防止失控的对话记录被一次性全部加载到内存中
+（两者默认均为 `20000` 条活跃消息；`0` 表示禁用该保护）：
+
+```yaml
+sessions:
+  max_resume_messages: 20000   # 交互式恢复（CLI / TUI / Desktop）
+  max_export_messages: 20000   # 单个 session 的一次性内存导出
+```
+
+`max_resume_messages` 限制的是**恢复实际加载的内容**，而不是对话的全部历史：
+
+- 普通的交互式恢复（CLI `--resume`、TUI）会实体化完整的压缩谱系——
+  每个已压缩的分段加上实时尾段——因此它按整个谱系计数限制。
+- Desktop 的冷恢复通过 REST 分页加载对话记录，内存中只保留实时尾段，
+  因此只受尾段限制。一个被多次压缩的长期聊天（几十个分段、小尾段背后有
+  数万条归档行）正是压缩所要产生的结果，可以正常打开；其页脚的消息计数
+  反映的是存储的谱系，而不是实时 prompt。
+
+当恢复被拒绝时，客户端会收到错误代码 `4130`，附带计数以及测量所依据的范围
+（`across its lineage` 或 `in its tip segment`）。对这类 session，
+`hermes sessions export` 仍然可用。
 
 ### 回收磁盘空间 {#reclaiming-disk-space}
 
@@ -707,5 +912,5 @@ hermes sessions prune --older-than 30 --yes
 ```
 
 :::tip
-数据库增长缓慢（典型情况：数百个 session 约 10–15 MB），session 历史为跨历史对话的 `session_search` 召回提供支持，因此自动清理默认关闭。如果你运行繁重的 gateway/cron 工作负载且 `state.db` 明显影响性能（已观察到的故障模式：约 1000 个 session 的 384 MB state.db 导致 FTS5 插入和 `/resume` 列表变慢），则启用它。使用 `hermes sessions prune` 进行一次性清理，无需开启自动清理。
+自动清理**默认开启**：已不活跃达 `sessions.retention_days`（默认 90）天的已结束 session 会在启动时被删除，活跃 session 永远不会被触碰（见上方[自动清理](#automatic-cleanup)）。Session 历史为跨历史对话的 `session_search` 召回提供支持，因此如果你想永久保留每个已结束的 session，请在 `config.yaml` 中设置 `sessions.auto_prune: false`，或调大 `retention_days`。关闭自动清理后，`hermes sessions prune` 仍可用于一次性清理（完全不清理时已观察到的故障模式：约 1000 个 session 的 384 MB `state.db` 导致 FTS5 插入和 `/resume` 列表变慢）。
 :::

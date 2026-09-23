@@ -82,6 +82,10 @@ hermes setup --portal
 该命令一次性完成登录、设置 Nous 为提供商并开启 Tool Gateway。
 :::
 
+:::tip 已经在另一台机器上运行 Hermes？
+你无需从头重建配置。可以用 `hermes import` 恢复完整备份（参见[将 Hermes 导出到另一台机器](/reference/faq#exporting-hermes-to-another-machine)），或用 `hermes profile import` 迁移单个 Agent（参见[将单个配置档案迁移到另一台机器](/reference/faq#moving-a-single-profile-to-another-machine)）。注意，配置档案导出在设计上不包含凭据，因此仅靠导出并不是完整备份——[`hermes backup` 与 `hermes profile export` 的区别](/reference/faq#hermes-backup-vs-hermes-profile-export)说明了该用哪一个。
+:::
+
 ---
 
 ## 前置条件
@@ -90,7 +94,7 @@ hermes setup --portal
 
 - **uv**（快速 Python 包管理器）
 - **Python 3.11**（通过 uv，无需 sudo）
-- **Node.js v22**（用于浏览器自动化和 WhatsApp 桥接）
+- **Node.js v26**（用于浏览器自动化和 WhatsApp 桥接；系统中已有的 Node 22.22+、24.11+ 或 26+ 会被直接使用）
 - **ripgrep**（快速文件搜索）
 - **ffmpeg**（TTS 的音频格式转换）
 
@@ -136,6 +140,8 @@ Nix **不再是明确支持的安装路径**（仅尽力而为）。如果你已
    curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser
    ```
 
+   安装程序还会预装 [`cua-driver`](../user-guide/features/computer-use.md)，这样 Computer Use 工具集在你启用的那一刻即可工作；传入 `--skip-computer-use` 可选择不预装（届时会在你启用该工具时按需安装）。
+
 3. **使 `hermes` 对服务用户的 shell 可用。** 安装程序将启动器写入 `~/.local/bin/hermes`。系统服务账户通常具有不包含 `~/.local/bin` 的最小 PATH。可以将其添加到用户环境，或将启动器符号链接到系统位置：
 
    ```bash
@@ -147,6 +153,14 @@ Nix **不再是明确支持的安装路径**（仅尽力而为）。如果你已
    ```
 
 4. **验证：** `hermes doctor` 现在应能正常运行。如果出现 `ModuleNotFoundError: No module named 'dotenv'`，说明你在用系统 Python 调用仓库源码中的 `hermes` 文件（`~/.hermes/hermes-agent/hermes`），而非 venv 启动器（`~/.hermes/hermes-agent/venv/bin/hermes`）——请修正步骤 3。
+
+5. **要从这个账户运行消息 gateway？** 用户级服务会在注销时停止，并且在你为该服务用户启用 lingering 之前不会在开机时启动：
+
+   ```bash
+   sudo loginctl enable-linger <service-user>
+   ```
+
+   服务本身的配置请参阅[消息 Gateway](/user-guide/messaging/)。
 
 同样的方式适用于 Arch（安装程序使用 pacman，具有相同的 sudo 检测逻辑）、Fedora/RHEL 和 openSUSE——这些发行版完全不支持 `--with-deps`，因此管理员始终需要单独安装系统库。安装程序会打印相应的 `dnf`/`zypper` 命令。
 
@@ -161,6 +175,23 @@ Nix **不再是明确支持的安装路径**（仅尽力而为）。如果你已
 | 更新后配置丢失              | 运行 `hermes config check`，然后运行 `hermes config migrate`                       |
 
 如需更多诊断信息，运行 `hermes doctor`——它会告诉你确切缺少什么以及如何修复。
+
+### 符号链接的主目录与外部存储 {#symlinked-home-directories-and-external-storage}
+
+Hermes 支持符号链接的 `HERMES_HOME` 以及符号链接的主目录子目录，
+包括 `hooks`、`skills`、`sessions` 和 `logs`。在主目录初始化期间，
+已有的目录链接会被保留，链接目录（以及 `logs/curator` 等子孙目录）的权限
+交由其所有者管理。
+
+如果链接目标缺失、无法访问或不是目录，初始化会停止，并报告一个存储错误，
+其中指明该路径和链接目标。Hermes **不会**替换该链接，也不会创建缺失的目标：
+这样做可能会在外部卷或 NAS 卷未挂载时把数据写到本地磁盘上。请检查报告的
+链接，恢复挂载或修正其目标，并在重试前确认访问权限。如果确实要使用一个新的
+dotfiles 目标，请仅在确认目标存储可用后自行创建。
+
+`hermes doctor` 会将这些失败报告为存储问题，而非无效的 YAML。
+请保留现有的 `config.yaml`；对于不可用的目录，运行 `hermes setup` 并不能修复。
+这是目录可用性检查，而不是挂载监控：一个已存在的目录并不能证明预期的卷已挂载。
 
 ## 安装方式自动检测
 

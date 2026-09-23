@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: "消息网关"
-description: "通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Email、Home Assistant、Mattermost、Matrix、DingTalk、Yuanbao、Microsoft Teams、LINE、Raft、Webhooks 或任何兼容 OpenAI 的前端与 Hermes 对话 — 架构与配置概览"
+description: "通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Email、Home Assistant、Mattermost、Matrix、DingTalk、Yuanbao、Microsoft Teams、LINE、Raft、Webhooks 或经由 API 服务器的任何兼容 OpenAI 的前端与 Hermes 对话——架构与配置概览"
 ---
 
 # 消息网关
@@ -14,7 +14,18 @@ description: "通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Emai
 机器人同时需要模型提供商和工具提供商（TTS、网页）。[Nous Portal](/integrations/nous-portal) 订阅将它们全部打包在一起。
 :::
 
-## 平台对比
+## Desktop 与仪表盘中的消息状态 {#messaging-status-in-desktop-and-the-dashboard}
+
+消息状态归属于所选机器上的所选 profile。由 `hermes gateway setup` 保存的凭据
+可以在 `config.yaml` 中没有 `platforms` 条目的情况下启用基于凭据的平台；显式设置
+`platforms.<name>.enabled: false` 仍会禁用它。其他 profile 绝不会继承服务器进程的凭据。
+没有必需凭据字段的平台不会仅仅因为该列表为空就被启用。
+
+显式指定服务器自身的 profile（例如在默认 profile 的服务器上使用 `profile=default`）
+得到的状态与不限定范围的请求相同。**Saved** 表示凭据已存储，并不代表消息网关正在运行
+或平台已连接。已启用的平台显示 **Messaging gateway stopped** 也可能是正确的。
+
+## 平台对比 {#platform-comparison}
 
 | 平台 | 语音 | 图片 | 文件 | 线程 | 表情反应 | 输入提示 | 流式输出 |
 |----------|:-----:|:------:|:-----:|:-------:|:---------:|:------:|:---------:|
@@ -23,7 +34,8 @@ description: "通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Emai
 | Slack | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Google Chat | — | ✅ | ✅ | ✅ | — | ✅ | — |
 | WhatsApp | — | ✅ | ✅ | — | — | ✅ | ✅ |
-| Signal | — | ✅ | ✅ | — | — | ✅ | ✅ |
+| WhatsApp Cloud API | ✅ | ✅ | ✅ | — | — | ✅ | — |
+| Signal | — | ✅ | ✅ | — | — | ✅ | — |
 | SMS | — | — | — | — | — | — | — |
 | Email | — | ✅ | ✅ | ✅ | — | — | — |
 | Home Assistant | — | — | — | — | — | — | — |
@@ -33,8 +45,9 @@ description: "通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Emai
 | Feishu/Lark | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | WeCom | ✅ | ✅ | ✅ | — | — | — | — |
 | WeCom Callback | — | — | — | — | — | — | — |
-| Weixin | ✅ | ✅ | ✅ | — | — | ✅ | ✅ |
+| Weixin | ✅ | ✅ | ✅ | — | — | ✅ | — |
 | BlueBubbles | — | ✅ | ✅ | — | ✅ | ✅ | — |
+| Photon (iMessage) | ✅ | ✅ | ✅ | — | ✅ | ✅ | — |
 | QQ | ✅ | ✅ | ✅ | — | — | ✅ | — |
 | Yuanbao | ✅ | ✅ | ✅ | — | — | ✅ | ✅ |
 | Microsoft Teams | — | ✅ | — | ✅ | — | ✅ | — |
@@ -42,10 +55,16 @@ description: "通过 Telegram、Discord、Slack、WhatsApp、Signal、SMS、Emai
 | ntfy | — | — | — | — | — | — | — |
 | Raft | — | — | — | — | — | — | — |
 | IRC | — | — | — | — | — | — | — |
+| Buzz | — | ✅ | — | ✅ | — | — | — |
+| SimpleX | ✅ | ✅ | ✅ | — | — | ✅ | — |
 
 **语音** = TTS 音频回复和/或语音消息转录。**图片** = 发送/接收图片。**文件** = 发送/接收文件附件。**线程** = 线程式对话。**表情反应** = 对消息添加 emoji 反应。**输入提示** = 处理时显示正在输入状态。**流式输出** = 通过编辑消息实现渐进式更新。
 
-## 架构
+:::note Hermes Relay
+[Hermes Relay](/user-guide/messaging/relay)（实验性）本身不是聊天平台——它是一套连接器系统，通过一个持有平台凭据的外部连接器来对接 Discord、Telegram、Slack 和 WhatsApp 等平台。各项能力（媒体、原生审批/澄清提示、表情反应、线程、输入提示、流式输出）在握手时按连接器协商，而不是固定为上表所列。
+:::
+
+## 架构 {#architecture}
 
 ```mermaid
 flowchart TB
@@ -108,7 +127,7 @@ flowchart TB
 
 每个平台适配器接收消息，通过每个聊天的会话存储进行路由，并将其分发给 AIAgent 处理。网关还运行 cron 调度器，每 60 秒触发一次以执行到期任务。
 
-## 有意静默 Token
+## 有意静默 Token {#intentional-silence-tokens}
 
 针对群聊、hook 和自动化流程，Hermes 支持显式的静默 token。如果 agent 的最终响应恰好等于某个受支持的 token，网关就会抑制外发投递，不向聊天发送任何内容。
 
@@ -131,7 +150,7 @@ user: next message
 
 失败的轮次仍会以错误形式呈现；Hermes 不会仅因文本形似静默 token 就隐藏失败。
 
-## 快速配置
+## 快速配置 {#quick-setup}
 
 配置消息平台最简单的方式是使用交互式向导：
 
@@ -141,7 +160,7 @@ hermes gateway setup        # 交互式配置所有消息平台
 
 该向导引导你通过方向键选择配置各平台，显示哪些平台已配置，并在完成后提示启动/重启网关。
 
-## 网关命令
+## 网关命令 {#gateway-commands}
 
 ```bash
 hermes gateway              # 在前台运行
@@ -154,7 +173,7 @@ hermes gateway status       # 检查默认服务状态
 hermes gateway status --system         # 仅 Linux：显式检查系统服务
 ```
 
-### 可选的 Linux 事件循环看门狗
+### 可选的 Linux 事件循环看门狗 {#optional-linux-event-loop-watchdog}
 
 由 systemd 管理的网关可以选择启用进程恢复机制，用于 Python asyncio
 事件循环不再获得调度时间的情况。这涵盖了那些同时会让平台专属存活任务
@@ -176,13 +195,13 @@ hermes gateway install --force
 systemd 会重启该进程。默认值 `0` 保持现有的 `Type=simple` 行为。此设置仅适用于
 Linux/systemd，且不会把普通的平台网络断连当作事件循环故障。
 
-## 聊天命令（在消息平台内使用）
+## 聊天命令（在消息平台内使用） {#chat-commands-inside-messaging}
 
 | 命令 | 说明 |
 |---------|-------------|
 | `/new` 或 `/reset` | 开始新对话 |
 | `/model [provider:model]` | 显示或切换模型（支持 `provider:model` 语法） |
-| `/personality [name]` | 设置人格 |
+| `/personality [name]` | 设置人格（`none` 表示重置） |
 | `/retry` | 重试上一条消息 |
 | `/undo` | 删除上一轮对话 |
 | `/status` | 显示会话信息 |
@@ -194,6 +213,7 @@ Linux/systemd，且不会把普通的平台网络断连当作事件循环故障�
 | `/compress` | 手动压缩对话上下文 |
 | `/title [name]` | 设置或显示会话标题 |
 | `/resume [name]` | 恢复之前命名的会话 |
+| `/sessions [all] [search <query>]` | 列出之前的会话；`search <query>` 按标题或 id 过滤 |
 | `/usage` | 显示本会话的 token 用量（`/usage reset [--force]` 可兑换已存入的 Codex 限额重置） |
 | `/insights [days]` | 显示用量洞察与分析 |
 | `/reasoning [level\|show\|hide]` | 更改推理强度或切换推理显示 |
@@ -206,13 +226,21 @@ Linux/systemd，且不会把普通的平台网络断连当作事件循环故障�
 | `/help` | 显示可用命令 |
 | `/<skill-name>` | 调用任意已安装的技能 |
 
-## 会话管理
+## 会话管理 {#session-management}
 
-### 会话持久化
+### 会话持久化 {#session-persistence}
 
 会话在消息之间持续保留，直到重置。Agent 会记住你的对话上下文。
 
-### 投递可靠性
+### 查找过去的会话（`/sessions`） {#finding-past-sessions-sessions}
+
+`/sessions` 列出当前聊天中你之前的会话——包括你正在使用的这个，会标记为 `(current)`——而 `/sessions <name>` 会恢复其中一个（相当于 `/resume` 的简写）。列表变长时，`/sessions search <query>`（别名 `find`）按标题或会话 id 匹配进行过滤，并按最近活跃时间排序。使用 `/sessions all` 跨来源列出会话仅限管理员——普通用户会收到一条提示，说明列表仍限定在当前聊天范围内，并且只会看到来自自己聊天来源的会话。
+
+### 持久化的 `/model` 覆盖 {#persistent-model-overrides}
+
+在网关聊天中执行的 `/model` 切换作用于该会话，并且现在**在网关重启后依然保留**：模型/提供商的选择会持久化到会话存储中，并在重启后首次使用时恢复（凭据在加载时重新解析，绝不写入磁盘）。`/new`（或 `/reset`）会清除该覆盖，而 `/model <name> --global` 则会把它写入 `config.yaml`。`/model <name> --once` 仅对单个轮次生效。
+
+### 投递可靠性 {#delivery-reliability}
 
 Agent 的最终响应会在每次平台发送前后记录到一个持久化的**投递账本**
 （`state.db`）中。如果网关在生成响应之后、平台确认收到之前崩溃或重启，
@@ -224,52 +252,49 @@ Agent 的最终响应会在每次平台发送前后记录到一个持久化的**
 - 网关挂掉时正**处于发送中**的响应（平台可能收到了，也可能没收到）会带上
   可见的"♻️ Recovered reply —— … may be a duplicate"前缀重新投递。歧义会被
   标注出来，绝不静默重发。
+- 被**限流控制**（例如 Telegram 的速率限制）拒绝的最终发送会在记录的惩罚时间
+  到期后自动重试，无需重新连接或重启。惩罚期间发生的重启会接管已存储的回复，
+  既不消耗重试次数，也不重跑 agent。重试会保留原始的机器人 profile、聊天和线程。
+  限流恢复前缀会提醒你之前的分段可能已经送达；账本无法根据消息长度推断部分投递。
 - 重新投递是有界的：3 次尝试、24 小时新鲜度，之后该条记录被放弃。已投递的
   记录会在 7 天后清理。
 
 在 `config.yaml` 中设置 `gateway.delivery_ledger: false` 可禁用（恢复旧行为：
 崩溃时正在传输中的响应会丢失）。
 
-### 重置策略
+### 会话连续性 {#session-continuity}
 
-Gateway 不会因空闲时间或每日时间边界而重置对话。需要新对话时使用 `/new`
-或 `/reset`；上下文压缩仍会自动运行。旧的 `session_reset` 配置、重置策略覆盖和
-重置计时环境变量均被忽略。缓存中的 agent 可以释放资源，但不会替换持久化对话。
-重启恢复的新鲜度限制仅约束自动继续执行，不会清除用户发送消息时加载的历史。
+网关对话不会因空闲或在每日时间边界时重置。需要明确开始新对话时使用 `/new`
+或 `/reset`；上下文压缩仍会自动进行。旧的 `session_reset` 设置、重置策略覆盖和
+重置计时环境变量均被忽略。缓存中的 agent 可能会被释放以回收资源，但不会替换持久化的对话。
+重启恢复的新鲜度只限制自动继续执行，而不限制你发送消息时加载的历史。
+
+
+## 按频道覆盖模型与系统 Prompt {#per-channel-model--system-prompt-overrides}
+
+不同频道可以通过**同一个网关**运行不同的模型和人设——例如在 `#daily` 中使用便宜快速的模型，在 `#dev` 中使用带专家 prompt 的前沿模型。在 `~/.hermes/config.yaml` 中该平台下配置 `channel_overrides`：
 
 ```yaml
-session_reset:
-  mode: idle        # "idle"、"daily"、"both" 或 "none"（默认）
-  idle_minutes: 1440  # idle/both 模式：空闲多少分钟后重置
-  at_hour: 4          # daily/both 模式：每天的重置时间（0-23，本地时间）
+platforms:
+  discord:
+    enabled: true
+    channel_overrides:
+      "123456789012345678":        # 频道/线程 id
+        model: anthropic/claude-sonnet-4.6
+        provider: anthropic
+        system_prompt: "You are the #dev channel code-review specialist."
+      "987654321098765432":
+        model: openai/gpt-5-mini
 ```
 
-| 模式 | 说明 |
-|------|-------------|
-| `none` | 永不自动重置（默认） |
-| `daily` | 每天在指定时间重置 |
-| `idle` | 空闲 N 分钟后重置 |
-| `both` | 以先触发者为准 |
+细节：
 
-处于活动状态的后台进程（通过 `terminal(background=true)` 启动）通常会保护其会话
-不被重置，以免输出丢失。为避免一个被遗忘的进程——比如某个预览服务器——把会话
-永久钉住，运行时间超过 `bg_process_max_age_hours`（默认 **24**）的后台进程不再
-阻止重置。该进程**不会**被杀掉，只是被重置守卫忽略。把它设为 `0` 可禁用这个
-截止时间（任何活动进程都会阻止重置，即旧行为），若你确实有需要靠存活状态
-保持对话打开的多日任务，则可以调高它。
+- 三个键都是可选的——可以只设置 `model`、只设置 `system_prompt`，或任意组合。未设置的字段回退到全局默认值。
+- 查找顺序是先精确匹配频道/线程 id，然后是**父**频道/论坛 id——因此 Discord 线程会自动继承其父频道的覆盖。
+- 模型的解析优先级为：会话 `/model` 覆盖 → `channel_overrides` → 全局配置。用户在聊天中运行 `/model` 仍优先于频道默认值。
+- `system_prompt` 覆盖会替换该频道的全局网关 prompt（它是临时性的——每轮注入，不存入历史）。
 
-在 `~/.hermes/gateway.json` 中配置各平台的覆盖设置：
-
-```json
-{
-  "reset_by_platform": {
-    "telegram": { "mode": "idle", "idle_minutes": 240 },
-    "discord": { "mode": "idle", "idle_minutes": 60 }
-  }
-}
-```
-
-## 安全
+## 安全 {#security}
 
 **默认情况下，网关拒绝所有不在白名单中或未通过私信配对的用户。** 这是具有终端访问权限的机器人的安全默认设置。
 
@@ -311,7 +336,7 @@ hermes pairing revoke telegram 123456789  # 撤销访问权限
 
 配对码 1 小时后过期，有频率限制，并使用密码学随机数生成。
 
-### 管理员与普通用户
+### 管理员与普通用户 {#admins-vs-regular-users}
 
 白名单解决的是"此人能否访问机器人"的问题。**管理员 / 普通用户的划分**解决的是"既然已经进来了，他们被允许做什么"的问题。
 
@@ -326,7 +351,7 @@ hermes pairing revoke telegram 123456789  # 撤销访问权限
 
 **未来可能受控的内容：** 更多功能面（工具访问、模型切换、高消耗操作）将随着我们的添加挂载到同一管理员 / 普通用户区分上。现在配置好划分，意味着未来的限制可以干净落地，无需重新规划谁是管理员。
 
-#### 配置
+#### 配置 {#configuration}
 
 ```yaml
 gateway:
@@ -343,25 +368,27 @@ gateway:
 
 **向后兼容：** 如果某个范围未设置 `allow_admin_from`，则该范围的层级划分被禁用，所有允许的用户拥有完全访问权限。现有安装无需任何更改即可继续工作——需要区分时再选择启用。
 
-#### 查看你的权限
+#### 查看你的权限 {#inspecting-your-access}
 
 在任意平台使用 `/whoami` 查看当前范围、你的层级（管理员 / 普通用户 / 无限制）以及你可以运行的斜杠命令。平台特定示例请参阅 [Telegram](/user-guide/messaging/telegram#slash-command-access-control) 和 [Discord](/user-guide/messaging/discord#slash-command-access-control) 页面。
 
-## 中断 Agent
+## 重定向 Agent {#redirecting-the-agent}
 
-在 agent 工作时发送任意消息即可中断它。关键行为：
+在 agent 工作时发送消息，即可修正当前正在进行的轮次：
 
-- **正在执行的终端命令立即终止**（SIGTERM，1 秒后 SIGKILL）
-- **工具调用被取消** — 仅当前正在执行的工具调用会运行，其余跳过
-- **多条消息合并** — 中断期间发送的消息合并为一个 prompt
-- **`/stop` 命令** — 中断而不排队后续消息
+- **模型生成带着上下文重新开始** — 已显示的推理和可见的部分文本会作为普通的助手检查点保留
+- **已完成的工作仍然可用** — 之前的工具调用及其结果保留在该轮次中
+- **运行中的工具安全完成** — 修正会在下一个工具结果边界处生效，而不是杀掉工具
+- **`/stop` 仍是硬停止** — 用它取消当前轮次和前台工作
 
-### 队列 vs 中断 vs 引导（繁忙输入模式）
+### 队列 vs 中断 vs 引导（繁忙输入模式） {#queue-vs-interrupt-vs-steer-busy-input-mode}
 
-默认情况下，向繁忙的 agent 发送消息会中断它。另有两种模式可用：
+默认情况下，向繁忙的 agent 发送消息会重定向其当前轮次（正在运行的前台终端命令会被移到后台而不是被杀掉，因此你的消息会被立即读取）。另有两种模式可用：
 
 - `queue` — 后续消息等待，在当前任务完成后作为下一轮运行。
 - `steer` — 后续消息通过 `/steer` 注入当前运行，在下一次工具调用后到达 agent。不中断，不开新轮次。如果 agent 尚未开始，则回退为 `queue` 行为。
+
+网关引导（包括显式的 `/steer`）和当前轮次重定向会把请求事件中可用的平台、聊天、线程、发送者、消息、profile 和范围标识符作为逐条消息的 JSON 上下文携带。启用 `privacy.redact_pii: true` 时，在受支持的平台上，这个模型可见上下文中的标识符（包括备用标识符和父级标识符）会被哈希处理；原始事件标识符仍在内部用于路由。否则标识符会原样保留。两种模式都不会更改会话的系统 prompt，也不会选择后备回复目标。该上下文是路由数据，既不是授权，也不保证自动投递。
 
 ```yaml
 display:
@@ -371,15 +398,24 @@ display:
 
 第一次在任意平台向繁忙的 agent 发送消息时，Hermes 会在繁忙确认中附加一行提示，说明该配置项（`"💡 First-time tip — …"`）。该提示每次安装只触发一次——由 `onboarding.seen.busy_input_prompt` 下的标志锁定。删除该键可再次看到提示。
 
-如果你觉得繁忙确认消息过多——尤其是使用语音输入或快速连续发送消息时——可设置 `display.busy_ack_enabled: false`。你的输入仍会正常排队/引导/中断，只是聊天回复被静默。
+如果你觉得繁忙确认消息太吵，可设置 `display.busy_ack_enabled: false`。输入处理方式不变，只是隐藏确认消息。
 
-## 工具进度通知
+## 澄清问题（多选） {#clarify-questions-multi-select}
+
+当 agent 使用 `clarify` 工具向你提问时，网关会把选项渲染为带编号的提示（在支持的平台上则渲染为原生按钮）。Clarify 也支持**多选**问题——agent 可以让你一次选择多个选项：
+
+- **消息平台** — 提示会显示"Multiple selections allowed"；回复用逗号或空格分隔的编号（例如 `1, 3`）、选项文本，或你自己的自由回答。
+- **经典 CLI / TUI** — 多选渲染为复选框：**Space** 切换选项，**Enter** 提交选择。
+
+单选提示的行为与以前相同：通过编号、按钮或文本选择一个选项，或通过"Other"路径输入你自己的答案。
+
+## 工具进度通知 {#tool-progress-notifications}
 
 在 `~/.hermes/config.yaml` 中控制显示多少工具活动信息：
 
 ```yaml
 display:
-  tool_progress: all    # off | new | all | verbose
+  tool_progress: all    # off | new | all | verbose | log
   tool_progress_command: false  # 设为 true 可在消息平台中启用 /verbose
   # 在支持消息编辑的平台上，进度如何分组：
   #   accumulate（默认）—— 工具运行时就地编辑同一个气泡
@@ -397,7 +433,27 @@ display:
 🐍 execute_code...
 ```
 
-### 模型上下文中的消息时间戳
+### `log` 模式——写入审计文件而非聊天消息 {#log-mode--audit-file-instead-of-chat-messages}
+
+设置 `display.tool_progress: log` 后，**不会**向聊天发送任何进度气泡。取而代之的是，每次工具调用都会作为一行追加到 `~/.hermes/logs/tool_calls.log`——这是一个轮转的审计文件（5 MB × 3 个备份），使用与常规日志相同的密钥脱敏格式化器，因此凭据绝不会落盘。当你想要完整的工具调用记录又不想产生任何聊天噪音时使用它。
+
+### 可配置的状态短语 {#configurable-status-phrases}
+
+长时间运行时的网关状态行（类似"still working…"的心跳）取自一个短语目录。内置默认值随 `gateway/assets/status_phrases.yaml` 提供；你可以在 `HERMES_HOME` 下用可随 profile 迁移的文件添加自己的短语：
+
+- `~/.hermes/status_phrases.yaml` 或 `~/.hermes/status_phrases/` 中的任意 `*.yaml`（约定路径，自动加载），或
+- 在配置中指向一个相对路径：
+
+```yaml
+display:
+  status_phrases:
+    path: status_phrases/whatsapp.yaml  # 相对于 HERMES_HOME
+    mode: append                        # append（默认）或 replace
+```
+
+短语文件把一个界面（`status`、`generic`）映射到一个字符串列表（每个界面最多 80 条短语，每条 160 个字符）。绝对路径和 `..` 越界会被忽略，以保证配置可随 profile 迁移。只会使用你配置的短语字符串——原始工具参数、命令和推理文本绝不会插入到状态短语中。
+
+### 模型上下文中的消息时间戳 {#message-timestamps-in-model-context}
 
 默认关闭。启用后，Hermes 会在**模型上下文中**的每条**用户**消息前加上一个
 人类可读的时间戳（例如 `[Tue 2026-04-28 13:40:53 CEST]`），让 agent 知道消息
@@ -428,7 +484,7 @@ Hermes 立即确认：
    Task ID: bg_143022_a1b2c3
 ```
 
-### 工作原理
+### 工作原理 {#how-it-works}
 
 每个 `/bg` prompt 会生成一个**独立的 agent 实例**异步运行：
 
@@ -437,7 +493,7 @@ Hermes 立即确认：
 - **非阻塞** — 你的主聊天保持完全交互。在后台任务运行期间，你可以发送消息、运行其他命令或启动更多后台任务。
 - **结果传递** — 任务完成后，结果发送回**发出命令的同一聊天或频道**，前缀为"✅ Background task complete"。如果失败，你会看到"❌ Background task failed"及错误信息。
 
-### 后台进程通知
+### 后台进程通知 {#background-process-notifications}
 
 当运行后台会话的 agent 使用 `terminal(background=true)` 启动长时间运行的进程（服务器、构建等）时，网关可以向你的聊天推送状态更新。通过 `~/.hermes/config.yaml` 中的 `display.background_process_notifications` 控制：
 
@@ -460,7 +516,7 @@ display:
 HERMES_BACKGROUND_NOTIFICATIONS=result
 ```
 
-### 使用场景
+### 使用场景 {#use-cases}
 
 - **服务器监控** — "/bg Check the health of all services and alert me if anything is down"
 - **长时间构建** — "/bg Build and deploy the staging environment"，同时继续聊天
@@ -471,9 +527,9 @@ HERMES_BACKGROUND_NOTIFICATIONS=result
 消息平台上的后台任务是即发即忘的——你无需等待或主动查询。任务完成后，结果会自动出现在同一聊天中。
 :::
 
-## 服务管理
+## 服务管理 {#service-management}
 
-### Linux（systemd）
+### Linux（systemd） {#linux-systemd}
 
 ```bash
 hermes gateway install               # 安装为用户服务
@@ -545,7 +601,7 @@ launchd plist 是静态的——如果你在配置网关后安装了新工具（
 与 Linux systemd 服务类似，每个 `HERMES_HOME` 目录都有自己的 launchd 标签。默认的 `~/.hermes` 使用 `ai.hermes.gateway`；其他安装使用 `ai.hermes.gateway-<suffix>`。
 :::
 
-## 平台专属工具集
+## 平台专属工具集 {#platform-specific-toolsets}
 
 每个平台有自己的工具集：
 
@@ -577,11 +633,11 @@ launchd plist 是静态的——如果你在配置网关后安装了新工具（
 | Webhooks | `hermes-webhook` | 完整工具，包括终端 |
 | Raft | `hermes-raft` | 仅唤醒通道；agent 使用 Raft CLI 收发消息 |
 
-## 运营多平台网关
+## 运营多平台网关 {#operating-a-multi-platform-gateway}
 
 网关通常同时运行多个适配器（Telegram + Discord + Slack 等）。以下章节涵盖跨所有平台的日常运维操作。
 
-### `/platform` 命令
+### `/platform` 命令 {#platform-command}
 
 网关运行后，可从任意已连接的 CLI 会话或聊天使用 `/platform` 斜杠命令检查和控制单个适配器，无需重启整个网关：
 
@@ -595,13 +651,56 @@ launchd plist 是静态的——如果你在配置网关后安装了新工具（
 
 另请参阅更广泛的状态汇总命令 [`/platforms`](../../reference/slash-commands.md#info)。
 
-### 自动熔断器
+### 禁用凭据仍留在 `.env` 中的平台 {#disabling-a-platform-whose-credentials-are-still-in-env}
+
+`~/.hermes/config.yaml` 中的 `platforms.<name>.enabled: false` 具有决定权。
+环境中遗留的该平台凭据（`TELEGRAM_BOT_TOKEN`、`WEIXIN_TOKEN`、`HASS_TOKEN`、
+`EMAIL_*`、`TWILIO_ACCOUNT_SID` 等）仍会接入该平台的配置，以便仅发送类工具
+继续工作，但它们不再会启动适配器：
+
+```yaml title="~/.hermes/config.yaml"
+platforms:
+  weixin:
+    enabled: false   # 优先于 .env 中的 WEIXIN_TOKEN
+```
+
+早期版本中，只要存在凭据，就会让十二个平台（Weixin、WhatsApp Cloud、Home Assistant、
+Email、SMS、DingTalk、Feishu、WeCom、WeCom callback、BlueBubbles、QQ Bot、Yuanbao）
+重新启用，而不管该键如何设置。如果你依赖过这一行为，网关现在会在启动时为每个受影响
+的平台记录一条 WARNING，以免它悄无声息地下线：
+
+```
+Platform 'weixin' is explicitly disabled by platforms.weixin.enabled: false in config.yaml,
+so the credentials found in the environment (WEIXIN_TOKEN, WEIXIN_ACCOUNT_ID) will NOT start
+its adapter. Environment credentials no longer override an explicit disable. Remove the key
+or set platforms.weixin.enabled: true to turn it back on.
+```
+
+完全省略 `enabled` 键则保留仅凭环境变量的行为：存在凭据 → 适配器启动。
+
+### 忽略继承的代理（`gateway.trust_env`） {#ignoring-an-inherited-proxy-gatewaytrust_env}
+
+默认情况下，每个平台适配器都会遵循网关环境中的 `HTTP_PROXY` / `HTTPS_PROXY` /
+`NO_PROXY`（以及 `SSL_CERT_FILE`），并自动检测 macOS 系统代理。由 Windows 计划任务
+或服务管理器启动的网关可能会继承一个交互式 shell 从未见过的代理——比如一个尚未运行
+的本地 Clash/V2Ray 监听器——并在每次轮询时记录
+`Cannot connect to host 127.0.0.1:7890`。可一次性为所有适配器关闭继承的代理：
+
+```yaml title="~/.hermes/config.yaml"
+gateway:
+  trust_env: false
+```
+
+显式的逐平台代理变量（`DISCORD_PROXY`、`TELEGRAM_PROXY`、`MATRIX_PROXY` 等）仍会生效。
+修改后需重启网关。
+
+### 自动熔断器 {#automatic-circuit-breaker}
 
 每个适配器都包裹在熔断器中。反复出现的可重试失败（网络抖动、限流回复、上游 5xx 响应、websocket 断开）会导致熔断器触发——适配器被自动暂停，当配置了主频道时向另一个存活平台的主频道发送运营通知，并输出结构化日志行。
 
 熔断器**不会自动恢复**——它保持断开状态，直到你手动运行 `/platform resume <name>`。这是有意为之：如果某个平台持续故障，你不希望网关不断重试重连。
 
-### 适配器暂停时的排查步骤
+### 适配器暂停时的排查步骤 {#where-to-look-when-a-platform-is-paused}
 
 当适配器暂停时，检查：
 
@@ -611,9 +710,9 @@ launchd plist 是静态的——如果你在配置网关后安装了新工具（
 
 上游恢复正常后，`/platform resume <name>` 清除熔断器并重新激活适配器。
 
-### 重启通知
+### 重启通知 {#restart-notifications}
 
-当网关重启（或在有进行中会话时关闭）时，它可以向每个平台的主频道发送一条"agent 已恢复"/"agent 被中断"的一次性消息。这由 `gateway-config.yaml` 中每个平台的 `gateway_restart_notification` 标志控制，默认为 `true`：
+当网关重启（或在有进行中会话时关闭）时，它可以向每个平台的主频道发送一条"agent 已恢复"/"agent 被中断"的一次性消息。这由 `config.yaml` 中每个平台的 `gateway_restart_notification` 标志控制，默认为 `true`：
 
 ```yaml
 gateway:
@@ -628,9 +727,9 @@ gateway:
 
 在嘈杂或低优先级的平台上禁用，同时在主要聊天上保持启用。无论有多少会话正在进行，每次重启只发送一次通知。
 
-### 正在输入指示器
+### 正在输入指示器 {#typing-indicators}
 
-当 agent 正在处理消息时，网关会在支持的平台上显示实时的输入状态——Telegram/Discord/Signal 上的"正在输入……"气泡，或 Slack 上的"is thinking…"助手状态。这由 `gateway-config.yaml` 中每个平台的 `typing_indicator` 标志控制，默认为 `true`：
+当 agent 正在处理消息时，网关会在支持的平台上显示实时的输入状态——Telegram/Discord/Signal 上的"正在输入……"气泡，或 Slack 上的"is thinking…"助手状态。这由 `config.yaml` 中每个平台的 `typing_indicator` 标志控制，默认为 `true`：
 
 ```yaml
 gateway:
@@ -643,7 +742,7 @@ gateway:
 
 在任何不需要该指示器的平台上设置 `typing_indicator: false`。部分用户觉得 Slack 的"is thinking…"状态比较嘈杂（由于它使用 Slack 的 Assistant API，显示期间还会短暂禁用输入框）。禁用它只会抑制该指示器——消息投递及其他一切均不受影响。该标志是通用的，因此同一个键对每个平台都有效。
 
-### 网关重启后的会话恢复
+### 网关重启后的会话恢复 {#session-resume-across-gateway-restarts}
 
 当网关在工具调用或生成进行中时关闭，受影响的会话被标记为 `restart_interrupted`。下次启动时，网关为每个会话安排自动恢复——用户在聊天中收到简短提示（"Send any message after restart and I'll try to resume where you left off."），当他们回复时，会话从最后提交的轮次继续。
 
@@ -655,7 +754,7 @@ Scheduled auto-resume for N restart-interrupted session(s)
 
 无需配置。如果你不想要提示消息，在该平台上设置 `gateway_restart_notification: false`。
 
-### 适合移动端的进度默认值
+### 适合移动端的进度默认值 {#mobile-friendly-progress-defaults}
 
 Telegram 通常是一个移动端收件箱，因此默认值是按该场景调优的：
 
@@ -679,7 +778,7 @@ display:
       long_running_notifications: false
 ```
 
-### 进度气泡清理（可选启用）
+### 进度气泡清理（可选启用） {#progress-bubble-cleanup-opt-in}
 
 工具进度消息、"仍在处理中……"心跳以及状态回调气泡也可在最终响应落地后自动删除。通过 `display.platforms.<platform>.cleanup_progress` 按平台启用：
 
@@ -694,7 +793,7 @@ display:
 
 默认为 `false`。仅实现了 `delete_message` 的适配器平台支持此设置（目前为 Telegram 和 Discord）。运行失败时**跳过**清理，气泡保留作为调试线索。
 
-## 后续步骤
+## 后续步骤 {#next-steps}
 
 - [Telegram 配置](telegram.md)
 - [Discord 配置](discord.md)
@@ -714,11 +813,18 @@ display:
 - [WeCom Callback 配置](wecom-callback.md)
 - [Weixin 配置（微信）](weixin.md)
 - [BlueBubbles 配置（iMessage）](bluebubbles.md)
+- [Photon 配置（iMessage）](photon.md)
 - [QQBot 配置](qqbot.md)
 - [Yuanbao 配置](yuanbao.md)
 - [Microsoft Teams 配置](teams.md)
 - [Teams 会议流水线](teams-meetings.md)
+- [Microsoft Graph Webhook 监听器](msgraph-webhook.md)
+- [LINE 配置](line.md)
+- [ntfy 配置](ntfy.md)
+- [SimpleX Chat 配置](simplex.md)
 - [Open WebUI + API Server](open-webui.md)
 - [Raft 配置](raft.md)
 - [IRC 配置](irc.md)
+- [Buzz 配置](buzz.md)
+- [A2A（Agent-to-Agent）配置](a2a.md)
 - [Webhooks](webhooks.md)

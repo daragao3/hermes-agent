@@ -16,7 +16,7 @@ Hermes 拥有一个共享的 provider 运行时解析器，用于以下场景：
 
 主要实现：
 
-- `hermes_cli/runtime_provider.py` — 凭据解析，`_resolve_custom_runtime()`
+- `hermes_cli/runtime_provider.py` — 凭据解析、自定义端点的运行时解析
 - `hermes_cli/auth.py` — provider 注册表，`resolve_provider()`
 - `hermes_cli/model_switch.py` — 共享 `/model` 切换流水线（CLI + gateway）
 - `agent/auxiliary_client.py` — 辅助模型路由
@@ -26,6 +26,14 @@ Hermes 拥有一个共享的 provider 运行时解析器，用于以下场景：
 `providers/` 中的 `get_provider_profile()` 为给定 provider id 返回一个 `ProviderProfile`。`runtime_provider.py` 在解析时调用它，以获取规范的 `base_url`、`env_vars` 优先级列表、`api_mode` 和 `fallback_models`，无需在多个文件中重复这些数据。在 `plugins/model-providers/<your-provider>/`（或 `$HERMES_HOME/plugins/model-providers/<your-provider>/`）下添加一个调用 `register_provider()` 的新插件，即可让 `runtime_provider.py` 自动识别它——无需在解析器本身中添加分支。
 
 如果你想添加一个新的一等推理 provider，请结合本页阅读 [添加 Provider](./adding-providers.md) 和 [Model Provider 插件指南](./model-provider-plugin.md)。
+
+## Chat-completions 推理字段的形态 {#chat-completions-reasoning-shapes}
+
+OpenAI 兼容的中继可能以字符串、文本片段字典，或由文本片段与字符串碎片组成的列表
+形式返回 `reasoning` 或 `reasoning_content`。Hermes 会在主流式输出、Relay 记录、
+同步与异步辅助流，以及已完成响应的推理提取中，先将这些字段展平，再进行字符串操作。
+碎片保留其显式空白；规范化不会在字段内部添加分隔符。主流式输出和 Relay 记录会保留
+完整的粗体推理标题之间已有的段落换行。推理内容始终与可见回答分开。
 
 ## 解析优先级
 
@@ -70,7 +78,7 @@ Hermes 拥有一个共享的 provider 运行时解析器，用于以下场景：
 - LM Studio
 - Tencent TokenHub
 - Custom（`provider: custom`）— 适用于任何 OpenAI 兼容端点的一等 provider
-- 命名自定义 provider（`config.yaml` 中的 `custom_providers` 列表）
+- 命名自定义 provider（`config.yaml` 中的 `providers:` 字典；为向后兼容，旧版 `custom_providers` 列表仍会被读取）
 
 ## 运行时解析的输出
 
@@ -170,7 +178,7 @@ Hermes 支持配置回退 provider 链——一个按顺序尝试的 `(provider,
 
 1. **存储**：`AIAgent.__init__` 存储 `fallback_model` 字典并将 `_fallback_activated` 设为 `False`。
 
-2. **触发点**：`_try_activate_fallback()` 在 `run_agent.py` 主重试循环的三处被调用：
+2. **触发点**：`_try_activate_fallback()`（转发至 `agent/chat_completion_helpers.py` 中的 `try_activate_fallback()`）在各轮次阶段（`agent/turn_api_error.py`、`agent/turn_response_check.py`、`agent/turn_recovery.py`）的三处被调用：
    - 在无效 API 响应（None choices、缺少 content）达到最大重试次数后
    - 在不可重试的客户端错误（HTTP 401、403、404）时
    - 在瞬时错误（HTTP 429、500、502、503）达到最大重试次数后
@@ -186,8 +194,8 @@ Hermes 支持配置回退 provider 链——一个按顺序尝试的 `(provider,
    - 将重试计数重置为 0 并继续循环
 
 4. **配置流程**：
-   - CLI：`cli.py` 读取 `CLI_CONFIG["fallback_model"]` → 传递给 `AIAgent(fallback_model=...)`
-   - Gateway：`gateway/run.py._load_fallback_model()` 读取 `config.yaml` → 传递给 `AIAgent`
+   - CLI：通过 `hermes_cli/fallback_config.get_fallback_chain()` 读取回退链 → 传递给 `AIAgent(fallback_model=...)`
+   - Gateway：`gateway/run_config_loaders.py._load_fallback_model()` 读取 `config.yaml` → 传递给 `AIAgent`
    - 验证：`provider` 和 `model` 键均须非空，否则回退被禁用
 
 ### 不支持回退的场景

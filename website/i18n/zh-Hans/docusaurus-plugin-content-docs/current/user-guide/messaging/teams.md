@@ -105,20 +105,40 @@ TEAMS_ALLOWED_USERS=<your-aad-object-id>
 
 ## 第五步：启动 Gateway
 
+**Docker**（必须在包含 `docker-compose.yml` 的目录中运行——通常是你克隆的 `hermes-agent` 仓库，而不是 `~`）：
+
 ```bash
+cd /path/to/hermes-agent
 HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose up -d gateway
 ```
 
-此命令启动 gateway。默认 webhook 端口为 `3978`（可通过 `TEAMS_PORT` 覆盖）。检查运行状态：
+**原生 / systemd 安装**（通过典型的 `hermes` 一行安装程序安装在 `~/.hermes/hermes-agent` 下）：
+
+```bash
+hermes gateway restart
+# 或前台运行：hermes gateway run
+```
+
+Teams SDK 是可选的；启用 Teams 后，gateway 会在首次启动时将其延迟安装到 Hermes 自己的虚拟环境中（在 Ubuntu 24.04 上**不要**使用系统 `pip install`——那会触发 PEP 668 `externally-managed-environment` 错误）。如需手动安装到 Hermes 虚拟环境：
+
+```bash
+~/.hermes/hermes-agent/venv/bin/pip install microsoft-teams-apps aiohttp
+# 或者在 agent 的克隆目录中：uv sync --extra teams
+```
+
+默认 webhook 端口为 `3978`（可通过 `TEAMS_PORT` 覆盖）。检查运行状态：
 
 ```bash
 curl http://localhost:3978/health   # 应返回：ok
+# Docker：
 docker logs -f hermes
+# 原生安装：
+hermes gateway status -l
 ```
 
 查找以下日志：
 ```
-[teams] Webhook server listening on 0.0.0.0:3978/api/messages
+[teams] Webhook server listening on * (all interfaces, IPv4+IPv6):3978/api/messages
 ```
 
 ---
@@ -235,6 +255,8 @@ teams app update --id <teamsAppId> --endpoint "https://your-domain.com/api/messa
 
 | 问题 | 解决方案 |
 |------|----------|
+| `docker compose` 报错 `Can't find a suitable configuration file` | 你不在包含 `docker-compose.yml` 的仓库中，或者你使用的是原生安装——请改用 `hermes gateway restart`，或先 `cd` 进入克隆目录 |
+| `requirements not met` / `Teams SDK missing` / `No adapter available for teams` | 重启 gateway 以便执行延迟安装，或安装到 **Hermes 虚拟环境**中：`~/.hermes/hermes-agent/venv/bin/pip install microsoft-teams-apps aiohttp`。系统 `pip` 在 Ubuntu 24.04 上会失败（PEP 668），而且无论如何都不会影响该服务 |
 | `health` 端点正常但机器人不响应 | 检查隧道是否仍在运行，以及机器人的消息端点是否与隧道 URL 匹配 |
 | Teams 发送消息时日志显示 `"UNKNOWN / HTTP/1.0" 400` | 隧道或反向代理正在将 HTTPS 转发到 Hermes 的纯 HTTP 监听器。请在代理处终止 TLS，并将 HTTP 转发到 `3978` 端口 |
 | 日志中出现 `KeyError: 'teams'` | 重启容器——此问题已在当前版本中修复 |
@@ -242,7 +264,7 @@ teams app update --id <teamsAppId> --endpoint "https://your-domain.com/api/messa
 | `No inference provider configured` | 检查 `~/.hermes/.env` 中是否设置了 `ANTHROPIC_API_KEY`（或其他提供商密钥） |
 | 机器人收到消息但忽略它们 | 你的 AAD 对象 ID 可能不在 `TEAMS_ALLOWED_USERS` 中。运行 `teams status --verbose` 查找 |
 | 隧道 URL 在重启后变更 | 使用命名隧道（`devtunnel create hermes-bot`）时，devtunnel URL 是持久的。ngrok 和 cloudflared 每次运行都会生成新 URL（除非你有付费计划）——URL 变更时请用 `teams app update` 更新机器人端点 |
-| Teams 显示"此机器人未响应" | Webhook 返回了错误。检查 `docker logs hermes` 中的错误堆栈 |
+| Teams 显示"此机器人未响应" | Webhook 返回了错误。检查 `docker logs hermes` / `hermes gateway status -l` 中的错误堆栈 |
 | 日志中出现 `[teams] Failed to connect` | SDK 认证失败。仔细检查凭据，并确认租户 ID 与 `teams login` 时使用的账户匹配 |
 
 ---

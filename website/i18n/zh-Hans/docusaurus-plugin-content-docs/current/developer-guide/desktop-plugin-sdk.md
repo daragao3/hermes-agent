@@ -38,7 +38,8 @@ CLI/网关插件的文档见[构建 Hermes 插件](/developer-guide/plugins)。
 分为若干层级：
 
 - **`host.state.*`** —— 对应用实时状态的只读视图（nanostore
-  atom）：当前会话、cwd、网关状态、模型、配置档、视口。
+  atom）：当前会话、按会话的轮次忙碌状态、cwd、网关 socket 状态、
+  模型、配置档、视口。`gateway` 指的是 WebSocket，而不是轮次忙碌状态。
 - **`host.*` 动作** —— 经过筛选的安全动词：toast、导航、跟踪日志、
   重启网关、订阅网关事件流。
 - **`host.request`** —— 网关 JSON-RPC 通道：会话、配置、skills、
@@ -54,10 +55,12 @@ CLI/网关插件的文档见[构建 Hermes 插件](/developer-guide/plugins)。
 | 模式 | 位置 | 面向谁 | 构建步骤 |
 |------|-------|-----|------------|
 | **磁盘**（推荐） | `$HERMES_HOME/desktop-plugins/<id>/plugin.js` | 用户、智能体 | 无——纯 ESM，未经编译即加载 |
+| **统一包** | `$HERMES_HOME/plugins/<id>/desktop/plugin.js` | 同时附带智能体侧代码的插件 | 无——同一条磁盘流水线 |
 | **打包内置** | `apps/desktop/src/plugins/<id>/plugin.tsx` | 仓库内，随应用一同发布 | 应用自身的 Vite 构建 |
 
-两者遵循相同的 `HermesPlugin` 契约，都会出现在**设置 → 插件**中，
-并可实时启用/禁用。本页所有内容都是针对磁盘通道来写的
+三者遵循相同的 `HermesPlugin` 契约，都会出现在**设置 → 插件**中，
+并可实时启用/禁用。统一包只不过是磁盘通道在你的智能体插件文件夹内部进行扫描——参见
+[一个包，两套 SDK](#one-package-both-sdks)。本页所有内容都是针对磁盘通道来写的
 （也就是你和智能体所写的那种）；[打包内置插件](#bundled-plugins)会说明这两处
 差异。目前核心仓库中没有发布任何桌面端插件——参考示例位于配套仓库
 [`hermes-example-plugins`](https://github.com/NousResearch/hermes-example-plugins)。
@@ -165,6 +168,8 @@ interface PluginContext {
   rest: <T>(path: string, opts?: PluginRestOptions) => Promise<T>
   /** 连接到本插件自身命名空间的实时 WebSocket。返回一个销毁函数。 */
   socket: (path: string, onMessage: (data: unknown) => void) => () => void
+  /** 经过筛选的 OS 通道：原生通知、外部打开、在文件管理器中显示、剪贴板。 */
+  os: PluginOs
   /** 插件作用域的 JSON 持久化（键位于 `hermes.plugin.<id>.` 之下）。 */
   storage: PluginStorage
 }
@@ -235,6 +240,10 @@ data: {
 `terminal`、`files`、`review`、`logs`）；`dock.pos` 取值为
 `'top' | 'bottom' | 'left' | 'right' | 'center'`。请声明 `width`/`height`，
 以免面板占掉整个区域的一半。
+
+关闭某个插件贡献的唯一面板会禁用该插件，之后可在**设置 → 插件**中重新启用。
+当一个插件贡献了多个面板时，关闭其中一个只会移除该面板，插件的其他面板、
+命令与中间件仍保持激活。**Reset layout** 会恢复被移除的贡献面板。
 
 ### 页面与侧边栏导航
 
@@ -325,12 +334,97 @@ import { THEMES_AREA } from '@hermes/plugin-sdk'
 ctx.register({ id: 'noir', area: THEMES_AREA, data: myDesktopTheme })
 ```
 
+注册主题只是把它列出来，并不会选中它。`useTheme()` 可以在组件中读取当前
+呈现的外观（`theme`、`themeName`、`availableThemes`、`resolvedMode`）并修改它
+（`setTheme`、`setMode`、`previewTheme`）：
+
+```javascript
+import { Button, useTheme } from '@hermes/plugin-sdk'
+
+function ThemePicker() {
+  const { availableThemes, setTheme, themeName } = useTheme()
+
+  return availableThemes.map(t => (
+    <Button key={t.name} disabled={t.name === themeName} onClick={() => setTheme(t.name)}>
+      {t.label}
+    </Button>
+  ))
+}
+```
+
+由渲染之外的事情驱动的切换——网关建立连接、一个 socket 事件、任意
+`host.onEvent` 回调——没有可以挂载该 hook 的组件。此时请使用 `requestTheme(name)`。
+无法解析的名称会被拒绝，而不是被强制回退到默认皮肤，因此返回值同时充当
+可用性检查，错误的名称永远不会悄无声息地重置某人的外观：
+
+```javascript
+import { host, requestTheme } from '@hermes/plugin-sdk'
+
+host.onEvent('gateway.ready', () => {
+  if (!requestTheme('noir')) {
+    host.notifyError('Connected, but the noir theme is not installed.')
+  }
+})
+```
+
+两种方式都会按配置档持久化，因此由插件驱动的切换与手动选择一样会保留下来。
+若想给*当前*主题着色而不是替换它，请使用 `setAccentOverride(hex)`，并在
+`ctx.onDispose` 中清除它——捆绑的 `accent` 插件就是现成的示例。
+
 ### 输入框扩展
 
 `COMPOSER_AREAS`（`top`、`bottom`、`leading`、`actions`、`attachments`、
 `middleware`）允许插件在消息输入框周围添加控件、提供
 附件来源，或在草稿被发送前对其进行变换（`ComposerMiddleware`，
 带有 `handler(draft) => draft | null`）。
+
+### 转录指令——由模型调用的内联组件 {#transcript-directives--inline-components-the-model-addresses}
+
+`TRANSCRIPT_DIRECTIVE_AREA` 让转录本身也成为一个贡献区域。注册一个具名指令后，
+智能体只要输出一个形如 `::name{key="value"}` 的段落，就能在助手消息中内联渲染你的组件：
+
+```javascript
+import { TRANSCRIPT_DIRECTIVE_AREA } from '@hermes/plugin-sdk'
+
+ctx.register({
+  id: 'task-card',
+  area: TRANSCRIPT_DIRECTIVE_AREA,
+  data: {
+    name: 'task', // 模型会写出 ::task{id="BB-12"}
+    render: ({ attrs, streaming }) => jsx(TaskCard, { taskId: attrs.id, streaming })
+  }
+})
+```
+
+宿主会强制执行以下规则，以保证这一界面的安全：
+
+- 指令必须构成**整个段落**——出现在正文中间的 `::name` 仍然是正文，因此插件组件
+  永远无法劫持连续的文本。
+- 属性是**不可信的模型输出**（`key="value"` 键值对，只能是字符串）。
+  请自行校验字段；遇到垃圾输入时什么都不渲染，而不是去猜。
+- **无人认领**的指令（没有插件为该名称注册）会渲染为它原本的普通段落——
+  插件关闭时不会有任何东西坏掉。
+- 渲染被包裹在贡献错误边界中：抛出的异常会降级为一个内联错误标记，
+  而不会让整条消息失效。
+- 名称冲突时先注册者胜出；对容易撞名的名称请用你的 slug 加命名空间
+  （`myplugin-board`，而不是 `board`）。
+
+核心附带了一个指令作为参考消费方：`::preview{file="…"}` 会把工作区中的 HTML 文件
+**在消息内实时渲染**——一个带不透明源（opaque origin）的沙箱化 `srcdoc` iframe
+（脚本会运行，组件完全可交互；但无法触及应用、其存储或桥接层）。该框架会根据内容
+调整自身尺寸（高度实时跟随，宽度采用内容的固有宽度，在消息流中左对齐），并由一段
+主题前导代码把应用解析后的 token（`--foreground`、`--muted-foreground`、
+`--accent`、`--border`、`--card`）、应用字体和透明背景交给文档——于是组件形态的
+HTML 看起来就像原生界面，而完整页面则保留其自身设计。非 HTML 目标以及远端网关会
+回退到经典的预览卡片。请在一个 skill 中把你的指令告诉智能体（它正是这样学会输出该指令的）。
+
+被预览的组件还可以**回传消息**。在框架内部，
+`window.hermes.send('get-price eth')`（或者声明式的
+`<button data-hermes-send="get-price eth">`——无需脚本）会把该提示词作为一条
+用户轮次交给智能体，且不显示在屏幕上：转录中不会出现气泡，组件的更新就是可见的
+响应。这个轮次仍然是真实的——它会唤醒智能体、遵循输入框的 steer/queue 规则，
+并被持久化（类型为 `hidden`），因此恢复会话与会话数据库都保有完整记录。
+提示词会被裁剪、上限为 500 个字符，并按每个框架每秒一条进行节流。
 
 ### 挂载作用域的界面元素（`Contribute`）
 
@@ -357,28 +451,149 @@ jsx(Contribute, {
 
 ```ts
 host.state.activeSessionId  // ReadableAtom<string | null>
+host.state.awaitingResponse // ReadableAtom<boolean>  在收到第一个助手载荷之前为 true
+host.state.busy             // ReadableAtom<boolean>  聚焦的对话在发送后正在工作
+host.state.busyBySession    // ReadableAtom<Record<string, boolean>>  运行时 id → 是否处于轮次中
+host.state.focusedSessionId // ReadableAtom<string | null>  （聚焦会话的运行时 id——感知分块；session.* RPC 优先使用它）
+host.state.focusedSessionProfile // ReadableAtom<string>  （聚焦对话的所属配置档——按 bot/配置档展示时优先于 `profile`）
+host.state.focusedStoredSessionId // ReadableAtom<string | null>  （持久 id——用于导航 / 会话列表匹配）
+host.state.focusedUsage     // ReadableAtom<UsageStats | null>  （聚焦会话实时流式的用量，无需 RPC）
 host.state.cwd              // ReadableAtom<string>
-host.state.gateway          // ReadableAtom<string>  （'idle' | 'connecting' | 'open' | …）
+host.state.gateway          // ReadableAtom<string>  socket 状态（'idle' | 'connecting' | 'open' | …）
 host.state.model            // ReadableAtom<string>
 host.state.profile          // ReadableAtom<string>
 host.state.viewport         // ReadableAtom<{ width, height, narrow }>
+```
 
+`host.state.gateway` 表示的是 WebSocket 连接，而不是某个对话轮次是否正在运行。
+一个会话可能在 socket 为 `open` 时处于轮次中；同时另一个会话可能是空闲的。
+请根据**聚焦会话**的轮次忙碌状态（`host.state.busyBySession[sessionId]`，或该会话的
+`view.$busy`）来禁用输入框或插件动作——绝不要依据 `gateway`，也绝不要依据
+进程级的全局忙碌标志。
+
+```ts
 host.notify({ kind, message, title?, detail?, action? })  // toast；返回 id
 host.notifyError(error, fallbackMessage)                   // 以 toast 形式提示错误
+ctx.os.notify({ title, body?, silent?, icon?, activate?, onActivate?, actions? })
+                                           // 原生 OS 通知（归属到你的插件）
+ctx.os.openExternal(url)                   // OS 默认处理程序（浏览器、邮件、spotify:）→ Promise<boolean>
+ctx.os.revealPath(path)                    // 在 Finder / 资源管理器中显示 → Promise<boolean>
+ctx.os.writeClipboard(text)                // 系统剪贴板 → Promise<boolean>
 host.navigate('/route')                    // hash 路由导航
+host.openSession(id, { profile?, intent? }) // 以核心方式打开一个已存储的会话；
+                                           //   profile：先软切换到该配置档的后端
+                                           //   intent：'in-place'（默认）| 'stack' | 'tab' | 'window'
+host.newChat(profile?)                     // 新的对话草稿，可选地位于另一个配置档
+host.openWorkspace(id, { render, title?, minWidth?, onClose? })
+                                           // 把插件渲染的标签页停靠到主
+                                           //   工作区区域并显示它；返回一个销毁函数
+host.paneVisibility(paneId)                // ReadableAtom<boolean>——某个贡献面板
+                                           //   是否真的在屏幕上（是其区域的活动标签页）？
 host.onEvent(type, fn)                     // 网关事件流（'*' = 全部）；返回销毁函数
 host.logs(...)                             // 跟踪某个应用日志文件
 host.status()                              // 一次性的系统状态快照
 host.restartGateway()                      // 重启后端网关
-host.request<T>(method, params?)           // 网关 JSON-RPC —— 真正的威力所在
+host.profileRoutes()                       // [{ profile, targetProfile, connectionId, mode }]
+host.requestProfile<T>(route, method, params?)   // 经注册表路由的 RPC；不切换前台
+host.requestProfile<T>(profile, method, params?) // 旧版 v1/本地重载
+host.request<T>(method, params?)           // 当前网关的 JSON-RPC —— 真正的威力所在
 ```
 
 `host.request` 就是应用自己使用的那套 JSON-RPC（会话、配置、skills、
-cron、kanban 等）。`host.onEvent` 会流式推送实时网关事件（消息增量、
+cron、kanban 等）。`host.requestProfile` 接受来自 `host.profileRoutes()` 的描述符，
+并把该 RPC 经由其确切的注册表来源与配置档进行路由，而不改变当前对话或网关。
+仅接受配置档的重载只为单一本地/旧版拓扑而保留；感知注册表的插件应当传入描述符，
+这样暴露同名配置档的两个来源就不会发生冲突。
+
+`host.openWorkspace(id, { render, title?, minWidth?, onClose? })` 会把插件渲染的视图
+以标签页形式停靠到**主工作区区域**——也就是会话分块与预览所使用的同一中央区域——
+并显示它。用相同的 `id` 再次调用会就地刷新内容并把该标签页重新置前，而不是打开一个
+重复的标签页。关闭该标签页（标签页的关闭控件或 ⌘W）会拆除注册并触发你的 `onClose`；
+返回的销毁函数可以以编程方式关闭它。请做特性检测（`typeof host.openWorkspace ===
+'function'`），并在较旧的桌面端版本上回退到普通的贡献面板——Bot Mode 的群聊房间
+就是参考消费方（可用时接管主窗口，否则使用面板内视图）。
+
+`host.paneVisibility(paneId)` 返回一个只读的响应式 atom，当某个贡献面板真正显示在
+屏幕上时为 `true`：存在于布局树中、未被移除或隐藏、其区域未被最小化，并且占据其
+区域的活动标签页位置（独占一个区域的单个面板也算）。id 是贡献作用域的面板 id，
+即 `<pluginId>:<paneId>`。atom 按 id 进行记忆化，因此在渲染中调用它是安全的。
+用它来仅在你的面板可见时注册配套 UI——Bot Mode 的 Cronjobs 面板就是参考消费方：
+它在 Bots 面板占据侧边栏标签页时注册，并在用户切回 Sessions 时取消注册。
+在较旧的桌面端上请做特性检测（`typeof host.paneVisibility === 'function'`），
+并回退到始终注册的行为。
+
+`host.profileRoutes()` 会盘点当前连接注册表中每一个已注册的来源。按需连接的 SSH
+来源会暴露一个不含凭据的 `default` 种子路由而不打开隧道，因此插件可以成为第一个
+拨通它们的调用方；SSH 的 `remoteProfile` 仍然是该路由的后端 `targetProfile`。
+`connectionId` 是注册表的路由标识；
+把它与 `profile` 搭配用于键与持久化。端点、token、SSH 主机/密钥以及其他原始连接
+字段永远不会跨越插件 IPC 边界。`profile` 是用于请求的来源本地路由；
+`targetProfile` 是该路由所服务的后端 Hermes 配置档。
+当某个路由显式映射到另一个后端配置档时（例如 SSH 的 `remoteProfile` 覆盖或旧版的
+按配置档 URL 别名），两者会不同。这种区分在不暴露连接密钥的前提下保留了后端身份。
+
+面向配置档的插件也有一等方法可用：
+`profiles.list`（每个配置档及其最近一次对话，作为 `last_session`；传入
+`include_sessions: false` 可跳过按配置档的数据库探测；传入
+`preferred_session_ids: { profileName: sessionId }` 可对每个配置档的一个固定会话进行
+精确且经存在性校验的查找——每个被点名的行会得到一个 `preferred_session` 摘要，
+它会把隐藏行与压缩谱系解析到其当前的最新端点，若该 id 确定已不存在则为 `null`；
+较旧的网关会忽略此参数并省略该字段）
+以及 `profiles.create`（`name`、`description`、`clone_from`、
+`clone_all`、`no_skills`、`soul`，可选的 `model` + `provider` 固定）——它们是
+dashboard 的 `/api/profiles` REST 路由在 ws 上的孪生版本。
+`host.state.busy` 是聚焦对话的实时轮次（思考与流式输出）。
+`host.state.awaitingResponse` 从发送起一直为 true，直到收到第一个助手载荷。
+两者都跟随用户实际正在查看的对话——有会话分块持有焦点时为该分块，否则为主工作区
+对话（与状态栏忙碌脉冲读取的是同一信号）。在组件中订阅：
+
+```javascript
+const busy = useValue(host.state.busy)
+```
+
+若需要 token 级别的细节，请用 `host.onEvent` 监听（`message.start`、
+`message.delta`、`message.complete`）。
+
+`host.onEvent` 会流式推送实时网关事件（消息增量、
 会话生命周期、工具活动）。监听器之间彼此隔离——你的监听器中抛出的异常
 不会影响应用的事件派发。每一个 `host` 通道都是异步安全的：内部辅助函数
 抛出的同步异常（例如在普通浏览器中没有桌面端桥接）会变成你的 `.catch()`
 能捕获的 rejection，而绝不会是导致错误边界崩溃的异常。
+
+`ctx.os` 是经过筛选的 OS 通道——插件触及应用窗口之外的所有方式，都集中在一个
+归属到你插件的命名空间中。`ctx.os.notify` 会发出一条**原生 OS 通知**——与应用自身的
+审批/轮次提醒所用的是同一条 Electron 流水线。它只在用户离开 Hermes 时触发
+（处于后台 / 未聚焦）；当用户正在看着应用时，请用 `host.notify` 显示应用内 toast。
+用户可以在 设置 ▸ 通知 ▸ “Plugin notifications” 中按设备将其静音，并且同一插件的
+重复通知会被节流，所以请把它当作真正值得关注的事件的信号——而不是日志。
+
+丰富的呈现与激活（扩展了最初的 `ctx.os` 通道）：
+
+```ts
+ctx.os.notify({
+  title: 'New match found',
+  body: 'Someone matched your signal',
+  icon: '/abs/path/to/icon.png', // Electron Notification 图标
+  // 点击正文 → 聚焦 Hermes 并导航。与 OS 深度链接使用相同的写法：
+  activate: 'hermes://index-network/intent/1',
+  // 或：activate: '/index-network/intent/1'
+  // 或：activate: { path: '/index-network/intent/1' }
+  onActivate: () => focusLocalState('1'), // 可选的渲染进程回调
+  actions: [
+    { id: 'open', label: 'Open', activate: 'hermes://index-network/intent/1' },
+    { id: 'dismiss', label: 'Dismiss', onAction: () => dismiss('1') },
+  ],
+})
+```
+
+`activate` 与深度链接兼容：`hermes://index-network/intent/1` 与 hash 路径
+`/index-network/intent/1` 会解析到同一个应用内路由（同样的 `hermes://…` URL 也可作为
+OS 深度链接使用）。操作按钮只在已签名的 macOS 版本上渲染；在其他平台上点击正文
+仍然会激活。导航只会在用户点击时发生——绝不会仅由后台事件触发。
+
+其他通道（`openExternal`、`revealPath`、`writeClipboard`）在能力不可用时
+（较旧的桌面端外壳、普通浏览器）会 resolve 为 `false` 而不是抛出异常——请根据
+结果分支，而不是去嗅探桥接层。
 
 ## 数据层——React Query + nanostores
 
@@ -439,6 +654,55 @@ ctx.socket('/events', () => {
 
 如果你的插件需要服务端工作，请随插件提供一个 Python `plugin_api.py`，并通过
 `ctx.rest` / `ctx.socket` 访问它——这个命名空间**在构造上**就限定在你的插件之内。
+
+### 一个包，两套 SDK {#one-package-both-sdks}
+
+一个既需要桌面端 UI **又**需要智能体侧代码（一个 Python 插件、它的后端路由、skills）
+的功能，不必拆成两个相互依赖的安装包来发布。桌面端应用还会扫描
+`$HERMES_HOME/plugins/<id>/`——也就是常规的智能体插件根目录——寻找
+`desktop/plugin.js`，并通过与独立磁盘通道完全相同的流水线加载它（包括热重载）：
+
+```
+~/.hermes/plugins/<id>/           # 一个可安装的文件夹
+├── plugin.yaml                   # 智能体一半：工具、钩子、命令
+├── skills/…
+├── dashboard/
+│   ├── manifest.json             # { "name": "<id>", "api": "plugin_api.py" }
+│   └── plugin_api.py             # 后端路由 → /api/plugins/<id>/
+└── desktop/
+    └── plugin.js                 # 桌面端一半：面板、命令、ctx.rest
+```
+
+`desktop/plugin.js` 这一半就是一个普通的磁盘插件——相同的契约、相同的 import，
+同样用 `ctx.rest('/…')` 访问与它并列的 `plugin_api.py`。安装、分享或移除该功能
+都只涉及一个文件夹。
+
+两个启用开关仍然各自生效，这是有意为之，并且两者默认都是**关闭**的：桌面端这一半
+以需要用户主动开启的方式发布——它会列在**设置 → 插件**中，但在用户拨动开关之前
+保持禁用——这与 Python 一半在 `config.yaml` 中的 `plugins.enabled` 门控相对应
+（即下文的安全边界）。把一个包放进 `~/.hermes/plugins`，在用户另行决定之前，
+它在任何界面上都是惰性的。当后端一半关闭时，桌面端一半会优雅降级——
+`ctx.rest` 返回错误，而不是崩溃。
+
+:::note
+该扫描只针对运行桌面端应用的那台机器本地。连接远端后端时，远端机器的
+`~/.hermes/plugins` 无法作为文件系统访问——只有本地安装的包才会贡献桌面端一半
+（与独立通道的规则相同）。
+:::
+
+### 通过安装链接分发 {#install-link}
+
+发布你的插件仓库（智能体一半、桌面端一半或两者），并用 `hermes://` scheme
+链接到它——在你的网站或 README 中放一个普通锚点即可：
+
+```html
+<a href="hermes://plugin/install?repo=owner/repo&enable=1">Install in Hermes</a>
+```
+
+用户会看到一个确认对话框（仓库 id、来源链接、对仓库所含内容的探测），并在安装
+任何东西之前选择组件——深度链接永远不会自动安装。`force=1` 会替换已有的安装；
+开发版本使用 `hermes-dev://`。完整的链接参考见：
+[一键安装链接](/user-guide/features/plugins#one-click-install-links-desktop)。
 
 ### Python 一侧
 
@@ -587,10 +851,11 @@ ctx.storage.remove('lastTab')
 | 类别 | 导出项 |
 |----------|---------|
 | Host | `host`（`.state.*`、`.notify`、`.notifyError`、`.navigate`、`.onEvent`、`.logs`、`.status`、`.restartGateway`、`.request`） |
-| 插件契约 | `HermesPlugin`、`PluginContext`、`PluginContribution`、`PluginStorage`、`PluginRestOptions`、`Contribution` |
+| 插件契约 | `HermesPlugin`、`PluginContext`、`PluginContribution`、`PluginStorage`、`PluginOs`、`PluginRestOptions`、`PluginNativeNotificationInput`、`PluginNotificationAction`、`HermesOpenTarget`、`Contribution` |
 | 区域常量 | `PANES_AREA`、`ROUTES_AREA`、`SIDEBAR_NAV_AREA`、`STATUSBAR_AREAS`、`TITLEBAR_AREAS`、`PALETTE_AREA`、`KEYBINDS_AREA`、`THEMES_AREA`、`COMPOSER_AREAS` |
 | 区域载荷 | `RouteContribution`、`SidebarNavContribution`、`StatusbarItem`、`TitlebarTool`、`PaletteContribution`、`KeybindContribution`、`ComposerMiddleware`、`ComposerAttachmentProvider` |
 | React / 状态 | `useValue`、`atom`、`computed`、`useQuery`、`useMutation`、`useQueryClient`、`queryClient`、`Contribute` |
+| 主题 | `useTheme`、`requestTheme`、`setAccentOverride`、`$accentOverride`、`retintTheme`、`themeHue`、`DesktopTheme`、`DesktopThemeColors`，以及 OKLCH 数学函数（`hexToOklch`、`oklchToHex`、`oklchToSrgb255`、`mixOklab`、`maxChroma`、`hueDelta`、`contrastRatio`、`readableOn`、`normalizeHex`） |
 | UI 套件 | `Button`、`Input`、`Textarea`、`Select*`、`Switch`、`Checkbox`、`SegmentedControl`、`Tabs*`、`Dialog*`、`ConfirmDialog`、`DropdownMenu*`、`ContextMenu*`、`Popover*`、`Tip`/`Tooltip*`、`Badge`、`Kbd`/`KbdGroup`、`SearchField`、`ScrollArea`、`Separator`、`Skeleton`、`GlyphSpinner`、`Loader`、`EmptyState`、`ErrorState`、`CopyButton`、`StatusDot`、`LogView`、`Codicon`、`DecodeText` |
 | 辅助工具 | `cn`、`icons`、`haptic`、`useI18n`、`profileColor`、`profileColorSoft`、`relativeTime`、`fmtDateTime`、`fmtDayTime`、`coarseElapsed`、`evaluateRuntimeReadiness` |
 

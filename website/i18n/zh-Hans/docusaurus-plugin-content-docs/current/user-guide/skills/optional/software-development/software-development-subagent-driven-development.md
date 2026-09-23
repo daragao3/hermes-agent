@@ -21,7 +21,7 @@ description: "通过 delegate_task 子 agent 执行计划（两阶段评审）"
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `delegation`, `subagent`, `implementation`, `workflow`, `parallel` |
-| 相关 skills | [`plan`](/user-guide/skills/bundled/software-development/software-development-plan), [`requesting-code-review`](/user-guide/skills/bundled/software-development/software-development-requesting-code-review), [`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development) |
+| 相关 skills | [`requesting-code-review`](/user-guide/skills/bundled/software-development/software-development-requesting-code-review), [`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development) |
 
 ## 参考：完整 SKILL.md
 

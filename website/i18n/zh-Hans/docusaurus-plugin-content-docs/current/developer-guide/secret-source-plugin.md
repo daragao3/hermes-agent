@@ -6,11 +6,25 @@ description: "如何为 Hermes Agent 构建一个 secret-manager 后端插件"
 
 # 构建密钥源插件
 
-密钥源（secret source）在进程启动时把供应商凭证从外部密钥管理器（vault、密码管理器、操作系统密钥库、自定义脚本）解析到环境变量中——在 `~/.hermes/.env` 加载之后、Hermes 读取凭证之前。Bitwarden 和 1Password 内置于代码树中；**其他所有后端都是插件**。本指南介绍如何构建一个。
+密钥源（secret source）在进程启动时把供应商凭证从外部密钥管理器（vault、密码管理器、操作系统密钥库、自定义脚本）解析到环境变量中——在 `~/.hermes/.env` 加载之后、Hermes 读取凭证之前。Bitwarden、1Password 以及一个通用的命令辅助（command-helper）源内置于代码树中；**其他所有后端都是插件**。本指南介绍如何构建一个。
 
 :::tip
 内置集合是刻意封闭的，与[记忆提供方](/developer-guide/memory-provider-plugin)的策略一致：在 `agent/secret_sources/` 下新增 vault 后端的 PR 会被关闭，并附上指向本指南的链接。请把你的后端作为独立插件仓库发布，并在 Nous Research Discord（`#plugins-skills-and-skins`）中分享。
 :::
+
+## 首个进程的引导时机 {#first-process-bootstrap-timing}
+
+`load_hermes_dotenv()` 往往在导入时、**早于**插件注册之前运行。
+因此，只要配置了任何**已启用**的插件密钥源，Hermes 就会在插件发现之后重新拉取密钥。
+是否启用由密钥源的 `is_enabled(cfg)` 契约决定；标准形式是
+`secrets.<name>.enabled: true`，同时仍支持自定义的启用方式。
+这弥补了「用我的 vault 替换 Bitwarden」时首个进程的空档（#64177）。
+
+- 重新拉取是幂等且 fail-open 的（永远不会阻塞启动）。
+- 密钥源只能通过编排器提供环境变量；**没有**任何插件 API
+  能导出其他插件或用户的整个密钥库，超出你自己的源配置所允许的范围。
+- 加载完成后，任何进程内代码都可以读取 `os.environ`——
+  信任边界仍然是「已启用的插件以 agent 权限运行」。
 
 ## 框架负责什么 vs. 你负责什么
 
@@ -110,6 +124,7 @@ class MyVaultSource(SecretSource):
 | `protected_env_vars(cfg)` | 空 | 你有一个引导 token（你几乎肯定有） |
 | `fetch_timeout_seconds(cfg)` | 120 秒 | 你的后端需要不同的预算 |
 | `config_schema()` | `{}` | 为配置界面声明配置键 |
+| `remediation(kind, cfg)` | 按 `ErrorKind` 给出的通用提示 | 你希望失败警告指向你自己的修复命令（例如内置源在 `AUTH_FAILED` 时返回 `Run hermes secrets <name> token…`）。必须是纯粹的 kind→字符串映射：不做 I/O，永不抛出异常。返回 `""` 可不显示提示。 |
 
 ## 子进程安全：使用 `run_secret_cli()`
 
@@ -126,7 +141,7 @@ def register(ctx):
 以下情况注册会被拒绝（记录一条警告日志，绝不崩溃）：非 `SecretSource` 实例、名称无效或重复、`scheme` 已被其他源占用、`api_version` 不正确，或 `shape` 不在 `mapped`/`bulk` 之内。
 
 :::note 时机
-插件发现发生在启动流程中比首次 `load_hermes_dotenv()` 调用更晚的位置，因此发现插件的那个进程在首次加载环境变量时不会咨询插件源。但之后派生的每个 Hermes 进程（gateway 子进程、cron 会话、subagent）都会咨询它。首个进程的引导由内置源覆盖。
+插件发现发生在启动流程中比首次 `load_hermes_dotenv()` 调用更晚的位置。发现完成后，Hermes 会立即重新拉取已启用的插件密钥源（`reset_secret_source_cache()` + `load_hermes_dotenv()`），因此发现插件的那个进程*确实*会用上它们——参见上文的[首个进程的引导时机](#first-process-bootstrap-timing)（#64177）。重新拉取是 fail-open 的，且在没有启用任何插件源时会跳过。任何在插件模块导入期间或 `register(ctx)` 中读取 `os.environ` 的代码仍然运行在重新拉取之前，不能依赖同一个源提供的凭证；请把需要凭证的工作放在 `fetch()` 中。Gateway、cron 和 subagent 进程也会执行同样的发现/重新拉取流程。
 :::
 
 ## 用户像配置其他源一样配置它

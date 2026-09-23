@@ -71,7 +71,11 @@ else:
 ```
 
 :::tip `[SILENT]` 技巧
-当 agent 的最终响应包含 `[SILENT]` 时，投递会被抑制。这意味着只有在真正发生变化时你才会收到通知——安静时段不会产生垃圾消息。
+对于 cron 监控类任务，请指示 agent 在没有变化时只回复 `[SILENT]`。Cron 投递会把 `[SILENT]` 视为静默标记，因此只有在真正发生变化时你才会收到通知——安静时段不会产生垃圾消息。
+:::
+
+:::tip 让失败通知远离共享频道
+`[SILENT]` 只适用于成功的运行——当任务硬失败时，引擎会向该任务的投递目标发送一条 `⚠️ Cron 'X' failed…` 通知。对于投递到繁忙共享频道的任务，设置 `--failure-deliver local` 可以完全抑制这些通知（运行状态仍可在 `hermes cron list` 和运行历史中查看），或者用 `--failure-deliver slack:C_OPS` 把失败通知发到运维频道。语法与 `--deliver` 相同；省略时，失败通知仍像以前一样跟随 `--deliver`。
 :::
 
 ---
@@ -123,7 +127,7 @@ Otherwise, provide a concise summary of the activity." --name "Repo watcher" --d
 ```
 
 :::warning 自包含的 Prompt
-注意 prompt 中包含了精确的 `gh` 命令。cron agent 不记得之前的运行记录或你的偏好——把所有内容都明确写出来。
+注意 prompt 中包含了精确的 `gh` 命令。cron agent 没有之前运行的对话历史——把所有内容都明确写出来。（持久记忆会被加载，因此保存到 MEMORY.md 的长期偏好会延续下来，但不要依赖它来提供任务的关键细节。）
 :::
 
 ---
@@ -246,6 +250,19 @@ Skill 按顺序加载——先加载 `arxiv`（教 agent 如何搜索论文）�
 | `slack` | `--deliver slack` | 你的 Slack 主频道 |
 | 指定对话 | `--deliver telegram:-1001234567890` | 特定 Telegram 群组 |
 | 线程投递 | `--deliver telegram:-1001234567890:17585` | 特定 Telegram 话题线程 |
+| Bot Chat | `--deliver bot-chat` | 将输出注入该 profile 的规范 Bot Chat——bot 会读取并作出回应 |
+| Bot Chat（指定名称） | `--deliver bot-chat:research` | 另一个本地 profile 的 Bot Chat |
+
+### Bot Chat 投递 {#bot-chat-delivery}
+
+`bot-chat` 目标会把任务输出**作为一条真实消息投递到某个 profile 的规范“Bot Chat”会话中**——bot 会像接收其他消息一样接收它，对需要处理的内容采取行动，并在该对话中回复。当你希望 bot *看到并响应*定时输出，而不只是把它归档在运行历史中时，就使用这个目标。
+
+需要注意：
+
+- **仅限本机。** 该 profile 必须存在于运行调度器的机器上（`hermes profile list`）。名称会在创建时校验；无法指定其他网关/机器上的 profile。
+- **消耗一次 bot 轮次。** 每次投递都会在目标 bot 的 Bot Chat 中运行一次完整的 agent 轮次——对高频任务要做好预算。
+- **可组合。** `--deliver bot-chat,telegram` 会同时发送给 bot 和你的 Telegram 主频道。`all` 标记永远不会展开为 bot-chat 目标。
+- 投递的消息带有前缀，让 bot 知道它来自定时任务，而不是来自你。
 
 ---
 
@@ -253,7 +270,7 @@ Skill 按顺序加载——先加载 `arxiv`（教 agent 如何搜索论文）�
 
 **让 prompt 完全自包含。** Cron 任务中的 agent 不记得你的任何对话。把 URL、仓库名、格式偏好和投递说明直接写进 prompt。
 
-**大量使用 `[SILENT]`。** 对于监控类任务，始终加上类似"如果没有变化，回复 `[SILENT]`"的指令，防止通知噪音。
+**有意识地使用 `[SILENT]`。** 对于监控类任务，加上类似“如果没有变化，只回复 `[SILENT]`”的指令。不要让 agent 在安静的情况下解释这个标记——cron 会把 `[SILENT]` 视为抑制投递的标记。
 
 **用脚本做数据采集。** `script` 参数让 Python 脚本处理枯燥的部分（HTTP 请求、文件 I/O、状态追踪）。Agent 只看到脚本的 stdout，并对其进行推理。这比让 agent 自己抓取更省钱、更可靠。
 

@@ -14,9 +14,9 @@ Outlines：结构化 JSON/regex/Pydantic LLM 生成。
 
 | | |
 |---|---|
-| 来源 | 可选 — 使用 `hermes skills install official/mlops/outlines` 安装 |
+| 来源 | 可选 —— 使用 `hermes skills install official/mlops/outlines` 安装 |
 | 路径 | `optional-skills/mlops/inference/outlines` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
 | 依赖项 | `outlines`, `transformers`, `vllm`, `pydantic` |
@@ -41,7 +41,15 @@ Outlines：结构化 JSON/regex/Pydantic LLM 生成。
 - **自动根据 JSON schema 生成**
 - **在 grammar（语法）层面控制 token 采样**
 
-**GitHub Stars**：8,000+ | **来自**：dottxt.ai（前身为 .txt）
+**GitHub Stars**：12,000+ | **来自**：dottxt.ai（前身为 .txt）
+
+> **API 说明（Outlines 1.x）：** 本 skill 面向当前的 v1 API。
+> 1.0 之前的辅助函数（`outlines.models.transformers(...)`、
+> `outlines.generate.json/choice/regex/...`）已被**移除**。在 v1 中，
+> 你使用 `outlines.from_transformers(...)`（或 `from_vllm`、
+> `from_llamacpp`、`from_openai`）创建模型，然后带上输出类型**直接调用模型**：
+> `model(prompt, output_type)`。JSON/Pydantic 输出以 **JSON 字符串**形式返回
+> ——请用 `YourModel.model_validate_json(result)` 进行校验。
 
 ## 安装
 
@@ -62,14 +70,19 @@ pip install outlines vllm  # vLLM 用于高吞吐量
 ```python
 import outlines
 from typing import Literal
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-# 加载模型
-model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
+MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
 
-# 带类型约束的生成
+# v1：包装一个 Transformers 模型 + tokenizer
+model = outlines.from_transformers(
+    AutoModelForCausalLM.from_pretrained(MODEL_NAME, device_map="auto"),
+    AutoTokenizer.from_pretrained(MODEL_NAME),
+)
+
+# 带输出类型直接调用模型
 prompt = "Sentiment of 'This product is amazing!': "
-generator = outlines.generate.choice(model, ["positive", "negative", "neutral"])
-sentiment = generator(prompt)
+sentiment = model(prompt, Literal["positive", "negative", "neutral"])
 
 print(sentiment)  # "positive"（保证为其中之一）
 ```
@@ -79,19 +92,24 @@ print(sentiment)  # "positive"（保证为其中之一）
 ```python
 from pydantic import BaseModel
 import outlines
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 class User(BaseModel):
     name: str
     age: int
     email: str
 
-model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
+MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
+model = outlines.from_transformers(
+    AutoModelForCausalLM.from_pretrained(MODEL_NAME, device_map="auto"),
+    AutoTokenizer.from_pretrained(MODEL_NAME),
+)
 
-# 生成结构化输出
+# 生成结构化输出（返回 JSON 字符串）
 prompt = "Extract user: John Doe, 30 years old, john@example.com"
-generator = outlines.generate.json(model, User)
-user = generator(prompt)
+result = model(prompt, User, max_new_tokens=200)
 
+user = User.model_validate_json(result)  # 解析为 Pydantic 模型
 print(user.name)   # "John Doe"
 print(user.age)    # 30
 print(user.email)  # "john@example.com"
@@ -101,11 +119,11 @@ print(user.email)  # "john@example.com"
 
 ### 1. 受约束的 Token 采样
 
-Outlines 使用有限状态机（FSM）在 logit 层面约束 token 生成。
+Outlines 使用由输出类型派生出的已编译自动机，在 logit 层面约束 token 生成。
 
 **工作原理：**
-1. 将 schema（JSON/Pydantic/regex）转换为上下文无关文法（CFG）
-2. 将 CFG 转换为有限状态机（FSM）
+1. 将输出类型（JSON/Pydantic/regex/`Literal`）转换为 schema/grammar
+2. 将 grammar 编译为 token 级自动机
 3. 在生成的每一步过滤无效 token
 4. 当只有一个有效 token 时快速前进
 
@@ -116,42 +134,36 @@ Outlines 使用有限状态机（FSM）在 logit 层面约束 token 生成。
 
 ```python
 import outlines
+from pydantic import BaseModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-# Pydantic 模型 -> JSON schema -> CFG -> FSM
 class Person(BaseModel):
     name: str
     age: int
 
-model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
-
-# 底层流程：
-# 1. Person -> JSON schema
-# 2. JSON schema -> CFG
-# 3. CFG -> FSM
-# 4. FSM 在生成过程中过滤 token
-
-generator = outlines.generate.json(model, Person)
-result = generator("Generate person: Alice, 25")
-```
-
-### 2. 结构化生成器
-
-Outlines 为不同输出类型提供专用生成器。
-
-#### Choice 生成器
-
-```python
-# 多项选择
-generator = outlines.generate.choice(
-    model,
-    ["positive", "negative", "neutral"]
+model = outlines.from_transformers(
+    AutoModelForCausalLM.from_pretrained("microsoft/Phi-3-mini-4k-instruct", device_map="auto"),
+    AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct"),
 )
 
-sentiment = generator("Review: This is great!")
+result = model("Generate person: Alice, 25", Person)
+person = Person.model_validate_json(result)
+```
+
+### 2. 输出类型
+
+在 v1 中，你将期望的**输出类型**直接作为第二个参数传入。
+
+#### 多项选择（`Literal`）
+
+```python
+from typing import Literal
+
+sentiment = model("Review: This is great!", Literal["positive", "negative", "neutral"])
 # 结果：三个选项之一
 ```
 
-#### JSON 生成器
+#### 通过 Pydantic 生成 JSON
 
 ```python
 from pydantic import BaseModel
@@ -161,97 +173,85 @@ class Product(BaseModel):
     price: float
     in_stock: bool
 
-# 生成符合 schema 的有效 JSON
-generator = outlines.generate.json(model, Product)
-product = generator("Extract: iPhone 15, $999, available")
-
-# 保证为有效的 Product 实例
-print(type(product))  # <class '__main__.Product'>
+result = model("Extract: iPhone 15, $999, available", Product)
+product = Product.model_validate_json(result)  # 有效的 Product 实例
 ```
 
-#### Regex 生成器
+#### Regex（传入 regex 字符串）
 
 ```python
-# 生成匹配 regex 的文本
-generator = outlines.generate.regex(
-    model,
-    r"[0-9]{3}-[0-9]{3}-[0-9]{4}"  # 电话号码模式
-)
-
-phone = generator("Generate phone number:")
+# 生成匹配 regex 模式的文本
+phone = model("Generate phone number:", r"[0-9]{3}-[0-9]{3}-[0-9]{4}")
 # 结果："555-123-4567"（保证匹配模式）
 ```
 
-#### 整数/浮点数生成器
+#### 数值类型
 
 ```python
-# 生成特定数值类型
-int_generator = outlines.generate.integer(model)
-age = int_generator("Person's age:")  # 保证为整数
-
-float_generator = outlines.generate.float(model)
-price = float_generator("Product price:")  # 保证为浮点数
+# 直接传入 Python 类型
+age = model("Person's age:", int)      # 保证为整数
+price = model("Product price:", float)  # 保证为浮点数
 ```
 
 ### 3. 模型后端
 
-Outlines 支持多种本地及基于 API 的后端。
+Outlines 通过 `from_*` 工厂函数支持多种本地及基于 API 的后端。
 
 #### Transformers（Hugging Face）
 
 ```python
 import outlines
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-# 从 Hugging Face 加载
-model = outlines.models.transformers(
-    "microsoft/Phi-3-mini-4k-instruct",
-    device="cuda"  # 或 "cpu"
+model = outlines.from_transformers(
+    AutoModelForCausalLM.from_pretrained("microsoft/Phi-3-mini-4k-instruct", device_map="auto"),
+    AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct"),
 )
 
-# 与任意生成器配合使用
-generator = outlines.generate.json(model, YourModel)
+result = model(prompt, YourModel)
 ```
 
 #### llama.cpp
 
 ```python
-# 加载 GGUF 模型
-model = outlines.models.llamacpp(
-    "./models/llama-3.1-8b-instruct.Q4_K_M.gguf",
-    n_gpu_layers=35
-)
+import outlines
+from llama_cpp import Llama
 
-generator = outlines.generate.json(model, YourModel)
+llm = Llama("./models/llama-3.1-8b-instruct.Q4_K_M.gguf", n_gpu_layers=35, n_ctx=4096)
+model = outlines.from_llamacpp(llm)
+
+result = model(prompt, YourModel)
 ```
 
 #### vLLM（高吞吐量）
 
 ```python
-# 用于生产部署
-model = outlines.models.vllm(
-    "meta-llama/Llama-3.1-8B-Instruct",
-    tensor_parallel_size=2  # 多 GPU
-)
+import outlines
+from vllm import LLM
 
-generator = outlines.generate.json(model, YourModel)
+llm = LLM("meta-llama/Llama-3.1-8B-Instruct", tensor_parallel_size=2)
+model = outlines.from_vllm(llm)
+
+result = model(prompt, YourModel)
 ```
 
-#### OpenAI（有限支持）
+#### OpenAI（服务端约束 JSON）
 
 ```python
-# 基础 OpenAI 支持
-model = outlines.models.openai(
-    "gpt-4o-mini",
-    api_key="your-api-key"
-)
+import outlines
+from openai import OpenAI
 
-# 注意：API 模型部分功能受限
-generator = outlines.generate.json(model, YourModel)
+client = OpenAI()
+model = outlines.from_openai(client, "gpt-4o-mini")
+
+# API 后端支持 JSON-schema 风格的结构化输出
+result = model(prompt, YourModel)
 ```
 
 ### 4. Pydantic 集成
 
 Outlines 对 Pydantic 提供一流支持，可自动进行 schema 转换。
+生成结果为 JSON 字符串；调用 `model_validate_json` 获取实例。
 
 #### 基础模型
 
@@ -264,10 +264,8 @@ class Article(BaseModel):
     word_count: int = Field(description="Number of words", gt=0)
     tags: list[str] = Field(description="List of tags")
 
-model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
-generator = outlines.generate.json(model, Article)
-
-article = generator("Generate article about AI")
+result = model("Generate article about AI", Article, max_new_tokens=300)
+article = Article.model_validate_json(result)
 print(article.title)
 print(article.word_count)  # 保证 > 0
 ```
@@ -285,9 +283,8 @@ class Person(BaseModel):
     age: int
     address: Address  # 嵌套模型
 
-generator = outlines.generate.json(model, Person)
-person = generator("Generate person in New York")
-
+result = model("Generate person in New York", Person)
+person = Person.model_validate_json(result)
 print(person.address.city)  # "New York"
 ```
 
@@ -307,9 +304,8 @@ class Application(BaseModel):
     status: Status  # 必须为枚举值之一
     priority: Literal["low", "medium", "high"]  # 必须为 literal 之一
 
-generator = outlines.generate.json(model, Application)
-app = generator("Generate application")
-
+result = model("Generate application", Application)
+app = Application.model_validate_json(result)
 print(app.status)  # Status.PENDING（或 APPROVED/REJECTED）
 ```
 
@@ -320,6 +316,7 @@ print(app.status)  # Status.PENDING（或 APPROVED/REJECTED）
 ```python
 from pydantic import BaseModel
 import outlines
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 class CompanyInfo(BaseModel):
     name: str
@@ -327,8 +324,10 @@ class CompanyInfo(BaseModel):
     industry: str
     employees: int
 
-model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
-generator = outlines.generate.json(model, CompanyInfo)
+model = outlines.from_transformers(
+    AutoModelForCausalLM.from_pretrained("microsoft/Phi-3-mini-4k-instruct", device_map="auto"),
+    AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct"),
+)
 
 text = """
 Apple Inc. was founded in 1976 in the technology industry.
@@ -336,7 +335,7 @@ The company employs approximately 164,000 people worldwide.
 """
 
 prompt = f"Extract company information:\n{text}\n\nCompany:"
-company = generator(prompt)
+company = CompanyInfo.model_validate_json(model(prompt, CompanyInfo, max_new_tokens=200))
 
 print(f"Name: {company.name}")
 print(f"Founded: {company.founded_year}")
@@ -348,26 +347,24 @@ print(f"Employees: {company.employees}")
 
 ```python
 from typing import Literal
-import outlines
-
-model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
+from pydantic import BaseModel
 
 # 二分类
-generator = outlines.generate.choice(model, ["spam", "not_spam"])
-result = generator("Email: Buy now! 50% off!")
+result = model("Email: Buy now! 50% off!", Literal["spam", "not_spam"])
 
 # 多分类
-categories = ["technology", "business", "sports", "entertainment"]
-category_gen = outlines.generate.choice(model, categories)
-category = category_gen("Article: Apple announces new iPhone...")
+category = model(
+    "Article: Apple announces new iPhone...",
+    Literal["technology", "business", "sports", "entertainment"],
+)
 
 # 带置信度
 class Classification(BaseModel):
     label: Literal["positive", "negative", "neutral"]
     confidence: float
 
-classifier = outlines.generate.json(model, Classification)
-result = classifier("Review: This product is okay, nothing special")
+out = model("Review: This product is okay, nothing special", Classification)
+result = Classification.model_validate_json(out)
 ```
 
 ### 模式 3：结构化表单
@@ -381,9 +378,6 @@ class UserProfile(BaseModel):
     country: str
     interests: list[str]
 
-model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
-generator = outlines.generate.json(model, UserProfile)
-
 prompt = """
 Extract user profile from:
 Name: Alice Johnson
@@ -394,7 +388,7 @@ Country: USA
 Interests: hiking, photography, cooking
 """
 
-profile = generator(prompt)
+profile = UserProfile.model_validate_json(model(prompt, UserProfile, max_new_tokens=250))
 print(profile.full_name)
 print(profile.interests)  # ["hiking", "photography", "cooking"]
 ```
@@ -402,6 +396,8 @@ print(profile.interests)  # ["hiking", "photography", "cooking"]
 ### 模式 4：多实体提取
 
 ```python
+from typing import Literal
+
 class Entity(BaseModel):
     name: str
     type: Literal["PERSON", "ORGANIZATION", "LOCATION"]
@@ -409,13 +405,10 @@ class Entity(BaseModel):
 class DocumentEntities(BaseModel):
     entities: list[Entity]
 
-model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
-generator = outlines.generate.json(model, DocumentEntities)
-
 text = "Tim Cook met with Satya Nadella at Microsoft headquarters in Redmond."
 prompt = f"Extract entities from: {text}"
 
-result = generator(prompt)
+result = DocumentEntities.model_validate_json(model(prompt, DocumentEntities, max_new_tokens=300))
 for entity in result.entities:
     print(f"{entity.name} ({entity.type})")
 ```
@@ -429,11 +422,8 @@ class PythonFunction(BaseModel):
     docstring: str
     body: str
 
-model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
-generator = outlines.generate.json(model, PythonFunction)
-
 prompt = "Generate a Python function to calculate factorial"
-func = generator(prompt)
+func = PythonFunction.model_validate_json(model(prompt, PythonFunction, max_new_tokens=300))
 
 print(f"def {func.function_name}({', '.join(func.parameters)}):")
 print(f'    """{func.docstring}"""')
@@ -443,29 +433,29 @@ print(f"    {func.body}")
 ### 模式 6：批量处理
 
 ```python
-def batch_extract(texts: list[str], schema: type[BaseModel]):
-    """从多段文本中提取结构化数据。"""
-    model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
-    generator = outlines.generate.json(model, schema)
-
-    results = []
-    for text in texts:
-        result = generator(f"Extract from: {text}")
-        results.append(result)
-
-    return results
+import outlines
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from pydantic import BaseModel
 
 class Person(BaseModel):
     name: str
     age: int
 
+model = outlines.from_transformers(
+    AutoModelForCausalLM.from_pretrained("microsoft/Phi-3-mini-4k-instruct", device_map="auto"),
+    AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct"),
+)
+
 texts = [
     "John is 30 years old",
     "Alice is 25 years old",
-    "Bob is 40 years old"
+    "Bob is 40 years old",
 ]
 
-people = batch_extract(texts, Person)
+# v1 接受 prompt 列表进行批量生成
+prompts = [f"Extract from: {t}" for t in texts]
+outputs = model(prompts, Person, max_new_tokens=100)
+people = [Person.model_validate_json(o) for o in outputs]
 for person in people:
     print(f"{person.name}: {person.age}")
 ```
@@ -476,58 +466,67 @@ for person in people:
 
 ```python
 import outlines
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
 
 # 基础用法
-model = outlines.models.transformers("microsoft/Phi-3-mini-4k-instruct")
+model = outlines.from_transformers(
+    AutoModelForCausalLM.from_pretrained(MODEL_NAME, device_map="auto"),
+    AutoTokenizer.from_pretrained(MODEL_NAME),
+)
 
-# GPU 配置
-model = outlines.models.transformers(
-    "microsoft/Phi-3-mini-4k-instruct",
-    device="cuda",
-    model_kwargs={"torch_dtype": "float16"}
+# GPU + dtype 配置在 HF 模型本身上设置
+import torch
+model = outlines.from_transformers(
+    AutoModelForCausalLM.from_pretrained(MODEL_NAME, device_map="cuda", torch_dtype=torch.float16),
+    AutoTokenizer.from_pretrained(MODEL_NAME),
 )
 
 # 常用模型
-model = outlines.models.transformers("meta-llama/Llama-3.1-8B-Instruct")
-model = outlines.models.transformers("mistralai/Mistral-7B-Instruct-v0.3")
-model = outlines.models.transformers("Qwen/Qwen2.5-7B-Instruct")
+for name in [
+    "meta-llama/Llama-3.1-8B-Instruct",
+    "mistralai/Mistral-7B-Instruct-v0.3",
+    "Qwen/Qwen2.5-7B-Instruct",
+]:
+    model = outlines.from_transformers(
+        AutoModelForCausalLM.from_pretrained(name, device_map="auto"),
+        AutoTokenizer.from_pretrained(name),
+    )
 ```
 
 ### llama.cpp
 
 ```python
-# 加载 GGUF 模型
-model = outlines.models.llamacpp(
-    "./models/llama-3.1-8b.Q4_K_M.gguf",
-    n_ctx=4096,         # 上下文窗口
-    n_gpu_layers=35,    # GPU 层数
-    n_threads=8         # CPU 线程数
-)
+import outlines
+from llama_cpp import Llama
 
-# 完全 GPU 卸载
-model = outlines.models.llamacpp(
-    "./models/model.gguf",
-    n_gpu_layers=-1  # 所有层在 GPU 上
+# 加载 GGUF 模型
+llm = Llama(
+    "./models/llama-3.1-8b.Q4_K_M.gguf",
+    n_ctx=4096,       # 上下文窗口
+    n_gpu_layers=35,  # GPU 层数
+    n_threads=8,      # CPU 线程数
 )
+model = outlines.from_llamacpp(llm)
+
+# 完全 GPU 卸载：在 Llama 对象上设置 n_gpu_layers=-1
 ```
 
 ### vLLM（生产环境）
 
 ```python
+import outlines
+from vllm import LLM
+
 # 单 GPU
-model = outlines.models.vllm("meta-llama/Llama-3.1-8B-Instruct")
+model = outlines.from_vllm(LLM("meta-llama/Llama-3.1-8B-Instruct"))
 
 # 多 GPU
-model = outlines.models.vllm(
-    "meta-llama/Llama-3.1-70B-Instruct",
-    tensor_parallel_size=4  # 4 块 GPU
-)
+model = outlines.from_vllm(LLM("meta-llama/Llama-3.1-70B-Instruct", tensor_parallel_size=4))
 
 # 带量化
-model = outlines.models.vllm(
-    "meta-llama/Llama-3.1-8B-Instruct",
-    quantization="awq"  # 或 "gptq"
-)
+model = outlines.from_vllm(LLM("meta-llama/Llama-3.1-8B-Instruct", quantization="awq"))
 ```
 
 ## 最佳实践
@@ -615,15 +614,23 @@ class Article(BaseModel):
 # 即使 author/date 缺失也能成功
 ```
 
+### 6. 始终校验 JSON 输出
+
+```python
+# 对于 Pydantic/JSON 输出类型，v1 返回 JSON 字符串。
+result = model(prompt, Article)          # str
+article = Article.model_validate_json(result)  # Article 实例
+```
+
 ## 与替代方案的对比
 
 | 特性 | Outlines | Instructor | Guidance | LMQL |
 |---------|----------|------------|----------|------|
-| Pydantic 支持 | ✅ 原生 | ✅ 原生 | ❌ 无 | ❌ 无 |
-| JSON Schema | ✅ 支持 | ✅ 支持 | ⚠️ 有限 | ✅ 支持 |
+| Pydantic 支持 | ✅ 原生 | ✅ 原生 | ✅ 支持 | ❌ 无 |
+| JSON Schema | ✅ 支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
 | Regex 约束 | ✅ 支持 | ❌ 无 | ✅ 支持 | ✅ 支持 |
 | 本地模型 | ✅ 完整 | ⚠️ 有限 | ✅ 完整 | ✅ 完整 |
-| API 模型 | ⚠️ 有限 | ✅ 完整 | ✅ 完整 | ✅ 完整 |
+| API 模型 | ✅ 支持 | ✅ 完整 | ✅ 支持 | ✅ 完整 |
 | 零开销 | ✅ 支持 | ❌ 无 | ⚠️ 部分 | ✅ 支持 |
 | 自动重试 | ❌ 无 | ✅ 支持 | ❌ 无 | ❌ 无 |
 | 学习曲线 | 低 | 低 | 低 | 高 |
@@ -648,24 +655,24 @@ class Article(BaseModel):
 - **比生成后验证方案快 1.2–2 倍**
 
 **内存：**
-- FSM 每个 schema 编译一次（已缓存）
+- 自动机对每个输出类型只编译一次（已缓存）
 - 极低的运行时开销
 - 配合 vLLM 可实现高吞吐量
 
 **准确性：**
-- **100% 有效输出**（由 FSM 保证）
+- **100% 有效输出**（由受约束的自动机保证）
 - 无需重试循环
 - 确定性 token 过滤
 
 ## 资源
 
-- **文档**：https://outlines-dev.github.io/outlines
-- **GitHub**：https://github.com/outlines-dev/outlines（8k+ stars）
+- **文档**：https://dottxt-ai.github.io/outlines/
+- **GitHub**：https://github.com/dottxt-ai/outlines（12k+ stars）
 - **Discord**：https://discord.gg/R9DSu34mGd
 - **博客**：https://blog.dottxt.co
 
 ## 另请参阅
 
-- `references/json_generation.md` — 全面的 JSON 与 Pydantic 模式
-- `references/backends.md` — 后端专项配置
-- `references/examples.md` — 生产就绪示例
+- `references/json_generation.md` —— 全面的 JSON 与 Pydantic 模式
+- `references/backends.md` —— 后端专项配置
+- `references/examples.md` —— 生产就绪示例

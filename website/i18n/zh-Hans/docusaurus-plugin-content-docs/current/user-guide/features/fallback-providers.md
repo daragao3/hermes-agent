@@ -11,7 +11,7 @@ Hermes Agent 具备三层弹性机制，在提供商出现问题时保持会话�
 
 1. **[凭据池](./credential-pools.md)** — 在*同一*提供商的多个 API 密钥之间轮换（优先尝试）
 2. **主模型备用** — 当主模型失败时，自动切换到*不同*的提供商:模型
-3. **辅助任务备用** — 针对视觉、压缩、网页提取等附属任务的独立提供商解析
+3. **辅助任务备用** — 针对视觉和压缩等附属任务的独立提供商解析
 
 凭据池处理同一提供商内的轮换（例如多个 OpenRouter 密钥）。本页介绍跨提供商的备用机制。两者均为可选，且相互独立。
 
@@ -38,6 +38,11 @@ fallback_providers:
 ```
 
 每个条目都需要同时包含 `provider` 和 `model`。缺少任一字段的条目将被忽略。
+
+Gemini 备用条目接受 `gemini`、`google`、`google-gemini` 和
+`google-ai-studio`。在 Google 原生 API 端点上，它们都会使用原生 Gemini
+客户端，包括其 `generationConfig.thinkingConfig` 转换。自定义的
+OpenAI 兼容 base URL 则仍使用兼容客户端。
 
 :::note `fallback_model` 与 `fallback_providers`
 `fallback_providers`（复数，列表）是当前的配置形态，支持按顺序尝试多个备用。`fallback_model`（单数）是旧版单备用键——Hermes 仍支持以保持向后兼容，但 `hermes fallback` 写入的是当前的 `fallback_providers` 键，并会在写入时迁移旧版配置。当两者同时设置时，`fallback_providers` 优先。
@@ -71,16 +76,21 @@ fallback_providers:
 | Qwen Portal（OAuth） | `qwen-oauth` | `hermes model`（Qwen Portal OAuth；可选：`HERMES_QWEN_BASE_URL`） |
 | MiniMax（OAuth） | `minimax-oauth` | `hermes model`（MiniMax 门户 OAuth） |
 | OpenCode Zen | `opencode-zen` | `OPENCODE_ZEN_API_KEY` |
+| CommandCode | `commandcode`（别名 `commandcode-chat`；Claude 通过 `commandcode-anthropic`） | `COMMANDCODE_API_KEY` |
 | OpenCode Go | `opencode-go` | `OPENCODE_GO_API_KEY` |
+| OpenCode Free | `opencode-free` | —（无需密钥，无凭据） |
 | Kilo Code | `kilocode` | `KILOCODE_API_KEY` |
+| Ramp Router | `router` | `RAMP_ROUTER_API_KEY` |
 | Xiaomi MiMo | `xiaomi` | `XIAOMI_API_KEY` |
 | Arcee AI | `arcee` | `ARCEEAI_API_KEY` |
 | GMI Cloud | `gmi` | `GMI_API_KEY` |
+| Nebius Token Factory | `nebius-token-factory` | `NEBIUS_API_KEY` |
 | Alibaba / DashScope | `alibaba` | `DASHSCOPE_API_KEY` |
 | Alibaba Coding Plan | `alibaba-coding-plan` | `ALIBABA_CODING_PLAN_API_KEY`（回退到 `DASHSCOPE_API_KEY`） |
 | Kimi / Moonshot（中国） | `kimi-coding-cn` | `KIMI_CN_API_KEY` |
 | StepFun | `stepfun` | `STEPFUN_API_KEY` |
 | Tencent TokenHub | `tencent-tokenhub` | `TOKENHUB_API_KEY` |
+| Tencent TokenPlan | `tencent-tokenplan` | `TOKENPLAN_API_KEY` |
 | Microsoft Foundry | `azure-foundry` | `AZURE_FOUNDRY_API_KEY` + `AZURE_FOUNDRY_BASE_URL` |
 | LM Studio（本地） | `lmstudio` | `LM_API_KEY`（本地可不填）+ `LM_BASE_URL` |
 | Hugging Face | `huggingface` | `HF_TOKEN` |
@@ -110,8 +120,8 @@ fallback_providers:
 
 触发后，Hermes 将：
 
-1. 解析备用提供商的凭据
-2. 构建新的 API 客户端
+1. 解析备用提供商的凭据（包括使用 `key_cmd` 的命名自定义提供商）
+2. 构建新的 API 客户端，并在超时和请求客户端重建时保留动态凭据来源
 3. 就地替换模型、提供商和客户端
 4. 重置重试计数器并继续对话
 
@@ -123,6 +133,10 @@ Prompt 缓存是按处理请求的模型（在大多数提供商上还包括账�
 
 :::info 按轮次，而非按会话
 备用机制的**作用域为单次轮次**：每条新用户消息都从主模型重新开始。若主模型在某轮次中途失败，备用仅对该轮次生效。下一条消息时，Hermes 会再次尝试主模型。在单次轮次内，备用最多激活一次——若备用也失败，则进入常规错误处理流程（重试，然后返回错误消息）。这既防止了单轮次内的级联故障转移循环，又让主模型在每轮次都有重新尝试的机会。
+
+每轮次的重试是**感知重置时间的**：当主模型的凭据报告的速率限制重置时间尚未到达时（Claude Pro/Max 的 5 小时区块或 Codex 每周限额这类订阅窗口会以小时或天为单位报告），Hermes 会跳过注定失败的重试，并停留在备用模型上直到重置时间过去——从而避免每轮次两次无意义的提供商切换（以及两次 prompt 缓存失效）。到期只会让主模型有资格在之后被重试；它不会安排重试，也不保证恢复。没有重置时间的瞬时 429 使用指数冷却。
+
+当一次切换启动了该冷却时，备用通知会包含其大致剩余时长，例如：`Primary retry eligible in ~60 s; recovery is not guaranteed.` 非速率限制导致的切换，以及从已激活的跨提供商备用发起的切换，不会通告新的主模型冷却。
 :::
 
 ### 示例
@@ -171,7 +185,7 @@ fallback_providers:
 |---------|-------------------|
 | CLI 会话 | ✔ |
 | 消息网关（Telegram、Discord 等） | ✔ |
-| 子 Agent 委派 | ✔（子 Agent 继承父 Agent 的备用链） |
+| 子 Agent 委派 | ✔（设置了 `delegation.fallback_providers` 时使用它；否则仅未固定（unpinned）的子 Agent 继承父链；`[]` 表示禁用） |
 | Cron 任务 | ✔（Cron Agent 继承配置的备用提供商） |
 | 使用 `provider: auto` 的辅助任务 | ✔（先尝试每任务备用链，再尝试主备用链，最后才使用内置的辅助自动发现链） |
 
@@ -206,6 +220,8 @@ Hermes 为附属任务使用独立的轻量级模型。每个任务都有自己�
 主提供商 + 主模型 → auxiliary.<task>.fallback_chain →
 fallback_providers / fallback_model → 内置辅助自动发现链
 ```
+
+计费或配额失败只会在辅助健康冷却期内隔离失败的那个自定义端点，而不是所有注册为 `custom` 的路由。base URL 不同的健康本地端点仍可用于备用及后续的自动路由。同一自定义端点的别名共享其健康状态。内置提供商保留其共享账户的健康检查。
 
 任务级的备用链最为精确，存在时优先生效。顶层的 `fallback_providers` 链与主 Agent 使用的是同一套策略，因此"仅限免费"或"同提供商"之类的备用规则同样适用于处于 `auto` 状态的辅助任务。
 
@@ -424,5 +440,5 @@ cronjob(
 | 审批分类 | 分层（见上文） | `auxiliary.approval` |
 | 标题生成 | 分层（见上文） | `auxiliary.title_generation` |
 | Triage Specifier | 分层（见上文） | `auxiliary.triage_specifier` |
-| 委派 | 仅提供商覆盖（无自动备用） | `delegation.provider` / `delegation.model` |
-| Cron 任务 | 仅每任务提供商覆盖（无自动备用） | 每任务 `provider` / `model` |
+| 委派 | 声明了 `delegation.fallback_providers` 时使用它；否则仅未固定（unpinned）的子 Agent 继承父链 | `delegation.provider` / `delegation.model` / `delegation.fallback_providers` |
+| Cron 任务 | 继承配置的 `fallback_providers` 链；可选的每任务提供商覆盖 | 每任务 `provider` / `model` |

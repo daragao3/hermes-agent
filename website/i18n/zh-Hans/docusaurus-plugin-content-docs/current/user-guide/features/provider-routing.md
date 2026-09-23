@@ -7,12 +7,12 @@ description: 配置 OpenRouter 或 Nous Portal 的 provider 偏好，以优化�
 
 # Provider Routing
 
-使用 [OpenRouter](https://openrouter.ai) 或 [Nous Portal](/integrations/nous-portal) 作为 LLM provider 时，Hermes Agent 支持 **provider routing**（提供商路由）——对哪些底层 AI provider 处理你的请求以及如何排列优先级进行精细控制。
+使用 [OpenRouter](https://openrouter.ai) 作为 LLM provider 时，Hermes Agent 支持 **provider routing**（提供商路由）——对哪些底层 AI provider 处理你的请求以及如何排列优先级进行精细控制。
 
 OpenRouter 将请求路由到多个 provider（例如 Anthropic、Google、AWS Bedrock、Together AI）。Provider routing 让你可以针对成本、速度、质量进行优化，或强制指定特定 provider。
 
-:::tip
-通过 Nous Portal 路由的流量同样遵循相同的 provider 偏好——并且 Portal 订阅者在按 token 计费的 provider 上可享受 10% 折扣。
+:::note
+[Nous Portal](/integrations/nous-portal) 按模型集中决定路由，不接受调用方提供的 provider 偏好；Hermes 从不向 Portal 发送 `provider` 对象，因此 `provider_routing` 在那里会被直接忽略。
 :::
 
 ## 配置
@@ -30,7 +30,7 @@ provider_routing:
 ```
 
 :::info
-Provider routing 仅在使用 OpenRouter 或 Nous Portal 时生效。直接连接 provider（例如直接连接 Anthropic API）时无效。
+Provider routing 仅在使用 OpenRouter 时生效。对 Nous Portal 或直接连接 provider（例如直接连接 Anthropic API）均无效。
 :::
 
 ## 选项
@@ -102,6 +102,25 @@ provider_routing:
   data_collection: "deny"
 ```
 
+### 按模型覆盖（`models`） {#per-model-overrides-models}
+
+为每个模型固定不同的 provider 集合。`models` 下的键是模型 id；每个条目接受相同的 `sort` / `only` / `ignore` / `order` / `require_parameters` / `data_collection` 键，并且只针对该模型覆盖顶层的值。未按模型设置的任何项都会回退到顶层默认值。
+
+```yaml
+provider_routing:
+  sort: "price"                      # 适用于所有模型
+  models:
+    "openai/gpt-6-astra":
+      only: ["openai"]               # 绝不让转售商提供此模型
+    "anthropic/claude-fable-5.1":
+      only: ["anthropic"]
+    "moonshotai/kimi-k2.6":
+      order: ["moonshotai", "together"]
+      sort: "throughput"
+```
+
+匹配方式与 `agent.reasoning_overrides` 一样能容忍拼写差异（`claude-fable-5.1` / `claude-fable-5-1`，带或不带 `openrouter/` 前缀均可）。覆盖设置跟随 agent *当前*所用的模型，因此 `/model` 切换、备用模型激活、cron 任务以及使用其他模型的委托子 agent 都会各自获得相应的固定设置。这些键请直接编辑 `config.yaml`：模型 id 中包含点号，而 `hermes config set` 会把点号解析为路径分隔符。
+
 ## 实用示例
 
 ### 优化成本
@@ -167,7 +186,7 @@ provider_routing:
 
 ## 工作原理
 
-Provider routing 偏好会在 agent 聊天请求和迭代上限摘要中通过 `extra_body.provider` 字段传递给 OpenRouter 或 Nous Portal。（`extra_body` 是 OpenAI Python SDK 的参数；它在 JSON 请求中会成为顶层的 `provider` 对象。）压缩和标题生成等辅助任务则在 `auxiliary.<task>.extra_body` 下独立配置。
+Provider routing 偏好会在 agent 聊天请求和迭代上限摘要中通过 `extra_body.provider` 字段传递给 OpenRouter。（`extra_body` 是 OpenAI Python SDK 的参数；它在 JSON 请求中会成为顶层的 `provider` 对象。）压缩和标题生成等辅助任务则在 `auxiliary.<task>.extra_body` 下独立配置。
 
 - **CLI 模式** — 在 `~/.hermes/config.yaml` 中配置，启动时加载
 - **Gateway 模式** — 同一配置文件，gateway 启动时加载
@@ -200,5 +219,5 @@ provider_routing:
 未配置 `provider_routing` 部分时（默认情况），聚合器使用其自身的默认路由逻辑，通常会自动在成本和可用性之间取得平衡。
 
 :::tip Provider Routing 与 Fallback Models
-Provider routing 控制 OpenRouter 或 Nous Portal **背后的子 provider** 如何处理你的请求。若需要在主模型失败时自动故障转移到完全不同的 provider，请参阅 [Fallback Providers](/user-guide/features/fallback-providers)。
+Provider routing 控制 OpenRouter **背后的子 provider** 如何处理你的请求。若需要在主模型失败时自动故障转移到完全不同的 provider，请参阅 [Fallback Providers](/user-guide/features/fallback-providers)。
 :::

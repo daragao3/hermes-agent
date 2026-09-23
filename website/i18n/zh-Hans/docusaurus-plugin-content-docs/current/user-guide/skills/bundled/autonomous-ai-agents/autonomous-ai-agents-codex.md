@@ -16,7 +16,7 @@ description: "将编码任务委托给 OpenAI Codex CLI（功能开发、PR）"
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/autonomous-ai-agents/codex` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Hermes Agent |
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
@@ -66,7 +66,7 @@ terminal(command="cd $(mktemp -d) && git init && codex exec 'Build a snake game 
 
 ```
 # Start in background with PTY
-terminal(command="codex exec --full-auto 'Refactor the auth module'", workdir="~/project", background=true, pty=true)
+terminal(command="codex exec --sandbox workspace-write 'Refactor the auth module'", workdir="~/project", background=true, pty=true)
 # Returns session_id
 
 # Monitor progress
@@ -85,9 +85,11 @@ process(action="kill", session_id="<id>")
 | 标志 | 效果 |
 |------|--------|
 | `exec "prompt"` | 单次执行，完成后退出 |
-| `--full-auto` | 沙箱模式，自动批准工作区内的文件变更 |
-| `--yolo` | 无沙箱，无需审批（最快，风险最高） |
+| `--sandbox workspace-write` (`-s`) | 沙箱模式，自动批准工作区内的文件变更（推荐的自动构建模式） |
+| `--dangerously-bypass-approvals-and-sandbox` | 无沙箱，无需审批（最快，风险最高；`--yolo` 仍可作为隐藏别名使用） |
 | `--sandbox danger-full-access` | 不使用 Codex 沙箱；当宿主服务上下文导致 bubblewrap 失效时很有用 |
+
+> **已弃用：** `--full-auto` 仍可使用，但当前版本的 CLI 会提示改用 `--sandbox workspace-write`。
 
 ## Hermes Gateway 注意事项
 
@@ -121,8 +123,8 @@ terminal(command="git worktree add -b fix/issue-78 /tmp/issue-78 main", workdir=
 terminal(command="git worktree add -b fix/issue-99 /tmp/issue-99 main", workdir="~/project")
 
 # Launch Codex in each
-terminal(command="codex --yolo exec 'Fix issue #78: <description>. Commit when done.'", workdir="/tmp/issue-78", background=true, pty=true)
-terminal(command="codex --yolo exec 'Fix issue #99: <description>. Commit when done.'", workdir="/tmp/issue-99", background=true, pty=true)
+terminal(command="codex --sandbox workspace-write exec 'Fix issue #78: <description>. Commit when done.'", workdir="/tmp/issue-78", background=true, pty=true)
+terminal(command="codex --sandbox workspace-write exec 'Fix issue #99: <description>. Commit when done.'", workdir="/tmp/issue-99", background=true, pty=true)
 
 # Monitor
 process(action="list")
@@ -154,7 +156,7 @@ terminal(command="gh pr comment 86 --body '<review>'", workdir="~/project")
 1. **始终使用 `pty=true`** — Codex 是交互式终端应用，没有 PTY 会挂起
 2. **需要 git 仓库** — Codex 不能在 git 目录外运行。临时工作请使用 `mktemp -d && git init`
 3. **单次任务使用 `exec`** — `codex exec "prompt"` 运行后干净退出
-4. **构建时使用 `--full-auto`** — 在沙箱内自动批准变更
+4. **构建时使用 `--sandbox workspace-write`** — 在沙箱内自动批准变更（此用途下 `--full-auto` 已弃用）
 5. **长时任务使用后台模式** — 使用 `background=true` 并通过 `process` 工具监控
 6. **不要干预** — 使用 `poll`/`log` 监控，对长时运行任务保持耐心
 7. **并行执行没问题** — 可同时运行多个 Codex 进程处理批量工作

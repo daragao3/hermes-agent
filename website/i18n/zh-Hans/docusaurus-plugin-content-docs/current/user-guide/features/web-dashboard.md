@@ -1,10 +1,10 @@
 ---
 sidebar_position: 15
-title: "Web Dashboard"
+title: "Hermes Web Dashboard"
 description: "基于浏览器的管理面板，用于管理配置、API 密钥、MCP 服务器、消息配对、webhook、gateway、记忆、凭据、会话、日志、分析、定时任务和技能"
 ---
 
-# Web Dashboard
+# Hermes Web Dashboard
 
 Web Dashboard 是一个基于浏览器的 UI，用于管理你的 Hermes Agent 安装。无需编辑 YAML 文件或运行 CLI 命令，即可通过简洁的 Web 界面配置设置、管理 API 密钥并监控会话。
 
@@ -12,7 +12,7 @@ Web Dashboard 是一个基于浏览器的 UI，用于管理你的 Hermes Agent �
 托管模式（hosted-mode）的认证使用 Nous Portal OAuth；如果你还希望 Dashboard 连接到真实的后端，`hermes setup --portal` 会一并配置好模型与工具 gateway。参见 [Nous Portal](/integrations/nous-portal)。
 :::
 
-## 快速开始
+## 快速开始 {#quick-start}
 
 ```bash
 hermes dashboard
@@ -20,7 +20,7 @@ hermes dashboard
 
 这将启动一个本地 Web 服务器，并在浏览器中打开 `http://127.0.0.1:9119`。Dashboard 完全在你的机器上运行——数据不会离开 localhost。
 
-### 选项
+### 选项 {#options}
 
 | 标志 | 默认值 | 描述 |
 |------|---------|-------------|
@@ -75,7 +75,7 @@ worker dashboard
 （通过 `hermes -p <name> gateway …` 管理）、每个 profile 各自的会话数据库，
 以及 cron 调度器（Cron 页面本身已经跨 profile 聚合，并带有自己的过滤器）。
 
-## 前置条件
+## 前置条件 {#prerequisites}
 
 默认的 `hermes-agent` 安装不包含 HTTP 栈或 PTY 辅助工具——这些是可选扩展。**Web Dashboard** 需要 FastAPI 和 Uvicorn（`web` 扩展）。**Chat** 标签页还需要 `ptyprocess` 来在伪终端（pseudo-terminal）后面启动嵌入式 TUI（POSIX 上的 `pty` 扩展）。使用以下命令同时安装：
 
@@ -89,9 +89,9 @@ cd ~/.hermes/hermes-agent && uv pip install -e ".[web,pty]"
 
 Chat 标签页是每次 `hermes dashboard` 启动的一部分——内嵌的浏览器聊天面板（通过 PTY/WebSocket 运行 TUI）始终可用，无需任何额外参数。
 
-## 页面
+## 页面 {#pages}
 
-### Status（状态）
+### Status（状态） {#status}
 
 首页显示你的安装的实时概览：
 
@@ -101,6 +101,17 @@ Chat 标签页是每次 `hermes dashboard` 启动的一部分——内嵌的浏�
 - **最近会话**——最近 20 个会话的列表，包含模型、消息数、token 用量和对话预览
 
 状态页每 5 秒自动刷新一次。
+
+#### 资源压力横幅 {#resource-pressure-banner}
+
+当主机的内存或磁盘不足时，Dashboard 顶部会出现一条横幅（数据来自同一个状态轮询——不会产生额外请求）：
+
+- **"Your agent is almost out of memory and may restart"** —— 系统可用内存已降至 *elevated*（< 128 MiB 或 < 15%）或 *critical*（< 64 MiB 或 < 5%）级别，由 gateway 的 30 秒心跳采样得出。
+- **"Your agent restarted unexpectedly, most likely because it ran out of
+  memory"** —— 生命周期台账记录到上一次启动时在内存压力下发生了非正常退出（疑似 OOM 终止）。
+- **磁盘警告** —— 存放 `~/.hermes` 的卷即将写满（*elevated* 为剩余空间低于 512 MB，*critical* 为低于 256 MB）。
+
+同一时间只显示最严重的一条活跃警告（磁盘 critical > 内存 critical > OOM 重启 > 磁盘 elevated > 内存 elevated）。关闭操作的作用范围是当前这次 gateway 启动：关闭一条警告后会显示下一条活跃警告；gateway 重启或级别升级（elevated → critical）会让它重新出现；而过时的心跳不会渲染任何内容，以免产生虚假告警。
 
 ### Chat（聊天） {#chat}
 
@@ -130,7 +141,7 @@ Chat 标签页是每次 `hermes dashboard` 启动的一部分——内嵌的浏�
 
 ### 通过远程后端使用 Desktop 聊天 {#desktop-chat-over-a-remote-backend}
 
-Hermes Desktop 通常会启动自己的本地后端，但它也可以通过 **Settings → Gateway → Remote gateway** 连接到运行在远程机器（虚拟机、家庭实验室主机等）上的 Dashboard。这是"Desktop 说后端已就绪但聊天始终不可用"这类报告最常见的来源，因为 Desktop 的就绪检查所验证的内容比实时聊天连接实际需要的要少。
+Hermes Desktop 通常会启动自己的本地后端，但它也可以通过 **Settings → Gateways → Remote gateway** 连接到运行在远程机器（虚拟机、家庭实验室主机等）上的 Dashboard。这是"Desktop 说后端已就绪但聊天始终不可用"这类报告最常见的来源，因为 Desktop 的就绪检查所验证的内容比实时聊天连接实际需要的要少。
 
 :::info 前置条件：远程主机上必须有一个正在运行的 `hermes dashboard`
 Desktop 所连接的"远程后端"**就是**运行在远程机器上的 `hermes dashboard` 进程——也就是本页所描述的同一个服务器。在下面任何步骤生效之前，它必须已经启动并可访问；Desktop 只是连接到它，并不会替你启动它。请用 `systemd`/`tmux` 等方式保持它运行，以便在登出和重启后依然存活。**gateway**（Telegram/Discord/Slack 等）是一个*独立的*长期运行进程——如果你依赖消息渠道，请单独启动它；它并不是桌面应用所连接的对象。
@@ -141,7 +152,7 @@ Desktop 的"远程后端已就绪"探测只会请求 `GET /api/status`，而这�
 1. **你必须已通过认证。** 当 Dashboard 绑定到非回环地址时，它会启用认证门。请用用户名和密码保护它（内置的[用户名/密码提供方](#usernamepassword-provider-no-oauth-idp)）；Desktop 登录一次，然后通过一次性票据（ticket）将所得会话复用于 WebSocket。如果没有配置任何提供方，非回环的 Dashboard 会在**启动时直接失败关闭**。
 2. **绑定主机必须允许该客户端，并且与 Host 头匹配。** 回环绑定（`127.0.0.1`）只接受回环客户端，因此无论凭据是否正确，远程机器都会在 socket 层被拒绝。请绑定到非回环地址（`--host 0.0.0.0`），让对端 IP 校验放行远程客户端。你在 Desktop 中填写的远程 URL 必须以它所绑定的同一主机名访问到该 Dashboard——DNS 重绑定（rebinding）防护要求 Host 头匹配。
 
-#### 远程 Dashboard 设置
+#### 远程 Dashboard 设置 {#remote-dashboard-setup}
 
 设置用户名和密码，然后让 Dashboard 绑定到一个可访问的地址运行。对于 `systemd` 服务：
 
@@ -176,9 +187,9 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 - `auth_required: true` 但没有 `"basic"` 提供方 → 用户名/密码环境变量没有被加载。请先修复它们。
 :::
 
-如果 `/api/status` 显示认证门已开启且带有 `"basic"` 提供方，而 Desktop 登录后*仍然*连不上，那么问题就超出了基础配置的范围——请取一份新的 `desktop.log`（Settings → Gateway → Open logs）以及同一次重试时间窗内的 Dashboard 日志，查找 `/api/ws` 的关闭码（4403 = 聊天 WS 被请求守卫拒绝，例如 Host/对端不匹配；4401 = WS 票据认证失败）。
+如果 `/api/status` 显示认证门已开启且带有 `"basic"` 提供方，而 Desktop 登录后*仍然*连不上，那么问题就超出了基础配置的范围——请取一份新的 `desktop.log`（Settings → Gateways → Open logs）以及同一次重试时间窗内的 Dashboard 日志，查找 `/api/ws` 的关闭码（4403 = 聊天 WS 被请求守卫拒绝，例如 Host/对端不匹配；4401 = WS 票据认证失败）。
 
-### Config（配置）
+### Config（配置） {#config}
 
 `config.yaml` 的表单式编辑器。所有 150+ 个配置字段均从 `DEFAULT_CONFIG` 自动发现，并按标签页分类组织：
 
@@ -207,12 +218,12 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 配置更改在下一次 agent 会话或 gateway 重启时生效。Web Dashboard 编辑的是 `hermes config set` 和 gateway 读取的同一个 `config.yaml` 文件。
 :::
 
-### API Keys（API 密钥）
+### API Keys（API 密钥） {#api-keys}
 
 管理存储 API 密钥和凭据的 `.env` 文件。密钥按类别分组：
 
 - **LLM Providers** — OpenRouter、Anthropic、OpenAI、DeepSeek 等
-- **Tool API Keys** — Browserbase、Firecrawl、Tavily、ElevenLabs 等
+- **Tool API Keys** — Browserbase、Firecrawl、Tavily、Keenable、ElevenLabs 等
 - **Messaging Platforms** — Telegram、Discord、Slack bot token 等
 - **Agent Settings** — 非敏感环境变量，如 `API_SERVER_ENABLED`
 
@@ -225,10 +236,11 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 
 高级/不常用的密钥默认隐藏，可通过开关显示。
 
-### Sessions（会话）
+### Sessions（会话） {#sessions}
 
 浏览和检查所有 agent 会话。每行显示会话标题、来源平台图标（CLI、Telegram、Discord、Slack、cron）、模型名称、消息数、工具调用数以及最后活跃时间。实时会话以脉冲徽章标记。
 
+- **Filter** — **Chats / Automation / All** 标签页用于限定列表范围：*Chats*（默认）显示人类对话并隐藏自动化噪音（cron、工具、API、ACP 会话）；*Automation* 只显示这些会话；*All* 显示全部。精确来源下拉框可以进一步收窄到单个渠道（例如只看 Telegram）。搜索会遵循当前的筛选条件。
 - **Search** — 使用 FTS5 对所有消息内容进行全文搜索。结果显示高亮片段，展开时自动滚动到第一条匹配消息。
 - **Stats** — 汇总栏显示会话总数、存储中活跃会话数、已归档数量、消息总数，以及按来源的细分。
 - **Expand** — 点击会话以加载完整消息历史。消息按角色（user、assistant、system、tool）用颜色区分，并以带语法高亮的 Markdown 渲染。
@@ -240,7 +252,7 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 
 ![Sessions 管理页面——统计栏、清理，以及每行的重命名 / 导出 / 删除](/img/dashboard/admin-sessions.png)
 
-### Logs（日志）
+### Logs（日志） {#logs}
 
 查看 agent、gateway 和错误日志文件，支持过滤和实时追踪。
 
@@ -251,7 +263,7 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 - **Auto-refresh** — 切换实时追踪，每 5 秒轮询新日志行
 - **Color-coded** — 日志行按严重程度着色（错误为红色，警告为黄色，debug 为暗色）
 
-### Analytics（分析）
+### Analytics（分析） {#analytics}
 
 基于会话历史计算的用量和成本分析。选择时间段（7、30 或 90 天）查看：
 
@@ -260,7 +272,7 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 - **Daily breakdown table** — 每日日期、会话数、输入 token、输出 token、缓存命中率和成本
 - **Per-model breakdown** — 显示每个使用模型的会话数、token 用量和估算成本的表格
 
-### Cron（定时任务）
+### Cron（定时任务） {#cron}
 
 创建和管理按定期计划运行 agent prompt 的定时任务。
 
@@ -271,7 +283,7 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 - **Trigger now** — 在正常计划之外立即执行任务
 - **Delete** — 永久删除定时任务
 
-### Profiles（配置档案）
+### Profiles（配置档案） {#profiles}
 
 创建和管理 [profile](../profiles.md)——拥有各自配置、技能和会话的隔离 Hermes 实例。
 
@@ -282,7 +294,7 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 - **Edit model / description / SOUL** — 就地编辑器，直接写入该 profile
 - **Rename / Delete** — 仅限命名 profile
 
-### Skills（技能）
+### Skills（技能） {#skills}
 
 浏览、搜索和切换已安装的技能与工具集，并可从 hub 安装新的。技能从 `~/.hermes/skills/` 加载，并按类别分组。
 
@@ -325,7 +337,7 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 
 ![Webhooks 管理页面——带启用/禁用开关的订阅列表](/img/dashboard/admin-webhooks.png)
 
-### Pairing（配对）
+### Pairing（配对） {#pairing}
 
 无需 CLI 即可批准和撤销消息用户——这是远程管理员将 Telegram/Discord 等
 用户接入已配对 gateway 的方式。与 `hermes pairing` 功能完全对等。
@@ -336,7 +348,7 @@ curl -s http://VM_IP:9119/api/status | jq '.auth_required, .auth_providers'
 
 ![Pairing 管理页面](/img/dashboard/admin-pairing.png)
 
-### Channels（渠道）
+### Channels（渠道） {#channels}
 
 在浏览器中把 Hermes 连接到任意消息平台——与 `hermes setup gateway` 功能
 完全对等。该页面列出每一个受支持的渠道（Telegram、Discord、Slack、Matrix、
@@ -351,11 +363,11 @@ webhook 端点）及其实时连接状态。
 
 ![Channels 管理页面——每个消息平台的状态、启用开关和各平台的设置表单](/img/dashboard/admin-channels.png)
 
-### System（系统）
+### System（系统） {#system}
 
 面向整个安装的统一管理面板：
 
-- **Host** — 实时系统统计：操作系统 / 内核、架构、主机名、Python 和 Hermes 版本、CPU 核心数 + 利用率、内存、Hermes home 的磁盘占用、运行时长和平均负载。（CPU/内存/磁盘在安装了 `psutil` 时提供；身份类字段始终显示。）Hermes 版本旁会显示**更新状态徽章**（已是最新 / 落后 N 个提交）和一个 **Check for updates** 按钮。当 git 或 pip 安装存在可用更新时，**Update now** 按钮会打开确认对话框——显示你将拉取多少个提交——然后在后台运行 `hermes update`。在 Docker/Nix/Homebrew 安装上，Dashboard 无法就地应用更新，因此会显示正确的带外（out-of-band）命令。
+- **Host** — 实时系统统计：操作系统 / 内核、架构、主机名、Python 和 Hermes 版本、CPU 核心数 + 利用率、内存、Hermes home 的磁盘占用、运行时长和平均负载。（CPU/内存/磁盘在安装了 `psutil` 时提供；身份类字段始终显示。）Hermes 版本旁会显示**更新状态徽章**（已是最新 / 落后 N 个提交）和一个 **Check for updates** 按钮。当 git 安装存在可用更新时，**Update now** 按钮会打开确认对话框——显示你将拉取多少个提交——然后在后台运行 `hermes update`。在 Docker/Nix 安装上，Dashboard 无法就地应用更新，因此会显示正确的带外（out-of-band）命令。
 - **Nous Portal** — 登录状态、当前推理提供方，以及 Tool Gateway 路由表（哪些工具经由 Portal 运行、哪些在本地运行），并带有管理订阅的链接。这是 `hermes portal` 的只读镜像。
 - **Skill curator** — 后台技能维护状态（活跃 / 已暂停、间隔、上次运行），带有暂停/恢复和立即运行按钮。对应 `hermes curator`。
 - **Gateway** — 启动、停止和重启消息 gateway，并显示实时状态（运行中/已停止、PID、状态）
@@ -376,10 +388,10 @@ webhook 端点）及其实时连接状态。
 ![新建 shell hook 弹窗](/img/dashboard/admin-hook-create.png)
 
 :::warning 安全提示
-Web Dashboard 会读写包含 API 密钥和机密的 `.env` 文件。它默认绑定到 `127.0.0.1`——只能从本机访问。如果绑定到 `0.0.0.0`，网络上的任何人都可以查看和修改你的凭据。Dashboard 本身没有任何认证机制。
+Web Dashboard 会读写包含 API 密钥和机密的 `.env` 文件。它默认绑定到 `127.0.0.1`——只能从本机访问，且无需登录。绑定到任何非回环地址（包括 `0.0.0.0`）都会启用[认证门](#authentication-gated-mode)：在配置好认证提供方（用户名/密码或 OAuth）之前，服务器会拒绝启动。
 :::
 
-## `/reload` 斜杠命令
+## `/reload` 斜杠命令 {#reload-slash-command}
 
 Dashboard 还为交互式 CLI 添加了 `/reload` 斜杠命令。通过 Web Dashboard（或直接编辑 `.env`）更改 API 密钥后，在活跃的 CLI 会话中使用 `/reload` 即可获取更改，无需重启：
 
@@ -406,6 +418,17 @@ WebSocket 接受同样的参数，用于在所选 profile 下启动聊天。
 ### GET /api/status
 
 返回 agent 版本、gateway 状态、平台状态和活跃会话数。
+
+响应中还带有两个建议性的资源块（它们永远不会影响 `components`/`overall` 健康结论）：
+
+- **`memory`** —— 由 gateway 的 30 秒心跳和生命周期台账提炼而来。字段：`pressure`（`ok` / `elevated` / `critical` /
+  `unknown`）、`gateway_rss_mb`、`system_total_mb`、`system_available_mb`、
+  `swap_used_mb`、`sampled_at`、`boot_id`、`last_boot_unclean`、
+  `last_boot_suspected_oom`。当可用系统内存低于 128 MiB（或 15%）时压力为 `elevated`，低于 64 MiB（或 5%）时为 `critical`——在这些级别下，随后发生的非正常退出会被标记为疑似 OOM 终止。超过 150 秒（或时间戳在未来）的心跳会保留其数值，但会把 `pressure` 降级为 `unknown`，因此一个已停止的 gateway 的最后一次采样无法冒充实时读数。
+- **`disk`** —— 对存放 `~/.hermes` 的卷进行的一次实时 `shutil.disk_usage()` 采样。字段：`pressure`、`free_mb`、`total_mb`、`used_percent`、
+  `sampled_at`。剩余空间低于 512 MB（或使用率 ≥85% 且余量不足 4 GB）时压力为 `elevated`，低于 256 MB（或使用率 ≥95% 且余量不足 1 GB）时为 `critical`。
+
+两个采集器都是故障安全的：任何采样错误都会把该块降级为 `{"pressure": "unknown"}`，而不会让状态端点失败。由于 `/api/status` 是公开的，这些数字都是粗粒度的（整 MB、整百分比）。
 
 ### GET /api/sessions
 
@@ -499,7 +522,7 @@ WebSocket 接受同样的参数，用于在所选 profile 下启动聊天。
 
 返回所有工具集，包含其标签、描述、工具列表以及活跃/已配置状态。
 
-### 管理端点
+### 管理端点 {#admin-endpoints}
 
 这些端点支撑着 MCP、Channels、Webhooks、Pairing 和 System 页面。它们与 `/api/`
 的其余部分位于同一道认证门之后。
@@ -535,7 +558,7 @@ WebSocket 接受同样的参数，用于在所选 profile 下启动聊天。
 | `GET /api/ops/checkpoints` · `POST .../prune` | 查看 / 清理 `/rollback` 存储 |
 | `POST /api/ops/hooks` · `DELETE /api/ops/hooks` | 创建 / 删除 shell hook（需授权） |
 | `GET /api/system/stats` | 主机统计——操作系统、CPU、内存、磁盘、运行时长 |
-| `GET /api/hermes/update/check` | 报告是否有可用更新（落后多少提交、安装方式）而不实际应用。对于落后的 git/pip 安装，还会返回一个 `commits` 列表（`sha`、`summary`、`author`、`at`）说明变更内容。`?force=1` 会绕过 6 小时缓存 |
+| `GET /api/hermes/update/check` | 报告是否有可用更新（落后多少提交、安装方式）而不实际应用。对于落后的 git 安装，还会返回一个 `commits` 列表（`sha`、`summary`、`author`、`at`）说明变更内容。`?force=1` 会绕过 6 小时缓存 |
 | `GET /api/curator` · `PUT .../paused` · `POST .../run` | 技能 curator 状态 + 暂停/恢复 + 运行 |
 | `GET /api/portal` | Nous Portal 认证 + Tool Gateway 路由（只读） |
 | `POST /api/ops/prompt-size` · `/dump` · `/config-migrate` | 诊断（后台执行） |
@@ -558,23 +581,20 @@ WebSocket 接受同样的参数，用于在所选 profile 下启动聊天。
 
 绑定到回环地址、由运维者自用的 Dashboard 不受影响——没有认证，也没有登录页。
 
-### 认证门何时启用
+### 认证门何时启用 {#when-the-gate-engages}
 
 | 标志 | 认证门 | 使用场景 |
 |-------|-----------|----------|
 | `hermes dashboard`（默认——绑定到 `127.0.0.1`） | 关闭 | 本地开发 |
 | `hermes dashboard --host 0.0.0.0` | **开启** | 远程 / 生产环境——请用用户名/密码提供方或 OAuth 保护 |
 
-当且仅当满足以下条件时认证门开启：
+当且仅当绑定主机不是 `127.0.0.1`、`::1` 或 `localhost` 时，认证门开启。绑定到 `0.0.0.0`（或任何 RFC1918 / 局域网地址）都会启用认证门。旧的 `--insecure` 标志**不再能禁用它**——为了向后兼容，该标志仍被接受，但会被忽略并给出警告。
 
-1. 绑定主机不是 `127.0.0.1`、`::1`、`localhost` 或 `0.0.0.0`，**并且**
-2. **没有**设置 `--insecure` 标志。
-
-:::danger `--insecure` 会完全关闭认证
-`--insecure` 会跳过认证门，提供一个未认证的 Dashboard，它可以读写你的 `.env`（API 密钥、机密）并运行 agent 命令。**不要在远程连接中使用它。** 若要把 Dashboard 暴露给另一台机器，请配置[用户名/密码提供方](#usernamepassword-provider-no-oauth-idp)（或 OAuth）并保持 `--insecure` 关闭。该标志仅作为在完全可信、有防火墙的单主机网络中的最后手段而存在。
+:::danger `--insecure` 是空操作——它不会禁用认证
+自 2026 年 6 月安全加固以来，`--insecure` 不再绕过 Dashboard 认证：非回环绑定始终需要一个认证提供方（用户名/密码提供方或 OAuth）。如果你想要一个无需认证的 Dashboard，请绑定到 `127.0.0.1`，并通过 SSH 隧道或 Tailscale 访问它。
 :::
 
-### 失败即关闭（fail-closed）语义
+### 失败即关闭（fail-closed）语义 {#fail-closed-semantics}
 
 如果认证门本应启用，但**没有**注册任何 `DashboardAuthProvider`（没有 Nous 插件，也没有自定义插件），`hermes dashboard` 会拒绝绑定并给出明确的错误信息。不存在"默认拒绝但实际全部放行"的兜底行为——配置错误的 gated Dashboard 永远不会启动。
 
@@ -600,7 +620,7 @@ WebSocket 接受同样的参数，用于在所选 profile 下启动聊天。
 
 - **GUI —— Local Dashboards 页面。** 在 Nous Portal 中打开 [`/local-dashboards`](https://portal.nousresearch.com/local-dashboards)，即可在浏览器中注册、命名、管理和撤销自托管 Dashboard。把得到的 `agent:{id}` client ID 复制到 `HERMES_DASHBOARD_OAUTH_CLIENT_ID`（环境变量）或 `dashboard.oauth.client_id`（config.yaml）。通过 CLI 注册的 Dashboard 也在这里撤销。
 
-#### 配置
+#### 配置 {#configuration}
 
 该插件从两个来源读取配置，环境变量在非空设置时优先：
 
@@ -625,22 +645,22 @@ dashboard:
 如果两个来源都没有提供 client_id，插件会报告具体原因，而 Dashboard 失败即关闭的绑定错误会准确告诉你需要修复什么：
 
 ```
-Refusing to bind dashboard to 0.0.0.0 — the OAuth auth gate engages on
+Refusing to bind dashboard to 0.0.0.0 — the auth gate engages on
 non-loopback binds, but no auth providers are registered.
 
 Bundled providers reported these issues:
   • nous: HERMES_DASHBOARD_OAUTH_CLIENT_ID is not set (and
-    dashboard.oauth.client_id in config.yaml is empty). The Nous Portal
-    provisions this env var (shape 'agent:{instance_id}') when it
-    deploys a Hermes Agent instance — set it to your provisioned
-    client id (either as an env var or under dashboard.oauth.client_id
-    in config.yaml), or pass --insecure to skip the OAuth gate entirely.
+    dashboard.oauth.client_id in config.yaml is empty). …
 
-Or pass --insecure to skip the auth gate (NOT recommended on untrusted
-networks).
+Configure an auth provider before exposing the dashboard:
+  • Password: set dashboard.basic_auth.username + password_hash in config.yaml
+  • OAuth: run `hermes dashboard register` (Nous Portal) or install a
+    DashboardAuthProvider plugin.
+There is no unauthenticated public-bind option — to keep it local, bind
+127.0.0.1 and tunnel in (SSH / Tailscale).
 ```
 
-#### 实例演练：Nous Research
+#### 实例演练：Nous Research {#worked-example-nous-research}
 
 从一个已登录的 Hermes 安装，三步得到一个由 Nous 保护的 Dashboard。
 
@@ -653,7 +673,7 @@ hermes dashboard register
 # …writes HERMES_DASHBOARD_OAUTH_CLIENT_ID to ~/.hermes/.env
 ```
 
-**2. 在可访问的地址上运行 Dashboard。** 不带 `--insecure` 的非回环绑定会启用 OAuth 认证门，而刚刚写入的 `client_id` 会激活 `nous` 提供方：
+**2. 在可访问的地址上运行 Dashboard。** 非回环绑定会启用 OAuth 认证门，而刚刚写入的 `client_id` 会激活 `nous` 提供方：
 
 ```bash
 hermes dashboard --host 0.0.0.0 --port 9119 --no-open
@@ -673,15 +693,15 @@ curl -s http://<host>:9119/api/status | jq '.auth_required, .auth_providers'
 
 如果你不想搭建 OAuth 身份提供方——也就是"只想给我的 Dashboard 加个密码"的自托管部署——内置的 `plugins/dashboard_auth/basic` 插件会注册一个名为 `basic` 的 `DashboardAuthProvider`，它使用**用户名和密码**认证，而不是 OAuth 重定向。
 
-它接入的是与 OAuth 提供方相同的认证门：认证门在不带 `--insecure` 的非回环绑定上启用，登录页为该提供方渲染一个凭据表单（而不是"用 X 登录"按钮），而登录之后的一切——会话 cookie、透明刷新、WS 票据、登出、审计日志——都与 OAuth 路径完全一致。会话是提供方自行签发的无状态 HMAC 签名 token，因此**不需要数据库，也不需要外部 IDP**。密码哈希使用标准库的 `scrypt`（无第三方依赖）。
+它接入的是与 OAuth 提供方相同的认证门：认证门在非回环绑定上启用，登录页为该提供方渲染一个凭据表单（而不是"用 X 登录"按钮），而登录之后的一切——会话 cookie、透明刷新、WS 票据、登出、审计日志——都与 OAuth 路径完全一致。会话是提供方自行签发的无状态 HMAC 签名 token，因此**不需要数据库，也不需要外部 IDP**。密码哈希使用标准库的 `scrypt`（无第三方依赖）。
 
 :::warning 仅在可信网络中使用——不要用于公网
 用户名/密码提供方面向的是位于**可信网络**中、或仅能通过 **VPN** 访问的自托管 / 本地部署 / 家庭实验室 Dashboard。它只保护一份共享凭据，背后没有外部身份提供方、MFA 或按用户的账户，因此**不适合把 Dashboard 直接暴露到公网**。对于面向互联网的 Dashboard，请改用 [Nous Research 提供方](#default-provider-nous-research)（或你自己的[自托管 OIDC](#self-hosted-oidc-provider) / [自定义 OAuth](#custom-providers) 提供方）。
 :::
 
-#### 配置
+#### 配置 {#configuration-1}
 
-与 Nous 提供方一样，它从 `config.yaml`（规范来源）读取，环境变量在非空设置时优先。只有当同时配置了 `username` 以及 `password_hash`（推荐）或 `password` 之一时它才会激活——否则它是空操作，因此 OAuth 用户和回环/`--insecure` 运维者不受影响。
+与 Nous 提供方一样，它从 `config.yaml`（规范来源）读取，环境变量在非空设置时优先。只有当同时配置了 `username` 以及 `password_hash`（推荐）或 `password` 之一时它才会激活——否则它是空操作，因此 OAuth 用户和回环运维者不受影响。
 
 **`config.yaml`：**
 
@@ -714,7 +734,7 @@ dashboard:
 
 `/auth/password-login` 端点按客户端 IP 限流（默认每分钟 10 次尝试 → HTTP 429），并且对未知用户和错误密码都返回同一个通用的 `401 Invalid credentials`，因此它无法被用作用户名枚举的探针。
 
-#### 实例演练：用户名/密码
+#### 实例演练：用户名/密码 {#worked-example-usernamepassword}
 
 在可信网络上，从零开始三步得到一个带密码保护的 Dashboard。
 
@@ -732,7 +752,7 @@ EOF
 chmod 600 ~/.hermes/.env
 ```
 
-**2. 在可访问的地址上运行 Dashboard。** 不带 `--insecure` 的非回环绑定会启用认证门，而用户名 + 哈希会激活 `basic` 提供方：
+**2. 在可访问的地址上运行 Dashboard。** 非回环绑定会启用认证门，而用户名 + 哈希会激活 `basic` 提供方：
 
 ```bash
 hermes dashboard --host 0.0.0.0 --port 9119 --no-open
@@ -748,7 +768,7 @@ curl -s http://<host>:9119/api/status | jq '.auth_required, .auth_providers'
 
 随后 `GET /api/auth/me` 会返回已验证的会话（`provider: basic`）。请把它放在 VPN 之后——参见上面的警告；面向公网的主机请改用 [Nous Research](#default-provider-nous-research) 或[自托管 OIDC](#self-hosted-oidc-provider) 提供方。
 
-#### 编写你自己的密码提供方
+#### 编写你自己的密码提供方 {#writing-your-own-password-provider}
 
 `basic` 只是某个扩展点的一种实现。任何插件都可以注册一个密码提供方：在你的 `DashboardAuthProvider` 子类上设置 `supports_password = True`，并实现 `complete_password_login(*, username, password) -> Session`（拒绝时抛出 `InvalidCredentialsError`，后端存储不可用时抛出 `ProviderError`）。对于纯密码提供方，OAuth 的 `start_login` / `complete_login` 方法可以保留为 `NotImplementedError` 桩。这正是实现 LDAP bind、凭据数据库或任何其他非重定向认证方案的路径——表单、路由、cookie 和刷新都由框架替你处理。
 
@@ -758,9 +778,9 @@ curl -s http://<host>:9119/api/status | jq '.auth_required, .auth_providers'
 
 > **Authentik · Keycloak · Zitadel · Authelia · Auth0 · Okta · Google · ……**
 
-与 Nous 提供方一样，它会自动加载，并且只有在完成配置后才注册自己，因此对回环 / `--insecure` 的 Dashboard 而言它是空操作。
+与 Nous 提供方一样，它会自动加载，并且只有在完成配置后才注册自己，因此对回环 Dashboard 而言它是空操作。
 
-#### 配置
+#### 配置 {#configuration-2}
 
 配置一个 **issuer** 和一个 **client_id**（一个公开的 PKCE 客户端——没有 client secret）。插件会从 `{issuer}/.well-known/openid-configuration` 获取 IDP 的 `authorization_endpoint`、`token_endpoint` 和 `jwks_uri`，因此你永远不需要硬编码端点 URL。
 
@@ -786,7 +806,7 @@ dashboard:
 
 在你的 IDP 中，注册一个使用授权码 + PKCE（S256）授权类型的**公开**应用/客户端，并把 Dashboard 的回调添加为允许的重定向 URI。回调地址是 `<Dashboard 公网 URL>/auth/callback`（Dashboard 在代理之后如何推导其公网 URL，参见[公网 URL 覆盖](#public-url-override)）。
 
-#### 它验证了什么
+#### 它验证了什么 {#what-it-verifies}
 
 该提供方会针对发现到的 `jwks_uri` 验证 OpenID Connect 的 **ID token**（RS256/ES256），并把 `iss` 和 `aud` 声明固定为你所配置的 `issuer` 和 `client_id`。标准 OIDC 声明按如下方式映射到 Dashboard 会话：
 
@@ -801,7 +821,7 @@ dashboard:
 
 > **机密客户端**（带 `client_secret` 的那种）尚不支持——请配置一个公开 + PKCE 客户端，这也是面向浏览器的 Dashboard 的典型选择。
 
-#### 实例演练：Keycloak
+#### 实例演练：Keycloak {#worked-example-keycloak}
 
 [Keycloak](https://www.keycloak.org/) 是最容易搭起来做本地测试的自托管 OIDC 服务器之一——它以 dev 模式作为单个容器运行（内存数据库），并提供教科书式的 OIDC 发现。本演练能让你在几分钟内从零得到一个可用的 Dashboard 登录。
 
@@ -867,7 +887,7 @@ hermes dashboard --host 0.0.0.0 --port 9119 --no-open
 
 `HERMES_DASHBOARD_PUBLIC_URL` 告诉 Dashboard 它的 OAuth 回调是
 `http://localhost:9119/auth/callback`——也就是上面 realm 所注册的那个
-重定向 URI。绑定到 `0.0.0.0`（非回环绑定）且不带 `--insecure`，正是启用
+重定向 URI。绑定到 `0.0.0.0`（非回环绑定），正是启用
 OAuth 认证门的原因。
 
 **3. 登录。** 打开 `http://localhost:9119/`，你会被弹到 `/login`。点击 **Sign in with Self-Hosted OIDC** → 在 Keycloak 以 `testuser` / `testpassword` 完成认证 → 回到已认证的 Dashboard。侧边栏会显示 `Logged in as Test User via self-hosted`，并且 `GET /api/auth/me` 会返回已验证的会话（`provider: self-hosted`、`email: testuser@example.com`）。
@@ -886,9 +906,38 @@ OAuth 认证门的原因。
 ```yaml
 dashboard:
   public_url: "https://dashboard.example.com/hermes"
+  trusted_proxies:
+    - "172.20.0.5"
 ```
 
 设置之后，OAuth 回调 URL 会原样变为 `<public_url>/auth/callback`——该代码路径会忽略 `X-Forwarded-Prefix`，因为运维者已经明确声明了公网 URL。这是有意为之：在前缀已经写进 `public_url` 的常见情形下，再叠加前缀会造成双重前缀。
+
+`public_url` 中的主机名也会被接受为一个**精确的** HTTP `Host` 和
+WebSocket `Origin` 值。这支持那种保留面向浏览器的主机名、同时转发到绑定在
+`127.0.0.1` 上的 Dashboard 的反向代理。不允许使用通配符和后缀匹配，因此像
+`dashboard.example.com.evil.test` 这样的攻击者主机仍会被 DNS 重绑定防护拒绝。
+
+声明一个非回环的 `public_url` 总会启用 Dashboard 认证门，即使后端绑定在回环地址上也是如此。请先配置密码或 OAuth 提供方；否则 Hermes 会在启动时失败即关闭。这可以防止本地 SPA 会话 token 通过代理变成一种远程认证机制。在此模式下 Uvicorn 也会启用代理头处理。回环代理会被自动信任。如果 TLS 终结器从另一个容器或主机发起连接，请把它的精确 IP 地址加入 `dashboard.trusted_proxies`；当地址是动态的时，也可以为专用的代理网络添加一个有界的 CIDR：
+
+```yaml
+dashboard:
+  public_url: "https://dashboard.example.com/hermes"
+  trusted_proxies:
+    - "172.20.0.0/24"
+```
+
+只有列出的对端才可以提供 `X-Forwarded-Proto` 和 `X-Forwarded-For`。
+Hermes 始终保留对回环地址的信任，并拒绝 `*`、`0.0.0.0/0` 和
+`::/0`。信任一个网络意味着该网络上的每个容器或机器都可以提供转发元数据，因此请优先使用精确的代理 IP 或专用的仅代理网络。
+
+```bash
+# 后端仍然只能在本机访问。
+hermes dashboard --host 127.0.0.1 --port 9119 --no-open
+```
+
+让 TLS 反向代理指向 `http://127.0.0.1:9119`，并在 `dashboard.public_url` 中使用同一个外部 origin。
+
+Tailscale Serve 就是这种部署形态的一个例子：它可以在一个 `https://<machine>.<tailnet>.ts.net` 主机名上终结仅限 tailnet 的 HTTPS，同时代理到回环地址上的 Dashboard。请把这个精确的 HTTPS origin 用作 `dashboard.public_url`。它仍被视为一个非回环的面向浏览器的 origin，因此需要 Dashboard 认证提供方；但这并不要求让该服务能从公网访问。
 
 优先级与其他 Dashboard 设置相同——环境变量优先于 `config.yaml`：
 
@@ -900,9 +949,9 @@ dashboard:
 
 校验会拒绝缺少 `http://` / `https://` 协议、缺少主机，或包含引号 / 尖括号 / 空白 / 控制字符的值。格式错误的值会静默回退到基于请求头的重建，从而让登录流程继续可用，而不是把用户送去一个恶意 URL。
 
-> **注意：** `public_url` 只覆盖 OAuth 回调 URL。cookie 的 `Secure` 标志仍由 `request.url.scheme` 决定（在 proxy_headers 下即 X-Forwarded-Proto），因此在 TLS 终结的公网部署上使用 `http://` 的 `public_url` 会产生非 Secure 的 cookie。这是运维上的一个坑——请把 `public_url` 与上游正确的 TLS 终结搭配使用。
+> **注意：** `public_url` 只覆盖 OAuth 回调 URL。cookie 的 `Secure` 标志仍由 `request.url.scheme` 决定，只有当连接的对端是回环地址或列在 `trusted_proxies` 中时，才会采用 `X-Forwarded-Proto`。当代理不在回环地址上时，请把 HTTPS 的 `public_url` 与 TLS 终结以及一个有界的受信代理条目搭配使用。
 
-### OAuth 流程
+### OAuth 流程 {#oauth-flow}
 
 该提供方实现了 [Nous Portal OAuth 契约 v1](https://github.com/NousResearch/nous-account-service/blob/main/docs/agent-dashboard-oauth-contract.md)——带 PKCE（S256）的授权码授权：
 
@@ -915,21 +964,21 @@ dashboard:
 
 Access token 的 TTL 为 15 分钟。**契约 v1 中没有 refresh token**——token 过期时，SPA 的 fetch 包装器会检测到 401 信封，并整页跳转回 `/login` 重新走一遍流程。
 
-### 设置的 Cookie
+### 设置的 Cookie {#cookies-set}
 
 | 名称 | 生存期 | 说明 |
 |------|----------|-------|
 | `hermes_session_at` | Token TTL（15 分钟） | HttpOnly、SameSite=Lax、HTTPS 时 Secure |
-| `hermes_session_pkce` | 10 分钟 | HttpOnly；在往返过程中保存 PKCE verifier + 提供方提示 |
+| `hermes_session_pkce` | 10 分钟 | HttpOnly；在往返过程中保存 PKCE verifier + 提供方提示。通过 HTTPS 时为 SameSite=None + Secure（必须在跨站的 IDP 重定向链中存活——Chromium 会丢弃在跨站链中通过 302 设置的 SameSite=Lax cookie）；回环 HTTP 上为 SameSite=Lax |
 | `hermes_session_rt` | v1 中未使用 | 为向前兼容预留；当 `refresh_token` 为空时不会写入 |
 
-三者都是 `Path=/` 且 `SameSite=Lax`。当 Dashboard 通过 HTTPS 访问时会设置 `Secure` 标志（通过请求 URL 的协议检测——在 `proxy_headers=True` 下会遵循上游 TLS 终结器的 `X-Forwarded-Proto`）。
+三者都是 `Path=/`。会话 cookie 为 `SameSite=Lax`；PKCE cookie 在通过 HTTPS 设置时为 `SameSite=None`（见上表）。当 Dashboard 通过 HTTPS 访问时会设置 `Secure` 标志（通过请求 URL 的协议检测——在 `proxy_headers=True` 下会遵循上游 TLS 终结器的 `X-Forwarded-Proto`）。
 
-### 登出
+### 登出 {#logout}
 
 侧边栏控件显示 `Logged in as <user_id…> via nous` 以及一个登出图标。点击它会向 `/auth/logout` 发送 POST 请求，清除所有 Dashboard 认证 cookie 并重定向回 `/login`。
 
-### 审计日志
+### 审计日志 {#audit-log}
 
 每一次登录开始、成功、失败以及会话校验失败，都会以 JSON 行的形式写入 `$HERMES_HOME/logs/dashboard-auth.log`。敏感字段（`access_token`、`refresh_token`、`code`、`code_verifier`、`state`、`Authorization` 头）在写日志前会被脱敏。
 
@@ -957,7 +1006,7 @@ def register(ctx):
 
 登录页会列出所有已注册的提供方；可以同时叠加多个提供方，由用户在 `/login` 处选择其一。
 
-### 非交互式（bearer token）认证
+### 非交互式（bearer token）认证 {#non-interactive-bearer-token-auth}
 
 除了交互式的人工登录（会话 cookie + 刷新）之外，`DashboardAuthProvider` ABC 还通过 `supports_token = True` + `verify_token(token=...)` 支持一种**非交互式的服务间**能力。当某个提供方选择支持它时，入站的 `Authorization: Bearer <token>` 会被验证，成功后会在请求上附加一个 `TokenPrincipal`（`request.state.token_principal`），供该提供方标记为可 token 认证的端点使用——没有 cookie，没有重定向，也没有刷新。
 
@@ -965,7 +1014,7 @@ def register(ctx):
 
 自定义提供方可以用同样的方式实现 `supports_token`/`verify_token`，以暴露它们自己的可机器认证端点。
 
-### 验证认证门已开启
+### 验证认证门已开启 {#verifying-the-gate-is-on}
 
 ```bash
 # 快速的环境变量方式。
@@ -991,13 +1040,13 @@ Dashboard 的 React StatusPage 在 "Web server" 下显示同样的字段。登�
 
 ## 将 Hermes Desktop 连接到远程后端 {#connecting-hermes-desktop-to-a-remote-backend}
 
-Hermes Desktop 可以驱动运行在另一台机器上的 Hermes 后端（一台 VPS、一台家庭服务器、一台在 Tailscale 之后的 Mini）。在应用中，这一功能位于 **Settings → Gateway → Remote gateway**，它会询问 **Remote URL** 以及**登录**方式。（关于桌面应用本身——安装、设置、聊天——请参阅 [Hermes Desktop](/user-guide/desktop) 页面。）
+Hermes Desktop 可以驱动运行在另一台机器上的 Hermes 后端（一台 VPS、一台家庭服务器、一台在 Tailscale 之后的 Mini）。在应用中，这一功能位于 **Settings → Gateways → Remote gateway**，它会询问 **Remote URL** 以及**登录**方式。（关于桌面应用本身——安装、设置、聊天——请参阅 [Hermes Desktop](/user-guide/desktop) 页面。）
 
 你用内置的某个认证提供方保护远程 Dashboard，桌面应用则针对后端所公布的那一个进行登录。对于超出你本机可访问范围的后端——VPS、公网主机、任何面向互联网的部署——推荐的提供方是 **OAuth（Nous Portal）**（用 [`hermes dashboard register`](#registering-a-dashboard) 注册，并用 *Sign in with Nous Research* 登录）。内置的[用户名/密码提供方](#usernamepassword-provider-no-oauth-idp)是后端位于可信局域网或仅能通过 VPN 访问时最快捷的选择，但**不适合直接暴露到公网**。把 Dashboard 绑定到非回环地址会启用它的认证门；登录之后，Desktop 会自动把该会话复用于聊天 WebSocket——没有任何 token 需要复制粘贴。
 
 下面的配方使用用户名/密码路径，因为它在可信网络上搭建起来最快；OAuth 路径请参见[默认提供方：Nous Research](#default-provider-nous-research)。
 
-### 在后端（远程机器）上
+### 在后端（远程机器）上 {#on-the-backend-the-remote-machine}
 
 ```bash
 # 1. 在 ~/.hermes/.env（机密文件，0600）中设置 Dashboard 登录凭据。
@@ -1022,9 +1071,9 @@ hermes dashboard --no-open --host 0.0.0.0 --port 9119
 Dashboard 会读写你的 `.env`（API 密钥、机密）并且可以运行 agent 命令。这里演示的**用户名/密码**方案适用于可信网络——切勿把仅有密码保护的 Dashboard 直接暴露到开放互联网。请把它放到 VPN 之后。[Tailscale](https://tailscale.com/) 是干净利落的选择：绑定到机器的 tailscale IP（`--host <tailscale-ip>`），并用 `http://<tailscale-ip>:9119` 作为 Remote URL。只有你 tailnet 上的设备才能访问它。若要通过公网访问后端，请改用 **OAuth（Nous Portal）** 提供方。
 :::
 
-### 在 Hermes Desktop 中
+### 在 Hermes Desktop 中 {#in-hermes-desktop}
 
-**Settings → Gateway → Remote gateway：**
+**Settings → Gateways → Remote gateway：**
 
 - **Remote URL** — `http://<backend-host>:9119`（如果你在前面加了反向代理，也支持 `/hermes` 这类路径前缀）
 - **Sign in** — 应用检测到用户名/密码网关后会显示一个 **Sign in** 按钮；点击它并输入第 1 步中的凭据
@@ -1032,7 +1081,7 @@ Dashboard 会读写你的 `.env`（API 密钥、机密）并且可以运行 agen
 
 当后端设置了 `HERMES_DASHBOARD_BASIC_AUTH_SECRET` 时，会话会自动刷新并在重启后依然有效。
 
-### 环境变量覆盖
+### 环境变量覆盖 {#environment-variable-override}
 
 除了应用内的设置之外，你也可以在启动桌面应用之前用环境变量指定后端。当设置了 `HERMES_DESKTOP_REMOTE_URL` 时，它会覆盖应用内保存的 URL（Gateway 设置面板会显示一个 "env override" 徽章并禁用编辑）；你仍然需要在面板中用用户名和密码**登录**。
 
@@ -1040,7 +1089,7 @@ Dashboard 会读写你的 `.env`（API 密钥、机密）并且可以运行 agen
 |---------|-------|
 | `HERMES_DESKTOP_REMOTE_URL` | `http://<backend-host>:9119` |
 
-### 故障排查
+### 故障排查 {#troubleshooting}
 
 - **"Remote gateway incomplete"** —— 你还没有填写远程 URL。
 - **登录失败并返回 401 / "Invalid credentials"** —— 用户名或密码与后端的 `HERMES_DASHBOARD_BASIC_AUTH_USERNAME` / `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD` 不匹配。后端对未知用户和错误密码返回同一个通用错误，因此请两者都检查。用 `curl -s http://<host>:9119/api/status | jq '.auth_required, .auth_providers'` 确认认证门——它应当报告 `true` 并包含 `"basic"`。
@@ -1058,7 +1107,7 @@ Web 服务器将 CORS 限制为仅 localhost 来源：
 
 如果你在自定义端口上运行服务器，该来源会自动添加。
 
-## 开发
+## 开发 {#development}
 
 如果你要为 Web Dashboard 前端做贡献：
 
@@ -1076,11 +1125,11 @@ npm run dev
 
 前端使用 React 19、TypeScript、Tailwind CSS v4 和 shadcn/ui 风格组件构建。生产构建输出到 `hermes_cli/web_dist/`，由 FastAPI 服务器作为静态 SPA 提供服务。
 
-## 更新时自动构建
+## 更新时自动构建 {#automatic-build-on-update}
 
 运行 `hermes update` 时，如果 `npm` 可用，Web 前端会自动重新构建。这使 Dashboard 与代码更新保持同步。如果未安装 `npm`，更新会跳过前端构建，`hermes dashboard` 将在首次启动时构建。
 
-## 主题与插件
+## 主题与插件 {#themes--plugins}
 
 Dashboard 内置八个主题，并可通过用户自定义主题、插件标签页和后端 API 路由进行扩展——全部即插即用，无需克隆仓库。
 

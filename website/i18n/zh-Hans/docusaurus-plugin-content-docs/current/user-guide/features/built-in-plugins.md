@@ -58,11 +58,10 @@ hermes plugins disable disk-cleanup
 | `disk-cleanup` | hook + 斜杠命令 | 自动追踪临时文件并在会话结束时清理 |
 | `security-guidance` | hook | 对 `write_file`/`patch` 的危险代码进行模式匹配并追加安全告警（或阻断）——共 25 条规则（Anthropic 的 `claude-plugins-official` 模式的 Apache-2.0 分支） |
 | `observability/langfuse` | hook | 将轮次 / LLM 调用 / 工具追踪到 [Langfuse](https://langfuse.com) |
-| `observability/nemo_relay` | hook | 将可观测性事件（轮次 / LLM 调用 / 工具）转发到 NVIDIA NeMo 端点 |
 | `teams_pipeline` | 独立插件 | Microsoft Teams 会议流水线——基于 Graph、以转录稿为先的会议摘要 |
 | `spotify` | 后端（7 个工具） | 原生 Spotify 播放、队列、搜索、播放列表、专辑、曲库 |
 | `google_meet` | 独立插件 | 加入 Meet 通话、实时字幕转录、可选实时双工音频 |
-| `image_gen/openai` | 图像后端 | OpenAI `gpt-image-2` 图像生成后端（FAL 的替代方案） |
+| `image_gen/openai` | 图像后端 | OpenAI GPT Image 2 以及 2.5 Flare/Sunburst 图像生成与编辑（API 密钥） |
 | `image_gen/openai-codex` | 图像后端 | 通过 Codex OAuth 使用 OpenAI 图像生成 |
 | `image_gen/xai` | 图像后端 | xAI `grok-2-image` 后端 |
 | `hermes-achievements` | 仪表盘标签页 | Steam 风格的可收集徽章，根据你真实的 Hermes 会话历史生成 |
@@ -203,6 +202,33 @@ Hermes 前缀的环境变量和标准 SDK 环境变量（`LANGFUSE_PUBLIC_KEY`�
 
 **禁用：** `hermes plugins disable observability/langfuse`。插件模块仍会被发现，但在你重新启用之前不会运行任何模块代码。
 
+### NeMo Relay 原生集成（迁移说明） {#nemo-relay-native-integration-migration-note}
+
+NeMo Relay 不再是 Hermes 的内置插件。请勿运行 `hermes plugins enable observability/nemo_relay`；Relay 的会话、轮次、LLM 和工具生命周期现在由 Hermes 核心负责。
+
+如需启用 Relay 中间件或导出器，请创建一个标准的 Relay `plugins.toml`，然后在启动 Hermes 之前将 `HERMES_NEMO_RELAY_PLUGINS_TOML` 设置为该文件。该策略在整个进程范围内生效，适用于该 Hermes 进程托管的每个 profile。有关 ATOF、ATIF 和 OpenTelemetry 选项，请参阅 [NeMo Relay 可观测性配置](https://docs.nvidia.com/nemo/relay/configure-plugins/observability/about)。
+
+旧的 `HERMES_NEMO_RELAY_ATOF_*` 和 `HERMES_NEMO_RELAY_ATIF_*` 设置不再激活导出器。当没有选定替代的 `plugins.toml` 时，`hermes doctor` 会报告这些过时的设置。
+
+#### 会话 span 分段（持续会话） {#session-span-segmentation-continuous-sessions}
+
+Relay 在作用域关闭时导出 span。持续运行的网关会话可能让其会话 span 保持打开数天，尽管每个轮次 span 都会正常导出。可选的分段功能只会在轮次边界处轮换会话作用域：
+
+```yaml
+gateway:
+  telemetry:
+    session_segments:
+      on_compaction: false  # 上下文压缩后轮换
+      max_turns: 0          # 0 = 不限；N = 每个分段的轮次数
+```
+
+| 键 | 默认值 | 行为 |
+|---|---:|---|
+| `on_compaction` | `false` | 压缩完成后，在下一个轮次边界处轮换。 |
+| `max_turns` | `0` | 每完成 N 个轮次后轮换；`0` 表示禁用该上限。 |
+
+两个默认值都会让整个会话保持同一个会话作用域。轮换后的 span 保留相同的 `session_id`，并添加 `hermes.session.segment` 以及 `hermes.session.segment_reason`（`compaction` 或 `max_turns`）。
+
 ### google_meet
 
 让 agent **加入、转录并参与 Google Meet 通话**——记录会议笔记、事后总结对话内容、跟进特定要点，并可选择通过 TTS 将回复发回通话中。
@@ -211,16 +237,17 @@ Hermes 前缀的环境变量和标准 SDK 环境变量（`LANGFUSE_PUBLIC_KEY`�
 
 - 使用浏览器自动化加入 Meet URL 的无头虚拟参与者
 - 通过配置的 STT 提供者对会议音频进行实时转录
-- agent 调用的 `meet_summarize` / `meet_speak` / `meet_followup` 工具集，用于对所听内容采取行动
-- 会后产物（转录、带发言人归属的笔记、行动项）保存在 `~/.hermes/cache/google_meet/<meeting_id>/`
+- agent 调用的 `meet_join` / `meet_status` / `meet_transcript` / `meet_leave` / `meet_say` 工具集，用于加入通话、轮询实时转录并对所听内容采取行动
+- 会后产物（转录、状态）保存在 `~/.hermes/workspace/meetings/<meeting_id>/`
 
 **设置：**
 
 ```bash
 hermes plugins enable google_meet
-# 首次使用时会提示你通过插件的 OAuth 流程登录——
-# 需要有 Meet 访问权限的 Google 账号。如果会议强制要求
-# "仅受邀参与者可加入"，可能需要主持人批准。
+hermes meet setup   # 预检：playwright、chromium、认证文件
+hermes meet auth    # 打开浏览器登录 Google 并保存会话状态——
+                    # 需要有 Meet 访问权限的 Google 账号。如果会议强制要求
+                    # "仅受邀参与者可加入"，可能需要主持人批准。
 ```
 
 在聊天中使用：
@@ -231,7 +258,7 @@ agent 会启动会议加入流程，在通话进行时将转录内容流式传�
 
 **适用场景：** 需要机器人转录并为异步参与者总结的定期站会；需要结构化笔记的访谈式会议；任何原本需要 Fireflies / Otter / Grain 的场景。如果你不希望有 AI 在旁监听——请勿启用。
 
-**禁用：** `hermes plugins disable google_meet`。已缓存的转录和录音保留在 `~/.hermes/cache/google_meet/`，直到你手动删除。
+**禁用：** `hermes plugins disable google_meet`。已保存的转录保留在 `~/.hermes/workspace/meetings/`，直到你手动删除。
 
 ### hermes-achievements
 

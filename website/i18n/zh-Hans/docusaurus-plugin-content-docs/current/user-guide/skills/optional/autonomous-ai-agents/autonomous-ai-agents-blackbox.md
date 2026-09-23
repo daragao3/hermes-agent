@@ -1,14 +1,14 @@
 ---
-title: "Blackbox — 将编码任务委托给 Blackbox AI CLI 代理"
+title: "Blackbox — 将编码任务委托给 Blackbox AI 多模型 CLI"
 sidebar_label: "Blackbox"
-description: "将编码任务委托给 Blackbox AI CLI 代理"
+description: "将编码任务委托给 Blackbox AI 多模型 CLI"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Blackbox
 
-将编码任务委托给 Blackbox AI CLI 代理。这是一个内置评判机制的多模型代理，可将任务分发给多个 LLM 并选出最佳结果。需要安装 blackbox CLI 及 Blackbox AI API 密钥。
+将编码任务委托给 Blackbox AI 多模型 CLI。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "将编码任务委托给 Blackbox AI CLI 代理"
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/autonomous-ai-agents/blackbox` 安装 |
 | 路径 | `optional-skills/autonomous-ai-agents/blackbox` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Hermes Agent (Nous Research) |
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
@@ -33,17 +33,12 @@ description: "将编码任务委托给 Blackbox AI CLI 代理"
 
 通过 Hermes 终端将编码任务委托给 [Blackbox AI](https://www.blackbox.ai/)。Blackbox 是一个多模型编码代理 CLI，可将任务分发给多个 LLM（Claude、Codex、Gemini、Blackbox Pro），并使用评判机制选出最佳实现。
 
-该 CLI 为[开源项目](https://github.com/blackboxaicode/cli)（GPL-3.0，TypeScript，fork 自 Gemini CLI），支持交互式会话、非交互式单次执行、检查点（checkpointing）、MCP 以及视觉模型切换。
+该 CLI（npm 包 `@blackbox_ai/blackbox-cli`，可执行文件 `blackbox`）是一个 TypeScript 编码代理（fork 自 Gemini CLI），支持交互式会话、非交互式单次执行、检查点（checkpointing）、MCP 以及视觉模型切换。
 
 ## 前置条件
 
 - 已安装 Node.js 20+
-- 已安装 Blackbox CLI：`npm install -g @blackboxai/cli`
-- 或从源码安装：
-  ```
-  git clone https://github.com/blackboxaicode/cli.git
-  cd cli && npm install && npm install -g .
-  ```
+- 已安装 Blackbox CLI：`npm install -g @blackbox_ai/blackbox-cli`（可执行文件：`blackbox`）
 - 从 [app.blackbox.ai/dashboard](https://app.blackbox.ai/dashboard) 获取 API 密钥
 - 配置：运行 `blackbox configure` 并输入 API 密钥
 - 在终端调用中使用 `pty=true` — Blackbox CLI 是交互式终端应用
@@ -128,12 +123,16 @@ Blackbox 的独特功能是将同一任务分发给多个模型并对结果进�
 
 | 参数 | 效果 |
 |------|--------|
-| `--prompt "task"` | 非交互式单次执行 |
+| `--prompt "task"` (`-p`) | 非交互式单次执行 |
 | `--resume-checkpoint "tag"` | 从已保存的检查点恢复 |
-| `--yolo` | 自动批准所有操作和模型切换 |
-| `blackbox session` | 启动交互式聊天会话 |
+| `--yolo` (`-y`) | 自动批准所有操作和模型切换 |
+| `--vlm-switch-mode <mode>` | 图像处理方式：`once`、`session` 或 `persist` |
+| `-c, --checkpointing` | 启用文件编辑的检查点 |
 | `blackbox configure` | 更改设置、提供商、模型 |
-| `blackbox info` | 显示系统信息 |
+| `blackbox update` | 将 CLI 更新到最新版本 |
+| `blackbox mcp` | 管理 MCP 服务器 |
+| `blackbox extensions` | 管理 CLI 扩展 |
+| `blackbox voice <action>` / `blackbox shortcut` | 配置语音输入 / `b` 快捷键 |
 
 ## 视觉支持
 

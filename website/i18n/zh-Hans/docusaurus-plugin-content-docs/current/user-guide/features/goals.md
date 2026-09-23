@@ -21,6 +21,24 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 
 只需一轮即可完成的任务不需要 `/goal`。*否则你需要说三次"继续"* 的任务，才是它的用武之地。
 
+## Goals 与 Kanban：我该用哪一个？ {#goals-vs-kanban-which-one-do-i-want}
+
+`/goal` 和 [Kanban](./kanban) 都能让 Hermes 在你不重新提示的情况下持续工作，因此很容易以为二者会相互衔接。事实并非如此——两者的边界非常清晰：
+
+- **`/goal` 是单会话的。** 循环会把续行 prompt 送回*当前*对话，直到裁判判定完成。设置目标永远不会创建 kanban 卡片、不会把工作分配给其他 profile，也不会扇出。不存在任何交接到看板的行为，无论显式还是隐式。
+- **Kanban 是由许多任务组成的看板。** 每张卡片都会被分派给拥有独立会话的独立 worker 进程。卡片、依赖、负责人和交接都位于看板上——而不在 `/goal` 中。
+- **两者的重叠是刻意的，而且很小。** 用 `--goal` 创建的 kanban 卡片会运行与 `/goal` 相同的 Ralph 式续行引擎——但只在*该卡片自己的 worker 会话内部*。它借用的是引擎，而不是看板。参见[目标模式卡片](./kanban#goal-mode-cards---goal)。
+
+| 你想要 | 应当使用 |
+|---|---|
+| 在当前聊天中持续迭代一个任务直到完成 | `/goal <text>` |
+| 多个相互独立的任务，带有依赖、交接或多个 profile | [Kanban](./kanban) —— `hermes kanban create …` |
+| 看板上的某一张卡片需要持续迭代，直到满足其验收标准 | 带 `--goal` 的 kanban 卡片 |
+
+:::note
+如果你希望工作出现在看板上，请自己把它放上去（`hermes kanban create …`）——`/goal` 不会替你这么做。反过来也一样：在当前聊天中暂停、恢复或清除目标，永远不会创建、认领或移动任何 kanban 卡片。
+:::
+
 ## 快速开始
 
 ```
@@ -31,7 +49,7 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 
 1. **目标已接受** — `⊙ Goal set (20-turn budget): <your goal>`
 2. **第 1 轮运行** — Hermes 开始工作，就像你发送了一条普通消息一样。
-3. **裁判运行** — 轮次结束后，裁判模型判定 `done` 或 `continue`。
+3. **裁判运行** — 轮次结束后，裁判模型判定 `done`、`continue` 或 `blocked`。
 4. **若需要则触发循环** — 若为 `continue`，你将看到 `↻ Continuing toward goal (1/20): <judge's reason>`，Hermes 自动执行下一步。
 5. **终止** — 最终你会看到 `✓ Goal achieved: <reason>` 或 `⏸ Goal paused — N/20 turns used`。
 
@@ -48,8 +66,16 @@ description: "设置一个持续目标，让 Hermes 跨轮次持续工作直到�
 | `/goal clear` | 完全删除目标。 |
 | `/goal wait <pid> [reason]` | 将循环停靠在某个后台进程上——进程运行期间不再每轮催促 agent，进程退出后自动恢复。 |
 | `/goal unwait` | 撤销等待屏障并立即恢复循环。 |
+| `/goal gate add <command>` | 添加一个**质量关卡**：一条必须通过的 shell 命令，目标才能被判定为完成。参见[质量关卡](#quality-gates)。 |
+| `/goal gate` 或 `/goal gate list` | 列出目标的关卡及其通过/失败状态。 |
+| `/goal gate remove <N>` | 删除第 N 个关卡（从 1 开始计数）。 |
+| `/goal gate clear` | 删除所有关卡。 |
 
-在 CLI 及所有 gateway 平台（Telegram、Discord、Slack、Matrix、Signal、WhatsApp、SMS、iMessage、Webhook、API server 以及 Web 控制台）上行为完全一致。
+经典 CLI、TUI、Desktop、dashboard 聊天和消息网关共用同一个 `/goal` 命令处理器。这包括 draft/show、内联契约、wait/unwait、质量关卡以及 clear/stop/done 别名。Desktop 的目标控件同样使用该处理器。ACP 目前既不公布也不实现 `/goal`。
+
+`/goal draft <text>` 既会创建目标，也会启动其第一轮——即使起草功能不可用、Hermes 回退为自由格式目标时也是如此。`draft` 是一个整词子命令：`/goal drafting docs` 会把 `drafting docs` 当作字面目标，而不会调用起草模型。
+
+消息平台保留各自的访问规则：`/goal gate add` 需要显式配置的网关管理员；列出、删除和清空关卡仍然可用，以便恢复。渲染和轮次调度因界面而异，但命令解析和持久化的目标变更是共享的。
 
 ## 完成契约 {#completion-contracts}
 
@@ -106,11 +132,31 @@ stop when: a DB schema migration is required
 
 当你启动一个循环（"修复失败的测试"）后，中途发现还需要"为刚修复的 bug 添加回归测试"时，使用此功能——`/subgoal add a regression test` 可在不中断运行循环的情况下收紧成功条件。
 
+## 质量关卡 {#quality-gates}
+
+完成契约能让裁判更严格，但裁判仍然是一个阅读文字的 LLM。**质量关卡**更强：它是一条确定性的 shell 命令，必须以 0 退出，目标才可能完成。灵感来自 Prime-Agent 的有界自主模式（`--autonomous-gate`）。
+
+```
+/goal Fix the flaky session tests
+/goal gate add scripts/run_tests.sh tests/hermes_cli/test_goals.py
+```
+
+每一轮的工作方式：
+
+1. **关卡先于裁判运行。** 只要有任何关卡失败，就*不会调用*裁判——红色关卡是目标尚未完成的确定性证据。关卡的退出码和输出末尾（最后约 3 KB）会成为续行 prompt，让 agent 针对真实的失败迭代，而不是凭感觉。
+2. **所有关卡通过 → 正常裁判。** 随后 LLM 裁判照常判定 done/blocked/continue/wait。
+3. **工作区未变化 → 不重新运行。** 如果某个关卡失败后工作区没有任何变化（通过 HEAD + 工作树状态的 git 指纹追踪），该关卡不会重新运行——而是重放已记录的失败并递增尝试次数。卡住的 agent 无法在反复运行同一套红色测试上浪费时间。在 git 仓库之外，关卡总是会重新运行。
+4. **重试次数有上限。** 每个关卡默认重试 3 次、超时 5 分钟。当某个关卡耗尽重试次数时，目标会自动暂停（与轮次预算类似），并提示你手动修复、删除该关卡，或执行 `/goal resume`。
+
+关卡与目标一起持久化在 `SessionDB.state_meta` 中（在 `/resume` 和上下文压缩后依然有效），并且在网关上运行中途管理关卡（`/goal gate …`）是安全的——关卡只在轮次边界运行。
+
+关卡与契约可以组合使用：用契约塑造 *agent 的目标方向*，用关卡让*「完成」可被机械地检验*。两者同时设置时，关卡先运行。
+
 ## 停靠在后台进程上：自动执行，并提供手动覆盖
 
 有些目标被某个需要数分钟、且自行运行的东西所阻塞——已推送 PR 的 CI、一次长时间构建、一个测试矩阵、一次部署，或一段限流冷却期。若无特殊处理，目标循环会在等待期间每轮都催促 agent 做「好了吗？」这类无用功。
 
-**这一点是自动处理的。** 每一轮中，裁判都会看到 agent 的实时后台进程（`terminal(background=true)` 注册表——pid、会话 id、命令、运行时长、近期输出，以及任何 `watch_patterns` / `notify_on_complete` 触发器），与目标和 agent 的回复一并呈现。当 agent 的进展确实被其中某个进程阻塞时，裁判会返回 **`wait`** 判定而非 `continue`，循环随即**停靠**：接下来的轮次被跳过（不调用裁判、不续行、不消耗轮次），直到等待条件被满足——然后带着结果正常恢复。裁判也可以基于**时间**停靠（`wait_for_seconds`），用于退避/冷却等待。停靠期间 `/goal status` 会显示 `⏳ Goal (parked …)`。
+**这一点是自动处理的。** 每一轮中，裁判都会看到 agent 自己的实时后台进程（本会话启动的 `terminal(background=true)` 注册表条目——pid、会话 id、命令、运行时长、近期输出，以及任何 `watch_patterns` / `notify_on_complete` 触发器；由委派子代理启动的进程不会显示，因此扇出的父代理永远不会停靠在某个 worker 的轮询器上），与目标和 agent 的回复一并呈现。当 agent 的进展确实被其中某个进程阻塞时，裁判会返回 **`wait`** 判定而非 `continue`，循环随即**停靠**：接下来的轮次被跳过（不调用裁判、不续行、不消耗轮次），直到等待条件被满足——然后带着结果正常恢复。基于 pid/会话的等待上限为 30 分钟；永不退出的进程（监视器、被遗忘的轮询器）无法让目标无限期停靠。裁判也可以基于**时间**停靠（`wait_for_seconds`），用于退避/冷却等待。停靠期间 `/goal status` 会显示 `⏳ Goal (parked …)`。
 
 裁判会根据进程自身的信号选择合适的等待类型：
 
@@ -137,9 +183,9 @@ stop when: a DB schema migration is required
 
 - 持续目标文本
 - agent 最新的最终回复（最后约 4 KB 文本）
-- 一个系统 prompt，要求裁判以严格 JSON 格式回复：`{"done": <bool>, "reason": "<one-sentence rationale>"}`
+- 一个系统 prompt，要求裁判以严格的单行 JSON 格式回复：`{"verdict": "done" | "blocked" | "continue" | "wait", "reason": "<one-sentence rationale>"}`（wait 判定会附加 `wait_on_session` / `wait_on_pid` / `wait_for_seconds`；旧版的 `{"done": <bool>, "reason": "..."}` 形状仍被接受）
 
-裁判刻意保守：只有当回复**明确**确认目标已完成、最终交付物已清晰产出，或目标不可达/被阻塞时（视为 DONE 并附带阻塞原因，以免在不可能的任务上消耗预算），才会将目标标记为 `done`。
+裁判刻意保守：只有当回复**明确**确认目标已完成、最终交付物已清晰产出时，才会将目标标记为 `done`。如果 agent 说明目标**不可达**（不可能、超出范围、需要用户输入），则会得到 `blocked` 判定——而绝不是 `done`：目标会附带裁判给出的原因**暂停**（`🚫 Goal judged unachievable — paused`），这样你可以用 `/goal <text>` 重新界定范围，或用 `/goal resume` 强制继续，而不是白白消耗预算，或让一个不可能的任务被当作完成放行。
 
 ### 失败开放语义
 

@@ -413,10 +413,7 @@ MATRIX_E2EE_MODE=required
 - `matrix_set_presence`
 
 这些工具的作用范围仅限 Matrix 上下文，在非 Matrix 工具集中不可用。管理类工具默认禁用：撤回需要 `MATRIX_TOOLS_ALLOW_REDACTION=true`，邀请需要 `MATRIX_TOOLS_ALLOW_INVITES=true`，创建房间需要 `MATRIX_TOOLS_ALLOW_ROOM_CREATE=true`。创建公开房间还需要 `MATRIX_ALLOW_PUBLIC_ROOMS=true`。
-Matrix 工具默认仅限于当前 Matrix 房间。明确的跨房间目标需要
-`MATRIX_TOOLS_ALLOW_CROSS_ROOM=true`；撤回及类似邀请的跨房间操作还额外需要
-`MATRIX_TOOLS_ALLOW_CROSS_ROOM_DESTRUCTIVE=true`。如果设置了 `MATRIX_ALLOWED_ROOMS`，
-Matrix 工具只能以这些房间为目标。
+如果设置了 `MATRIX_ALLOWED_ROOMS`，Matrix 工具只能以这些房间为目标。
 
 反应控件使用：
 
@@ -439,22 +436,6 @@ MATRIX_MAX_MEDIA_BYTES=104857600
 
 入站媒体必须使用 Matrix `mxc://` 内容 URI。Hermes 会拒绝 Matrix 事件中任意的
 HTTP(S) 媒体 URL，以免把联邦房间变成不受限的下载器。
-
-## Synapse 集成测试
-
-Hermes 附带了一个可选启用的 Synapse 测试环境，用于本地验证：
-
-```bash
-docker compose -f tests/e2e/matrix_synapse_gateway/docker-compose.yml up -d
-HERMES_MATRIX_SYNAPSE_INTEGRATION=1 \
-  scripts/run_tests.sh -m "integration and matrix_synapse" \
-  tests/e2e/matrix_synapse_gateway/test_gateway.py
-docker compose -f tests/e2e/matrix_synapse_gateway/docker-compose.yml down -v
-```
-
-该环境通过 Synapse 的共享密钥注册创建临时用户，覆盖私有房间的收发、具名房间的
-邀请/加入、媒体上传/下载、机器人响应投递以及启动时的旧事件过滤。E2EE 冒烟测试
-另以 `matrix_e2ee` 标记，因此在开发机器上可以保持为可选启用。
 
 ### 交叉签名验证（推荐）
 
@@ -564,7 +545,7 @@ MATRIX_ALLOWED_ROOMS="!abc123def456:matrix.example.org,!opsroom789:matrix.exampl
 
 Hermes 在 Matrix 中支持与其他消息平台相同的 gateway 命令，包括
 `/commands`、`/model`、`/stop`、`/queue`、`/steer`、`/goal`、`/subgoal`、
-`/background`、`/bg`、`/btw`、`/tasks` 和 `/yolo`。
+`/bg`、`/btw`、`/tasks` 和 `/yolo`。
 
 有些 Matrix 客户端把开头的 `/` 保留给本地客户端命令，可能不会把未知的斜杠命令
 发送到房间。这种情况下，请使用 `!` 作为 Matrix 下安全的别名：

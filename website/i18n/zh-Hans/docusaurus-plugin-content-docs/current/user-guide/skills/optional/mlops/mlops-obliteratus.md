@@ -22,7 +22,7 @@ OBLITERATUS：消除 LLM 的拒答行为（diff-in-means）。
 | 依赖项 | `obliteratus`, `torch`, `transformers`, `bitsandbytes`, `accelerate`, `safetensors` |
 | 平台 | linux, macos |
 | 标签 | `Abliteration`, `Uncensoring`, `Refusal-Removal`, `LLM`, `Weight-Projection`, `SVD`, `Mechanistic-Interpretability`, `HuggingFace`, `Model-Surgery` |
-| 相关 skills | `vllm`, `gguf`, [`huggingface-tokenizers`](/user-guide/skills/optional/mlops/mlops-huggingface-tokenizers) |
+| 相关 skills | [`serving-llms-vllm`](/user-guide/skills/optional/mlops/mlops-inference-serving-llms-vllm), [`llama-cpp`](/user-guide/skills/optional/mlops/mlops-inference-llama-cpp), [`huggingface-tokenizers`](/user-guide/skills/optional/mlops/mlops-huggingface-tokenizers) |
 
 ## 参考：完整 SKILL.md
 

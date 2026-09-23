@@ -1,10 +1,10 @@
 ---
 sidebar_position: 7
-title: "Docker"
+title: "Hermes Docker 部署"
 description: "在 Docker 中运行 Hermes Agent 以及将 Docker 用作终端后端"
 ---
 
-# Hermes Agent — Docker
+# Hermes Docker 部署
 
 Docker 与 Hermes Agent 的交集有两种截然不同的方式：
 
@@ -70,14 +70,11 @@ docker run -d \
 :::
 
 :::note 无人值守 gateway 的工具循环硬停止
-`tool_loop_guardrails.hard_stop_enabled` 默认为 `false`，这对交互式 CLI 和 TUI 会话是合理的 —— 那里有人能看到重复的工具调用警告。在无人值守的 gateway 或服务器部署中，仅有警告可能无法阻止陷入重复工具调用循环的 agent。希望获得熔断行为的运维人员应在该 profile 的 `config.yaml` 中显式启用硬停止：
+无人值守的 gateway 和 cron 会话默认通过 `non_interactive_hard_stop_enabled` 启用工具循环硬停止。交互式 CLI、TUI、Desktop 和 ACP 会话仍然只发出警告。如需让某个无人值守部署退出该行为，请在该 profile 的 `config.yaml` 中设置：
 
 ```yaml
 tool_loop_guardrails:
-  hard_stop_enabled: true
-  hard_stop_after:
-    exact_failure: 5
-    idempotent_no_progress: 5
+  non_interactive_hard_stop_enabled: false
 ```
 :::
 
@@ -136,6 +133,19 @@ Dashboard 由 s6 监管：若进程崩溃，`s6-supervise` 会在短暂退避后
 - **自托管 OIDC** —— 通过标准 OpenID Connect 接入你自己的身份提供商：设置 `HERMES_DASHBOARD_OIDC_ISSUER` + `HERMES_DASHBOARD_OIDC_CLIENT_ID` 后，`dashboard_auth/self_hosted` 提供者会激活。
 
 无论选择哪种，调用方在访问受保护路由前都会先被重定向到登录页。三种提供方的完整说明见 [Web Dashboard → 鉴权](features/web-dashboard.md#authentication-gated-mode)。
+
+当 Traefik 或 nginx 等反向代理运行在另一个容器中时，其桥接网络地址默认不受信任。请在挂载的 `config.yaml` 中设置 dashboard 的公开 URL，并只信任该代理的确切 IP，或专用代理网络的有界 CIDR：
+
+```yaml
+dashboard:
+  public_url: "https://dashboard.example.com"
+  trusted_proxies:
+    - "172.20.0.5"
+    # 或者，如果代理地址在专用网络上是动态分配的：
+    # - "172.20.0.0/24"
+```
+
+这样代理发来的 `X-Forwarded-Proto: https` 就能控制安全的 OAuth cookie，而来自其他对端的转发头仍不受信任。不要使用 `*`、`0.0.0.0/0` 或 `::/0`；Hermes 会拒绝这些无界条目。
 
 如果未注册提供者且绑定为非回环地址，dashboard **会在启动时
 失败关闭**，并给出指向缺失环境变量的具体错误信息。现在已不再
@@ -474,7 +484,7 @@ docker run -d \
 官方镜像基于 `debian:13.4`，包含：
 
 - Python 3.13，依赖通过 `uv sync --frozen --no-install-project` 从 lockfile 同步，涵盖预置的 extras（`all`、`messaging`、Anthropic/Bedrock/Azure identity、Hindsight、Matrix），随后再对 Hermes 本身执行不带依赖的可编辑安装。
-- Node.js 22 + npm（用于浏览器自动化、WhatsApp 桥接、TUI/桌面 bundle 以及工作区构建工具）
+- Node.js 26 + npm（用于浏览器自动化、WhatsApp 桥接、TUI/桌面 bundle 以及工作区构建工具）
 - Playwright 与 Chromium（`npx playwright install --with-deps chromium --only-shell`）
 - ripgrep、ffmpeg、git 和 `xz-utils` 作为系统工具
 - **`docker-cli`** — 使容器内运行的 agent 可以驱动宿主机的 Docker 守护进程（绑定挂载 `/var/run/docker.sock` 以启用），用于 `docker build`、`docker run`、容器检查等操作
@@ -484,7 +494,9 @@ docker run -d \
 
 镜像在运行时把 `/opt/hermes` 视为不可变的安装树。必须在 Docker 内可用的可选 Python extras、Node 工作区和 TUI 资源都需要在镜像构建时预置；运行时的懒安装被禁用，以免受监管的 gateway 和 `docker exec hermes …` 命令尝试把依赖产物写回只读的源码树。
 
-容器的 `ENTRYPOINT` 是 s6-overlay 的 `/init`。启动时：
+容器的 `ENTRYPOINT` 是一个小型分发器（`docker/entrypoint-dispatch.sh`）。当容器拥有 PID 1 时（常规 Docker / Podman），它会 exec s6-overlay 的 `/init`，你将获得下文所述的完整监管树。当平台用自己的 PID-1 init 包裹镜像入口点时（Fly.io Machines、`docker run --init`、部分 Nomad/Kubernetes 部署），`/init` 会以 `s6-overlay-suexec: fatal: can only run as pid 1` 中止——因此分发器改为直接运行 stage2 引导流程，并在不使用 s6 的情况下 exec 主封装脚本。在这条回退路径上，请求的命令仍会运行，但受监管的服务（dashboard、各 profile gateway）不可用。
+
+在 PID-1 路径上，`/init`：
 1. 以 root 身份运行 `/etc/cont-init.d/01-hermes-setup`（即 `docker/stage2-hook.sh`）：可选的 UID/GID 重映射、修复卷所有权、首次启动时初始化 `.env` / `config.yaml` / `SOUL.md`、除非设置了 `HERMES_SKIP_CONFIG_MIGRATION=1` 否则执行非交互式的配置 schema 迁移、同步内置技能。
 2. 运行 `/etc/cont-init.d/02-reconcile-profiles`（即 `hermes_cli.container_boot`）：遍历 `$HERMES_HOME/profiles/<name>/`，在 `/run/service/gateway-<profile>/` 下重建各 profile 的 gateway s6 服务槽，并仅自动启动上次记录状态为 `running` 的 profile（参见 [Per-profile gateway 监管](#per-profile-gateway-supervision)）。
 3. 启动静态的 `main-hermes` 和 `dashboard` s6-rc 服务。
@@ -495,7 +507,7 @@ docker run -d \
    主程序退出时容器退出，并使用其退出码。
 
 :::warning 与 pre-s6 镜像的破坏性变更
-容器 ENTRYPOINT 现在是 `/init`（s6-overlay），而非 `/usr/bin/tini`。所有五种已记录的 `docker run` 调用模式（无参数、`chat -q "…"`、`sleep infinity`、`bash`、`--tui`）的行为与基于 tini 的镜像完全相同。如果你有依赖 tini 特定信号行为或硬编码 `/usr/bin/tini --` 调用的下游封装，请固定到之前的镜像标签。
+容器 ENTRYPOINT 现在是 `entrypoint-dispatch.sh` 分发器（在 PID 1 下委托给 s6-overlay 的 `/init`），而非 `/usr/bin/tini`。所有五种已记录的 `docker run` 调用模式（无参数、`chat -q "…"`、`sleep infinity`、`bash`、`--tui`）的行为与基于 tini 的镜像完全相同。如果你有依赖 tini 特定信号行为或硬编码 `/usr/bin/tini --` 调用的下游封装，请固定到之前的镜像标签。
 :::
 
 :::warning 权限模型
@@ -796,6 +808,16 @@ docker run -d \
 ```
 
 `docker exec hermes <cmd>` 同样会自动降权到 UID 10000 —— 详情以及按调用退出的方式见[`docker exec` 会自动降权到 `hermes` 用户](#docker-exec-automatically-drops-to-the-hermes-user)。
+
+### 每次 `docker exec` 都报 "Permission denied"（安装目录被锁定为 0700） {#permission-denied-on-every-docker-exec-install-dir-locked-to-0700}
+
+2026 年 8 月下旬之前构建的镜像存在一个 bug：直接在 `/opt/hermes` 下写入凭据文件会把该目录权限限制为 `0700`，导致 `hermes` 用户（UID 10000）被锁在安装树之外。此后每次新的 `docker exec` 都会以 `Permission denied` 失败。
+
+拉取更新的镜像并重新创建容器即可永久修复（安装目录以 `0755` 发布，当前版本也不再限制它）。如果需要在不重建容器的情况下原地恢复正在运行的容器：
+
+```sh
+docker exec -u root hermes chmod 0755 /opt/hermes
+```
 
 ### 浏览器工具无法使用
 

@@ -31,212 +31,256 @@ hermes skills uninstall <skill-name>
 
 | 技能 | 描述 |
 |-------|-------------|
+| [**agent-merge-conflict-arbiter**](/user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-agent-merge-conflict-arbiter) | 两个 agent 之间合并冲突的中立仲裁者。 |
 | [**antigravity-cli**](/user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-antigravity-cli) | 操作 Antigravity CLI（agy）：插件、鉴权、沙箱。 |
-| [**blackbox**](/user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-blackbox) | 将编码任务委托给 Blackbox AI CLI agent。内置评判机制的多模型 agent，通过多个 LLM 运行任务并选出最佳结果。需要 blackbox CLI 和 Blackbox AI API 密钥。 |
+| [**blackbox**](/user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-blackbox) | 将编码任务委托给 Blackbox AI 多模型 CLI。 |
 | [**grok**](/user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-grok) | 将编码任务委托给 xAI Grok Build CLI（功能开发、PR）。 |
-| [**honcho**](/user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-honcho) | 配置并使用 Honcho 记忆与 Hermes — 跨会话用户建模、多配置文件对等隔离、观测配置、辩证推理、会话摘要及上下文预算执行。适用于配置 Honcho、故障排查等场景。 |
+| [**honcho**](/user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-honcho) | 为 Hermes 配置 Honcho 记忆并排查问题。 |
 | [**openhands**](/user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-openhands) | 将编码任务委托给 OpenHands CLI（模型无关，基于 LiteLLM）。 |
 
 ## blockchain
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**evm**](/user-guide/skills/optional/blockchain/blockchain-evm) | 只读 EVM 客户端：支持 8 条链的钱包、代币、Gas 查询。 |
-| [**hyperliquid**](/user-guide/skills/optional/blockchain/blockchain-hyperliquid) | Hyperliquid 市场数据、账户历史、交易回顾。 |
-| [**solana**](/user-guide/skills/optional/blockchain/blockchain-solana) | 查询 Solana 链上数据并附带 USD 定价 — 钱包余额、带估值的代币组合、交易详情、NFT、巨鲸检测及实时网络统计。使用 Solana RPC + CoinGecko，无需 API 密钥。 |
+| [**evm**](/user-guide/skills/optional/blockchain/blockchain-evm) | 只读 EVM 客户端：覆盖 8 条链的钱包、代币、gas。 |
+| [**hyperliquid**](/user-guide/skills/optional/blockchain/blockchain-hyperliquid) | Hyperliquid 市场数据、账户历史、交易复盘。 |
+| [**solana**](/user-guide/skills/optional/blockchain/blockchain-solana) | 以美元计价查询 Solana 钱包、代币、交易和 NFT。 |
 
 ## communication
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**one-three-one-rule**](/user-guide/skills/optional/communication/communication-one-three-one-rule) | 用于技术提案和权衡分析的结构化决策框架。当用户面临多种方案选择（架构决策、工具选型、重构策略、迁移路径）时，本技能提供系统化的分析流程。 |
+| [**one-three-one-rule**](/user-guide/skills/optional/communication/communication-one-three-one-rule) | 1-3-1 决策简报：一个问题、三个选项、一个推荐。 |
 
 ## creative
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**audiocraft-audio-generation**](/user-guide/skills/optional/creative/creative-audiocraft-audio-generation) | AudioCraft：MusicGen 文本转音乐、AudioGen 文本转音效。 |
-| [**concept-diagrams**](/user-guide/skills/optional/creative/creative-concept-diagrams) | 生成扁平、极简、支持亮色/暗色模式的 SVG 图表，输出为独立 HTML 文件，采用统一的教育视觉语言，包含 9 种语义色阶、句首大写排版及自动暗色模式。最适合教育和说明类内容。 |
-| [**heartmula**](/user-guide/skills/optional/creative/creative-heartmula) | HeartMuLa：根据歌词 + 标签生成类 Suno 风格的歌曲。 |
-| [**hyperframes**](/user-guide/skills/optional/creative/creative-hyperframes) | 使用 HyperFrames 创建基于 HTML 的视频合成、动态标题卡、社交叠层、字幕访谈视频、音频响应视觉效果及着色器转场。HTML 是视频的唯一来源。适用于用户希望制作任何视频内容的场景。 |
-| [**kanban-video-orchestrator**](/user-guide/skills/optional/creative/creative-kanban-video-orchestrator) | 规划、搭建并监控由 Hermes Kanban 支撑的多 agent 视频制作流水线。适用于用户希望制作任何类型视频的场景 — 叙事影片、产品/营销视频、MV、解说视频、ASCII/终端艺术、抽象/生成式循环等。 |
-| [**meme-generation**](/user-guide/skills/optional/creative/creative-meme-generation) | 通过选取模板并使用 Pillow 叠加文字来生成真实的 meme 图片，输出实际的 .png 文件。 |
-| [**pixel-art**](/user-guide/skills/optional/creative/creative-pixel-art) | 使用时代配色（NES、Game Boy、PICO-8）创作像素画。 |
-| [**unreal-mcp**](/user-guide/skills/optional/creative/creative-unreal-mcp) | 当用户想通过 Epic 官方内嵌于编辑器的 MCP 服务器（目录条目：unreal-engine）在 Unreal Engine 中执行任何操作时使用——搭建/打光/填充场景、放置与变换 Actor、编写 Blueprint、用 Sequence... |
+| [**ascii-art**](/user-guide/skills/optional/creative/creative-ascii-art) | ASCII 艺术：pyfiglet、cowsay、boxes、图片转 ASCII。 |
+| [**audiocraft-audio-generation**](/user-guide/skills/optional/creative/creative-audiocraft-audio-generation) | AudioCraft：MusicGen 文本生成音乐，AudioGen 文本生成音效。 |
+| [**baoyu-article-illustrator**](/user-guide/skills/optional/creative/creative-baoyu-article-illustrator) | 文章插图：类型 × 风格 × 配色保持一致。 |
+| [**baoyu-comic**](/user-guide/skills/optional/creative/creative-baoyu-comic) | 知识漫画：教育、人物传记、教程。 |
+| [**comfyui**](/user-guide/skills/optional/creative/creative-comfyui) | 通过扩散工作流生成图像、视频和音频。 |
+| [**concept-diagrams**](/user-guide/skills/optional/creative/creative-concept-diagrams) | 以 HTML 形式生成扁平、极简的教学用 SVG 图示。 |
+| [**creative-ideation**](/user-guide/skills/optional/creative/creative-creative-ideation) | 借助创意实践中的具名方法生成点子。 |
+| [**draw-your-font**](/user-guide/skills/optional/creative/creative-draw-your-font) | 把手写照片变成可安装的 TTF 字体。 |
+| [**excalidraw**](/user-guide/skills/optional/creative/creative-excalidraw) | 手绘风格的 Excalidraw JSON 图表（架构、流程、时序）。 |
+| [**heartmula**](/user-guide/skills/optional/creative/creative-heartmula) | HeartMuLa：根据歌词 + 标签生成类似 Suno 的歌曲。 |
+| [**hyperframes**](/user-guide/skills/optional/creative/creative-hyperframes) | 将 HTML 合成渲染为 MP4/WebM 视频。 |
+| [**impeccable**](/user-guide/skills/optional/creative/creative-impeccable) | 前端设计指导，由上游维护（impeccable）。 |
+| [**kanban-video-orchestrator**](/user-guide/skills/optional/creative/creative-kanban-video-orchestrator) | 规划并运行多 agent 视频制作流水线。 |
+| [**meme-generation**](/user-guide/skills/optional/creative/creative-meme-generation) | 基于模板用 Pillow 叠加文字，生成表情包 PNG。 |
+| [**pixel-art**](/user-guide/skills/optional/creative/creative-pixel-art) | 带时代调色板的像素画（NES、Game Boy、PICO-8）。 |
+| [**pretext**](/user-guide/skills/optional/creative/creative-pretext) | 用无 DOM 的文本布局构建创意浏览器演示。 |
+| [**simple-english**](/user-guide/skills/optional/creative/creative-simple-english) | 将文本改写为 ASD-STE100 简化技术英语。 |
+| [**sketch**](/user-guide/skills/optional/creative/creative-sketch) | 一次性 HTML 原型：2-3 个设计变体供比较。 |
+| [**social-media-content-calendar**](/user-guide/skills/optional/creative/creative-social-media-content-calendar) | 规划多平台社媒活动：从简报到发布。 |
+| [**tldraw-offline**](/user-guide/skills/optional/creative/creative-tldraw-offline) | 用 agent 驱动并编写 tldraw 离线画布脚本。 |
+| [**touchdesigner-mcp**](/user-guide/skills/optional/creative/creative-touchdesigner-mcp) | 通过 twozero MCP 控制 TouchDesigner。 |
+| [**unreal-mcp**](/user-guide/skills/optional/creative/creative-unreal-mcp) | 自动化 Unreal Engine 编辑器中的场景、Actor 和渲染。 |
 
 ## data-science
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**jupyter-notebook**](/user-guide/skills/optional/data-science/data-science-jupyter-notebook) | 通过实时 Jupyter kernel（hamelnb）进行迭代式 Python 开发。 |
+| [**jupyter-notebook**](/user-guide/skills/optional/data-science/data-science-jupyter-notebook) | 通过实时 Jupyter kernel 迭代运行 Python（hamelnb）。 |
 
 ## devops
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**inference-sh-cli**](/user-guide/skills/optional/devops/devops-cli) | 通过 inference.sh CLI（infsh）运行 150+ AI 应用 — 图像生成、视频创作、LLM、搜索、3D、社交自动化。使用终端工具。触发词：inference.sh、infsh、ai apps、flux、veo、图像生成、视频生成、seedrea 等。 |
-| [**docker-management**](/user-guide/skills/optional/devops/devops-docker-management) | 管理 Docker 容器、镜像、卷、网络及 Compose 栈 — 生命周期操作、调试、清理及 Dockerfile 优化。 |
-| [**hermes-s6-container-supervision**](/user-guide/skills/optional/devops/devops-hermes-s6-container-supervision) | 修改、调试或扩展 Hermes Agent Docker 镜像内部的 s6-overlay 监管树 — 新增服务、调试配置文件网关、理解架构 B 的主程序模式。 |
-| [**pinggy-tunnel**](/user-guide/skills/optional/devops/devops-pinggy-tunnel) | 通过 Pinggy 经 SSH 实现零安装本地隧道。 |
-| [**watchers**](/user-guide/skills/optional/devops/devops-watchers) | 轮询 RSS、JSON API 和 GitHub，并使用水印去重。 |
+| [**actual-setup**](/user-guide/skills/optional/devops/devops-actual-setup) | 在 Hermes 中配置 Actual Computer（actual.inc）推理。 |
+| [**docker-management**](/user-guide/skills/optional/devops/devops-docker-management) | 管理 Docker 容器、镜像、卷和 Compose。 |
+| [**hermes-s6-container-supervision**](/user-guide/skills/optional/devops/devops-hermes-s6-container-supervision) | 修改或调试 Hermes Docker 镜像中的 s6 服务。 |
+| [**inference-sh-cli**](/user-guide/skills/optional/devops/devops-inference-sh-cli) | 通过 inference.sh CLI 运行 150+ 个 AI 应用（图像、视频、LLM）。 |
+| [**pinggy-tunnel**](/user-guide/skills/optional/devops/devops-pinggy-tunnel) | 通过 Pinggy 基于 SSH 建立免安装的 localhost 隧道。 |
+| [**setup-wizard-generator**](/user-guide/skills/optional/devops/devops-setup-wizard-generator) | 生成一个 bash 向导，引导人工完成手动配置。 |
+| [**watchers**](/user-guide/skills/optional/devops/devops-watchers) | 轮询 RSS、JSON API 和 GitHub，并用水位线去重。 |
 
 ## dogfood
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**adversarial-ux-test**](/user-guide/skills/optional/dogfood/dogfood-adversarial-ux-test) | 扮演产品中最难应对的技术抵触型用户。以该角色浏览应用，找出所有 UX 痛点，再通过实用主义过滤层区分真实问题与噪音，生成可执行的工单。 |
+| [**adversarial-ux-test**](/user-guide/skills/optional/dogfood/dogfood-adversarial-ux-test) | 扮演挑剔的用户，发现并分类 UX 痛点。 |
 
 ## email
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**agentmail**](/user-guide/skills/optional/email/email-agentmail) | 通过 AgentMail 为 agent 提供专属邮箱。使用 agent 专属邮件地址（如 hermes-agent@agentmail.to）自主发送、接收和管理邮件。 |
+| [**agentmail**](/user-guide/skills/optional/email/email-agentmail) | 当 agent 需要 AgentMail CLI 邮箱收件箱时使用。 |
 
 ## finance
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**3-statement-model**](/user-guide/skills/optional/finance/finance-3-statement-model) | 在 Excel 中构建完整集成的三表模型（利润表、资产负债表、现金流量表），包含营运资本计划、折旧摊销滚动、债务计划及使现金与留存收益平衡的勾稽项。与 excel-author 配合使用。 |
-| [**comps-analysis**](/user-guide/skills/optional/finance/finance-comps-analysis) | 在 Excel 中构建可比公司分析 — 运营指标、估值倍数、与同行集合的统计基准对比。与 excel-author 配合使用。适用于上市公司估值、IPO 定价、行业基准或异常值检测。 |
-| [**dcf-model**](/user-guide/skills/optional/finance/finance-dcf-model) | 在 Excel 中构建机构级 DCF 估值模型 — 收入预测、自由现金流构建、WACC、终值、悲观/基准/乐观情景及 5×5 敏感性分析表。与 excel-author 配合使用。适用于内在价值股权分析。 |
-| [**excel-author**](/user-guide/skills/optional/finance/finance-excel-author) | 使用 openpyxl 无头构建可审计的 Excel 工作簿 — 蓝/黑/绿单元格规范、公式优先于硬编码、命名区域、余额校验、敏感性分析表。适用于财务模型、审计输出、对账。 |
-| [**lbo-model**](/user-guide/skills/optional/finance/finance-lbo-model) | 在 Excel 中构建杠杆收购模型 — 资金来源与用途、债务计划、现金清偿、退出倍数、IRR/MOIC 敏感性分析。与 excel-author 配合使用。适用于 PE 筛选、主导方案估值或 pitch 中的示意性 LBO。 |
-| [**merger-model**](/user-guide/skills/optional/finance/finance-merger-model) | 在 Excel 中构建增厚/摊薄（并购）模型 — 合并后利润表、协同效应、融资结构、每股收益影响。与 excel-author 配合使用。适用于并购 pitch、董事会材料或交易评估。 |
-| [**polymarket**](/user-guide/skills/optional/finance/finance-polymarket) | 查询 Polymarket：市场、价格、订单簿、历史数据。 |
-| [**pptx-author**](/user-guide/skills/optional/finance/finance-pptx-author) | 使用 python-pptx 无头构建 PowerPoint 演示文稿。与 excel-author 配合，制作每个数字均可追溯至工作簿单元格的模型支撑型幻灯片。适用于 pitch deck、投委会备忘录、盈利说明。 |
-| [**stocks**](/user-guide/skills/optional/finance/finance-stocks) | 通过 Yahoo 获取股票报价、历史数据、搜索、对比及加密货币行情。 |
+| [**3-statement-model**](/user-guide/skills/optional/finance/finance-3-statement-model) | 在 Excel 中构建联动的 IS/BS/CF 三表财务模型。 |
+| [**comps-analysis**](/user-guide/skills/optional/finance/finance-comps-analysis) | 在 Excel 中构建可比公司估值工作簿。 |
+| [**dcf-model**](/user-guide/skills/optional/finance/finance-dcf-model) | 在 Excel 中构建现金流折现估值工作簿。 |
+| [**excel-author**](/user-guide/skills/optional/finance/finance-excel-author) | 通过 openpyxl 无界面构建可审计的财务工作簿。 |
+| [**lbo-model**](/user-guide/skills/optional/finance/finance-lbo-model) | 在 Excel 中构建含 IRR/MOIC 的杠杆收购工作簿。 |
+| [**merger-model**](/user-guide/skills/optional/finance/finance-merger-model) | 在 Excel 中构建并购增厚/摊薄工作簿。 |
+| [**polymarket**](/user-guide/skills/optional/finance/finance-polymarket) | 查询 Polymarket：市场、价格、订单簿、历史。 |
+| [**pptx-author**](/user-guide/skills/optional/finance/finance-pptx-author) | 通过 python-pptx 无界面构建 PowerPoint 演示文稿。 |
+| [**stocks**](/user-guide/skills/optional/finance/finance-stocks) | 通过 Yahoo 获取股票报价、历史、搜索、比较及加密货币数据。 |
 
 ## gaming
 
 | 技能 | 描述 |
 |-------|-------------|
 | [**minecraft-modpack-server**](/user-guide/skills/optional/gaming/gaming-minecraft-modpack-server) | 托管模组版 Minecraft 服务器（CurseForge、Modrinth）。 |
-| [**pokemon-player**](/user-guide/skills/optional/gaming/gaming-pokemon-player) | 通过无头模拟器 + 内存读取来游玩宝可梦。 |
+| [**pokemon-player**](/user-guide/skills/optional/gaming/gaming-pokemon-player) | 通过无界面模拟器 + 读取 RAM 来玩宝可梦。 |
 
 ## health
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**fitness-nutrition**](/user-guide/skills/optional/health/health-fitness-nutrition) | 健身训练计划与营养追踪。通过 wger 按肌肉群、器械或类别搜索 690+ 种训练动作。通过 USDA FoodData Central 查询 380,000+ 种食物的宏量营养素和热量。计算 BMI、TDEE、单次最大重量、宏量营养素分配及体成分。 |
-| [**neuroskill-bci**](/user-guide/skills/optional/health/health-neuroskill-bci) | 连接运行中的 NeuroSkill 实例，将用户的实时认知和情绪状态（专注度、放松度、情绪、认知负荷、困倦度、心率、HRV、睡眠分期及 40+ 项衍生 EXG 评分）融入响应中。 |
+| [**fitness-nutrition**](/user-guide/skills/optional/health/health-fitness-nutrition) | 借助 wger/USDA 进行训练计划、宏量营养素和身体指标管理。 |
+| [**neuroskill-bci**](/user-guide/skills/optional/health/health-neuroskill-bci) | 使用来自 NeuroSkill 的实时 BCI 认知与情绪状态。 |
 
 ## mcp
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**fastmcp**](/user-guide/skills/optional/mcp/mcp-fastmcp) | 使用 Python 中的 FastMCP 构建、测试、检查、安装和部署 MCP 服务器。适用于创建新 MCP 服务器、将 API 或数据库封装为 MCP 工具、暴露资源或 prompt（提示词），或为 Claude Code、Cursor 等准备 FastMCP 服务器的场景。 |
-| [**mcp-oauth-remote-gateway**](/user-guide/skills/optional/mcp/mcp-mcp-oauth-remote-gateway) | 在无头网关上为远程 MCP 服务器手动完成 OAuth。 |
-| [**mcporter**](/user-guide/skills/optional/mcp/mcp-mcporter) | 使用 mcporter CLI 列出、配置、鉴权并直接调用 MCP 服务器/工具（HTTP 或 stdio），包括临时服务器、配置编辑及 CLI/类型生成。 |
+| [**fastmcp**](/user-guide/skills/optional/mcp/mcp-fastmcp) | 构建、测试和部署 Python MCP 服务器。 |
+| [**mcp-oauth-remote-gateway**](/user-guide/skills/optional/mcp/mcp-mcp-oauth-remote-gateway) | 在无界面 gateway 上为远程 MCP 服务器手动完成 OAuth。 |
+| [**mcporter**](/user-guide/skills/optional/mcp/mcp-mcporter) | 在终端中列出、认证并调用 MCP 服务器/工具。 |
 
 ## migration
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**openclaw-migration**](/user-guide/skills/optional/migration/migration-openclaw-migration) | 将用户的 OpenClaw 自定义配置迁移至 Hermes Agent。从 ~/.openclaw 导入兼容 Hermes 的记忆、SOUL.md、命令白名单、用户技能及选定的工作区资产，并报告无法迁移的内容。 |
+| [**openclaw-migration**](/user-guide/skills/optional/migration/migration-openclaw-migration) | 将 OpenClaw 配置（记忆、技能）导入 Hermes。 |
 
 ## mlops
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**huggingface-accelerate**](/user-guide/skills/optional/mlops/mlops-accelerate) | 最简单的分布式训练 API。仅需 4 行代码即可为任意 PyTorch 脚本添加分布式支持。统一支持 DeepSpeed/FSDP/Megatron/DDP 的 API。自动设备放置，混合精度（FP16/BF16/FP8）。交互式配置，单一启动命令。 |
-| [**axolotl**](/user-guide/skills/optional/mlops/mlops-training-axolotl) | Axolotl：基于 YAML 配置的 LLM 微调（LoRA、DPO、GRPO）。 |
-| [**chroma**](/user-guide/skills/optional/mlops/mlops-chroma) | 面向 AI 应用的开源 embedding（向量嵌入）数据库。存储 embedding 和元数据，执行向量及全文搜索，按元数据过滤。简洁的 4 函数 API，从 notebook 扩展至生产集群。适用于语义搜索、RAG 等场景。 |
-| [**clip**](/user-guide/skills/optional/mlops/mlops-clip) | OpenAI 连接视觉与语言的模型。支持零样本图像分类、图文匹配及跨模态检索。在 4 亿图文对上训练。适用于图像搜索、内容审核或视觉语言任务。 |
-| [**dspy**](/user-guide/skills/optional/mlops/mlops-research-dspy) | DSPy：声明式 LM 程序，自动优化 prompt（提示词），支持 RAG。 |
-| [**faiss**](/user-guide/skills/optional/mlops/mlops-faiss) | Facebook 用于高效相似性搜索和稠密向量聚类的库。支持数十亿向量、GPU 加速及多种索引类型（Flat、IVF、HNSW）。适用于快速 k-NN 搜索、大规模向量检索等场景。 |
-| [**optimizing-attention-flash**](/user-guide/skills/optional/mlops/mlops-flash-attention) | 使用 Flash Attention 优化 transformer 注意力机制，实现 2-4 倍加速和 10-20 倍显存降低。适用于训练/运行长序列（>512 token）transformer、遇到注意力 GPU 显存问题或需要更快推理的场景。 |
-| [**guidance**](/user-guide/skills/optional/mlops/mlops-guidance) | 使用 Guidance（微软研究院的约束生成框架）通过正则表达式和语法控制 LLM 输出，保证生成有效的 JSON/XML/代码，强制结构化格式，并构建多步骤工作流。 |
-| [**huggingface-tokenizers**](/user-guide/skills/optional/mlops/mlops-huggingface-tokenizers) | 为研究和生产优化的快速 tokenizer（分词器）。基于 Rust 实现，可在 20 秒内对 1GB 文本完成分词。支持 BPE、WordPiece 和 Unigram 算法。训练自定义词表、追踪对齐、处理填充/截断，与 HuggingFace 生态集成。 |
-| [**instructor**](/user-guide/skills/optional/mlops/mlops-instructor) | 使用 Instructor（久经考验的结构化输出库）从 LLM 响应中提取带 Pydantic 验证的结构化数据，自动重试失败的提取，以类型安全方式解析复杂 JSON，并流式传输部分结果。 |
-| [**lambda-labs-gpu-cloud**](/user-guide/skills/optional/mlops/mlops-lambda-labs) | 用于 ML 训练和推理的按需及预留 GPU 云实例。适用于需要通过简单 SSH 访问专用 GPU 实例、持久化文件系统或用于大规模训练的高性能多节点集群的场景。 |
-| [**llava**](/user-guide/skills/optional/mlops/mlops-llava) | 大型语言与视觉助手。支持视觉指令微调和基于图像的对话。结合 CLIP 视觉编码器与 Vicuna/LLaMA 语言模型。支持多轮图像对话、视觉问答及指令跟随。 |
-| [**modal-serverless-gpu**](/user-guide/skills/optional/mlops/mlops-modal) | 用于运行 ML 工作负载的 serverless GPU 云平台。适用于无需基础设施管理的按需 GPU 访问、将 ML 模型部署为 API 或运行自动扩缩容批处理任务的场景。 |
-| [**nemo-curator**](/user-guide/skills/optional/mlops/mlops-nemo-curator) | 面向 LLM 训练的 GPU 加速数据整理工具。支持文本/图像/视频/音频。具备模糊去重（快 16 倍）、质量过滤（30+ 启发式规则）、语义去重、PII 脱敏、NSFW 检测等功能，可跨 GPU 扩展。 |
-| [**obliteratus**](/user-guide/skills/optional/mlops/mlops-obliteratus) | OBLITERATUS：消除 LLM 的拒答（diff-in-means 方法）。 |
-| [**outlines**](/user-guide/skills/optional/mlops/mlops-inference-outlines) | Outlines：结构化 JSON/正则表达式/Pydantic LLM 生成。 |
-| [**peft-fine-tuning**](/user-guide/skills/optional/mlops/mlops-peft) | 使用 LoRA、QLoRA 及 25+ 种方法对 LLM 进行参数高效微调（PEFT）。适用于在有限 GPU 显存下微调大型模型（7B-70B）、仅训练不到 1% 参数且精度损失极小，或进行多适配器服务的场景。 |
-| [**pinecone**](/user-guide/skills/optional/mlops/mlops-pinecone) | 面向生产 AI 应用的托管向量数据库。全托管、自动扩缩容，支持混合搜索（稠密+稀疏）、元数据过滤和命名空间。低延迟（p95 &lt;100ms）。适用于生产 RAG、推荐系统等场景。 |
-| [**pytorch-fsdp**](/user-guide/skills/optional/mlops/mlops-pytorch-fsdp) | PyTorch FSDP 全分片数据并行训练专家指导 — 参数分片、混合精度、CPU 卸载、FSDP2。 |
-| [**pytorch-lightning**](/user-guide/skills/optional/mlops/mlops-pytorch-lightning) | 高层 PyTorch 框架，提供 Trainer 类、自动分布式训练（DDP/FSDP/DeepSpeed）、回调系统及极少样板代码。同一套代码可从笔记本扩展至超算。适用于希望训练循环简洁、同时保留完整 PyTorch 灵活性的场景。 |
-| [**qdrant-vector-search**](/user-guide/skills/optional/mlops/mlops-qdrant) | 高性能向量相似性搜索引擎，适用于 RAG 和语义搜索。适用于构建需要快速近邻搜索、带过滤的混合搜索或基于 Rust 高性能的可扩展向量存储的生产 RAG 系统。 |
-| [**sparse-autoencoder-training**](/user-guide/skills/optional/mlops/mlops-saelens) | 提供使用 SAELens 训练和分析稀疏自编码器（SAE）的指导，将神经网络激活分解为可解释特征。适用于发现可解释特征、分析叠加现象或研究神经网络内部结构的场景。 |
+| [**accelerate**](/user-guide/skills/optional/mlops/mlops-accelerate) | 以最少改动在多 GPU 上运行 PyTorch 训练。 |
+| [**axolotl**](/user-guide/skills/optional/mlops/mlops-training-axolotl) | Axolotl：基于 YAML 的 LLM 微调（LoRA、DPO、GRPO）。 |
+| [**chroma**](/user-guide/skills/optional/mlops/mlops-chroma) | 用于 RAG 和语义搜索的嵌入数据库。 |
+| [**clip**](/user-guide/skills/optional/mlops/mlops-clip) | 零样本图像分类与图文检索。 |
+| [**dspy**](/user-guide/skills/optional/mlops/mlops-research-dspy) | DSPy：声明式 LM 程序，自动优化提示词、RAG。 |
+| [**evaluating-llms-harness**](/user-guide/skills/optional/mlops/mlops-evaluation-evaluating-llms-harness) | lm-eval-harness：LLM 基准测试（MMLU、GSM8K 等）。 |
+| [**faiss**](/user-guide/skills/optional/mlops/mlops-faiss) | 十亿规模的快速向量相似度搜索。 |
+| [**flash-attention**](/user-guide/skills/optional/mlops/mlops-flash-attention) | 加速长序列 Transformer 的训练与推理。 |
+| [**guidance**](/user-guide/skills/optional/mlops/mlops-guidance) | 用语法约束 LLM 输出；保证生成有效 JSON。 |
+| [**huggingface-hub**](/user-guide/skills/optional/mlops/mlops-models-huggingface-hub) | HuggingFace hf CLI：搜索/下载/上传模型、数据集。 |
+| [**huggingface-tokenizers**](/user-guide/skills/optional/mlops/mlops-huggingface-tokenizers) | 快速 BPE/WordPiece 分词及自定义词表训练。 |
+| [**instructor**](/user-guide/skills/optional/mlops/mlops-instructor) | 经 Pydantic 校验的结构化 LLM 输出。 |
+| [**lambda-labs**](/user-guide/skills/optional/mlops/mlops-lambda-labs) | 用于 ML 训练的按需 GPU 云实例。 |
+| [**llama-cpp**](/user-guide/skills/optional/mlops/mlops-inference-llama-cpp) | llama.cpp 本地 GGUF 推理 + HF Hub 模型发现。 |
+| [**llava**](/user-guide/skills/optional/mlops/mlops-llava) | 视觉-语言对话：VQA、图像描述、图像对话。 |
+| [**modal**](/user-guide/skills/optional/mlops/mlops-modal) | 面向 ML 任务和模型 API 的 Serverless GPU 云。 |
+| [**nemo-curator**](/user-guide/skills/optional/mlops/mlops-nemo-curator) | 整理 LLM 训练数据：去重、过滤、PII 脱敏。 |
+| [**obliteratus**](/user-guide/skills/optional/mlops/mlops-obliteratus) | OBLITERATUS：消除 LLM 的拒答行为（diff-in-means）。 |
+| [**outlines**](/user-guide/skills/optional/mlops/mlops-inference-outlines) | Outlines：结构化 JSON/正则/Pydantic LLM 生成。 |
+| [**peft**](/user-guide/skills/optional/mlops/mlops-peft) | 在有限 GPU 显存上用 LoRA 微调大型 LLM。 |
+| [**pinecone**](/user-guide/skills/optional/mlops/mlops-pinecone) | 面向生产级 RAG 和搜索的托管向量数据库。 |
+| [**pytorch-fsdp**](/user-guide/skills/optional/mlops/mlops-pytorch-fsdp) | 使用 PyTorch FSDP 进行完全分片数据并行训练的专家指导 - 参数分片、混合精度、CPU 卸载、FSDP2 |
+| [**pytorch-lightning**](/user-guide/skills/optional/mlops/mlops-pytorch-lightning) | 内置分布式支持的简洁训练循环。 |
+| [**qdrant**](/user-guide/skills/optional/mlops/mlops-qdrant) | 面向生产级 RAG 系统的向量搜索引擎。 |
+| [**saelens**](/user-guide/skills/optional/mlops/mlops-saelens) | 训练稀疏自编码器以解释模型特征。 |
 | [**segment-anything-model**](/user-guide/skills/optional/mlops/mlops-models-segment-anything-model) | SAM：通过点、框、掩码进行零样本图像分割。 |
-| [**simpo-training**](/user-guide/skills/optional/mlops/mlops-simpo) | 用于 LLM 对齐的简单偏好优化（SimPO）。无需参考模型的 DPO 替代方案，性能更优（在 AlpacaEval 2.0 上提升 +6.4 分）。比 DPO 更高效。适用于希望简化偏好对齐流程的场景。 |
-| [**slime-rl-training**](/user-guide/skills/optional/mlops/mlops-slime) | 提供使用 slime（Megatron+SGLang 框架）进行 LLM RL 后训练的指导。适用于训练 GLM 模型、实现自定义数据生成工作流或需要紧密 Megatron-LM 集成以进行 RL 扩展的场景。 |
-| [**stable-diffusion-image-generation**](/user-guide/skills/optional/mlops/mlops-stable-diffusion) | 通过 HuggingFace Diffusers 使用 Stable Diffusion 模型进行最先进的文本到图像生成。适用于从文本 prompt 生成图像、图像到图像转换、图像修复或构建自定义扩散流水线的场景。 |
-| [**tensorrt-llm**](/user-guide/skills/optional/mlops/mlops-tensorrt-llm) | 使用 NVIDIA TensorRT 优化 LLM 推理，实现最大吞吐量和最低延迟。适用于在 NVIDIA GPU（A100/H100）上进行生产部署、需要比 PyTorch 快 10-100 倍的推理，或使用量化服务模型的场景。 |
-| [**distributed-llm-pretraining-torchtitan**](/user-guide/skills/optional/mlops/mlops-torchtitan) | 使用 torchtitan 进行 PyTorch 原生分布式 LLM 预训练，支持 4D 并行（FSDP2、TP、PP、CP）。适用于在 8 到 512+ GPU 上预训练 Llama 3.1、DeepSeek V3 或自定义模型，并使用 Float8、torch.compile 及分布式检查点的场景。 |
-| [**fine-tuning-with-trl**](/user-guide/skills/optional/mlops/mlops-training-trl-fine-tuning) | TRL：用于 LLM RLHF 的 SFT、DPO、PPO、GRPO 及奖励建模。 |
-| [**unsloth**](/user-guide/skills/optional/mlops/mlops-training-unsloth) | Unsloth：2-5 倍更快的 LoRA/QLoRA 微调，更低 VRAM 占用。 |
-| [**whisper**](/user-guide/skills/optional/mlops/mlops-whisper) | OpenAI 的通用语音识别模型。支持 99 种语言、转录、翻译为英语及语言识别。六种模型规格，从 tiny（39M 参数）到 large（1550M 参数）。适用于语音转文字、播客转录等场景。 |
+| [**serving-llms-vllm**](/user-guide/skills/optional/mlops/mlops-inference-serving-llms-vllm) | vLLM：高吞吐 LLM 服务、OpenAI API、量化。 |
+| [**simpo**](/user-guide/skills/optional/mlops/mlops-simpo) | 无需参考模型的偏好对齐，比 DPO 更简单。 |
+| [**slime**](/user-guide/skills/optional/mlops/mlops-slime) | 基于 Megatron 和 SGLang 的 LLM 强化学习后训练。 |
+| [**stable-diffusion**](/user-guide/skills/optional/mlops/mlops-stable-diffusion) | 文生图、局部重绘和图生图。 |
+| [**tensorrt-llm**](/user-guide/skills/optional/mlops/mlops-tensorrt-llm) | 在 NVIDIA GPU 上进行高吞吐 LLM 推理。 |
+| [**torchtitan**](/user-guide/skills/optional/mlops/mlops-torchtitan) | 借助 PyTorch 4D 并行大规模预训练 LLM。 |
+| [**trl-fine-tuning**](/user-guide/skills/optional/mlops/mlops-training-trl-fine-tuning) | TRL：用于 LLM RLHF 的 SFT、DPO、GRPO、RLOO 奖励建模。 |
+| [**unsloth**](/user-guide/skills/optional/mlops/mlops-training-unsloth) | Unsloth：LoRA/QLoRA 微调提速 2-5 倍，显存占用更低。 |
+| [**weights-and-biases**](/user-guide/skills/optional/mlops/mlops-evaluation-weights-and-biases) | W&B：记录 ML 实验、超参扫描、模型注册表、仪表盘。 |
+| [**whisper**](/user-guide/skills/optional/mlops/mlops-whisper) | 转写并翻译 99 种语言的语音。 |
 
 ## payments
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**mpp-agent**](/user-guide/skills/optional/payments/payments-mpp-agent) | 通过机器支付协议（MPP）为 HTTP 402 API 付费。 |
-| [**stripe-link-cli**](/user-guide/skills/optional/payments/payments-stripe-link-cli) | 通过 Stripe Link 进行 agent 支付 — 银行卡、SPT、审批。 |
+| [**mpp-agent**](/user-guide/skills/optional/payments/payments-mpp-agent) | 通过 Machine Payments Protocol（MPP）支付 HTTP 402 API。 |
+| [**stripe-link-cli**](/user-guide/skills/optional/payments/payments-stripe-link-cli) | 通过 Stripe Link 进行 agent 支付——银行卡、SPT、审批。 |
 | [**stripe-projects**](/user-guide/skills/optional/payments/payments-stripe-projects) | 通过 Stripe Projects 开通 SaaS 服务并同步凭据。 |
 
 ## productivity
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**canvas**](/user-guide/skills/optional/productivity/productivity-canvas) | Canvas LMS 集成 — 使用 API token 认证获取已注册课程和作业。 |
-| [**here.now**](/user-guide/skills/optional/productivity/productivity-here-now) | 将静态站点发布至 &#123;slug&#125;.here.now，并将私有文件存储在云端 Drive 中以供 agent 间交接。 |
-| [**memento-flashcards**](/user-guide/skills/optional/productivity/productivity-memento-flashcards) | 间隔重复闪卡系统。从事实或文本创建卡片，通过 agent 评分的自由文本回答与闪卡对话，从 YouTube 字幕生成测验，使用自适应调度复习到期卡片，并支持导出/导入。 |
-| [**shop**](/user-guide/skills/optional/productivity/productivity-shop) | Shop.app：商品搜索、订单追踪、退货、重新下单。 |
-| [**shopify**](/user-guide/skills/optional/productivity/productivity-shopify) | 通过 curl 使用 Shopify Admin 和 Storefront GraphQL API。支持商品、订单、客户、库存、元字段。 |
-| [**siyuan**](/user-guide/skills/optional/productivity/productivity-siyuan) | 通过 curl 使用 SiYuan Note API，在自托管知识库中搜索、读取、创建和管理块与文档。 |
-| [**telephony**](/user-guide/skills/optional/productivity/productivity-telephony) | 为 Hermes 添加电话能力，无需修改核心工具。配置并持久化 Twilio 号码，发送和接收 SMS/MMS，拨打直接通话，并通过 Bland.ai 或 Vapi 发起 AI 驱动的外呼。 |
+| [**canvas**](/user-guide/skills/optional/productivity/productivity-canvas) | 通过 API token 获取 Canvas LMS 课程和作业。 |
+| [**decision-questionnaire**](/user-guide/skills/optional/productivity/productivity-decision-questionnaire) | 把一个难以直接回答的决策变成一份问卷文档。 |
+| [**here-now**](/user-guide/skills/optional/productivity/productivity-here-now) | 将站点发布到 &#123;slug&#125;.here.now，并在 Drives 中存储文件。 |
+| [**memento-flashcards**](/user-guide/skills/optional/productivity/productivity-memento-flashcards) | 间隔重复记忆卡片：创建、复习、测验、导出。 |
+| [**property-listings**](/user-guide/skills/optional/productivity/productivity-property-listings) | 以桌面卡片形式展示房产和租赁房源。 |
+| [**shop**](/user-guide/skills/optional/productivity/productivity-shop) | Shop 商品目录搜索、结账、订单跟踪、退货。 |
+| [**shopify**](/user-guide/skills/optional/productivity/productivity-shopify) | 通过 curl 查询 Shopify Admin/Storefront GraphQL API。 |
+| [**siyuan**](/user-guide/skills/optional/productivity/productivity-siyuan) | 通过 API 查询和编辑思源笔记知识库。 |
+| [**telephony**](/user-guide/skills/optional/productivity/productivity-telephony) | 开通 Twilio 号码、SMS/MMS，以及 AI 外呼电话。 |
 
 ## research
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**bioinformatics**](/user-guide/skills/optional/research/research-bioinformatics) | 通往 bioSkills 和 ClawBio 400+ 生物信息学技能的入口。涵盖基因组学、转录组学、单细胞、变异检测、药物基因组学、宏基因组学、结构生物学等领域，按需获取特定领域参考资料。 |
-| [**darwinian-evolver**](/user-guide/skills/optional/research/research-darwinian-evolver) | 使用 Imbue 的进化循环演化 prompt/正则表达式/SQL/代码。 |
-| [**domain-intel**](/user-guide/skills/optional/research/research-domain-intel) | 使用 Python 标准库进行被动域名侦察。子域名发现、SSL 证书检查、WHOIS 查询、DNS 记录、域名可用性检测及批量多域名分析。无需 API 密钥。 |
-| [**drug-discovery**](/user-guide/skills/optional/research/research-drug-discovery) | 药物发现工作流的制药研究助手。在 ChEMBL 上搜索生物活性化合物，计算类药性（Lipinski Ro5、QED、TPSA、合成可及性），通过 OpenFDA 查询药物相互作用，解读 ADMET 属性。 |
-| [**duckduckgo-search**](/user-guide/skills/optional/research/research-duckduckgo-search) | 通过 DuckDuckGo 免费网络搜索 — 文本、新闻、图片、视频。无需 API 密钥。优先使用已安装的 `ddgs` CLI；仅在确认当前运行时中 `ddgs` 可用后才使用 Python DDGS 库。 |
-| [**gitnexus-explorer**](/user-guide/skills/optional/research/research-gitnexus-explorer) | 使用 GitNexus 为代码库建立索引，并通过 Web UI + Cloudflare 隧道提供交互式知识图谱。 |
-| [**osint-investigation**](/user-guide/skills/optional/research/research-osint-investigation) | 公开记录 OSINT 调查框架 — SEC EDGAR 文件、USAspending 合同、参议院游说记录、OFAC 制裁、ICIJ 离岸泄露、纽约市房产记录（ACRIS）、OpenCorporates 注册信息、CourtListener 法院记录、Wayback Machine 等。 |
-| [**parallel-cli**](/user-guide/skills/optional/research/research-parallel-cli) | Parallel CLI 的可选厂商技能 — agent 原生网络搜索、提取、深度研究、数据增强、FindAll 及监控。优先使用 JSON 输出和非交互式流程。 |
-| [**qmd**](/user-guide/skills/optional/research/research-qmd) | 使用 qmd（一款结合 BM25、向量搜索和 LLM 重排序的混合检索引擎）在本地搜索个人知识库、笔记、文档和会议记录。支持 CLI 和 MCP 集成。 |
-| [**scrapling**](/user-guide/skills/optional/research/research-scrapling) | 使用 Scrapling 进行网页抓取 — 通过 CLI 和 Python 实现 HTTP 获取、隐身浏览器自动化、Cloudflare 绕过及爬虫抓取。 |
-| [**searxng-search**](/user-guide/skills/optional/research/research-searxng-search) | 通过 SearXNG 免费元搜索 — 聚合 70+ 搜索引擎的结果。可自托管或使用公共实例。无需 API 密钥。当网络搜索工具集不可用时自动回退。 |
+| [**bioinformatics**](/user-guide/skills/optional/research/research-bioinformatics) | 通往 400+ 个基因组学与计算生物学技能的入口。 |
+| [**blogwatcher**](/user-guide/skills/optional/research/research-blogwatcher) | 通过 blogwatcher-cli 工具监控博客和 RSS/Atom 订阅源。 |
+| [**darwinian-evolver**](/user-guide/skills/optional/research/research-darwinian-evolver) | 用 Imbue 的进化循环演化提示词/正则/SQL/代码。 |
+| [**domain-intel**](/user-guide/skills/optional/research/research-domain-intel) | 被动侦察子域名、SSL 证书、WHOIS 和 DNS。 |
+| [**drug-discovery**](/user-guide/skills/optional/research/research-drug-discovery) | 药物发现：ChEMBL 搜索、类药性、相互作用。 |
+| [**duckduckgo-search**](/user-guide/skills/optional/research/research-duckduckgo-search) | 通过 ddgs 进行免费、无需密钥的网页、新闻和图片搜索。 |
+| [**gitnexus-explorer**](/user-guide/skills/optional/research/research-gitnexus-explorer) | 提供交互式代码库知识图谱 Web UI。 |
+| [**osint-investigation**](/user-guide/skills/optional/research/research-osint-investigation) | 通过公开记录和制裁数据追踪资金流向。 |
+| [**parallel-cli**](/user-guide/skills/optional/research/research-parallel-cli) | 面向 agent 的网页搜索、深度研究与数据增强。 |
+| [**pinecone-research**](/user-guide/skills/optional/research/research-pinecone-research) | 基于 Pinecone 的 agent RAG 与长期记忆。 |
+| [**qmd**](/user-guide/skills/optional/research/research-qmd) | 对笔记、文档和转录稿进行本地混合搜索。 |
+| [**research-paper-writing**](/user-guide/skills/optional/research/research-research-paper-writing) | 为 NeurIPS/ICML/ICLR 撰写 ML 论文：从设计到投稿。 |
+| [**rss-feeds**](/user-guide/skills/optional/research/research-rss-feeds) | 读取 RSS、Atom、JSON 订阅源；发现页面背后的订阅源。 |
+| [**scrapling**](/user-guide/skills/optional/research/research-scrapling) | 通过隐身浏览和 Cloudflare 绕过抓取网站。 |
+| [**searxng-search**](/user-guide/skills/optional/research/research-searxng-search) | 免费、无需密钥的元搜索，聚合 70+ 搜索引擎。 |
 
 ## security
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**1password**](/user-guide/skills/optional/security/security-1password) | 配置并使用 1Password CLI（op）。适用于安装 CLI、启用桌面应用集成、登录及为命令读取/注入密钥的场景。 |
-| [**godmode**](/user-guide/skills/optional/security/security-godmode) | 越狱 LLM：Parseltongue、GODMODE、ULTRAPLINIAN。 |
-| [**oss-forensics**](/user-guide/skills/optional/security/security-oss-forensics) | 针对 GitHub 仓库的供应链调查、证据恢复和取证分析。涵盖已删除提交恢复、强制推送检测、IOC 提取、多源证据收集、假设形成/验证等。 |
-| [**sherlock**](/user-guide/skills/optional/security/security-sherlock) | 跨 400+ 社交网络的 OSINT 用户名搜索。通过用户名追踪社交媒体账号。 |
-| [**unbroker**](/user-guide/skills/optional/security/security-unbroker) | 自主地从数据经纪商网站上移除你的个人信息。 |
-| [**web-pentest**](/user-guide/skills/optional/security/security-web-pentest) | 获得授权的 Web 应用渗透测试 — 侦察、漏洞分析、基于验证的利用及专业报告。在范围、授权等方面带有硬性护栏地采用 Shannon 的"No Exploit, No Report"方法论。 |
+| [**1password**](/user-guide/skills/optional/security/security-1password) | 配置 op CLI、登录，并读取或注入密钥。 |
+| [**godmode**](/user-guide/skills/optional/security/security-godmode) | LLM 越狱：Parseltongue、GODMODE、ULTRAPLINIAN。 |
+| [**oss-forensics**](/user-guide/skills/optional/security/security-oss-forensics) | GitHub 供应链取证：恢复、IOC、报告。 |
+| [**sherlock**](/user-guide/skills/optional/security/security-sherlock) | 在 400+ 个平台上查找某个用户名对应的账号。 |
+| [**unbroker**](/user-guide/skills/optional/security/security-unbroker) | 自动从数据经纪商网站上删除你的个人信息。 |
+| [**web-pentest**](/user-guide/skills/optional/security/security-web-pentest) | 经授权的 Web 渗透测试：侦察、基于证据的漏洞利用、报告。 |
+
+## smart-home
+
+| 技能 | 描述 |
+|-------|-------------|
+| [**openhue**](/user-guide/skills/optional/smart-home/smart-home-openhue) | 通过 OpenHue CLI 控制飞利浦 Hue 灯光、场景、房间。 |
+
+## social-media
+
+| 技能 | 描述 |
+|-------|-------------|
+| [**reddit-reading**](/user-guide/skills/optional/social-media/social-media-reddit-reading) | 阅读 Reddit：子版块、搜索、帖子、用户。无需浏览器。 |
 
 ## software-development
 
 | 技能 | 描述 |
 |-------|-------------|
+| [**ast-grep**](/user-guide/skills/optional/software-development/software-development-ast-grep) | 通过 ast-grep 进行感知 AST 的结构化代码搜索与改写。 |
 | [**code-wiki**](/user-guide/skills/optional/software-development/software-development-code-wiki) | 为任意代码库生成 wiki 文档 + Mermaid 图表。 |
-| [**rest-graphql-debug**](/user-guide/skills/optional/software-development/software-development-rest-graphql-debug) | 调试 REST/GraphQL API：状态码、认证、schema、问题复现。 |
+| [**grill-me**](/user-guide/skills/optional/software-development/software-development-grill-me) | 实施前的对抗式方案质询。 |
+| [**rest-graphql-debug**](/user-guide/skills/optional/software-development/software-development-rest-graphql-debug) | 调试 REST/GraphQL API：状态码、鉴权、schema、复现。 |
 | [**subagent-driven-development**](/user-guide/skills/optional/software-development/software-development-subagent-driven-development) | 通过 delegate_task 子 agent 执行计划（两阶段评审）。 |
 
 ## web-development
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**cloudflare-temporary-deploy**](/user-guide/skills/optional/web-development/web-development-cloudflare-temporary-deploy) | 无需账号，通过 wrangler --temporary 实时部署 Worker。 |
-| [**page-agent**](/user-guide/skills/optional/web-development/web-development-page-agent) | 将 alibaba/page-agent 嵌入您自己的 Web 应用 — 一个纯 JavaScript 页内 GUI agent，以单个 `<script>` 标签或 npm 包形式提供，让您网站的终端用户可以用自然语言驱动 UI（如"点击登录，填写用户名..."）。 |
+| [**cloudflare-temporary-deploy**](/user-guide/skills/optional/web-development/web-development-cloudflare-temporary-deploy) | 通过 wrangler --temporary 无需账号即可上线一个 Worker。 |
+| [**har-derived-api-client**](/user-guide/skills/optional/web-development/web-development-har-derived-api-client) | 把网站的 XHR 录制为 HAR，并据此生成 HTTP 客户端。 |
+| [**page-agent**](/user-guide/skills/optional/web-development/web-development-page-agent) | 在 Web 应用中嵌入页面内的自然语言 GUI 副驾驶。 |
+| [**publish-site**](/user-guide/skills/optional/web-development/web-development-publish-site) | 将站点按版本部署到 GitHub/Cloudflare/Netlify Pages。 |
 
 ## yuanbao
 
 | 技能 | 描述 |
 |-------|-------------|
-| [**yuanbao**](/user-guide/skills/optional/yuanbao/yuanbao-yuanbao) | 元宝（Yuanbao）群组：@提及用户、查询信息/成员。 |
+| [**yuanbao**](/user-guide/skills/optional/yuanbao/yuanbao-yuanbao) | 元宝（Yuanbao）群组：@mention 用户，查询信息/成员。 |
 
 ---
 

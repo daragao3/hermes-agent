@@ -70,6 +70,8 @@ hermes memory setup        # 选择 "honcho" — 运行 Honcho 专属的安装�
 
 在全新安装上，可直接用 `hermes memory setup honcho` 配置 Honcho。旧版 `hermes honcho setup` 命令仍然有效（现在会重定向到 `hermes memory setup`），但只有在 Honcho 被选为激活记忆提供者后才会注册。
 
+**无头 / 远程机器：** 如需在没有浏览器的机器（SSH、远程虚拟机）上进行云端认证，请在向导的认证方式提示处选择 **device**。CLI 会打印一个短代码和一个验证链接；在任意其他机器的浏览器中打开该链接并批准，即可完成设置——无需复制粘贴 API key。当向导检测到没有可用的本地浏览器时，会自动默认选择此选项。
+
 **配置：** `$HERMES_HOME/honcho.json`（profile 本地）或 `~/.honcho/config.json`（全局）。解析顺序：`$HERMES_HOME/honcho.json` > `~/.hermes/honcho.json` > `~/.honcho/config.json`。参见[配置参考](https://github.com/NousResearch/hermes-agent/blob/main/plugins/memory/honcho/README.md)和 [Honcho 集成指南](https://docs.honcho.dev/v3/guides/integrations/hermes)。
 
 <details>
@@ -284,26 +286,39 @@ hermes honcho sync
 | | |
 |---|---|
 | **适合场景** | 具有结构化浏览功能的自托管知识管理 |
-| **依赖** | `pip install openviking` + 运行中的服务器 |
+| **依赖** | OpenViking 已初始化、已验证并正在运行 |
 | **数据存储** | 自托管（本地或云端） |
 | **费用** | 免费（开源，AGPL-3.0） |
 
-**工具：** `viking_search`（语义搜索）、`viking_read`（分层：摘要/概览/全文）、`viking_browse`（文件系统导航）、`viking_remember`（存储事实）、`viking_add_resource`（导入 URL/文档）
+**工具（6 个）：** `viking_search`（语义搜索）、`viking_read`（分层：摘要/概览/全文）、`viking_browse`（文件系统导航）、`viking_remember`（存储事实）、`viking_forget`（按精确的 `viking://` URI 删除记忆文件）、`viking_add_resource`（导入 URL/文档）
 
 **安装：**
 ```bash
-# 先启动 OpenViking 服务器
-pip install openviking
+# 先准备好 OpenViking
+openviking-server init
+openviking-server doctor
 openviking-server
 
 # 然后配置 Hermes
 hermes memory setup    # 选择 "openviking"
 # 或手动配置：
 hermes config set memory.provider openviking
-echo "OPENVIKING_ENDPOINT=http://localhost:1933" >> ~/.hermes/.env
-# 启用了认证的服务器应使用 user/admin API key：
-echo "OPENVIKING_API_KEY=..." >> ~/.hermes/.env
 ```
+
+`hermes memory setup` 可以复用或复制 `~/.openviking/ovcli.conf` 中的连接值。
+手动设置使用当前激活 profile 的 `.env` 文件；默认 profile 为 `~/.hermes/.env`，
+具名 profile 则使用 `~/.hermes/profiles/<profile>/.env`。
+
+```text
+OPENVIKING_ENDPOINT=http://127.0.0.1:1933
+# OPENVIKING_API_KEY=...
+# OPENVIKING_ACCOUNT=default
+# OPENVIKING_USER=default
+```
+
+OpenViking 服务器设置位于 `ov.conf`（`--config`、`OPENVIKING_CONFIG_FILE`
+或 `~/.openviking/ov.conf`）。客户端连接值位于 `ovcli.conf`
+（`OPENVIKING_CLI_CONFIG_FILE` 或 `~/.openviking/ovcli.conf`）。
 
 **主要特性：**
 - 分层上下文加载：L0（约 100 tokens）→ L1（约 2k）→ L2（完整）
@@ -311,7 +326,20 @@ echo "OPENVIKING_API_KEY=..." >> ~/.hermes/.env
 - `viking://` URI 方案用于层级知识浏览
 
 `OPENVIKING_ACCOUNT` 和 `OPENVIKING_USER` 用于本地/受信任模式。
-`OPENVIKING_AGENT` 是 Hermes 在 OpenViking 中的 peer ID，用于 peer 范围的记忆。
+Peer 身份是可选的。默认情况下，Hermes 不发送 peer ID，并将显式记忆写入
+`viking://user/<user>/memories/...`。设置过程不会询问 peer ID。如需单独的助手上下文，
+请在 `config.yaml` 中设置 `memory.openviking.agent: work-assistant`。
+
+已有的非空 peer 设置会保留其 peer 范围的写入和召回。这包括 `OPENVIKING_AGENT`，
+以及关联的 OpenViking 配置中的 `actor_peer_id` 或旧版 `agent_id`。已有记忆不会被移动或删除。
+没有 peer ID 时，默认搜索覆盖同一 OpenViking 用户下的用户记忆和已有的 peer 记忆。
+旧的 peer 记忆在其现有路径上仍可被搜索到。返回哪些记忆由排序和结果数量限制决定。
+设置 `memory.openviking.agent: hermes` 可恢复旧的 peer 范围写入。
+在此变更之前以用户范围写入的记忆会保留在原处，并且仍可被搜索到。
+该设置只改变今后的写入，不改变已有记忆的位置。
+
+Hermes 在 OpenViking 请求中发送 `User-Agent: openviking-memory-hermes/<version>`。
+这个标准的 harness 标识符不包含任何按用户区分的标识，也不会额外发起请求。
 
 ---
 
@@ -380,6 +408,7 @@ echo "MEM0_API_KEY=your-admin-api-key" >> ~/.hermes/.env
 | `user_id` | `hermes-user` | 用户标识符 |
 | `agent_id` | `hermes` | Agent 标识符 |
 | `rerank` | `false` | 对搜索结果重排序以提升相关性（仅 platform 模式） |
+| `sync_max_chars` | `450` | 在每轮发送进行事实提取之前应用的单条消息字符上限，在最后一个句子边界处截断。默认值适配 512 token 的嵌入模型（Ollama `bge-small-zh-v1.5`、`all-minilm`）；对于 `text-embedding-3-small`、`jina-embeddings-v3` 或 `bge-m3` 等 8k token 的嵌入模型，请调高（例如 `6000`） |
 
 **OSS 支持的提供者：**
 
@@ -487,7 +516,7 @@ hermes config set memory.provider holographic
 | **数据存储** | RetainDB Cloud |
 | **费用** | $20/月 |
 
-**工具：** `retaindb_profile`（用户 profile）、`retaindb_search`（语义搜索）、`retaindb_context`（任务相关上下文）、`retaindb_remember`（带类型和重要性的存储）、`retaindb_forget`（删除记忆）
+**工具（10 个）：** `retaindb_profile`（用户 profile）、`retaindb_search`（语义搜索）、`retaindb_context`（任务相关上下文）、`retaindb_remember`（带类型和重要性的存储）、`retaindb_forget`（删除记忆），以及文件工具：`retaindb_upload_file`、`retaindb_list_files`、`retaindb_read_file`、`retaindb_ingest_file`、`retaindb_delete_file`
 
 **安装：**
 ```bash
@@ -639,11 +668,11 @@ hermes memory setup
 | 提供者 | 存储 | 费用 | 工具数 | 依赖 | 独特特性 |
 |----------|---------|------|-------|-------------|----------------|
 | **Honcho** | 云端 | 付费 | 5 | `honcho-ai` | 辩证用户建模 + 会话范围上下文 |
-| **OpenViking** | 自托管 | 免费 | 5 | `openviking` + 服务器 | 文件系统层级 + 分层加载 |
+| **OpenViking** | 自托管 | 免费 | 6 | `openviking` + 服务器 | 文件系统层级 + 分层加载 |
 | **Mem0** | 云端/自托管 | 免费/付费 | 4 | `mem0ai` | 服务端 LLM 提取 + 自托管/OSS 模式 |
 | **Hindsight** | 云端/本地 | 免费/付费 | 3 | `hindsight-client` | 知识图谱 + reflect 合成 |
 | **Holographic** | 本地 | 免费 | 2 | 无 | HRR 代数 + 信任评分 |
-| **RetainDB** | 云端 | $20/月 | 5 | `requests` | 增量压缩 |
+| **RetainDB** | 云端 | $20/月 | 10 | `requests` | 增量压缩 |
 | **ByteRover** | 本地/云端 | 免费/付费 | 3 | `brv` CLI | 预压缩提取 |
 | **Supermemory** | 云端/自托管 | 免费/付费 | 4 | `supermemory` | 上下文隔离 + 会话图谱导入 + 多容器 |
 | **Memori** | 云端 | 免费/付费 | 5 | `hermes-memori` | 工具感知记忆 + 结构化召回 |

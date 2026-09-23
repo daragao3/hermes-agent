@@ -88,7 +88,7 @@ platforms:
 | `deliver_extra.pr_number` | 从 payload 中解析为 PR 编号。 |
 
 :::note Payload 中不包含代码
-GitHub webhook payload 包含 PR 元数据（标题、描述、分支名、URL），但**不包含 diff**。上方的 prompt 指示 agent 运行 `gh pr diff` 来获取实际变更。`terminal` 工具已包含在默认的 `hermes-webhook` 工具集中，无需额外配置。
+GitHub webhook payload 包含 PR 元数据（标题、描述、分支名、URL），但**不包含 diff**。上方的 prompt 指示 agent 运行 `gh pr diff` 来获取实际变更。默认的 `hermes-webhook` 工具集是刻意受限的（网页搜索/提取、视觉、澄清——**没有 terminal**），因为 webhook payload 可能携带不可信内容。要让此路由运行 `gh`，请添加按路由的工具集授权：在路由配置中设置 `toolsets: ["terminal", "web"]`——参见[按路由工具集](/user-guide/messaging/webhooks#per-route-toolsets)。
 :::
 
 ---

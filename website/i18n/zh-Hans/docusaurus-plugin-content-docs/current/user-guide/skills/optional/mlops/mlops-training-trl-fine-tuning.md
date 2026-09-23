@@ -1,14 +1,14 @@
 ---
-title: "使用 TRL 进行微调 — TRL：面向 LLM RLHF 的 SFT、DPO、PPO、GRPO 及奖励建模"
-sidebar_label: "使用 TRL 进行微调"
-description: "TRL：面向 LLM RLHF 的 SFT、DPO、PPO、GRPO 及奖励建模"
+title: "TRL 微调 — TRL：面向 LLM RLHF 的 SFT、DPO、GRPO、RLOO 及奖励建模"
+sidebar_label: "TRL 微调"
+description: "TRL：面向 LLM RLHF 的 SFT、DPO、GRPO、RLOO 及奖励建模"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# 使用 TRL 进行微调
+# TRL 微调
 
-TRL：面向 LLM RLHF 的 SFT、DPO、PPO、GRPO 及奖励建模。
+TRL：面向 LLM RLHF 的 SFT、DPO、GRPO、RLOO 及奖励建模。
 
 ## Skill 元数据
 
@@ -16,12 +16,12 @@ TRL：面向 LLM RLHF 的 SFT、DPO、PPO、GRPO 及奖励建模。
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/mlops/trl-fine-tuning` 安装 |
 | 路径 | `optional-skills/mlops/training/trl-fine-tuning` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
 | 依赖项 | `trl`, `transformers`, `datasets`, `peft`, `accelerate`, `torch` |
 | 平台 | linux, macos, windows |
-| 标签 | `Post-Training`, `TRL`, `Reinforcement Learning`, `Fine-Tuning`, `SFT`, `DPO`, `PPO`, `GRPO`, `RLHF`, `Preference Alignment`, `HuggingFace` |
+| 标签 | `Post-Training`, `TRL`, `Reinforcement Learning`, `Fine-Tuning`, `SFT`, `DPO`, `GRPO`, `RLOO`, `RLHF`, `Preference Alignment`, `HuggingFace` |
 
 ## 参考：完整 SKILL.md
 
@@ -67,9 +67,15 @@ trainer.train()
 
 ## 常见工作流
 
-### 工作流 1：完整 RLHF 流水线（SFT → 奖励模型 → PPO）
+### 工作流 1：完整 RLHF 流水线（SFT → 奖励模型 → RLOO）
 
 从基础模型到人类对齐模型的完整流水线。
+
+> **注意（TRL 1.x）：** PPO 已从 TRL 中**移除**——`PPOTrainer`、`PPOConfig` 以及
+> `python -m trl.scripts.ppo` 均已不复存在。请使用 TRL 仍然提供的在线 RL 训练器：
+> **RLOO**（`RLOOTrainer` / `trl rloo`）是由奖励模型驱动的 RLHF 流水线最接近的直接替代方案，
+> 而 **GRPO**（`GRPOTrainer` / `trl grpo`，参见工作流 3）则是更节省显存的替代方案。
+> 下面的步骤使用 RLOO。
 
 复制此检查清单：
 
@@ -77,7 +83,7 @@ trainer.train()
 RLHF Training:
 - [ ] Step 1: Supervised fine-tuning (SFT)
 - [ ] Step 2: Train reward model
-- [ ] Step 3: PPO reinforcement learning
+- [ ] Step 3: RLOO reinforcement learning
 - [ ] Step 4: Evaluate aligned model
 ```
 
@@ -112,7 +118,7 @@ trainer = SFTTrainer(
     model=model,
     args=training_args,
     train_dataset=dataset,
-    tokenizer=tokenizer
+    processing_class=tokenizer
 )
 trainer.train()
 trainer.save_model()
@@ -155,19 +161,46 @@ trainer.train()
 trainer.save_model()
 ```
 
-**第 3 步：PPO 强化学习**
+**第 3 步：RLOO 强化学习**
 
-使用奖励模型优化策略：
+使用奖励模型优化策略。PPO 已在 TRL 1.x 中移除；请使用 RLOO CLI
+（`trl rloo`），并通过 `--reward_model_name_or_path` 传入训练好的奖励模型：
 
 ```bash
-python -m trl.scripts.ppo \
+trl rloo \
     --model_name_or_path Qwen2.5-0.5B-SFT \
-    --reward_model_path Qwen2.5-0.5B-Reward \
+    --reward_model_name_or_path Qwen2.5-0.5B-Reward \
     --dataset_name trl-internal-testing/descriptiveness-sentiment-trl-style \
-    --output_dir Qwen2.5-0.5B-PPO \
+    --output_dir Qwen2.5-0.5B-RLOO \
     --learning_rate 3e-6 \
     --per_device_train_batch_size 64 \
-    --total_episodes 10000
+    --num_generations 4
+```
+
+等效的 Python 写法（`RLOOTrainer` / `RLOOConfig`）：
+```python
+from trl import RLOOTrainer, RLOOConfig
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+reward_model = AutoModelForSequenceClassification.from_pretrained(
+    "Qwen2.5-0.5B-Reward", num_labels=1
+)
+
+config = RLOOConfig(
+    output_dir="Qwen2.5-0.5B-RLOO",
+    per_device_train_batch_size=64,
+    learning_rate=3e-6,
+    num_generations=4,
+)
+
+trainer = RLOOTrainer(
+    model="Qwen2.5-0.5B-SFT",
+    reward_funcs=reward_model,   # a reward model (or a callable reward function)
+    args=config,
+    train_dataset=dataset,       # prompt-only dataset
+    processing_class=tokenizer,
+)
+trainer.train()
 ```
 
 **第 4 步：评估**
@@ -176,7 +209,7 @@ python -m trl.scripts.ppo \
 from transformers import pipeline
 
 # Load aligned model
-generator = pipeline("text-generation", model="Qwen2.5-0.5B-PPO")
+generator = pipeline("text-generation", model="Qwen2.5-0.5B-RLOO")
 
 # Test
 prompt = "Explain quantum computing to a 10-year-old"
@@ -365,15 +398,15 @@ trl grpo \
 **适合使用 TRL 的场景：**
 - 需要将模型与人类偏好对齐
 - 拥有偏好数据（chosen/rejected 对）
-- 希望使用强化学习（PPO、GRPO）
+- 希望使用强化学习（RLOO、GRPO）
 - 需要训练奖励模型
 - 执行完整 RLHF 流水线
 
 **方法选择**：
 - **SFT**：拥有 prompt-completion 对，需要基础指令跟随
 - **DPO**：拥有偏好数据，需要简单对齐（无需奖励模型）
-- **PPO**：拥有奖励模型，需要对 RL 进行最大程度的控制
-- **GRPO**：内存受限，需要在线 RL
+- **RLOO**：拥有奖励模型，需要在线 RL（由奖励模型驱动的 RLHF 路径；PPO 已在 TRL 1.x 中移除）
+- **GRPO**：内存受限，需要基于奖励函数的在线 RL
 - **奖励模型**：构建 RLHF 流水线，需要对生成内容评分
 
 **改用替代方案的场景：**
@@ -428,13 +461,15 @@ print(dataset[0])
 # Should have clear chosen > rejected
 ```
 
-**问题：PPO 训练不稳定**
+**问题：在线 RL（RLOO/GRPO）训练不稳定**
 
-调整 KL 系数：
+调整朝向参考策略的 KL/beta 正则化：
 ```python
-config = PPOConfig(
-    kl_coef=0.1,  # Increase from 0.05
-    cliprange=0.1  # Reduce from 0.2
+from trl import RLOOConfig
+
+config = RLOOConfig(
+    beta=0.05,          # KL coefficient toward the reference model (increase for stability)
+    num_generations=4,  # more samples per prompt = lower-variance advantage estimates
 )
 ```
 
@@ -456,7 +491,7 @@ config = PPOConfig(
 - **显存（VRAM）**：取决于模型和方法
   - SFT 7B：16GB（使用 LoRA）
   - DPO 7B：24GB（存储参考模型）
-  - PPO 7B：40GB（策略模型 + 奖励模型）
+  - RLOO 7B：40GB（策略模型 + 奖励模型）
   - GRPO 7B：24GB（内存效率更高）
 - **多 GPU**：通过 `accelerate` 支持
 - **混合精度**：推荐 BF16（A100/H100）

@@ -8,7 +8,7 @@ description: "随 Hermes Agent 附带的内置技能目录"
 
 Hermes 附带一个大型内置技能库，安装时会复制到 `~/.hermes/skills/`。下方每个技能均链接至专属页面，包含完整定义、配置和用法说明。
 
-Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单会尊重本地删除和用户编辑。如果此处列出的某个技能在你的 `~/.hermes/skills/` 目录树中缺失，它仍随 Hermes 一同发布；可通过 `hermes skills reset <name> --restore` 恢复。
+Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单会尊重本地删除和用户编辑。如果此处列出的某个技能在你的 profile 的 `~/.hermes/skills/` 目录树中缺失，它仍随 Hermes 一同发布；可通过 `hermes skills reset <name> --restore` 恢复。
 
 如果某个技能未出现在此列表中但存在于仓库中，目录由 `website/scripts/generate-skill-docs.py` 重新生成。
 
@@ -27,64 +27,37 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 |-------|-------------|------|
 | [`claude-code`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-claude-code) | 将编码任务委托给 Claude Code CLI（功能开发、PR）。 | `autonomous-ai-agents/claude-code` |
 | [`codex`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-codex) | 将编码任务委托给 OpenAI Codex CLI（功能开发、PR）。 | `autonomous-ai-agents/codex` |
-| [`hermes-agent`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent) | 配置、扩展或贡献 Hermes Agent。 | `autonomous-ai-agents/hermes-agent` |
+| [`computer-use`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-computer-use) | 以后台优先的方式驱动桌面；出现信号时再升级处理。 | `autonomous-ai-agents/computer-use` |
+| [`hermes-agent`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent) | 使用、配置、定制主题、扩展和编排 Hermes Agent。 | `autonomous-ai-agents/hermes-agent` |
 | [`opencode`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-opencode) | 将编码任务委托给 OpenCode CLI（功能开发、PR 审查）。 | `autonomous-ai-agents/opencode` |
-
-## computer-use
-
-| 技能 | 描述 | 路径 |
-|-------|-------------|------|
-| [`computer-use`](/user-guide/skills/bundled/computer-use/computer-use-computer-use) | 在后台驱动用户桌面——点击、输入、滚动、拖拽——不抢占光标、键盘焦点，也不切换虚拟桌面 / Space。跨平台：macOS、Windows、Linux。适用于任何支持工具调用... | `computer-use` |
 
 ## creative
 
 | 技能 | 描述 | 路径 |
 |-------|-------------|------|
 | [`architecture-diagram`](/user-guide/skills/bundled/creative/creative-architecture-diagram) | 以 HTML 形式生成深色主题的 SVG 架构/云/基础设施图。 | `creative/architecture-diagram` |
-| [`ascii-art`](/user-guide/skills/bundled/creative/creative-ascii-art) | ASCII 艺术：pyfiglet、cowsay、boxes、图像转 ASCII。 | `creative/ascii-art` |
 | [`ascii-video`](/user-guide/skills/bundled/creative/creative-ascii-video) | ASCII 视频：将视频/音频转换为彩色 ASCII MP4/GIF。 | `creative/ascii-video` |
-| [`baoyu-infographic`](/user-guide/skills/bundled/creative/creative-baoyu-infographic) | 信息图（可视化）：21 种布局 × 21 种风格。 | `creative/baoyu-infographic` |
+| [`baoyu-infographic`](/user-guide/skills/bundled/creative/creative-baoyu-infographic) | 信息图：21 种布局 × 21 种风格（信息图, 可视化）。 | `creative/baoyu-infographic` |
 | [`claude-design`](/user-guide/skills/bundled/creative/creative-claude-design) | 设计一次性 HTML 制品（落地页、幻灯片、原型）。 | `creative/claude-design` |
-| [`comfyui`](/user-guide/skills/bundled/creative/creative-comfyui) | 使用 ComfyUI 生成图像、视频和音频——安装、启动、管理节点/模型、运行带参数注入的工作流。使用官方 comfy-cli 管理生命周期，通过 REST/WebSocket API 直接执行。 | `creative/comfyui` |
 | [`design-md`](/user-guide/skills/bundled/creative/creative-design-md) | 编写/验证/导出 Google 的 DESIGN.md token 规范文件。 | `creative/design-md` |
-| [`excalidraw`](/user-guide/skills/bundled/creative/creative-excalidraw) | 手绘风格的 Excalidraw JSON 图表（架构、流程、时序）。 | `creative/excalidraw` |
 | [`humanizer`](/user-guide/skills/bundled/creative/creative-humanizer) | 人性化文本：去除 AI 腔，加入真实语气。 | `creative/humanizer` |
 | [`manim-video`](/user-guide/skills/bundled/creative/creative-manim-video) | Manim CE 动画：3Blue1Brown 风格数学/算法视频。 | `creative/manim-video` |
 | [`p5js`](/user-guide/skills/bundled/creative/creative-p5js) | p5.js 草图：生成艺术、着色器、交互、3D。 | `creative/p5js` |
 | [`popular-web-designs`](/user-guide/skills/bundled/creative/creative-popular-web-designs) | 54 种真实设计系统（Stripe、Linear、Vercel）的 HTML/CSS 实现。 | `creative/popular-web-designs` |
-| [`pretext`](/user-guide/skills/bundled/creative/creative-pretext) | 使用 @chenglou/pretext 构建创意浏览器 demo——无 DOM 的文本布局，支持 ASCII 艺术、绕障碍物的排版流、文字即几何游戏、动态排版和文字驱动的生成艺术。生成单文件 HTML。 | `creative/pretext` |
-| [`sketch`](/user-guide/skills/bundled/creative/creative-sketch) | 一次性 HTML 原型：生成 2-3 个设计变体供对比。 | `creative/sketch` |
 | [`songwriting-and-ai-music`](/user-guide/skills/bundled/creative/creative-songwriting-and-ai-music) | 歌曲创作技巧与 Suno AI 音乐 prompt（提示词）。 | `creative/songwriting-and-ai-music` |
-| [`touchdesigner-mcp`](/user-guide/skills/bundled/creative/creative-touchdesigner-mcp) | 通过 twozero MCP 控制运行中的 TouchDesigner 实例——创建算子、设置参数、连接节点、执行 Python、构建实时视觉效果。36 个原生工具。 | `creative/touchdesigner-mcp` |
 
 ## devops
 
 | 技能 | 描述 | 路径 |
 |-------|-------------|------|
-
+| [`sdlc-review`](/user-guide/skills/bundled/devops/devops-sdlc-review) | 审查 Kanban 交接并路由已验证的结果。 | `devops/sdlc-review` |
 
 ## email
 
 | 技能 | 描述 | 路径 |
 |-------|-------------|------|
+| [`email-inbox-triage`](/user-guide/skills/bundled/email/email-email-inbox-triage) | 分拣收件箱：为邮件线程排定优先级，安全地起草回复。 | `email/email-inbox-triage` |
 | [`himalaya`](/user-guide/skills/bundled/email/email-himalaya) | Himalaya CLI：在终端中收发 IMAP/SMTP 邮件。 | `email/himalaya` |
-
-## github
-
-| 技能 | 描述 | 路径 |
-|-------|-------------|------|
-| [`codebase-inspection`](/user-guide/skills/bundled/github/github-codebase-inspection) | 使用 pygount 检查代码库：代码行数、语言、占比。 | `github/codebase-inspection` |
-| [`github-auth`](/user-guide/skills/bundled/github/github-github-auth) | GitHub 认证配置：HTTPS token、SSH 密钥、gh CLI 登录。 | `github/github-auth` |
-| [`github-code-review`](/user-guide/skills/bundled/github/github-github-code-review) | 审查 PR：通过 gh 或 REST API 查看 diff、添加行内评论。 | `github/github-code-review` |
-| [`github-issues`](/user-guide/skills/bundled/github/github-github-issues) | 通过 gh 或 REST API 创建、分类、标记、分配 GitHub issue。 | `github/github-issues` |
-| [`github-pr-workflow`](/user-guide/skills/bundled/github/github-github-pr-workflow) | GitHub PR 生命周期：分支、提交、开启、CI、合并。 | `github/github-pr-workflow` |
-| [`github-repo-management`](/user-guide/skills/bundled/github/github-github-repo-management) | 克隆/创建/fork 仓库；管理远程、发布版本。 | `github/github-repo-management` |
-
-## hermes-desktop-plugins
-
-| 技能 | 描述 | 路径 |
-|-------|-------------|------|
-| [`hermes-desktop-plugins`](/user-guide/skills/bundled/hermes-desktop-plugins/hermes-desktop-plugins-hermes-desktop-plugins) | 编写桌面应用插件，添加 UI 面板与命令。 | `hermes-desktop-plugins` |
 
 ## media
 
@@ -93,16 +66,6 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 | [`gif-search`](/user-guide/skills/bundled/media/media-gif-search) | 通过 curl + jq 从 Tenor 搜索/下载 GIF。 | `media/gif-search` |
 | [`songsee`](/user-guide/skills/bundled/media/media-songsee) | 通过 CLI 生成音频频谱图/特征（mel、chroma、MFCC）。 | `media/songsee` |
 | [`youtube-content`](/user-guide/skills/bundled/media/media-youtube-content) | 将 YouTube 字幕转换为摘要、推文串、博客文章。 | `media/youtube-content` |
-
-## mlops
-
-| 技能 | 描述 | 路径 |
-|-------|-------------|------|
-| [`huggingface-hub`](/user-guide/skills/bundled/mlops/mlops-huggingface-hub) | HuggingFace hf CLI：搜索/下载/上传模型、数据集。 | `mlops/huggingface-hub` |
-| [`llama-cpp`](/user-guide/skills/bundled/mlops/mlops-inference-llama-cpp) | llama.cpp 本地 GGUF 推理 + HF Hub 模型发现。 | `mlops/inference/llama-cpp` |
-| [`evaluating-llms-harness`](/user-guide/skills/bundled/mlops/mlops-evaluation-evaluating-llms-harness) | lm-eval-harness：对 LLM 进行基准测试（MMLU、GSM8K 等）。 | `mlops/evaluation/evaluating-llms-harness` |
-| [`serving-llms-vllm`](/user-guide/skills/bundled/mlops/mlops-inference-serving-llms-vllm) | vLLM：高吞吐量 LLM 服务、OpenAI API 兼容、量化支持。 | `mlops/inference/serving-llms-vllm` |
-| [`weights-and-biases`](/user-guide/skills/bundled/mlops/mlops-evaluation-weights-and-biases) | W&B：记录 ML 实验、超参数搜索、模型注册表、仪表盘。 | `mlops/evaluation/weights-and-biases` |
 
 ## note-taking
 
@@ -115,46 +78,54 @@ Hermes 在执行 `hermes update` 时也会同步内置技能，但同步清单�
 | 技能 | 描述 | 路径 |
 |-------|-------------|------|
 | [`airtable`](/user-guide/skills/bundled/productivity/productivity-airtable) | 通过 curl 调用 Airtable REST API：记录增删改查、过滤、upsert。 | `productivity/airtable` |
+| [`box`](/user-guide/skills/bundled/productivity/productivity-box) | Box 管理云端文件、共享、搜索和元数据。 | `productivity/box` |
+| [`document-to-action-items`](/user-guide/skills/bundled/productivity/productivity-document-to-action-items) | 从文档中提取带引用的义务、截止日期和任务。 | `productivity/document-to-action-items` |
+| [`docx`](/user-guide/skills/bundled/productivity/productivity-docx) | 创建、读取、编辑、套用模板和审阅 Word .docx 文件。 | `productivity/docx` |
 | [`google-workspace`](/user-guide/skills/bundled/productivity/productivity-google-workspace) | 通过 gws CLI 或 Python 操作 Gmail、Calendar、Drive、Docs、Sheets。 | `productivity/google-workspace` |
 | [`maps`](/user-guide/skills/bundled/productivity/productivity-maps) | 通过 OpenStreetMap/OSRM 进行地理编码、POI 查询、路线规划、时区查询。 | `productivity/maps` |
-| [`nano-pdf`](/user-guide/skills/bundled/productivity/productivity-nano-pdf) | 通过自然语言指令编辑现有 PDF 中的文本。 | `productivity/nano-pdf` |
+| [`meeting-action-items`](/user-guide/skills/bundled/productivity/productivity-meeting-action-items) | 将会议笔记转化为带引用的决策、负责人和工单。 | `productivity/meeting-action-items` |
 | [`notion`](/user-guide/skills/bundled/productivity/productivity-notion) | Notion API + ntn CLI：页面、数据库、Markdown、Workers。 | `productivity/notion` |
-| [`ocr-and-documents`](/user-guide/skills/bundled/productivity/productivity-ocr-and-documents) | 从 PDF/扫描件中提取文本（pymupdf、marker-pdf）。 | `productivity/ocr-and-documents` |
-| [`petdex`](/user-guide/skills/bundled/productivity/productivity-petdex) | 为 Hermes 安装并选择动画 petdex 吉祥物。 | `productivity/petdex` |
-| [`powerpoint`](/user-guide/skills/bundled/productivity/productivity-powerpoint) | 创建、读取、编辑 .pptx 演示文稿、幻灯片、备注、模板。 | `productivity/powerpoint` |
-| [`teams-meeting-pipeline`](/user-guide/skills/bundled/productivity/productivity-teams-meeting-pipeline) | 通过 Hermes CLI 操作 Teams 会议摘要流水线——汇总会议、检查流水线状态、重放任务、管理 Microsoft Graph 订阅。 | `productivity/teams-meeting-pipeline` |
+| [`pdf`](/user-guide/skills/bundled/productivity/productivity-pdf) | PDF 文件：创建、读取、合并、填写、OCR、编辑文本。 | `productivity/pdf` |
+| [`powerpoint`](/user-guide/skills/bundled/productivity/productivity-powerpoint) | 使用 python-pptx 创建、读取、编辑 .pptx 演示文稿。 | `productivity/powerpoint` |
+| [`product-price-monitor`](/user-guide/skills/bundled/productivity/productivity-product-price-monitor) | 监控商品、航班或挂牌价格；达到目标价时发出提醒。 | `productivity/product-price-monitor` |
+| [`teams-meeting-pipeline`](/user-guide/skills/bundled/productivity/productivity-teams-meeting-pipeline) | Teams 会议摘要、任务重放、Graph 订阅。 | `productivity/teams-meeting-pipeline` |
+| [`weekly-review-planning`](/user-guide/skills/bundled/productivity/productivity-weekly-review-planning) | 每周重置：梳理承诺事项、停滞的工作和下周计划。 | `productivity/weekly-review-planning` |
+| [`xlsx`](/user-guide/skills/bundled/productivity/productivity-xlsx) | 创建、读取、编辑 Excel .xlsx 工作簿和 CSV 文件。 | `productivity/xlsx` |
 
 ## research
 
 | 技能 | 描述 | 路径 |
 |-------|-------------|------|
 | [`arxiv`](/user-guide/skills/bundled/research/research-arxiv) | 按关键词、作者、分类或 ID 搜索 arXiv 论文。 | `research/arxiv` |
-| [`blogwatcher`](/user-guide/skills/bundled/research/research-blogwatcher) | 通过 blogwatcher-cli 工具监控博客和 RSS/Atom 订阅源。 | `research/blogwatcher` |
+| [`competitor-news-monitor`](/user-guide/skills/bundled/research/research-competitor-news-monitor) | 关注指定公司的重大新闻；生成带引用的摘要。 | `research/competitor-news-monitor` |
+| [`grounded-citations`](/user-guide/skills/bundled/research/research-grounded-citations) | 让回答和文档以带引用、可核实的来源为依据。 | `research/grounded-citations` |
 | [`llm-wiki`](/user-guide/skills/bundled/research/research-llm-wiki) | Karpathy 的 LLM Wiki：构建/查询互联 Markdown 知识库。 | `research/llm-wiki` |
-| [`research-paper-writing`](/user-guide/skills/bundled/research/research-research-paper-writing) | 为 NeurIPS/ICML/ICLR 撰写 ML 论文：从设计到投稿。 | `research/research-paper-writing` |
-
-## smart-home
-
-| 技能 | 描述 | 路径 |
-|-------|-------------|------|
-| [`openhue`](/user-guide/skills/bundled/smart-home/smart-home-openhue) | 通过 OpenHue CLI 控制 Philips Hue 灯光、场景、房间。 | `smart-home/openhue` |
 
 ## social-media
 
 | 技能 | 描述 | 路径 |
 |-------|-------------|------|
-| [`xurl`](/user-guide/skills/bundled/social-media/social-media-xurl) | 通过 xurl CLI 操作 X/Twitter：发帖、搜索、私信、媒体、v2 API。 | `social-media/xurl` |
+| [`xurl`](/user-guide/skills/bundled/social-media/social-media-xurl) | 通过 xurl CLI 操作 X/Twitter：原始帖子搜索、发帖、私信、媒体。 | `social-media/xurl` |
 
 ## software-development
 
 | 技能 | 描述 | 路径 |
 |-------|-------------|------|
+| [`codebase-inspection`](/user-guide/skills/bundled/software-development/software-development-codebase-inspection) | 使用 pygount 检查代码库：代码行数、语言、占比。 | `software-development/codebase-inspection` |
 | [`dogfood`](/user-guide/skills/bundled/software-development/software-development-dogfood) | Web 应用探索性 QA：发现 bug、收集证据、生成报告。 | `software-development/dogfood` |
-| [`hermes-agent-skill-authoring`](/user-guide/skills/bundled/software-development/software-development-hermes-agent-skill-authoring) | 编写仓库内 SKILL.md：frontmatter、验证器、结构规范。 | `software-development/hermes-agent-skill-authoring` |
+| [`github`](/user-guide/skills/bundled/software-development/software-development-github) | 通过 gh CLI 操作 GitHub：PR、issue、审查、仓库、认证。 | `software-development/github` |
+| [`hermes-agent-skill-authoring`](/user-guide/skills/bundled/software-development/software-development-hermes-agent-skill-authoring) | 编写仓库内 SKILL.md 文件：frontmatter 与结构。 | `software-development/hermes-agent-skill-authoring` |
+| [`inspecting-hermes-desktop-dom`](/user-guide/skills/bundled/software-development/software-development-inspecting-hermes-desktop-dom) | 通过 CDP 读取运行中 Hermes 桌面应用的 DOM/CSS。 | `software-development/inspecting-hermes-desktop-dom` |
 | [`node-inspect-debugger`](/user-guide/skills/bundled/software-development/software-development-node-inspect-debugger) | 通过 --inspect + Chrome DevTools Protocol CLI 调试 Node.js。 | `software-development/node-inspect-debugger` |
 | [`python-debugpy`](/user-guide/skills/bundled/software-development/software-development-python-debugpy) | 调试 Python：pdb REPL + debugpy 远程调试（DAP）。 | `software-development/python-debugpy` |
 | [`requesting-code-review`](/user-guide/skills/bundled/software-development/software-development-requesting-code-review) | 提交前审查：安全扫描、质量门控、自动修复。 | `software-development/requesting-code-review` |
-| [`simplify-code`](/user-guide/skills/bundled/software-development/software-development-simplify-code) | 由 3 个 agent 并行清理近期的代码改动。 | `software-development/simplify-code` |
+| [`simplify-code`](/user-guide/skills/bundled/software-development/software-development-simplify-code) | 由 4 个 agent 并行清理近期的代码改动。 | `software-development/simplify-code` |
 | [`spike`](/user-guide/skills/bundled/software-development/software-development-spike) | 一次性实验，在正式构建前验证想法。 | `software-development/spike` |
 | [`systematic-debugging`](/user-guide/skills/bundled/software-development/software-development-systematic-debugging) | 四阶段根因调试：先理解 bug，再修复。 | `software-development/systematic-debugging` |
 | [`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development) | TDD：强制执行红-绿-重构流程，先写测试再写代码。 | `software-development/test-driven-development` |
+
+## web
+
+| 技能 | 描述 | 路径 |
+|-------|-------------|------|
+| [`blocked-page-recovery`](/user-guide/skills/bundled/web/web-blocked-page-recovery) | 在抓取失败时使用：403/429、付费墙、WAF、机器人拦截。 | `web/blocked-page-recovery` |

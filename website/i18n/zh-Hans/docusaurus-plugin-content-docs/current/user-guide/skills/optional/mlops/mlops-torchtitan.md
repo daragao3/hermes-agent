@@ -1,14 +1,14 @@
 ---
-title: "Distributed Llm Pretraining Torchtitan"
-sidebar_label: "Distributed Llm Pretraining Torchtitan"
-description: "使用 torchtitan 提供 PyTorch 原生分布式 LLM 预训练，支持 4D 并行（FSDP2、TP、PP、CP）"
+title: "Torchtitan — 使用 PyTorch 4D 并行大规模预训练 LLM"
+sidebar_label: "Torchtitan"
+description: "使用 PyTorch 4D 并行大规模预训练 LLM"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# Distributed Llm Pretraining Torchtitan
+# Torchtitan
 
-使用 torchtitan 提供 PyTorch 原生分布式 LLM 预训练，支持 4D 并行（FSDP2、TP、PP、CP）。适用于在 8 到 512+ GPU 规模下预训练 Llama 3.1、DeepSeek V3 或自定义模型，支持 Float8、torch.compile 及分布式检查点。
+使用 PyTorch 4D 并行大规模预训练 LLM。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "使用 torchtitan 提供 PyTorch 原生分布式 LLM 预训练，�
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/mlops/torchtitan` 安装 |
 | 路径 | `optional-skills/mlops/torchtitan` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
 | 依赖 | `torch>=2.6.0`, `torchtitan>=0.2.0`, `torchao>=0.5.0` |
@@ -54,7 +54,9 @@ python scripts/download_hf_assets.py --repo_id meta-llama/Llama-3.1-8B --assets 
 
 **在 8 个 GPU 上启动训练**：
 ```bash
-CONFIG_FILE="./torchtitan/models/llama3/train_configs/llama3_8b.toml" ./run_train.sh
+# 配置从 Python 配置注册表中按名称选择
+# （torchtitan/models/llama3/config_registry.py），而不是按 TOML 路径
+MODULE=llama3 CONFIG=llama3_8b ./run_train.sh
 ```
 
 ## 常用工作流
@@ -82,10 +84,16 @@ python scripts/download_hf_assets.py \
 
 **步骤 2：配置训练**
 
-编辑或创建 TOML 配置文件：
+在 torchtitan 当前的布局中，运行配置定义在 Python **配置注册表**
+（`torchtitan/models/llama3/config_registry.py`）中，并通过 `CONFIG=<name>`
+（或 `--config <name>`）按名称选择。要自定义，可在注册表中注册你自己的配置，或在命令行上覆盖
+单个字段（例如 `--optimizer.lr 3e-4 --training.steps 1000`）。
+
+8B 运行的等效设置如下（以字段形式展示；可写入注册表条目，或以
+`--section.key value` 覆盖参数传入）：
 
 ```toml
-# llama3_8b_custom.toml
+# llama3 8B 运行的字段（在 config_registry.py 中注册，或以 --overrides 形式传入）
 [job]
 dump_folder = "./outputs"
 description = "Llama 3.1 8B training"
@@ -125,13 +133,16 @@ interval = 500
 **步骤 3：启动训练**
 
 ```bash
-# 单节点 8 个 GPU
-CONFIG_FILE="./llama3_8b_custom.toml" ./run_train.sh
+# 单节点 8 个 GPU（从注册表中按名称选择配置）
+MODULE=llama3 CONFIG=llama3_8b ./run_train.sh
 
-# 或显式使用 torchrun
+# 在命令行上覆盖单个字段
+MODULE=llama3 CONFIG=llama3_8b ./run_train.sh --optimizer.lr 3e-4 --training.steps 1000
+
+# 或显式使用 torchrun（run_train.sh 封装了这一步）
 torchrun --nproc_per_node=8 \
   -m torchtitan.train \
-  --job.config_file ./llama3_8b_custom.toml
+  --module llama3 --config llama3_8b
 ```
 
 **步骤 4：监控与检查点**
@@ -177,7 +188,7 @@ srun torchrun \
   --rdzv_backend=c10d \
   --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
   -m torchtitan.train \
-  --job.config_file ./llama3_70b.toml
+  --module llama3 --config llama3_70b
 ```
 
 **步骤 3：提交作业**
@@ -209,16 +220,27 @@ USE_CPP=0 pip install git+https://github.com/pytorch/ao.git
 
 **步骤 2：配置 Float8**
 
-在 TOML 配置中添加：
+在当前的 torchtitan 中，Float8 是在配置阶段通过配置注册表内 `model_registry()` 调用的 `quantization`
+参数应用的（而不是通过 `[quantize.linear.float8]` TOML 小节）。添加一个 `Float8LinearConverter.Config`：
+
+```python
+# in torchtitan/models/llama3/config_registry.py (your model_registry(...) call)
+from torchtitan.components.quantization import Float8LinearConverter
+
+model_spec = model_registry(
+    "8B",
+    quantization=[
+        Float8LinearConverter.Config(
+            recipe_name="rowwise",          # or "rowwise_with_gw_hp"
+            filter_fqns=["output"],          # skip layers too small to benefit
+            model_compile_enabled=True,      # requires torch.compile for competitive perf
+        ),
+    ],
+)
+```
+
+同时在运行配置中启用 `torch.compile`：
 ```toml
-[model]
-converters = ["quantize.linear.float8"]
-
-[quantize.linear.float8]
-enable_fsdp_float8_all_gather = true
-precompute_float8_dynamic_scale_for_fsdp = true
-filter_fqns = ["output"]  # Exclude output layer
-
 [compile]
 enable = true
 components = ["model", "loss"]
@@ -227,10 +249,8 @@ components = ["model", "loss"]
 **步骤 3：启动并开启 compile**
 
 ```bash
-CONFIG_FILE="./llama3_8b.toml" ./run_train.sh \
-  --model.converters="quantize.linear.float8" \
-  --quantize.linear.float8.enable_fsdp_float8_all_gather \
-  --compile.enable
+# Float8 配置已内置于注册的配置中；只需选择它并启用 compile
+MODULE=llama3 CONFIG=llama3_8b ./run_train.sh --compile.enable
 ```
 
 ### 工作流 4：405B 模型的 4D 并行
@@ -246,7 +266,7 @@ CONFIG_FILE="./llama3_8b.toml" ./run_train.sh \
 
 跨 PP 阶段一致初始化所必需：
 ```bash
-NGPU=1 CONFIG_FILE=./llama3_405b.toml ./run_train.sh \
+NGPU=1 MODULE=llama3 CONFIG=llama3_405b ./run_train.sh \
   --checkpoint.enable \
   --checkpoint.create_seed_checkpoint \
   --parallelism.data_parallel_shard_degree 1 \
@@ -274,7 +294,7 @@ seq_len = 8192
 # 64 节点 x 8 GPU = 512 GPU
 srun torchrun --nnodes=64 --nproc_per_node=8 \
   -m torchtitan.train \
-  --job.config_file ./llama3_405b.toml
+  --module llama3 --config llama3_405b
 ```
 
 ## 何时使用 vs 替代方案
@@ -321,10 +341,15 @@ export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 
 **问题：Float8 训练未见加速**
 
-Float8 仅对大型 GEMM 有效。过滤小层：
-```toml
-[quantize.linear.float8]
-filter_fqns = ["attention.wk", "attention.wv", "output", "auto_filter_small_kn"]
+Float8 仅对大型 GEMM 有效。通过转换器的 `filter_fqns` 过滤小层：
+```python
+from torchtitan.components.quantization import Float8LinearConverter
+
+Float8LinearConverter.Config(
+    # add "auto_filter_small_kn" to auto-skip layers too small to benefit
+    filter_fqns=["attention.wk", "attention.wv", "output", "auto_filter_small_kn"],
+    model_compile_enabled=True,
+)
 ```
 
 **问题：更改并行度后检查点加载失败**

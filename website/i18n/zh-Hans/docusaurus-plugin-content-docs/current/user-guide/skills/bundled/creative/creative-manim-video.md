@@ -17,7 +17,10 @@ Manim CE 动画：3Blue1Brown 数学/算法视频。
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/creative/manim-video` |
 | 版本 | `1.0.0` |
+| 作者 | SHL0MS, Hermes Agent |
+| 许可证 | MIT |
 | 平台 | linux, macos, windows |
+| 标签 | `Manim`, `Animation`, `Math`, `Video` |
 
 ## 参考：完整 SKILL.md
 

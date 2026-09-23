@@ -18,7 +18,7 @@ Hermes Agent 通过 Vertex 的 OpenAI 兼容端点支持 **Google Cloud Vertex A
 - **凭据**，以下二选一：
   - 具有 `roles/aiplatform.user` 角色的**服务账号 JSON** 密钥文件，或
   - 通过 `gcloud auth application-default login` 获得的**应用默认凭据**（在 GCP 虚拟机上运行时也可使用元数据服务器）。
-- **`google-auth`** — 首次选择 Vertex 时会自动安装（懒安装），也可显式执行 `pip install 'hermes-agent[vertex]'`。
+- **`google-auth`** — 首次选择 Vertex 时会自动安装（懒安装）。如果安装失败，运行 `hermes setup` 修复托管安装。
 
 ## 快速开始
 
@@ -88,6 +88,8 @@ Vertex 要求模型 ID 带有 `google/` 厂商前缀。`hermes model` 选择器�
 
 | 模型 | ID |
 |-------|----|
+| Gemini 3.8 Flash | `google/gemini-3.8-flash` |
+| Gemini 3.7 Flash | `google/gemini-3.7-flash` |
 | Gemini 3.1 Pro Preview | `google/gemini-3.1-pro-preview` |
 | Gemini 3 Pro Preview | `google/gemini-3-pro-preview` |
 | Gemini 3 Flash Preview | `google/gemini-3-flash-preview` |
@@ -128,7 +130,7 @@ Hermes 既未找到服务账号 JSON，也没有可用的 ADC。请在 `~/.herme
 
 ### 未安装 `google-auth`
 
-安装额外依赖：`pip install 'hermes-agent[vertex]'`。首次选择 Vertex provider 时 Hermes 也会懒安装它。
+首次选择 Vertex provider 时 Hermes 会懒安装它。如果安装失败，运行 `hermes setup` 修复托管安装。
 
 ### Gemini 3.x 模型返回 404
 

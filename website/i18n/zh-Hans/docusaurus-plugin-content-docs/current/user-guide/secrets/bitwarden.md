@@ -80,9 +80,16 @@ hermes secrets bitwarden status
 | `hermes secrets bitwarden install` | 仅下载固定版本的 `bws` 二进制文件（无需认证） |
 | `hermes secrets bitwarden disable` | 将 `enabled` 设为 `false`；保留令牌和项目 ID |
 
-## 轮换已过期或已吊销的令牌
+## 轮换已过期或已吊销的令牌 {#rotating-an-expired-or-revoked-token}
 
-当机器账户令牌过期、被吊销或账户被删除时，启动信息会显示令牌被拒绝的说明，并附带 `→` 修复提示。无需重新运行整个向导即可修复：
+当机器账户令牌过期、被吊销或账户被删除时，启动时会显示：
+
+```
+Bitwarden Secrets Manager: Bitwarden rejected the machine-account access token (BWS_ACCESS_TOKEN) — it was likely revoked, expired, or belongs to another region.  (...)
+Bitwarden Secrets Manager: → Run `hermes secrets bitwarden token` to paste a fresh access token ...
+```
+
+无需重新运行整个向导即可修复：
 
 ```bash
 hermes secrets bitwarden token                     # 隐藏输入提示
@@ -103,6 +110,9 @@ secrets:
     project_id: ""
     server_url: ""
     cache_ttl_seconds: 300
+    encrypted_cache:
+      enabled: false
+      max_stale_seconds: 0
     override_existing: true
     auto_install: true
 ```
@@ -113,7 +123,9 @@ secrets:
 | `access_token_env` | `BWS_ACCESS_TOKEN` | 存储引导令牌的环境变量名。如果你已将 `BWS_ACCESS_TOKEN` 用于其他用途，可修改此项。 |
 | `project_id` | `""` | 要同步的项目 UUID。 |
 | `server_url` | `""` | Bitwarden 区域或自托管端点。为空时使用 `bws` 默认值（US Cloud，`https://vault.bitwarden.com`）。欧盟云设为 `https://vault.bitwarden.eu`，自托管则填写自己的 URL。以 `BWS_SERVER_URL` 形式传递给 `bws` 子进程。 |
-| `cache_ttl_seconds` | `300` | 进程内拉取结果的复用时长。设为 `0` 可禁用缓存。缓存按进程隔离；新的 `hermes` 调用从头开始。 |
+| `cache_ttl_seconds` | `300` | 进程内或磁盘上的拉取结果的复用时长。设为 `0` 可禁用新鲜缓存的复用。 |
+| `encrypted_cache.enabled` | `false` | 将最近一次成功的拉取结果存储在 `~/.hermes/cache/bws_cache.enc.json` 的 AES-GCM 加密缓存中。 |
+| `encrypted_cache.max_stale_seconds` | `0` | 启用加密缓存时，仅在网络/超时失败后才允许使用该缓存，且缓存时长不超过此值。认证失败时绝不会使用过期的 secret。一次成功的加密写入会删除旧版明文缓存 `cache/bws_cache.json`。 |
 | `override_existing` | `true` | 为 true 时，Bitwarden 的值会覆盖环境中已有的任何值（使 Web 应用中的轮换真正生效）。如果希望本地 `.env` / shell 导出优先，设为 `false`。 |
 | `auto_install` | `true` | 为 true 时，首次使用时自动将 `bws` 下载到 `~/.hermes/bin/`。 |
 

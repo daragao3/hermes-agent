@@ -1,14 +1,14 @@
 ---
-title: "优化注意力 Flash"
-sidebar_label: "优化注意力 Flash"
-description: "通过 Flash Attention 优化 Transformer 注意力机制，实现 2-4 倍加速和 10-20 倍内存减少"
+title: "Flash Attention —— 加速长序列 Transformer 训练与推理"
+sidebar_label: "Flash Attention"
+description: "加速长序列 Transformer 训练与推理"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# 优化注意力 Flash
+# Flash Attention
 
-通过 Flash Attention 优化 Transformer 注意力机制，实现 2-4 倍加速和 10-20 倍内存减少。适用于以下场景：使用长序列（>512 token）训练/运行 Transformer、遇到注意力相关的 GPU 内存问题，或需要更快的推理速度。支持 PyTorch 原生 SDPA、flash-attn 库、H100 FP8 以及滑动窗口注意力。
+加速长序列 Transformer 训练与推理。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "通过 Flash Attention 优化 Transformer 注意力机制，实现
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/mlops/flash-attention` 安装 |
 | 路径 | `optional-skills/mlops/flash-attention` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
 | 依赖项 | `flash-attn`, `torch`, `transformers` |
@@ -99,13 +99,12 @@ import torch.nn.functional as F
 out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
 ```
 
-强制使用 Flash Attention 后端：
+强制使用 Flash Attention 后端（`torch.backends.cuda.sdp_kernel` 已弃用；请使用
+`torch.nn.attention.sdpa_kernel` 配合 `SDPBackend`）：
 ```python
-with torch.backends.cuda.sdp_kernel(
-    enable_flash=True,
-    enable_math=False,
-    enable_mem_efficient=False
-):
+from torch.nn.attention import SDPBackend, sdpa_kernel
+
+with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
     out = F.scaled_dot_product_attention(q, k, v)
 ```
 
@@ -118,7 +117,8 @@ def test_attention(use_flash):
     q, k, v = [torch.randn(2, 8, 2048, 64, device='cuda', dtype=torch.float16) for _ in range(3)]
 
     if use_flash:
-        with torch.backends.cuda.sdp_kernel(enable_flash=True):
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+        with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
             return F.scaled_dot_product_attention(q, k, v)
     else:
         attn = (q @ k.transpose(-2, -1) / 8.0).softmax(dim=-1)
@@ -247,14 +247,17 @@ print(f"Memory allocated: {torch.cuda.max_memory_allocated()/1e9:.2f}GB")
 
 ### 工作流 3：H100 FP8 优化（FlashAttention-3）
 
-在 H100 GPU 上获得最大性能。
+在 Hopper GPU（H100）上获得最大性能。
+
+> **重要：** pip 包 `flash-attn`（2.8.x）**仅包含 FlashAttention-2**——它**不**包含 FA3 或 FP8 H100 内核，`flash_attn_func` 也**不会**自动使用 FP8。
+> FlashAttention-3 是一个独立的 **beta** 构建，需从仓库的 `hopper/` 目录源码编译，并通过 `flash_attn_interface` 模块提供。FA3 支持 FP16/BF16 前向+反向，
+> 以及**仅前向的 FP8**。
 
 ```
 FP8 设置：
-- [ ] 步骤 1：确认 H100 GPU 可用
-- [ ] 步骤 2：安装支持 FP8 的 flash-attn
-- [ ] 步骤 3：将输入转换为 FP8
-- [ ] 步骤 4：使用 FP8 注意力运行
+- [ ] 步骤 1：确认 Hopper（H100）GPU 可用
+- [ ] 步骤 2：从源码构建并安装 FlashAttention-3（hopper/）
+- [ ] 步骤 3：使用 FA3 接口（FP8 前向）
 ```
 
 **步骤 1：确认 H100 GPU**
@@ -264,36 +267,38 @@ nvidia-smi --query-gpu=name --format=csv
 # 应显示 "H100" 或 "H800"
 ```
 
-**步骤 2：安装支持 FP8 的 flash-attn**
+**步骤 2：从源码构建并安装 FlashAttention-3**
+
+FA3 **不**包含在 `pip install flash-attn` 中。请从 `hopper/` 子目录构建：
 
 ```bash
-pip install flash-attn --no-build-isolation
-# H100 的 FP8 支持已包含在内
+git clone https://github.com/Dao-AILab/flash-attention.git
+cd flash-attention/hopper
+python setup.py install
+# （编译开销很大，需要 CUDA 工具链 + Hopper GPU）
 ```
 
-**步骤 3：将输入转换为 FP8**
+**步骤 3：使用 FA3 接口（FP8 前向）**
+
+FA3 提供自己的模块 `flash_attn_interface`（区别于 FA2 的 `flash_attn`）。
+FP8 是**仅前向**路径，要求输入为 `float8_e4m3fn`：
 
 ```python
 import torch
+from flash_attn_interface import flash_attn_func  # FA3（hopper 构建），而非 `flash_attn`
 
+# q, k, v: [batch, seqlen, nheads, headdim]
 q = torch.randn(2, 4096, 32, 64, device='cuda', dtype=torch.float16)
 k = torch.randn(2, 4096, 32, 64, device='cuda', dtype=torch.float16)
 v = torch.randn(2, 4096, 32, 64, device='cuda', dtype=torch.float16)
 
-# 转换为 float8_e4m3（FP8）
+# FP8 前向（推理 / 仅前向）：转换为 float8_e4m3fn
 q_fp8 = q.to(torch.float8_e4m3fn)
 k_fp8 = k.to(torch.float8_e4m3fn)
 v_fp8 = v.to(torch.float8_e4m3fn)
-```
 
-**步骤 4：使用 FP8 注意力运行**
-
-```python
-from flash_attn import flash_attn_func
-
-# FlashAttention-3 在 H100 上自动使用 FP8 内核
-out = flash_attn_func(q_fp8, k_fp8, v_fp8)
-# 结果：约 1.2 PFLOPS，比 FP16 快 1.5-2 倍
+out = flash_attn_func(q_fp8, k_fp8, v_fp8, causal=True)
+# FA3 接口同样支持 FP16/BF16 前向+反向。
 ```
 
 ## 何时使用与替代方案

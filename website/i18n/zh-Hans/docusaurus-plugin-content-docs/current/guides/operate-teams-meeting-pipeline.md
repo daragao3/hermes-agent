@@ -159,7 +159,13 @@ hermes teams-pipeline run <job-id>
 ```bash
 hermes teams-pipeline fetch --meeting-id <meeting-id>
 hermes teams-pipeline fetch --join-web-url "<join-url>"
+hermes teams-pipeline fetch --join-web-url "<join-url>" --organizer-user-id <entra-user-id>
 ```
+
+传入 `--organizer-user-id`（组织者的 Microsoft Entra 用户 ID），即可通过组织者作用域的
+`/users/{id}/onlineMeetings` Graph 路径进行解析。对于 Teams 的 `/meet/` 短链接，这是必需的，
+因为 Graph 会在 `/communications/onlineMeetings` 端点上拒绝此类链接。由 webhook 驱动的任务
+会自动从通知的 `@odata.id` 中推导出组织者。
 
 ## 日常运行手册
 

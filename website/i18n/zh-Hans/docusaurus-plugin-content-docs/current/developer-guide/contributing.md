@@ -36,7 +36,7 @@ description: "如何为 Hermes Agent 做贡献 — 开发环境配置、代码�
 | **Git** | 需安装 `git-lfs` 扩展 |
 | **Python 3.11–3.13** | 若未安装，uv 会自动安装 |
 | **uv** | 高速 Python 包管理器（[安装](https://docs.astral.sh/uv/)） |
-| **Node.js 20+** | 可选 — 浏览器工具和 WhatsApp bridge 需要（与根目录 `package.json` engines 字段一致） |
+| **Node.js 26+** | 可选 — 浏览器工具和 WhatsApp bridge 需要（与根目录 `package.json` engines 字段一致） |
 
 ### 使用标准安装器
 
@@ -146,6 +146,7 @@ scripts/run_tests.sh
 - **使用 `pathlib.Path` / `os.path.join`，不得手动用 `/` 拼接路径。** 这对我们构造后传给子进程的字符串尤为重要，而非 OS 返回给我们的字符串。
 
 关键模式：
+
 ### 1. 文件编码
 
 某些环境可能以非 UTF-8 编码保存 `.env` 文件：
@@ -249,6 +250,27 @@ fix(cli): prevent crash in save_config_value when model is a string
 feat(gateway): add WhatsApp multi-user session isolation
 fix(security): prevent shell injection in sudo password piping
 ```
+
+### 仓库内的评审清单：`.agents/checks/*.md`
+
+基于 Hermes 构建（或由 Hermes 评审）的项目，可以把评审清单保存在仓库内的 `.agents/checks/` 下。每个文件都是一份聚焦的纯 markdown 清单，agent 在评审涉及对应领域的变更之前会先加载它：
+
+```
+.agents/
+  checks/
+    security.md        # e.g. "grep the diff for shell interpolation; check subprocess calls quote args"
+    migrations.md      # e.g. "every schema change ships a backfill and a rollback note"
+    public-api.md      # e.g. "exported signatures changed? flag for semver review"
+```
+
+让这些清单发挥作用的约定：
+
+- **每个文件只关注一个问题**，并以该问题命名。小文件会被完整读完；一份庞大的 `checklist.md` 只会被草草扫过。
+- **把检查项写成可验证的动作**（"运行 X 并确认 Y"），而不是愿景（"代码应当安全"）。
+- **在开头写明触发条件**——清单适用于哪些路径或哪类变更——这样 agent（或人）可以低成本地跳过无关清单。
+- 把它们与所守护的代码一起纳入版本控制：它们随代码库一同演进，修改规则的 PR 会在同一个 diff 中修改清单。
+
+当你让 Hermes 评审一个包含 `.agents/checks/` 的仓库中的 PR 时，告诉它（或通过 skill 教会它）先阅读相关清单，并对照清单给出报告。这能让评审 agent 具备通用评审提示词所缺失的项目专属标准。
 
 ## 报告问题
 

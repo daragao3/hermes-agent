@@ -21,7 +21,6 @@ description: "自动化 Unreal Engine 编辑器中的场景、Actor 与渲染"
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `unreal`, `unreal-engine`, `ue5`, `3d`, `mcp`, `scenes`, `cinematics`, `lighting`, `gamedev` |
-| 相关 skill | [`blender-mcp`](/user-guide/skills/optional/creative/creative-blender-mcp) |
 
 ## 参考：完整 SKILL.md
 

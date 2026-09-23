@@ -1,7 +1,7 @@
 ---
 sidebar_position: 16
 title: 电脑操控
-description: "让 Hermes 在 macOS、Windows 和 Linux 上后台操控桌面，不会抢占你的光标与键盘焦点"
+description: "让 Hermes 在 macOS、Windows 和 Linux 上后台操控桌面，而不会接管你的光标"
 ---
 
 # 电脑操控
@@ -12,7 +12,7 @@ Hermes Agent 可以在 **macOS、Windows 和 Linux** 上以**后台**方式驱�
 
 ## 工作原理
 
-`computer_use` 工具集通过 stdio 以 MCP 协议与 [`cua-driver`](https://github.com/trycua/cua) 通信，后者是一个开源的后台电脑操控驱动。每个平台在底层使用相应的无障碍 + 输入栈：
+内置的 `computer_use` 工具集是推荐的 Hermes 集成方式。它通过 stdio 以 MCP 协议与 [`cua-driver`](https://github.com/trycua/cua) 通信，后者是一个开源的后台电脑操控驱动。每个平台在底层使用相应的无障碍 + 输入栈：
 
 | 平台 | 无障碍树 | 输入投递 |
 |---|---|---|
@@ -27,26 +27,29 @@ Hermes Agent 可以在 **macOS、Windows 和 Linux** 上以**后台**方式驱�
 
 ## 启用
 
-选择最方便的方式——两种方式运行的是同一个上游安装程序：
+**全新安装已自带驱动。** Hermes 安装程序（`install.sh` / `install.ps1`）会预装 `cua-driver`（尽力而为；传入 `--skip-computer-use` / `-SkipComputerUse` 可选择不安装），因此启用电脑操控只需切换一个配置：
 
-**方式一：使用专用 CLI 命令（最直接）。**
+- **`hermes tools`** → 选择 `🖱️  Computer Use`——如果驱动仍然缺失，会自动安装。
+- **Dashboard / 桌面应用** → 打开 Computer Use 工具集开关——如果驱动缺失，该开关会自动在后台启动安装（可在工具集面板中查看进度）。
+
+**手动回退方式（较旧的安装，或跳过了安装程序中的该步骤）：**
 
 ```
 hermes computer-use install
 ```
 
-此命令会获取并运行上游 cua-driver 安装程序——在 macOS/Linux 上是 `install.sh`，在 Windows 上是 `install.ps1`。使用 `hermes computer-use status` 验证安装结果。
+此命令会获取并运行上游 cua-driver 安装程序——在 macOS/Linux 上是 `install.sh`，在 Windows 上是 `install.ps1`。使用 `hermes computer-use
+status` 验证安装结果。
 
-**方式二：通过交互式界面启用工具集。**
+已经装有 cua-driver？只要它支持 0.20 运行时契约，Hermes 就会复用它。在设置、启用工具集、`hermes update` 以及会话中第一次 `computer_use` 调用时，Hermes 会检查本地版本和清单。对于过旧或不完整的标准安装，它会通过上游安装程序进行修复（运行时每个会话最多一次）。通过 `HERMES_CUA_DRIVER_CMD` 选定的二进制文件仍由你自己掌控，因此 Hermes 只会报告不兼容，而不会改动它。
 
-1. 运行 `hermes tools`，选择 `🖱️  Computer Use (macOS/Windows/Linux)`。
-2. 安装流程将运行上游安装程序（与方式一相同）。
+如果你先安装了 Cua Driver，`cua-driver skills install` 会把 Cua 的技能包安装到 `~/.cua-driver/skills/cua-driver` 下。Hermes 的自动检测是 cua-driver 计划中的后续工作，因此目前请让 Hermes 指向该目录，或将其软链接到你的技能目录中。你也可以把原始的 Cua MCP 工具注册为自定义 MCP 服务器，但那是为需要底层接口的用户准备的替代方案。内置工具集提供 Hermes 的动作、配置、审批和诊断能力。
 
 安装完成后，无论采用哪种方式，都需要授予平台对应的前置条件：
 
 | 平台 | 前置条件 |
 |---|---|
-| **macOS** | 系统设置 → 隐私与安全性 → **辅助功能** + **屏幕录制** → 允许你的终端（或 Hermes 应用）。`hermes computer-use doctor` 会告诉你缺少哪项权限。 |
+| **macOS** | 系统设置 → 隐私与安全性 → **辅助功能** + **屏幕录制**。授权给 `hermes computer-use doctor` 所指明的身份。标准模式使用 CuaDriver.app；bounded 和 unrestricted 模式使用 Hermes 宿主身份。 |
 | **Windows** | 安装时无需任何前置条件。如果你通过 SSH（而非 RDP / 控制台）驱动，则需要 autostart 模式——Session 0 ↔ Session 1+ 代理方案参见 [cua.ai/docs/how-to-guides/driver/windows-ssh](https://cua.ai/docs/how-to-guides/driver/windows-ssh)。 |
 | **Linux** | 一个可达的显示服务器：X11 需设置 `DISPLAY`，或设置 `XDG_SESSION_TYPE=wayland`。Wayland 会话需要 XWayland 桥接才能截图。AT-SPI 必须开启（GNOME/KDE/Xfce 默认开启）。 |
 
@@ -58,14 +61,57 @@ hermes -t computer_use chat
 
 或在 `~/.hermes/config.yaml` 中将 `computer_use` 添加到已启用的工具集列表。
 
+## 权限模式与已登录的浏览器 profile {#permission-modes-and-logged-in-browser-profiles}
+
+Hermes 将其现有的审批体验映射到 cua-driver 不可变的运行时模式上。权限模式和能力清单审批都是启动时设置，运行时启动后便无法更改：
+
+| Hermes 会话 | cua-driver 模式 | 人工介入 |
+|---|---|---|
+| 手动或智能审批（默认） | `standard` | 常规 Hermes 审批；Cua 在其受保护边界处停止 |
+| `computer_use.permission_mode: bounded` + 已审阅的清单 | 私有 `bounded` 守护进程 | 你在启动时审阅并批准一次能力清单 |
+| `--yolo`、`/yolo` 或 `approvals.mode: off` | 私有 `unrestricted` 守护进程 | 一次明确的 Hermes 风险确认；运行时没有 Cua 提示 |
+
+浏览器相关工作——包括已登录 profile 中的页面——走的是 `browser` 工具集（`browser_exec`），而不是 `computer_use`。以前的 `computer_use.grant_existing_profile` 选项已随类型化浏览器路由一并移除；config.yaml 中残留的该键会被忽略。
+
+### 用于可重复自动化的 bounded 模式 {#bounded-mode-for-repeatable-automation}
+
+对于周期性的浏览器自动化（cron 任务、针对已认证应用的定时调研），`bounded` 模式使用一份你只需审阅一次的能力清单：
+
+```yaml
+# config.yaml
+computer_use:
+  permission_mode: bounded
+  capability_manifest: ~/.hermes/cua-manifest.yaml
+```
+
+清单列出了会话可以使用的应用、浏览器 profile 类型、允许的来源（origin）以及类型化工具（格式参见 [cua-driver 权限模式参考](https://cua.ai/docs/reference/cua-driver/permission-modes)）。Hermes 会以 `--capability-manifest ... --approve-capability-manifest` 启动一个私有运行时；清单之外的任何操作都会在 cua-driver 内部以失败即关闭的方式被拒绝。清单缺失或无法读取时，会在会话启动时明确报错，而不是静默降级。会话级 YOLO 仍会在该会话中覆盖 bounded。
+
+在 macOS 上，私有会话守护进程通过已安装的 `CuaDriver.app` 包启动（这样权限授予会归属于驱动自身的身份，而不会随每次 Hermes 构建而重置），并且 Hermes 会在启动前校验该包的代码签名——精确的 `com.trycua.driver` 标识符和官方签名团队。如果你从源码构建 cua-driver（未签名），需要显式选择启用：
+
+```yaml
+# config.yaml
+computer_use:
+  allow_unsigned_driver: true   # local driver development only
+```
+
+每个 MCP 传输在其运行时内部拥有一个私有的生命周期会话。公开的会话名称只是光标身份和会话范围状态的标签，它不会选择、共享或保活某个运行时。关闭 `/yolo`、重置或关闭 Hermes 会话、取消清理或进程退出，都会关闭该传输会话。Hermes 还会停止它为 bounded 或 unrestricted 访问而启动的私有运行时。一个 Hermes 对话无法更改另一个运行时的模式或授权。bounded 和 unrestricted 模式使用运行在 Hermes 宿主身份下的私有嵌入式服务。
+
+`smart` 审批仍然是 `standard`：LLM 分类无法替代一份经过审阅的清单。
+
+<div class="alert alert--warning">
+
+YOLO/unrestricted 模式无法防范提示词注入或意外输入。请只在一次性虚拟机中使用它，或者只用于你能接受其被完全攻破的账户和数据。
+
+</div>
+
 ## `hermes computer-use doctor` —— 排查的第一站
 
 `hermes computer-use doctor` 会运行 cua-driver 的结构化 `health_report` MCP 工具，并打印逐项检查矩阵。这是查明某个操作*为什么*不生效的最快途径。
 
 ```
 $ hermes computer-use doctor
-⚠️  cua-driver 0.5.8 on darwin — degraded
-  ✅ binary_version: cua-driver 0.5.8
+⚠️  cua-driver VERSION on darwin: degraded
+  ✅ binary_version: cua-driver VERSION
   ✅ platform_supported: macOS 26.4.1 (arm64)
   ✅ session_active: MCP session is active.
   ❌ bundle_identity: Process has no CFBundleIdentifier.
@@ -90,19 +136,21 @@ $ hermes computer-use doctor
 
 ## Agent 光标与会话
 
-当 Agent 执行操作时，你会看到一个**带色调的浮层光标**滑过屏幕，停在每次点击 / 输入 / 滚动落点上。真实的操作系统光标从不移动——该浮层只是一个视觉提示，表示「Agent 正在这里操作」。每次 Hermes 运行都会声明自己的 cua-driver **会话 id**（形如 `hermes-3a7b9c14d2e8`）；光标的身份与该会话绑定，因此并发运行 / 子 Agent 各自拥有独立光标，互不干扰。
+当 Agent 执行操作时，你会看到一个**带色调的浮层光标**滑过屏幕，停在每次点击 / 输入 / 滚动的落点上。真实的操作系统光标从不移动，浮层只是表明 Agent 正在哪里操作。每次 Hermes 运行都会声明一个公开的 cua-driver **会话名称**（形如 `hermes-3a7b9c14d2e8`）。该名称标记光标身份及相关状态，因此并发运行和子 Agent 会拥有各自独立的光标。运行时内部的私有生命周期会话由 MCP 传输拥有，而不是由这个公开名称拥有。
+
+浮层光标只是装饰性的——截图、点击和输入在没有它的情况下都能正常工作。在已知会出问题的环境中，Hermes 会自动禁用它：macOS（空闲时占用 CPU）、无头 Linux / WSL2 / 容器，以及 **Linux X11 桌面**（浮层是一个全屏、始终置顶的窗口，会话非正常结束后可能卡在所有工作区之上，导致桌面输入失灵）。Linux Wayland 和 Windows 会保留浮层。在 `config.yaml` 中设置 `computer_use.no_overlay: false` 可在任何平台上强制开启光标（设为 `true` 则强制关闭）。
 
 可以通过 `cua-driver` 的 CLI 参数或运行时 `set_agent_cursor_style` MCP 工具来调整光标——完整选项参见 [cua.ai/docs/how-to-guides/driver/personalize-cursor](https://cua.ai/docs/how-to-guides/driver/personalize-cursor)（内置 `arrow` 与 `teardrop` 轮廓、通过 `--cursor-icon` 使用自定义 SVG / PNG / ICO、运行时渐变颜色、光晕效果）。
 
 ## 深入了解 —— cua-driver 技能包
 
-Hermes 有意让自己的技能（`skills/computer-use/SKILL.md`）专注于 Hermes 侧的 `computer_use` 动作词汇表——这是 Agent 加载的唯一真实来源。若需要更深入的材料——平台专属深度解析、录制语义、浏览器页面交互——请将你的 Agent 框架指向 cua-driver 团队直接发布并维护的 cua-driver 技能包：
+Hermes 让自己的封装技能（`skills/autonomous-ai-agents/computer-use/SKILL.md`）专注于 Hermes 侧的 `computer_use` 工作流和动作词汇表。若需要平台细节、录制语义、浏览器页面交互以及其他深入的 Cua 行为，请安装由 cua-driver 团队直接发布并维护的技能包：
 
 ```
 cua-driver skills install
 ```
 
-该命令会将技能包软链接到你的 Agent 框架的技能目录。运行后，Agent 即可访问：
+该命令会把技能包安装到 `~/.cua-driver/skills/cua-driver` 下。Hermes 的自动检测是 cua-driver 计划中的后续工作，因此目前请让 Hermes 指向该目录，或将其软链接到你的技能目录中。封装技能仍然是工作流层，并会指向 Cua 已安装的技能来说明驱动行为。技能包包含：
 
 | 文件 | 主题 |
 |---|---|
@@ -132,6 +180,22 @@ Agent 的执行计划（在 macOS / Windows / Linux 上形状相同——模型�
 
 整个过程中，你的光标保持原位，邮件应用始终不会切换到前台。
 
+## 获取实际截图
+
+电脑操控期间拍摄的截图通常只在内部使用——它们的作用是让模型看到屏幕，而 Agent 以文字回复。不过，每次图像截取还会在 Hermes 的图像缓存中保存一份有大小上限、可分享的副本并报告其路径，因此在支持附件的界面上（Telegram、Discord、Desktop 以及其他网关平台），你可以直接要求：
+
+> *「把我屏幕的截图发给我。」*
+
+Agent 就会以原生附件的形式发送真实图像，而不只是一段描述。CLI 没有附件通道，因此 Agent 会改为给出已保存文件的路径。
+
+只会保留最近的 20 个截图文件，并且截图永远不会自动发送——只有在你要求时才会发送。
+
+### 整个屏幕与桌面表面
+
+「截取我的屏幕」会捕获**当前显示的所有内容**——对所有可见窗口的合成截图，就像按下 PrtScn 一样。这张图像中没有可点击的元素，因此如果要对其中的某个东西*进行操作*，Agent 会重新截取该特定应用。
+
+如果改为要求截取**桌面**，目标就是操作系统外壳表面本身——壁纸、桌面图标、任务栏——并带有其可点击元素，因此像「打开我桌面上的回收站」这样的请求依然可行。
+
 ## 提供商兼容性
 
 | 提供商 | 支持视觉？ | 可用？ | 备注 |
@@ -160,7 +224,8 @@ Hermes 应用多层防护机制：
 
 截图开销较大。Hermes 应用四层优化措施：
 
-- **截图淘汰** —— Anthropic 适配器在上下文中仅保留最近 3 张截图；较旧的截图替换为 `[screenshot removed to save context]` 占位符。
+- **截图淘汰** —— Anthropic 适配器在上下文中仅保留最近 3 张截图；较旧的截图替换为 `[screenshot removed
+  to save context]` 占位符。
 - **客户端压缩裁剪** —— 上下文压缩器检测多模态工具结果，并从旧结果中剥离图像部分。
 - **图像感知 token 估算** —— 每张图像计为约 1500 个 token（Anthropic 的固定费率），而非其 base64 字符长度。
 - **服务端上下文编辑（仅限 Anthropic）** —— 激活后，适配器通过 `context_management` 启用 `clear_tool_uses_20250919`，由 Anthropic API 在服务端清除旧工具结果。
@@ -181,6 +246,23 @@ Hermes 应用多层防护机制：
 如果需要跨平台 GUI 自动化但不想承担桌面开销（也不想配置 TCC / Session 0 / X11），`browser` 工具集使用真实的无头 Chromium，是纯 Web 任务的正确选择。
 
 ## 配置
+
+权限模式与清单（参见上文的[权限模式](#permission-modes-and-logged-in-browser-profiles)）：
+
+```yaml
+computer_use:
+  permission_mode: standard        # standard (default) | bounded
+  capability_manifest: ""          # capability manifest path, required for bounded
+```
+
+在 Linux 上，原生 Wayland 支持仍需显式启用。只有当某个 cua-driver 进程同时具有 `WAYLAND_DISPLAY` 时，Hermes 才会把该启用选项传给它（包括网关会话中的进程）：
+
+```yaml
+computer_use:
+  native_wayland: true
+```
+
+更改此设置后，请重启正在运行的网关。
 
 覆盖驱动二进制路径（测试 / CI / 本地构建）：
 
@@ -205,7 +287,8 @@ computer_use:
   cua_telemetry: true   # default: false (telemetry off)
 ```
 
-开启时，`hermes computer-use doctor` 会报告 `telemetry: enabled`；关闭时（默认），它会报告 `telemetry: disabled via CUA_DRIVER_RS_TELEMETRY_ENABLED`。
+开启时，`hermes computer-use doctor` 会报告 `telemetry: enabled`；关闭时（默认），它会报告 `telemetry: disabled via
+CUA_DRIVER_RS_TELEMETRY_ENABLED`。
 
 ## 针对本地 cua-driver 构建进行测试
 
@@ -259,8 +342,9 @@ HERMES_CUA_DRIVER_CMD=/path/to/cua/libs/cua-driver/rust/target/debug/cua-driver
 
 ### 注意事项与坑
 
-- **Hermes 会通过 stdio 派生自己的 `cua-driver mcp` 子进程**——它*不会*连接到长期运行的 `cua-driver serve` autostart 守护进程或其命名管道。因此计划任务 / LaunchAgent 对测试来说不是必需的（使用 `-NoAutoStart` 即可）。autostart 守护进程和 Windows UIAccess 工作进程（`cua-driver-uia.exe`）只在某些应用（例如 WPF）需要前台安全输入时才有意义；标准工具面通过 stdio 子进程即可工作。在 Windows SSH 会话中，autostart 模式**是**必需的——参见「限制」一节。
-- **Windows 上的二进制文件被占用。** 正在运行的 `cua-driver-serve` 守护进程可能占用 `cua-driver.exe`，导致重新构建时无法覆盖。`install-local.ps1` 会自动把被占用的二进制文件改名挪开；如果你手动执行 `cargo build`（方式 B），请先用 `cua-driver autostart disable`（或 `schtasks /End /TN cua-driver-serve`）停止它。
+- **Hermes 会派生一个 `cua-driver mcp` stdio 代理。** 在普通会话中，该代理会连接到（并可能启动）标准的机器级守护进程。在显式的 Hermes YOLO 模式下，Hermes 会改为自己持有一个私有的 `cua-driver serve --embedded` 子进程，并让代理指向它的私有套接字或命名管道。对于从 SSH 进行的交互式 Session 1+ 输入，Windows 的 autostart/UIAccess 模式仍然重要——参见「限制」一节。
+- **Windows 上的二进制文件被占用。** 正在运行的 `cua-driver-serve` 守护进程可能占用 `cua-driver.exe`，导致重新构建时无法覆盖。`install-local.ps1` 会自动把被占用的二进制文件改名挪开；如果你手动执行 `cargo build`（方式 B），请先用 `cua-driver autostart disable`（或 `schtasks /End /TN
+  cua-driver-serve`）停止它。
 - **重新构建循环。** 修改 cua-driver 源码后，方式 A 重新运行 `install-local`（重新构建、重新暂存、切换 `current` 联接），方式 B 只需重新执行 `cargo build`——两种方式都不需要改动 Hermes。
 - **本地构建跳过版本检查。** 当已安装的 cua-driver 低于其按操作系统设定的测试基线时 Hermes 会发出警告，但会豁免 `0.0.0-local-*` 开发构建——因此你的本地构建永远不会触发该警告。
 
@@ -284,8 +368,8 @@ doctor 无法捕获的特定故障模式：
 
 ## 另请参阅
 
-- **Hermes 侧技能** —— `skills/computer-use/SKILL.md` —— 讲解 Hermes 的 `computer_use` 动作词汇表；这是 Agent 实际加载的内容。
-- **cua-driver 技能包** —— 若需平台专属深度解析（macOS 无前台契约、Windows UIA + Session 0、Linux AT-SPI + X11/Wayland、录制、浏览器页面），请运行 `cua-driver skills install` 并阅读 `MACOS.md` / `WINDOWS.md` / `LINUX.md` / `RECORDING.md` / `WEB_APPS.md`。一旦 `cua-driver skills install` 支持自动检测 Hermes（计划中的后续工作），这一步将在安装时自动完成。
+- **Hermes 侧技能** —— `skills/autonomous-ai-agents/computer-use/SKILL.md` —— 讲解 Hermes 的 `computer_use` 动作词汇表；这是 Agent 实际加载的内容。
+- **cua-driver 技能包** —— 若需平台专属深度解析（macOS 无前台契约、Windows UIA + Session 0、Linux AT-SPI + X11/Wayland、录制、浏览器页面），请运行 `cua-driver skills install` 并阅读 `MACOS.md` / `WINDOWS.md` / `LINUX.md` / `RECORDING.md` / `WEB_APPS.md`。Hermes 的自动检测是计划中的后续工作；目前请让 Hermes 指向已安装的技能包目录，或将其软链接到你的技能目录中。
 - **cua.ai/docs** —— cua-driver 项目的文档：
   - [什么是电脑操控？](https://cua.ai/docs/explanation/what-is-computer-use) —— 概念介绍
   - [无前台契约](https://cua.ai/docs/explanation/the-no-foreground-contract) —— 后台模式*为何*重要

@@ -21,7 +21,7 @@ description: "当 Hermes 运行在远程机器、容器或跳板机后面时，�
 ssh -N -L 43827:127.0.0.1:43827 user@remote-host
 
 # 在远程机器的现有 SSH 会话中：
-hermes auth add spotify --no-browser
+hermes auth spotify --no-browser
 # → Hermes 打印授权 URL，在笔记本的浏览器中打开。
 # → 浏览器重定向到 127.0.0.1:43827/callback，隧道将请求转发
 #   到远程监听器，登录完成。
@@ -43,6 +43,8 @@ Hermes 会在 `Waiting for callback on ...` 一行打印实际绑定的端口—
 如果你的提供商不在表中，则不需要隧道。
 
 ## MCP 服务器 {#mcp-servers}
+
+**桌面版 Skills → MCP：** 原生应用在你的电脑上接收回调，并将其转发给所选的连接和配置文件，因此该流程不需要 SSH 回调隧道，也不需要 `dashboard.public_url`。令牌保留在所属的后端配置文件中。离开 MCP 标签页或更改其作用域会取消待处理的登录。如果桌面版提示你更新后端，请先更新再重试；它不会回退到远程 HTTP 回调。下文的终端工作流程保持不变。
 
 远程 MCP 服务器（Linear、Sentry、Atlassian、Asana、Figma 等）使用同样的回环重定向流程。Hermes 会为每台服务器自动选择一个空闲端口，并在 OAuth 流程启动时打印授权 URL——可能是在启动时（当 `mcp_servers:` 中出现新服务器时），也可能是在你运行 `hermes mcp login <server>` 时。
 
@@ -92,7 +94,7 @@ ssh -N -L 43827:127.0.0.1:43827 user@remote-host
 
 ```bash
 ssh user@remote-host
-hermes auth add spotify --no-browser
+hermes auth spotify --no-browser
 ```
 
 Hermes 检测到 SSH 会话，跳过自动打开浏览器，并打印授权 URL 以及 `Waiting for callback on http://127.0.0.1:<port>/callback`。

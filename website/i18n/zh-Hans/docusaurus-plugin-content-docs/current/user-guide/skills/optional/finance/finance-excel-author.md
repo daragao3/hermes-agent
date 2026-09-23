@@ -1,14 +1,14 @@
 ---
-title: "Excel Author"
+title: "Excel Author —— 通过 openpyxl 无头构建可审计的财务工作簿"
 sidebar_label: "Excel Author"
-description: "使用 openpyxl 无头构建可审计的 Excel 工作簿——蓝/黑/绿单元格约定、公式优先于硬编码、命名范围、余额检查、敏感性表格。"
+description: "通过 openpyxl 无头构建可审计的财务工作簿"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Excel Author
 
-使用 openpyxl 无头构建可审计的 Excel 工作簿——蓝/黑/绿单元格约定、公式优先于硬编码、命名范围、余额检查、敏感性表格。适用于财务模型、审计输出、对账。
+通过 openpyxl 无头构建可审计的财务工作簿。
 
 ## Skill 元数据
 
@@ -21,7 +21,7 @@ description: "使用 openpyxl 无头构建可审计的 Excel 工作簿——蓝/
 | 许可证 | Apache-2.0 |
 | 平台 | linux, macos, windows |
 | 标签 | `excel`, `openpyxl`, `finance`, `spreadsheet`, `modeling` |
-| 相关 skill | [`pptx-author`](/user-guide/skills/optional/finance/finance-pptx-author)、[`dcf-model`](/user-guide/skills/optional/finance/finance-dcf-model)、[`comps-analysis`](/user-guide/skills/optional/finance/finance-comps-analysis)、[`lbo-model`](/user-guide/skills/optional/finance/finance-lbo-model)、[`3-statement-model`](/user-guide/skills/optional/finance/finance-3-statement-model) |
+| 相关 skill | [`xlsx`](/user-guide/skills/bundled/productivity/productivity-xlsx)、[`pptx-author`](/user-guide/skills/optional/finance/finance-pptx-author)、[`dcf-model`](/user-guide/skills/optional/finance/finance-dcf-model)、[`comps-analysis`](/user-guide/skills/optional/finance/finance-comps-analysis)、[`lbo-model`](/user-guide/skills/optional/finance/finance-lbo-model)、[`3-statement-model`](/user-guide/skills/optional/finance/finance-3-statement-model) |
 
 ## 参考：完整 SKILL.md
 

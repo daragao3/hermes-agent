@@ -193,21 +193,21 @@ delegate_task(
 
 ## 继承的工具访问权限
 
-子代理会继承父代理已启用的工具集。`delegate_task` 不接受面向模型的 `toolsets` 参数，因此委派任务无法自行授予父代理没有的能力。如果委派任务需要网络、终端、文件或其他访问权限，请在开始对话前配置父代理的工具。Hermes 仍会移除 `clarify`、`memory` 和 `execute_code` 等对子代理屏蔽的工具。
+子代理会继承父代理已启用的工具集。`delegate_task` 不接受面向模型的 `toolsets` 参数，因此委派任务无法自行授予父代理没有的能力。如果委派任务需要网络、终端、文件或其他访问权限，请在开始对话前配置父代理的工具。Hermes 仍会移除 `clarify`、`memory` 和 `send_message` 等对子代理屏蔽的工具；子代理保留 `execute_code` 以进行程序化工具调用。
 
 ---
 
 ## 约束条件
 
-- **默认 3 个并行任务**：批次默认并发 3 个子代理（可通过 config.yaml 中的 `delegation.max_concurrent_children` 配置，无硬性上限，最低为 1）
-- **嵌套委托需显式启用**：叶子子代理（默认）无法调用 `delegate_task`、`clarify`、`memory`、`send_message` 或 `execute_code`。编排器子代理（`role="orchestrator"`）保留 `delegate_task` 以支持进一步委托，但仅在 `delegation.max_spawn_depth` 高于默认值 1 时生效（支持 1-3）；其余四项仍被禁用。可通过 `delegation.orchestrator_enabled: false` 全局禁用。
+- **默认 10 个并行任务**：批次默认并发 10 个子代理（可通过 config.yaml 中的 `delegation.max_concurrent_children` 配置，无硬性上限，最低为 1）
+- **嵌套委托需显式启用**：叶子子代理（默认）无法调用 `delegate_task`、`clarify`、`memory` 或 `execute_code`。编排器子代理（`role="orchestrator"`）保留 `delegate_task` 以支持进一步委托，但仅在 `delegation.max_spawn_depth` 高于默认值 1 时生效（最低为 1，无上限）；其余三项仍被禁用。可通过 `delegation.orchestrator_enabled: false` 全局禁用。
 
 ### 调整并发数与深度
 
 | 配置项 | 默认值 | 范围 | 效果 |
 |--------|---------|-------|--------|
-| `max_concurrent_children` | 3 | >=1 | 每次 `delegate_task` 调用的并行批次大小 |
-| `max_spawn_depth` | 1 | 1-3 | 可进一步生成子代理的委托层级数 |
+| `max_concurrent_children` | 10 | >=1 | 每次 `delegate_task` 调用的并行批次大小 |
+| `max_spawn_depth` | 1 | >=1 | 可进一步生成子代理的委托层级数 |
 
 示例：运行 30 个并行 worker 并启用嵌套子代理：
 
@@ -219,7 +219,7 @@ delegation:
 
 - **独立终端** — 每个子代理拥有独立的终端会话，具有独立的工作目录和状态
 - **无对话历史** — 子代理只能看到父代理调用 `delegate_task` 时传入的 `goal` 和 `context`
-- **默认 50 次迭代** — 对简单任务设置较低的 `max_iterations` 以节省成本
+- **默认 250 次迭代** — 对于由简单任务组成的批量子代理，可在 `config.yaml` 中将 `delegation.max_iterations` 设低以节省成本
 - **非持久性** — 顶层委派会在后台运行并稍后发送结果，但仍依赖所属会话和 Hermes 进程。会话关闭、`/stop`、`/new` 或进程重启都可能取消或遗留正在执行的工作。对于必须跨越这些边界继续运行的任务，请使用 `cronjob` 或 `terminal(background=True, notify_on_complete=True)`。
 
 ---
@@ -233,6 +233,8 @@ delegation:
 **利用委托实现上下文隔离。** 有时你需要全新的视角。委托迫使你清晰地阐述问题，而子代理会在没有对话中积累的假设前提下处理它。
 
 **核验结果。** 子代理的摘要只是摘要。如果子代理说"修复了 bug 且测试通过"，请自行运行测试或查看 diff 来验证。
+
+**失败会被显式报告。** 子代理异常终止（提供商错误、超时、崩溃）时，会以一行简洁的通知报告——`⚠️ Subagent failed — "your goal": <reason>`——在 CLI 委托树中显示，在网关平台上则作为聊天通知发出，即使关闭了工具进度显示也是如此。父代理也会在工具结果中收到完整的错误信息。
 
 ---
 

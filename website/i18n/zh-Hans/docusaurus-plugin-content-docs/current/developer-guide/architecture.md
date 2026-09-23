@@ -52,11 +52,11 @@ description: "Hermes Agent 内部结构——主要子系统、执行路径、�
 
 ```text
 hermes-agent/
-├── run_agent.py              # AIAgent — 核心对话循环（大文件）
-├── cli.py                    # HermesCLI — 交互式终端 UI（大文件）
+├── run_agent.py              # AIAgent 门面——循环位于 agent/conversation_loop.py + agent/turn_*.py
+├── cli.py                    # HermesCLI 门面——mixin 位于 hermes_cli/cli_*_mixin.py
 ├── model_tools.py            # 工具发现、schema 收集、分发
 ├── toolsets.py               # 工具分组与平台预设
-├── hermes_state.py           # 带 FTS5 的 SQLite 会话/状态数据库
+├── hermes_state.py           # SQLite 会话/状态数据库门面（+ hermes_state_*.py 兄弟模块）
 ├── hermes_constants.py       # HERMES_HOME、感知 profile 的路径
 ├── batch_runner.py           # 批量轨迹生成
 │
@@ -76,14 +76,14 @@ hermes-agent/
 │   └── trajectory.py         # 轨迹保存辅助函数
 │
 ├── hermes_cli/               # CLI 子命令与设置
-│   ├── main.py               # 入口点——所有 `hermes` 子命令（大文件）
+│   ├── main.py               # 入口点——`hermes` 子命令（解析器位于 subcommands/、main_*.py）
 │   ├── config.py             # DEFAULT_CONFIG、OPTIONAL_ENV_VARS、迁移
 │   ├── commands.py           # COMMAND_REGISTRY——斜杠命令中央定义
-│   ├── auth.py               # PROVIDER_REGISTRY、凭据解析
+│   ├── auth.py               # PROVIDER_REGISTRY、凭据解析（+ auth_*.py 兄弟模块）
 │   ├── runtime_provider.py   # Provider → api_mode + 凭据
 │   ├── models.py             # 模型目录、provider 模型列表
 │   ├── model_switch.py       # /model 命令逻辑（CLI + gateway 共用）
-│   ├── setup.py              # 交互式设置向导（大文件）
+│   ├── setup.py              # 交互式设置向导（+ setup_*.py 兄弟模块）
 │   ├── skin_engine.py        # CLI 主题引擎
 │   ├── skills_config.py      # hermes skills——按平台启用/禁用
 │   ├── skills_hub.py         # /skills 斜杠命令
@@ -99,17 +99,17 @@ hermes-agent/
 │   ├── process_registry.py   # 后台进程管理
 │   ├── file_tools.py         # read_file、write_file、patch、search_files
 │   ├── web_tools.py          # web_search、web_extract
-│   ├── browser_tool.py       # 10 个浏览器自动化工具
+│   ├── browser_tool.py       # 浏览器自动化工具门面（+ browser_tool_*.py 兄弟模块）
 │   ├── code_execution_tool.py # execute_code 沙箱
 │   ├── delegate_tool.py      # 子 agent 委托
-│   ├── mcp_tool.py           # MCP 客户端（大文件）
+│   ├── mcp_tool.py           # MCP 客户端门面（+ mcp_tool_*.py 兄弟模块）
 │   ├── credential_files.py   # 基于文件的凭据透传
 │   ├── env_passthrough.py    # 沙箱环境变量透传
 │   ├── ansi_strip.py         # ANSI 转义字符剥离
 │   └── environments/         # 终端后端（local、docker、ssh、modal、daytona、singularity）
 │
 ├── gateway/                  # 消息平台 gateway
-│   ├── run.py                # GatewayRunner——消息分发（大文件）
+│   ├── run.py                # GatewayRunner 门面——消息分发（+ run_*.py 兄弟模块）
 │   ├── session.py            # SessionStore——对话持久化
 │   ├── delivery.py           # 出站消息投递
 │   ├── pairing.py            # DM 配对授权
@@ -117,11 +117,13 @@ hermes-agent/
 │   ├── mirror.py             # 跨会话消息镜像
 │   ├── status.py             # Token 锁、profile 范围的进程追踪
 │   ├── builtin_hooks/        # 始终注册的 hook 扩展点（当前无内置）
-│   └── platforms/            # 20 个适配器：telegram、discord、slack、whatsapp、
-│                             #   signal、matrix、mattermost、email、sms、
-│                             #   dingtalk、feishu、wecom、wecom_callback、weixin、
-│                             #   bluebubbles、qqbot、homeassistant、webhook、api_server、
-│                             #   yuanbao
+│   └── platforms/            # 内置适配器：signal、weixin、bluebubbles、
+│                             #   qqbot、whatsapp_cloud、yuanbao、webhook、api_server
+│
+├── plugins/platforms/        # 捆绑的平台插件：telegram、discord、slack、
+│                             #   whatsapp、matrix、mattermost、email、sms、dingtalk、
+│                             #   feishu、wecom、homeassistant、irc、line、teams、
+│                             #   google_chat、buzz、ntfy、photon、raft、simplex
 │
 ├── acp_adapter/              # ACP 服务器（VS Code / Zed / JetBrains）
 ├── cron/                     # 调度器（jobs.py、scheduler.py）
@@ -130,7 +132,7 @@ hermes-agent/
 ├── skills/                   # 内置 skill（始终可用）
 ├── optional-skills/          # 官方可选 skill（需显式安装）
 ├── website/                  # Docusaurus 文档站点
-└── tests/                    # Pytest 测试套件（3,000+ 个测试）
+└── tests/                    # Pytest 测试套件（约 1,250 个文件中的约 25,000 个测试）
 ```
 
 ## 数据流
@@ -189,7 +191,7 @@ hermes-agent/
 
 ### Agent 循环
 
-同步编排引擎（`run_agent.py` 中的 `AIAgent`）。负责 provider 选择、prompt 构建、工具执行、重试、回退、回调、压缩和持久化。支持三种 API 模式以适配不同 provider 后端。
+同步编排引擎（`AIAgent`，由 `run_agent.py` 门面对外暴露；循环本身位于 `agent/conversation_loop.py` 和 `agent/turn_*.py`）。负责 provider 选择、prompt 构建、工具执行、重试、回退、回调、压缩和持久化。支持三种 API 模式以适配不同 provider 后端。
 
 → [Agent 循环内部机制](./agent-loop.md)
 
@@ -223,7 +225,7 @@ CLI、gateway、cron、ACP 及辅助调用共用的运行时解析器。将 `(pr
 
 ### 消息 Gateway
 
-长驻进程，包含 20 个平台适配器、统一会话路由、用户授权（白名单 + DM 配对）、斜杠命令分发、hook 系统、cron 触发和后台维护。
+长驻进程，包含 25+ 个平台适配器（内置 + 捆绑插件）、统一会话路由、用户授权（白名单 + DM 配对）、斜杠命令分发、hook 系统、cron 触发和后台维护。
 
 → [Gateway 内部机制](./gateway-internals.md)
 

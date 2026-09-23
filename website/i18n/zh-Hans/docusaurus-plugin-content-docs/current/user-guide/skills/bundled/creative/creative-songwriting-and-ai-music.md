@@ -16,6 +16,9 @@ description: "歌词创作与 Suno AI 音乐提示词"
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/creative/songwriting-and-ai-music` |
+| 版本 | `1.0.0` |
+| 作者 | Teknium (teknium1), Hermes Agent |
+| 许可证 | MIT |
 | 平台 | linux, macos, windows |
 
 ## 参考：完整 SKILL.md

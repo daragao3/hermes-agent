@@ -1,14 +1,14 @@
 ---
-title: "Simplify Code —— 用 3 个并行 agent 清理最近的代码改动"
+title: "Simplify Code —— 用 4 个并行 agent 清理最近的代码改动"
 sidebar_label: "Simplify Code"
-description: "用 3 个并行 agent 清理最近的代码改动"
+description: "用 4 个并行 agent 清理最近的代码改动"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Simplify Code
 
-用 3 个并行 agent 清理最近的代码改动。
+用 4 个并行 agent 清理最近的代码改动。
 
 ## Skill 元数据
 
@@ -16,12 +16,12 @@ description: "用 3 个并行 agent 清理最近的代码改动"
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/software-development/simplify-code` |
-| 版本 | `1.0.0` |
+| 版本 | `1.1.0` |
 | 作者 | Hermes Agent（灵感来自 Claude Code /simplify） |
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `code-review`, `cleanup`, `refactor`, `delegation`, `subagent`, `parallel`, `simplify` |
-| 相关 skill | [`requesting-code-review`](/user-guide/skills/bundled/software-development/software-development-requesting-code-review)、[`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development)、[`plan`](/user-guide/skills/bundled/software-development/software-development-plan) |
+| 相关 skill | [`requesting-code-review`](/user-guide/skills/bundled/software-development/software-development-requesting-code-review)、[`test-driven-development`](/user-guide/skills/bundled/software-development/software-development-test-driven-development) |
 
 ## 参考：完整 SKILL.md
 
@@ -31,9 +31,11 @@ description: "用 3 个并行 agent 清理最近的代码改动"
 
 # Simplify Code —— 并行评审与清理
 
-用三个各有专注方向的评审者并行评审你最近的代码改动，汇总它们的发现，并应用其中值得应用的修复。
+用四个各有专注方向的评审者并行评审你最近的代码改动，汇总它们的发现，并应用其中值得应用的修复。
 
-**核心原则：** 三个窄口径评审者胜过一个宽口径评审者。每个评审者都针对单一类问题——复用、质量、效率——深入搜索代码库，而不会把注意力摊薄到三者之上。它们并发运行，所以你只需付出一次评审的延迟，而不是三次。
+**这是一次清理，而不是抓 bug。** 你是在提升已经能正常工作的代码的质量——消除重复、拍平不必要的复杂度、削减浪费、把治标的修补改为治本。不要在这里搜寻正确性 bug；那是 `requesting-code-review` 的职责。
+
+**核心原则：** 四个窄口径评审者胜过一个宽口径评审者。每个评审者都针对单一类问题——复用、质量、效率、层次（altitude）——深入搜索代码库，而不会把注意力摊薄到四者之上。它们并发运行，所以你只需付出一次评审的延迟，而不是四次。
 
 ## 适用场景
 
@@ -47,14 +49,14 @@ description: "用 3 个并行 agent 清理最近的代码改动"
 
 - **聚焦：** "simplify focus on efficiency" → 只运行效率评审者
   （或在汇总时向它倾斜）。可识别的聚焦方向：`reuse`、
-  `quality`、`efficiency`。
+  `quality`（也接受 `simplification`）、`efficiency`、`altitude`。
 - **空跑：** "simplify but don't change anything" / "just report" → 运行
-  三个评审者，呈现发现，但不应用任何改动。应用前先询问。
+  四个评审者，呈现发现，但不应用任何改动。应用前先询问。
 - **范围：** "simplify the last commit" / "simplify staged" / "simplify
   src/foo.py" → 相应地收窄 diff 来源（见阶段 1）。
 
-不要在每次编辑后自动运行它。它会消耗三个 subagent 份额的
-token——只在用户明确要求时才调用。
+不要在每次编辑后自动运行它，也不要把它附加到无关任务的末尾。它会消耗四个
+subagent 份额的 token——只在用户明确要求时才调用。
 
 ## 流程
 
@@ -78,13 +80,15 @@ git diff -- src/foo.py            # specific file(s)
 
 如果 `git diff` 和 `git diff HEAD` 都为空，且不存在 git 仓库或没有任何改动，就退回到用户明确点名的文件，或本次会话中最近创建/编辑过的文件。如果你确实找不到任何改动过的代码，就明说并停止——没有什么可以简化的。
 
-抓取完整的 diff 文本。留意它的体量：如果非常大（比如超过 2000 行改动），提醒用户三个 subagent 各自携带完整 diff 会非常耗 token，并在继续之前提出把范围收窄（按目录、按提交）。
+抓取完整的 diff 文本。留意它的体量：如果非常大（比如超过 2000 行改动），提醒用户四个 subagent 各自携带完整 diff 会非常耗 token，并在继续之前提出把范围收窄（按目录、按提交）。
 
-### 阶段 2 —— 并行启动三个评审者
+### 阶段 2 —— 并行启动四个评审者
 
-使用 `delegate_task` 的**批处理模式**——把三个任务放在同一个 `tasks`
-数组里传入，让它们并发运行。三是这个模式下合适的扇出数；
+使用 `delegate_task` 的**批处理模式**——把四个任务放在同一个 `tasks`
+数组里传入，让它们并发运行。四是这个模式下合适的扇出数；
 它在任何默认安装的 `delegation.max_concurrent_children` 预算之内。
+
+**无法委派？** 如果你在当前上下文中无法调用 `delegate_task`（你是一个叶子 subagent、委派被禁用，或预算已耗尽），不要跳过评审，也不要丢掉任何角度。自己在当前上下文中依次完成全部四个评审角度——同样的搜索标准、同样的发现格式。然后在最终总结中明确说明，这是一次单遍的内联评审，而不是并行扇出，好让用户知道实际运行的是什么。
 
 给**每个**评审者**完整的 diff**（不是片段——跨文件的问题就藏在片段之间的缝隙里），外加仓库的绝对路径，好让它们能搜索更大范围的代码库。每个评审者都获得 `terminal`、`file` 和 `search`
 工具集（这样它们可以用 `git`、`read_file` 和 `search_files`/grep）。
@@ -94,10 +98,11 @@ git diff -- src/foo.py            # specific file(s)
 - **应用切斯特顿栅栏原则：** 在标记任何东西可删除之前，先对该行运行
   `git blame`，弄清它为什么存在。如果你无法确定它最初的用途，标记为
   `confidence: low`——不要猜。
-- 以结构化输出报告发现，带上置信度和风险：
+- 以结构化输出报告发现，带上具体代价、置信度和风险：
   ```
-  file:line → problem → suggested fix | confidence: high/medium/low | risk: SAFE/CAREFUL/RISKY
+  file:line → problem → cost (what's duplicated/wasted/harder to maintain) → suggested fix | confidence: high/medium/low | risk: SAFE/CAREFUL/RISKY
   ```
+  **cost（代价）**字段迫使每条发现为自己正名——一条说不清问题究竟带来什么代价的发现，多半只是吹毛求疵。
   - **SAFE** = 已证明不影响行为（未使用的 import、被注释掉的
     代码、纯透传封装）。这些自动应用。
   - **CAREFUL** = 在不改变语义的前提下改进（重命名局部变量、
@@ -107,7 +112,7 @@ git diff -- src/foo.py            # specific file(s)
     人工评审——不要自动应用。
 - 跳过吹毛求疵和纯风格的改动。只标记那些能实质改进代码的问题。
 
-传入下面这三个目标（用户的聚焦方向排除掉哪个就删掉哪个）：
+传入下面这四个目标（用户的聚焦方向排除掉哪个就删掉哪个）：
 
 **评审者 1 —— 代码复用**
 > 评审此 diff，找出重复实现了代码库中已有功能的代码。
@@ -126,7 +131,8 @@ git diff -- src/foo.py            # specific file(s)
 > 复制粘贴加微调（本该共享一层抽象的近似重复代码块）；
 > 抽象泄漏（暴露内部实现、打破已有的封装边界）；
 > 字符串化编程（在已有常量/枚举/注册表的地方使用裸字符串——标记前
-> 先检查规范的注册表）；AI 生成的糊弄式模式（在 `count++` 上方写
+> 先检查规范的注册表）；深层嵌套的条件判断（三元表达式链、3 层以上的
+> if/else 金字塔——用卫语句、提前返回或查找表来拍平）；AI 生成的糊弄式模式（在 `count++` 上方写
 > `// increment counter` 这类复述显而易见代码的多余注释；对已校验输入
 > 做不必要的防御性 null 检查；绕过类型系统的 `as any`
 > 转换；与文件其余部分不一致的写法）。对每一项，给出具体的重构方案。
@@ -138,17 +144,33 @@ git diff -- src/foo.py            # specific file(s)
 > 热路径臃肿（启动或每请求路径上的重量级/阻塞工作）；
 > TOCTOU 反模式（在操作前先做存在性预检查，而不是直接
 > 执行并处理错误）；内存问题（无界增长、缺少
-> 清理、监听器/句柄泄漏）；读取范围过大（本可只读一小段
+> 清理、监听器/句柄泄漏；以捕获整个外层作用域的闭包形式构建的长生命周期
+> 回调或对象——被捕获的一切都会与该对象同生共死，因此更推荐只复制所需内容的
+> 小型类或显式字段结构体）；读取范围过大（本可只读一小段
 > 却加载整个文件）；静默失败（空的 catch 块、被忽略的错误
 > 返回值、`except: pass`、不做任何处理的 `.catch(() => {})`、错误
 > 传播断层——这些会掩盖 bug，至少也应该在吞掉之前记录
 > 日志）。对每一项，给出具体的修复方案，并说明为什么更快或更安全。
 
+**评审者 4 —— 层次（Altitude）**
+> 评审此 diff 中实现深度不对的改动——在共享基础设施之上叠加的
+> 治标补丁，而不是对基础设施本身的修复。修复过浅的迹象：为了处理某一个
+> 调用方而在通用代码路径中加入特殊分支（一个 `if (caller == X)` 分支、
+> 一次类型检查、一个魔法值逃生口）；在调用点修补症状，而同级的其他调用点
+> 仍保留同样的缺陷；在早先的变通方案之上再叠一层变通方案；为了避免改动
+> 真正需要改的东西而加一层封装；引入配置或标志来绕开一个有问题的默认值，
+> 而不是修复这个默认值。对每一项，指出该改动所回避的底层机制，并描述
+> 更深层的修复——泛化共享路径、修复根本的默认值，或修掉整类 bug——
+> 同时如实指出更深层的修复何时大到应当作为独立任务，而非本次清理的一部分。
+> 先阅读周边代码并运行 `git blame`：看起来像治标补丁的东西，有时是有意设置
+> 的边界（兼容垫片、分阶段迁移、对 vendored 代码的隔离）。不要标记这些。
+
 ### 阶段 3 —— 汇总并应用
 
-等待三个评审者全部返回（批处理模式会一起返回）。
+等待四个评审者全部返回（批处理模式会一起返回）。
 
-1. **合并**这些发现为一个列表，对评审者之间重叠的部分去重。
+1. **合并**这些发现为一个列表，对评审者之间重叠的部分去重——
+   当两条发现指向同一行或同一底层机制时，把它们合并为一条。
 2. **丢弃误报**——你掌握的上下文最多；你不必
    跟评审者争辩，直接静默丢掉薄弱或错误的建议即可。
 3. **解决冲突。** 评审者之间可能意见相左（评审者 1："使用现有的
@@ -164,17 +186,19 @@ git diff -- src/foo.py            # specific file(s)
      测试。任何导致失败的改动都回退。
    - **最后 RISKY**（标记待评审——不要自动应用）：N+1 重构、
      公共 API 变更、并发修复、错误处理变更。逐条呈现，
-     附上风险描述和测试覆盖状况。
+     附上风险描述和测试覆盖状况。层次类发现通常落在这里——
+     加深修复意味着要改动共享基础设施，因此请呈现更深层的修复方案，
+     由用户决定现在就做还是作为后续任务。
    如果用户选择了空跑，就呈现全部三个等级，不应用任何改动。
 5. **验证**你没有弄坏任何东西：对被改动的文件运行项目的针对性测试
    （不是整个测试套件），并重新运行仓库使用的任何 linter/类型检查。如果某个修复弄坏了测试，就回退那一个修复并报告。
 6. **总结**你改了什么：按评审者类别和风险等级分组的已应用修复简表，
-   外加任何你有意跳过的发现及其原因。
+   外加任何你有意跳过的发现及其原因。如果你是以内联方式运行的（没有委派），也在这里说明。
 
 ## 陷阱
 
-- **扇出不要超过 ~3 个。** 更多评审者意味着更高成本、更多需要调和的
-  相互冲突的建议，而不是更好的覆盖率。三个类别
+- **扇出不要超过 4 个。** 更多评审者意味着更高成本、更多需要调和的
+  相互冲突的建议，而不是更好的覆盖率。这四个类别
   已经覆盖了这个问题空间。
 - **把完整的 diff 交给每个评审者。** 把 diff 拆开分给不同评审者
   会破坏这个设计——跨文件重复和 N+1 只有在完整视图下才会显现。
@@ -183,12 +207,17 @@ git diff -- src/foo.py            # specific file(s)
   `file:line` 证据；丢弃缺少证据的发现。
 - **应用 ≠ 重写。** 这是对用户最近改动的清理，不是
   重构整个模块的许可证。把编辑范围控制在 diff 触及的部分
-  加上修复所需的最小周边改动。
+  加上修复所需的最小周边改动。层次类发现恰恰是印证这条规则的例外：
+  当正确的修复比 diff 更深时，要把它**标记**出来——不要在一次清理中
+  擅自重建共享机制。
+- **不要滑向抓 bug。** 如果某个评审者发现了真正的正确性 bug，
+  要醒目地报告它——但作为单独的"发现了一个 bug"说明，而不是混进
+  清理修复里。正确性评审是另一轮工作，验证标准也不同。
 - **尊重项目约定。** 如果仓库里有 AGENTS.md / CLAUDE.md /
   HERMES.md 或某个 linter 配置，把那些规则揉进评审者的提示词里，
   好让建议符合本项目的风格而不是与之对抗。
 - **大 diff 会撑爆上下文。** 如果 diff 特别大，先收窄范围再
-  委派——三个 subagent 各自携带 5000 行 diff 既昂贵，
+  委派——四个 subagent 各自携带 5000 行 diff 既昂贵，
   又可能被截断。
 - **过度信任死代码工具。** `knip`、`ts-prune` 和 `depcheck` 会把
   确实被动态使用的导出（基于字符串的 import、反射）标记出来。删除前务必
@@ -200,10 +229,13 @@ git diff -- src/foo.py            # specific file(s)
 - **删除"不必要的"错误处理。** 一个空的 catch 块或被忽略的
   错误可能是有意为之——在那个上下文里错误是预期且无害的。
   标记它，不要删除它；让人来决定。
+- **不是每个特殊分支都是治标补丁。** 兼容垫片、分阶段迁移以及
+  围绕 vendored 代码的隔离层，看起来像层次问题，实则是有意的设计。
+  标记前先查看 `git blame` 和周边注释；意图不明时，标记为 `confidence: low`。
 
 ## 相关
 
 如果你的安装带有 `subagent-driven-development` skill（可选），它
 覆盖的是互补的场景：在实现*过程中*按任务进行并行评审。
 本 skill 则是独立的*事后*清理环节。提交前的安全/质量把关请使用
-`requesting-code-review`。
+`requesting-code-review`——那是抓 bug；这是清理。

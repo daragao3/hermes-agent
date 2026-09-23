@@ -11,6 +11,17 @@ description: 使用 xAI 内置的 x_search Responses 工具在 agent 内搜索 X
 
 **当你明确需要 X 上的当前讨论、反应或观点时，请使用此工具而非 `web_search`。** 对于一般网页内容，继续使用 `web_search` / `web_extract`。
 
+## `x_search` 与 `xurl` {#x_search-vs-xurl}
+
+Hermes 可以提供两种不同的 X 接入面：
+
+| 接入面 | 适用于 | 不适用于 |
+|--------|--------|----------|
+| `x_search` | 只读的公开 X 内容发现：当前讨论、反应、观点、账号、话题串，以及带引用的综合回答。 | 发帖、回复、点赞、私信、上传媒体、删除，或证明某个已认证 X 账号的状态发生了变化。 |
+| `xurl` skill | 精确或需要认证的 X API 操作：`post`、`reply`、`read`、`like`、`dm`、时间线、提及、媒体上传、特定账号的读取，以及原始 v2 端点。 | 当 `x_search` 可用且不需要已认证账号上下文时，由 Grok 综合的大范围公开 X 调研。 |
+
+对于混合工作流，先用 `x_search` 发现候选的公开帖子，在目标帖子/用户/操作明确后，再切换到 `xurl read` 或其他精确的 `xurl` 命令。任何会改变 X 状态的操作都必须由 `xurl` 输出或 X API 响应来确认；`x_search` 的回答永远不能作为写操作已发生的证据。
+
 :::tip
 如果你本来就在为某个 xAI 模型付费使用 Portal，那么 Live Search 调用会计入为聊天配置的同一个 xAI 密钥。参见 [Nous Portal](/integrations/nous-portal)。
 :::
@@ -21,10 +32,10 @@ description: 使用 xAI 内置的 x_search Responses 工具在 agent 内搜索 X
 
 | 凭据 | 来源 | 配置方式 |
 |------|------|---------|
-| **SuperGrok / X Premium+ OAuth**（推荐） | 在 `accounts.x.ai` 浏览器登录，自动刷新 | `hermes auth add xai-oauth` — 参见 [xAI Grok OAuth (SuperGrok / X Premium+)](../../guides/xai-grok-oauth.md) |
-| **`XAI_API_KEY`** | 付费 xAI API 密钥 | 在 `~/.hermes/.env` 中设置 |
+| **SuperGrok / X Premium+ OAuth** | 在 `accounts.x.ai` 浏览器登录，自动刷新 | `hermes auth add xai-oauth` — 参见 [xAI Grok OAuth (SuperGrok / X Premium+)](../../guides/xai-grok-oauth.md) |
+| **`XAI_API_KEY`**（推荐） | 付费 xAI API 密钥 | 在 `~/.hermes/.env` 中设置 |
 
-两者使用相同的 endpoint 和相同的请求体，区别仅在于 bearer token。**当两者同时配置时，SuperGrok OAuth 优先**，x_search 将消耗你的订阅配额而非付费 API 用量。
+两者使用相同的 endpoint 和相同的请求体，区别仅在于 bearer token。**当两者同时配置时，显式设置的 `XAI_API_KEY` 优先**——订阅 OAuth bearer 虽然能授权 `/v1/responses`，但会以降级的 Grok 解释模式回答 x_search，且不附带引用；而 API 密钥会返回真实的帖子。注意，这意味着设置了密钥时 x_search 按 API 计量计费；移除 `XAI_API_KEY` 即可回退到你的订阅配额（但需接受上述降级回答的限制）。
 
 工具的 `check_fn` 在每次重建模型工具列表时都会运行 xAI 凭据解析器。返回 `True` 表示 bearer token 可获取、非空，且（若已过期）已成功刷新。刷新失败的已撤销 token 会将该工具从 schema 中隐藏，模型将无法感知其存在。
 
@@ -117,6 +128,8 @@ agent 将：
 2. 获取综合回答及指向具体帖子的引用列表
 3. 回复包含答案和参考来源
 
+如果用户接下来的请求是"回复最好的那条"或"给那条帖子点赞"，agent 应切换到 `xurl` skill，确认确切的目标帖子，并使用 X API 操作。`x_search` 始终只是一个发现工具。
+
 ## 故障排查
 
 ### "No xAI credentials available"
@@ -147,5 +160,6 @@ agent 将：
 ## 另请参阅
 
 - [xAI Grok OAuth (SuperGrok / Premium+)](../../guides/xai-grok-oauth.md) — OAuth 配置指南
+- [xurl skill](../skills/bundled/social-media/social-media-xurl.md) — 用于已认证账号操作的官方 X API CLI
 - [Web 搜索与提取](web-search.md) — 用于一般（非 X）网页搜索
 - [工具参考](../../reference/tools-reference.md) — 完整工具目录

@@ -152,7 +152,7 @@ Hermes 在会话启动时从当前工作目录加载顶层 `AGENTS.md`。子目�
 使用 `/model` 在会话中途切换模型。对于复杂推理和架构决策，使用前沿模型（Claude Sonnet/Opus、GPT-4o）；对于格式化、重命名或样板代码生成等简单任务，切换到更快的模型。请注意，每次切换都会重置 prompt 缓存（见上文），因此在长会话中，直接用另一个模型开启新会话往往比来回切换更省钱。
 
 :::tip
-定期运行 `/usage` 查看 token 消耗情况。运行 `/insights` 可查看过去 30 天的用量模式概览。
+定期运行 `/usage` 查看 token 消耗情况。运行 `/insights` 可查看过去 30 天的用量模式概览。若想在任何对话开始之前了解每条消息的*固定*开销——系统提示词、skills 索引、记忆、工具 schema——请运行 [`hermes prompt-size`](/reference/cli-commands#hermes-prompt-size)（可离线使用）。
 :::
 
 ## 消息技巧

@@ -33,6 +33,7 @@ Hermes Agent 包含一套丰富的能力，远超基础聊天范畴。从持久�
 ## 媒体与网络
 
 - **[语音模式](voice-mode.md)** — 跨 CLI 和消息平台的完整语音交互。使用麦克风与 Agent 对话，收听语音回复，并在 Discord 语音频道中进行实时语音对话。
+- **[唤醒词](wake-word.md)** — 适用于 CLI、TUI 和桌面应用的免手动 "Hey Hermes" 触发。设备端的热词监听器会在你说出唤醒短语时启动语音会话。
 - **[浏览器自动化](browser.md)** — 支持多种后端的完整浏览器自动化：Browserbase 云端、Browser Use 云端、通过 CDP 连接的本地 Chrome/Brave/Chromium/Edge，或本地 Chromium。可导航网站、填写表单并提取信息。
 - **[视觉与图片粘贴](vision.md)** — 多模态视觉支持。将剪贴板中的图片粘贴到 CLI，并使用任意支持视觉的模型请求 Agent 分析、描述或处理图片。
 - **[图像生成](image-generation.md)** — 使用 FAL.ai 从文本 prompt 生成图像。支持十一种模型（FLUX 2 Klein/Pro、GPT-Image 1.5/2、Nano Banana Pro、Ideogram V3、Recraft V4 Pro、Qwen、Z-Image Turbo、Krea V2 Medium/Large）；可通过 `hermes tools` 选择。

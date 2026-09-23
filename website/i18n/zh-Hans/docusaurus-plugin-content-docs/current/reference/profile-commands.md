@@ -83,7 +83,7 @@ hermes profile create <name> [options]
 |-------------------|-------------|
 | `<name>` | 新 profile 的名称。必须是合法的目录名（字母数字、连字符、下划线）。 |
 | `--clone` | 从当前 profile 复制 `config.yaml`、`.env`、`SOUL.md` 和 skills。 |
-| `--clone-all` | 从当前 profile 复制所有内容（config、memories、skills、cron、plugins）。会排除每个 profile 自己的历史数据：sessions、`state.db`、backups、state-snapshots、checkpoints。 |
+| `--clone-all` | 从当前 profile 复制所有内容（config、memories、skills、plugins）。会排除每个 profile 自己的历史数据：sessions、`state.db`、backups、state-snapshots、checkpoints——以及 cron 任务，它们仍绑定在源 profile 上（若克隆继承了它们，每个任务都会触发两次）。 |
 | `--clone-from <profile>` | 从指定 profile 克隆 config/skills/SOUL，而非当前 profile。除非与 `--clone-all` 配合使用，否则会隐含 `--clone`。 |
 | `--no-alias` | 跳过 wrapper 脚本创建。 |
 | `--description "<text>"` | 一到两句话描述该 profile 的用途。供 kanban 编排器根据角色而非仅凭 profile 名称来路由任务。可跳过，稍后通过 `hermes profile describe` 添加。持久化保存在 `<profile_dir>/profile.yaml` 中。 |
@@ -165,7 +165,7 @@ hermes profile delete mybot --yes
 ```
 
 :::warning
-此操作将永久删除 profile 的整个目录，包括所有 config、memories、sessions 和 skills。无法删除当前活跃的 profile。
+此操作将永久删除 profile 的整个目录，包括所有 config、memories、sessions 和 skills。`default` profile（`~/.hermes`）无法删除——如需移除全部内容，请使用 `hermes uninstall`。
 :::
 
 ## `hermes profile show`
@@ -250,7 +250,9 @@ hermes profile rename mybot assistant
 hermes profile export <name> [options]
 ```
 
-将 profile 导出为压缩的 tar.gz 归档文件。
+将 profile 导出为压缩的 tar.gz 归档文件——一个可移植的快照，可用于备份、迁移到另一台机器，或交给他人使用。`auth.json` 和 `.env` 始终被排除。
+
+在聊天中也可用 [`/export`](./slash-commands.md)；在桌面应用中可通过 **⌘K → Export profile…** 或 profile 方块的右键菜单使用。桌面端导出还会额外把 `desktop.json`（皮肤、明暗模式、自定义主题、侧栏颜色、窗口布局）放入归档。
 
 | 参数 / 选项 | 描述 |
 |-------------------|-------------|
@@ -266,13 +268,17 @@ hermes profile export work
 hermes profile export work -o ./work-2026-03-29.tar.gz
 ```
 
+关于归档中究竟包含哪些内容、以及发给他人之前需要检查什么，参见[导出和导入 profile 文件](../user-guide/profile-distributions.md#export-and-import-a-profile-file)。
+
 ## `hermes profile import`
 
 ```bash
 hermes profile import <archive> [options]
 ```
 
-从 tar.gz 归档文件导入 profile。
+从 tar.gz 归档文件导入 profile，作为一个新 profile。拒绝覆盖已有 profile，也不能以 `default`（内置的根 profile）的名义导入——这两种情况下都请传入 `--name`。当名称与现有命令不冲突时，会创建一个 shell 包装脚本。
+
+在聊天中也可用 [`/import`](./slash-commands.md)；在桌面应用中可通过 **⌘K → Import profile…** 或 profile 栏 **+** 旁的导入按钮使用。桌面端导入还会应用归档中附带的 `desktop.json` 覆盖配置（主题、布局），并切换到新 profile。
 
 | 参数 / 选项 | 描述 |
 |-------------------|-------------|
@@ -301,7 +307,7 @@ hermes profile import ./work-2026-03-29.tar.gz --name work-restored
 接收方的用户数据（memories、sessions、auth、对 `.env` 的自有编辑）在初次安装和后续更新中始终得到保留。
 
 :::info
-`hermes profile export` / `import` 仍是在**本机进行 profile 本地备份和恢复**的正确命令。发行版（`install` / `update` / `info`）是独立概念：通过 git 分发 profile，供他人安装。
+共享 profile 有两种方式，二者互为补充。`hermes profile export` / `import`（在聊天中也可用 `/export` 和 `/import`）生成的是**单个文件**——无需仓库、无需清单，桌面端导出还会带上你的主题和布局。发行版（`install` / `update` / `info`）则将 profile 发布为 **git 仓库**，接收方之后可以拉取带版本的更新。备份与恢复是导出文件的另一个用途。参见[共享 profile 的两种方式](../user-guide/profile-distributions.md#two-ways-to-share-a-profile)。
 :::
 
 ### `hermes profile install`

@@ -1,17 +1,14 @@
 ---
-title: "Oss Forensics — GitHub 仓库的供应链调查、证据恢复与取证分析"
+title: "Oss Forensics — GitHub 供应链取证：恢复、IOC、报告"
 sidebar_label: "Oss Forensics"
-description: "GitHub 仓库的供应链调查、证据恢复与取证分析"
+description: "GitHub 供应链取证：恢复、IOC、报告"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Oss Forensics
 
-GitHub 仓库的供应链调查、证据恢复与取证分析。
-涵盖已删除提交的恢复、强制推送检测、IOC 提取、多源证据收集、
-假设形成与验证，以及结构化取证报告生成。
-灵感来源于 RAPTOR 的 1800+ 行 OSS Forensics 系统。
+GitHub 供应链取证：恢复、IOC、报告。
 
 ## Skill 元数据
 
@@ -19,7 +16,11 @@ GitHub 仓库的供应链调查、证据恢复与取证分析。
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/security/oss-forensics` 安装 |
 | 路径 | `optional-skills/security/oss-forensics` |
+| 版本 | `1.0.0` |
+| 作者 | Teknium (teknium1), Hermes Agent |
+| 许可证 | MIT |
 | 平台 | linux, macos, windows |
+| 标签 | `Security`, `Forensics`, `GitHub`, `Supply-Chain` |
 
 ## 参考：完整 SKILL.md
 
@@ -69,7 +70,7 @@ GitHub 仓库的供应链调查、证据恢复与取证分析。
    ```
 2. 初始化证据库：
    ```bash
-   python3 SKILL_DIR/scripts/evidence-store.py --store evidence.json list
+   python SKILL_DIR/scripts/evidence-store.py --store evidence.json list
    ```
 3. 复制取证报告模板：
    ```bash
@@ -139,7 +140,7 @@ git log --all --diff-filter=A --name-only --format="%H %ai" -- "*.so" "*.dll" "*
 git log --show-signature --format="%H %ai %aN" > ../signature_check.txt 2>&1
 ```
 
-**需收集的证据**（通过 `python3 SKILL_DIR/scripts/evidence-store.py add` 添加）：
+**需收集的证据**（通过 `python SKILL_DIR/scripts/evidence-store.py add` 添加）：
 - 每个悬空提交 SHA → 类型：`git`
 - 强制推送证据（reflog 显示历史重写）→ 类型：`git`
 - 已验证贡献者的未签名提交 → 类型：`git`
@@ -292,7 +293,7 @@ LIMIT 200
 
 所有调查员完成后：
 
-1. 运行 `python3 SKILL_DIR/scripts/evidence-store.py --store evidence.json list` 查看所有已收集证据。
+1. 运行 `python SKILL_DIR/scripts/evidence-store.py --store evidence.json list` 查看所有已收集证据。
 2. 对每条证据，验证 `content_sha256` 哈希值与原始来源一致。
 3. 按以下维度对证据分组：
    - **时间线**：将所有带时间戳的证据按时间顺序排列
@@ -363,7 +364,7 @@ LIMIT 200
 
 ## 阶段 7：完成
 
-1. 运行最终证据统计：`python3 SKILL_DIR/scripts/evidence-store.py --store evidence.json list`
+1. 运行最终证据统计：`python SKILL_DIR/scripts/evidence-store.py --store evidence.json list`
 2. 归档完整调查目录。
 3. 如确认存在攻陷：
    - 列出即时缓解措施（轮换凭据、固定依赖哈希、通知受影响用户）

@@ -38,7 +38,7 @@ hermes chat
 
 ```yaml
 model:
-  default: gemini-3-flash-preview
+  default: gemini-3.7-flash
   provider: gemini
   base_url: https://generativelanguage.googleapis.com/v1beta
 ```
@@ -49,7 +49,7 @@ model:
 
 ```yaml
 model:
-  default: gemini-3-flash-preview
+  default: gemini-3.7-flash
   provider: gemini
   base_url: https://generativelanguage.googleapis.com/v1beta
 ```
@@ -75,6 +75,10 @@ Hermes 检测到该端点后会创建原生 Gemini 适配器。在内部，Herme
 - 工具 schema → Gemini `functionDeclarations`
 - 工具结果 → Gemini `functionResponse` 部分
 - 流式响应 → 供 Hermes 循环使用的 OpenAI 格式流式数据块
+
+诸如 `"type": ["number", "null"]` 这样的工具参数类型数组，会被转换为 Gemini 的标量类型加
+`nullable` 的形式。多类型联合会通过 `anyOf` 保留每一种候选类型，包括嵌套属性和数组元素。
+这一过程是自动完成的，无需修改任何 MCP 服务器或 provider 配置。
 
 :::note Gemini 3 思维签名
 对于 Gemini 3 的工具调用，Hermes 会保留附加在函数调用部分的 `thoughtSignature` 值，并在下一个工具轮次中重放。这覆盖了多步骤 Agent 工作流中验证关键路径的需求。
@@ -104,20 +108,22 @@ GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 
 | 模型 | ID | 说明 |
 |------|----|------|
-| Gemini 3.1 Pro Preview | `gemini-3.1-pro-preview` | 可用时最强大的预览模型 |
-| Gemini 3 Pro Preview | `gemini-3-pro-preview` | 强大的推理和编码模型 |
-| Gemini 3 Flash Preview | `gemini-3-flash-preview` | 推荐的默认选项，速度与能力均衡 |
-| Gemini 3.1 Flash Lite Preview | `gemini-3.1-flash-lite-preview` | 可用时速度最快、成本最低的选项 |
+| Gemini 3.8 Flash | `gemini-3.8-flash` | 面向长周期智能体任务和编码工作、能力最强的 Flash 模型 |
+| Gemini 3.7 Flash | `gemini-3.7-flash` | 推荐的默认选项，兼顾速度、能力与多模态理解 |
+| Gemini 3.1 Pro Preview | `gemini-3.1-pro-preview` | 推理、数学和编码能力最强的模型 |
+| Gemini 3.5 Flash Lite | `gemini-3.5-flash-lite` | 适合轻量任务、速度最快且成本最低的选项 |
+| Gemini 2.5 Flash | `gemini-2.5-flash` | 上一代具备思考能力的快速模型 |
+| Gemini 2.5 Pro | `gemini-2.5-pro` | 上一代复杂推理模型 |
 
 模型可用性会随时间变化。如果某个模型消失或未对你的密钥启用，请重新运行 `hermes model` 并从当前列表中选择。
 
 :::info 模型 ID
-当 `provider: gemini` 时，请使用 Gemini 原生模型 ID，如 `gemini-3-flash-preview`，而非 OpenRouter 风格的 ID（如 `google/gemini-3-flash-preview`）。
+当 `provider: gemini` 时，请使用 Gemini 原生模型 ID，如 `gemini-3.7-flash`，而非 OpenRouter 风格的 ID（如 `google/gemini-3.7-flash`）。
 :::
 
 ### 最新别名
 
-Google 为 Pro 和 Flash Gemini 系列发布了滚动别名。当你希望 Google 自动升级模型而无需修改 Hermes 配置时，`gemini-pro-latest` 和 `gemini-flash-latest` 非常实用。
+Google 为 Pro 和 Flash Gemini 系列发布了滚动别名。当你希望 Google 自动升级模型而无需修改 Hermes 配置时，`gemini-pro-latest` 和 `gemini-flash-latest` 非常实用。请注意，如果新模型采用不同的费率，你的用量费用可能会受到影响。
 
 | 别名 | 当前指向 | 说明 |
 |------|----------|------|
@@ -131,7 +137,7 @@ model:
   base_url: https://generativelanguage.googleapis.com/v1beta
 ```
 
-如果需要严格的可复现性，请优先使用明确的模型 ID，如 `gemini-3.1-pro-preview` 或 `gemini-3-flash-preview`。
+如果需要严格的可复现性，请优先使用明确的模型 ID，如 `gemini-3.1-pro-preview` 或 `gemini-3.7-flash`。
 
 ### 通过 Gemini API 使用 Gemma
 
@@ -160,9 +166,9 @@ model:
 在对话中使用 `/model` 命令：
 
 ```text
-/model gemini-3-flash-preview
+/model gemini-3.7-flash
 /model gemini-flash-latest
-/model gemini-3-pro-preview
+/model gemini-3.1-pro-preview
 /model gemini-pro-latest
 /model gemma-4-31b-it
 /model gemini-3.1-flash-lite-preview

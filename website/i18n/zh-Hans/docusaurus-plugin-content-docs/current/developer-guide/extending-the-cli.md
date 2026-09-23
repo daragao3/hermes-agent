@@ -6,7 +6,7 @@ description: "构建包装 CLI，通过自定义 widget、快捷键和布局变�
 
 # 扩展 CLI
 
-Hermes 在 `HermesCLI` 上暴露了受保护的扩展 hook（钩子），使包装 CLI 可以添加 widget、快捷键和布局自定义，而无需覆盖超过 1000 行的 `run()` 方法。这样可以让你的扩展与内部变更解耦。
+Hermes 在 `HermesCLI` 上暴露了受保护的扩展 hook（钩子），使包装 CLI 可以添加 widget、快捷键和布局自定义，而无需覆盖 `run()` 方法或 `hermes_cli/cli_tui_mixin.py` 中的 TUI 构建逻辑（这些 hook 就定义在该文件中；`cli.py` 中的 `HermesCLI` 混入了它）。这样可以让你的扩展与内部变更解耦。
 
 ## 扩展点
 

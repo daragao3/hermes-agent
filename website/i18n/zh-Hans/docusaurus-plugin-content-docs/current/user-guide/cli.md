@@ -25,6 +25,11 @@ hermes
 # 单次查询模式（非交互式）
 hermes chat -q "Hello"
 
+# 从文件或 stdin 读取单次查询——不经过任何 shell 解释，因此
+# 任意文本（引号、$(...)、反引号）都会原样传入
+hermes chat --query-file prompt.txt
+hermes chat --query-file - < prompt.txt
+
 # 使用指定模型
 hermes chat --model "anthropic/claude-sonnet-4"
 
@@ -42,6 +47,8 @@ hermes chat -s github-pr-workflow -q "open a draft PR"
 # 恢复之前的会话
 hermes --continue             # 恢复最近的 CLI 会话（-c）
 hermes --resume <session_id>  # 通过 ID 恢复指定会话（-r）
+hermes --resume latest        # 恢复最近的会话（等同于 -c）
+hermes --resume latest --in ./dir  # 恢复 ./dir 的最近会话，并停留在 ./dir
 
 # 详细模式（调试输出）
 hermes chat --verbose
@@ -50,6 +57,49 @@ hermes chat --verbose
 hermes -w                         # 在 worktree 中以交互模式运行
 hermes -w -z "Fix issue #123"     # 在 worktree 中以单次查询模式运行
 ```
+
+### Worktree 清理 {#worktree-cleanup}
+
+`hermes -w` 会话会在 `<repo>/.worktrees/` 下创建一次性 worktree。
+启动时会自动运行一个保守的清理器（它只会移除干净的、已完全合并且超过年龄阈值的临时 worktree），但在繁忙的机器上，被保留的 worktree 和已合并的本地分支仍会不断累积。可以显式回收它们：
+
+```bash
+hermes worktree list              # 审计：每个 worktree 的年龄、大小、结论、原因
+hermes worktree prune             # 移除安全的 worktree + 删除已合并分支
+hermes worktree prune --dry-run   # 只显示计划，不做任何更改
+hermes worktree prune --trees-only     # 不动本地分支
+hermes worktree prune --branches-only  # 不动 worktree
+```
+
+在会话内，`/worktree prune [--dry-run]` 效果相同（且永远不会触碰会话正在运行的那个 worktree）。
+
+安全保证（所有模式、任何年龄均适用）：
+
+- 未提交的**已跟踪**更改永远不会被删除。
+- **独有的未推送提交**永远不会被删除——已在上游被 rebase/squash 合并的提交会通过 `git cherry` 的补丁等价性检测出来并计为已合并，正是这一点让最常见的"PR 已合并、worktree 永久保留"泄漏终于能被回收。
+- **已推送的开放 PR 分支可以释放磁盘而不丢失任何内容**：当一个干净 worktree 的分支头与 `origin` 上的完全一致时（每次清理只执行一次 `git ls-remote` 检查），这个检出就是冗余的——worktree 会被移除，但其**分支引用会保留**，只需一条 `git worktree add .worktrees/<name> <branch>` 即可恢复。如果远程不可达，worktree 会被保留。
+- **正被运行中的 hermes 会话使用**的 worktree 永远不会被触碰。
+- **只含未跟踪文件的临时内容**（PR 正文草稿、笔记）会在其 worktree 被移除前归档到 `~/.hermes/archive/worktree-prune/`——绝不销毁。
+- 分支删除按内容判定，而非按名称判定：任何提交全部位于上游的本地分支都可以安全删除；含独有工作的分支、已检出的分支，以及 `main`/`master`/`develop` 始终保留。
+
+同一个保守清理器也会由 cron 调度器运行（最多每 6 小时一次，在后台执行），因此只运行 gateway 的机器——那里可能连续几天没人启动 `hermes -w`——在 CLI 会话之间也不会再累积已合并的临时 worktree。
+
+当 `.worktrees/` 超过 10 个 worktree 或 5 GB 时，启动时会打印一行提示，指向这些命令。
+
+### 插件管理 {#plugin-management}
+
+`hermes plugins` 命令通过同一套选择启用（opt-in）流程管理原生 Hermes 插件和可移植的 Agent Plugins v1 包：
+
+```bash
+hermes plugins install owner/repository --no-enable
+hermes plugins list
+hermes plugins enable <plugin-name>
+hermes plugins disable <plugin-name>
+hermes plugins update <plugin-name>
+hermes plugins remove <plugin-name>
+```
+
+可移植包在被显式启用之前保持禁用状态。Hermes 目前会加载可移植的 Agent Skills 和 stdio MCP 条目。确切的支持子集和信任边界参见[插件开发者指南](/developer-guide/plugins#portable-agent-plugins-v1-packages)。
 
 ## 界面布局
 
@@ -69,13 +119,16 @@ hermes -w -z "Fix issue #123"     # 在 worktree 中以单次查询模式运行
 | 元素 | 描述 |
 |---------|-------------|
 | 模型名称 | 当前模型（超过 26 个字符时截断） |
-| Token 计数 | 已使用的上下文 token 数 / 最大上下文窗口 |
+| Token 计数 | 已使用的上下文 token 数 / 最大上下文窗口；`~` 表示估算值 |
 | 上下文进度条 | 带颜色阈值编码的可视填充指示器 |
 | 费用 | 预估会话费用（未知或零价格模型显示 `n/a`） |
 | 🗜️ N | **上下文压缩次数**——当前运行会话被自动压缩的次数。首次压缩触发后显示。 |
 | ▶ N | **活跃后台任务数**——当前会话中仍在运行的 `/bg` prompt（提示词）数量。至少有一个任务进行中时显示。 |
 | 时长 | 会话已用时间 |
+| 会话标题 | 会话有标题后，会以金色徽章的形式固定在最右侧。标题过长时会先被截断，而不会挤占模型和上下文这些关键字段。 |
 | ⚠ YOLO | **YOLO 模式警告**——当 `HERMES_YOLO_MODE` 开启时显示（通过启动时的 `hermes --yolo` 或会话中的 `/yolo` 切换）。与横幅行警告保持同步，确保你不会忘记自己处于自动批准模式。 |
+
+上下文计数或百分比前的 `~` 表示其中包含本地估算。这同样适用于 gateway 的 `/status` 和 `/context`、TUI 以及桌面端的上下文仪表。未变化的 provider 用量读数不带 `~`；provider 锚点加上尚未计价的新消息则带 `~`。`/context` 会报告所选的数据来源。分类、剩余空间、skill 和工具集的分解始终是本地估算，即使整体占用来自 provider 用量。这些显示标记不会改变压缩决策，也不会产生额外的 provider 请求。
 
 状态栏会根据终端宽度自适应——≥ 76 列时显示完整布局，52–75 列时显示紧凑布局，低于 52 列时显示最简布局（模型 + 时长，以及 YOLO 徽章（如已激活））。
 
@@ -107,14 +160,35 @@ hermes -w -z "Fix issue #123"     # 在 worktree 中以单次查询模式运行
 | `Ctrl+B` | 语音模式启用时开始/停止录音（`voice.record_key`，默认：`ctrl+b`） |
 | `Ctrl+G` | 在 `$EDITOR`（vim/nvim/nano/VS Code 等）中打开当前输入缓冲区。保存并退出后，编辑后的文本将作为下一条 prompt 发送——适合编写长篇多段落 prompt。 |
 | `Ctrl+X Ctrl+E` | 外部编辑器的 Emacs 风格备用绑定（与 `Ctrl+G` 行为相同）。 |
+| `Ctrl+S` | **暂存 prompt。** 搁置当前草稿并清空输入框，让你可以先发送别的内容。在输入框为空时再次按 `Ctrl+S` 即可取回草稿（光标位于末尾，附带的图片也会恢复）。重复按下会构建一个栈而不是覆盖，因此较早的草稿永远不会被悄悄丢失——暂存两条或更多时，`Ctrl+S` 会打开浏览面板（`↑`/`↓` 导航，`Enter` 恢复，`D` 丢弃，`Esc` 或 `Ctrl+S` 关闭）。状态栏中的 `📌 N` 徽章显示当前搁置的草稿数量。多行草稿会原样往返，包括空行。暂存只保存在本会话的内存中——不会写入磁盘，因为草稿中常常含有机密信息。 |
 | `Ctrl+C` | 中断 agent（2 秒内双击强制退出） |
-| `F6` | 打开全屏实时子智能体监视器，保留输入草稿。方向键选择，`Enter` 查看近期日志，`s` 引导，`x` 请求停止并确认。 |
+| `Ctrl+T` / `F6` | 打开全屏实时子智能体监视器，保留输入草稿。实时栏会自动出现在状态栏上方；方向键选择一个 worker，`Enter` 查看其近期日志，`s` 引导，`x` 请求停止并确认。参见[监控子智能体](/user-guide/features/delegation#monitoring-running-subagents-agents)。 |
 | `F7` | 将实时子智能体栏切换为单行摘要或恢复多行预览，不改变输入焦点。 |
 | `Ctrl+D` | 退出 |
 | `Ctrl+Z` | 将 Hermes 挂起到后台（仅 Unix）。在 shell 中运行 `fg` 恢复。 |
 | `Tab` | 接受自动建议（ghost text）或自动补全斜杠命令 |
+| `!<command>` | **Shell 模式**——自己运行一条 shell 命令，不消耗模型轮次（例如 `!git status`、`!pytest -x`）。见下文。 |
 
 **多行粘贴预览。** 粘贴多行内容时，CLI 会显示一行简洁的单行预览（`[pasted: 47 lines, 1,842 chars — press Enter to send]`），而非将全部内容倾倒到滚动缓冲区。实际发送的仍是完整内容；这只是显示上的优化。
+
+### `!` Shell 模式 {#shell-mode}
+
+以 `!` 开头的行会作为 shell 命令运行，而不是发送给 agent：
+
+```
+> !git status
+> !ls -la
+> !pytest -x tests/cli
+```
+
+- **零成本。** 完全不调用模型——没有 API 调用、没有 token、没有延迟。
+- **不会进入对话。** 命令及其输出不会加入历史，因此上下文保持干净，prompt 缓存也不受影响。
+- **在 agent 的 `terminal` 工具运行的地方运行。** 使用会话的工作目录，因此 `!pwd` 与 agent 看到的一致。
+- **审批依然生效。** 危险命令（`rm -rf`、写入 `~/.hermes/config.yaml` 等）会经过与 agent 的 `terminal` 工具相同的审批提示。`!` 是节省成本/延迟的捷径，而不是绕过安全机制。
+- **显示非零退出码。** 失败的命令会在输出后打印 `! exited <code>`。
+- 单独输入 `!` 会打印一行用法提示。
+
+Shell 模式仅限 CLI。Gateway 平台（Discord、Telegram、Slack）和 cron 运行会忽略它——这些用户本来就有自己的 shell。
 
 **最终响应中的 Markdown 剥离。** CLI 会从 agent 的*最终*回复中剥离最冗长的 Markdown 围栏以及 `**bold**`（粗体） / `*italic*`（斜体） 包装，使其在终端中呈现为可读的纯文本，而非原始源码。代码块和列表会被保留。这不影响 gateway 平台或工具结果——它们保留 Markdown 以供原生渲染。
 
@@ -138,6 +212,7 @@ hermes -w -z "Fix issue #123"     # 在 worktree 中以单次查询模式运行
 | `/reasoning high` | 提高推理强度 |
 | `/title My Session` | 为当前会话命名 |
 | `/status` | 显示会话信息——模型/配置/token/时长——以及本地**会话摘要**块（近期轮次数、常用工具、涉及文件、最新用户 prompt + 助手回复）。纯本地计算，不调用 LLM。 |
+| `/context [all]` | 可视化的上下文用量分解——字形方块网格 + 按类别的 token 表（system prompt / tools / skills / memory / conversation / 剩余空间）。`/context all` 还会显示每个 skill 和每个工具集的开销。 |
 | `/sessions` | 在经典 CLI 中直接打开交互式会话选择器（与 TUI 使用同一界面）。输入过滤，方向键导航，Enter 恢复。 |
 
 完整的内置 CLI 和消息列表，参见[斜杠命令参考](../reference/slash-commands.md)。
@@ -204,6 +279,8 @@ Hermes 会在第一轮对话前将每个指定的 skill 加载到会话 prompt �
 
 内置人格包括：`helpful`、`concise`、`technical`、`creative`、`teacher`、`kawaii`、`catgirl`、`pirate`、`shakespeare`、`surfer`、`noir`、`uwu`、`philosopher`、`hype`。
 
+要恢复默认（无覆盖层），请使用 `/personality none`——`default` 和 `neutral` 也可以。
+
 你也可以在 `~/.hermes/config.yaml` 中定义自定义人格：
 
 ```yaml
@@ -227,6 +304,14 @@ personalities:
   2. Returns the sum
 ```
 
+`Ctrl+J` 和反斜杠续行默认启用，与 Claude Code / Codex / OpenCode 的多行快捷键一致。在 iTerm2 等受支持的终端上，Hermes 还会请求扩展按键报告，使 `Shift+Enter` 作为一个独立的换行键到达。如果你的终端对普通 `Enter` 发送 LF，而你需要旧版的"`Ctrl+J` 即提交"回退行为，可以选择关闭：
+
+```yaml
+# ~/.hermes/config.yaml
+display:
+  cli_multiline_shortcuts: false
+```
+
 :::info
 支持粘贴多行文本——使用上述任意换行键，或直接粘贴内容。
 
@@ -244,16 +329,16 @@ personalities:
 | Windows Terminal Preview 1.25+ | 在设置中启用 Kitty 协议后支持 |
 | macOS Terminal.app、Windows Terminal 稳定版 | 不支持——`Shift+Enter` 与 `Enter` 无法区分 |
 
-当终端无法区分时，`Alt+Enter` 和 `Ctrl+J` 在所有终端中均可正常使用。**特别是在 Windows Terminal 中，`Alt+Enter` 被终端捕获（切换全屏），永远不会传递给 Hermes——请直接使用 `Ctrl+Enter`（传递为 `Ctrl+J`）或 `Ctrl+J` 来换行。**
+当终端无法区分时，`Alt+Enter` 和 `Ctrl+J` 默认仍可正常使用。**特别是在 Windows Terminal 中，`Alt+Enter` 被终端捕获（切换全屏），永远不会传递给 Hermes——请直接使用 `Ctrl+Enter`（传递为 `Ctrl+J`）或 `Ctrl+J` 来换行。**
 
-## 中断 Agent
+## 在轮次中途重定向 Agent {#redirecting-the-agent-mid-turn}
 
-你可以在任意时刻中断 agent：
+在 agent 工作时，你可以发送更正而无需开启新轮次：
 
-- **输入新消息 + Enter**，在 agent 工作时——中断并处理你的新指令
+- **输入新消息 + Enter**——用你的更正重定向当前轮次
 - **`Ctrl+C`**——中断当前操作（2 秒内双击强制退出）
-- 正在进行的终端命令会立即被终止（SIGTERM，1 秒后 SIGKILL）
-- 中断期间输入的多条消息会合并为一条 prompt
+- 已完成的工具工作和已显示的推理会保留在上下文中
+- 正在运行的工具会先到达其安全边界，然后才应用更正
 
 ### 繁忙输入模式
 
@@ -261,7 +346,7 @@ personalities:
 
 | 模式 | 行为 |
 |------|----------|
-| `"interrupt"`（默认） | 你的消息中断当前操作并立即处理 |
+| `"interrupt"`（默认） | 你的消息会重定向当前轮次。模型生成会重新开始，已显示的推理和已完成的工作会被保留。正在运行的前台终端命令会被移到后台（不会被终止——完成时你会收到通知），以便立即读取你的消息；其他正在运行的工具会先完成 |
 | `"queue"` | 你的消息被静默排队，在 agent 完成后作为下一轮发送 |
 | `"steer"` | 你的消息通过 `/steer` 注入当前运行，在下一次工具调用后到达 agent——不中断，不开启新轮次 |
 
@@ -271,7 +356,7 @@ display:
   busy_input_mode: "steer"   # 或 "queue" 或 "interrupt"（默认）
 ```
 
-`"queue"` 模式适合在不意外取消进行中工作的情况下准备后续消息。`"steer"` 模式适合在不中断的情况下在任务执行中途重定向 agent——例如在它还在编辑代码时说"顺便也检查一下测试"。未知值会回退到 `"interrupt"`。
+`"queue"` 模式会准备一个独立的后续轮次。`"steer"` 始终等待下一个工具结果边界。默认的 `"interrupt"` 模式在模型生成期间响应更快，同时避免取消正在运行的工具；较长的前台 `terminal` 命令（构建、轮询器）会被交给后台，使 agent 立即看到你的消息，而不是等命令退出之后。想取消该轮次及其前台工作时，请使用 `/stop`。未知值会回退到 `"interrupt"`。
 
 `"steer"` 有两个自动回退：如果 agent 尚未启动，或附有图片，消息会回退到 `"queue"` 行为，确保内容不丢失。
 
@@ -285,7 +370,7 @@ display:
 ```
 
 :::tip 首次提示
-第一次在 Hermes 工作时按下 Enter，Hermes 会打印一行提示，说明 `/busy` 选项（`"(tip) Your message interrupted the current run…"`）。每次安装只触发一次——`config.yaml` 中 `onboarding.seen.busy_input_prompt` 下的标志会锁定它。删除该键可再次看到提示。
+第一次在 Hermes 工作时按下 Enter，Hermes 会打印一行提示，说明 `/busy` 选项。每次安装只触发一次；`config.yaml` 中的 `onboarding.seen.busy_input_prompt` 记录了它已显示过。删除该键可再次看到提示。
 :::
 
 ### 挂起到后台
@@ -353,6 +438,8 @@ hermes -c                                  # 简写形式
 hermes -c "my project"                     # 恢复命名会话（谱系中最新的）
 hermes --resume 20260225_143052_a1b2c3     # 通过 ID 恢复指定会话
 hermes --resume "refactoring auth"         # 通过标题恢复
+hermes --resume latest                     # 恢复最近的会话（等同于 -c）
+hermes --resume latest --in ./my-project   # ./my-project 工作区的最近会话
 hermes -r 20260225_143052_a1b2c3           # 简写形式
 ```
 

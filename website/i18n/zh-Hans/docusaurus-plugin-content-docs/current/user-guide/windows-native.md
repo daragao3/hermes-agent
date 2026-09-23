@@ -56,7 +56,7 @@ iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/script
 | 依赖            | Hermes 需要它的原因                                                                             |
 | --------------- | ----------------------------------------------------------------------------------------------- |
 | **PortableGit** | 为终端工具提供 `bash.exe`，为会话内克隆提供 `git`。在安装时配置，而非由 `dep_ensure` 负责。     |
-| **Node.js 22**  | 浏览器工具（`agent-browser`）、TUI 的 web 桥接以及 WhatsApp 桥接所必需。                        |
+| **Node.js 26**  | 浏览器工具（`agent-browser`）、TUI 的 web 桥接以及 WhatsApp 桥接所必需。                        |
 | **ffmpeg**      | TTS / 语音消息的音频格式转换。                                                                  |
 | **ripgrep**     | 快速文件搜索——不可用时回退到 `grep`。                                                           |
 | **npm 包**      | `agent-browser`、Playwright Chromium 以及各工具集的 Node 依赖，在首次使用浏览器工具时安装一次。 |
@@ -69,13 +69,13 @@ iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/script
 
 1. **引导 `uv`** — Astral 的快速 Python 管理器。安装到 `%USERPROFILE%\.local\bin`。
 2. **通过 `uv` 安装 Python 3.11**。无需预先安装 Python。
-3. **安装 Node.js 22**（优先使用 winget，否则将便携式 Node 压缩包解压到 `%LOCALAPPDATA%\hermes\node`）。用于浏览器工具和 WhatsApp 桥接。
+3. **安装 Node.js 26**（优先使用 winget，否则将便携式 Node 压缩包解压到 `%LOCALAPPDATA%\hermes\node`）。用于浏览器工具和 WhatsApp 桥接。
 4. **安装便携式 Git** — 如果 `git` 已在 PATH 中，安装程序直接使用；否则从官方 `git-for-windows` 发布版下载精简的自包含 **PortableGit**（约 45 MB）到 `%LOCALAPPDATA%\hermes\git`。无需管理员权限，不写入 Windows 安装程序注册表，不干扰系统上的其他任何内容。
 5. **将仓库克隆**到 `%LOCALAPPDATA%\hermes\hermes-agent` 并在其中创建 virtualenv。
 6. **分层 `uv pip install`** — 先尝试 `.[all]`，如果 `git+https` 依赖在 GitHub 限速时失败，则逐步回退到更小的集合（`[messaging,dashboard,ext]` → `[messaging]` → `.`）。防止"单次失败导致裸安装"的故障模式。
 7. **根据 `.env` 自动安装消息 SDK** — 如果存在 `TELEGRAM_BOT_TOKEN` / `DISCORD_BOT_TOKEN` / `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `WHATSAPP_ENABLED`，则运行 `python -m ensurepip --upgrade` 并针对性地调用 `pip install`，确保各平台 SDK 可正常导入。
 8. **设置 `HERMES_GIT_BASH_PATH`** 为解析后的 `bash.exe` 路径，使 Hermes 在新 shell 中能确定性地找到它。
-9. **将 `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts` 添加到用户 PATH，并设置 `HERMES_HOME=%LOCALAPPDATA%\hermes`** — 打开新终端后即可使用 `hermes` 命令（并让它指向你的数据目录）。
+9. **将 `%LOCALAPPDATA%\hermes\bin` 添加到用户 PATH，并设置 `HERMES_HOME=%LOCALAPPDATA%\hermes`** — 打开新终端后即可使用 `hermes` 命令（并让它指向你的数据目录）。只有 `hermes.exe` / `hermes-acp.exe` 启动器会被复制到这个 `bin` 目录中；完整的 `venv\Scripts` 被刻意**不**加入 PATH，这样 Hermes 永远不会遮蔽你自己的 `python` 命令。
 10. **运行 `hermes setup`** — 正常的首次运行向导（模型、提供商、工具集）。使用 `-SkipSetup` 跳过。
 
 :::tip 在 Windows 上跳过繁琐的提供商配置
@@ -176,8 +176,8 @@ hermes gateway install
 
 底层发生的事情：
 
-1. `schtasks /Create /SC ONLOGON /RL LIMITED /TN HermesGateway` — 注册一个在你登录时以标准（非提升）权限运行的任务。无 UAC 提示。
-2. 如果 schtasks 被组策略阻止，则回退到在 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` 中写入 `start /min cmd.exe /d /c <wrapper>` 快捷方式。效果相同，稍显粗糙。
+1. `schtasks /Create /SC ONLOGON /RL LIMITED /TN Hermes_Gateway` — 注册一个在你登录时以标准（非提升）权限运行的任务。无 UAC 提示。
+2. 如果 schtasks 被组策略阻止，则回退到在 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` 中写入一个小型 `Hermes_Gateway.vbs` 启动器（通过 `wscript.exe` 隐藏运行）。效果相同，稍显粗糙。之所以使用 VBScript 而不是 `cmd.exe` 快捷方式，是因为登录时分配的控制台可能会收到关闭事件，从而在 gateway 完成启动之前将其杀死。
 3. 通过 **`pythonw.exe`** 以分离方式生成 gateway——而非 `python.exe`。`pythonw.exe` 没有附加控制台，可免疫来自同一进程组中兄弟进程的 `CTRL_C_EVENT` 广播（这是一个真实问题，曾导致在同一进程组中 Ctrl+C 任何进程时 gateway 被杀死）。
 
 生成时使用的标志：`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB`。
@@ -202,10 +202,10 @@ hermes gateway uninstall   # 移除 schtasks 条目、Startup 快捷方式、pid
 
 | 路径                                  | 内容                                                            |
 | ------------------------------------- | --------------------------------------------------------------- |
-| `%LOCALAPPDATA%\hermes\hermes-agent\` | Git 检出 + venv。`venv\Scripts\hermes.exe` 就是被添加到用户 PATH 的命令。可安全执行 `Remove-Item -Recurse` 后重新安装。 |
+| `%LOCALAPPDATA%\hermes\hermes-agent\` | Git 检出 + venv。可安全执行 `Remove-Item -Recurse` 后重新安装。 |
 | `%LOCALAPPDATA%\hermes\git\`          | PortableGit（仅在安装程序配置时存在）。                         |
 | `%LOCALAPPDATA%\hermes\node\`         | 便携式 Node.js（仅在安装程序配置时存在）。                      |
-| `%LOCALAPPDATA%\hermes\bin\`          | Hermes 托管的 `uv.exe`（它用于更新的 Python 管理器）。          |
+| `%LOCALAPPDATA%\hermes\bin\`          | `hermes` / `hermes-acp` 启动器，以及 Hermes 托管的 `uv.exe`（它用于更新的 Python 管理器）。 |
 | `%LOCALAPPDATA%\hermes\`（根目录）    | 你的配置、认证、技能、会话、日志（`config.yaml`、`.env`、`skills\`、`sessions\`、`logs\` 等）。**重装后保留。** |
 
 在原生 Windows 上，安装程序会设置 `HERMES_HOME=%LOCALAPPDATA%\hermes`，因此你的数据和可丢弃的安装目录位于**同一个** `%LOCALAPPDATA%\hermes` 根目录下：安装/运行时是 `hermes-agent\`、`git\`、`node\` 和 `bin\` 子目录，而你的数据文件直接位于 `%LOCALAPPDATA%\hermes` 中。重新安装只会替换 `hermes-agent\` 检出，因此你的数据会保留——但由于两者共用同一个根目录，如果你想保留数据，**不要**执行 `Remove-Item -Recurse %LOCALAPPDATA%\hermes`，而应删除 `hermes-agent\` 子目录。你的数据目录结构与 Linux 的 `~/.hermes` 完全相同，因此可以在机器间同步。
@@ -224,12 +224,12 @@ hermes gateway uninstall   # 移除 schtasks 条目、Startup 快捷方式、pid
 
 ### 安装后的 PATH
 
-安装程序通过 `[Environment]::SetEnvironmentVariable` 将 `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts` 添加到你的**用户 PATH**。已打开的终端不会获取此更新——安装完成后请打开新的 PowerShell 窗口（或 Windows Terminal 标签页）。关闭并重新打开，不要手动执行 `$env:PATH += …`，除非你清楚自己在做什么。
+安装程序通过 `[Environment]::SetEnvironmentVariable` 将 `%LOCALAPPDATA%\hermes\bin` 添加到你的**用户 PATH**。已打开的终端不会获取此更新——安装完成后请打开新的 PowerShell 窗口（或 Windows Terminal 标签页）。关闭并重新打开，不要手动执行 `$env:PATH += …`，除非你清楚自己在做什么。
 
 验证：
 
 ```powershell
-Get-Command hermes        # 应输出 C:\Users\<you>\AppData\Local\hermes\hermes-agent\venv\Scripts\hermes.exe
+Get-Command hermes        # 应输出 C:\Users\<you>\AppData\Local\hermes\bin\hermes.exe
 hermes --version
 ```
 
@@ -288,7 +288,7 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.hermes"
 ## 常见问题
 
 **安装后立即出现 `hermes: command not found`。**
-打开新的 PowerShell 窗口。安装程序已将 `%LOCALAPPDATA%\hermes\bin` 添加到用户 PATH，但现有 shell 需要重启才能获取更新。在此期间可以运行 `& "$env:LOCALAPPDATA\hermes\bin\hermes.cmd"`。
+打开新的 PowerShell 窗口。安装程序已将 `%LOCALAPPDATA%\hermes\bin` 添加到用户 PATH，但现有 shell 需要重启才能获取更新。在此期间可以运行 `& "$env:LOCALAPPDATA\hermes\bin\hermes.exe"`。
 
 **运行工具时出现 `WinError 193: %1 is not a valid Win32 application`。**
 你触发了绕过 `.cmd` 垫片的 shebang 脚本调用。Hermes 通过 `shutil.which(cmd, path=local_bin)` 解析命令，使 PATHEXT 能识别 `.CMD`——如果你通过硬编码路径调用工具，请切换到 `.cmd` 变体（例如使用 `npx.cmd` 而非 `npx`）。
@@ -297,7 +297,7 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.hermes"
 你下载的 `install.ps1` 携带了 UTF-8 BOM。`irm | iex` 形式会自动剥离 BOM；`[scriptblock]::Create((irm ...))` 不会。请改用简单的 `irm | iex` 形式，或手动下载脚本并通过 `[IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding $false))` 保存为不带 BOM 的纯 UTF-8。
 
 **重启后 gateway 无法持续运行。**
-运行 `hermes gateway status`——它会合并 schtasks 条目、Startup 文件夹快捷方式（如有）和运行中的 PID。如果 schtasks 已注册但未运行，组策略可能阻止了 `ONLOGON` 触发器。运行 `schtasks /Query /TN HermesGateway /V /FO LIST` 查看任务失败原因，或通过卸载后使用 `HERMES_GATEWAY_FORCE_STARTUP=1` 重新安装来回退到 Startup 文件夹路径。
+运行 `hermes gateway status`——它会合并 schtasks 条目、Startup 文件夹快捷方式（如有）和运行中的 PID。如果 schtasks 已注册但未运行，组策略可能阻止了 `ONLOGON` 触发器。运行 `schtasks /Query /TN Hermes_Gateway /V /FO LIST`（具名 profile 则为 `Hermes_Gateway_<profile>`）查看任务失败原因。只有当 `schtasks` 本身无法注册任务时，才会自动启用 Startup 文件夹回退方案；没有任何环境变量或标志可以强制启用它。
 
 **设置 `$env:EDITOR` 后 `/edit` 仍然无响应。**
 你只在当前进程中设置了它；请关闭并重新打开 shell，或在系统属性 → 环境变量中以用户作用域设置。在新 PowerShell 窗口中用 `echo $env:EDITOR` 验证。
@@ -306,7 +306,7 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.hermes"
 Chromium 在首次运行时自动安装。如果安装失败（GitHub 限速、Playwright CDN 故障），运行 `hermes doctor`——它会检测缺失的 Chromium 并打印修复所需的确切 `npx playwright install chromium` 命令。
 
 **`agent-browser` 报奇怪的 Node 版本错误。**
-安装程序在 `%LOCALAPPDATA%\hermes\node` 配置了 Node 22，但你的 PATH 中可能有更靠前的旧版系统 Node 18。要么将 Hermes 的 node 目录移到 PATH 前面，要么如果你不在其他地方使用 Node，删除系统安装。
+安装程序在 `%LOCALAPPDATA%\hermes\node` 配置了 Node 26，但你的 PATH 中可能有更靠前的旧版系统 Node 18。要么将 Hermes 的 node 目录移到 PATH 前面，要么如果你不在其他地方使用 Node，删除系统安装。
 
 **CLI 中中文/日文/阿拉伯文字符显示为 `?`。**
 UTF-8 stdio 垫片未激活。检查 `HERMES_DISABLE_WINDOWS_UTF8` 是否**未**设置（`Get-ChildItem env:HERMES_DISABLE_WINDOWS_UTF8`）。如果该变量为空但仍然看到 `?`，控制台宿主（非常旧的 `cmd.exe`）可能完全不支持 UTF-8——请切换到 Windows Terminal。

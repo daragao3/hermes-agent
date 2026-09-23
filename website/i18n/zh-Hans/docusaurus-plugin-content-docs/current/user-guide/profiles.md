@@ -12,6 +12,10 @@ description: "在同一台机器上运行相互独立的 Hermes agent，各自�
 
 profile 是一个独立的 Hermes 主目录。每个 profile 拥有自己的目录，其中包含各自的 `config.yaml`、`.env`、`SOUL.md`、记忆、会话、技能、cron 任务和状态数据库。profile 让你可以为不同用途运行独立的 agent——编程助手、个人机器人、研究 agent——而不会混淆 Hermes 状态。
 
+:::caution 为每个 agent 分配独立的 profile
+切勿让两个 agent 进程指向同一个 profile（同一个 Hermes 主目录）。两者都会自动写入记忆，并且各自在会话开始时把对方写入的内容加载进自己的系统提示——因此同一个主目录上的两个写入者会不断叠加彼此的状态，直到它不再是你所配置的任何东西。profile 的存在正是为了防止这种情况；需要共享记忆的 agent 应改用[外部记忆提供商](/user-guide/features/memory-providers)。
+:::
+
 创建 profile 后，它会自动成为独立的命令。创建名为 `coder` 的 profile，你立即就拥有了 `coder chat`、`coder setup`、`coder gateway start` 等命令。
 
 ## 快速开始
@@ -60,7 +64,11 @@ hermes profile create work --clone
 hermes profile create backup --clone-all
 ```
 
-复制**所有内容**——配置、API 密钥、人格、记忆、技能、cron 任务、插件。会排除每个 profile 自己的历史数据（会话历史、`state.db`、`backups/`、`state-snapshots/`、`checkpoints/`），这些数据属于源 profile 且可能达到数十 GB。若要包含历史的完整备份，请使用 `hermes profile export` 或 `hermes backup`。
+复制**所有内容**——配置、API 密钥、人格、记忆、技能、插件。一份完整可用的快照。会排除每个 profile 自己的历史数据（会话历史、`state.db`、`backups/`、`state-snapshots/`、`checkpoints/`），这些数据属于源 profile 且可能达到数十 GB。**cron 任务同样不会被克隆**：它们是绑定到源 profile 及其投递渠道的计划任务，继承了它们的克隆会让每个任务运行两次（两个 gateway，相同的任务 id）。新 profile 以空的 `cron/` 开始。若要包含历史和 cron 任务的完整备份，请使用 `hermes profile export` 或 `hermes backup`。
+
+:::note OAuth 登录是共享的，而不是复制的
+Anthropic（Claude Pro/Max）、OpenAI Codex 和 xAI 的 OAuth 登录使用**一次性刷新令牌**——它的副本并不是第二份凭据，而是同一份凭据有了两个持有者，第一个刷新它的 profile 会让其他所有副本失效。因此 `--clone-all`（以及仪表板的凭据镜像）会从克隆中剔除这些 OAuth 条目。新 profile 会继续从根目录的 `~/.hermes/auth.json` 读取登录信息，而在任何 profile 内执行的令牌刷新都会写回根目录，因此所有 profile 都保持登录状态。静态 API 密钥照常复制。若要为某个 profile 提供独立的 OAuth 登录，请在其中运行 `hermes -p <name> auth add <provider>`。
+:::
 
 ### 从指定 profile 克隆
 
@@ -237,9 +245,29 @@ hermes update
 hermes profile list           # 显示所有 profile 及其状态
 hermes profile show coder     # 显示某个 profile 的详细信息
 hermes profile rename coder dev-bot   # 重命名（同步更新别名和服务）
-hermes profile export coder   # 导出为 coder.tar.gz
-hermes profile import coder.tar.gz   # 从归档文件导入
+hermes profile export coder   # 打包为 coder.tar.gz（可分享；已剥离密钥）
+hermes profile import coder.tar.gz   # 将归档安装为新的 profile
 ```
+
+在聊天中，这两个操作对应 `/export` 和 `/import`——在桌面应用中则是 **⌘K → Export/Import profile…**。参见[共享 profile](#sharing-a-profile)。
+
+### 为默认 profile 命名 {#naming-the-default-profile}
+
+默认 profile 的内部 ID 始终是 `default`——它无法被真正
+重命名，因为 `~/.hermes` 是安装根目录。对它执行重命名时，
+实际上是设置一个**显示名称**，各个 UI 界面会用它代替原始 ID 显示：
+
+```bash
+hermes profile rename default Harumesu   # 支持 Unicode：小助手
+```
+
+显示名称会出现在 `hermes profile list`/`show`、`/profile`
+聊天命令、仪表板以及桌面应用（包括 Bot Mode 名单）中。
+它仅用于展示：`-p default`、服务名称、cron 任务
+以及其他所有引用仍使用规范的 `default` ID。它以
+`display_name` 的形式存储在 `~/.hermes/profile.yaml` 中；删除该行即可
+还原。命名 profile 同样可以带有 `display_name`（真正重命名后仍会保留），
+但对它们执行 `rename` 仍会重命名 profile 本身。
 
 ## 删除 profile
 
@@ -288,8 +316,8 @@ profile 使用 `HERMES_HOME` 环境变量。运行 `coder chat` 时，包装脚�
   和 Codex 等工具就能找到它们在你日常 shell 中使用的同一套凭据。
 
 代价是宿主机上的各 profile 默认共享普通的用户级 CLI 状态。如果你需要每个
-profile 拥有独立的 CLI 身份，请在该 profile 的 `config.yaml` 中设置
-`terminal.home_mode: profile`。在该模式下，Hermes 会以 `HOME={HERMES_HOME}/home`
+profile 拥有独立的 CLI 身份，请在该 profile 的 `config.yaml` 中设置 `terminal.home_mode:
+profile`。在该模式下，Hermes 会以 `HOME={HERMES_HOME}/home`
 启动工具子进程；随后你需要在该 profile 主目录内初始化或链接对应的 `~/.ssh`、
 `~/.gitconfig`、`~/.config/gh`、云 CLI 认证、Claude/Codex 认证、npm 状态等文件。
 
@@ -298,9 +326,19 @@ Hermes 还会向子进程暴露 `HERMES_REAL_HOME`，这样在 `home_mode: profi
 
 默认 profile 就是 `~/.hermes` 本身。无需迁移——现有安装的工作方式完全不变。
 
-## 将 profile 作为发行版共享
+## 共享 profile {#sharing-a-profile}
 
-你在一台机器上构建的 profile 可以打包为 **git 仓库**，并通过一条命令安装到另一台机器——你自己的工作站、团队成员的笔记本，或社区用户的环境。共享包包含 SOUL、配置、技能、cron 任务和 MCP 连接。凭据、记忆和会话保持各机器独立。
+你在一台机器上构建的 profile 可以转移到另一台机器——你自己的工作站、团队成员的笔记本，或者社区。有两种途径：
+
+**发送文件。** `/export` 会把 profile 打包为一个 `.tar.gz`——包括技能、记忆、人格、cron 任务、插件、设置，以及（从桌面应用导出时）你的主题和布局。API 密钥会被剥离。接收方运行 `/import` 即可。
+
+```bash
+# 在聊天中运行 /export，把文件交给对方，对方对其运行 /import
+hermes profile export coder
+hermes profile import ./coder.tar.gz --name coder
+```
+
+**发布发行版。** 将 profile 打包为 **git 仓库**，接收方只需一条命令即可安装，之后还能拉取带版本的更新。其中包含 SOUL、配置、技能、cron 任务和 MCP 连接；凭据、记忆和会话保持各机器独立。
 
 ```bash
 # 从 git 仓库安装完整 agent
@@ -310,4 +348,4 @@ hermes profile install github.com/you/research-bot --alias
 hermes profile update research-bot
 ```
 
-完整指南请参阅 **[Profile 发行版：共享完整 Agent](./profile-distributions.md)**——包括编写、发布、更新语义、安全模型和使用场景。
+一次性交接或迁移请使用导出文件；需要持续发布的 agent 请使用发行版。两者的详细说明请参阅 **[Profile 发行版：共享完整 Agent](./profile-distributions.md)**——包括对比表、编写、发布、更新语义以及安全模型。

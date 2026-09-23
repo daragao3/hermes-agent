@@ -160,7 +160,7 @@ code_execution:
 | 资源 | 限制 | 说明 |
 |------|------|------|
 | **超时** | 5 分钟（300 秒） | 脚本先收到 SIGTERM，5 秒宽限期后收到 SIGKILL |
-| **Stdout** | 50 KB | 输出截断并附加 `[output truncated at 50KB]` 提示 |
+| **Stdout** | 50 KB | 内联显示首尾部分；完整输出保存到 `~/.hermes/cache/exec/`，并在结果中附上路径 |
 | **Stderr** | 10 KB | 非零退出时包含在输出中，用于调试 |
 | **工具调用** | 每次执行 50 次 | 达到上限时返回错误 |
 
@@ -173,6 +173,29 @@ code_execution:
   timeout: 300       # Max seconds per script (default: 300)
   max_tool_calls: 50 # Max tool calls per execution (default: 50)
 ```
+
+## 调用之间的状态（会话内核） {#state-between-calls-the-session-kernel}
+
+在本地终端后端上，`execute_code` 不会为每次调用启动一个全新的解释器。每个会话拥有一个持久化的 Python 内核，因此一次调用中的变量、导入和已加载的数据在下一次调用中仍然可用。agent 可以只加载一次数据集，然后在多轮对话中对其进行查询，而不必每次都重新读取。子 agent 拥有各自的内核；内核绝不会在会话之间共享。
+
+以下情况会终止内核：
+
+- **超时或中断。** 达到超时（或被中断）的单元会杀死内核进程，其状态会被有意丢弃；结果中会说明这一点，下一次调用将启动一个全新的内核。
+- **`reset=true`。** agent 可以传入 `reset: true` 来丢弃内核状态并重新开始。这也是让环境变更生效的方式：内核的环境在其启动时即被冻结，因此新加入允许列表的透传变量在内核重置之前是不可见的。
+- **空闲超时与淘汰。** 内核会随会话一同结束；也会在空闲 `code_execution.kernel_idle_timeout` 秒后（默认 1800）结束；或者当存活的内核数量超过 `code_execution.max_session_kernels`（默认 4）时，最旧的内核会被淘汰。
+
+安全边界与一次性脚本相同：环境清理、工具白名单和每次调用的工具预算都适用于每个单元，并且工具调用权限（审批、会话、允许列表）会在每个单元上重新绑定。
+
+```yaml
+# ~/.hermes/config.yaml
+code_execution:
+  kernel_idle_timeout: 1800   # seconds a kernel may sit idle before it is reaped
+  max_session_kernels: 4      # kernels kept alive at once; oldest is evicted past this
+```
+
+**远程后端**（Docker、SSH、Modal）运行一个遵循相同约定的远程会话内核。如果无法在该后端上启动内核，Hermes 会退回到将每次调用作为独立脚本运行，并在结果中加以说明。
+
+**大量输出。** 超过 50 KB 的 stdout 会以首尾部分的形式内联显示，完整文本保存在 `~/.hermes/cache/exec/` 下，并在结果中附上路径，因此 agent 可以用 `read_file` 分页查看，而无需重新运行脚本。
 
 ## 脚本内工具调用的工作方式
 
@@ -287,4 +310,4 @@ Hermes 始终将脚本和自动生成的 `hermes_tools.py` RPC 存根写入临�
 
 ## 平台支持
 
-代码执行依赖 Unix 域套接字，仅在 **Linux 和 macOS** 上可用。在 Windows 上会自动禁用——agent 回退至常规的顺序工具调用。
+代码执行可在 **Linux、macOS 和 Windows** 上使用。在 Linux 和 macOS 上，RPC 通道使用 Unix 域套接字；在 Windows 上，由于 `AF_UNIX` 不可靠，Hermes 会自动退回到使用本地回环 TCP 套接字作为沙箱 RPC 传输。远程终端后端（Docker/SSH/Modal 等）则改用基于文件的 RPC 传输，并且还要求后端内安装 Python 3。

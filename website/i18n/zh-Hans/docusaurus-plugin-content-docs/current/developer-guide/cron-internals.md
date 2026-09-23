@@ -63,6 +63,20 @@ cron 子系统提供定时任务执行能力——从简单的单次延迟到带
 }
 ```
 
+### `last_status` 字面量 {#last_status-literals}
+
+`last_status` 是一个封闭集合，只由 `cron.jobs.mark_job_run` 写入。每个
+渲染方（`hermes cron list`/`doctor`、`cronjob` 工具、Web 仪表盘徽标、
+桌面端 routine 检查器）都会显式映射每个字面量——任何消费方都绝不能用
+`== "ok"` 来判断"用户是否拿到了结果"：
+
+| 字面量 | 含义 | 详情字段 |
+|---------|---------|--------------|
+| `ok` | Agent 运行成功，且（若有目标）投递已确认 | — |
+| `error` | Agent 运行失败 | `last_error` |
+| `delivery_failed` | Agent 运行成功，但输出从未到达目标 | `last_delivery_error`（`last_error` 为 `null`） |
+| `blocked_config` | 派发前校验拒绝了这次运行，以免白白消耗 | `last_error` |
+
 ### 任务生命周期状态
 
 | 状态 | 含义 |
@@ -112,7 +126,7 @@ tick()
 - **留空（默认）** → 内置的 `InProcessCronScheduler`，运行历史上的进程内循环，每 60 秒调用一次
   `scheduler.tick()`。其行为与引入 provider 之前逐字节一致。
 - **具名 provider**（例如 `chronos`，一个面向缩容至零部署的托管 cron provider）→
-  从 `plugins/cron/<name>/` 或 `$HERMES_HOME/plugins/<name>/` 中发现。
+  从 `plugins/cron_providers/<name>/` 或 `$HERMES_HOME/plugins/<name>/` 中发现。
 
 如果具名 provider 缺失、加载失败，或报告 `is_available() ==
 False`，解析器会回退到内置 provider 并记录警告——**cron 永远不会没有触发器。**
@@ -169,7 +183,9 @@ agent↔Nous 通信契约位于 `docs/chronos-managed-cron-contract.md`。
 每个 cron 任务在完全全新的 agent 会话中运行：
 
 - 无前次运行的对话历史
-- 无前次 cron 执行的记忆（除非已持久化到内存/文件）
+- 无前次 cron 执行的记忆（持久记忆——MEMORY.md /
+  USER.md——与其他任何 agent 运行一样会被加载，因此长期偏好和
+  事实会延续下来；每次运行的对话上下文则不会）
 - prompt 必须自包含——cron 任务无法提出澄清性问题
 - `cronjob` 工具集已禁用（递归防护）
 
@@ -208,6 +224,14 @@ import requests, json
 
 该超时仅限制**预运行脚本**，不限制 agent。基于技能 / LLM 驱动的任务采用一套独立的、基于*非活动*的预算（`HERMES_CRON_TIMEOUT`，默认 600 秒空闲时间，`0` = 无限制）——只要它们持续调用工具或流式输出 token，就可以运行数小时，只有在配置的空闲时长内毫无活动时才会被终止。脚本被派发到一个常驻线程池（不占用 tick 锁），因此长时间运行的脚本不会阻塞其他到期任务的触发。
 
+在超时或所有权取消时，`cron.scheduler_script` 使用共享的
+`agent.deadline.kill_process_tree` 强制终止路径。在 POSIX 上，它会先短暂暂停并
+重新扫描存活的进程树，再向后代进程及其父进程发送信号，其中包括处于独立会话、
+没有继承输出管道的子进程。这消除了"快照之后再 fork"的竞态。暂停等待是有上限的；
+发现或权限失败时仍会退回尽力而为的进程组清理，这并非沙箱级保证。任何被清理
+过程暂停的目标，若终止失败则会被恢复运行；原本就处于暂停状态的目标保持原状。
+显式的优雅信号不会挂起其接收方。Windows 继续使用 `taskkill /F /T`。
+
 ### Provider 恢复
 
 `run_job()` 将用户配置的备用 provider 和凭证池传入 `AIAgent` 实例：
@@ -245,12 +269,15 @@ Cron 任务结果可投递到任何受支持的平台。
 | WeCom | `wecom` 或 `wecom:<chat_id>` | 裸名投递到企业微信 |
 | BlueBubbles | `bluebubbles` 或 `bluebubbles:<chat_guid>` | 裸名通过 BlueBubbles 投递到 iMessage |
 | QQ Bot | `qqbot` 或 `qqbot:<chat_id>` | 裸名通过官方 API v2 投递到 QQ（腾讯） |
+| Bot Chat | `bot-chat` 或 `bot-chat:<profile>` | 注入到某个本地 profile 的规范 Bot Chat 中（由 bot 进行回复） |
 
 第一组平台具有显式、经校验的目标语法——具名频道（`#channel`）、话题/线程、房间/用户 ID、群组 ID 或电话号码。其余平台接受通用的 `platform:<chat_id>` 形式（冒号后的值原样用作目标 ID）；裸平台名始终投递到主频道。
 
 **具名频道**（`slack:#engineering`、`discord:#engineering`，或像 `slack:engineering` 这样的友好名称）会根据 gateway 从已连接适配器构建的频道目录进行解析，因此 gateway 必须已发现该频道，名称解析才能成功；原始 ID（`slack:C0123ABCD45`）则始终可用。
 
 对于 **Telegram 话题**，使用 `telegram:<chat_id>:<thread_id>`（例如 `telegram:-1001234567890:17585`）。对于 **Slack 线程**，第三段是父消息的 `thread_ts`（例如 `slack:C0123ABCD45:1700000000.000100`），因此仅在回复某条已有消息下方时适用。
+
+**Bot Chat**（`bot-chat`、`bot-chat:<profile>`）是一个仅限本机的伪平台，而不是 gateway 适配器。具备 mailbox 能力的规范实时所有者会立即获得持久准入（无论空闲还是忙碌）；只有该所有者会执行传入的轮次。`scheduler_delivery._deliver_to_bot_chat` 通过 `get_profile_dir` 或任务当前的 `get_hermes_home` 解析目标，根据源 home、任务 ID、持久的 `execution_id` 和目标 home 推导出回执 ID，并在发现所有者之前先检查回执。已存在的回执永远不允许回退到 CLI。没有 mailbox 所有者时，它保留 `hermes [-p <profile>] chat --in ~ -c "Bot Chat" --create-if-missing -Q --query-file <tmp>` 以及常规的所有权隔离。两条通道投递的都是真实的入站轮次，而不是对话记录镜像。已排队/已认领的回执会用回执 ID 填充 `last_delivery_queued`。投递聚合器会把准入通知从真正的错误中排除，并将执行记录为 `delivery_outcome=queued`；成功的任务使用 `last_status=delivery_queued`。在混合目标中，真正的错误优先，记为失败，同时保留已排队回执的元数据。目标 profile 的持久回执对最终完成状态具有权威性。Queued 是历史上的准入结果，并不证明已投递。历史 cron 状态不会自动跟踪回执后来的完成情况。Bot-chat 目标不包含在 `all` 和凭据预检之中。仅含 bot-chat 目标的外部 worker 会绕过 gateway 投递队列；混合目标的外部 worker 则保留 gateway 移交。`cron.bot_chat_delivery_timeout_seconds`（默认 600）只约束旧版子进程通道。
 
 ### 响应包装
 

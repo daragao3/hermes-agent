@@ -46,6 +46,38 @@ python -m pip install -e '.[termux]' -c constraints-termux.txt
 
 ---
 
+## 社区维护的原生 `pkg` 安装方式
+
+:::caution 贡献者运营的发行版
+此 APT 仓库**由 `@adybag14-cyber` 社区维护，并非 NousResearch 官方发行版**。NousResearch 不构建、不签名、不托管，也不审计这些软件包。启用该仓库即意味着信任这个由贡献者运营的仓库及其签名密钥。Termux 本身仍是 Tier 2 / 尽力而为的平台。
+:::
+
+如果你更倾向于使用原生包管理器安装，而不是在手机上构建 Python/Rust 依赖，可以使用一个社区维护的 APT 仓库。仓库引导脚本和打包源码发布在 [`adybag14-cyber/termux-python`](https://github.com/adybag14-cyber/termux-python)，Hermes 软件包的构建位于 [`adybag14-cyber/termux-hermes`](https://github.com/adybag14-cyber/termux-hermes)。
+
+使用以下命令安装仓库密钥/源以及 Hermes：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/adybag14-cyber/termux-python/main/scripts/setup_apt_repo.sh | bash
+pkg install hermes-agent
+```
+
+该社区发行版目前公布的仓库签名密钥指纹为：
+
+```text
+EAD24A2124EFA7393A78B7B14699F966313F7A6B
+```
+
+通过 APT 管理的 Hermes 安装会被标记为安装方式 `apt`。因此 Hermes 不会对软件包所拥有的文件运行其 Git 自更新程序；请改用包管理器更新：
+
+```bash
+pkg update
+pkg upgrade hermes-agent
+```
+
+此安装方式的打包/仓库/签名问题应报告给上述社区打包仓库。Hermes 运行时 bug 仍可在此处报告，但请注意 Android/Termux 支持属于尽力而为。
+
+---
+
 ## 方式一：一行安装命令
 
 Hermes 现已内置 Termux 感知的安装路径：
@@ -78,6 +110,22 @@ pkg install -y git python clang rust make pkg-config libffi openssl nodejs ripgr
 各包用途说明：
 
 - `python` — 运行时 + 虚拟环境支持
+
+:::warning 支持的 Python 版本范围
+Hermes 需要 **Python >=3.11,&lt;3.14**。当前 Termux 提供的 `python`
+为 3.14.x，超出该范围——安装程序会检测到这一点，并自动尝试从
+[Termux User Repository (TUR)](https://github.com/termux-user-repository/tur)
+获取受支持的解释器。手动安装时，请自行安装一个：
+
+```bash
+pkg install tur-repo
+pkg install python3.13
+```
+
+然后在下面的命令中用 `python3.13` 代替 `python`
+（例如 `python3.13 -m venv venv`）。
+:::
+
 - `git` — 克隆/更新仓库
 - `clang`、`rust`、`make`、`pkg-config`、`libffi`、`openssl` — 在 Android 上构建部分 Python 依赖所需
 - `nodejs` — 可选的 Node 运行时，用于已验证核心路径之外的实验
@@ -155,12 +203,20 @@ hermes setup
 
 ### 手动安装可选的 Node 依赖
 
-已验证的 Termux 路径有意跳过 Node/浏览器引导。如果你之后想尝试浏览器工具：
+已验证的 Termux 路径有意跳过 Node/浏览器引导。如果你之后想尝试浏览器工具，所需内容取决于你使用哪种后端：
 
-```bash
-pkg install nodejs-lts
-npm install
-```
+- **云浏览器提供商**（Browserbase、Browser Use、Firecrawl）自行托管 Chromium，因此仅需 Node.js 即可——`agent-browser` 会在首次使用时通过 `npx agent-browser` 延迟解析：
+
+  ```bash
+  pkg install nodejs-lts
+  ```
+
+- Termux 上的**本地浏览器自动化**需要真正安装 `agent-browser`——在本地模式下，裸 npx 回退会被有意拒绝，因为它过于脆弱，不宜标记为就绪：
+
+  ```bash
+  pkg install nodejs-lts
+  npm install -g agent-browser && agent-browser install
+  ```
 
 浏览器工具会自动将 Termux 目录（`/data/data/com.termux/files/usr/bin`）纳入 PATH 搜索，因此无需额外配置 PATH 即可发现 `agent-browser` 和 `npx`。
 

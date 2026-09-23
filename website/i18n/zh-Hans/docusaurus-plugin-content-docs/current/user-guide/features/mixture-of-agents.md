@@ -90,7 +90,7 @@ moa:
       # 与单模型的 Hermes Agent 行为一致。
       # reference_temperature: 0.6
       # aggregator_temperature: 0.4
-      max_tokens: 4096
+
       enabled: true
 ```
 
@@ -100,32 +100,66 @@ moa:
 - 参考模型：`openrouter:deepseek/deepseek-v4-pro`
 - 聚合器 / 执行模型：`openrouter:anthropic/claude-opus-4.8`
 
-### 用 `reference_max_tokens` 调优顾问速度
+### 顾问输出 {#advisor-output}
 
-每一轮中，MoA 会并行运行参考模型（顾问），然后由聚合器执行。顾问生成是每轮延迟的主要来源——
-每轮的实际耗时与顾问输出的 token 数量高度相关，因为该轮需要等待写得最慢的顾问完成。
-默认情况下顾问是**不设上限**的（`reference_max_tokens` 未设置），因此它们可能写出长篇大论式的建议。
+MoA 使用由 provider 决定的输出上限。预设级和按插槽设置的输出 token 上限配置已不再受支持。
+各 provider 的默认值不尽相同；省略并不总是意味着使用模型的最大值。对于要求必须提供输出上限的
+原生协议，Hermes 会在内部传入一个值。
 
-在预设上设置 `reference_max_tokens` 可以限制顾问输出，让建议更简洁。聚合器只需要每位顾问
-判断的要点，因此设置一个上限（例如 `600`）能在几乎不影响质量的前提下明显缩短每轮耗时。
-它**只限制顾问**——执行任务的聚合器的输出（即用户可见的答案）永远不会被截断。
+### 用 `fanout` 设置顾问节奏 {#advisor-cadence-with-fanout}
+
+默认情况下，顾问**每个用户轮次只运行一次**（`fanout: user_turn`）——它们在该轮的第一条消息上
+综合出计划层面的建议，之后由执行任务的聚合器独自完成剩余的工具循环。这是成本最低的节奏：
+顾问开销不会随一轮中工具调用的次数成倍增加。另有两种节奏，以成本换取建议的时效性：
+
+- `fanout: per_iteration`——顾问在**每一次工具迭代**时都重新运行，因此其建议总能跟上最新的
+  工具结果——代价是顾问的延迟和开销会乘以一轮中的工具调用次数。
+- `fanout: every_n:3`——折中方案：顾问在每个用户轮次的**第一次**迭代时运行，之后每隔
+  **第 3 次**工具迭代运行一次（任何 `N >= 2` 均可）。中间的迭代复用上一次顾问运行缓存的指导，
+  因此聚合器在每一步仍能获得建议——只是每 N 步刷新一次，而不是每步刷新。计数器会在每条新的
+  用户消息时重置，所以每一轮都从新鲜的建议开始。映射形式 `fanout: {mode: every_n, n: 3}`
+  同样被接受，并会被规范化为字符串形式。
 
 ```yaml
 moa:
   presets:
-    fast:
+    fresh:
       reference_models:
         - provider: openrouter
           model: anthropic/claude-opus-4.8
-        - provider: openrouter
-          model: openai/gpt-5.5
       aggregator:
         provider: openrouter
-        model: anthropic/claude-opus-4.8
-      reference_max_tokens: 600   # 简洁建议 → 更快的轮次
+        model: openai/gpt-5.5
+      fanout: per_iteration   # 顾问在每次工具迭代时刷新
 ```
 
-保持其未设置（或设为 `0`/留空）即可维持先前的不限量行为。
+未知或格式错误的值会回退为 `user_turn`。
+
+:::note 默认值变更
+2026 年 7 月之前，默认节奏是 `per_iteration`。现在默认值为 `user_turn`——成本最低、影响最小的
+节奏——直到按模式的基准测试证明更昂贵的默认值合理为止。希望恢复逐步建议的预设，
+请显式设置 `fanout: per_iteration`。
+:::
+
+### 顾问输出的隐私过滤 {#privacy-filter-for-advisor-outputs}
+
+顾问输出可能会把对话中的敏感数据——电子邮件、格式化的电话号码、API 密钥、JWT——回显到
+UI 中显示的参考块、保存的 MoA 追踪记录以及聚合器提示词中。`moa.privacy_filter`
+（默认关闭）会对这些位置进行脱敏：
+
+```yaml
+moa:
+  privacy_filter: display   # 或：full
+```
+
+- `display`——**仅对用户可见的位置**脱敏：UI 中渲染的带标签参考块，以及 `save_traces`
+  写入的记录。聚合器仍然接收原始的顾问文本，因此答案质量不受影响。
+- `full`——额外对注入到聚合器提示词中的顾问文本（以及一次性 `/moa` 综合的输入）进行脱敏。
+
+凭据形态（API 密钥前缀、JWT、私钥、数据库连接字符串）由 Hermes 的中央密钥脱敏器屏蔽；
+MoA 过滤器在此之上额外对电子邮件和格式明确的电话号码进行脱敏。这些模式对代码审查类建议
+刻意保持保守：纯数字串、行号、时间戳、git SHA 和 IP 地址永远不会被改动——只有
+`(555) 123-4567` 或 `555-123-4567` 这类带分隔符的电话格式才会匹配。
 
 ### 按插槽设置推理强度
 

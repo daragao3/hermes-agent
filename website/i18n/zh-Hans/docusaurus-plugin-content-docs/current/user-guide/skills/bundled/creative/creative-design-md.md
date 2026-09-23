@@ -1,7 +1,7 @@
 ---
-title: "Design Md — 编写/验证/导出 Google 的 DESIGN"
+title: "Design Md — 编写/验证/导出 Google 的 DESIGN.md token 规范文件"
 sidebar_label: "Design Md"
-description: "编写/验证/导出 Google 的 DESIGN"
+description: "编写/验证/导出 Google 的 DESIGN.md token 规范文件"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
@@ -16,12 +16,12 @@ description: "编写/验证/导出 Google 的 DESIGN"
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/creative/design-md` |
-| 版本 | `1.0.0` |
+| 版本 | `1.1.0` |
 | 作者 | Hermes Agent |
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `design`, `design-system`, `tokens`, `ui`, `accessibility`, `wcag`, `tailwind`, `dtcg`, `google` |
-| 相关 skill | [`popular-web-designs`](/user-guide/skills/bundled/creative/creative-popular-web-designs), [`claude-design`](/user-guide/skills/bundled/creative/creative-claude-design), [`excalidraw`](/user-guide/skills/bundled/creative/creative-excalidraw), [`architecture-diagram`](/user-guide/skills/bundled/creative/creative-architecture-diagram) |
+| 相关 skill | [`popular-web-designs`](/user-guide/skills/bundled/creative/creative-popular-web-designs), [`claude-design`](/user-guide/skills/bundled/creative/creative-claude-design), [`excalidraw`](/user-guide/skills/optional/creative/creative-excalidraw), [`architecture-diagram`](/user-guide/skills/bundled/creative/creative-architecture-diagram) |
 
 ## 参考：完整 SKILL.md
 
@@ -110,7 +110,7 @@ Public Sans for everything except small all-caps labels...
 
 | 类型 | 格式 | 示例 |
 |------|--------|---------|
-| 颜色 | `#` + 十六进制（sRGB） | `"#1A1C1E"` |
+| 颜色 | 任意 CSS 颜色（十六进制、`rgb()`、`oklch()`、命名颜色） | `"#1A1C1E"`、`"oklch(62% 0.18 250)"` |
 | 尺寸 | 数字 + 单位（`px`、`em`、`rem`） | `48px`、`-0.02em` |
 | Token 引用 | `{path.to.token}` | `{colors.primary}` |
 | 字体排版 | 包含 `fontFamily`、`fontSize`、`fontWeight`、`lineHeight`、`letterSpacing`、`fontFeature`、`fontVariation` 的对象 | 见上方 |
@@ -119,7 +119,7 @@ Public Sans for everything except small all-caps labels...
 
 ## 规范章节顺序
 
-章节均为可选，但已存在的章节**必须**按以下顺序排列。重复标题将导致文件被拒绝。
+章节均为可选，但已存在的章节应按以下顺序排列。linter 会标记顺序错误的章节（`section-order`，警告）以及重复的标题——按照规范，消费方会拒绝重复标题，因此在返回文件前请把这两类问题都修复。
 
 1. Overview（别名：Brand & Style）
 2. Colors
@@ -151,8 +151,11 @@ npx -y @google/design.md lint DESIGN.md
 # 比较两个版本，发现回归时失败（exit 1 = 存在回归）
 npx -y @google/design.md diff DESIGN.md DESIGN-v2.md
 
-# 导出为 Tailwind 主题 JSON
-npx -y @google/design.md export --format tailwind DESIGN.md > tailwind.theme.json
+# 导出为 Tailwind v3 主题 JSON（`tailwind` 是向后兼容的别名）
+npx -y @google/design.md export --format json-tailwind DESIGN.md > tailwind.theme.json
+
+# 导出为 Tailwind v4 CSS @theme 块（--color-*、--text-*、--radius-* 等）
+npx -y @google/design.md export --format css-tailwind DESIGN.md > theme.css
 
 # 导出为 W3C DTCG（Design Tokens Format Module）JSON
 npx -y @google/design.md export --format dtcg DESIGN.md > tokens.json
@@ -161,15 +164,20 @@ npx -y @google/design.md export --format dtcg DESIGN.md > tokens.json
 npx -y @google/design.md spec --rules-only --format json
 ```
 
-所有命令均接受 `-` 作为 stdin。`lint` 在出现错误时返回 exit 1。若需要以结构化方式报告结果，请使用 `--format json` 标志并解析输出。
+所有命令均接受 `-` 作为 stdin。`lint` 在出现错误时返回 exit 1（仅有警告时返回 exit 0）。`export` 只要导出成功就返回 exit 0，与源文件中的 lint 结果无关——如需据此设置关卡，请单独运行 `lint`。输出默认为 JSON；若需要以结构化方式报告结果，请解析输出。
 
-### Lint 规则参考（7 条规则的检查内容）
+在 Windows 上，`design.md` 这个 bin 名称可能与 `.md` 文件关联发生冲突（静默无操作，或文件在编辑器中被打开）。请使用不含点号的别名：`npx -y -p @google/design.md designmd lint DESIGN.md`。
+
+### Lint 规则参考（9 条规则，截至 CLI 0.3.0）
 
 - `broken-ref`（错误）— `{colors.missing}` 指向不存在的 token
-- `duplicate-section`（错误）— 同一 `## 标题` 出现两次
-- `invalid-color`、`invalid-dimension`、`invalid-typography`（错误）
-- `wcag-contrast`（警告/信息）— 组件 `textColor` 与 `backgroundColor` 的对比度，对照 WCAG AA（4.5:1）和 AAA（7:1）
-- `unknown-component-property`（警告）— 超出上述白名单范围
+- `contrast-ratio`（警告）— 组件 `textColor` 与 `backgroundColor` 的对比度低于 WCAG AA（4.5:1）
+- `missing-primary`（警告）— 定义了颜色但没有 `primary` token
+- `missing-typography`（警告）— 定义了颜色但没有字体排版 token
+- `orphaned-tokens`（警告）— 从未被任何组件引用的颜色 token
+- `section-order`（警告）— 章节未按规范顺序排列
+- `unknown-key`（警告）— 看起来像是 schema 键拼写错误的顶层 YAML 键（`colours:` → `colors:`）；自定义扩展键不会报告
+- `token-summary`、`missing-sections`（信息）— 计数以及缺失的可选章节
 
 当用户关注无障碍性时，请在摘要中明确指出 — WCAG 检查结果是使用 CLI 最重要的理由。
 
@@ -178,8 +186,9 @@ npx -y @google/design.md spec --rules-only --format json
 - **不要嵌套组件变体。** `button-primary.hover` 是错误的；应将 `button-primary-hover` 作为同级键。
 - **十六进制颜色必须加引号。** 否则 YAML 会在 `#` 处出错，或将 `#1A1C1E` 等值截断。
 - **负数尺寸也需要加引号。** `letterSpacing: -0.02em` 会被解析为 YAML flow — 应写为 `letterSpacing: "-0.02em"`。
-- **章节顺序是强制的。** 若用户以随机顺序提供正文，在保存前须重新排列为规范列表顺序。
-- **`version: alpha` 是当前规范版本**（截至 2026 年 4 月）。该规范标记为 alpha — 请关注破坏性变更。
+- **即使 linter 只发出警告，章节顺序也很重要。** 若用户以随机顺序提供正文，在保存前须重新排列为规范列表顺序——符合规范的消费方会依赖这一顺序。
+- **字体排版子属性的拼写错误会被静默丢弃。** 截至 CLI 0.3.0，像 `fontwight:` 这样的拼写错误不会产生任何检查结果，其值会从导出中消失——请对照 schema 仔细核对子属性名（`fontFamily`、`fontSize`、`fontWeight`、`lineHeight`、`letterSpacing`、`fontFeature`、`fontVariation`）。
+- **`version: alpha` 是当前规范版本**（截至 2026 年 7 月，CLI 0.3.0）。该规范标记为 alpha — 请关注破坏性变更。
 - **Token 引用通过点分路径解析。** `{colors.primary}` 有效；`{primary}` 无效。
 
 ## 规范来源

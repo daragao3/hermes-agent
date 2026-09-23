@@ -78,7 +78,6 @@ hermes skills opt-in --sync      # 撤销：删除标记并立即重新预置
 
 对于你反复使用的组合，更推荐使用 [skill 捆绑包](#skill-bundles)——一条短命令即可达到同样的效果。
 
-捆绑的 `plan` skill 是一个很好的示例。运行 `/plan [request]` 会加载该 skill 的指令，告知 Hermes 在需要时检查上下文、编写 markdown 实现计划而非直接执行任务，并将结果保存在相对于当前工作区/后端工作目录的 `.hermes/plans/` 下。
 （计划模式的工作方式相同，但现在是内置命令：`/plan [request]` 告知 Hermes 在需要时检查上下文、编写 markdown 实现计划而非直接执行任务，并将结果保存在相对于当前工作区/后端工作目录的 `.hermes/plans/` 下。）
 
 你也可以通过自然对话与 skills 交互：
@@ -104,7 +103,21 @@ hermes chat --toolsets skills -q "Show me the axolotl skill"
 
 # 粘贴的笔记 / 口述的操作步骤
 /learn filing an expense: open the portal, New > Expense, attach the receipt, submit
+
+# 整本书、一叠论文或大型文档语料——会变成一个知识库 skill
+/learn ~/books/designing-data-intensive-applications.pdf
 ```
+
+### 大型资料会变成知识库 skill {#large-sources-become-knowledge-base-skills}
+
+当资料是一本书、一叠论文、一份规范或一个大型文档文件夹时，agent 不会把它塞进单个文件，
+也不会把它压缩成有损的摘要。相反，它会编写一个**扩展型知识库 skill**：一个精简的 `SKILL.md`，
+承载资料的核心心智模型以及一份索引，并在 `references/` 下为每一章或每个主题提供一个提炼后的
+文件（在资料值得时还会附上术语表或速查表）。参考文件在有问题需要它之前不产生任何开销——agent
+会按需通过 `skill_view` 加载它们，因此查询成本与答案成正比，而不是与资料规模成正比。针对同一
+主题用新材料再次运行 `/learn`，会把新内容并入已有的 skill，而不是创建一个重复的 skill。
+
+提炼过程综合的是结构——框架、定义、决策规则、反模式——绝不会复现资料原文的段落。
 
 由于是实时的 agent 完成资料收集，`/learn` 在 CLI、消息 gateway、TUI 和仪表板中的表现完全一致——在任何终端后端（本地、Docker、远程）上也是如此，因为它没有独立的摄取引擎。在**仪表板**中，Skills 页面有一个 **Learn a skill** 按钮，会打开一个包含目录字段、URL 字段和开放式文本框的面板；它会组装出一条 `/learn` 请求并在聊天中运行。
 
@@ -290,6 +303,38 @@ metadata:
 
 通过第三方 URL 或 GitHub 安装时，Hermes 会安装 `SKILL.md`，以及其中明确引用且位于 `references/`、`templates/`、`scripts/`、`assets/` 和 `examples/` 下的文件。未引用的仓库文件不会被复制。Hermes 会扫描完整的隔离捆绑包，并在 `skills/.hub/lock.json` 中记录来源 URL、精确内容哈希、扫描器版本、发现项、时间戳，以及本次结果是新扫描还是缓存复用。
 
+### 建议性的 SkillEvaluator 扫描 {#advisory-skillevaluator-scan}
+
+除了内置的安全扫描器（它负责执行上述安装策略）之外，Hermes 还可以在每次 hub 安装时运行
+[NVIDIA SkillEvaluator](https://github.com/NVIDIA/SkillEvaluator) 的 Tier 1 检查作为第二意见。
+Tier 1 是确定性的、无需密钥——包括 PII 检测（泄露的邮箱、个人路径、连接字符串）、Unicode
+走私检测、脚本 lint、许可证合规，以及通过
+[NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector) 进行的静态安全扫描。
+
+该扫描**仅供参考**：发现项会在安装确认之前连同文件和行号一起打印出来，安装会继续进行。
+看起来像真实凭据的发现项（私钥、云访问密钥、token、带凭据的连接字符串）会以红色高亮，
+方便你在做决定之前审阅被标记的行。PII 类发现项仅作提示——上游扫描器有已知的误报类别
+（例如 `git@github.com` SSH 语法、文档中的示例邮箱），因此它们永远不会阻止任何操作。
+
+要启用它，请安装可选的扫描器二进制文件（第二个用于支撑 `security` 检查；没有它时该检查
+只会报告“未运行”）：
+
+```bash
+uv tool install --python 3.13 \
+  "skillevaluator @ git+https://github.com/NVIDIA/SkillEvaluator.git@v0.1.0"
+uv tool install "git+https://github.com/NVIDIA/SkillSpector.git@v2.9.5"
+```
+
+如果 PATH 上没有该二进制文件，扫描会被静默跳过。要彻底关闭它：
+
+```yaml
+skills:
+  tier1_advisory: false
+```
+
+仪表板 Browse-hub 的扫描按钮会在其响应中（`tier1` 字段）返回同样的建议性数据，并附带内置
+扫描器的结论。
+
 ## 外部 Skill 目录 {#external-skill-directories}
 
 如果你在 Hermes 之外维护 skills——例如，供多个 AI 工具使用的共享 `~/.agents/skills/` 目录——你可以告诉 Hermes 也扫描这些目录。
@@ -308,7 +353,7 @@ skills:
 
 ### 工作原理
 
-- **本地创建，就地更新**：新的 agent 创建的 skills 写入 `~/.hermes/skills/`。现有 skills 在找到的位置被修改，包括 `external_dirs` 下的 skills，当 agent 使用 `skill_manage` 操作（如 `patch`、`edit`、`write_file`、`remove_file` 或 `delete`）时。
+- **本地创建，就地更新**：新的 agent 创建的 skills 写入 `~/.hermes/skills/`（配置了 `skills.create_dir` 时则写入该目录——见下文）。现有 skills 在找到的位置被修改，包括 `external_dirs` 下的 skills，当 agent 使用 `skill_manage` 操作（如 `patch`、`edit`、`write_file`、`remove_file` 或 `delete`）时。
 - **外部目录不是写保护边界**：如果外部 skill 目录对 Hermes 进程可写，agent 管理的 skill 更新可以修改该目录中的文件。如果共享的外部 skills 必须保持只读，请使用文件系统权限或单独的 profile/toolset 设置。
 - **本地优先**：如果同一 skill 名称同时存在于本地目录和外部目录中，本地版本优先。
 - **完整集成**：外部 skills 出现在系统提示词索引、`skills_list`、`skill_view` 以及 `/skill-name` 斜杠命令中——与本地 skills 无异。
@@ -331,6 +376,68 @@ skills:
 ```
 
 所有四个 skills 都出现在你的 skill 索引中。如果你在本地创建一个名为 `my-custom-workflow` 的新 skill，它会遮蔽外部版本。
+
+## 重定向 Skill 创建位置（`skills.create_dir`） {#redirecting-skill-creation-skillscreate_dir}
+
+默认情况下，agent 会把新 skill 写入 profile 本地的 `~/.hermes/skills/`。如果你希望 agent 创建的 skill 落在别处——一个共享的“大脑”目录、一个受 git 跟踪的仓库，或一个全机队共用的 skills 卷——请在 `skills` 部分下设置 `create_dir`：
+
+```yaml
+skills:
+  create_dir: /opt/brain/skills
+```
+
+这会改变：
+
+- **`skill_manage` 的 create 会写入该目录。** 新 skill（包括分类子目录）会在 `create_dir` 下创建，而不是在本地 skills 目录中。该目录若不存在，会在首次写入时创建。
+- **agent 的指令会跟随配置。** 所有提及 skill 创建路径的面向 agent 的指令——`skill_manage` 工具描述以及相关的提示文本——都会动态渲染所配置的目录，因此 agent 会被告知在那里创建 skill。无需覆盖系统 prompt，也无需任何文件系统技巧。
+- **该目录完全集成。** `create_dir` 下的 skill 会与本地目录一同扫描：它们会出现在 skill 索引、`skills_list`、`skill_view` 和斜杠命令中，并且可以像任何本地 skill 一样被 patch 或删除。
+- **其他一切保持本地。** 已有的 skill 仍在其所在位置被原地修改；捆绑 skill 同步、hub 和 curator 继续作用于 profile 本地目录。
+
+路径支持 `~` 展开和 `${VAR}` 替换；相对路径相对于你的 Hermes 主目录解析。把 `create_dir` 设为本地 skills 目录等同于不设置。
+
+
+## 项目本地 Skill {#project-local-skills}
+
+仓库可以携带自己的 skill，这些 skill 只在该项目内启动的会话中生效——这与其他 agent 工具用于仓库本地配置的模式相同。当你在 git 检出目录中启动 Hermes 时，它会在以下位置查找 skill：
+
+```text
+<project-root>/.hermes/skills/    # Hermes 原生位置
+<project-root>/.agents/skills/    # 跨工具约定（与其他 agent CLI 共享）
+```
+
+项目根目录是包含 `.git` 的最近的祖先目录（worktree 和 submodule 同样算数）。
+
+### 信任一个项目 {#trusting-a-project}
+
+Skill 是 agent 会遵循的流程文档，因此 Hermes **不会**从任意克隆的仓库中自动加载它们。当你第一次在带有项目 skill 的仓库中运行 Hermes 时，横幅会显示一条提示：
+
+```text
+◆ 3 project skill(s) found in /home/you/myproject but not loaded — run `hermes skills trust` to enable them.
+```
+
+信任该仓库一次即可（在仓库内部运行，或传入路径）：
+
+```bash
+hermes skills trust             # 信任当前仓库
+hermes skills trust ~/myproject # 或显式指定
+hermes skills untrust           # 撤销
+```
+
+受信任的根目录保存在 `~/.hermes/config.yaml` 的 `skills.trusted_project_dirs` 中。设置 `skills.project_discovery: false` 可彻底关闭该功能（不扫描，也不提示）。
+
+### 优先级 {#precedence}
+
+项目 skill 属于**最高优先级层**：`project → local (~/.hermes/skills/) → external_dirs`。一个名为 `deploy` 的项目 skill 会在该仓库内的会话中覆盖同名的 profile skill 或捆绑 skill——这正是其用意：随仓库提供的 skill 在自己的主场胜出，而不会触及你的全局 profile。项目 skill 在 agent 的 skill 索引中带有 `[project]` 标签，以便来源始终可见。
+
+与外部目录一样，项目 skill 目录被视为归仓库所有：自主的 skill 维护（curator）从不修改它们，而 agent 新创建的 skill 总是写入 `~/.hermes/skills/`。
+
+### 扫描时隔离 {#scan-time-quarantine}
+
+信任是仓库级别的决定，但仓库中的 skill 内容会随着每次 `git pull` 而变化。为了弥补这一缺口，每个项目 skill 在进入索引之前，都会用与 Skills Hub 安装相同的安全扫描器进行扫描。扫描结论为**危险**的 skill（提示注入指令、凭据外泄命令、隐藏文本伎俩）会被隔离：它不会出现在 skill 索引、`skills_list` 和斜杠命令中，并且按名称加载时会以一条解释性错误拒绝加载。扫描结果按内容哈希缓存在 `~/.hermes/cache/project_skill_scans/` 下（绝不会放在你的仓库内），并在 skill 内容变化时自动重新运行。
+
+### 非交互式界面（cron、API、ACP） {#non-interactive-surfaces-cron-api-acp}
+
+Cron 任务和其他非交互式界面沿用你在交互中做出的信任决定——它们从不提示，也从不自动信任。项目根目录根据该界面的工作目录解析（cron 任务的 `workdir`，与 terminal 工具使用的机制相同）。`workdir` 位于你先前已信任的仓库内的 cron 任务会加载该仓库的项目 skill；位于未信任或尚未决定的仓库中的任务则不会加载任何项目 skill。
 
 ## Skill 捆绑包 {#skill-bundles}
 
@@ -425,10 +532,17 @@ skills 与记忆在自我改进循环中协同工作：记忆存放应始终位�
 
 ### Agent 创建 Skills 的时机
 
-- 成功完成复杂任务后（5+ 次工具调用）
+系统 prompt 会要求 agent 用 `skill_manage` 记录非平凡的工作流，以便将来复用。实际上这涵盖：
+
+- 当它摸索出一个值得重复使用的多步骤工作流时
 - 遇到错误或死路并找到可行路径时
 - 用户纠正了其方法时
-- 发现了非平凡的工作流时
+
+### Skill 条目的样子 {#what-a-skill-entry-looks-like}
+
+Skill 是按照你的要求、以最高效且正确的方式完成某一类任务的指令：按顺序排列的流程、行之有效的命令和工具调用、你希望结果呈现的样子，以及会浪费时间的陷阱。无论是在前台轮次中编写、由后台审查编写，还是由 curator 的整合流程编写，它记录的都是**经验，而不是日志**：一个陷阱就是一条可推广的规则，加上一句说明*原因*（其机制）的从句，附在它所影响的步骤上，只陈述一次。事件经过、PR 或 issue 编号、日期以及引用的聊天内容都不属于 skill 内容；规则必须脱离其背后的故事也能成立。始终生效的规则写在 `SKILL.md` 本身中；`references/` 存放少量按主题命名的文件（决策表、配方、提供方的怪癖），并在原文件上扩充，而不是每个会话累积一个文件。Skill 也不会重复每轮都已加载的内容（仓库的 `AGENTS.md`、工具 schema）。
+
+`skill_manage` 会在 `create` 以及写入 `references/` 时运行一个建议性的 linter，并在工具结果中返回其发现项。有两条规则专门针对这种形态：`incident-log-shape`（正文中密集出现 PR/issue 编号）和 `references-sprawl`（参考文件超过 60 个）。它们只会警告，绝不会阻止写入。
 
 ### 操作
 
@@ -688,9 +802,16 @@ hub 现在跟踪足够的来源信息以重新检查已安装 skills 的上游�
 hermes skills check          # Report which installed hub skills changed upstream
 hermes skills update         # Reinstall only the skills with updates available
 hermes skills update react   # Update one specific installed hub skill
+hermes skills update react --force   # Overwrite a skill you've edited locally
 ```
 
 这使用存储的来源标识符加上当前上游捆绑包内容哈希来检测漂移。
+
+对于缺失或并非目录的安装（`orphaned`），以及不安全或无法解析的记录路径（`invalid_install`），检查会跳过网络请求。目录缺失的条目可以用 `hermes skills uninstall <name>` 移除；无效路径则需要先检查并修复当前 profile 的 `skills/.hub/lock.json`，然后再重试。不会自动移除任何条目。
+
+有效的安装继续使用其来源适配器现有的同步获取和传输超时。更新检查没有严格的总截止时间：某个已有安装的来源若无法访问或速度缓慢，仍可能拖慢后续条目。
+
+你在本地编辑过的 skill（磁盘上的内容与安装时记录的哈希不再匹配）会被 `hermes skills update` **跳过**，因此你的修改永远不会被静默覆盖。传入 `--force` 可无论如何用上游版本替换它们。
 
 :::tip GitHub 速率限制
 Skills hub 操作使用 GitHub API，未认证用户的速率限制为每小时 60 次请求。如果在安装或搜索时看到速率限制错误，请在 `.env` 文件中设置 `GITHUB_TOKEN` 以将限制提高到每小时 5,000 次请求。发生此情况时，错误消息会包含可操作的提示。
@@ -765,7 +886,7 @@ hermes skills install my-org/hermes-skills/deploy-runbook
 
 #### 非默认路径
 
-如果你的 skills 不在 `skills/` 下（当你向现有项目添加 `skills/` 子树时很常见），请编辑 `~/.hermes/.hub/taps.json` 中的 tap 条目：
+如果你的 skills 不在 `skills/` 下（当你向现有项目添加 `skills/` 子树时很常见），请编辑 `~/.hermes/skills/.hub/taps.json` 中的 tap 条目：
 
 ```json
 {
@@ -789,7 +910,7 @@ hermes skills install owner/repo/skills/my-workflow
 
 #### tap 的信任级别
 
-新 tap 默认分配 `community` 信任级别。从中安装的 skills 经过标准安全扫描，首次安装时显示第三方警告面板。如果你的组织或广泛受信任的来源应获得更高信任，请将其仓库添加到 `tools/skills_hub.py` 中的 `TRUSTED_REPOS`（需要 Hermes 核心 PR）。
+新 tap 默认分配 `community` 信任级别。从中安装的 skills 经过标准安全扫描，首次安装时显示第三方警告面板。如果你的组织或广泛受信任的来源应获得更高信任，请将其仓库添加到 `tools/skills_guard.py` 中的 `TRUSTED_REPOS`（需要 Hermes 核心 PR）。
 
 #### Tap 管理
 
@@ -807,7 +928,7 @@ hermes skills tap remove myorg/skills-repo            # remove
 /skills tap remove myorg/skills-repo
 ```
 
-Tap 存储在 `~/.hermes/.hub/taps.json` 中（按需创建）。
+Tap 存储在 `~/.hermes/skills/.hub/taps.json` 中（按需创建）。
 
 ## 捆绑 skill 更新（`hermes skills reset`）
 
@@ -817,6 +938,8 @@ Hermes 在仓库的 `skills/` 中附带一组捆绑 skills。在安装时以及�
 
 - **未更改** → 可以安全拉取上游变更，复制新的捆绑版本，记录新的 origin hash。
 - **已更改** → 视为**用户修改**并永久跳过，因此你的编辑不会被覆盖。
+
+skill 内部生成的运行时缓存（`__pycache__/`、`.pytest_cache/`、`.mypy_cache/`、`.ruff_cache/`，以及紧挨着其 `.py` 的 `.pyc`）不计入哈希，因此运行某个 skill 的辅助脚本永远不会把它标记为用户修改，也不会让它从 `hermes skills list-modified` / `diff` 中消失。
 
 这种保护机制很好，但有一个棘手的边缘情况。如果你编辑了一个捆绑 skill，后来想通过从 `~/.hermes/hermes-agent/skills/` 复制粘贴来放弃更改并回到捆绑版本，清单仍然保存着上次成功同步时的*旧* origin hash。你新复制粘贴的内容（当前捆绑哈希）与那个过时的 origin hash 不匹配，因此同步继续将其标记为用户修改。
 

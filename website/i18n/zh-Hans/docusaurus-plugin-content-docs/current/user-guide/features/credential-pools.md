@@ -33,7 +33,7 @@ Your request
           → Second 429 → rotate to next pool key
       → All keys exhausted → fallback_model (different provider)
   → 402 billing error?
-      → Immediately rotate to next pool key (24h cooldown)
+      → Immediately rotate to next pool key (1h cooldown)
   → 401 auth expired?
       → Try refreshing the token (OAuth)
       → Refresh failed → rotate to next pool key
@@ -65,16 +65,16 @@ hermes auth list
 输出：
 ```
 openrouter (2 credentials):
-  #1  OPENROUTER_API_KEY   api_key env:OPENROUTER_API_KEY ←
-  #2  backup-key           api_key manual
+  #1  OPENROUTER_API_KEY   api_key id=ab12cd34 priority=0 env:OPENROUTER_API_KEY ←
+  #2  backup-key           api_key id=ef56gh78 priority=1 manual
 
 anthropic (3 credentials):
-  #1  hermes_pkce          oauth   hermes_pkce ←
-  #2  claude_code          oauth   claude_code
-  #3  ANTHROPIC_API_KEY    api_key env:ANTHROPIC_API_KEY
+  #1  hermes_pkce          oauth   id=ab12cd34 priority=0 hermes_pkce ←
+  #2  claude_code          oauth   id=cd34ef56 priority=1 claude_code
+  #3  ANTHROPIC_API_KEY    api_key id=ef56gh78 priority=2 env:ANTHROPIC_API_KEY
 ```
 
-`←` 标记当前选中的凭证。
+`←` 标记当前选中的凭证。`id=` 是标签有歧义时 `hermes auth remove <provider> <target>` 可接受的条目 id，`priority=` 是在 `fill_first` 策略下池尝试凭证的顺序。
 
 ## 交互式管理
 
@@ -114,10 +114,20 @@ Type [1/2]:
 | `hermes auth add <provider>` | 添加凭证（提示选择类型和密钥） |
 | `hermes auth add <provider> --type api-key --api-key <key>` | 非交互式添加 API 密钥 |
 | `hermes auth add <provider> --type oauth` | 通过浏览器登录添加 OAuth 凭证 |
+| `hermes auth add <provider> --priority 0` | 添加凭证并将其置于 `fill_first` 顺序的首位 |
+| `hermes auth priority <provider> <target> <n>` | 将凭证移动到优先级 `n`（0 = 最先尝试）；其余凭证重新编号 |
 | `hermes auth remove <provider> <index>` | 按从 1 开始的索引删除凭证 |
 | `hermes auth reset <provider>` | 清除所有冷却时间/耗尽状态 |
+| `hermes auth reset <provider> <target>` | 按索引、id 或标签清除单个凭证的冷却时间 |
+| `hermes auth refresh <provider> [target]` | 刷新单个 OAuth 凭证的令牌并将其放回轮换（证明授权仍然有效；下一次请求会重新检查配额） |
+
+对于 Nous，`auth refresh` 仅支持登录产生的 `device_code` 单例凭证。独立的 Nous 池账户会在刷新前被拒绝；它们的令牌和冷却时间会被保留。使用 `hermes auth add nous --type oauth` 重新认证可以更新该单例；这不会刷新独立账户。其他提供商保留各自原有的、特定于来源的刷新支持。
 
 ## 轮换策略
+
+优先级位置从 0 开始，并会被限制在池的两端之内；显示的目标可以是从 1 开始的索引、条目 ID，或无歧义的精确标签。`auth add --priority` 也会为因重新认证而更新的现有条目设置位置。Anthropic 会将手动添加的凭证排在自动导入的凭证之前，因此当该规则改变了位置时，命令会报告实际生效的位置。其他策略可能会覆盖优先级，并且重新排序不会重新绑定运行中会话已持有的凭证。
+
+无论采用哪种策略，每次成功的池选择都会使 `request_count` 递增。仅用于刷新的查找和窥视（peek）不计入。这些是选择计数器，而不是计费总量，也不是每次推理请求的计数：一个缓存的凭证可以服务多个请求。计数会保存在内存中，直到下一次已有的池写入（例如轮换、耗尽、刷新或管理变更）；这不会为每次选择额外增加一次磁盘写入。
 
 通过 `hermes auth` → "Set rotation strategy" 配置，或在 `config.yaml` 中设置：
 
@@ -129,7 +139,7 @@ credential_pool_strategies:
 
 | 策略 | 行为 |
 |----------|----------|
-| `fill_first`（默认） | 持续使用第一个健康密钥直至耗尽，然后切换到下一个 |
+| `fill_first`（默认） | 持续使用第一个健康密钥直至耗尽，然后切换到下一个；顺序由每个凭证的 `priority` 决定（`hermes auth priority` 可修改） |
 | `round_robin` | 均匀循环遍历所有密钥，每次选择后轮换 |
 | `least_used` | 始终选择请求次数最少的密钥 |
 | `random` | 在健康密钥中随机选择 |
@@ -141,15 +151,17 @@ credential_pool_strategies:
 | 错误 | 行为 | 冷却时间 |
 |-------|----------|----------|
 | **429 速率限制** | 对同一密钥重试一次（瞬时错误）。连续第二次 429 则轮换到下一个密钥 | 1 小时 |
-| **402 计费/配额** | 立即轮换到下一个密钥 | 24 小时 |
-| **401 认证过期** | 先尝试刷新 OAuth 令牌。仅在刷新失败时才轮换 | — |
+| **402 计费/配额** | 立即轮换到下一个密钥 | 1 小时 |
+| **401 认证过期** | 先尝试刷新 OAuth 令牌。仅在刷新失败时才轮换 | 5 分钟 |
 | **所有密钥耗尽** | 若已配置则转入 `fallback_model` | — |
+
+提供商返回的 `reset_at` 时间戳会覆盖这些默认冷却时间。
 
 `has_retried_429` 标志在每次成功的 API 调用后重置，因此单次瞬时 429 不会触发轮换。
 
 ## 自定义端点池
 
-自定义 OpenAI 兼容端点（Together.ai、RunPod、本地服务器）拥有各自的池，以 `config.yaml` 中 `custom_providers` 的端点名称作为键。
+自定义 OpenAI 兼容端点（Together.ai、RunPod、本地服务器）拥有各自的池，以 `config.yaml` 中 `providers:` 字典（或会被自动迁移的旧版 `custom_providers` 列表）里的端点名称作为键。
 
 通过 `hermes model` 设置自定义端点时，会自动生成类似 "Together.ai" 或 "Local (localhost:8080)" 的名称，该名称即成为池的键。
 
@@ -204,16 +216,18 @@ Hermes 在启动时自动从多个来源发现凭证并初始化池：
 
 凭证池对所有状态变更操作（`select()`、`mark_exhausted_and_rotate()`、`try_refresh_current()`、`mark_used()`）使用线程锁，确保 gateway（网关）同时处理多个聊天会话时的并发访问安全。
 
+在跨进程场景下（大量子 agent、gateway 加 CLI、cron 任务），OAuth 刷新通过 `auth.json` 上的文件锁串行化。当一个共享的 OAuth 授权在大量并发进程下过期时，只有一个进程会执行刷新；其他进程会检测到磁盘上的令牌已不同于失败的那个，并直接采用它，而不会再次轮换一次性的刷新令牌。在锁竞争中落败的进程会保持其条目健康并重试——锁争用绝不会被记录为凭证失败。
+
 ## 架构
 
 完整的数据流图请参见仓库中的 [`docs/credential-pool-flow.excalidraw`](https://excalidraw.com/#json=2Ycqhqpi6f12E_3ITyiwh,c7u9jSt5BwrmiVzHGbm87g)。
 
 凭证池集成于提供商解析层：
 
-1. **`agent/credential_pool.py`** — 池管理器：存储、选择、轮换、冷却时间
+1. **`agent/credential_pool.py`** — 池管理器：存储、选择、轮换、冷却时间；**`agent/credential_pool_admin.py`** 负责加锁的目标解析、重置、添加、删除和优先级变更
 2. **`hermes_cli/auth_commands.py`** — CLI 命令和交互式向导
 3. **`hermes_cli/runtime_provider.py`** — 感知池的凭证解析
-4. **`run_agent.py`** — 错误恢复：429/402/401 → 池轮换 → 备用
+4. **`agent/turn_api_error.py`** — 错误恢复：429/402/401 → 池轮换 → 备用
 
 ## 存储
 

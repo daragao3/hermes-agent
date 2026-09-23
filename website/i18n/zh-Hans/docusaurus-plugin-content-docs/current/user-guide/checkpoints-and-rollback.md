@@ -40,7 +40,8 @@ Agent 每个目录每轮**最多创建一个检查点**，因此长时间运行�
 | 命令 | 说明 |
 |---------|-------------|
 | `/rollback` | 列出所有检查点及变更统计 |
-| `/rollback <N>` | 恢复到检查点 N（同时撤销最后一轮对话） |
+| `/rollback <N>` | 恢复到检查点 N，保留你的手动编辑（同时撤销最后一轮对话） |
+| `/rollback <N> --all` | 完整恢复——同时覆盖你的手动编辑 |
 | `/rollback diff <N>` | 预览检查点 N 与当前状态的差异 |
 | `/rollback <N> <file>` | 从检查点 N 恢复单个文件 |
 
@@ -132,7 +133,8 @@ Hermes 返回带有变更统计的格式化列表：
   2. eaf4c1f  2026-03-16 04:35  before write_file
   3. b3f9d2e  2026-03-16 04:34  before terminal: sed -i s/old/new/ config.py  (1 file, +1/-1)
 
-  /rollback <N>             restore to checkpoint N
+  /rollback <N>             restore to checkpoint N (keeps your hand-edits)
+  /rollback <N> --all       full restore, overwriting your hand-edits too
   /rollback diff <N>        preview changes since checkpoint N
   /rollback <N> <file>      restore a single file from checkpoint N
 ```
@@ -190,8 +192,30 @@ Hermes 在后台执行：
 
 1. 验证目标提交存在于影子存储中。
 2. 对当前状态创建**回滚前快照**，以便之后可以"撤销撤销"。
-3. 恢复工作目录中被跟踪的文件。
+3. 恢复工作目录中被跟踪的文件——**保留你的手动编辑**（见下文）。
 4. **撤销最后一轮对话**，使 Agent 的上下文与恢复后的文件系统状态一致。
+
+### 默认保留用户的手动编辑 {#user-hand-edits-are-preserved-by-default}
+
+`/rollback <N>` 只恢复 Hermes 自己修改过的文件。每次成功的
+`write_file` / `patch` 都会将文件的内容哈希记录到一份 **agent 写入账本**
+中；恢复时，任何当前内容与 Hermes 最后写入内容不一致的文件（你之后编辑过它，
+或 Hermes 从未改动过它）都会被**跳过**而不是被覆盖，并在输出中列出：
+
+```
+✅ Restored to checkpoint a1b2c3d4: before write_file
+↷ Kept your hand-edits: src/config.py, notes.md
+Use /rollback <N> --all to restore those too.
+```
+
+如需强制执行传统的完整恢复、还原所有内容——包括你自己的编辑——请加上 `--all`：
+
+```
+/rollback 1 --all
+```
+
+如果账本为空（该存储创建于此功能推出之前，或 Hermes 尚未在该项目中写入任何文件），
+`/rollback` 会自动回退为完整恢复。
 
 ## 单文件恢复
 

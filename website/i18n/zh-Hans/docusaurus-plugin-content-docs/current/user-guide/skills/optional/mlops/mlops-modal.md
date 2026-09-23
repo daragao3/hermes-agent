@@ -1,14 +1,14 @@
 ---
-title: "Modal Serverless Gpu — 用于运行 ML 工作负载的无服务器 GPU 云平台"
-sidebar_label: "Modal Serverless Gpu"
-description: "用于运行 ML 工作负载的无服务器 GPU 云平台"
+title: "Modal — 面向 ML 作业和模型 API 的无服务器 GPU 云"
+sidebar_label: "Modal"
+description: "面向 ML 作业和模型 API 的无服务器 GPU 云"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# Modal Serverless Gpu
+# Modal
 
-用于运行 ML 工作负载的无服务器 GPU 云平台。适用于需要按需 GPU 访问而无需管理基础设施、将 ML 模型部署为 API，或运行具有自动扩缩容的批处理作业的场景。
+面向 ML 作业和模型 API 的无服务器 GPU 云。
 
 ## Skill 元数据
 
@@ -16,10 +16,10 @@ description: "用于运行 ML 工作负载的无服务器 GPU 云平台"
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/mlops/modal` 安装 |
 | 路径 | `optional-skills/mlops/modal` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
-| 依赖 | `modal>=0.64.0` |
+| 依赖 | `modal>=1.0` |
 | 平台 | linux, macos, windows |
 | 标签 | `Infrastructure`, `Serverless`, `GPU`, `Cloud`, `Deployment`, `Modal` |
 
@@ -31,7 +31,7 @@ description: "用于运行 ML 工作负载的无服务器 GPU 云平台"
 
 # Modal Serverless GPU
 
-在 Modal 无服务器 GPU 云平台上运行 ML 工作负载的完整指南。
+在 Modal 无服务器 GPU 云平台上运行 ML 工作负载的指南。
 
 ## 何时使用 Modal
 
@@ -244,7 +244,6 @@ async def batch_predict(inputs: list[str]) -> list[dict]:
     # Inputs automatically batched
     return model.batch_predict(inputs)
 ```
-
 ## 密钥管理
 
 ```bash
@@ -276,10 +275,10 @@ def hourly_job():
 ### 冷启动缓解
 
 ```python
-@app.function(
-    container_idle_timeout=300,  # Keep warm 5 min
-    allow_concurrent_inputs=10,  # Handle concurrent requests
-)
+# Modal 1.0 autoscaler params: scaledown_window (was container_idle_timeout).
+# Input concurrency moved to the @modal.concurrent decorator.
+@app.function(scaledown_window=300)  # Keep warm 5 min
+@modal.concurrent(max_inputs=10)     # Handle concurrent requests per container
 def inference():
     pass
 ```
@@ -321,13 +320,20 @@ def run_parallel():
     memory=32768,              # 32GB RAM
     cpu=4,                     # 4 CPU cores
     timeout=3600,              # 1 hour max
-    container_idle_timeout=120,# Keep warm 2 min
+    scaledown_window=120,      # Keep warm 2 min (was container_idle_timeout)
     retries=3,                 # Retry on failure
-    concurrency_limit=10,      # Max concurrent containers
+    max_containers=10,         # Max concurrent containers (was concurrency_limit)
+    min_containers=1,          # Keep N containers warm (was keep_warm)
 )
 def my_function():
     pass
 ```
+
+> **Modal 1.0 自动扩缩容参数重命名**（参见[迁移指南](https://modal.com/docs/guide/modal-1-0-migration)）：
+> - `container_idle_timeout` → `scaledown_window`
+> - `concurrency_limit` → `max_containers`
+> - `keep_warm` → `min_containers`
+> - `allow_concurrent_inputs=N` → `@modal.concurrent(max_inputs=N)` 装饰器
 
 ## 调试
 
@@ -344,7 +350,7 @@ if __name__ == "__main__":
 
 | 问题 | 解决方案 |
 |-------|----------|
-| 冷启动延迟 | 增大 `container_idle_timeout`，使用 `@modal.enter()` |
+| 冷启动延迟 | 增大 `scaledown_window`，使用 `@modal.enter()` |
 | GPU 内存溢出 | 使用更大 GPU（`A100-80GB`），启用梯度检查点 |
 | 镜像构建失败 | 固定依赖版本，检查 CUDA 兼容性 |
 | 超时错误 | 增大 `timeout`，添加检查点 |

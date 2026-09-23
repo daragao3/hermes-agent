@@ -1,7 +1,7 @@
 ---
-title: "P5Js — p5"
+title: "P5Js — p5.js 草图：生成艺术、着色器、交互、3D"
 sidebar_label: "P5Js"
-description: "p5"
+description: "p5.js 草图：生成艺术、着色器、交互、3D"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
@@ -17,9 +17,11 @@ p5.js 草图：生成艺术、着色器、交互、3D。
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/creative/p5js` |
 | 版本 | `1.0.0` |
+| 作者 | SHL0MS, Hermes Agent |
+| 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `creative-coding`, `generative-art`, `p5js`, `canvas`, `interactive`, `visualization`, `webgl`, `shaders`, `animation` |
-| 相关 skill | [`ascii-video`](/user-guide/skills/bundled/creative/creative-ascii-video), [`manim-video`](/user-guide/skills/bundled/creative/creative-manim-video), [`excalidraw`](/user-guide/skills/bundled/creative/creative-excalidraw) |
+| 相关 skill | [`ascii-video`](/user-guide/skills/bundled/creative/creative-ascii-video), [`manim-video`](/user-guide/skills/bundled/creative/creative-manim-video), [`excalidraw`](/user-guide/skills/optional/creative/creative-excalidraw) |
 
 ## 参考：完整 SKILL.md
 
@@ -272,7 +274,7 @@ function windowResized() { resizeCanvas(windowWidth, windowHeight); }
 ### 第四步：预览与迭代
 
 - 直接在浏览器中打开 HTML 文件——基本草图无需服务器
-- 对于从本地文件加载 `loadImage()`/`loadFont()`：使用 `scripts/serve.sh` 或 `python3 -m http.server`
+- 对于从本地文件加载 `loadImage()`/`loadFont()`：使用 `scripts/serve.sh` 或 `python -m http.server`
 - 使用 Chrome DevTools 性能面板验证 60fps
 - 在目标导出分辨率下测试，而不仅仅是窗口大小
 - 调整参数直到视觉效果符合第一步的概念
@@ -504,7 +506,7 @@ function setup() {
 
 1. **编写 HTML 文件** — 单一自包含文件，所有代码内联
 2. **在浏览器中打开** — macOS 用 `open sketch.html`，Linux 用 `xdg-open sketch.html`
-3. **本地资源**（字体、图像）需要服务器：在项目目录中运行 `python3 -m http.server 8080`，然后打开 `http://localhost:8080/sketch.html`
+3. **本地资源**（字体、图像）需要服务器：在项目目录中运行 `python -m http.server 8080`，然后打开 `http://localhost:8080/sketch.html`
 4. **导出 PNG/GIF** — 如上所示添加 `keyPressed()` 快捷键，告知用户按哪个键
 5. **无头导出** — `node scripts/export-frames.js sketch.html --frames 300` 用于自动化帧捕获（草图必须使用 `noLoop()` + `_p5Ready`）
 6. **MP4 渲染** — `bash scripts/render.sh sketch.html output.mp4 --duration 30`

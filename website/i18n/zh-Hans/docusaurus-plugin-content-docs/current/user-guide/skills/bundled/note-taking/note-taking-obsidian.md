@@ -16,7 +16,11 @@ description: "在 Obsidian 知识库中读取、搜索、创建和编辑笔记"
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/note-taking/obsidian` |
+| 版本 | `1.0.0` |
+| 作者 | Teknium (teknium1), Hermes Agent |
+| 许可证 | MIT |
 | 平台 | linux, macos, windows |
+| 标签 | `Obsidian`, `Notes`, `Markdown`, `Vault` |
 
 ## 参考：完整 SKILL.md
 

@@ -16,6 +16,9 @@ description: "托管模组版 Minecraft 服务器（CurseForge、Modrinth）"
 |---|---|
 | 来源 | 可选 —— 通过 `hermes skills install official/gaming/minecraft-modpack-server` 安装 |
 | 路径 | `optional-skills/gaming/minecraft-modpack-server` |
+| 版本 | `1.0.0` |
+| 作者 | Teknium (teknium1), Hermes Agent |
+| 许可证 | MIT |
 | 平台 | linux, macos |
 
 ## 参考：完整 SKILL.md

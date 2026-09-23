@@ -37,6 +37,22 @@ Hermes 将**当前工作目录**视为项目根目录：
 
 ## 快速开始：创建 Worktree
 
+### 在会话内：`/worktree new` {#from-inside-a-session-worktree-new}
+
+最快的方式（灵感来自 Copilot CLI 的 `/worktree new`）：在交互式 CLI 会话中运行
+
+```
+/worktree new my-experiment
+```
+
+Hermes 会在仓库内创建 `.worktrees/my-experiment/`（分支为
+`hermes/my-experiment`，除非设置了 `worktree_sync: false`，否则基于刚拉取的远程 tip），
+并将会话的终端和文件工具重新指向该目录——无需重启。省略名称则会得到一个随机的 `hermes-<id>`
+worktree。单独运行 `/worktree` 会显示当前活动的 worktree；`/worktree list` 会列出全部。
+退出时，只有当该 worktree 存在未推送的提交时才会保留，与 `hermes -w` 完全一致。
+
+### 使用 git 手动创建 {#manually-with-git}
+
 在主仓库（包含 `.git/` 的目录）中，为功能分支创建新的 worktree：
 
 ```bash

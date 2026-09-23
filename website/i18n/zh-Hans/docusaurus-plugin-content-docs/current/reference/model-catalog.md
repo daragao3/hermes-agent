@@ -59,6 +59,7 @@ https://hermes-agent.nousresearch.com/docs/api/model-catalog.json
 | 时机 | 行为 |
 |---|---|
 | `/model` 或 `hermes model` | 若磁盘缓存已过期则重新获取，否则使用缓存 |
+| Gateway 运行中 | 每隔 `ttl_minutes`（默认 20）在后台刷新一次，因此选择器落后于已发布清单的时间绝不会超过一个周期 |
 | 磁盘缓存新鲜（< TTL） | 不发起网络请求 |
 | 网络故障且有缓存 | 静默回退到缓存，输出一行日志 |
 | 网络故障且无缓存 | 静默回退到仓库内置快照 |
@@ -72,11 +73,11 @@ https://hermes-agent.nousresearch.com/docs/api/model-catalog.json
 model_catalog:
   enabled: true
   url: https://hermes-agent.nousresearch.com/docs/api/model-catalog.json
-  ttl_hours: 1
+  ttl_minutes: 20
   providers: {}
 ```
 
-将 `enabled` 设为 `false` 可完全禁用远程获取，始终使用仓库内置快照。
+设置 `enabled: false` 可完全禁用远程获取，始终使用仓库内置快照（这也会禁用 gateway 的后台刷新）。`ttl_minutes` 同时决定缓存有效期和 gateway 的刷新周期；如果你显式设置了旧的 `ttl_hours` 键，它仍会生效。
 
 ### 按 provider 覆盖 URL
 

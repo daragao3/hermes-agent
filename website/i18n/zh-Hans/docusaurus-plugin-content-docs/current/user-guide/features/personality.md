@@ -211,7 +211,7 @@ Hermes 内置了多种个性，可通过 `/personality` 切换。
 
 ## 在配置中定义自定义个性
 
-你也可以在 `~/.hermes/config.yaml` 的 `agent.personalities` 下定义命名的自定义个性。
+内置个性在所有界面（CLI、消息平台、TUI 和桌面应用）上始终可用。你可以在 `~/.hermes/config.yaml` 的 `agent.personalities` 下添加自己的个性——或者复用某个内置个性的名称来覆盖它。
 
 ```yaml
 agent:
@@ -226,6 +226,24 @@ agent:
 ```text
 /personality codereviewer
 ```
+
+你的选择会以名称形式保存在 `display.personality` 中。个性从不修改 `agent.system_prompt`——该字段保留给你自己手写的系统提示词，并且只在未选择任何个性时生效。
+
+## 恢复默认 {#resetting-to-the-default}
+
+要取消当前生效的个性叠加层并恢复基础行为（你的 `SOUL.md` 人设，以及你设置过的 `agent.system_prompt`），可使用以下任一命令：
+
+```text
+/personality none
+/personality default
+/personality neutral
+```
+
+这三条命令都会清除选择（`display.personality`），并在你的下一条消息时生效。不带参数运行 `/personality` 也会在可用预设旁列出 `none`，并标记当前生效的个性。
+
+:::note 升级时的一次性重置
+旧版 Hermes 在不同界面上保存个性状态的方式不一致，可能会重新启用你此前已关闭的个性。升级后首次运行时，任何已保存的个性选择都会被重置为 `none` 一次（迁移会打印被清除的是哪个个性）。如果你仍想使用它，可通过 `/personality <name>` 重新启用。手动编写的 `agent.system_prompt` 文本永远不会被改动。
+:::
 
 ## 推荐工作流
 

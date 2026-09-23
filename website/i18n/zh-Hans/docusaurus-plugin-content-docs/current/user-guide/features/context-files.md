@@ -13,6 +13,7 @@ Hermes Agent 会自动发现并加载上下文文件，以塑造其行为方式�
 | 文件 | 用途 | 发现方式 |
 |------|---------|-----------| 
 | **.hermes.md** / **HERMES.md** | 项目指令（最高优先级） | 向上遍历至 git 根目录 |
+| **AGENTS.override.md** | 个人的、按目录覆盖 AGENTS.md 的文件（通常被 gitignore） | 启动时的 CWD 及子目录（渐进式） |
 | **AGENTS.md** | 项目指令、规范、架构说明 | 启动时的 CWD 及子目录（渐进式） |
 | **CLAUDE.md** | Claude Code 上下文文件（同样支持检测） | 启动时的 CWD 及子目录（渐进式） |
 | **SOUL.md** | 当前 Hermes 实例的全局个性与语气定制 | 仅 `HERMES_HOME/SOUL.md` |
@@ -20,12 +21,29 @@ Hermes Agent 会自动发现并加载上下文文件，以塑造其行为方式�
 | **.cursor/rules/*.mdc** | Cursor IDE 规则模块 | 仅 CWD |
 
 :::info 优先级系统
-每次会话仅加载**一种**项目上下文类型（先匹配先生效）：`.hermes.md` → `AGENTS.md` → `CLAUDE.md` → `.cursorrules`。**SOUL.md** 始终作为 agent 身份独立加载（插槽 #1）。
+每次会话仅加载**一种**项目上下文类型（先匹配先生效）：`.hermes.md` → `AGENTS.override.md` → `AGENTS.md` → `CLAUDE.md` → `.cursorrules`。**SOUL.md** 始终作为 agent 身份独立加载（插槽 #1）。
+
+如果 `AGENTS.md` 旁边存在 `AGENTS.override.md`，则会加载该覆盖文件**而不是**已提交的文件——当你想使用与仓库中签入的指令不同的指令，又不想编辑被跟踪的 `AGENTS.md` 时，可以保留一个个人的（通常被 gitignore 的）`AGENTS.override.md`。
 :::
 
 ## AGENTS.md
 
 `AGENTS.md` 是主要的项目上下文文件。它告知 agent 项目的结构、需要遵循的规范以及任何特殊指令。
+
+### 目录链（git 根目录 → 工作目录）
+
+当你的工作目录位于 git 仓库内时，Hermes 会在会话启动时加载一条**合并的** `AGENTS.md` 文件链：首先是 git 根目录的 `AGENTS.md`，然后是从根目录到工作目录之间每个中间目录中的 `AGENTS.md`。越深层的文件在 prompt 中出现得越靠后，因此更具体的指导优先生效。每个文件都有自己的来源标题（例如 `## ../../AGENTS.md`），链上内容完全相同的副本会被去重。
+
+```
+monorepo/                   (git 根目录，cwd = packages/webapp/)
+├── AGENTS.md              ← 最先加载（仓库级规范）
+└── packages/
+    ├── AGENTS.md          ← 第二个加载
+    └── webapp/
+        └── AGENTS.md      ← 最后加载（最具体，优先生效）
+```
+
+在 git 仓库之外，只检查工作目录本身——绝不会查询父目录，因此放在 `/tmp` 或 `$HOME` 中的 `AGENTS.md` 不会泄漏到无关的会话中。
 
 ### 渐进式子目录发现
 
@@ -109,7 +127,7 @@ Hermes 兼容 Cursor IDE 的 `.cursorrules` 文件和 `.cursor/rules/*.mdc` 规�
 1. **扫描工作目录** — 依次检查 `.hermes.md` → `AGENTS.md` → `CLAUDE.md` → `.cursorrules`（先匹配先生效）
 2. **读取内容** — 以 UTF-8 文本读取每个文件
 3. **安全扫描** — 检查内容是否存在 prompt 注入模式
-4. **截断** — 超过 `context_file_max_chars` 个字符（默认 20,000）的文件进行首尾截断（70% 头部，20% 尾部，中间插入标记）
+4. **截断** — 超过字符上限的文件进行首尾截断（70% 头部，20% 尾部，中间插入标记）。若在 config.yaml 中显式设置了 `context_file_max_chars`，则以其为上限；否则上限会随模型的上下文窗口动态调整（下限 20,000 个字符，上限 500,000 个字符）
 5. **组装** — 所有部分合并在 `# Project Context` 标题下
 6. **注入** — 组装后的内容添加到系统 prompt
 
@@ -171,7 +189,8 @@ The following project context files have been loaded and should be followed:
 
 | 限制 | 值 |
 |-------|-------|
-| 每个文件最大字符数 | `context_file_max_chars`（默认 20,000，约 7,000 个 token） |
+| 每个文件最大字符数 | 设置时为 `context_file_max_chars`；否则动态调整（随模型上下文窗口缩放，下限 20,000，上限 500,000） |
+| 每个文件的读取超时 | `context_file_read_timeout`（默认 5 秒）；读取耗时更长的文件（例如位于 iCloud Drive、OneDrive 或 NFS 上）会被跳过并给出警告 |
 | 头部截断比例 | 70% |
 | 尾部截断比例 | 20% |
 | 截断标记 | 10%（显示字符数并建议使用文件工具） |

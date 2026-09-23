@@ -1,10 +1,10 @@
 ---
 sidebar_position: 1
-title: "快速入门"
+title: "Hermes Agent 快速入门"
 description: "与 Hermes Agent 的第一次对话——从安装到开始聊天，5 分钟内完成"
 ---
 
-# 快速入门
+# Hermes Agent 快速入门
 
 本指南带你从零开始搭建一个能够应对实际使用的 Hermes 环境。完成安装、选择 provider（服务提供商）、验证对话正常运行，并了解出现问题时的处理方法。
 
@@ -103,7 +103,7 @@ hermes setup --portal
 :::info 配置模式
 在全新安装时，`hermes setup` 提供三种模式：
 
-- **快速配置（Nous Portal）** — 免费 OAuth 登录，无需 API key；一次配好模型以及 Tool Gateway 工具。推荐的快捷路径。
+- **快速配置（Nous Portal）** — OAuth 登录，无需管理 API key；一次配好模型以及 Tool Gateway 工具，费用计入你的 [Nous Portal 订阅](/integrations/nous-portal)。推荐的快捷路径。
 - **完整配置** — 由你自己逐项走完每个 provider、工具和选项（自带 key）。
 - **空白起步（Blank Slate）** — 除了运行 Agent 所必需的最低配置外，一切默认**关闭**：**provider 与模型、文件操作（File Operations）工具集和终端（Terminal）工具集**。没有网页、浏览器、代码执行、视觉、记忆、委派、cron、skills、插件或 MCP 服务器——压缩、检查点、智能路由和记忆捕获也全部禁用。应用最小基线后，你可以在两条路径中选择其一：**保持一切禁用**（就此完成，得到一个最小化 Agent），或**逐项走完所有配置**（按需启用工具、skills、插件、MCP 和消息平台）。当你想要一个最小化、完全受控的 Agent，并打算只启用确实需要的功能时，选择这个模式。
 
@@ -124,6 +124,7 @@ hermes setup --portal
 | **Kimi / Moonshot China** | 中国区 Moonshot endpoint | 设置 `KIMI_CN_API_KEY` |
 | **Arcee AI** | Trinity 模型 | 设置 `ARCEEAI_API_KEY` |
 | **GMI Cloud** | 多模型直连 API | 设置 `GMI_API_KEY` |
+| **Actual Computer** | 将你自己的硬件作为私有推理集群——托管中继或本地守护进程 | 设置 `ACTUAL_API_KEY`（中继）或 `ACTUAL_BASE_URL=http://127.0.0.1:8080`（本地，无需 key） |
 | **MiniMax (OAuth)** | 通过浏览器 OAuth 使用 MiniMax 前沿模型，无需 API key（`hermes_cli/models.py` 中的模型名称可能随版本变化） | `hermes model` → MiniMax (OAuth) |
 | **MiniMax** | 国际版 MiniMax endpoint | 设置 `MINIMAX_API_KEY` |
 | **MiniMax China** | 中国区 MiniMax endpoint | 设置 `MINIMAX_CN_API_KEY` |
@@ -135,9 +136,12 @@ hermes setup --portal
 | **xAI** | 通过直连 API 使用 Grok 模型 | 设置 `XAI_API_KEY` |
 | **xAI Grok OAuth** | SuperGrok / Premium+ 订阅，无需 API key | `hermes model` → xAI Grok OAuth |
 | **NovitaAI** | 多模型 API 网关 | 设置 `NOVITA_API_KEY` |
+| **Ramp Router** | 原生支持 Responses 的 LLM 网关，可路由至 OpenAI/Anthropic/xAI/... | 设置 `RAMP_ROUTER_API_KEY` |
+| **Nebius Token Factory** | Nebius AI 云上的开源模型 | 设置 `NEBIUS_API_KEY` |
 | **StepFun** | Step Plan 模型 | 设置 `STEPFUN_API_KEY` |
 | **Xiaomi MiMo** | 小米托管模型 | 设置 `XIAOMI_API_KEY` |
 | **Tencent TokenHub** | 腾讯托管模型 | 设置 `TOKENHUB_API_KEY` |
+| **Tencent TokenPlan** | 通过 Anthropic 风格 endpoint 使用腾讯混元（Hy）模型 | 设置 `TOKENPLAN_API_KEY` |
 | **Ollama Cloud** | 托管的 Ollama 模型服务 | 设置 `OLLAMA_API_KEY` |
 | **LM Studio** | 提供兼容 OpenAI API 的本地桌面应用 | 设置 `LM_API_KEY`（如非默认地址还需 `LM_BASE_URL`） |
 | **Qwen OAuth** | Qwen Portal 浏览器 OAuth，无需 API key | `hermes model` → Qwen OAuth |
@@ -278,6 +282,8 @@ hermes config set terminal.backend docker    # Docker 隔离
 hermes config set terminal.backend ssh       # 远程服务器
 ```
 
+对于 Docker 沙箱，你还可以启用 **egress 凭据注入代理**，让沙箱永远看不到你真实的 API key——只能看到不透明的代理 token，而这些 token 只有在本地 TLS 拦截守护进程之后才能生效。参见 [Egress 代理](../user-guide/egress/iron-proxy.md)。配置命令为 `hermes egress setup && hermes egress start`；`hermes setup terminal` 也会引导 Docker 用户使用它。Modal、SSH、Daytona 和 Singularity 尚未接入。
+
 ### 语音模式
 
 ```bash
@@ -393,3 +399,4 @@ hermes acp
 - **[AI Providers](../integrations/providers.md)** — 完整 provider 列表及配置详情
 - **[Skills 系统](../user-guide/features/skills.md)** — 可复用的工作流与知识
 - **[技巧与最佳实践](../guides/tips.md)** — 高级用户技巧
+- **[迁移到另一台机器](/reference/faq#exporting-hermes-to-another-machine)** — `hermes backup` 可迁移你的整套配置（或[单个 profile](/reference/faq#moving-a-single-profile-to-another-machine)）；无需从头重建

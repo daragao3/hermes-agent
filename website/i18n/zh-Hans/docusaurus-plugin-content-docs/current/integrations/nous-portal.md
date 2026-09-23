@@ -26,19 +26,23 @@ Portal 代理了来自整个生态系统的精选 agentic 模型目录——统�
 
 | 系列 | 模型 |
 |--------|--------|
-| **Anthropic Claude** | Opus、Sonnet、Haiku（4.x 系列） |
-| **OpenAI** | GPT-5.4、o 系列推理模型 |
-| **Google Gemini** | 2.5 Pro、2.5 Flash |
-| **DeepSeek** | DeepSeek V3.2、DeepSeek-R1 |
-| **Qwen** | Qwen3 系列、Qwen Coder |
-| **Kimi / Moonshot** | Kimi-K2、Kimi-Latest |
-| **GLM / Zhipu** | GLM-4.6、GLM-4-Plus |
-| **MiniMax** | M2.7、M1 |
-| **xAI** | Grok-4、Grok-3 |
+| **Anthropic Claude** | Opus 4.7、Opus 4.6、Sonnet 4.6、Haiku 4.5 |
+| **OpenAI** | GPT-5.5、GPT-5.5 Pro、GPT-5.4 Mini、GPT-5.4 Nano、GPT-5.3 Codex |
+| **Google Gemini** | Gemini 3 Pro Preview、Gemini 3 Flash Preview、Gemini 3.1 Pro Preview、Gemini 3.1 Flash Lite Preview |
+| **DeepSeek** | DeepSeek V4 Pro |
+| **Qwen** | Qwen3.7-Max、Qwen3.6-35B-A3B |
+| **Kimi / Moonshot** | Kimi K2.6 |
+| **GLM / Zhipu** | GLM-5.1 |
+| **MiniMax** | MiniMax M2.7 |
+| **xAI** | Grok 4.3 |
+| **NVIDIA** | Nemotron-3 Super 120B-A12B |
+| **Tencent** | Hunyuan 3 Preview |
+| **Xiaomi** | MiMo V2.5 Pro |
+| **StepFun** | Step 3.5 Flash |
 | **Hermes** | Hermes-4-70B、Hermes-4-405B（对话，见[下方说明](#a-note-on-hermes-4)） |
-| **+ 其他所有模型** | 240+ 额外模型——完整的 agentic 前沿生态 |
+| **+ 其他所有模型** | 280+ 额外模型——完整的 agentic 前沿生态 |
 
-底层上，Portal 会为每个模型选择最合适的后端——部分模型通过 OpenRouter 路由，其他模型则通过专有或备用提供商，且某个模型的路由方式可能随时间调整。所有用量都统一计入你的 Nous 订阅。在会话中途用 `/model` 即可在 Claude Sonnet 4.6（适合代码）和 Gemini 2.5 Pro（适合长上下文）之间切换——无需新凭证，无需充值，不会遇到余额为零的意外报错。
+底层上，Portal 会为每个模型选择最合适的后端——部分模型通过 OpenRouter 路由，其他模型则通过专有或备用提供商，且某个模型的路由方式可能随时间调整。所有用量都统一计入你的 Nous 订阅。在会话中途用 `/model` 即可在 Claude Sonnet 4.6（适合代码）和 Gemini 3 Pro（适合长上下文）之间切换——无需新凭证，无需充值，不会遇到余额为零的意外报错。
 
 :::note
 由于路由是按模型进行的，并非总是经过 OpenRouter，OpenRouter 专有的请求扩展（如 `provider` 路由偏好、`session_id` 粘性路由或顶层 `cache_control`）不属于 Portal 的 API 契约，可能会被忽略，具体取决于该模型由哪个后端提供服务。
@@ -76,9 +80,9 @@ Nous Research 自家的 **Hermes 4** 系列（Hermes-4-70B、Hermes-4-405B）通
 
 ```bash
 /model anthropic/claude-sonnet-4.6     # 最佳通用 agentic 模型
-/model openai/gpt-5.4                  # 强推理 + 工具调用
-/model google/gemini-2.5-pro           # 超大上下文窗口
-/model deepseek/deepseek-v3.2          # 高性价比代码模型
+/model openai/gpt-5.5-pro              # 强推理 + 工具调用
+/model google/gemini-3-pro-preview     # 超大上下文窗口
+/model deepseek/deepseek-v4-pro        # 高性价比代码模型
 ```
 
 Portal 自身的[模型信息页](https://portal.nousresearch.com/info)也有相同警告，因此这不是 Hermes 侧的主观意见——这是 Nous Research 的官方指导。
@@ -129,6 +133,7 @@ OAuth 需要浏览器，但回调的 loopback 运行在 Hermes 所在的机器�
 ```bash
 hermes portal            # 登录 Nous Portal 并完成配置（一键引导）
 hermes portal info       # 登录状态、订阅信息、模型与 gateway 路由
+hermes portal status     # `portal info` 的别名
 hermes portal tools      # 详细的 Tool Gateway 目录及每个工具的路由信息
 hermes portal open       # 在浏览器中打开订阅管理页面
 ```
@@ -159,8 +164,8 @@ hermes portal open       # 在浏览器中打开订阅管理页面
 
 ```bash
 /model anthropic/claude-sonnet-4.6
-/model openai/gpt-5.4
-/model google/gemini-2.5-pro
+/model openai/gpt-5.5-pro
+/model google/gemini-3-pro-preview
 ```
 
 或打开选择器：
@@ -205,14 +210,14 @@ Tool Gateway 是按工具单独选择启用的，而非全部或全不。完整�
 model:
   provider: nous
   default: anthropic/claude-sonnet-4.6     # 或你选择的其他模型
-  base_url: https://inference.nousresearch.com/v1
+  base_url: https://inference-api.nousresearch.com/v1
 ```
 
-Tool Gateway 设置位于各自工具的配置节下：
+Tool Gateway 设置位于各自工具的配置节下——每个类别都有一个唯一的选择键，在 `hermes tools`（或 `hermes setup --portal`）中选择 **Nous Subscription** 会写入值 `nous`：
 
 ```yaml
 web:
-  backend: nous       # 网页搜索/抓取通过 Tool Gateway 路由
+  backend: nous          # 网页搜索/抓取通过 Tool Gateway 路由
 
 image_gen:
   provider: nous
@@ -221,14 +226,23 @@ tts:
   provider: nous
 
 browser:
-  backend: nous
+  cloud_provider: nous
 ```
+
+运行时始终遵循已存储的选择——当某个类别设置为 `nous` 时，`.env` 中残留的直连 API 密钥会被忽略；而选择某个直连提供商（例如 `image_gen.provider: fal`）却未配置其密钥时，会给出明确的错误，而不是悄悄改走 Gateway。（旧配置使用过遗留的 `use_gateway: true` 标志；它会被视为等同于 `nous`，但不再写入。）
 
 OAuth refresh token 单独存储在 `~/.hermes/auth.json`（不在 `config.yaml` 中——凭证与配置有意分开存放）。
 
 ## 令牌处理 {#token-handling}
 
 Hermes 在每次推理调用时从存储的 Portal refresh token 生成短期 JWT，而非复用长期 API 密钥。令牌生命周期完全自动管理——刷新、生成、在瞬时 401 时重试——你无需关心这些细节。
+
+长期运行的 gateway 和 dashboard 进程还会运行一个后台保活（keepalive）任务，在令牌过期前刷新它，这样空闲的 agent 在每个凭证生命周期内的首次请求时就不必承受一次 401 往返。保活任务根据 Portal 实际签发的生命周期推算其触发间隔（每个生命周期内触发多次），上限由以下配置决定：
+
+```yaml
+nous:
+  keepalive_interval_seconds: 900   # 触发间隔的上限；设为 0 可禁用保活
+```
 
 如果 Portal 使 refresh token 失效（修改密码、手动撤销、会话过期），失效的 refresh token 会被**本地隔离**，Hermes 停止重放该令牌，你不会看到一连串相同的 401 错误。下一次调用会显示清晰的"需要重新认证"提示。运行 `hermes auth add nous` 重新登录；隔离状态在下次成功登录时自动清除。
 

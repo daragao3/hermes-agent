@@ -32,7 +32,7 @@ AudioCraft：MusicGen 文本转音乐，AudioGen 文本转声音。
 
 # AudioCraft：音频生成
 
-使用 Meta 的 AudioCraft 进行文本转音乐和文本转音频生成的完整指南，涵盖 MusicGen、AudioGen 和 EnCodec。
+使用 Meta 的 AudioCraft 进行文本转音乐和文本转音频生成的指南，涵盖 MusicGen、AudioGen 和 EnCodec。
 
 ## 何时使用 AudioCraft
 
@@ -576,8 +576,8 @@ for desc in descriptions:
 
 ## 参考资料
 
-- **[高级用法](https://github.com/NousResearch/hermes-agent/blob/main/skills/mlops/models/audiocraft/references/advanced-usage.md)** - 训练、微调、部署
-- **[故障排查](https://github.com/NousResearch/hermes-agent/blob/main/skills/mlops/models/audiocraft/references/troubleshooting.md)** - 常见问题与解决方案
+- **[高级用法](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/creative/audiocraft-audio-generation/references/advanced-usage.md)** - 训练、微调、部署
+- **[故障排查](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/creative/audiocraft-audio-generation/references/troubleshooting.md)** - 常见问题与解决方案
 
 ## 资源
 

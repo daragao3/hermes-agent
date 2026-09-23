@@ -6,6 +6,10 @@ description: "使用 llama.cpp 或 MLX 在 macOS 上搭建兼容 OpenAI 的本�
 
 # 在 Mac 上运行本地 LLM
 
+:::tip 桌面端用户：有一键式方案
+在 Hermes 桌面应用中，**设置 → 提供商 → 本地模型**（**Settings → Providers → Local Models**）会为你安装并管理一个本地 llama.cpp 服务器——包括模型下载、内存适配和上下文大小设置。参见[本地模型](/user-guide/local-models)。本指南适用于手动搭建：MLX、自定义构建，或你想自行运行的服务器。
+:::
+
 本指南介绍如何在 macOS 上运行一个兼容 OpenAI API 的本地 LLM 服务器。你将获得完整的隐私保护、零 API 费用，以及 Apple Silicon 上出乎意料的出色性能。
 
 我们涵盖两个后端：
@@ -238,3 +242,7 @@ HERMES_STREAM_READ_TIMEOUT=1800
 | API 调用（非流式） | 1800s | 无需调整 | `HERMES_API_TIMEOUT` |
 
 流式读取超时最容易引发问题——它是接收下一个数据块的 socket 级别截止时间。在大上下文的预填充（prefill）阶段，本地模型可能在处理 prompt 时数分钟内没有任何输出。自动检测机制会透明地处理这一情况。
+
+:::tip 首轮长时间无响应通常是预填充，而不是卡住
+Hermes 每次调用都会发送其系统提示词和工具 schema，因此在较慢的硬件上，首轮对话可能会有数分钟的静默——模型在生成任何内容之前需要先处理这段 prompt。这是预填充（prefill）在工作，而不是会话卡死。缓解方法（例如保持模型常驻加载、使用 `hermes prompt-size` 精简固定 prompt）请参见 Ollama 指南中的[首次响应缓慢（预填充）](./local-ollama-setup.md#slow-first-response-prefill)。
+:::

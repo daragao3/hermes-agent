@@ -14,7 +14,7 @@ description: Agent 如何将生成的图表、PDF、电子表格及其他文件�
 
 三个部分协同配合：
 
-1. **Agent 拥有可生成文件的工具。** `execute_code` 用于通过 matplotlib 生成图表，`latex-pdf-report` skill 用于生成 PDF，`powerpoint` skill 用于生成演示文稿，`image_generate` 用于生成图片，`text_to_speech` 用于生成音频，等等。
+1. **Agent 拥有可生成文件的工具。** `execute_code` 用于通过 matplotlib 生成图表，`docx` skill 用于生成 Word 文档，`xlsx` skill 用于生成电子表格，`pdf` 和 `latex-pdf-report` skill 用于生成 PDF，`powerpoint` skill 用于生成演示文稿，`image_generate` 用于生成图片，`text_to_speech` 用于生成音频，等等。
 
 2. **Gateway 扫描 agent 回复中的文件路径。** 任何以支持扩展名结尾的绝对路径（`/tmp/...`）或相对主目录路径（`~/...`）都会被提取。代码块和内联代码中的路径会被忽略，以避免代码示例被破坏。
 
@@ -25,12 +25,13 @@ description: Agent 如何将生成的图表、PDF、电子表格及其他文件�
 | 类别 | 扩展名 | 发送方式 |
 |---|---|---|
 | 图片 | `.png .jpg .jpeg .gif .webp .bmp .tiff .svg` | 内联嵌入 |
-| 视频 | `.mp4 .mov .avi .mkv .webm` | 内联嵌入（平台支持时） |
-| 音频 | `.mp3 .wav .ogg .m4a .flac` | 语音/音频附件 |
-| 文档 | `.pdf .docx .doc .odt .rtf .txt .md` | 文件上传 |
-| 数据 | `.xlsx .xls .csv .tsv .json .xml .yaml .yml` | 文件上传 |
-| 演示文稿 | `.pptx .ppt .odp` | 文件上传 |
-| 压缩包 | `.zip .tar .gz .tgz .bz2 .7z` | 文件上传 |
+| 视频 | `.mp4 .mov .avi .mkv .webm .3gp` | 内联嵌入（平台支持时） |
+| 音频 | `.mp3 .m2a .wav .ogg .opus .m4a .flac` | 语音/音频附件 |
+| 文档 | `.pdf .docx .doc .odt .rtf .txt .md .epub` | 文件上传 |
+| 数据 | `.xlsx .xls .ods .csv .tsv .json .xml .yaml .yml` | 文件上传 |
+| 地理空间 | `.kmz .kml .geojson .gpx` | 文件上传 |
+| 演示文稿 | `.pptx .ppt .odp .key` | 文件上传 |
+| 压缩包 | `.zip .tar .gz .tgz .bz2 .xz .7z .rar .apk .ipa` | 文件上传 |
 | Web | `.html .htm` | 文件上传 |
 
 `.py`、`.log` 及其他源文件扩展名被有意排除，以防 agent 自动发送任意源文件；如需向用户发送代码，请使用代码块。

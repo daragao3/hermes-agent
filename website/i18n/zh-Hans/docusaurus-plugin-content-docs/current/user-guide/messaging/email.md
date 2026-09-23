@@ -48,6 +48,29 @@ Hermes 可以使用标准 IMAP 和 SMTP 协议接收并回复电子邮件。向 
 - SMTP 主机和端口（通常为端口 587，使用 STARTTLS）
 - 是否需要应用专用密码
 
+### Proton Mail Bridge / 本地中继 {#proton-mail-bridge--local-relays}
+
+Proton Mail Bridge（以及类似的本地中继，例如自托管 MTA）在回环地址上以 **STARTTLS**
+和自签名证书监听，因此默认设置（IMAP 993 端口上的隐式 TLS、校验证书）无法连接。
+请在 `~/.hermes/config.yaml` 中覆盖传输设置：
+
+```yaml
+platforms:
+  email:
+    enabled: true
+    extra:
+      imap_host: 127.0.0.1
+      imap_security: starttls     # tls（默认）| starttls | plain
+      imap_tls_verify: false      # Bridge 使用自签名证书
+      smtp_host: 127.0.0.1
+      smtp_security: starttls     # 默认：465 端口用 tls，其他端口用 starttls
+      smtp_tls_verify: false
+```
+
+并在 `~/.hermes/.env` 中与 Bridge 凭据一起设置 `EMAIL_IMAP_PORT=1143` / `EMAIL_SMTP_PORT=1025`。
+未知的 `*_security` 值会记录一条警告并回退到安全的默认值。仅对回环主机禁用
+`*_tls_verify`——对任何其他主机关闭校验时，Hermes 都会记录警告。
+
 ---
 
 ## 第一步：配置 Hermes

@@ -16,10 +16,14 @@ Curator 是针对 **agent 创建的技能**的后台维护流程。它跟踪每�
 
 ## 运行方式
 
-Curator 由空闲检查触发，而非 cron 守护进程。在 CLI 会话启动时，以及 gateway 的 cron-ticker 线程内的周期性 tick 中，Hermes 会检查以下条件是否同时满足：
+Curator 由空闲检查触发，而非 cron 任务。在 CLI 会话启动时、gateway 例行维护期间，以及 Desktop/`hermes serve` 的维护定时器上，Hermes 会检查以下条件是否同时满足：
 
 1. 距上次 curator 运行已过去足够长的时间（`interval_hours`，默认 **7 天**），以及
 2. agent 已空闲足够长的时间（`min_idle_hours`，默认 **2 小时**）。
+
+Desktop 和其他 `hermes serve` 后端共用现有的每小时维护定时器（首次轮询在 90 秒后），独立于 cron 任务。它们从进程启动以及同一 profile 中最近一次聊天活动开始计算空闲时间——会话关闭或被回收后仍保留该活动时间戳——并在该 profile 中有轮次正在运行时跳过 curator。已连接但处于非活动状态的窗口不会阻止维护。该定时器还会轮询个人和组织的 Skill Sync，前提是这些功能各自的启用开关已打开。如果同一 profile 有正在运行的消息网关，则改由网关负责这些例行工作。
+
+定时器为其后端所属的 profile 服务。进行中的维护在工作线程中运行；关闭后端不会协作式地中断这一轮。为同一 profile 启动多个相互独立的 serve 进程，仍可能在 curator 的间隔检查上产生竞争。
 
 若两个条件均满足，则会派生一个 `AIAgent` 的后台 fork——与内存/技能自我改进 nudge 使用的模式相同。该 fork 在自己的 prompt（提示词）缓存中运行，绝不触碰当前活跃的对话。
 
@@ -32,7 +36,9 @@ Curator 由空闲检查触发，而非 cron 守护进程。在 CLI 会话启动�
 一次运行分为两个阶段：
 
 1. **自动状态转换**（确定性，无 LLM）。未使用时间超过 `stale_after_days`（30 天）的技能变为 `stale`；未使用时间超过 `archive_after_days`（90 天）的技能被移至 `~/.hermes/skills/.archive/`。这是始终开启的裁剪行为——只要 curator 处于启用状态就会运行，且不产生辅助模型开销。
-2. **LLM 合并**（单次辅助模型 pass，`max_iterations=8`）——**默认关闭**。当 `curator.consolidate: true` 时，派生的 agent 会审查 agent 创建的技能，可通过 `skill_view` 读取任意技能，并逐技能决定是保留、修补（通过 `skill_manage`）、将重叠项合并为类级别的总括技能，还是通过终端工具归档。合并会把技能视为一个完整的软件包：如果某技能带有 `references/`、`templates/`、`scripts/`、`assets/`，或指向这些路径的相对链接，curator 必须要么让它保持独立，要么将所需的支持文件迁移到新位置并重写路径，要么原封不动地归档整个包——而不是仅把 `SKILL.md` 压平塞进另一个技能的 `references/` 文件中。
+   - **已固定的技能**和**被任何 cron 任务引用的技能**（包括已暂停/已禁用的任务）会被完全跳过——在自动状态转换中按固定处理，这样缓慢或暂停的调度就不会让某个技能在任务脚下被归档。合并在融合总括技能时也会重写 cron 的技能引用。
+   - **从未使用过的技能**（`use_count == 0`）享有宽限下限：在其存在时间至少达到 `stale_after_days` 之前不会被归档。零次使用只是缺乏证据，并不能证明该技能可以丢弃。
+2. **LLM 合并**（单次辅助模型 pass，迭代上限很高——一次完整的整理扫描通常需要 50–100 次 API 调用）——**默认关闭**。当 `curator.consolidate: true` 时，派生的 agent 会审查 agent 创建的技能，可通过 `skill_view` 读取任意技能，并逐技能决定是保留、修补（通过 `skill_manage`）、将重叠项合并为类级别的总括技能，还是通过终端工具归档。合并会把技能视为一个完整的软件包：如果某技能带有 `references/`、`templates/`、`scripts/`、`assets/`，或指向这些路径的相对链接，curator 必须要么让它保持独立，要么将所需的支持文件迁移到新位置并重写路径，要么原封不动地归档整个包——而不是仅把 `SKILL.md` 压平塞进另一个技能的 `references/` 文件中。
 
 :::info 合并需手动启用
 默认情况下 curator 只做**裁剪**——确定性的闲置检测 pass 会把技能标记为 stale 并归档长期未使用的技能。带有主观判断的 LLM **合并** pass（构建总括技能、合并重叠技能）默认关闭，因为它每次运行都会消耗辅助模型 token（令牌），并且会对你的技能库做出大范围的结构性改动。可通过 `curator.consolidate: true` 开启，或使用 `hermes curator run --consolidate` 按需运行一次。
@@ -103,10 +109,17 @@ hermes curator pause          # stop runs until resumed
 hermes curator resume
 hermes curator pin <skill>    # never auto-transition this skill
 hermes curator unpin <skill>
+hermes curator adopt <skill>    # hand an unmanaged skill to the curator
+hermes curator adopt --all-unmanaged   # hand over every unmanaged skill
+hermes curator list-unmanaged   # itemize skills with no provenance marker
 hermes curator restore <skill>  # move an archived skill back to active
 hermes curator list-archived    # list skills currently in ~/.hermes/skills/.archive/
 hermes curator archive <skill>  # manually archive a single skill now
 hermes curator prune [--days N] # bulk-archive agent-created skills idle >= N days (default 90)
+hermes curator ledger           # list the per-mutation audit ledger (all actors)
+hermes curator ledger --skill <name> --limit 50  # filter/paginate ledger entries
+hermes curator rollback <entry-id>  # undo a single mutation from the ledger
+hermes curator purge [--days N] [--dry-run]  # delete archived skills older than the TTL (explicit only)
 ```
 
 ## 备份与回滚
@@ -138,6 +151,45 @@ curator:
 
 相同的子命令也可作为 `/curator` 斜杠命令在运行中的会话（CLI 或 gateway 平台）内使用。
 
+## 审计账本与单次编辑回滚 {#audit-ledger-and-single-edit-rollback}
+
+整次运行的快照回答的是「撤销上一次 curator pass 所做的一切」——但有时你想知道*谁改了什么*，并只撤销某一次变更。每一次技能变更——curator 的自动状态转换、agent 的 `skill_manage` 调用，以及你自己在 CLI 中执行的 archive/restore/purge——都会向位于 `~/.hermes/skills/.curator_ledger.jsonl` 的只追加 JSONL 账本写入一条记录：
+
+- **actor** —— `curator`（后台审查 fork / 自动状态转换）、`agent`（前台 agent 工具调用）或 `user`（CLI 命令）
+- **action** —— `create`、`edit`、`patch`、`delete`、`write_file`、`remove_file`、`archive`、`restore`、`purge`、`rollback`
+- **evidence** —— 删除意图（合并时为 `absorbed_into`，裁剪时为空，以及是否经由可恢复的归档路径处理），可用时还包括触发该变更的会话 id
+- **before/after** —— 按文件记录的 `{path, sha256}` 清单。文件内容以内容寻址方式（按哈希去重）存储在 `~/.hermes/.curator_backups/blobs/` 下，因此一百条涉及同一个未改动文件的记录只占用一个 blob。
+
+```bash
+hermes curator ledger                  # newest 20 entries
+hermes curator ledger --skill my-skill --limit 50
+hermes curator rollback <entry-id>     # restore that one mutation's before-state
+```
+
+单条记录回滚会从 blob 存储中恰好恢复该次变更所触及的文件（并删除它创建的文件）——技能树中的其他内容都不会变动。与整树回滚一样，它会先为当前状态写入一条安全账本记录，并且**失败即关闭**：如果无法写入该安全快照，就不会做任何更改。由于前台删除也会记入账本，`hermes curator rollback <entry-id>` 可以复活一个被硬删除的技能。
+
+账本只是遥测，永远不是关卡——如果写入记录失败，变更仍会照常进行。可通过以下配置禁用：
+
+```yaml
+skills:
+  ledger: false
+```
+
+## 归档 TTL 清除 {#archive-ttl-purge}
+
+默认情况下，已归档的技能会被永久保留。如果你希望 `~/.hermes/skills/.archive/` 有上限，可以设置 TTL 并显式清除——清除永远不会自动运行，而且每个被清除的技能都会先被记入账本（连同 blob），因此即使是清除也会留下可审计、可恢复的痕迹：
+
+```yaml
+curator:
+  archive_ttl_days: 180   # 0 (default) = never purge
+```
+
+```bash
+hermes curator purge --dry-run   # preview what would be deleted
+hermes curator purge             # delete archives older than the TTL (with confirmation)
+hermes curator purge --days 90   # one-off TTL override
+```
+
 ## "agent 创建"的含义
 
 Curator 只管理在 `~/.hermes/skills/.usage.json` 中被明确标记为
@@ -166,6 +218,49 @@ pass（大约每 10 个 agent 轮次）中创建新的总括技能时。该后�
 `Model: (not resolved) via (not resolved)` 以及 `Duration: 0s`。
 :::
 
+### 接管未受管理的技能 {#adopting-unmanaged-skills}
+
+`hermes curator status` 会在受管理技能数量之外，同时报告**未受管理**的数量：
+
+```
+curator-managed skills: 43 total  (agent-created=43  bundled=0)
+  active     41
+  stale       2
+  archived    0
+
+unmanaged (no provenance marker): 112 total
+  pre-dates marker    34
+  foreground-created  78
+  never auto-staled or archived — `hermes curator adopt <name>` hands one over
+```
+
+这 112 个技能*有资格*被整理，却永远不会进入生命周期的视野，原因有两种：
+
+- **pre-dates marker（早于标记）** —— 该记录写入时 `created_by` 尚不存在，因此它完全不带任何来源信号。仅凭记录，作者身份确实无从得知。
+- **foreground-created（前台创建）** —— 前台的 `skill_manage(create)` 按设计不设置该标记，因为你要求创建的技能归你所有。
+
+因此，一个大型技能库可能看起来已被完整整理，而其中大部分实际上无法触及。`adopt` 通过**声明**来弥补这一缺口：
+
+```bash
+hermes curator list-unmanaged                    # itemize them, with reasons
+hermes curator adopt <name> [<name> ...]         # hand specific skills over
+hermes curator adopt --all-unmanaged --dry-run   # preview the full list
+hermes curator adopt --all-unmanaged             # hand over everything (prompts)
+hermes curator adopt --all-unmanaged --yes       # skip the prompt
+```
+
+接管会写入与后台审查 fork 相同的 `created_by: agent` 标记。它**不会**重置闲置计时——被接管的技能会保留其现有的 `last_activity_at`，因此移交一个你早已不再使用的技能库，并不会为它换来新的 90 天窗口。被接管的长期闲置技能在下一次 pass 中会变为 `stale`（或 `archived`）；这正是目的所在。
+
+接管也是解锁自主*改进*的前提。后台审查 fork 拒绝修补不受 curator 管理的技能，因此如果它发现你的某个技能已经过时，会指出这一点并建议接管，而不是直接编辑它。前台（用户主导的）编辑永远不受影响——你和 agent 始终可以应要求编辑你自己的技能。
+
+:::note `created_by` 是策略标志，而不是来源声明
+存储的字段名为 `created_by`，但它被当作「自主整理是否可以触碰它？」来使用——而不是「这个文件是谁写的」。这是两个不同的问题，对于早于该标记的记录，作者身份的答案根本无法恢复。之所以保留这个名字，是因为它已经存在于每个 `.usage.json` 中；请把它理解为策略。`hermes curator adopt` 改变的是策略，并不说明文件的作者是谁。
+:::
+
+:::note 来源只能声明，永不推断
+接管刻意设计为手动操作。遥测无法确定作者身份：一个被修补了数千次的技能只能证明 agent 在**维护**它，而不能证明 agent **编写**了它——Hermes 一直在代表你编辑用户编写的技能。自动化的「看起来像 agent 做的，接管它」启发式规则，迟早会归档某个你亲手写的技能。`adopt` 会拒绝捆绑技能、hub 安装的技能、外部技能以及受保护的内置技能，因为它们的所有者另有其人。
+:::
+
 确实属于 agent 创建的技能会走完整的生命周期：
 
 - `active` →（30 天未使用）`stale` →（90 天未使用）`archived`
@@ -191,9 +286,11 @@ hermes curator unpin <skill>
 
 该标志以 `"pinned": true` 的形式存储在 `~/.hermes/skills/.usage.json` 中技能对应的条目上，因此跨会话持久有效。
 
+任何 cron 任务的 `skills:` 列表中列出的技能，在**自动状态转换**中也会以同样方式受到保护（只要该引用仍然存在，curator 就永远不会把它们标记为 stale 或归档），即使该任务已暂停或禁用。如果你还希望阻止 `skill_manage delete`，请优先使用显式固定。
+
 只有 **agent 创建**的技能才能被固定——若你尝试固定捆绑或 hub 安装的技能，`hermes curator pin` 会拒绝并给出说明。Hub 安装的技能永远不受 curator 变更。捆绑内置技能仅在 `curator.prune_builtins: true`（默认值）时才会被触碰，且即便如此也只是在 `archive_after_days` 天未使用后被归档——绝不会被修补、合并或删除。设置 `curator.prune_builtins: false` 可让捆绑技能完全豁免。
 
-有一小组**受保护的内置技能**被硬编码为永不可归档、永不可合并，不受 `curator.prune_builtins`、固定状态或 LLM 判断的影响。它们支撑着关键的用户体验——例如 `plan` 支撑着 `/plan` 斜杠命令流程——因此静默归档其中之一会让对应的斜杠命令变成"Unknown command"错误，且不会给你任何提示。受保护的内置技能会被完全排除在 curator 的候选列表之外，因此合并 pass 永远不会看到它们。
+可以将一小组**受保护的内置技能**硬编码为永不可归档、永不可合并，不受 `curator.prune_builtins`、固定状态或 LLM 判断的影响。它们支撑着关键的用户体验，因此静默归档其中之一会让对应的斜杠命令变成"Unknown command"错误，且不会给你任何提示。（该集合目前为空——其最初的成员 `plan` 已升级为内置的 `/plan` 命令，磁盘上不再有对应的技能。）受保护的内置技能会被完全排除在 curator 的候选列表之外，因此合并 pass 永远不会看到它们。
 
 如果你想要比"禁止删除"更强的保证——例如在 agent 仍可读取技能的同时完全冻结其内容——请直接用编辑器编辑 `~/.hermes/skills/<name>/SKILL.md`。pin 保护的是工具驱动的删除，而非你自己的文件系统访问。
 

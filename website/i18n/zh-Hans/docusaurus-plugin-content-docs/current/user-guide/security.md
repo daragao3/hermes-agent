@@ -32,8 +32,10 @@ Hermes Agent 采用纵深防御安全模型。本页涵盖所有安全边界—�
 ```yaml
 approvals:
   mode: smart                     # smart | manual | off
-  timeout: 60                     # 等待用户响应的秒数（默认：60）
+  timeout: 300                    # 等待用户响应的秒数（默认：300）
   cron_mode: deny                 # deny | approve — cron 任务遇到危险命令时的行为
+  single_query_mode: deny         # deny | approve — 单次查询（-q）会话遇到危险命令时的行为
+  unattended_mode: deny           # deny | approve — webhook/API 会话遇到危险命令时的行为
   mcp_reload_confirm: true        # /reload-mcp 在使 MCP 工具缓存失效前先询问
   destructive_slash_confirm: true # /clear、/new、/reset、/undo 在丢弃状态前先提示
 ```
@@ -43,10 +45,12 @@ approvals:
 | 配置项 | 默认值 | 控制内容 |
 |---|---|---|
 | `mode` | `smart` | 危险 shell 命令的审批策略——参见下方表格。 |
-| `timeout` | `60` | Hermes 等待审批回复的秒数，超时后判定为超时。 |
+| `timeout` | `300` | Hermes 等待审批回复的秒数，超时后判定为超时。 |
 | `cron_mode` | `deny` | [cron 任务](./features/cron.md)在无人值守情况下触发危险命令提示时的行为。`deny` 会阻止该命令（Agent 必须另寻他法）；`approve` 则在 cron 上下文中自动批准一切。 |
+| `single_query_mode` | `deny` | 一次性 [`hermes chat -q`](./cli.md) 会话触发危险命令提示时的行为。`-q` 会话只运行单个轮次后退出，没有用户在等待回答提示；`deny` 会阻止该命令（Agent 必须另寻他法），`approve` 则在单次查询上下文中自动批准一切。与 `cron_mode` 对应。 |
+| `unattended_mode` | `deny` | 无人值守的程序化平台（webhook、msgraph_webhook、api_server）上的会话触发危险命令提示时的行为。这些界面没有能回应 `/approve` 的人，因此不会在整个审批超时期间阻塞：`deny` 会立即阻止该命令（Agent 必须另寻他法），`approve` 则在无人值守上下文中自动批准一切。与 `cron_mode` 对应。 |
 | `mcp_reload_confirm` | `true` | 为 true 时，`/reload-mcp` 会在重建 MCP 工具集前先询问。重建会使供应商的 prompt 缓存失效（工具 schema 位于系统 prompt 中），因此下一条消息会重新发送完整的输入 token。点击 **Always Approve** 的用户会将此项翻转为 `false`。 |
-| `destructive_slash_confirm` | `true` | 为 true 时，破坏性的会话斜杠命令（`/clear`、`/new`、`/reset`、`/undo`）会在丢弃对话状态前先提示。三选项对话框（Approve Once / Always Approve / Cancel）在 Telegram、Discord 和 Slack 上通过原生的是/否按钮路由，其他平台回退为文本形式。点击 **Always Approve** 的用户会将此项翻转为 `false`。TUI 使用自己的模态浮层（设置 `HERMES_TUI_NO_CONFIRM=1` 可在此处退出该行为）。 |
+| `destructive_slash_confirm` | `true` | 为 true 时，破坏性的会话斜杠命令（`/clear`、`/new`、`/reset`、`/undo`）会在丢弃对话状态前先提示。三选项对话框（Approve Once / Always Approve / Cancel）在 Telegram、Discord 和 Slack 上通过原生的是/否按钮路由，其他平台回退为文本形式。点击 **Always Approve** 的用户会将此项翻转为 `false`。TUI 的 `/clear`、`/new` 和 `/reset` 模态框同样遵循此设置；`HERMES_TUI_NO_CONFIRM=1` 会无视所配置的值，强制跳过该模态框。 |
 
 | 模式 | 行为 |
 |------|----------|
@@ -89,6 +93,26 @@ YOLO 模式会禁用会话中**所有**危险命令安全检查——**但硬性
 
 对于破坏性会话斜杠命令（`/clear`、`/new` / `/reset`、`/undo`、`/quit --delete`——`/exit --delete` 是其别名），CLI 在执行前也会提示确认。参见[斜杠命令——破坏性命令的确认提示](../reference/slash-commands.md#confirmation-prompts-for-destructive-commands)。
 
+### 受监管 gateway 的生命周期限制 {#supervised-gateway-lifecycle-restriction}
+
+terminal 工具另有一道独立的、不可覆盖的防护，禁止在 gateway 自身受监管的进程内部
+停止或重启 gateway。自我重启可能在工具完成之前就将其终止，并引发监管器/自动恢复的循环。
+用户审批、YOLO 模式和 `force=True` 都无法绕过这道防护。
+
+在 macOS 上，被执行的 `launchctl submit` 和 `launchctl bootstrap` 命令**无论作业标签为何**
+都会受到限制。这是一项保守的注册限制，旨在捕获使用中性标签的间接重启辅助程序，而不是对
+目标 plist 的检查。它同样会拒绝 `RunAtLoad=false` 且没有 `KeepAlive` 键的独立计划作业；
+被拒绝**并不**表示该作业使用了 KeepAlive 或控制着 Hermes。
+
+对于经授权的 LaunchAgent 维护，请在运行中的 gateway 之外另开一个 shell。目前某些独立的
+`load`/`unload` 命令能通过基于标签的检查，但这并不是经目标验证的豁免，也不是规避
+`bootstrap` 拒绝的受支持方式。只读的 `launchctl print` 不属于生命周期操作。
+完成外部维护后，请区分磁盘上的 plist 与已加载的作业：在报告已激活之前，先校验 plist
+并读回已加载的调度。
+
+工具拒绝意味着该命令没有通过那次工具调用执行。助手拒绝发起调用则是另一项模型决策；
+更换模型不会改变 terminal 防护的策略。
+
 ### 硬性黑名单（始终生效的底线）
 
 某些命令极具破坏性——不可逆的文件系统清除、fork 炸弹、直接写入块设备——无论以下任何情况，Hermes 都**拒绝**执行：
@@ -125,16 +149,19 @@ approvals:
 
 细节：
 
-- 模式是 [fnmatch](https://docs.python.org/3/library/fnmatch.html) glob（`*`、`?`、`[...]`），以**不区分大小写**的方式匹配整条命令文本。`git push --force*` 匹配 `git push --force origin main`，但不匹配 `git push origin main`。
+- 模式是 [fnmatch](https://docs.python.org/3/library/fnmatch.html) glob（`*`、`?`、`[...]`），以**不区分大小写**的方式匹配整条命令文本以及各个可执行命令候选。`git push --force*` 匹配 `git push --force origin main`，但不匹配 `git push origin main`。
 - 匹配运行在与危险模式检测器相同的规范化/去混淆命令变体之上，因此简单的引号技巧（`git pu""sh --force`）无法绕过规则。
+- 可执行候选既保留字面路径，也会匹配其 basename：`sudo *` 同时覆盖 `/usr/bin/sudo -n id` 和 `./sudo -n id`。而像 `/usr/bin/sudo *` 这样限定路径的规则**不会**变成针对所有名为 `sudo` 的二进制文件的规则。
+- 感知引号的解析会暴露出位于赋值、前导重定向、`;`、`&&`、`||`、管道、分组、命令替换以及普通 `if`/`then`/`else`/`do` 转换之后的命令。支持的启动器包括 `sudo`、`env`、`command`、`exec`、`nohup`、`setsid`、`time`、`nice`、`timeout`、`stdbuf`、`ionice`、`chrt`、`taskset` 和 `chroot`。已知的选项操作数会被跳过；`command -v`/`-V` 查询不算执行。Shell 的 `-c` 载荷会被递归检查。`env -S` / `--split-string` 中的字面可执行文件与参数字符串使用 GNU 引号和转义规则（包括 `\_` 词边界和 `\c` 终止），并附加其余的命令参数；这些参数中的 shell 标点仍被视为数据，除非确实有 shell `-c` 消费它。`env -a` / `--argv0` 的值是参数，而不是可执行文件名。Shell 和 GNU split-string 的注释不会引入可执行候选。
+- 在额外的可执行候选中，单词**之间**的空白会被合并，但带引号的参数内容和参数路径会被保留。因此，像 `git status` 这样的精确规则同样会匹配 `env git\tstatus; echo done`（其中 `\t` 代表一个制表符）。像 `echo 'sudo -n id'` 这样带引号的提及不会被提升为命令。已有的整条输入 glob（如 `*sudo*`）仍会有意匹配任意位置的提及。
 - **YAML 引号：** 请始终为模式加引号。裸的前导 `*` 会被当作 YAML 别名而解析失败；`{`、`!` 和 `: ` 在 YAML 中也各有含义。对于类 shell 的内容，单引号最为稳妥。
-- 拒绝规则适用于可触及宿主机的后端（本地、SSH、挂载宿主目录的 Docker）。隔离的容器后端一如既往地完全跳过整个防护栈——它们运行的任何内容都无法触及宿主机。
+- 用户定义的拒绝规则适用于所有 terminal 后端（包括隔离容器），并在任何后端专属的审批捷径之前生效。
 - 被拒绝的命令会向 Agent 返回一条 BLOCKED 错误，告知其不要重试或改写。不执行任何操作。
 
 与审批配置的其余部分一样，改动会立即生效（配置缓存以 mtime 为键）——无需重启会话。
 
 :::note 威胁模型
-拒绝规则是针对"诚实但犯错"的 Agent 的护栏，与危险模式检测器的威胁模型相同。它们并不是针对刻意与你为敌的进程的沙箱——若需如此，请使用隔离后端（Docker、Modal）或出口受限的环境。
+拒绝规则是一种 shell 命令策略，而不是完整的 shell 解释器，也不是操作系统能力沙箱。规范化不会解析任意变量（包括 GNU `env -S` 的 `${NAME}` 展开）、别名、函数、重命名的二进制文件、脚本、解释器程序，也无法覆盖所有 shell/启动器语法（例如 case 模式语法、聚合的启动器选项，或嵌入在 `env -S` 字符串中的选项）。不要把基于 basename 的拒绝规则当作某项能力无法通过其他方式触及的保证。若需隔离，请使用操作系统权限，以及挂载、凭据和网络访问均受到适当限制的隔离后端。这种匹配行为不会改变所配置的审批模式，也不会改变拒绝列表默认为空这一事实。
 :::
 
 ### 审批超时
@@ -182,6 +209,10 @@ approvals:
 | `sed -i` / `sed --in-place` 作用于 `/etc/` | 就地编辑系统配置 |
 | `pkill`/`killall` hermes/gateway | 防止自我终止 |
 | `gateway run` 配合 `&`/`disown`/`nohup`/`setsid` | 防止在服务管理器外启动 gateway |
+| `docker stop/kill/restart`、`docker compose down/stop/kill/restart` | 容器生命周期（同样能捕获全局标志和 `docker-compose`） |
+| `docker -H`/`--host`/`--context`、`DOCKER_HOST=`/`DOCKER_CONTEXT=` | Docker 守护进程重定向——命令指向另一个（通常是远程的）守护进程 |
+| `docker context use` | 为之后所有 docker 命令切换默认守护进程 |
+| `podman --remote`/`-r`/`--url`/`--connection`/`--identity`、`CONTAINER_HOST=` | Podman 远程守护进程重定向 |
 
 :::info
 **容器绕过**：在 `docker`、`singularity`、`modal`、`daytona` 或 `vercel_sandbox` 后端运行时，危险命令检查会被**跳过**，因为容器本身就是安全边界。容器内的破坏性命令不会危害宿主机。
@@ -229,9 +260,47 @@ command_allowlist:
 
 这些模式在启动时加载，并在所有后续会话中静默批准。
 
+该设置必须是一个字符串列表。旧版安装若曾把列表存储为带引号的 YAML/JSON 字符串，
+会在加载时恢复出该列表，并记录一条警告，提示你用 `hermes config edit` 重新保存。
+其他格式错误的值会被忽略并伴随警告；它们绝不会变成逐字符的审批条目。加载过程不会
+改写你的配置文件。
+
 :::tip
 使用 `hermes config edit` 查看或删除永久允许列表中的模式。
 :::
+
+### 挖掘审批历史（`hermes approvals suggest`） {#mining-approval-history-hermes-approvals-suggest}
+
+与其在一个又一个会话里回答同样的提示，不如把你过去的审批决定挖掘成允许列表提案：
+
+```bash
+hermes approvals suggest            # 试运行——打印带编号的提案
+hermes approvals suggest --apply 1,3  # 将所选条目合并到 command_allowlist
+hermes approvals suggest --json     # 机器可读的输出
+```
+
+该命令会扫描会话数据库（`~/.hermes/state.db`），查找被归类为危险且确实已执行的命令——
+也就是你批准过的命令——将它们聚合为模式（`git push *`，或对复合命令使用危险类别键），
+并按审批频率排序：
+
+```
+Proposed command_allowlist additions (from approval history, last 90 days):
+
+  1. git push *    — approved 14x
+  2. docker restart/stop/kill (container lifecycle)    — approved 9x (class key)
+```
+
+安全规则：
+
+- **绝不会自动应用任何内容**——默认运行是只读的；只有显式的 `--apply N[,M...]`
+  才会写入 `config.yaml`。
+- **破坏性类别永远不会被提议**，无论它们被批准过多少次：递归删除、`sudo`、磁盘/设备写入、
+  凭据和系统配置编辑、管道传给 shell、SQL DROP/TRUNCATE、杀死进程，以及所有硬性黑名单类别
+  都会被直接排除。`rm -rf build/` 即使被批准 100 次，也永远不会产生 `rm` 条目。
+- 已被你现有 `command_allowlist` 覆盖的提案会被跳过。
+
+常用标志：`--days N`（历史窗口，默认 90）、`--min-count N`
+（入选所需的最少审批次数，默认 2）、`--limit N` 以及 `--db PATH`。
 
 ## 文件写入安全 {#file-write-safety}
 
@@ -243,13 +312,21 @@ command_allowlist:
 
 | 类别 | 示例 |
 |----------|----------|
-| 操作系统凭据存储 | `~/.ssh/`、`~/.aws/`、`~/.kube/`、`/etc/sudoers`、`~/.netrc` |
+| 操作系统凭据存储 | `~/.ssh/`（密钥、`authorized_keys`）、`~/.aws/`、`~/.kube/`、`/etc/sudoers`、`~/.netrc` |
 | Hermes 凭据存储 | HERMES_HOME 下（当前 profile 及全局根目录）的 `auth.json`、`.env`、`.anthropic_oauth.json`、`mcp-tokens/`、`pairing/` |
 | 项目密钥文件 | 磁盘上任何位置的 `.env`、`.env.local`、`.env.production`、`.envrc` |
 
 安全根目录内部的敏感路径同样会被阻止——把 `HERMES_WRITE_SAFE_ROOT` 指向 `$HOME` 并不会允许写入 `~/.ssh/id_rsa`。
 
 安全根目录违规会返回 `Write denied: '…' is outside HERMES_WRITE_SAFE_ROOT (…)`。凭据路径阻止则使用 `Write denied: '…' is a protected system/credential file.`
+
+**例外——`~/.ssh/config` 需要审批，而不是被硬性阻止。** SSH *客户端配置*不包含任何私钥
+材料，编辑它（主机别名、`ProxyJump`、VS Code Remote-SSH 目标）是一项常规任务，因此
+`write_file` / `patch` 会将其路由到 terminal 工具对 `~/.ssh` 写入已在使用的同一套
+“仅此一次/本会话/始终”审批提示——而不是以往那种一律拒绝。它仍可能携带会执行命令的
+`ProxyCommand` / `Match exec` 指令，因此这种写入绝不会静默发生。非交互式调用方（ACP
+文件桥接、没有人工渠道的后台作业）会故障关闭。私钥、`authorized_keys` 以及 `~/.ssh/`
+下的其他所有内容仍被硬性阻止。
 
 ### HERMES_WRITE_SAFE_ROOT（可选沙箱）
 
@@ -465,6 +542,8 @@ terminal:
 
 `execute_code` 和 `terminal` 都会从子进程中剥离敏感环境变量，以防止 LLM 生成的代码泄露凭据。但是，声明了 `required_environment_variables` 的技能（skill）确实需要访问这些变量。
 
+第一方平台凭据——Buzz 消息平台使用的 `BUZZ_*` 变量——**仅当会话确实以 Buzz agent 身份运行时**才会透传给 `terminal` 子进程（前台以及后台/PTY 派生的进程）：即该进程是 Buzz-ACP 托管的 agent（由 Buzz Desktop harness 设置 `BUZZ_MANAGED_AGENT`），或实时 gateway 会话的平台为 `buzz`。这样，Buzz 平台 agent 就能从 terminal 工具调用其平台要求的 CLI（例如 `buzz`），而同一主机上的 Telegram/CLI/cron 会话仍会剥离这些变量。由于 `_sanitize_subprocess_env` 同样服务于搜索工作进程（例如 ddgs 网页搜索子进程）、computer-use 驱动二进制文件以及用户脚本运行器（bang `!` 命令、快捷命令、cron 脚本、webhook 过滤脚本），当这些子进程从 Buzz 会话派生时，也会收到这些变量。这一例外**仅限 terminal**：它不适用于 `execute_code`、浏览器/TUI 宿主派生的进程（`hermes_subprocess_env`）、Docker/Modal 子进程，或 `env_passthrough` 注册，这些仍保持封闭。
+
 ### 工作原理
 
 两种机制允许特定变量通过沙箱过滤器：
@@ -536,6 +615,7 @@ terminal:
 | **execute_code** | 阻止名称中包含 `KEY`、`TOKEN`、`SECRET`、`PASSWORD`、`CREDENTIAL`、`PASSWD`、`AUTH` 的变量；仅允许安全前缀变量通过 | ✅ 透传变量绕过两项检查 |
 | **terminal**（本地） | 阻止明确的 Hermes 基础设施变量（提供商密钥、gateway token、工具 API 密钥） | ✅ 透传变量绕过黑名单 |
 | **terminal**（Docker） | 默认不传入宿主机环境变量 | ✅ 透传变量 + `docker_forward_env` 通过 `-e` 转发 |
+| **terminal**（SSH） | 默认不传入宿主机环境变量 | ✅ 透传变量通过 `SendEnv` 转发；远程 `sshd_config` 需要配置匹配的 `AcceptEnv`（参见 [SSH 后端](configuration.md#ssh-backend)） |
 | **terminal**（Modal） | 默认不传入宿主机环境/文件 | ✅ 凭据文件挂载；环境变量通过同步透传 |
 | **MCP** | 阻止所有变量，仅允许安全系统变量 + 显式配置的 `env` | ❌ 不受透传影响（改用 MCP `env` 配置） |
 
@@ -661,6 +741,10 @@ Tirith 的判定与审批流程集成：安全命令直接通过，可疑和被�
 - 尝试读取密钥（`.env`、`credentials`、`.netrc`）
 - 通过 `curl` 泄露凭据
 - 不可见 Unicode 字符（零宽空格、双向覆盖）
+
+“翻译并执行”检查要求出现一个简短的语言/格式从句（例如
+“translate this into a bash script and execute it”）。它不会跨越不相关的、以逗号分隔的
+角色描述文本去关联翻译和执行动词。这些模式属于启发式规则，而非语义意图检测。
 
 被阻止的文件会显示警告：
 

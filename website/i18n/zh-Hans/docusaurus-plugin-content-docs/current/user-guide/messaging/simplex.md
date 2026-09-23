@@ -89,6 +89,18 @@ SIMPLEX_GROUP_ALLOWED=*              # any group the bot is in
 给群组寻址时，在聊天 ID 前加上 `group:` 前缀，例如
 在 cron 的 `deliver=` 目标中或 `hermes send` 调用中使用 `simplex:group:12`。
 
+## 使用 `hermes send` 发送 {#sending-with-hermes-send}
+
+SimpleX 可以作为独立的发送目标使用——守护进程必须在运行，但发送纯文本不需要网关处于运行状态：
+
+```bash
+hermes send --to simplex:alice "hello"          # DM by contact display name
+hermes send --to simplex:group:12 "hello"       # group by numeric ID
+hermes send --to simplex "hello"                # SIMPLEX_HOME_CHANNEL
+```
+
+网关运行期间，适配器会把你的联系人和允许的群组枚举到频道目录中（每 5 分钟刷新一次），因此 `hermes send --list` 会按名称显示它们。在网关首次运行之前，该平台仍会出现在 `--list` 中，并附带“尚未发现任何频道”的提示——像上面这样的直接目标无论如何都可以使用。
+
 ## 附件
 
 适配器在两个方向上都支持 SimpleX 原生附件：

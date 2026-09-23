@@ -18,7 +18,8 @@ description: "如何为 Hermes Agent 构建模型提供商（推理后端）插�
 
 1. **内置插件** — `<repo>/plugins/model-providers/<name>/` — 随 Hermes 一同发布
 2. **用户插件** — `$HERMES_HOME/plugins/model-providers/<name>/` — 放入任意目录；后续会话无需重启即可生效
-3. **旧版单文件** — `<repo>/providers/<name>.py` — 为树外可编辑安装提供向后兼容
+3. **已安装插件** — `$HERMES_HOME/plugins/<name>/`（`hermes plugins install owner/repo` 克隆到的位置）— 仅当 `plugin.yaml` 声明 `kind: model-provider` 时才会被导入；该目录下的其他所有 kind 都归通用 PluginManager 管理
+4. **旧版单文件** — `<repo>/providers/<name>.py` — 为树外可编辑安装提供向后兼容
 
 **同名用户插件会覆盖内置插件**，因为 `register_provider()` 采用后写者优先策略。放入 `$HERMES_HOME/plugins/model-providers/gmi/` 目录即可替换内置 GMI profile，无需修改仓库。
 
@@ -135,12 +136,34 @@ class AcmeProfile(ProviderProfile):
         时需要此方法。默认：({}, {})。"""
         return {}, {}
 
-    def fetch_models(self, *, api_key=None, timeout=8.0) -> list[str] | None:
+    def fetch_models(self, *, api_key=None, base_url=None, timeout=8.0) -> list[str] | None:
         """实时目录获取。默认使用 Bearer 认证访问 {models_url or base_url}/models。
         以下情况需覆盖：自定义认证（Anthropic）、无 REST 端点（Bedrock → None），
         或公开/无认证目录（OpenRouter）。"""
-        return super().fetch_models(api_key=api_key, timeout=timeout)
+        return super().fetch_models(api_key=api_key, base_url=base_url, timeout=timeout)
+
+    def create_client(self, **client_kwargs):
+        """提供你自己的客户端对象，而不是共享的 openai.OpenAI。
+        默认返回 None（= 使用标准客户端）。当传输协议不是基于 HTTP 的
+        OpenAI 协议时覆盖——例如 ACP 子进程垫片。
+        client_kwargs 是核心原本会传给 openai.OpenAI 的参数
+        （api_key、base_url、command、args、超时、headers……）；接受 **kwargs
+        并取用你需要的部分。抛出的异常会被记录，并回退到标准客户端。"""
+        return None
 ```
+
+## 外部进程（ACP）提供商 {#external-process-acp-providers}
+
+通过 stdio 驱动的 agent CLI 并不是 HTTP 端点。设置 `auth_type="external_process"`，描述如何启动该二进制文件，并通过 `create_client` 提供客户端。无需修改核心代码——`hermes -m <name>`、`/model`、凭据解析、运行时解析以及辅助客户端（压缩、视觉）都以 `auth_type` 为依据，而不是提供商名称。`plugins/model-providers/copilot-acp/` 是树内示例。
+
+| 字段 | 用途 |
+|---|---|
+| `process_command` | 默认二进制文件，例如 `"copilot"` |
+| `process_args` | 默认 argv 尾部，例如 `("--acp", "--stdio")` |
+| `process_command_env_vars` | 覆盖二进制文件的环境变量，按顺序检查 |
+| `process_args_env_var` | 覆盖 argv 的环境变量（按 shlex 拆分） |
+
+你的 `create_client` 返回的客户端会在 `client_kwargs` 中收到 `command` 和 `args`。如果它本身已经完整且异步安全，请将 `HERMES_SKIP_TRANSPORT_WRAP = True` / `HERMES_SKIP_ASYNC_WRAP = True` 声明为类属性，这样辅助客户端就不会再通过 HTTP 传输适配器重新派发它。
 
 ## Hook 参考示例
 
@@ -197,7 +220,7 @@ register_provider(ProviderProfile(
 | `oauth_external` | 用户在其他地方登录，token 存入 `auth.json` | Anthropic OAuth、MiniMax OAuth、Qwen Portal、Nous Portal |
 | `copilot` | GitHub Copilot token 刷新周期 | 仅 `copilot` 插件 |
 | `aws_sdk` | AWS SDK 凭据链（IAM role、profile、env） | 仅 `bedrock` 插件 |
-| `external_process` | 认证由 agent 启动的子进程处理 | 仅 `copilot-acp` 插件 |
+| `external_process` | 认证由 agent 启动的子进程处理（参见 [外部进程提供商](#external-process-acp-providers)） | `copilot-acp` 插件、树外 ACP 插件 |
 
 `auth_type` 控制哪些代码路径将你的提供商视为"简单 api-key 提供商"——若不是 `api_key`，PluginManager 仍会记录 manifest，但 Hermes CLI 层面的自动化（doctor 检查、`--provider` 标志、设置向导委托）可能会跳过它。
 
@@ -247,14 +270,47 @@ hermes -z "hello" --provider my-provider -m some-model
 
 ## 通过 pip 分发
 
-与所有 Hermes 插件一样，模型提供商可以作为 pip 包发布。在你的 `pyproject.toml` 中添加入口点：
+模型提供商可以作为 pip 包发布。在你的 `pyproject.toml` 中，于
+`hermes_agent.plugins` 组下暴露一个入口点：
 
 ```toml
 [project.entry-points."hermes_agent.plugins"]
 acme-inference = "acme_hermes_plugin:register"
 ```
 
-……其中 `acme_hermes_plugin:register` 是一个调用 `register_provider(profile)` 的函数。通用 PluginManager 在 `discover_and_load()` 期间会拾取入口点插件。对于 `kind: model-provider` 的 pip 插件，你仍需在 manifest 中声明 kind（或依赖源码文本启发式检测）。
+目标可以是以下任一种：
+
+- 一个**可调用对象**（`module:func`）——以无参数方式调用；它应当调用
+  `register_provider(profile)`，或者
+- 一个**裸模块**（`module`）——导入它以触发模块级的
+  `register_provider(...)` 副作用，与目录插件的
+  `__init__.py` 约定一致。
+
+`providers/__init__.py` 会自行发现这些入口点——通用
+`PluginManager` 从不为 pip 包调用提供商注册（它的
+入口点路径面向 `register(ctx)` 风格的通用插件，并受
+`plugins.enabled` 控制），因此提供商注册表会自己扫描。适用两条规则：
+
+- **必须显式启用。** `config.yaml` 中同一份 `plugins.enabled` 允许列表（以及
+  `plugins.disabled` 拒绝列表）同样约束这次扫描。pip
+  包绝不会仅仅因为已安装就被导入——用户必须把
+  入口点名称加入 `plugins.enabled`：
+
+  ```yaml
+  plugins:
+    enabled:
+      - acme-inference
+  ```
+
+- **优先级最低。** 入口点插件会在文件系统插件**之前**被发现：
+  由于 `register_provider()` 采用后写者优先策略，同名的内置或
+  `$HERMES_HOME` profile 总会覆盖通过 pip 安装的那个。pip 包可以新增一个
+  真正全新的提供商，但无法悄悄劫持第一方提供商的名称。
+
+需要参数的目标（通用插件的 `register(ctx)`）会被
+提供商扫描跳过——它们属于 `PluginManager`。损坏的
+入口点会被隔离——以 warning 级别记录后跳过，绝不会
+阻塞其他提供商的发现。
 
 完整的入口点设置请参阅 [构建 Hermes 插件](/developer-guide/plugins#distribute-via-pip)。
 

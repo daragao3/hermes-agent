@@ -1,15 +1,14 @@
 ---
-title: "Hermes S6 Container Supervision"
+title: "Hermes S6 Container Supervision — 修改或调试 Hermes Docker 镜像中的 s6 服务"
 sidebar_label: "Hermes S6 Container Supervision"
-description: "修改、调试或扩展 Hermes Agent Docker 镜像内的 s6-overlay 监督树 —— 添加新服务、调试 profile gateway、理解 Architecture B 主程序模式"
+description: "修改或调试 Hermes Docker 镜像中的 s6 服务"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Hermes S6 Container Supervision
 
-修改、调试或扩展 Hermes Agent Docker 镜像内的 s6-overlay 监督树 —— 添加新服务、调试
-profile gateway、理解 Architecture B 主程序模式。
+修改或调试 Hermes Docker 镜像中的 s6 服务。
 
 ## Skill 元数据
 
@@ -22,7 +21,7 @@ profile gateway、理解 Architecture B 主程序模式。
 | 许可证 | MIT |
 | 平台 | linux |
 | 标签 | `docker`, `s6`, `supervision`, `gateway`, `profiles` |
-| 相关 skills | [`hermes-agent`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent), `hermes-agent-dev` |
+| 相关 skills | [`hermes-agent`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent) |
 
 ## 参考：完整 SKILL.md
 
@@ -85,7 +84,8 @@ profile gateway、理解 Architecture B 主程序模式。
 
 | 路径 | 角色 |
 |---|---|
-| `Dockerfile` | s6-overlay 安装 + cont-init.d 接线 + `ENTRYPOINT ["/init", "/opt/hermes/docker/main-wrapper.sh"]` |
+| `Dockerfile` | s6-overlay 安装 + cont-init.d 接线 + `ENTRYPOINT ["/opt/hermes/docker/entrypoint-dispatch.sh"]` |
+| `docker/entrypoint-dispatch.sh` | PID-1 分发器：当镜像拥有 PID 1 时 exec `/init` + main-wrapper；在包装型运行时（Fly Machines、`docker run --init`）上则回退为直接运行 stage2-hook + main-wrapper，并先恢复 s6 辅助程序的 PATH（#38349）。 |
 | `docker/stage2-hook.sh` | "旧入口点逻辑" —— UID 重映射、chown、播种、skills 同步。作为 cont-init.d/01-hermes-setup 运行。 |
 | `docker/cont-init.d/02-reconcile-profiles` | 每次启动时调用 `hermes_cli.container_boot`，从持久卷恢复 profile gateway 槽。 |
 | `docker/main-wrapper.sh` | 容器的 CMD。路由用户参数，通过 `s6-setuidgid` 降权到 hermes，exec 所选程序。 |
@@ -109,11 +109,14 @@ profile gateway、理解 Architecture B 主程序模式。
    _"if you want a container shutdown, you need to either have your CMD exit, or, if you
    have no CMD, write the container exit code you want then call halt"_。
 
-因此我们采用 s6-overlay 原生的 CMD 模式：`ENTRYPOINT ["/init",
-"/opt/hermes/docker/main-wrapper.sh"]`。/init 会自动把 wrapper 前置到用户参数之前 ——
+因此我们通过分发器采用 s6-overlay 原生的 CMD 模式：`ENTRYPOINT ["/opt/hermes/docker/entrypoint-dispatch.sh"]`，
+它在 PID 1 下会 exec `/init /opt/hermes/docker/main-wrapper.sh "$@"`。wrapper 会被自动前置到用户参数之前 ——
 所以 `docker run <image> --version` 变成 `/init main-wrapper.sh --version`，且 `--version`
 不会被 /init 的 POSIX shell 拦截。wrapper 通过 `s6-setuidgid` 降权到 hermes，然后 exec 所选
-程序。程序的退出码成为容器退出码，与 s6 之前的 tini 契约完全一致。
+程序。程序的退出码成为容器退出码，与 s6 之前的 tini 契约完全一致。当入口点**不是** PID 1 时
+（Fly Machines、`docker run --init`），分发器会完全跳过 `/init`（否则它会以 `can only run as pid 1`
+中止），恢复 s6 辅助程序的 PATH，运行 stage2-hook.sh，然后直接 exec main-wrapper.sh —— 该路径上
+没有受监督的服务（#38349）。
 
 权衡：主 hermes 在 s6 下不受监督。这恰好与它在 tini 下（s6 之前的镜像）的行为一致。
 Dashboard 监督是唯一的**新**保证 —— 而 `/run/service/` 下按 profile 的 gateway 获得完整

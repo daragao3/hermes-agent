@@ -10,11 +10,24 @@ description: "基于 SQLite 的持久化任务看板，用于协调多个 Hermes
 
 Hermes Kanban 是一个持久化任务看板，在所有 Hermes 配置文件之间共享，允许多个具名 agent 协作完成工作，而无需脆弱的进程内子 agent 集群。每个任务都是 `~/.hermes/kanban.db` 中的一行记录；每次交接都是任何人都可以读写的一行记录；每个 worker 都是拥有独立身份的完整 OS 进程。
 
+### 迭代上限前的完成检查点
+
+由调度器拥有的 worker 会在其有限迭代预算用到约 90% 时收到一次检查点通知，
+该通知附加在一个新的工具结果上，此时仍剩余至少一次可调用工具的机会。可使用
+`agent.budget_warning_ratio` 选择更早的阈值。极小的预算最迟会在倒数第二次迭代时
+发出警告；只有一次迭代的运行没有上限前的检查点窗口。该通知会在下一次请求之前
+保存到会话记录中。Worker 应当仅在核实任务契约后才调用 `kanban_complete`，否则就
+持久化一条进度评论并继续工作。仅有一次提交或一个 diff 永远不会自动完成任务。
+
+硬上限、无工具的最终总结以及连续失败熔断器均保持不变：仍然耗尽预算的 worker
+依然受有界重试的约束。这是一次汇报机会，并不保证模型会理会该通知。普通对话和
+委派出的子 agent 不会继承这一自动 Kanban 检查点；它们的迭代警告仍需主动启用。
+
 ### 两个操作界面：模型通过工具交互，你通过 CLI 交互
 
 看板有两个入口，均由同一个 `~/.hermes/kanban.db` 支撑：
 
-- **Agent 通过专用 `kanban_*` 工具集驱动看板** —— `kanban_show`、`kanban_list`、`kanban_complete`、`kanban_block`、`kanban_request_review`、`kanban_request_changes`、`kanban_heartbeat`、`kanban_comment`、`kanban_create`、`kanban_link`、`kanban_unblock`。调度器在 schema 中已内置这些工具来启动每个 worker；编排器（orchestrator）配置文件也可以通过 `kanban` 工具集显式启用。模型通过直接调用工具来读取和路由任务，*而不是*通过 shell 执行 `hermes kanban`。详见下方[Worker 如何与看板交互](#how-workers-interact-with-the-board)。
+- **Agent 通过专用 `kanban_*` 工具集驱动看板** —— `kanban_show`、`kanban_list`、`kanban_complete`、`kanban_request_review`、`kanban_request_changes`、`kanban_block`、`kanban_heartbeat`、`kanban_comment`、`kanban_attach`、`kanban_attach_url`、`kanban_attachments`、`kanban_create`、`kanban_link`、`kanban_unblock`。调度器在 schema 中已内置这些工具来启动每个 worker；编排器（orchestrator）配置文件也可以通过 `kanban` 工具集显式启用。模型通过直接调用工具来读取和路由任务，*而不是*通过 shell 执行 `hermes kanban`。详见下方[Worker 如何与看板交互](#how-workers-interact-with-the-board)。
 - **你（以及脚本和 cron）通过 CLI 上的 `hermes kanban …`、斜杠命令 `/kanban …` 或仪表盘驱动看板。** 这些界面面向人类和自动化场景——即没有工具调用模型的场合。
 
 两个界面都通过同一个 `kanban_db` 层路由，因此读取视图一致，写入不会产生偏差。本页其余部分展示 CLI 示例，因为它们便于复制粘贴，但每个 CLI 动词都有模型使用的等效工具调用。
@@ -28,6 +41,37 @@ Hermes Kanban 是一个持久化任务看板，在所有 Hermes 配置文件之�
 - **批量任务** —— 一个专家管理 N 个对象（50 个社交账号、12 个监控服务）。
 
 完整的设计原理、与 Cline Kanban / Paperclip / NanoClaw / Google Gemini Enterprise 的对比分析，以及八种典型协作模式，请参阅仓库中的 `docs/hermes-kanban-v1-spec.pdf`。
+
+## PR 完成契约
+
+在创建时用 `--completion-contract OWNER/REPO` 声明 PR 工作（对于已有工作，也可以
+用确切的 `https://github.com/OWNER/REPO/pull/123` URL）。`kanban_create` 接受同样的
+`completion_contract`。对于有意只在本地进行的工作，请使用 `local-only`；已有卡片和
+未声明的卡片保持这一默认值。正文中出现的 URL 不构成策略。
+
+发布之后，在完成时传入 `metadata.published_pr`。第一个匹配的 URL 会永久绑定该卡片；
+重试无法换成另一个通过检查的兄弟 PR。CLI `show --json` 和 `kanban_show` 会展示持久化
+的契约。
+
+共享的 `complete_task` 边界覆盖 worker 工具、CLI、审查批准以及仪表盘完成。它读取
+经典分支保护和生效中的 ruleset 所要求的检查上下文，分页读取精确 head 上的 check run
+和旧式 status，然后重新读取 PR 的 head/base。可选检查的失败/跳过遥测不会否决已被接受
+的必需检查。缺失、待定、失败、取消、超时、过期、跳过或中性的**必需**证据都无法完成
+卡片。零运行的接受、无法读取的策略或 GitHub API 失败同样不能。没有必需检查的仓库需要
+local-only 契约。`gh` 必须已认证，并对该仓库的 checks 和 rules 拥有读取权限；该门控
+不会执行任何远程写入。
+
+被拒绝时，活动卡片和工作区都会保留。持久化的 `pr_acceptance` 事件会存储 PR URL、SHA、
+必需上下文、check ID/URL、分类以及恢复说明；`last_failure_error` 会给出下一步。修复
+失败、重跑基础设施检查或等待，然后重试完成。需要人工操作时使用 `kanban_block`。
+GitHub 通用的 `failure` 无法判断失败的是测试还是制品上传；请检查其保留的 URL。明确的
+基础设施结论和 API 失败会被单独分类。不会额外启动 worker。
+
+回执持久化与终态写入会在同一个 SQLite 锁下重新检查 run/状态/契约的归属：被回收的
+worker 无法完成新 run，也无法把接受结果附加到新 run 上。最后一次 GitHub 读取是完成
+时刻的快照，而不是分布式事务，也不是完成后的持续监控。这是面向单用户的生命周期守卫，
+而不是针对任意直接数据库写入的 OS 级隔离。GitHub Enterprise 不在覆盖范围内。相关的
+发布/生命周期工作：#91230、#84254、#52311；仅有本地验证和发布并不等于远程接受。
 
 ## Kanban 与 `delegate_task` 的对比
 
@@ -187,8 +231,9 @@ hermes kanban stats
 kanban:
   dispatch_in_gateway: true        # 默认
   dispatch_interval_seconds: 60    # 默认
-  review_dispatch: true            # 默认：使用内置 sdlc-review skill 自动启动 reviewer。
-                                   # 纯人工审查看板可设为 false。
+  review_dispatch: true            # 默认：使用内置 sdlc-review skill
+                                   # 启动受让的配置文件。纯人工审查
+                                   # 看板可设为 false。
 ```
 
 通过 `HERMES_KANBAN_DISPATCH_IN_GATEWAY=0` 在运行时覆盖配置标志以进行调试。标准 gateway 监督适用：直接运行 `hermes gateway start`，或将 gateway 配置为 systemd 用户单元（参见 gateway 文档）。没有运行中的 gateway，`ready` 任务会保持原状，直到 gateway 启动 —— `hermes kanban create` 在创建时会对此发出警告。
@@ -218,9 +263,10 @@ hermes kanban block    t_abc "need input" --ids t_def t_hij
 ```
 
 :::note 被解除阻塞的任务会落到哪里
-`unblock` 本身只会把任务移动到 **`ready`**（所有父任务都已 `done`）或
-**`todo`**（仍有父任务未完成 —— 该任务受依赖门控，父任务完成后调度器会自动
-提升它）。它永远不会路由到 `triage`。
+`unblock` 会恢复到安全的来源阶段：父任务均已完成的 reviewer 来源工作回到
+**`review`**，父任务均已完成的实现工作回到 **`ready`**，只要还有父任务未完成则
+进入 **`todo`**。`todo` 任务会保留其来源阶段的溯源信息，并在依赖门控解除后自动
+回到 `review` 或 `ready`。`unblock` 永远不会直接路由到 `triage`。
 
 如果你解除了某个任务的阻塞，而它随后出现在 **`triage`** 中，那不是 unblock
 造成的，而是随后**因同一原因再次阻塞**造成的：当一个任务因同一原因经历
@@ -242,11 +288,14 @@ LLM 的判断，任务正文也无法选择退出：递归计数器在每次解�
 | `kanban_show` | 读取当前任务（标题、正文、先前尝试、父级交接、评论、完整预格式化的 `worker_context`）。默认使用环境变量中的任务 id。 | — |
 | `kanban_list` | 列出带有 `assignee`、`status`、`tenant`、归档可见性和限制过滤器的任务摘要。供编排器发现看板工作使用。 | — |
 | `kanban_complete` | 以 `summary` + `metadata` 结构化交接完成任务。 | `summary` / `result` 至少一个 |
-| `kanban_request_review` | 启动同卡审查，携带 `summary`、可选 `metadata` 和 reviewer profile；任务移入 `review`，且不计入 block 循环。 | `summary` |
-| `kanban_request_changes` | reviewer 在活动审查 run 中要求修改：关闭审查 run，重新检查父依赖，并把任务交还原 implementer。 | `reason` |
-| `kanban_block` | 以 `reason` 上报需要人工输入。 | `reason` |
+| `kanban_request_review` | 以持久化的 `summary`、可选 `metadata` 和可选 reviewer 配置文件启动同卡审查。任务移入 `review`；这不是阻塞。 | `summary` |
+| `kanban_request_changes` | 来自活动审查运行的 reviewer 结论。关闭该运行，重新应用父任务门控，并把任务路由回其原 implementer，不计入阻塞循环。 | `reason` |
+| `kanban_block` | 停止工作并按原因路由：`kind=dependency`（在 `todo` 中等待，自动恢复）、`needs_input`/`capability`/`transient`（上报给人类）。同类原因的重复再次阻塞会自动升级到 `triage`。 | `reason` |
 | `kanban_heartbeat` | 在长时间操作期间发出存活信号。纯副作用。 | — |
 | `kanban_comment` | 向任务线程追加持久化备注。 | `task_id`、`body` |
+| `kanban_attach` | 以内联方式（base64）传入文件字节，把文件附加到任务；存储在任务的附件目录下（上限 25 MB）。 | 文件字节 + 名称 |
+| `kanban_attach_url` | 通过 URL 把文件附加到任务。 | `url` |
+| `kanban_attachments` | 列出任务的附件。 | — |
 | `kanban_create` | （编排器）将任务扇出为带有 `assignee`、可选 `parents`、`skills` 等的子任务。 | `title`、`assignee` |
 | `kanban_link` | （编排器）事后添加 `parent_id → child_id` 依赖边。 | `parent_id`、`child_id` |
 | `kanban_unblock` | （编排器）将阻塞任务恢复到来源阶段（`review` 或 `ready`）；父任务仍开放时进入 `todo`。 | `task_id` |
@@ -380,6 +429,22 @@ hermes kanban create "audit auth flow" \
 
 调度器为列出的每个 skill 发出一个 `--skills <name>` 标志，因此 worker 在自动注入的 kanban 指引之上加载了所有这些 skill。skill 名称必须与受让人配置文件上实际安装的 skill 匹配（运行 `hermes skills list` 查看可用内容）；没有运行时安装。
 
+### 按任务覆盖模型 {#per-task-model-override}
+
+把某个任务的 worker 固定到特定模型（以及可选的 provider），与受让人配置文件的默认值无关：
+
+```bash
+# 创建时
+hermes kanban create "hard refactor" --assignee coder \
+    --model claude-opus-4.6 --provider anthropic
+
+# 或者之后设置 —— 在下一次调度时生效
+hermes kanban set-model t_abcd claude-opus-4.6 --provider anthropic
+hermes kanban set-model t_abcd none    # 清除覆盖
+```
+
+调度器以固定的模型启动 worker（设置了 provider 时会传入 `--provider <name>`；`--provider` 需要同时指定模型）。仪表盘上按任务的模型下拉框驱动的是同一个 `model_override` 字段。未设置覆盖时，worker 使用其配置文件中配置的模型。
+
 ### 成本策略：前沿模型编排，低价模型执行
 
 Kanban 的按 profile 配置让规划者/执行者的成本分层水到渠成。将项目分解为范围清晰的卡片需要前沿模型级别的判断力；而执行一张已经带有明确目标、上下文和交接证据的卡片通常不需要——并且绝大多数 token 消耗发生在 worker 身上，因此成本真正落在 worker 模型上。让编排器/调度器 profile 运行前沿模型，让 worker profile 指向低价模型。每个 profile 在 `~/.hermes/profiles/<name>/` 下有自己的 `config.yaml`，调度器在生成 `hermes -p <assignee>` 时注入 profile 范围的 `HERMES_HOME`，因此每个 worker 读取自己 profile 的模型设置：
@@ -398,7 +463,36 @@ model:
   default: "your-inexpensive-model"
 ```
 
-对于偶尔出现的质量敏感型卡片，可以只为该任务固定更强的模型（按任务模型覆盖）：创建时用 `--model`/`--provider`，之后用 `hermes kanban set-model <task-id> <model> --provider <name>`（`set-model ... none` 清除覆盖），或使用仪表盘的按任务模型下拉框——无需修改 profile 配置。未设置覆盖时，worker 使用其 profile 配置的模型。
+对于偶尔出现的质量敏感型卡片，可以用[按任务覆盖模型](#per-task-model-override)只把该任务固定回更强的模型（创建时用 `--model`/`--provider`，之后用 `hermes kanban set-model`，或使用仪表盘的模型下拉框）——无需修改 profile 配置。
+
+### 生命周期插件钩子
+
+看板状态转换会触发[插件钩子](/user-guide/features/hooks#plugin-hooks)：`kanban_task_claimed`、`kanban_task_completed` 和 `kanban_task_blocked`，每个都携带 `task_id` 和 `profile_name`。钩子在看板 DB 变更提交**之后**触发，因此回调看到的始终是持久化状态。注意进程划分：`kanban_task_claimed` 在**调度器**进程中触发，而 `kanban_task_completed`/`kanban_task_blocked` 在 **worker** 进程中触发 —— 若要集中观察每一次转换，请在调度器配置文件中注册钩子。
+
+```python
+def register(ctx):
+    def on_blocked(task_id=None, profile_name=None, **kw):
+        ctx.dispatch_tool("terminal", {"command": f"notify-send 'kanban blocked: {task_id}'"})
+    ctx.register_hook("kanban_task_blocked", on_blocked)
+```
+
+### 目标模式卡片（`--goal`） {#goal-mode-cards---goal}
+
+默认情况下，每个 worker 对其卡片只有**一次机会** —— 完成工作，调用 `kanban_complete`/`kanban_block`，退出。传入 `--goal`（CLI）或 `goal_mode=True`（`kanban_create` 工具 / 仪表盘），即可让该 worker 改为运行**目标循环**，也就是 `/goal` 斜杠命令背后的同一个 Ralph 式引擎：每一轮之后，辅助评判器会对照卡片的标题 + 正文（视为验收标准）检查 worker 的输出；如果工作尚未完成且轮次预算仍有剩余，worker 会**在同一会话中**继续工作，直到评判器认可、worker 自己终止任务，或预算耗尽（这会**阻塞**卡片以便人工审查，而不是静默退出）。如果评判器判定该目标按现有描述**无法实现**，卡片会立即以评判器给出的原因被阻塞 —— 不可能完成的卡片永远不会被标记为完成，对这类卡片执行 `kanban complete` / `kanban request-review` 会被拒绝，并提示改用 `kanban block` 或重新划定范围。
+
+```bash
+hermes kanban create "Translate the docs site to French" \
+    --body "Acceptance: every page translated, no English left, links intact." \
+    --assignee linguist \
+    --goal \
+    --goal-max-turns 15      # 可选；默认 20
+```
+
+适用于开放式、多步骤或"持续进行直到 X 成立"的卡片。廉价的一次性工作请跳过它 —— 每轮评判的开销并不划算，而调度器现有的重试/熔断机制已经能处理 worker 的瞬时故障。评判器的质量取决于你的目标文本，因此请把正文写成**明确的验收标准**。
+
+:::note 目标模式卡片借用 `/goal` 引擎 —— 但并不与之相连
+`--goal` 在*该卡片自己的 worker 会话内部*运行续跑循环。它与 [`/goal` 斜杠命令](./goals)共享的是引擎，而不是状态：在聊天会话中设置 `/goal` 永远不会创建、认领或移动 kanban 卡片，而目标模式卡片的循环对任何聊天会话的 `/goal status` 都不可见。如果你希望当前对话持续迭代，请使用 [`/goal`](./goals)；如果你希望把工作放上看板，请创建一张卡片。
+:::
 
 ### 编排器的行为方式
 
@@ -465,7 +559,15 @@ hermes dashboard        # 导航栏中出现 "Kanban" 标签页，位于 "Skills
 
 看板有两种方式处理你放入 Triage 列的任务：
 
-**自动（默认）** —— `kanban.auto_decompose: true`。Gateway 内嵌调度器在每个 tick 运行**分解器**，受 `kanban.auto_decompose_per_tick`（默认每 tick 3 个任务）限制，以防批量加载分诊任务时突发消耗辅助 LLM。分解器读取粗略想法，查看你安装的配置文件及其描述，并要求 LLM 生成 JSON 任务图：要启动哪些任务、分配给谁，以及哪些依赖哪些。原始分诊任务成为图中每个叶节点的父级，因此它保持存活直到整个图完成 —— 然后推进回 `ready`，让其受让人（编排器配置文件）判断完成情况，并在工作未完成时添加更多任务。这是"丢一行描述，走开"的流程。
+**自动（默认）** —— `kanban.auto_decompose: true`。Gateway 内嵌调度器在每个 tick 运行**分解器**，受 `kanban.auto_decompose_per_tick`（默认每 tick 3 个任务）限制，以防批量加载分诊任务时突发消耗辅助 LLM。分解器使用内置的分解 prompt 加上 `auxiliary.kanban_decomposer` 模型路径，读取你安装的配置文件及其描述，并要求 LLM 生成 JSON 任务图：要启动哪些任务、分配给谁，以及哪些依赖哪些。原始分诊任务成为图中每个叶节点的父级，因此它保持存活直到整个图完成 —— 然后推进回 `ready`，让其受让人（`kanban.orchestrator_profile`，未设置时为当前默认配置文件）判断完成情况，并在工作未完成时添加更多任务。这是"丢一行描述，走开"的流程。
+
+已完成的内置扇出会与其子任务图一起被原子性地记录。把该根任务移回 Triage 不会再创建
+另一张图；普通的前置依赖链接也不会阻止任务的首次分解。该完成标记在事件保留清理中
+保留，直到任务被删除。这并不是对独立手动创建的任务图做语义去重，也不能修复此前已被
+清理的历史。
+
+当新任务省略租户时，创建操作会按给定顺序继承其父任务中第一个非空的租户。显式租户
+（包括工具传入的 worker 当前租户）优先。看板仍然是硬隔离边界。
 
 **手动** —— `kanban.auto_decompose: false`。分诊任务保持在分诊中，直到你操作。点击卡片上的 **⚗ Decompose** 按钮，运行 `hermes kanban decompose <id>`（或 `--all`），或从聊天中使用 `/kanban decompose <id>`。这与看板的预分解器行为一致，适合需要完全控制运行时机的场景。
 
@@ -481,9 +583,10 @@ hermes dashboard        # 导航栏中出现 "Kanban" 标签页，位于 "Skills
 |---|---|---|
 | `auto_decompose` | `true` | 调度器每 tick 为 Triage 任务运行内置分解器；它不会限制配置文件驱动的 `kanban_create` 或创建者唤醒回合。 |
 | `auto_decompose_per_tick` | `3` | 每个调度器 tick 的分解上限。超出部分推迟到下一个 tick。 |
-| `orchestrator_profile` | `""` | 拥有分解权的配置文件。空 = 回退到活动默认配置文件。 |
+| `orchestrator_profile` | `""` | 分解后分配给根/编排任务的配置文件。空 = 回退到活动默认配置文件。 |
 | `default_assignee` | `""` | LLM 选择未知配置文件时子任务的落地位置。空 = 回退到活动默认配置文件。 |
 | `auto_subscribe_on_create` | `true` | 当 `kanban_create` 在持久 gateway/TUI 会话中运行时，终止事件会通过合成状态回合恢复原始 agent。设为 `false` 可让完成保持被动，或要求显式调用 `kanban_notify-subscribe`。此设置独立于 `auto_decompose`。 |
+| `done_sub_retention_days` | `30` | 通知订阅在 `done` 之后仍然保留（可安全重开），在 `archived` 时移除。通知器 GC 会清除其任务已处于 `done` 或 `blocked` 且在这么多天内没有新事件的订阅，从而限制从不归档的看板上订阅表的增长。`0` 禁用该清理。 |
 
 以及两个辅助 LLM 槽：
 
@@ -597,11 +700,21 @@ hermes kanban create "<title>" [--body ...] [--assignee <profile>]
                                 [--priority N] [--triage] [--idempotency-key KEY]
                                 [--max-runtime 30m|2h|1d|<seconds>]
                                 [--max-retries N]
+                                [--goal] [--goal-max-turns N]
                                 [--skill <name>]...
                                 [--json]
-hermes kanban list [--mine] [--assignee P] [--status S] [--tenant T] [--archived] [--json]
+hermes kanban list [--mine] [--assignee P] [--status S] [--tenant T] [--archived]
+        [--workflow-template-id <id>] [--current-step-key <key>]
+        [--sort created|created-desc|priority|priority-desc|status|assignee|title|updated]
+        [--json]
 hermes kanban show <id> [--json]
 hermes kanban assign <id> <profile>                    # 或 'none' 取消分配
+hermes kanban reassign <id>... <profile>               # 批量将任务重新分配给某个配置文件
+hermes kanban edit <id> [--title ...] [--body ...]     # 就地编辑任务标题 / 正文 / 优先级
+        [--priority N]
+hermes kanban promote <id>...                          # 将 todo/blocked 任务移到 ready（恢复用）
+hermes kanban schedule <id> --at <ISO8601>             # 设置/清除任务的 scheduled_at 启动时间
+hermes kanban diagnostics [--json]                     # 看板健康快照（别名：diag）
 hermes kanban link <parent_id> <child_id>
 hermes kanban unlink <parent_id> <child_id>
 hermes kanban claim <id> [--ttl SECONDS]
@@ -614,7 +727,7 @@ hermes kanban unblock <id>...
 hermes kanban archive <id>...
 
 hermes kanban request-review <id> [--summary "..."] [--metadata JSON] [--reviewer PROFILE]
-hermes kanban request-changes <id> "<所需修改>"                       # reviewer -> implementer
+hermes kanban request-changes <id> "<required changes>"               # 活动 reviewer -> implementer
 hermes kanban reopen-review  <id>... [--reason "..."]                 # 请求修改：'review' -> ready/todo
 
 hermes kanban tail <id>                                # 跟踪单个任务的事件流
@@ -631,6 +744,7 @@ hermes kanban stats [--json]                           # 每状态 + 每受让�
 hermes kanban log <id> [--tail BYTES]                  # 来自 ~/.hermes/kanban/logs/ 的 worker 日志
 hermes kanban notify-subscribe <id>                    # gateway 桥接钩子（由 gateway 中的 /kanban 使用）
         --platform <name> --chat-id <id> [--thread-id <id>] [--user-id <id>]
+        [--chat-type dm|group|channel|thread] [--delivery-mode notify|notify+wake|wake]
 hermes kanban notify-list [<id>] [--json]
 hermes kanban notify-unsubscribe <id>
         --platform <name> --chat-id <id> [--thread-id <id>]
@@ -701,7 +815,7 @@ hermes kanban swarm "Design a multi-region failover plan" \
   --verifier reviewer --synthesizer writer
 ```
 
-生成的图会正常派发 —— worker 并行运行，验证者在它们全部完成后唤醒，综合者在验证者判定工作无误后唤醒。
+生成的图会被原子性地提交：调度器和仪表盘读取方要么看不到新的 swarm，要么看到完整的拓扑，绝不会看到链接不完整的根/worker/验证者图。之后它会正常派发 —— worker 并行运行，验证者在它们全部完成后唤醒，综合者在验证者判定工作无误后唤醒。
 
 ## `/kanban` 斜杠命令 {#kanban-slash-command}
 
@@ -745,7 +859,20 @@ bot> ✓ t_9fc1a3 completed by transcriber
      transcribed 42 minutes, saved to podcast/2026-05-04.md
 ```
 
-订阅在任务达到 `done` 或 `archived` 后自动移除。如果你用 `--json`（机器输出）脚本化创建，则跳过自动订阅 —— 假设脚本化调用者希望通过 `/kanban notify-subscribe` 显式管理订阅。
+订阅在任务达到 `done` 后仍然保留 —— 完成是可逆的（审查者或控制器可以重开已完成的任务），因此发起会话在重开周期中也会持续收到通知。订阅在 `archived`（不可逆的终态）时自动移除。在从不归档的看板上，GC 清理会清除那些任务已在 `done` 或 `blocked` 中停留、且 `kanban.done_sub_retention_days` 天（默认 30；设为 0 禁用）内没有新活动的订阅，因此过期行不会永远累积。如果你用 `--json`（机器输出）脚本化创建，则跳过自动订阅 —— 假设脚本化调用者希望通过 `/kanban notify-subscribe` 显式管理订阅。
+
+通过 `kanban_create` 或 `hermes kanban create` 创建任务的调度器 worker，即使没有 `parents`
+依赖链接，也会复制其所属任务的持久化通知订阅。目标、路由锚点和投递模式都会被保留；
+被动订阅不会因自动订阅而升级为唤醒。这种复制现有订阅的行为独立于
+`auto_subscribe_on_create`，后者控制的是是否把当前对话添加为新的目标。对于裸 CLI 会话，
+或所属任务没有任何订阅的 worker，不会凭空创造目标。
+
+对于 `kanban_create`，会话谱系按以下顺序解析：显式 `session_id`、所属 worker 任务的
+持久化会话、请求范围的 API 来源，然后是当前进程会话。内置分解同样继承其根任务的持久化
+会话。会话谱系本身并不是通知目标：更改 `session_id` 不会替换已有订阅；请使用
+`notify-subscribe` 和 `notify-unsubscribe` 更改事件的投递位置。
+
+聊天发起的自动订阅以 `notify+wake` 模式创建：发生终态事件时，目标 agent 既会收到被动消息，**又**会进行一次真正的轮次，从而可以读取看板上下文并以自己的口吻回复。参见下方[投递模式](#delivery-modes)。
 
 ### 消息中的输出截断
 
@@ -809,7 +936,7 @@ EOF
 
 ### 调解冲突的 worker 分支
 
-在工程流水线（使用 worktree 的 P1/P2）中，两个 worker 的分支合并时可能发生冲突。不要让任一 worker 自行裁决 —— 发生冲突的 agent 缺乏对方的上下文，往往会覆盖对方的改动或放弃自己的改动。正确做法是：创建一张调解卡片，指派给**第三个中立配置文件**，并把**两张**冲突卡片都链接为其父任务：父任务链接会把双方的完成摘要带入调解者的上下文，使其同时获得双方的 diff *和*双方的意图。内置的 [`agent-merge-conflict-arbiter` 技能](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/autonomous-ai-agents/agent-merge-conflict-arbiter/SKILL.md) 为该 worker 提供完整流程：对每个冲突块分类、公正地解决、验证，并在交回摘要中说明每一项决定。
+在工程流水线（使用 worktree 的 P1/P2）中，两个 worker 的分支合并时可能发生冲突。不要让任一 worker 自行裁决 —— 发生冲突的 agent 缺乏对方的上下文，往往会覆盖对方的改动或放弃自己的改动。正确做法是：创建一张调解卡片，指派给**第三个中立配置文件**，并把**两张**冲突卡片都链接为其父任务：父任务链接会把双方的完成摘要带入调解者的上下文，使其同时获得双方的 diff *和*双方的意图。内置的 [`agent-merge-conflict-arbiter` 可选技能](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/autonomous-ai-agents/agent-merge-conflict-arbiter/SKILL.md) 为该 worker 提供完整流程：对每个冲突块分类、公正地解决、验证，并在交回摘要中说明每一项决定。
 
 ### 并行战役中的碰撞热点（Collision hotspots）
 
@@ -819,7 +946,7 @@ EOF
 hotspot: hermes_cli/kanban_db.py — 本轮对 dispatch 循环的第三次冲突性编辑
 ```
 
-并在完成时的 `metadata` 中重复该标记。编排者（或查看看板的人类）如果看到**两条或更多 `hotspot:` 评论指向同一路径**，应在继续排入任何触碰该文件的工作**之前**，为该文件创建一张专门的重构/分解卡片 —— 拆分磁石文件比调解它未来引发的每一次冲突更便宜。对于*已经*发生的冲突，请使用上文的调解卡片模式配合 `agent-merge-conflict-arbiter` 技能；hotspot 标记是上游修复，能避免调解者变成一条常设车道。
+并在完成时的 `metadata` 中重复该标记。编排者（或查看看板的人类）如果看到**两条或更多 `hotspot:` 评论指向同一路径**，应在继续排入任何触碰该文件的工作**之前**，为该文件创建一张专门的重构/分解卡片 —— 拆分磁石文件比调解它未来引发的每一次冲突更便宜。对于*已经*发生的冲突，请使用上文的调解卡片模式配合 `agent-merge-conflict-arbiter` 可选技能；hotspot 标记是上游修复，能避免调解者变成一条常设车道。
 
 ## 多租户使用
 
@@ -834,6 +961,12 @@ hermes kanban create "monthly report" \
 
 Worker 接收 `$HERMES_TENANT` 并按前缀命名空间化其内存写入。看板、调度器和配置文件定义都是共享的；只有数据是有范围的。
 
+## 桌面通知
+
+桌面应用的 Kanban 插件会以原生方式呈现同样的终态事件 —— 无需任何 gateway 平台。当 Kanban 看板的实时事件 socket 处于连接状态时，每个 `completed`、`blocked`、`gave_up`、`crashed`、`timed_out` 或被路由到分诊（`block_loop_detected`）的事件都会弹出一个应用内提示，显示 worker 的交接内容（摘要、阻塞原因或错误），并附带"Open Kanban"操作。当你不在 Hermes 窗口前时，同一事件还会触发原生操作系统通知（受 **Settings ▸ Notifications ▸ Plugin notifications** 控制），因此即使你正在使用其他应用，任务遇到阻塞时也能通知到你。
+
+覆盖窗口：桌面通知依赖实时事件流，因此只有在应用运行且启用了 Kanban 插件时才会触发。应用关闭期间发生的事件不会在下次启动时作为通知重放 —— 对于必须在应用关闭时也能送达的投递，请使用 gateway 订阅（见下文）。
+
 ## Gateway 通知
 
 当你从 gateway（Telegram、Discord、Slack 等）运行 `/kanban create …` 时，发起聊天会自动订阅新任务。Gateway 的后台通知器每隔几秒轮询 `task_events`，并为每个终端事件（`completed`、`blocked`、`gave_up`、`crashed`、`timed_out`）向该聊天发送一条消息。已完成的任务还会发送 worker `--result` 的第一行，这样你无需 `/kanban show` 就能看到结果。
@@ -842,13 +975,32 @@ Worker 接收 `$HERMES_TENANT` 并按前缀命名空间化其内存写入。看�
 
 ```bash
 hermes kanban notify-subscribe t_abcd \
-    --platform telegram --chat-id 12345678 --thread-id 7
+    --platform telegram --chat-id 12345678 --thread-id 7 \
+    --chat-type group --delivery-mode notify+wake
 hermes kanban notify-list
 hermes kanban notify-unsubscribe t_abcd \
     --platform telegram --chat-id 12345678 --thread-id 7
 ```
 
 订阅在任务达到 `done` 或 `archived` 后自动移除；无需清理。
+
+### 投递模式 {#delivery-modes}
+
+`--delivery-mode` 控制通知器**如何**响应终态事件。每个订阅都处于以下三种模式之一（`notify` 是默认值，也是最初的行为）：
+
+| 模式 | 被动消息 | 唤醒 agent | 适用场景 |
+|------|-----------------|-----------------|-------------|
+| `notify` | 是 | 否 | 你只想在聊天中收到一条提醒消息（默认）。 |
+| `notify+wake` | 是 | 是 | 你还希望目标 agent 进行一次真正的轮次 —— 读取看板上下文并以自己的口吻回复。聊天发起的自动订阅使用此模式。 |
+| `wake` | 否 | 是 | 你只希望 agent 对事件采取行动，而不另外发送提醒。 |
+
+对于 `notify+wake`，只有当唤醒被适配器的轮次队列接纳、且被动提醒也已发送时，投递才算完成。缺少处理器、路由被拒绝以及队列已满的情况会在后续的通知器 tick 中重试，而不会使订阅过期。已发送的提醒会在 SQLite 中单独记录检查点，因此被拒绝的唤醒不会重复一条已记录检查点的提醒。`notify` 仍然是被动的，永远不会启动轮次。被接纳并不保证模型一定执行或成功回复；常规的轮次门控仍然适用。这不是恰好一次（exactly-once）投递：在发送与其检查点之间发生进程崩溃可能会导致提醒重复，而现有的"先认领后投递"游标也不是可从崩溃中恢复的队列。
+
+"唤醒"会向目标 gateway agent 伪造一条合成的入站消息，使其进行一次正常轮次（读取评论 + 结果、推理、回复），而不是只收到一行被动通知。它只在通知器运行于活动 gateway 进程内时触发；否则 `notify+wake` 订阅仍会投递其被动消息，而仅 `wake` 的订阅在该进程中不会做任何事。
+
+**哪些事件会唤醒。** 那些把决策交还给发起方的事件：`completed`、`blocked`、`gave_up`、`crashed`、`timed_out`、`review_requested`（worker 完成了实现并通过 `kanban_request_review` 交接）以及 `block_loop_detected`（任务在反复阻塞后被路由到 `triage`）。`status`、`archived` 和 `unblocked` 会被投递但永远不会唤醒 —— 它们是记账性质的转换，而不是决策。当 `completed` 或 `review_requested` 事件携带摘要时，该交接会随唤醒轮次一起送达，因此被唤醒的 agent 能看到 worker 实际做了什么。
+
+`--chat-type`（`dm` | `group` | `channel` | `thread`）记录发起聊天的类型，使被唤醒的轮次能解析到操作者**真实的**会话：`build_session_key` 对群组、频道和线程的键与私聊不同，因此不准确的 `chat_type` 会把唤醒路由到一个单独的、没有上下文的会话中。`/kanban` 自动订阅和斜杠命令路径会自动捕获该值 —— 只有在从脚本或 cron 订阅聊天时才需要手动设置。省略它则保持现有订阅不变（新订阅默认为 `dm`）。
 
 ### 多 profile 部署：投递按 profile 归属
 
@@ -863,6 +1015,12 @@ hermes kanban notify-unsubscribe t_abcd \
   都运行通知器，且只轮询标记了其所托管 profile 的订阅。从 `writer`
   profile 的 Telegram 创建的任务，其 `completed`/`blocked` 消息由
   `writer` gateway 投递，即使调度是由 `default` gateway 完成的。
+- **仅路由的多路复用 profile** 在订阅所持久化的平台、聊天、线程、范围和父频道
+  锚点通过 `gateway.profile_routes` 解析到该确切的被服务 profile 时，可以使用
+  主适配器。已连接的次级适配器仍然具有权威性；不完整的次级适配器注册表永远不会
+  回退到主 bot。未匹配、已重新分配、已禁用或有歧义的路由会保持未投递且可重试。
+  缺少必需路由锚点的旧行不会被猜测归入某个 profile。唤醒轮次会保留目标 profile
+  的运行时范围以及经过授权的传输通道。
 - **遗留订阅**（在 profile 标记之前创建、行上没有 `notifier_profile`
   的订阅）只由实际持有调度器单例锁的 gateway 投递，因此两个 gateway
   永远不会争抢它们。
@@ -961,6 +1119,7 @@ hermes kanban runs t_abcd
 | `crashed` | `{pid, claimer}` | Worker PID 不再存活但 TTL 尚未过期。 |
 | `timed_out` | `{pid, elapsed_seconds, limit_seconds, sigkill}` | 超过 `max_runtime_seconds`；调度器发送 SIGTERM（5 秒宽限后发送 SIGKILL）并重新排队。 |
 | `stale` | `{elapsed_seconds, last_heartbeat_at, heartbeat_age_seconds, timeout_seconds, pid, terminated}` | 任务运行时间超过 `kanban.dispatch_stale_timeout_seconds`（默认 4 小时）**且**最近一小时内没有 `kanban_heartbeat`。调度器向本地 worker（如有）发送 SIGTERM，将任务重置为 `ready` 重新调度。**不**增加失败计数器（stale 是调度器端的缺席检测，不是 worker 故障）。运行长时间操作的 Worker 应至少每小时调用一次 `kanban_heartbeat` 以避免此情况。 |
+| `reconciled` | `{reason, claim_lock, claim_expires, worker_pid}` | 孤立卡片调和：卡片处于 `running`，但认领记账已损坏（`claim_lock` 或 `claim_expires` 为 NULL —— 认领中途崩溃、手动 SQL、DB 恢复）且没有存活的 worker，因此 TTL/崩溃/stale 路径都无法恢复它。调度器将其重新排队到 `ready` 并附上解释性评论。由 config.yaml 中的 `kanban.reconcile_orphans` 控制（默认 `true`）。 |
 | `respawn_guarded` | `{reason}` | 调度器拒绝在本 tick 重新启动此就绪任务。原因：`blocker_auth`（上次失败是配额/认证/429 错误 —— 等待速率窗口重置）、`recent_success`（最近一小时内有完成的运行 —— 在重新运行前等待审查）、`active_pr`（最近的评论中出现 GitHub PR URL —— 先前的 worker 已经打开了 PR）。任务保持在 `ready`；下一个 tick 有另一次启动机会。如果底层条件持续存在，正常的 `consecutive_failures` 熔断器将在 `failure_limit` 次失败后通过 `gave_up` 自动阻塞。 |
 | `spawn_failed` | `{error, failures}` | 一次启动尝试失败（PATH 缺失、工作区无法挂载等）。计数器递增；任务返回 `ready` 重试。 |
 | `protocol_violation` | `{pid, claimer, exit_code, protocol_violation}` | Worker 在任务仍处于 `running` 状态时成功退出，通常是因为它回答了问题而没有调用 `kanban_complete` 或 `kanban_block`。每次违规都会发出该事件（payload 中的 `protocol_violation: true` 标记会被复制到运行元数据中，并驱动仅针对违规的重试预算）。在预算之内——最多 `_PROTOCOL_VIOLATION_FAILURE_LIMIT`（默认 3）次*连续*违规，每任务的 `max_retries` 可覆盖——任务只是返回 `ready` 以便再次尝试；当连击达到上限时，调度器还会发出 `gave_up` 并自动阻塞。 |

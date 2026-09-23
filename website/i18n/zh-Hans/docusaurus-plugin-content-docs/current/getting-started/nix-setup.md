@@ -12,11 +12,12 @@ Nix 和 NixOS 属于 [Tier 2 平台](./platform-support.md#tier-2)。本页记�
 如需受支持的部署方式，请使用标准[安装](./installation.md)路径之一——Docker 或 FHS 环境。
 :::
 
-Hermes Agent 提供了一个 Nix flake 和一个 NixOS 模块。
+Hermes Agent 提供了一个 Nix flake、一个 NixOS 模块和一个 Home Manager 模块。
 
 | 层级 | 适用对象 | 提供内容 |
 |-------|-------------|--------------|
 | **`nix run` / `nix profile install`** | 任意 Nix 用户（macOS、Linux） | 包含所有依赖的预构建二进制文件——然后使用标准 CLI 工作流 |
+| **Home Manager 模块** | 为一个人服务的 Agent，可运行在任意发行版或 macOS 上 | 声明式配置和用户服务，无需 root |
 | **NixOS 模块（原生）** | NixOS 服务器部署 | 声明式配置、加固的 systemd 服务、托管密钥 |
 | **NixOS 模块（容器）** | 需要自我修改能力的 Agent | 以上所有功能，加上一个持久化 Ubuntu 容器，Agent 可在其中执行 `apt`/`pip`/`npm install` |
 
@@ -84,7 +85,7 @@ hermes setup
 该 flake 导出 `nixosModules.default`——一个完整的 NixOS 服务模块，以声明式方式管理用户创建、目录、配置生成、密钥、文档和服务生命周期。
 
 :::note
-此模块需要 NixOS。对于非 NixOS 系统（macOS、其他 Linux 发行版），请使用 `nix profile install` 和上述标准 CLI 工作流。
+此模块需要 NixOS。Hermes 是为一个人服务的 Agent。如果你想要的是一个为一个人服务的 Agent，而不是系统服务，请使用 [Home Manager 模块](#home-manager-module)。该模块可以运行在 NixOS 以及 Home Manager 支持的所有其他系统上。
 :::
 
 ### 添加 Flake 输入
@@ -287,8 +288,10 @@ services.hermes-agent.settings = {
     environmentFiles = [ config.sops.secrets."hermes-env".path ];
 
     # ── 文档 ──────────────────────────────────────────────────────────
-    documents = {
-      "USER.md" = ./documents/USER.md;
+    # USER.md 属于记忆，因此放入 HERMES_HOME。工作区文件使用
+    # `documents`，而该选项需要显式设置 `workingDirectory`。
+    hermesHomeFiles = {
+      "memories/USER.md" = ./documents/USER.md;
     };
 
     # ── MCP 服务器 ────────────────────────────────────────────────────
@@ -336,7 +339,9 @@ Nix 用户最常见自定义需求的快速参考：
 | 更改 LLM 模型 | `settings.model.default` | `"anthropic/claude-sonnet-4"` |
 | 使用不同的提供商端点 | `settings.model.base_url` | `"https://openrouter.ai/api/v1"` |
 | 添加 API 密钥 | `environmentFiles` | `[ config.sops.secrets."hermes-env".path ]` |
-| 给 Agent 设置个性 | `${services.hermes-agent.stateDir}/.hermes/SOUL.md` | 直接管理该文件 |
+| 给 Agent 设置身份 | `hermesHomeFiles."SOUL.md"` | `"You are a terse ops assistant."` |
+| 为工作区添加项目上下文 | `documents."AGENTS.md"` | `./documents/AGENTS.md` |
+| 为桌面应用或仪表盘运行后端 | `backend.mode` | `"serve"` 或 `"dashboard"` |
 | 添加 MCP 工具服务器 | `mcpServers.<name>` | 参见 [MCP 服务器](#mcp-servers) |
 | 启用 Discord/Telegram/Slack | `extraDependencyGroups` | `[ "messaging" ]` |
 | 将主机目录挂载到容器 | `container.extraVolumes` | `[ "/data:/data:rw" ]` |
@@ -416,22 +421,43 @@ hermes-env: |
 
 ## 文档
 
-`documents` 选项将文件安装到 Agent 的工作目录（即 `workingDirectory`，Agent 将其作为工作区读取）。Hermes 按约定查找特定文件名：
+Hermes 从两个目录读取文件，因此有两个选项。请根据文件需要放入的目录选择对应的选项。
 
-- **`USER.md`** — 关于 Agent 正在交互的用户的上下文信息。
-- 你放置在此处的任何其他文件对 Agent 都可见，作为工作区文件。
-
-Agent 身份文件是独立的：Hermes 从 `$HERMES_HOME/SOUL.md` 加载其主要 `SOUL.md`，在 NixOS 模块中对应 `${services.hermes-agent.stateDir}/.hermes/SOUL.md`。将 `SOUL.md` 放入 `documents` 只会创建一个工作区文件，不会替换主角色文件。
+`documents` 会安装到 Agent 的**工作目录**，即 `workingDirectory`。Agent 从该工作区读取其项目上下文：
 
 ```nix
 {
-  services.hermes-agent.documents = {
-    "USER.md" = ./documents/USER.md;  # 路径引用，从 Nix store 复制
+  services.hermes-agent = {
+    # documents 需要此选项。请阅读下方说明。
+    workingDirectory = "/var/lib/hermes/workspace";
+    documents = {
+      "AGENTS.md" = ./documents/AGENTS.md;   # 路径引用，从 Nix store 复制
+      "notes/oncall.md" = "Page #infra before restarting anything.";
+    };
   };
 }
 ```
 
-值可以是内联字符串或路径引用。文件在每次 `nixos-rebuild switch` 时安装。
+:::warning documents 需要显式设置 workingDirectory
+在你设置 `workingDirectory` 之前，模块会拒绝 `documents`。该选项的默认值在两个模块中并不相同：在 Home
+Manager 上是你的主目录，在 NixOS 上是 `${stateDir}/workspace`。因此，未设置的默认值会把文件放进一个你并未选择的目录。
+路径与默认值相同的目录是一个正确的选择，也满足该规则。
+:::
+
+`hermesHomeFiles` 会安装到 **`HERMES_HOME`**。Hermes 从该目录读取 Agent 的身份文件和记忆文件。`SOUL.md` 和 `memories/` 只有放在那里才会生效。放在 `documents` 中的 `SOUL.md` 只会成为一个工作区文件，Hermes 不会把它作为身份加载：
+
+```nix
+{
+  services.hermes-agent.hermesHomeFiles = {
+    "SOUL.md" = "You are a helpful AI assistant.";
+    "memories/USER.md" = ./documents/USER.md;
+  };
+}
+```
+
+每个值是一个字符串或一个路径。两个选项中的键都可以包含子目录，模块会创建其父目录。每次激活时都会重新安装这些文件。
+
+`hermesHomeFiles` 不需要 `workingDirectory`，因为 `HERMES_HOME` 目录由模块自己管理。大多数用户需要的是 `hermesHomeFiles`。
 
 ---
 
@@ -554,10 +580,109 @@ scp ~/.hermes/mcp-tokens/my-oauth-server{,.client}.json \
 
 这可以防止 Nix 声明的内容与磁盘上实际内容之间产生漂移。检测使用两个信号：
 
-1. **`HERMES_MANAGED=true`** 环境变量——由 systemd 服务设置，对 gateway 进程可见
-2. **`.managed` 标记文件**，位于 `HERMES_HOME` 中——由激活脚本设置，对交互式 shell 可见（例如 `docker exec -it hermes-agent hermes config set ...` 也会被屏蔽）
+1. **`HERMES_MANAGED` 环境变量。** 由服务设置，由 gateway 进程读取。
+2. **`HERMES_HOME` 中的 `.managed` 标记文件。** 由激活脚本写入，由交互式 shell 读取。因此 CLI 也会屏蔽诸如 `docker exec -it hermes-agent hermes config set ...` 这样的命令。
 
-要更改配置，请编辑你的 Nix 配置并运行 `sudo nixos-rebuild switch`。
+两个信号都保存着管理该安装的系统名称，因此拒绝信息会给出正确的重建命令：NixOS 模块给出 `sudo nixos-rebuild switch`，Home Manager 模块给出 `home-manager switch`。
+
+---
+
+## Home Manager 模块 {#home-manager-module}
+
+该 flake 还导出 `homeManagerModules.default`。Hermes 是为一个人服务的 Agent：凭据、记忆、会话和 cron 任务都属于这个人。因此在个人机器上，用户服务是正确的形态。它可以运行在 Home Manager 支持的每一个发行版上，而不仅限于 NixOS。
+
+其选项集与 NixOS 模块使用的相同，即 `services.hermes-agent`，具有同样的 `settings`、`environmentFiles`、`documents`、`mcpServers`、`extraPlugins` 和 `backend` 选项。上文的每个示例在这里都无需修改即可使用。只有必要的部分有所不同：
+
+| | NixOS 模块 | Home Manager 模块 |
+|---|---|---|
+| 运行身份 | 你通过 `user`、`group` 和 `createUser` 声明的系统用户 | 你自己 |
+| 状态目录 | `stateDir` 和 `/.hermes` | `hermesHome`，直接设置。默认为 `~/.hermes`。 |
+| 服务 | `systemd.services` | Linux 上为 `systemd.user.services`，macOS 上为 `launchd.agents` |
+| PATH 中的 CLI | `addToSystemPackages`，为整个系统导出 `HERMES_HOME` | `programs.hermes-agent.enable`，仅为你的会话导出它 |
+| 桌面应用 | 不支持，因为系统服务无法拥有用户会话 | `programs.hermes-agent.desktop.enable` |
+| 容器模式 | 支持 | 不支持，因为它需要 root 和 Docker 套接字 |
+
+### 添加 Flake 输入 {#add-the-flake-input-1}
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    home-manager.url = "github:nix-community/home-manager";
+    home-manager.inputs.nixpkgs.follows = "nixpkgs";
+    hermes-agent.url = "github:NousResearch/hermes-agent";
+  };
+}
+```
+
+然后将该模块导入你的 Home Manager 配置。该配置可以是独立的，也可以位于 NixOS 或 nix-darwin 配置中的 `home-manager.users.<name>` 之下：
+
+```nix
+{
+  imports = [ hermes-agent.homeManagerModules.default ];
+
+  services.hermes-agent = {
+    enable = true;
+    gateway.enable = true;
+    settings.model.default = "anthropic/claude-sonnet-4";
+    environmentFiles = [ config.sops.secrets."hermes-env".path ];
+  };
+}
+```
+
+`home-manager switch` 会创建 `~/.hermes`、写入 `config.yaml`、构建 `.env`，并以用户服务的形式启动 gateway。
+
+:::warning 启用 linger，否则服务会在注销时停止
+注意：请为你的账户启用 linger。没有 linger 时，systemd 会在你的最后一个会话结束时停止用户管理器，gateway 也会随之停止。Home Manager 无法设置 linger，因为 linger 是账户的属性：
+
+```nix
+# NixOS
+users.users.your-username.linger = true;
+```
+
+```bash
+# 其他任何地方
+sudo loginctl enable-linger your-username
+```
+
+macOS 没有对应的选项。带有 `RunAtLoad` 的 `launchd` agent 会在登录时启动并持续运行。
+:::
+
+### 运行 Desktop / Dashboard 后端 {#running-the-desktop--dashboard-backend}
+
+`gateway.enable` 运行面向 Telegram、Discord、Slack 及其他平台的消息 gateway。Hermes Desktop 和 Web 仪表盘连接的是*另一个*进程，即 `hermes serve` 或 `hermes dashboard`。`backend.mode` 会与 gateway 一起运行该进程：
+
+```nix
+{
+  services.hermes-agent = {
+    enable = true;
+    gateway.enable = true;      # 消息平台
+    backend.mode = "dashboard"; # + 位于 127.0.0.1:9119 的浏览器仪表盘
+    backend.port = 9119;
+  };
+}
+```
+
+`serve` 在没有用户界面的情况下运行。它提供 Hermes Desktop 所连接的 `/api/ws` 和 `/api/pty` 套接字，并且不会构建 Web 应用。`dashboard` 提供上述全部内容，并额外提供浏览器管理面板。两个进程与 gateway 共用同一个 `HERMES_HOME`，因此会话、技能、记忆和 cron 任务对它们来说都是相同的。`backend.mode` 在 NixOS 模块上的工作方式相同，但不支持容器模式。
+
+:::warning 绑定到回环以外的地址
+默认地址是 `127.0.0.1`。任何其他地址都会启用仪表盘的认证关卡。服务器还会拒绝 `Host` 头与其绑定地址不同的每个请求，这是针对 DNS 重绑定的防御措施。请绑定到你的客户端所使用的名称或地址。
+:::
+
+### 验证运行状态 {#verify-it-works-1}
+
+```bash
+# Linux
+systemctl --user status hermes-agent
+journalctl --user -u hermes-agent -f
+
+# macOS
+launchctl list | grep hermes
+tail -f ~/Library/Logs/hermes-agent.log
+
+hermes --version
+hermes config     # 显示 Nix 写入的配置
+```
 
 ---
 
@@ -587,7 +712,7 @@ scp ~/.hermes/mcp-tokens/my-oauth-server{,.client}.json \
   │   └── mcp-tokens/                      （MCP 服务器的 OAuth token）
   ├── home/                                ──►  /home/hermes    (rw)
   └── workspace/                           （Agent 工作目录）
-      ├── SOUL.md                          （来自 documents 选项）
+      ├── AGENTS.md                        （来自 documents 选项）
       └── （Agent 创建的文件）
 
 容器可写层（apt/pip/npm）：   /usr, /usr/local, /tmp
@@ -857,7 +982,8 @@ nix build .#checks.x86_64-linux.config-roundtrip    # 合并脚本保留用户�
 
 | 选项 | 类型 | 默认值 | 描述 |
 |---|---|---|---|
-| `documents` | `attrsOf (either str path)` | `{}` | 工作区文件。键为文件名，值为内联字符串或路径。激活时安装到 `workingDirectory` |
+| `documents` | `attrsOf (either str path)` | `{}` | 工作区文件。每个键都是相对于 `workingDirectory` 的路径。必须设置该选项才能使用本选项。 |
+| `hermesHomeFiles` | `attrsOf (either str path)` | `{}` | 放入 `HERMES_HOME` 的文件。`SOUL.md` 和 `memories/` 必须放在这里，否则 Hermes 不会加载它们。 |
 
 ### MCP 服务器
 
@@ -885,10 +1011,58 @@ nix build .#checks.x86_64-linux.config-roundtrip    # 合并脚本保留用户�
 | `extraPlugins` | `listOf package` | `[]` | 以符号链接方式安装到 `$HERMES_HOME/plugins/` 的目录插件包。每个包必须包含 `plugin.yaml` |
 | `extraPythonPackages` | `listOf package` | `[]` | 添加到 PYTHONPATH 用于入口点插件发现的 Python 包。使用 `python312Packages` 构建 |
 | `extraDependencyGroups` | `listOf str` | `[]` | 包含到封闭 venv 中的 pyproject.toml 可选 extras（例如 `["hindsight"]`）。由 uv 解析——无冲突 |
-| `restart` | `str` | `"always"` | systemd `Restart=` 策略 |
-| `restartSec` | `int` | `5` | systemd `RestartSec=` 值 |
+| `restart` | `str` | `"always"` | systemd `Restart=` 策略。macOS 不使用它。 |
+| `restartSec` | `int` | `5` | systemd `RestartSec=` 值。macOS 不使用它。 |
 
-### 容器
+### 后端（`hermes serve` / `hermes dashboard`） {#backend-hermes-serve--hermes-dashboard}
+
+该选项会与 gateway 一起运行 Hermes Desktop 和 Web 仪表盘所连接的进程。它不能与 `container.enable` 一起使用。
+
+| 选项 | 类型 | 默认值 | 描述 |
+|---|---|---|---|
+| `backend.mode` | `enum ["none" "serve" "dashboard"]` | `"none"` | `serve` 在没有用户界面的情况下运行，提供 `/api/ws` 和 `/api/pty`。`dashboard` 还会提供浏览器面板。 |
+| `backend.host` | `str` | `"127.0.0.1"` | 要绑定的地址。回环以外的任何地址都会启用认证关卡。 |
+| `backend.port` | `port` | `9119` | 要绑定的端口 |
+| `backend.extraArgs` | `listOf str` | `[]` | 后端命令的更多参数 |
+
+### 仅 Home Manager {#home-manager-only}
+
+| 选项 | 类型 | 默认值 | 描述 |
+|---|---|---|---|
+| `hermesHome` | `str` | `"${config.home.homeDirectory}/.hermes"` | 直接指定 `HERMES_HOME`。NixOS 模块则由 `stateDir` 构建它。 |
+| `gateway.enable` | `bool` | `false` | 运行消息 gateway。在 NixOS 模块中 gateway 就是服务本身，因此该模块没有此选项。 |
+
+### `programs.hermes-agent`（仅 Home Manager） {#programshermes-agent-home-manager-only}
+
+Home Manager 将"为我安装这个应用"与"运行这个守护进程"区分开来。`services.hermes-agent` 负责状态、配置和守护进程。`programs.hermes-agent` 安装你所使用的东西，并从 services 中读取 `hermesHome` 和后端地址。
+
+| 选项 | 类型 | 默认值 | 描述 |
+|---|---|---|---|
+| `enable` | `bool` | `false` | 将 `hermes` CLI 添加到 `home.packages`，并为你的 shell 导出 `HERMES_HOME` |
+| `package` | `package` | `services.hermes-agent.package` | 要安装的包。默认值会应用 services 中的 `extraPythonPackages` 和 `extraDependencyGroups`，因此二者只需构建一次。 |
+| `desktop.enable` | `bool` | `false` | 添加 Hermes Desktop 应用，并在 Linux 上添加启动器条目 |
+| `desktop.package` | `package` | `package.hermesDesktop` | 桌面应用包。默认值跟随 `package`，因此应用和 services 运行同一个 Hermes 运行时。 |
+
+```nix
+programs.hermes-agent = {
+  enable = true;
+  desktop.enable = true;
+};
+
+services.hermes-agent = {
+  enable = true;
+  backend.mode = "serve";
+  backend.sessionTokenFile = config.sops.secrets."hermes/desktop-token".path;
+};
+```
+
+启动器自身携带 `HERMES_HOME`。桌面菜单不会读取任何 shell profile，因此 `programs.hermes-agent.enable` 通过 `home.sessionVariables` 导出的值只能到达交互式 shell。如果启动器中没有该值，应用会打开 `~/.hermes`，而 services 使用的是 `hermesHome`，你将看不到任何会话和密钥。
+
+设置 `backend.sessionTokenFile` 后，应用会连接到服务的后端，而不是自己启动一个。双方都在启动时读取该文件，因此 token 不会进入任何 Nix store 路径。未设置该选项时，双方各自运行自己的后端。
+
+`services.hermes-agent.installPackage` 已随这次拆分被移除。仍然设置它的配置会得到一个指明替代选项的错误。
+
+### 容器（仅 NixOS） {#container-nixos-only}
 
 | 选项 | 类型 | 默认值 | 描述 |
 |---|---|---|---|
@@ -908,6 +1082,7 @@ nix build .#checks.x86_64-linux.config-roundtrip    # 合并脚本保留用户�
 ```
 /var/lib/hermes/                     # stateDir（归 hermes:hermes 所有，权限 0750）
 ├── .hermes/                         # HERMES_HOME
+│   ├── SOUL.md                      # 来自 hermesHomeFiles：Agent 身份
 │   ├── config.yaml                  # Nix 生成（每次重建深度合并）
 │   ├── .managed                     # 标记：CLI 配置变更被屏蔽
 │   ├── .env                         # 从 environment + environmentFiles 合并
@@ -922,8 +1097,24 @@ nix build .#checks.x86_64-linux.config-roundtrip    # 合并脚本保留用户�
 │   └── logs/
 ├── home/                            # Agent HOME
 └── workspace/                       # Agent 工作目录
-    ├── SOUL.md                      # 来自 documents 选项
+    ├── AGENTS.md                    # 来自 documents 选项
     └── （Agent 创建的文件）
+```
+
+### Home Manager {#home-manager}
+
+```
+~/.hermes/                           # hermesHome（HERMES_HOME），0700
+├── SOUL.md                          # 来自 hermesHomeFiles
+├── config.yaml                      # 由 Nix 写入，每次激活时合并
+├── .managed                         # 标记：记录管理此安装的系统名称
+├── .env                             # 每次根据 environment + environmentFiles 重新写入
+├── auth.json                        # OAuth 凭据：预置后由 Hermes 自行管理
+├── memories/  sessions/  skills/  cron/  logs/  plugins/
+└── （运行时状态）
+
+~/                                   # workingDirectory，默认为你的主目录
+└── AGENTS.md                        # 来自 documents 选项
 ```
 
 ### 容器模式 {#container-mode}
@@ -946,7 +1137,8 @@ nix build .#checks.x86_64-linux.config-roundtrip    # 合并脚本保留用户�
 cd /etc/nixos && nix flake update hermes-agent
 
 # 重建
-sudo nixos-rebuild switch
+sudo nixos-rebuild switch          # 用于 NixOS 模块
+home-manager switch                # 用于 Home Manager 模块
 ```
 
 在容器模式下，`current-package` 符号链接会更新，Agent 在重启时获取新的二进制文件。不会重建容器，不会丢失已安装的包。

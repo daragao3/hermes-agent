@@ -1,12 +1,22 @@
 ---
 sidebar_position: 14
 title: "AWS Bedrock"
-description: "将 Hermes Agent 与 Amazon Bedrock 配合使用——原生 Converse API、IAM 身份验证、Guardrails 及跨区域推理"
+description: "将 Hermes Agent 与 Amazon Bedrock 配合使用——原生 Converse API、Anthropic SDK 路由、通过 Bedrock Mantle 使用 OpenAI 模型、IAM 身份验证、Guardrails 及跨区域推理"
 ---
 
 # AWS Bedrock
 
-Hermes Agent 通过 **Converse API** 原生支持 Amazon Bedrock——而非 OpenAI 兼容端点。这让你可以完整访问 Bedrock 生态系统：IAM 身份验证、Guardrails、跨区域推理配置文件以及所有基础模型。
+Hermes Agent 原生支持 Amazon Bedrock 作为提供商。这让你可以完整访问 Bedrock 生态系统：IAM 身份验证、Guardrails、跨区域推理配置文件以及所有基础模型。
+
+Hermes 会将每个模型系列路由到最适合它的 API：
+
+| 模型系列 | API 路由 | 原因 |
+|---|---|---|
+| Anthropic Claude | Anthropic SDK（`AnthropicBedrock`） | Prompt 缓存、思考预算、自适应思考——这些功能未通过 Converse 暴露 |
+| OpenAI GPT-5.5 / GPT-5.6（Sol、Terra、Luna） | Bedrock Mantle **OpenAI Responses** 端点（`bedrock-mantle.<region>.api.aws/openai/v1`） | 这些模型仅在 Mantle 上提供——其模型卡片将 bedrock-runtime/Converse 列为不支持 |
+| 其他所有模型（Nova、DeepSeek、Llama、GPT-OSS 等） | 原生 **Converse API**（`bedrock-runtime`） | 完整的 Bedrock 功能集：Guardrails、推理配置文件、流式输出 |
+
+三条路由共享相同的 AWS 凭据链和区域解析——无需单独配置。发往 Mantle 端点的请求在设置了 `AWS_BEARER_TOKEN_BEDROCK` 时使用它进行身份验证，否则通过标准 boto3 凭据链进行 SigV4 签名。
 
 ## 前提条件
 
@@ -88,6 +98,14 @@ bedrock:
     refresh_interval: 3600                     # 缓存 1 小时
 ```
 
+### Prompt 缓存（cachePoint） {#prompt-caching-cachepoint}
+
+Hermes 会在 Bedrock **Converse API** 路径上自动启用 prompt 缓存，方法是在系统提示词、工具定义和最新消息之后插入 `cachePoint` 标记。由于向不支持的模型发送 `cachePoint` 块会引发 `ValidationException`，因此只会为已知可用白名单中的模型（Anthropic Claude 和 Amazon Nova 模型 ID）添加标记；未知模型默认不添加缓存标记。Claude 模型通常走 AnthropicBedrock SDK 路径，该路径有自己的 prompt 缓存——Converse 的 `cachePoint` 路径覆盖的是 Nova 以及使用 bearer token 的 Claude 回退路径。无需任何配置；缓存读写会体现在用量统计中。
+
+### 上下文窗口探测 {#context-window-probing}
+
+对于上下文窗口不在 Hermes 静态表中的模型，Hermes 可以按固定档位（约 1.3M 和约 2.2M token）发送超大请求来探测真实上限，并解析 Bedrock 长度校验错误中报告的 `maximum` 值。探测到的值与静态表写入同一个元数据缓存；低报模型窗口的过期缓存条目（例如在某模型的 1M 窗口正式发布之前写入的条目）会被自动丢弃，改用已知的更大值。
+
 ## 可用模型
 
 Bedrock 模型使用**推理配置文件 ID** 进行按需调用。`hermes model` 选择器会自动显示这些 ID，并将推荐模型置于顶部：
@@ -97,13 +115,17 @@ Bedrock 模型使用**推理配置文件 ID** 进行按需调用。`hermes model
 | Claude Sonnet 4.6 | `us.anthropic.claude-sonnet-4-6` | 推荐——速度与能力的最佳平衡 |
 | Claude Opus 4.6 | `us.anthropic.claude-opus-4-6-v1` | 能力最强 |
 | Claude Haiku 4.5 | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | 最快的 Claude |
+| OpenAI GPT-5.6 Sol | `openai.gpt-5.6-sol` | OpenAI 前沿模型（通过 Bedrock Mantle） |
+| OpenAI GPT-5.6 Terra | `openai.gpt-5.6-terra` | 均衡（通过 Bedrock Mantle） |
+| OpenAI GPT-5.6 Luna | `openai.gpt-5.6-luna` | 快速、经济（通过 Bedrock Mantle） |
+| OpenAI GPT-5.5 | `openai.gpt-5.5` | 上一代 OpenAI 旗舰（通过 Bedrock Mantle） |
 | Amazon Nova Pro | `us.amazon.nova-pro-v1:0` | Amazon 旗舰模型 |
 | Amazon Nova Micro | `us.amazon.nova-micro-v1:0` | 最快、最经济 |
 | DeepSeek V3.2 | `deepseek.v3.2` | 强大的开源模型 |
 | Llama 4 Scout 17B | `us.meta.llama4-scout-17b-instruct-v1:0` | Meta 最新模型 |
 
 :::info 跨区域推理
-以 `us.` 为前缀的模型使用跨区域推理配置文件，可在多个 AWS 区域间提供更好的容量保障和自动故障转移。以 `global.` 为前缀的模型则在全球所有可用区域间路由。
+以 `us.` 为前缀的模型使用跨区域推理配置文件，可在多个 AWS 区域间提供更好的容量保障和自动故障转移。以 `global.` 为前缀的模型则在全球所有可用区域间路由。OpenAI `openai.*` 模型 ID 由配置区域中的 Bedrock Mantle 提供服务，不使用推理配置文件前缀。
 :::
 
 ## 会话中途切换模型

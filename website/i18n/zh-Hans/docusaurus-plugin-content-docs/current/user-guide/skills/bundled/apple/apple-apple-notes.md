@@ -16,7 +16,7 @@ description: "通过 memo CLI 管理 Apple Notes：创建、搜索、编辑"
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/apple/apple-notes` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Hermes Agent |
 | 许可证 | MIT |
 | 平台 | macos |
@@ -65,9 +65,11 @@ memo notes -s "query"             # 搜索笔记（模糊匹配）
 ### 创建笔记
 
 ```bash
-memo notes -a                     # 交互式编辑器
-memo notes -a "Note Title"        # 快速添加并指定标题
+memo notes -a                     # 添加笔记（打开你的 $EDITOR）
+memo notes -a -f "Folder Name"    # 将笔记添加到指定文件夹
 ```
+
+`-a`/`--add` 是一个不带参数的标志——它会打开你的 `$EDITOR` 来撰写笔记；它不接受标题参数。使用 `-f/--folder` 指定目标文件夹。请先设置 `$EDITOR`（例如 `export EDITOR=vim`）。
 
 ### 编辑笔记
 

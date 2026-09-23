@@ -51,12 +51,31 @@ Hermes Kanban 拥有生命周期的真实状态——`ready` → `running` → `
 
 对于非 Hermes 通道（通过插件注册），插件提供自己的 `spawn_fn` 可调用对象，接收 `task`、`workspace` 和 `board`，并返回可选的 pid 用于崩溃检测。
 
+### 后代进程作用域 {#descendant-process-scope}
+
+任务分配属于调度器 worker，而不是属于它启动的每一个程序。
+Hermes 的子进程辅助函数会把一个非所有者隔离标记（fence）带入 shell、执行内核、
+cron 投递、hook、语言服务器以及普通 stdio MCP 服务器。即使某个脚本移除了继承的任务 ID，
+之后的子进程仍保持隔离：CLI 和工具的变更操作会被拒绝，而不会把该脚本当作编排者。
+看板/数据库路由和工作区路径会被保留。后代进程可以读取已存在的看板，但不会运行 schema 迁移；
+看板必须由其所有者初始化。
+
+调度器会显式地为新分配的 worker 授予其自身的作用域。托管的 Hermes-tools MCP 端点同样可以
+代表其监督 worker 行事，而执行器的普通 shell 子进程仍保持隔离。worker 只能执行生命周期
+交接，并向其被分配的任务附加文件；`unblock` 仍仅限编排者使用。
+跨任务评论和创建后续任务保持原有行为。
+
+编写生成子进程代码的集成作者，应在实际生成子进程时、合并环境变量覆盖之后使用
+`agent.delegation_context.delegated_child_subprocess_env`。它会保留调用方的凭据/profile 策略。
+这是协作式的运行时作用域限定，**而非操作系统级隔离**：它无法阻止任意代码蓄意抹除
+血缘元数据或直接打开 SQLite。
+
 ### 3. 生命周期终止器
 
 每次 claim 必须以以下之一结束：
 
 - `kanban_complete(summary=..., metadata=...)` — 任务成功，状态切换为 `done`。
-- `kanban_request_review(summary=..., metadata=..., reviewer=...)` — 同卡实现进入一等审查。默认由内置 `sdlc-review` skill 启动 reviewer；reviewer 可用 `kanban_complete` 批准、用 `kanban_request_changes` 退回原 implementer，或仅在真正需要外部介入时 block。
+- `kanban_request_review(summary=..., metadata=..., reviewer=...)` — 同卡实现已完成并进入一等审查；状态切换为 `review`。除非禁用了 `kanban.review_dispatch`，调度器会加载内置的 `sdlc-review` skill。reviewer 可用 `kanban_complete` 批准，用 `kanban_request_changes` 退回可执行的返工，或用 `kanban_block` 升级真正的外部阻塞。
 - `kanban_block(reason=...)` — 任务等待人工输入，状态切换为 `blocked`。调度器在 `kanban_unblock` 运行时重新生成。
 - worker 进程退出而未调用任何工具。内核回收该进程并发出 `crashed`（PID 已消亡）、`gave_up`（连续失败断路器触发）或 `timed_out`（超过 max_runtime）。这是失败路径；健康的 worker 不会在此结束。
 

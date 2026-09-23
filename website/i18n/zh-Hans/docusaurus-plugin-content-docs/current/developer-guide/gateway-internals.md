@@ -12,7 +12,7 @@ description: "消息 gateway 如何启动、授权用户、路由会话以及投
 
 | 文件 | 用途 |
 |------|---------|
-| `gateway/run.py` | `GatewayRunner` — 主循环、斜杠命令、消息分发（大文件；请查看 git 获取当前行数） |
+| `gateway/run.py` | `GatewayRunner` 门面——组合 `gateway/run_*.py` 同级 mixin（启动、适配器、入站、轮次、忙碌、目标、通知、关闭等）以及 `gateway/slash_commands_*.py` 处理器 |
 | `gateway/session.py` | `SessionStore` — 会话持久化与会话键构造 |
 | `gateway/delivery.py` | 向目标平台/频道投递出站消息 |
 | `gateway/pairing.py` | 用于用户授权的 DM 配对流程 |
@@ -85,7 +85,7 @@ agent:main:{platform}:{chat_type}:{chat_id}
 
 1. **第一级 — 基础适配器**（`gateway/platforms/base.py`）：检查 `_active_sessions`。若会话处于活跃状态，将消息加入 `_pending_messages` 队列并设置中断事件。此级在消息到达 gateway runner *之前*进行拦截。
 
-2. **第二级 — Gateway runner**（`gateway/run.py`）：检查 `_running_agents`。拦截特定命令（`/stop`、`/new`、`/queue`、`/status`、`/approve`、`/deny`）并进行相应路由。其余所有消息触发 `running_agent.interrupt()`。
+2. **第二级 — Gateway runner**（`gateway/run_inbound.py`）：检查 `_running_agents`。拦截特定命令（`/stop`、`/new`、`/queue`、`/status`、`/approve`、`/deny`）并进行相应路由。其余所有消息触发 `running_agent.interrupt()`。
 
 必须在 agent 被阻塞时到达 runner 的命令（如 `/approve`）通过 `await self._message_handler(event)` **内联**分发 — 绕过后台任务系统以避免竞态条件。
 
@@ -116,20 +116,16 @@ Gateway 中所有斜杠命令均经过相同的解析流程：
 
 1. `hermes_cli/commands.py` 中的 `resolve_command()` 将输入映射为规范名称（处理别名、前缀匹配）
 2. 规范名称与 `GATEWAY_KNOWN_COMMANDS` 进行比对
-3. `_handle_message()` 中的处理器根据规范名称进行分发
+3. `_handle_message()`（`gateway/run_inbound.py`）按名称查找处理器——即 `gateway/slash_commands_*.py` mixin 上的 `_handle_<name>_command`——通过 `gateway/run_busy.py` 中基于 `_IDLE_COMMANDS` / `_PLAIN_COMMANDS` 构建的 `_command_handler_table` 完成；不存在 `if canonical == ...` 判断链
 4. 部分命令受配置门控（`CommandDef` 上的 `gateway_config_gate`）
 
 ### 运行中 Agent 守卫
 
 在 agent 处理消息期间不得执行的命令会被提前拒绝：
 
-```python
-if _quick_key in self._running_agents:
-    if canonical == "model":
-        return "⏳ Agent is running — wait for it to finish or /stop first."
-```
+当 `_quick_key in self._running_agents` 成立时，`gateway/run_busy.py` 中的 `_dispatch_busy_slash_command()` 会按每个已识别命令的 `CommandDef.busy_policy` / `busy_handler` 进行路由：如果存在运行中变体（`_busy_<key>_command`）则使用它；否则在 `busy_policy` 允许时使用常规处理器；否则返回拒绝消息（"⏳ Agent is running — `/model` can't run mid-turn…"）。
 
-绕过命令（`/stop`、`/new`、`/approve`、`/deny`、`/queue`、`/status`）具有特殊处理逻辑。
+绕过命令（`/stop`、`/new`、`/approve`、`/deny`、`/queue`、`/status`）具有运行中处理器，并以内联方式分发。
 
 ## 配置来源
 
@@ -178,16 +174,22 @@ gateway/platforms/                  # 核心 base 与旧的直接适配器
 └── api_server.py        # REST API 服务器适配器
 ```
 
+**延迟加载：** 捆绑的 `kind: platform` 插件会（通过 `hermes_cli/plugins.py`）在 `gateway/platform_registry.py` 中注册开销很低的 `register_deferred` 加载器，因此平台 SDK 只会在 gateway 启动、投递或运行 setup/status 时才被导入——普通的 `hermes chat` 不会导入它们。解析时每次查找只加载一个适配器；完整枚举只会在需要所有平台的路径上运行待处理的加载器。
+
 实验性的连接器（connector）驱动平台使用 `gateway/relay/` 中的通用 relay 适配器，而非独立的平台模块。当配置了 `GATEWAY_RELAY_URL` 或 `gateway.relay_url` 时，gateway 会注册 `relay` 平台，通过出站 WebSocket 拨号连接到该连接器，并在同一条 socket 上接收 `descriptor`、`inbound` 和 `interrupt_inbound` 帧。连接器会声明一个 `CapabilityDescriptor`；Hermes 可以通过该 relay 回送普通出站回复、无 token 的 `follow_up` 操作以及中断帧。基于源码的线路协议约定见 [`docs/relay-connector-contract.md`](https://github.com/NousResearch/hermes-agent/blob/main/docs/relay-connector-contract.md)。
 
 适配器实现统一接口：
 - `connect()` / `disconnect()` — 生命周期管理
-- `send_message()` — 出站消息投递
-- `on_message()` — 入站消息规范化 → `MessageEvent`
+- `send()` — 出站消息投递
+- 入站事件被规范化为 `MessageEvent`，并通过 `handle_message()` 转发
+
+内部推送唤醒使用 `gateway.wake.admit_internal_event`：公开的 `handle_message()` 仍然返回 `None`，但事件在进程内的 `_gateway_accepted` 回执只有在完成调度或插入队列之后才会被设置。缺少处理器、显式会话键不匹配或因队列上限被丢弃，都不算作接收。覆盖入站逻辑的自定义适配器应将内部事件委托给 `BasePlatformAdapter.handle_message()`（或显式记录实际的接收），而不能把回调被消费/丢弃等同于接收。该回执独立于心跳执行统计，也不会绕过授权、紧急停止或后续的轮次准备门控。
 
 ### Token 锁
 
 使用唯一凭据连接的适配器在 `connect()` 中调用 `acquire_scoped_lock()`，在 `disconnect()` 中调用 `release_scoped_lock()`。这可防止两个 profile 同时使用同一 bot token。
+
+锁冲突以 `{scope}_lock` 形式发出，并带有 `retryable=True`，因此**运行中**的重连可以在另一个持有者退出后恢复。但在**启动时**，存活的外部持有者属于配置冲突：`gateway/restart.py::is_global_startup_conflict()` 会识别 `*_lock` / `lock_conflict` 错误码族，启动路由器会将该平台标记为 `fatal`，而不是放入重试队列。如果没有其他平台已连接，gateway 会以 `78`（`EX_CONFIG`，`gateway_state=startup_failed`）退出，使监管进程停止重启它；如果同时存在真正暂时性的其他平台故障，gateway 会保持运行，只有那个平台会重试。
 
 ## 投递路径
 

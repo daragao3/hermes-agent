@@ -35,7 +35,6 @@ Hermes 开箱即支持多个 AI 推理提供商。使用 `hermes model` 进行�
 | **SearXNG** | `SEARXNG_URL` | ✔ | — | — |
 | **Brave**（免费套餐） | `BRAVE_SEARCH_API_KEY` | ✔ | — | — |
 | **DuckDuckGo**（ddgs） | _（无）_ | ✔ | — | — |
-| **Tavily** | `TAVILY_API_KEY` | ✔ | ✔ | ✔ |
 | **Exa** | `EXA_API_KEY` | ✔ | ✔ | — |
 | **Parallel** | `PARALLEL_API_KEY` | ✔ | ✔ | — |
 | **xAI** | `XAI_API_KEY` | ✔ | — | — |
@@ -44,7 +43,7 @@ Hermes 开箱即支持多个 AI 推理提供商。使用 `hermes model` 进行�
 
 ```yaml
 web:
-  backend: firecrawl    # firecrawl | searxng | brave-free | ddgs | tavily | exa | parallel | xai
+  backend: firecrawl    # firecrawl | searxng | brave-free | ddgs | tavily | perplexity | keenable | exa | parallel | xai
 ```
 
 若未设置 `web.backend`，后端将根据可用的 API key 自动检测。也支持通过 `FIRECRAWL_API_URL` 使用自托管的 Firecrawl。
@@ -53,8 +52,8 @@ web:
 
 Hermes 内置完整的浏览器自动化功能，提供多种后端选项，用于网站导航、表单填写和信息提取：
 
-- **Browserbase** — 托管云端浏览器，具备反机器人工具、CAPTCHA 解决和住宅代理
-- **Browser Use** — 备选云端浏览器提供商
+- **Browser Use Cloud** — 托管 Chromium，具备隐身能力、住宅代理、CAPTCHA 解决和可复用的浏览器配置文件
+- **Browserbase** — 备选云端浏览器提供商，提供托管浏览器、反机器人工具、CAPTCHA 解决和住宅代理
 - **本地 Chromium 系 CDP** — 使用 `/browser connect` 连接正在运行的 Chrome、Brave、Chromium 或 Edge 浏览器
 - **本地 Chromium** — 通过 `agent-browser` CLI 使用无头本地浏览器
 
@@ -73,7 +72,7 @@ Hermes 内置完整的浏览器自动化功能，提供多种后端选项，用�
 | **xAI TTS** | 良好 | 付费 | `XAI_API_KEY` |
 | **NeuTTS** | 良好 | 免费 | 无需 |
 
-语音转文字支持六个提供商：本地 faster-whisper（免费，设备端运行）、本地命令封装器、Groq、OpenAI Whisper API、Mistral 和 xAI。语音消息转录支持 Telegram、Discord、WhatsApp 及其他消息平台。详见[语音与 TTS](/user-guide/features/tts) 和[语音模式](/user-guide/features/voice-mode)。
+语音转文字支持八个提供商：本地 faster-whisper（免费，设备端运行）、本地命令封装器、Groq、OpenAI Whisper API、Mistral、xAI、ElevenLabs Scribe 和 DeepInfra。语音消息转录支持 Telegram、Discord、WhatsApp 及其他消息平台。详见[语音与 TTS](/user-guide/features/tts) 和[语音模式](/user-guide/features/voice-mode)。
 
 ## IDE 与编辑器集成
 
@@ -92,9 +91,27 @@ Hermes 内置完整的浏览器自动化功能，提供多种后端选项，用�
 
 Hermes 可作为 gateway（网关）机器人运行于 27+ 个消息平台，均通过同一 `gateway` 子系统配置：
 
-- **[Telegram](/user-guide/messaging/telegram)**、**[Discord](/user-guide/messaging/discord)**、**[Slack](/user-guide/messaging/slack)**、**[WhatsApp](/user-guide/messaging/whatsapp)**、**[Signal](/user-guide/messaging/signal)**、**[Matrix](/user-guide/messaging/matrix)**、**[Mattermost](/user-guide/messaging/mattermost)**、**[Email](/user-guide/messaging/email)**、**[SMS](/user-guide/messaging/sms)**、**[DingTalk](/user-guide/messaging/dingtalk)**、**[Feishu/Lark](/user-guide/messaging/feishu)**、**[WeCom](/user-guide/messaging/wecom)**、**[WeCom Callback](/user-guide/messaging/wecom-callback)**、**[Weixin](/user-guide/messaging/weixin)**、**[BlueBubbles](/user-guide/messaging/bluebubbles)**、**[QQ Bot](/user-guide/messaging/qqbot)**、**[Yuanbao](/user-guide/messaging/yuanbao)**、**[Home Assistant](/user-guide/messaging/homeassistant)**、**[Microsoft Teams](/user-guide/messaging/teams)**、**[Microsoft Teams 会议](/user-guide/messaging/teams-meetings)**、**[Microsoft Graph Webhook](/user-guide/messaging/msgraph-webhook)**、**[Google Chat](/user-guide/messaging/google_chat)**、**[LINE](/user-guide/messaging/line)**、**[ntfy](/user-guide/messaging/ntfy)**、**[SimpleX](/user-guide/messaging/simplex)**、**[Open WebUI](/user-guide/messaging/open-webui)**、**[Webhooks](/user-guide/messaging/webhooks)**
+- **[Telegram](/user-guide/messaging/telegram)**、**[Discord](/user-guide/messaging/discord)**、**[Slack](/user-guide/messaging/slack)**、**[WhatsApp](/user-guide/messaging/whatsapp)**、**[Signal](/user-guide/messaging/signal)**、**[Matrix](/user-guide/messaging/matrix)**、**[Mattermost](/user-guide/messaging/mattermost)**、**[Email](/user-guide/messaging/email)**、**[SMS](/user-guide/messaging/sms)**、**[DingTalk](/user-guide/messaging/dingtalk)**、**[Feishu/Lark](/user-guide/messaging/feishu)**、**[WeCom](/user-guide/messaging/wecom)**、**[WeCom Callback](/user-guide/messaging/wecom-callback)**、**[Weixin](/user-guide/messaging/weixin)**、**[BlueBubbles](/user-guide/messaging/bluebubbles)**、**[Buzz](/user-guide/messaging/buzz)**、**[QQ Bot](/user-guide/messaging/qqbot)**、**[Yuanbao](/user-guide/messaging/yuanbao)**、**[Home Assistant](/user-guide/messaging/homeassistant)**、**[Microsoft Teams](/user-guide/messaging/teams)**、**[Microsoft Teams 会议](/user-guide/messaging/teams-meetings)**、**[Microsoft Graph Webhook](/user-guide/messaging/msgraph-webhook)**、**[Google Chat](/user-guide/messaging/google_chat)**、**[LINE](/user-guide/messaging/line)**、**[ntfy](/user-guide/messaging/ntfy)**、**[SimpleX](/user-guide/messaging/simplex)**、**[Open WebUI](/user-guide/messaging/open-webui)**、**[Webhooks](/user-guide/messaging/webhooks)**
 
 平台对比表和配置指南详见[消息 Gateway 概览](/user-guide/messaging)。
+
+### 快速连接链接 {#quick-connect-links}
+
+主流平台都有一个规范的“创建 bot/应用”URL，其中一些还接受可预先打开对应表单的参数。无需在控制台里四处寻找，直接前往：
+
+| 平台 | 直达链接 | 打开的内容 |
+|----------|-------------|---------------|
+| **Telegram** | [t.me/BotFather](https://t.me/BotFather) | 与 BotFather 对话——发送 `/newbot` 生成 bot token |
+| **Discord** | [discord.com/developers/applications?new_application=true](https://discord.com/developers/applications?new_application=true) | 预先打开 **New Application** 对话框的开发者门户 |
+| **Slack** | [api.slack.com/apps?new_app=1](https://api.slack.com/apps?new_app=1) | **Create New App** 对话框——选择 *From an app manifest*，并粘贴 `hermes slack manifest --agent-view` 生成的 manifest |
+| **LINE** | [developers.line.biz/console](https://developers.line.biz/console/) | 用于创建 Messaging API 频道的 LINE Developers Console |
+| **Feishu/Lark** | [open.feishu.cn/app](https://open.feishu.cn/app) | 用于创建自建应用的飞书开放平台控制台 |
+
+到达之后该做什么，各平台的配置页面都有详细说明。
+
+## 协作工作区 {#collaboration-workspaces}
+
+- **[Buzz](/integrations/buzz)** — Block 基于 Nostr 的人机协作工作区。三种集成途径：Buzz Desktop 将 Hermes 作为托管 ACP 运行时启动；`buzz-acp` 中继桥接在服务端托管一个 Hermes 身份；或由原生网关平台加入 Buzz 频道，并保留完整的 Hermes 记忆/技能/审批/cron。概览页对三者进行了比较。
 
 ## 家庭自动化
 

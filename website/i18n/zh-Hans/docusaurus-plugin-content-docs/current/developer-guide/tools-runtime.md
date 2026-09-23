@@ -65,7 +65,7 @@ def discover_builtin_tools(tools_dir=None):
 
 核心工具发现完成后，还会发现 MCP 工具和插件工具：
 
-1. **MCP 工具** — `tools.mcp_tool.discover_mcp_tools()` 读取 MCP 服务器配置，并注册来自外部服务器的工具。
+1. **MCP 工具** — `tools.mcp_tool_discovery.discover_mcp_tools()`（由 `tools.mcp_tool` 门面模块重新导出）读取 MCP 服务器配置，并注册来自外部服务器的工具。
 2. **插件工具** — `hermes_cli.plugins.discover_plugins()` 加载用户/项目/pip 插件，这些插件可能注册额外的工具。
 
 ## 工具可用性检查（`check_fn`）
@@ -132,7 +132,7 @@ Toolset 是工具的命名集合。Hermes 通过以下方式解析它们：
 ```
 模型响应包含 tool_call
     ↓
-run_agent.py agent 循环
+agent 循环（`agent/conversation_loop.py`，经由 `run_agent.py` 的 `AIAgent` 门面）
     ↓
 model_tools.handle_function_call(name, args, task_id, user_task)
     ↓
@@ -223,6 +223,16 @@ registry.dispatch(name, args, **kwargs)
 - 后台进程管理
 - PTY 模式
 - 危险命令的审批回调
+
+`tools/process_registry_checkpoint.py` 负责运行中进程的检查点以及 PID 安全的接管。
+已完成的输出是分开的：`tools/process_registry_results.py` 在 profile 的
+`logs/process-results/` 下为每个进程写入一份原子化、已脱敏的回执。生产者无法通过
+改写共享的 PID 检查点来覆盖另一个父进程的结果。注册表会在释放完成事件之前先持久化
+回执；一次性的 linger 等待的正是该事件。现有的进程查询方法会加载保留的快照，而不会
+接管 PID 或将通知入队。读取需要发起该进程的持久会话或其压缩延续会话；仅知道句柄
+并不足以授权读取保留的结果。注册表会在启动任何输出读取器之前捕获该所有者（包括 CLI
+进程和不发通知的进程），并在读取器线程中保留生产者的 profile 上下文。回执脱敏独立于
+实时输出的退出选项而强制执行；保留期限受时长和数量双重约束。
 
 ## 并发
 

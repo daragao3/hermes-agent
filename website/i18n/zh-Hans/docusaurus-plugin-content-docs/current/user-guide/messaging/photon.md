@@ -71,7 +71,10 @@ hermes photon setup --phone +15551234567
    用户则跳过，因此重复运行是安全的。
 5. **打印分配给你的 iMessage 线路**——即你发短信联系
    agent 时使用的号码。
-6. **在插件的 sidecar 目录中运行 `npm install`**。
+6. **在插件的 sidecar 目录中运行 `npm install`**。在只读 / 不可变的
+   安装目录树上（托管 Docker 镜像、Podman、Nix），sidecar 会自动
+   回退到 `~/.hermes/photon/sidecar` 下的可写镜像目录；设置
+   `PHOTON_SIDECAR_DIR` 可固定一个明确的位置。
 
 运行时凭据写入 `~/.hermes/.env`
 （`PHOTON_PROJECT_ID` = Spectrum 项目 id，`PHOTON_PROJECT_SECRET`），
@@ -199,9 +202,28 @@ Photon iMessage status
   端点，使用 spectrum-ts 的 `attachment()` / `voice()` 内容构造器
   发送图片、语音留言、视频和文档。
   说明文字会在媒体之后以单独的 iMessage 气泡送达。
+- **原生投票已支持。** Hermes 通过 sidecar 的 `/send-poll` 端点，
+  使用 spectrum-ts 的 `poll()` 构造器发送投票内容。
+- **已读回执已支持。** sidecar 在将入站 iMessage 转发给 Hermes 后
+  会将其标记为已读，因此发送者无需等待模型/工具轮次即可看到 `Read`。
+  针对 Hermes 所发消息的入站回执会作为在线状态遥测数据被消费，
+  绝不会创建 agent 轮次。设置 `PHOTON_READ_RECEIPTS=false` 可让消息
+  保持在 `Delivered` 状态。
+- **消息特效已支持。** Hermes 通过 sidecar 的 `/send-effect` 端点，
+  使用 spectrum-ts 的 iMessage `effect()` 构造器发送带有原生 iMessage
+  气泡/全屏特效的文本。
 - **Photon 的免费配额：** 每台服务器每天 5,000 条消息，
   每条共享线路每天发起 50 个新会话。可申请提额——
   发送邮件至 `help@photon.codes`。
+- **Cron 和独立发送需要 gateway 处于运行状态。** 进程外的发送方
+  （cron 作业、`hermes send`、仪表盘）会复用 gateway 启动的 sidecar——
+  它们从 `<hermes-home>/runtime/photon-sidecar.json` 读取其端口/令牌，
+  该文件在 sidecar 通过健康检查后写入，并在其停止时删除。如果独立发送
+  报告 gateway 似乎已停止，请先启动（或重启）gateway。
+- **共享/免费层线路无法向新目标发起会话。** 这是 Photon 侧的策略：
+  共享线路只能在某个号码先向该线路发过短信之后，才能向该号码发消息。
+  即使 Hermes 配置正确，向全新收件人发起的 cron/独立发送也会被 Photon
+  拒绝——要么让收件人先向该线路发一条消息，要么改用专用线路。
 
 ## 环境变量
 

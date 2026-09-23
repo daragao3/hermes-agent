@@ -21,7 +21,7 @@ description: "通过关键词、作者、分类或 ID 搜索 arXiv 论文"
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `Research`, `Arxiv`, `Papers`, `Academic`, `Science`, `API` |
-| 相关 skill | [`ocr-and-documents`](/user-guide/skills/bundled/productivity/productivity-ocr-and-documents) |
+| 相关 skill | [`pdf`](/user-guide/skills/bundled/productivity/productivity-pdf) |
 
 ## 参考：完整 SKILL.md
 
@@ -44,7 +44,7 @@ description: "通过关键词、作者、分类或 ID 搜索 arXiv 论文"
 
 ## 搜索论文
 
-API 返回 Atom XML 格式数据。可使用 `grep`/`sed` 解析，或通过管道传给 `python3` 获得整洁输出。
+API 返回 Atom XML 格式数据。可使用 `grep`/`sed` 解析，或通过管道传给 `python` 获得整洁输出。
 
 ### 基本搜索
 
@@ -55,7 +55,7 @@ curl -s "https://export.arxiv.org/api/query?search_query=all:GRPO+reinforcement+
 ### 整洁输出（将 XML 解析为可读格式）
 
 ```bash
-curl -s "https://export.arxiv.org/api/query?search_query=all:GRPO+reinforcement+learning&max_results=5&sortBy=submittedDate&sortOrder=descending" | python3 -c "
+curl -s "https://export.arxiv.org/api/query?search_query=all:GRPO+reinforcement+learning&max_results=5&sortBy=submittedDate&sortOrder=descending" | python -c "
 import sys, xml.etree.ElementTree as ET
 ns = {'a': 'http://www.w3.org/2005/Atom'}
 root = ET.parse(sys.stdin).getroot()
@@ -135,7 +135,7 @@ curl -s "https://export.arxiv.org/api/query?id_list=2402.03300,2401.12345,2403.0
 
 &#123;% raw %&#125;
 ```bash
-curl -s "https://export.arxiv.org/api/query?id_list=1706.03762" | python3 -c "
+curl -s "https://export.arxiv.org/api/query?id_list=1706.03762" | python -c "
 import sys, xml.etree.ElementTree as ET
 ns = {'a': 'http://www.w3.org/2005/Atom', 'arxiv': 'http://arxiv.org/schemas/atom'}
 root = ET.parse(sys.stdin).getroot()
@@ -215,7 +215,7 @@ arXiv 不提供引用数据或推荐功能。请使用 **Semantic Scholar API**�
 
 ```bash
 # 通过 arXiv ID
-curl -s "https://api.semanticscholar.org/graph/v1/paper/arXiv:2402.03300?fields=title,authors,citationCount,referenceCount,influentialCitationCount,year,abstract" | python3 -m json.tool
+curl -s "https://api.semanticscholar.org/graph/v1/paper/arXiv:2402.03300?fields=title,authors,citationCount,referenceCount,influentialCitationCount,year,abstract" | python -m json.tool
 
 # 通过 Semantic Scholar 论文 ID 或 DOI
 curl -s "https://api.semanticscholar.org/graph/v1/paper/DOI:10.1234/example?fields=title,citationCount"
@@ -224,19 +224,19 @@ curl -s "https://api.semanticscholar.org/graph/v1/paper/DOI:10.1234/example?fiel
 ### 获取引用该论文的文献（被引情况）
 
 ```bash
-curl -s "https://api.semanticscholar.org/graph/v1/paper/arXiv:2402.03300/citations?fields=title,authors,year,citationCount&limit=10" | python3 -m json.tool
+curl -s "https://api.semanticscholar.org/graph/v1/paper/arXiv:2402.03300/citations?fields=title,authors,year,citationCount&limit=10" | python -m json.tool
 ```
 
 ### 获取该论文的参考文献（引用情况）
 
 ```bash
-curl -s "https://api.semanticscholar.org/graph/v1/paper/arXiv:2402.03300/references?fields=title,authors,year,citationCount&limit=10" | python3 -m json.tool
+curl -s "https://api.semanticscholar.org/graph/v1/paper/arXiv:2402.03300/references?fields=title,authors,year,citationCount&limit=10" | python -m json.tool
 ```
 
 ### 搜索论文（arXiv 搜索的替代方案，返回 JSON）
 
 ```bash
-curl -s "https://api.semanticscholar.org/graph/v1/paper/search?query=GRPO+reinforcement+learning&limit=5&fields=title,authors,year,citationCount,externalIds" | python3 -m json.tool
+curl -s "https://api.semanticscholar.org/graph/v1/paper/search?query=GRPO+reinforcement+learning&limit=5&fields=title,authors,year,citationCount,externalIds" | python -m json.tool
 ```
 
 ### 获取论文推荐
@@ -244,13 +244,13 @@ curl -s "https://api.semanticscholar.org/graph/v1/paper/search?query=GRPO+reinfo
 ```bash
 curl -s -X POST "https://api.semanticscholar.org/recommendations/v1/papers/" \
   -H "Content-Type: application/json" \
-  -d '{"positivePaperIds": ["arXiv:2402.03300"], "negativePaperIds": []}' | python3 -m json.tool
+  -d '{"positivePaperIds": ["arXiv:2402.03300"], "negativePaperIds": []}' | python -m json.tool
 ```
 
 ### 作者主页
 
 ```bash
-curl -s "https://api.semanticscholar.org/graph/v1/author/search?query=Yann+LeCun&fields=name,hIndex,citationCount,paperCount" | python3 -m json.tool
+curl -s "https://api.semanticscholar.org/graph/v1/author/search?query=Yann+LeCun&fields=name,hIndex,citationCount,paperCount" | python -m json.tool
 ```
 
 ### 常用 Semantic Scholar 字段
@@ -279,7 +279,7 @@ curl -s "https://api.semanticscholar.org/graph/v1/author/search?query=Yann+LeCun
 ## 注意事项
 
 - arXiv 返回 Atom XML——使用辅助脚本或解析代码片段获得整洁输出
-- Semantic Scholar 返回 JSON——通过管道传给 `python3 -m json.tool` 提升可读性
+- Semantic Scholar 返回 JSON——通过管道传给 `python -m json.tool` 提升可读性
 - arXiv ID 格式：旧格式（`hep-th/0601001`）与新格式（`2402.03300`）
 - PDF：`https://arxiv.org/pdf/{id}` — 摘要：`https://arxiv.org/abs/{id}`
 - HTML（如有）：`https://arxiv.org/html/{id}`

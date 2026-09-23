@@ -348,6 +348,8 @@ discord:
     limit: 100                    # 每次重连的全局扫描上限
     max_dispatches: 10            # 每次重连的恢复分发上限
   channel_prompts: {}             # 每个频道的临时系统 prompt（提示词）
+  voice_channel_inactivity_timeout_seconds: 300  # 设为 0 则一直留在语音频道，直到显式执行 /voice leave
+  voice_playback_timeout_seconds: 120             # 播放看门狗的最小值；长音频使用 时长+余量
   allow_mentions:                 # 机器人允许 ping 的内容（安全默认值）
     everyone: false               # @everyone / @here ping（默认：false）
     roles: false                  # @role ping（默认：false）
@@ -575,6 +577,19 @@ display:
   tool_progress_command: true
 ```
 
+#### `display.reasoning_style`
+
+**类型：** 字符串 — **默认值（Discord）：** `"subtext"` — **可选值：** `code`、`blockquote`、`subtext`
+
+控制在启用推理显示时模型推理块的渲染方式。Discord 默认使用 `subtext`，即 Discord 原生的 `-# ` 灰色小号元数据文本，使推理内容在视觉上次于答案。`blockquote` 将其渲染为 `>` 引用，`code`（其他平台上的默认值）则使用围栏代码块。较长的推理内容会被折叠为前 15 行。
+
+```yaml
+display:
+  platforms:
+    discord:
+      reasoning_style: subtext   # code | blockquote | subtext
+```
+
 ## 斜杠命令访问控制 {#slash-command-access-control}
 
 默认情况下，每个允许的用户都可以运行每个斜杠命令。要将你的允许列表分为**管理员**（完整斜杠命令访问权限）和**普通用户**（仅你明确启用的命令），请在 Discord 平台的 `extra` 块中添加 `allow_admin_from` 和 `user_allowed_commands`：
@@ -759,6 +774,8 @@ discord:
 ```
 
 注意事项：
+- 如果希望机器人一直留在语音频道，直到显式执行 `/voice leave` 或手动断开连接，请设置 `voice_channel_inactivity_timeout_seconds: 0`。默认值保留了以往空闲 300 秒后自动离开的行为。
+- `voice_playback_timeout_seconds` 是一个下限，而不是长 TTS 的硬性上限。Hermes 会探测生成音频的时长，当 `duration + 30s` 长于所配置的下限时，会等待 `duration + 30s`。
 - 口头确认每轮最多触发一次，且仅在机器人位于语音频道且混音器处于活动状态时触发。它使用你所配置的 TTS 提供商。
 - `ambient_path` 接受任何 `ffmpeg` 能解码的文件；它会被无缝循环播放。留空则使用内置的合成音垫（无需任何素材）。
 - 所有设置都位于 `config.yaml`（而非 `.env`）——它们属于行为配置，不是密钥。
@@ -809,11 +826,17 @@ No Discord access policy configured; inbound Discord messages will be denied by 
 
 Hermes 0.18 对可从外部访问的适配器刻意采用默认拒绝策略。一个既没有 `DISCORD_ALLOWED_USERS`、也没有 `DISCORD_ALLOWED_ROLES`、没有 `DISCORD_ALLOWED_CHANNELS`、也没有显式 allow-all 标志的 Discord 机器人，会成功连接，但会在正常消息处理之前就拒绝入站用户。
 
-### 启动时出现"Disallowed Intents"错误
+### 启动时出现"Privileged intents" / `PrivilegedIntentsRequired` 错误
 
-**原因**：你的代码请求了开发者门户中未启用的 intent。
+**原因**：Hermes 请求了在开发者门户中未为你的机器人启用的特权 Gateway Intents，Discord 随即拒绝 WebSocket 连接。Hermes 总是会请求 **Message Content Intent**。当你的允许列表使用用户名（而非数字 ID）或设置了 `DISCORD_ALLOWED_ROLES` 时，它还会请求 **Server Members Intent**。Presence Intent 不是必需的。
 
-**解决方法**：在 Bot 设置中启用所有三个 Privileged Gateway Intents（Presence、Server Members、Message Content），然后重启。
+**解决方法**：
+
+1. 前往[开发者门户](https://discord.com/developers/applications) → 你的应用 → Bot → Privileged Gateway Intents。
+2. 启用 **Message Content Intent**（必需）。如果你使用用户名或角色允许列表，还需启用 **Server Members Intent**。
+3. 点击 **Save Changes**，然后重启网关（`hermes gateway restart`）。
+
+网关日志应当会列出 Hermes 请求的具体 intent。在启用它们之前，Discord 会一直拒绝连接——这是门户配置错误，而不是网络不稳定的问题。
 
 ### 机器人看不到特定频道中的消息
 

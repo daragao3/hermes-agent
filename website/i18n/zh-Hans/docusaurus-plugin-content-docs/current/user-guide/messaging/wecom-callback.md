@@ -58,7 +58,7 @@ WECOM_CALLBACK_TOKEN=your-callback-token
 WECOM_CALLBACK_ENCODING_AES_KEY=your-43-char-aes-key
 
 # 可选
-WECOM_CALLBACK_HOST=0.0.0.0
+# WECOM_CALLBACK_HOST=  # optional pin; unset = dual-stack (all interfaces, IPv4+IPv6)
 WECOM_CALLBACK_PORT=8645
 WECOM_CALLBACK_ALLOWED_USERS=user1,user2
 ```
@@ -84,7 +84,7 @@ hermes gateway
 | `agent_id` | — | 自建应用的 Agent ID（必填） |
 | `token` | — | 回调验证 token（必填） |
 | `encoding_aes_key` | — | 43 字符的 AES 密钥，用于回调加密（必填） |
-| `host` | `0.0.0.0` | HTTP 回调服务器绑定地址 |
+| `host` | 未设置（双栈：所有接口，IPv4+IPv6） | HTTP 回调服务器绑定地址 |
 | `port` | `8645` | HTTP 回调服务器端口 |
 | `path` | `/wecom/callback` | 回调端点的 URL 路径 |
 
@@ -172,6 +172,6 @@ token 与管理后台期望的 token 不一致是最常见的原因。请重新�
 **端口不可达 / 监听器未绑定。**
 检查 `hermes gateway run` 日志中绑定的 host/port。如果适配器绑定到了
 `127.0.0.1`，你必须在前面加一层反向代理或隧道——企业微信的服务器无法访问
-回环地址。请在 `config.yaml` 中设置 `extra.host: 0.0.0.0`（如果直接暴露，
-还需设置 `allowed_source_cidrs`），或者保持回环地址并使用
+回环地址。请保持 `extra.host` 未设置，以使用默认的双栈绑定（所有接口，IPv4+IPv6），
+或在 `config.yaml` 中固定一个接口（如果直接暴露，还需设置 `allowed_source_cidrs`），或者保持回环地址并使用
 Cloudflare Tunnel / nginx 之类的隧道。

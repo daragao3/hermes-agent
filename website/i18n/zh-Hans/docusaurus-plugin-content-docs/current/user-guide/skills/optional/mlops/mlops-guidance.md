@@ -1,14 +1,14 @@
 ---
-title: "Guidance"
+title: "Guidance —— 用语法约束 LLM 输出；保证生成有效 JSON"
 sidebar_label: "Guidance"
-description: "使用正则表达式和语法控制 LLM 输出，保证生成有效的 JSON/XML/代码，强制结构化格式，并使用 Guidance（微软研究院的约束生成框架）构建多步骤工作流"
+description: "用语法约束 LLM 输出；保证生成有效 JSON"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Guidance
 
-使用正则表达式和语法控制 LLM 输出，保证生成有效的 JSON/XML/代码，强制结构化格式，并使用 Guidance（微软研究院的约束生成框架）构建多步骤工作流
+用语法约束 LLM 输出；保证生成有效 JSON。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "使用正则表达式和语法控制 LLM 输出，保证生成有�
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/mlops/guidance` 安装 |
 | 路径 | `optional-skills/mlops/guidance` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
 | 依赖项 | `guidance`, `transformers` |
@@ -70,13 +70,19 @@ result = lm + "The capital of France is " + gen("capital", max_tokens=5)
 print(result["capital"])  # "Paris"
 ```
 
-### 使用 Anthropic Claude
+### 使用本地模型的对话格式 {#chat-format-with-a-local-model}
+
+> **约束支持需要本地 logit 访问。** 正则、`select()` 以及
+> 基于语法的约束生成只适用于本地后端
+> （`Transformers`、`LlamaCpp`）。远程 API 后端（`OpenAI` 及其 Azure
+> 变体）只支持无约束的 `gen()` / 对话——它们无法强制执行
+> token 级别的约束。guidance 0.3.x 中没有 `models.Anthropic` 类。
 
 ```python
 from guidance import models, gen, system, user, assistant
 
-# 配置 Claude
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+# 本地模型（支持约束生成）
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 
 # 使用上下文管理器实现对话格式
 with system():
@@ -98,7 +104,7 @@ Guidance 使用 Python 风格的上下文管理器实现对话式交互。
 ```python
 from guidance import system, user, assistant, gen
 
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 
 # 系统消息
 with system():
@@ -129,7 +135,7 @@ Guidance 使用正则表达式或语法确保输出符合指定模式。
 ```python
 from guidance import models, gen
 
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 
 # 约束为有效邮箱格式
 lm += "Email: " + gen("email", regex=r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
@@ -154,7 +160,7 @@ print(lm["date"])   # 保证为 YYYY-MM-DD 格式
 ```python
 from guidance import models, gen, select
 
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 
 # 约束为特定选项
 lm += "Sentiment: " + select(["positive", "negative", "neutral"], name="sentiment")
@@ -188,7 +194,7 @@ prompt = "The capital of France is "
 ```python
 from guidance import models, gen
 
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 
 # 默认启用 token 修复
 lm += "The capital of France is " + gen("capital", max_tokens=5)
@@ -202,26 +208,30 @@ lm += "The capital of France is " + gen("capital", max_tokens=5)
 
 ### 4. 基于语法的生成
 
-使用上下文无关语法定义复杂结构。
+通过组合语法函数来定义复杂结构。模板字符串形式的
+`grammar=` 已不属于当前版本的 guidance——请用可组合的函数构建语法，
+或使用 `guidance.json()` 生成 JSON。
 
 ```python
 from guidance import models, gen
+from guidance import json as gen_json
+from pydantic import BaseModel, Field
 
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 
-# JSON 语法（简化版）
-json_grammar = """
-{
-    "name": <gen name regex="[A-Za-z ]+" max_tokens=20>,
-    "age": <gen age regex="[0-9]+" max_tokens=3>,
-    "email": <gen email regex="[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}" max_tokens=50>
-}
-"""
+# 通过 Pydantic schema 生成 JSON（guidance.json 会把 schema 编译为语法）
+class Person(BaseModel):
+    name: str = Field(pattern=r"[A-Za-z ]+")
+    age: int
+    email: str = Field(pattern=r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
-# 生成有效 JSON
-lm += gen("person", grammar=json_grammar)
+lm += gen_json(name="person", schema=Person)
 
-print(lm["person"])  # 保证为有效 JSON 结构
+print(lm["person"])  # 保证是符合 schema 的有效 JSON
+
+# 或者直接组合语法函数：
+grammar = "name=" + gen("name", regex=r"[A-Za-z ]+") + " age=" + gen("age", regex=r"[0-9]+")
+lm += grammar
 ```
 
 **使用场景：**
@@ -245,7 +255,7 @@ def generate_person(lm):
     return lm
 
 # 使用该函数
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 lm = generate_person(lm)
 
 print(lm["name"])
@@ -283,20 +293,14 @@ def react_agent(lm, question, tools, max_rounds=5):
 
 ## 后端配置
 
-### Anthropic Claude
+### OpenAI（远程——仅限无约束） {#openai-remote--unconstrained-only}
+
+> 远程 API 后端无法进行约束生成（regex/select/grammar）；
+> 只能将其用于普通对话/`gen()`。需要约束时，请使用本地后端。
 
 ```python
 from guidance import models
 
-lm = models.Anthropic(
-    model="claude-sonnet-4-5-20250929",
-    api_key="your-api-key"  # 或设置 ANTHROPIC_API_KEY 环境变量
-)
-```
-
-### OpenAI
-
-```python
 lm = models.OpenAI(
     model="gpt-4o-mini",
     api_key="your-api-key"  # 或设置 OPENAI_API_KEY 环境变量
@@ -333,7 +337,7 @@ lm = LlamaCpp(
 ```python
 from guidance import models, gen, system, user, assistant
 
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 
 with system():
     lm += "You generate valid JSON."
@@ -356,7 +360,7 @@ print(lm)  # 保证为有效 JSON
 ```python
 from guidance import models, gen, select
 
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 
 text = "This product is amazing! I love it."
 
@@ -387,7 +391,7 @@ def chain_of_thought(lm, question):
 
     return lm
 
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 lm = chain_of_thought(lm, "What is 15% of 200?")
 
 print(lm["answer"])
@@ -429,7 +433,7 @@ def react_agent(lm, question):
 
     return lm
 
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 lm = react_agent(lm, "What is 25 * 4 + 10?")
 print(lm["answer"])
 ```
@@ -460,7 +464,7 @@ def extract_entities(lm, text):
 
 text = "Tim Cook announced at Apple Park on 2024-09-15 in Cupertino."
 
-lm = models.Anthropic("claude-sonnet-4-5-20250929")
+lm = models.Transformers("microsoft/Phi-4-mini-instruct")
 lm = extract_entities(lm, text)
 
 print(f"Person: {lm['person']}")

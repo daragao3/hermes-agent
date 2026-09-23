@@ -8,7 +8,7 @@ description: "Hermes Agent 如何跨会话记忆——MEMORY.md、USER.md 与会
 
 Hermes Agent 拥有有界、经过整理的记忆，可跨会话持久保存。这使它能够记住你的偏好、项目、环境以及已学到的内容。
 
-## 工作原理
+## 工作原理 {#how-it-works}
 
 两个文件构成 Agent 的记忆：
 
@@ -19,6 +19,10 @@ Hermes Agent 拥有有界、经过整理的记忆，可跨会话持久保存。�
 
 两个文件均存储于 `~/.hermes/memories/`，在会话开始时以冻结快照的形式注入系统 prompt（提示词）。Agent 通过 `memory` 工具管理自身记忆——可添加、替换或删除条目。
 
+:::caution 每个 Hermes home 只对应一个 agent
+不要让两个 agent 进程指向同一个 Hermes home 目录。记忆写入是自动的，并会在会话开始时重新加载进系统 prompt，因此共享同一个 home 的两个写入者会把彼此的条目叠加进一个它们（和你）都没有写过的状态。记忆在设计上是按 [profile](/user-guide/profiles) 隔离的——给第二个 agent 分配它自己的 profile；如果它们需要共享记忆，请改用[外部记忆提供商](/user-guide/features/memory-providers)。
+:::
+
 :::info
 字符上限使记忆保持聚焦。记忆**不会**自动压缩：当一次写入将超出上限时，
 `memory` 工具会返回错误，而不是悄悄丢弃条目。随后 Agent 会自行腾出空间——
@@ -27,7 +31,7 @@ Hermes Agent 拥有有界、经过整理的记忆，可跨会话持久保存。�
 因此新内容必须缩短（或删除另一个条目）才能放得下。
 :::
 
-## 记忆在系统 Prompt 中的呈现方式
+## 记忆在系统 Prompt 中的呈现方式 {#how-memory-appears-in-the-system-prompt}
 
 每次会话开始时，记忆条目从磁盘加载并以冻结块的形式渲染到系统 prompt 中：
 
@@ -50,7 +54,7 @@ User prefers concise responses, dislikes verbose explanations
 
 **冻结快照模式：** 系统 prompt 注入在会话开始时捕获一次，会话中途不会改变。这是有意为之——目的是保留 LLM 的前缀缓存以提升性能。当 Agent 在会话期间添加或删除记忆条目时，更改会立即持久化到磁盘，但要到下一次会话开始时才会出现在系统 prompt 中。工具响应始终显示实时状态。
 
-## Memory 工具操作
+## Memory 工具操作 {#memory-tool-actions}
 
 Agent 使用 `memory` 工具执行以下操作：
 
@@ -60,7 +64,7 @@ Agent 使用 `memory` 工具执行以下操作：
 
 没有 `read` 操作——记忆内容在会话开始时自动注入系统 prompt。Agent 将其记忆作为对话上下文的一部分来查看。
 
-### 子字符串匹配
+### 子字符串匹配 {#substring-matching}
 
 `replace` 和 `remove` 操作使用简短的唯一子字符串匹配——不需要完整的条目文本。`old_text` 参数只需是能唯一标识某一条目的子字符串即可：
 
@@ -73,9 +77,9 @@ memory(action="replace", target="memory",
 
 如果子字符串匹配到多个条目，则返回错误，要求提供更具体的匹配内容。
 
-## 两个目标说明
+## 两个目标说明 {#two-targets-explained}
 
-### `memory` — Agent 的个人笔记
+### `memory` — Agent 的个人笔记 {#memory--agents-personal-notes}
 
 用于 Agent 需要记住的环境、工作流及经验教训相关信息：
 
@@ -85,7 +89,7 @@ memory(action="replace", target="memory",
 - 已完成任务的日记条目
 - 有效的技能和技术
 
-### `user` — 用户档案
+### `user` — 用户档案 {#user--user-profile}
 
 用于记录用户的身份、偏好和沟通风格：
 
@@ -95,9 +99,9 @@ memory(action="replace", target="memory",
 - 工作流习惯
 - 技术水平
 
-## 什么该保存，什么该跳过
+## 什么该保存，什么该跳过 {#what-to-save-vs-skip}
 
-### 主动保存这些内容
+### 主动保存这些内容 {#save-these-proactively}
 
 Agent 会自动保存——无需你主动要求。当它学到以下内容时会保存：
 
@@ -108,7 +112,7 @@ Agent 会自动保存——无需你主动要求。当它学到以下内容时�
 - **已完成的工作：** "2026-01-15 将数据库从 MySQL 迁移到 PostgreSQL" → 保存到 `memory`
 - **明确请求：** "记住我的 API 密钥每月轮换一次" → 保存到 `memory`
 
-### 跳过这些内容
+### 跳过这些内容 {#skip-these}
 
 - **琐碎/显而易见的信息：** "用户询问了 Python"——太模糊，没有实用价值
 - **容易重新发现的事实：** "Python 3.12 支持 f-string 嵌套"——可以网络搜索
@@ -116,7 +120,7 @@ Agent 会自动保存——无需你主动要求。当它学到以下内容时�
 - **会话特定的临时内容：** 临时文件路径、一次性调试上下文
 - **已在上下文文件中的信息：** SOUL.md 和 AGENTS.md 的内容
 
-## 容量管理
+## 容量管理 {#capacity-management}
 
 记忆有严格的字符上限，以保持系统 prompt 的有界性：
 
@@ -146,7 +150,7 @@ Agent 应当：
 
 **最佳实践：** 当记忆使用率超过 80%（在系统 prompt 标头中可见）时，在添加新条目之前先整合现有条目。例如，将三个独立的"项目使用 X"条目合并为一个综合性的项目描述条目。
 
-### 优质记忆条目的实际示例
+### 优质记忆条目的实际示例 {#practical-examples-of-good-memory-entries}
 
 **紧凑、信息密度高的条目效果最佳：**
 
@@ -168,15 +172,15 @@ On January 5th, 2026, the user asked me to look at their project which is
 located at ~/code/api. I discovered it uses Go version 1.22 and...
 ```
 
-## 重复防护
+## 重复防护 {#duplicate-prevention}
 
 记忆系统会自动拒绝完全重复的条目。如果你尝试添加已存在的内容，系统返回成功并附带"未添加重复项"的消息。
 
-## 安全扫描
+## 安全扫描 {#security-scanning}
 
 记忆条目在被接受之前会扫描注入和数据外泄模式，因为它们会被注入系统 prompt。匹配威胁模式（prompt 注入、凭据外泄、SSH 后门）或包含不可见 Unicode 字符的内容将被拦截。
 
-## 会话搜索
+## 会话搜索 {#session-search}
 
 除 MEMORY.md 和 USER.md 之外，Agent 还可以使用 `session_search` 工具搜索过去的对话：
 
@@ -191,7 +195,7 @@ hermes sessions list    # 浏览过去的会话
 
 有关三种调用形式（发现 / 滚动 / 浏览）和响应格式，请参阅[会话搜索工具](/user-guide/sessions#session-search-tool)。
 
-### session_search 与 memory 的对比
+### session_search 与 memory 的对比 {#session_search-vs-memory}
 
 | 特性 | 持久化记忆 | 会话搜索 |
 |------|-----------|---------|
@@ -204,15 +208,25 @@ hermes sessions list    # 浏览过去的会话
 
 **记忆**用于应始终在上下文中的关键事实。**会话搜索**用于"我们上周讨论过 X 吗？"这类需要 Agent 从过去对话中回忆具体内容的查询。
 
-## 同模型审查的推理强度 {#same-model-review-reasoning}
+## 学习历程（`/journey`） {#learning-journey-journey}
 
-后台审查与主会话使用同一模型时，**始终继承主会话的推理强度**。`auxiliary.background_review.reasoning_effort` 不会覆盖该设置；`auto` 路由和显式指定主会话的 provider/model 都遵循此规则。
+学习历程是一个时间线视图，展示 Hermes 学到的一切——已保存的技能和记忆条目按时间排布（最早的在顶部，最新的在底部），并带有一个可播放的“星座”拖动条，用来回放整个积累过程。同一份图数据驱动三个界面：
 
-分支创建时，推理设置、系统 prompt、完整会话快照和工具定义保持与主会话逐字节一致，以复用 prompt 缓存前缀。只改变审查的推理强度会破坏这种一致性。没有用于同模型审查的独立推理强度开关。
+- **经典 CLI / 独立运行** —— `hermes journey`（别名：`hermes learning`、`hermes memory-graph`）在终端中渲染时间线。标志：`--play` 以动画回放积累过程（用 `--fps` 调整速度），`--width`/`--height` 覆盖渲染尺寸，`--no-color` 禁用颜色，`--json` 导出原始图数据。
+- **TUI** —— `/journey`（别名：`/learning`、`/memory-graph`）以浮层形式打开时间线。
+- **桌面应用** —— `/journey` 打开 Star Map / 记忆图面板，以交互式可视化呈现同样的节点。
 
-若要减少审查工作而不改变主会话的推理强度，可以调整 `memory.nudge_interval` / `skills.creation_nudge_interval`，通过 `auxiliary.background_review.enabled: false` 禁用自动审查，或将审查路由到其他模型。其他模型使用会话摘要，不共享主会话的预热缓存前缀；其任务推理强度的独立问题见 [#94825](https://github.com/NousResearch/hermes-agent/issues/94825)。频率和路由控制并不会分离同模型审查的推理强度。
+除了查看之外，学习历程也是你**修剪和纠正** Hermes 所学内容的地方：
 
-## 配置
+| 命令 | 作用 |
+|---------|--------------|
+| `hermes journey list` | 列出节点 id——技能名称，以及记忆片段的 `memory:<source>:<index>` id。 |
+| `hermes journey delete <node> [-y]` | 删除一个节点。技能会被**归档**（可恢复），记忆片段则被移除。`-y` 跳过确认。 |
+| `hermes journey edit <node>` | 在 `$EDITOR` 中打开该节点的内容（技能的 `SKILL.md` 或记忆片段）。 |
+
+同样的 `list` / `delete <id>` / `edit <id>` 子命令也可以在 CLI 的聊天内 `/journey` 命令中使用，桌面面板则直接在节点上提供编辑/删除操作。
+
+## 配置 {#configuration}
 
 ```yaml
 # In ~/.hermes/config.yaml
@@ -223,6 +237,17 @@ memory:
   user_char_limit: 1375     # ~500 tokens
   write_approval: false     # false = 自由写入（默认） | true = 需要审批
 ```
+
+将 `memory_enabled` 和 `user_profile_enabled` **两者**都设为 `false`，会彻底关闭内置存储：
+`memory` 工具会从 schema 中移除，其指导块也会从系统 prompt 中移除，因此模型永远不会被告知
+一个它无法使用的工具。通过 `memory.provider` 设置的外部提供商（Hindsight、Mem0、Honcho 等）
+不受影响，并保留自己的工具——当你想用第三方记忆后端*替代*内置文件时，就使用这种方式。
+把 `memory` 列入 `agent.disabled_toolsets` 是更重的开关：它连外部提供商的工具也会隐藏。
+
+如果只设置 `memory_enabled: false`（用户档案仍开启），工具会保留——它仍要支撑档案存储——
+但系统 prompt 会把完整的记忆指导换成一个更窄的、仅针对档案的指导块。工具 schema 只会宣告
+`user` 目标，对已禁用的 `MEMORY.md` 的直接写入或暂存写入都会被拒绝。反过来的配置则只宣告
+`memory` 目标，并拒绝对 `USER.md` 的写入。
 
 ## 控制记忆写入（`write_approval`） {#controlling-memory-writes-write_approval}
 
@@ -236,7 +261,7 @@ memory:
 | `false`（默认） | 自由写入——门控关闭（引入门控之前的行为）。 |
 | `true` | 保存任何内容前都需要审批。在交互式 CLI 中，前台写入会内联提示你（条目足够短，可以完整阅读）。其他所有场景——消息平台、脚本以及后台自我改进复盘——写入都会被**暂存**，通过 `/memory pending` 审阅。 |
 
-> 若要完全关闭记忆（而不只是加门控），请设置 `memory_enabled: false`。
+> 若要完全关闭记忆（而不只是加门控），请同时设置 `memory_enabled: false` 和 `user_profile_enabled: false`。当两个内置存储都被禁用时，内置的 `memory` 工具会被自动隐藏。
 
 在 CLI 或任意消息平台上审阅暂存的写入：
 
@@ -251,7 +276,7 @@ memory:
 `write_approval: true`，此后每一次保存——尤其是那些未经请求的后台保存——
 都要等你点头或否决之后才会进入你的档案。
 
-## 后台复盘通知（`display.memory_notifications`）
+## 后台复盘通知（`display.memory_notifications`） {#background-review-notifications-displaymemory_notifications}
 
 在一轮对话之后，后台自我改进复盘可能会悄悄保存一条记忆或更新某个技能。
 这是 Hermes 具备同意意识的学习闭环：反复出现的纠正和持久的工作流经验会
@@ -273,7 +298,11 @@ display:
 > 这只控制**网关**的聊天通知。复盘本身以及对记忆/技能存储的写入不受此设置
 > 影响。可通过 `display.platforms.<platform>.memory_notifications` 按平台设置。
 
-## 在更便宜的模型上运行复盘（`auxiliary.background_review`）
+成功的技能批次在 `on` 和 `verbose` 两种模式下都会列出每一项已应用的操作，包括支持文件的
+写入/删除以及技能删除。等待审批的暂存写入和已回滚的批次不会被报告为已完成的变更。
+批次摘要依据的是实际应用的结果，而不是假定所请求的写入都已执行。
+
+## 在更便宜的模型上运行复盘（`auxiliary.background_review`） {#running-the-review-on-a-cheaper-model-auxiliarybackground_review}
 
 复盘默认运行在你的**主聊天模型**上，重放整段对话——这些内容已经在 prompt
 缓存中预热，因此只是廉价的缓存读取。如果主模型很贵，你可以改用更便宜的模型
@@ -295,7 +324,76 @@ auxiliary:
 保持 `auto`（或将其设为你的主模型），一切照旧——复盘仍在主模型上运行，
 并使用完整的热缓存重放。
 
-## 控制技能写入（`skills.write_approval`）
+### 同模型复盘的推理强度 {#same-model-review-reasoning}
+
+与主会话使用同一模型的复盘，**始终继承主会话的推理强度**。设置 `auxiliary.background_review.reasoning_effort` 不会覆盖它，无论路由是 `auto` 还是显式指定了主会话的 provider/model。
+
+分支创建时，推理设置、系统 prompt、完整会话快照和工具定义都与主会话保持逐字节一致，以便复盘复用其 prompt 缓存前缀。只改变复盘的思考级别会破坏这种一致性。同模型复盘没有独立的推理强度开关。
+
+若要减少复盘工作而不改变主会话的推理强度，可以调整 `memory.nudge_interval` / `skills.creation_nudge_interval`，按下文所述禁用自动复盘，或将复盘路由到其他模型。其他模型的路由使用对话摘要，不共享主会话的预热前缀；其单独的任务推理强度 bug 见 [#94825](https://github.com/NousResearch/hermes-agent/issues/94825)。这些频率和路由控制并不会让同模型复盘的推理强度与主会话脱钩。
+
+### 禁用自动复盘（`enabled`） {#disabling-automatic-reviews-enabled}
+
+在繁忙的主机上，复盘分支可能消耗总 token 中相当可观的一部分。
+运维人员无需把 nudge 间隔清零即可禁用它：
+
+```yaml
+auxiliary:
+  background_review:
+    enabled: true              # false = 跳过每轮结束后的自动分支
+```
+
+设置 `enabled: false` 后，每轮结束后的自动分支不会再派生；手动执行的
+`/refine` 仍然有效。
+
+分支的用量会以 `task='background_review'` 持久化到 `session_model_usage` 中，
+并且会向 `agent.log` 写入一行完成记录
+（`Background review complete: thread=bg-review calls=… in=… out=… result=…`）。
+
+### 允许一个范围严格受限的额外复盘工具（`extra_tools`） {#allowing-a-narrowly-scoped-extra-review-tool-extra_tools}
+
+后台复盘默认可以使用记忆、技能管理和只读文件工具。如果某个 profile
+提供了另一个适合在无人值守复盘中使用的安全工具，可以按名称选择加入：
+
+```yaml
+auxiliary:
+  background_review:
+    extra_tools:
+      - propose_shared_memory
+```
+
+该工具必须已经对主 agent 可用；此设置只是把它加入复盘分支的运行时白名单。
+它不会启用任意工具，未在此列出的工具仍然被拒绝。请让列表保持精简，并优先选择
+那些把提案暂存下来供人工审阅、而不是直接施加外部或破坏性变更的工具。默认值为空列表。
+
+### 本地模型：复盘会等待 GPU 空闲（`defer`） {#local-models-reviews-wait-for-an-idle-gpu-defer}
+
+在云端 provider 上，复盘几秒内就能完成，并与你接下来的操作并行运行。当复盘的
+运行时是**托管的本地 llama-server**（设置 → 本地模型）时，同一个分支会占用你下一个
+prompt 所需的 GPU——对大模型而言要占用好几分钟——而发送新的 prompt 会取消它，
+丢弃这次学习成果。因此在托管的本地运行时上，复盘**默认会被推迟**：在轮次结束时
+排入队列，待机器经过一段短暂的稳定窗口保持空闲后再执行。复盘本身没有任何变化——
+同样的模型、同样的完整记录重放、同样的写入——只是执行时机挪后了。
+
+```yaml
+auxiliary:
+  background_review:
+    defer: auto            # auto (default) | never
+    defer_max_age_s: 1800  # run a queued review anyway after this long
+```
+
+| 取值 | 行为 |
+|-------|-----------|
+| `auto`（默认） | 运行时解析为托管本地服务器的复盘会被排队，并在空闲时运行；其他所有运行时（云端、外部服务器）仍像以前一样立即派生。 |
+| `never` | 所有地方都沿用旧行为：在轮次结束时立即派生，即使是在托管的本地 GPU 上。 |
+
+排队的复盘会按会话合并（较新轮次的快照替换较旧的快照——复盘会重放整段对话，
+因此不会丢失任何内容），被新 prompt 抢占的复盘会被重新排队而不是丢弃，而等待时间
+超过 `defer_max_age_s` 的复盘即使机器始终不空闲也会运行。显式的 `/refine` 总是
+立即运行。队列保存在内存中：应用退出时仍在等待的复盘会被丢弃，这与正在运行的分支
+在退出时的结局相同。
+
+## 控制技能写入（`skills.write_approval`） {#controlling-skill-writes-skillswrite_approval}
 
 技能使用同样的开关式门控，但审阅体验有所不同，因为 `SKILL.md` 远大于一个
 聊天气泡所能容纳的篇幅：
@@ -322,7 +420,7 @@ CLI / 仪表盘上执行 `/skills diff`，或直接查看 `~/.hermes/pending/ski
 下的暂存文件。完整细节参见 [为 Agent 技能写入加门控](/user-guide/features/skills#gating-agent-skill-writes-skillswrite_approval)。
 
 
-## 外部记忆提供商
+## 外部记忆提供商 {#external-memory-providers}
 
 对于超出 MEMORY.md 和 USER.md 范围的更深层持久化记忆，Hermes 内置了 8 个外部记忆提供商插件——包括 Honcho、OpenViking、Mem0、Hindsight、Holographic、RetainDB、ByteRover 和 Supermemory。
 

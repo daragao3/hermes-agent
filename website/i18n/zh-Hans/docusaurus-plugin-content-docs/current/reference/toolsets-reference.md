@@ -68,9 +68,10 @@ hermes tools                            # curses UI to enable/disable per platfo
 | `computer_use` | `computer_use` | 通过 cua-driver 进行后台桌面控制——不抢占光标/焦点。适用于任何支持工具调用的模型。支持 macOS、Windows 和 Linux；需要 `cua-driver` 在 `$PATH` 中。 |
 | `context_engine` | （视情况而定） | 由活跃的上下文引擎（context-engine）插件暴露的运行时工具（在插件填充之前为空）。 |
 | `image_gen` | `image_generate` | 通过 FAL.ai 进行文本生成图像（支持可选的 OpenAI / xAI 后端）。 |
-| `video_gen` | `video_generate` | 通过插件注册的后端（xAI Grok-Imagine、FAL.ai Veo 3.1 / Pixverse v6 / Kling O3）进行文本生成视频和图像生成视频。传入 `image_url` 可对图像进行动画化；省略则为文本生成视频。 |
-| `kanban` | `kanban_block`, `kanban_comment`, `kanban_complete`, `kanban_create`, `kanban_heartbeat`, `kanban_link`, `kanban_list`, `kanban_show`, `kanban_unblock` | 多 agent 协调工具。为调度器生成的任务工作者（`HERMES_KANBAN_TASK`）以及显式启用 `kanban` 工具集的 profile 注册。工作者可标记任务完成、阻塞、心跳、评论以及创建/关联后续任务；编排器 profile 还额外获得看板路由工具，如 list/unblock。 |
+| `video_gen` | `video_generate`, `xai_video_edit`, `xai_video_extend` | 通过插件注册的后端（xAI Grok-Imagine、FAL.ai Veo 3.1 / Pixverse v6 / Kling O3）进行文本生成视频和图像生成视频。传入 `image_url` 可对图像进行动画化；省略则为文本生成视频。`xai_video_edit` / `xai_video_extend` 是特定于 provider 的编辑/延长工具，需要 xAI Imagine 凭据才会启用。 |
+| `kanban` | `kanban_attach`, `kanban_attach_url`, `kanban_attachments`, `kanban_block`, `kanban_comment`, `kanban_complete`, `kanban_create`, `kanban_heartbeat`, `kanban_link`, `kanban_list`, `kanban_request_changes`, `kanban_request_review`, `kanban_show`, `kanban_unblock` | 多 agent 协调工具。为调度器生成的任务工作者（`HERMES_KANBAN_TASK`）以及按名称显式列出 `kanban` 工具集的 profile 注册（`all`/`*` 通配符**不会**启用它）。工作者可标记任务完成、请求正式评审、阻塞、心跳、评论以及创建/关联后续任务；编排器 profile 还额外获得看板路由工具，如 list/unblock。`delegate_task` 子 agent 不是 Kanban 运行的所有者：其 schema 会剥离/禁用该工具集，运行时守卫也会拒绝直接修改看板，即使存在父级的 `HERMES_KANBAN_*` 环境变量。 |
 | `memory` | `memory` | 持久化跨会话记忆管理。 |
+| `desktop_ui` | `annotate_preview`, `close_preview`, `close_terminal`, `drive_preview`, `focus_pane`, `open_preview`, `react_to_message`, `read_preview`, `read_terminal`, `read_window_below`, `tour` | 作用于 Hermes 桌面应用本身的能力——读取/关闭内嵌终端面板，打开、读取、关闭、操作和标注应用内浏览器，识别应用背后的操作系统窗口，显示某个面板，对消息做出回应，运行引导式导览（高亮并讲解应用或预览面板中的 UI 元素）。对来源为桌面应用的会话启用，无论其连接的是哪个后端（本地、SSH、URL 或 Hermes Cloud）。CLI、TUI、消息平台和 cron 会话中永远不会出现。 |
 | `project` | `project_create`, `project_list`, `project_switch` | 创建并切换桌面[项目（Projects）](../user-guide/cli.md)（具名的多文件夹工作区）。仅限 GUI / 桌面会话。 |
 | `safe` | `image_generate`, `vision_analyze`, `web_extract`, `web_search`（通过 `includes`） | 只读研究 + 媒体生成。无文件写入、无终端、无代码执行。 |
 | `search` | `web_search` | 仅网页搜索（不含提取）。 |
@@ -83,7 +84,7 @@ hermes tools                            # curses UI to enable/disable per platfo
 | `vision` | `vision_analyze` | 通过视觉能力模型进行图像分析。 |
 | `video` | `video_analyze` | 视频分析与理解工具（需手动启用，不在默认工具集中——通过 `--toolsets` 显式添加）。 |
 | `web` | `web_extract`, `web_search` | 网页搜索和页面内容提取。 |
-| `x_search` | `x_search` | 通过 xAI 内置的 `x_search` Responses 工具搜索 X（Twitter）帖子和话题。默认关闭；通过 `hermes tools` 启用。仅在配置了 xAI 凭据（SuperGrok OAuth 或 `XAI_API_KEY`）时注册 schema。 |
+| `x_search` | `x_search` | 通过 xAI 内置的 `x_search` Responses 工具进行只读的公开 X 内容发现。需要经过身份验证的 X API 读取和账号操作时，请使用 `xurl` skill。默认关闭；通过 `hermes tools` 启用。仅在配置了 xAI 凭据（SuperGrok OAuth 或 `XAI_API_KEY`）时注册 schema。 |
 | `yuanbao` | `yb_query_group_info`, `yb_query_group_members`, `yb_search_sticker`, `yb_send_dm`, `yb_send_sticker` | 元宝私信/群组操作和表情包搜索。仅在 `hermes-yuanbao` 上注册。 |
 
 ## 平台工具集
@@ -92,9 +93,9 @@ hermes tools                            # curses UI to enable/disable per platfo
 
 | 工具集 | 与 `hermes-cli` 的差异 |
 |--------|------------------------|
-| `hermes-cli` | 完整工具集——交互式 CLI 会话的默认配置。包含 file、terminal、web、browser、memory、skills、vision、image_gen、todo、tts、delegation、code_execution、cronjob、session_search、clarify 和 `safe`（只读）套件。 |
-| `hermes-acp` | 移除了 `clarify`、`cronjob`、`image_generate`、`text_to_speech` 以及全部四个 Home Assistant 工具。专注于 IDE 环境中的编码任务。 |
-| `hermes-api-server` | 移除了 `clarify` 和 `text_to_speech`。保留其他所有工具——适用于无法进行用户交互的程序化访问场景。 |
+| `hermes-cli` | 完整工具集——交互式 CLI 会话的默认配置。包含 file、terminal、web、browser、memory、skills、vision、image_gen、todo、tts、delegation、code_execution、cronjob、session_search、clarify、computer_use、Home Assistant 以及 kanban 工具（全部在运行时由 check_fn 控制启用）。 |
+| `hermes-acp` | 移除了 `clarify`、`cronjob`、`image_generate`、`text_to_speech`、`computer_use`、全部四个 Home Assistant 工具以及 kanban 工具。专注于 IDE 环境中的编码任务。 |
+| `hermes-api-server` | 移除了 `clarify`、`text_to_speech`、`computer_use` 以及 kanban 工具。保留其他所有工具——适用于无法进行用户交互的程序化访问场景。 |
 | `hermes-cron` | 与 `hermes-cli` 相同。 |
 | `hermes-telegram` | 与 `hermes-cli` 相同。 |
 | `hermes-discord` | 在 `hermes-cli` 基础上添加了 `discord` 和 `discord_admin`。 |
@@ -114,7 +115,7 @@ hermes tools                            # curses UI to enable/disable per platfo
 | `hermes-weixin` | 与 `hermes-cli` 相同。 |
 | `hermes-yuanbao` | 在 `hermes-cli` 基础上添加了五个 `yb_*` 工具（私信/群组/表情包）。 |
 | `hermes-homeassistant` | 与 `hermes-cli` 相同（Home Assistant 工具默认已存在，在设置 `HASS_TOKEN` 时激活）。 |
-| `hermes-webhook` | 与 `hermes-cli` 相同。 |
+| `hermes-webhook` | 受限的安全子集——仅包含 `web_search`、`web_extract`、`vision_analyze` 和 `clarify`。由 webhook 触发的运行无法访问终端、文件或浏览器。 |
 | `hermes-gateway` | 内部 gateway 编排器工具集——所有 `hermes-<platform>` 工具集的并集；当 gateway 需要接受任意消息来源时使用。 |
 
 ## 动态工具集
@@ -131,7 +132,7 @@ mcp_servers:
     args: ["-y", "@modelcontextprotocol/server-github"]
 ```
 
-这将创建一个 `mcp-github` 工具集，可在 `--toolsets` 或平台配置中引用。
+这将创建一个 `mcp-github` 工具集，可在 `--toolsets` 或平台配置中引用。裸 server 名称（`github`）可作为别名使用。如果某个 server 的名称与内置工具集相同（`homeassistant`、`browser`），该名称会解析为内置工具**加上**该 server 的 `mcp__<server>__*` 工具；两者互不遮蔽。
 
 ### 插件工具集
 

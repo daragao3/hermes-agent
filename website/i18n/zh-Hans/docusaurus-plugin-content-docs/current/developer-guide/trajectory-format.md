@@ -7,7 +7,7 @@ description: "Hermes 用于保存对话轨迹的 ShareGPT 兼容 JSONL 格式，
 
 Hermes Agent 以 ShareGPT 兼容的 JSONL 格式保存对话轨迹，用于训练数据、调试产物和强化学习数据集。
 
-源文件：`agent/trajectory.py`、`run_agent.py`（搜索 `_save_trajectory`）、`batch_runner.py`
+源文件：`agent/trajectory.py`、`agent/session_persistence.py`（搜索 `_save_trajectory`）、`batch_runner.py`
 
 
 ## 文件命名规范
@@ -210,16 +210,16 @@ ds = load_dataset("json", data_files="trajectory_samples.jsonl")
 
 ## 控制轨迹保存
 
-在 CLI 中，轨迹保存通过以下方式控制：
+轨迹保存是 `run_agent.py` / 库层面的开关——`hermes` CLI
+没有为它提供配置项或标志：
 
-```yaml
-# config.yaml
-agent:
-  save_trajectories: true  # default: false
+```bash
+python run_agent.py --save_trajectories --query='your question here'
 ```
 
-或通过 `--save-trajectories` 标志。当 agent 以 `save_trajectories=True` 初始化时，
-`_save_trajectory()` 方法在每次对话轮次结束时调用。
+或者以编程方式：`AIAgent(..., save_trajectories=True)` /
+`initialize_agent(..., save_trajectories=True)`。启用后，
+`_save_trajectory()` 方法会在每次对话轮次结束时调用。
 
 批量运行器始终保存轨迹（这是其主要用途）。
 

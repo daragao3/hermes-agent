@@ -19,10 +19,14 @@ hermes --tui
 # 恢复最近的 TUI 会话（若无则回退到最近的 classic 会话）
 hermes --tui -c
 hermes --tui --continue
+hermes --tui --resume latest
 
 # 通过 ID 或标题恢复指定会话
 hermes --tui -r 20260409_000000_aa11bb
 hermes --tui --resume "my t0p session"
+
+# 恢复指定项目目录下最近的会话
+hermes --tui --resume latest --in ./my-project
 
 # 直接运行源码——跳过预构建步骤（供 TUI 贡献者使用）
 hermes --tui --dev
@@ -98,8 +102,8 @@ hermes --tui
 
 快捷键与 [Classic CLI](cli.md#keybindings) 完全一致。仅有以下行为差异：
 
-- **`Ctrl+T`** — 将输入框上方的实时子智能体栏展开为完整 `/agents` 列表；**Enter/t** 查看实时日志，**`d`** 查看详细信息，**`e`** 引导，**`x`** 停止选中的工作者。可见行数随终端高度调整，关闭后保留输入草稿。
-- **`F7`** — 在多行预览和单行摘要之间切换，保留输入焦点，不写入配置。
+- **`Ctrl+T`** — 将自动显示的实时子智能体栏展开为全高的 `/agents` 列表。选中一个工作者后按 **Enter**（或 **`t`**）查看其实时日志，按 **`d`** 查看详细信息，按 **`e`** 进行引导，按 **`x`** 停止它。该栏的行数随终端高度调整，并保留输入框草稿。参见[监控子智能体](/user-guide/features/delegation#monitoring-running-subagents-agents)。
+- **`F7`** — 在实时栏的默认预览和单行摘要之间切换。这不会打开监控视图，也不会移动输入框焦点；该选择在当前 TUI 进程内有效，不会修改配置。
 - **鼠标拖拽** — 以统一选区背景色高亮文本。
 - **`Cmd+V` / `Ctrl+V`** — 优先尝试普通文本粘贴，然后回退到 OSC52/原生剪贴板读取，最后在剪贴板或粘贴内容解析为图片时进行图片附件操作。
 - **`/terminal-setup`** — 安装本地 VS Code / Cursor / Windsurf 终端绑定，以在 macOS 上获得更好的 `Cmd+Enter` 和撤销/重做一致性。

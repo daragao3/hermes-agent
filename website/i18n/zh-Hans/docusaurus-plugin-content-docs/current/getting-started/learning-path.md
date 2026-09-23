@@ -80,6 +80,16 @@ Hermes Agent 功能丰富——CLI 助手、Telegram/Discord 机器人、任务�
 Cron 任务让 Hermes Agent 按计划执行任务——每日摘要、定期检查、自动报告——无需您在场。
 :::
 
+### "我想要一支专业 Bot 团队" {#i-want-a-team-of-specialist-bots}
+
+创建拥有各自模型、记忆、技能、例行任务和聊天的命名 Bot，再通过群聊或 `@mentions` 让它们协同工作。
+
+1. [桌面端](/user-guide/desktop)
+2. [Profiles](/user-guide/profiles)
+3. [Bot 模式](/user-guide/bot-mode)
+4. [Cron 定时任务](/user-guide/features/cron)
+5. [多连接桌面端](/user-guide/multi-connection-desktop)
+
 ### "我想构建自定义工具/技能"
 
 通过自定义工具和可复用技能包扩展 Hermes Agent。
@@ -131,6 +141,7 @@ Cron 任务让 Hermes Agent 按计划执行任务——每日摘要、定期检�
 | **工具** | Agent 可调用的内置工具（文件 I/O、搜索、Shell 等） | [工具](/user-guide/features/tools) |
 | **技能** | 可安装的插件包，用于添加新能力 | [技能](/user-guide/features/skills) |
 | **记忆** | 跨会话的持久化记忆 | [记忆](/user-guide/features/memory) |
+| **Bot 模式** | 拥有持久聊天、例行任务、群聊和 `@mentions` 的命名专业 Bot | [Bot 模式](/user-guide/bot-mode) |
 | **上下文文件** | 将文件和目录传入对话 | [上下文文件](/user-guide/features/context-files) |
 | **MCP** | 通过模型上下文协议连接外部工具服务器 | [MCP](/user-guide/features/mcp) |
 | **Cron** | 调度周期性 agent 任务 | [Cron](/user-guide/features/cron) |

@@ -69,11 +69,12 @@ webhook 监听器是一个名为 `msgraph_webhook` 的 gateway 平台。至少�
 
 ```bash
 MSGRAPH_WEBHOOK_ENABLED=true
-MSGRAPH_WEBHOOK_HOST=127.0.0.1
 MSGRAPH_WEBHOOK_PORT=8646
 MSGRAPH_WEBHOOK_CLIENT_STATE=<random-shared-secret>
 MSGRAPH_WEBHOOK_ACCEPTED_RESOURCES=communications/onlineMeetings
 ```
+
+绑定地址（host）从 `config.yaml` 中该平台的 `extra.host` 读取（不存在 `MSGRAPH_WEBHOOK_HOST` 环境变量——参见 [webhook 监听器参考](msgraph-webhook.md)）。
 
 监听器暴露以下端点：
 - `/msgraph/webhook` 用于接收 Graph 通知

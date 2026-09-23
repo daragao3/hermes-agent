@@ -8,7 +8,9 @@ description: "与 Hermes Agent 进行实时语音对话 — CLI、Telegram、Dis
 
 Hermes Agent 支持在 CLI 和消息平台上进行完整的语音交互。通过麦克风与 Agent 对话，听取语音回复，并在 Discord 语音频道中进行实时语音对话。
 
-如需包含推荐配置和实际使用模式的实践指南，请参阅 [使用 Hermes 的语音模式](/guides/use-voice-mode-with-hermes)。
+如需包含推荐配置和实际使用模式的实践指南，请参阅 [使用 Hermes 的语音模式](../../guides/use-voice-mode-with-hermes.md)。
+
+如需免手动启动会话——说出"hey hermes"（或任意短语）即可在 CLI、TUI 或桌面应用中开启新的语音会话——请参阅 [唤醒词](/user-guide/features/wake-word)。
 
 ## 前提条件
 
@@ -157,13 +159,52 @@ hermes                # 启动交互式 CLI
 
 `silence_threshold` 和 `silence_duration` 均可在 `config.yaml` 中配置。也可通过 `voice.beep_enabled: false` 禁用录音开始/结束提示音。
 
+### 用语音结束语音对话
+
+说出 **"stop"**——且只说这一个词——即可免手动结束语音对话。匹配规则刻意设计得很严格：整段话（不区分大小写，忽略首尾标点）必须与某个已配置的短语完全相同，因此"stop doing that and try X instead"仍会正常发送给 Agent。可通过 `config.yaml` 中的 `voice.stop_phrases` 自定义短语列表（例如 `["stop", "goodbye hermes"]`），或将其设为 `[]` 以禁用。连续三个静音周期（未检测到语音）后，语音对话也会自动结束。
+
+在语音对话进行中**键入**单独的停止短语，在所有界面（CLI、TUI、桌面）上效果相同：该消息会结束语音对话，而不会发送给 Agent。在语音对话之外，键入的"stop"只是一条普通消息。
+
 ### 流式 TTS
 
-启用 TTS 后，Agent 在生成文字的同时**逐句**朗读回复 — 无需等待完整响应：
+启用 TTS 后，Agent 在生成文字的同时**逐句**朗读回复——无需等待完整响应。此功能适用于**所有 TTS 提供商**：
 
 1. 将文字增量缓冲为完整句子（最少 20 个字符）
-2. 去除 Markdown 格式和 `<think>` 块
-3. 实时逐句生成并播放音频
+2. 去除 Markdown 格式、emoji 和 `<think>` 块
+3. 实时逐句播放音频——具备分块 PCM API 的提供商（ElevenLabs、OpenAI）直接流式传输原始音频，首字延迟最低；其他所有提供商（包括默认的 Edge）在每句完成时合成并播放该句
+
+经典 CLI、TUI 和桌面应用运行的是同一套流水线。在桌面语音对话中，回复文字会在模型生成时**实时**送入每条回复专属的语音 WebSocket，使语音与生成过程重叠——每条回复一个 socket、一个音频时钟，句与句之间没有连接间隙。
+
+### 桌面远程：客户端直连语音（最少跳数路径）
+
+当 Hermes Desktop 连接到**远程 gateway** 时，音频完全无需经由 gateway 中转。语音会话开始时，桌面端通过经过认证的 REST 通道（`GET /api/audio/voice-config`）从 gateway 获取当前 profile 解析后的 STT/TTS 设置（提供商、模型、语言/声音以及凭据），然后**直接**调用这些提供商：
+
+- **听写 / 语音输入：** 麦克风录音直接从你的桌面发送到 profile 的 STT 提供商；只有转录得到的*文字*会作为提示发送给 gateway。
+- **语音回复：** 回复文字本就通过聊天 socket 流式传输到桌面，因此桌面使用 profile 的 TTS 提供商在本地合成并播放——gateway 链路从不传输音频。
+
+客户端无需任何配置：你正在对话的 profile 是提供商和密钥的唯一事实来源，效果与 gateway 亲自完成这些工作完全相同。密钥仅在本次会话期间保存在桌面端内存中——绝不会写入客户端磁盘。
+
+只能在 gateway 主机上运行的提供商（本地 whisper、`edge` TTS、命令型提供商、插件）会自动回退到中转路径（`/api/audio/transcribe` 和语音 WebSocket），不具备该端点的旧版后端也同样如此。如需对所有提供商强制使用中转，请设置：
+
+```yaml
+voice:
+  client_direct: false
+```
+
+客户端直连的线路支持：通过 OpenAI 兼容格式接入的 OpenAI（包括 Nous 托管音频）、Groq、Mistral 和 DeepInfra，xAI Grok STT，以及 ElevenLabs STT + TTS。通过 OAuth 配置的 xAI 仍走中转（OAuth bearer 在服务端刷新）。
+
+### 插话打断（Barge-in）
+
+你可以在 Agent 回合中的任何时刻打断它——从你说完话起，直到回复完全播放完毕，麦克风始终保持开启（全双工）：
+
+- **在它思考时插话**——在连续语音模式下，于 LLM 生成期间（尚未播放任何音频时）开口说话，会中断进行中的回合，你的插话成为下一条消息，与在运行中的回合上键入消息效果相同。
+- **盖过它说话**——在 Agent 回复播放时说话，会在你开口的瞬间切断播放并提交你所说的内容。检测器在回合开始时根据*安静房间*校准噪声底（绝不根据播放本身校准），因此扬声器串音不会使其失聪，正常说话能可靠触发。
+- **键入或按下录音键**——发送新消息或按下按键录音键，会在所有界面上立即停止播放。
+- **说"stop"**——停止短语在两个阶段均有效：生成中途会中断回合并结束语音对话；播放中途会切断语音并结束对话。
+
+调优（config.yaml）：`voice.barge_in: false` 可禁用此功能；`voice.barge_in_threshold_multiplier`（默认 `3.0`）按安静房间噪声底的倍数设定语音触发阈值；`voice.barge_in_grace_seconds`（默认 `0.5`）在播放刚开始后抑制误触发。设置 `HERMES_VOICE_DEBUG=1` 可将逐块 VAD 诊断信息（校准后的噪声底、RMS、触发判定）输出到 stderr，便于实时调优。
+
+Agent **知道**自己被打断了：下一条消息会附带一条简短说明，告诉模型其语音回复被切断，因此它可以自然地作出反应（"真没礼貌！"）或从中断处继续，而不是浑然不觉。
 
 ### 幻觉过滤器
 
@@ -392,6 +433,7 @@ voice:
   beep_enabled: true               # 播放录音开始/结束提示音
   silence_threshold: 200           # 静音判定的 RMS 电平（0-32767）
   silence_duration: 3.0            # 自动停止前的静音秒数
+  stop_phrases: ["stop"]           # 恰好说出其中之一即结束语音对话；[] 表示禁用
 
 # 语音转文字（STT）
 stt:
@@ -403,6 +445,9 @@ stt:
   provider: "local"                  # "local"（免费）| "groq" | "openai" | "mistral" | "xai"
   local:
     model: "base"                    # tiny, base, small, medium, large-v3
+    language: ""                     # 可选的 ISO-639-1 语言提示；留空 = 若设置了 HERMES_LOCAL_STT_LANGUAGE 则使用它，否则自动检测
+  groq:
+    language: ""                     # 可选的 ISO-639-1 语言提示；留空 = 若设置了 HERMES_LOCAL_STT_LANGUAGE 则使用它，否则自动检测
   # model: "whisper-1"              # 旧版：在未设置 provider 时使用
 
 # 文字转语音（TTS）
@@ -417,6 +462,11 @@ tts:
     model: "gpt-4o-mini-tts"
     voice: "alloy"                 # alloy, echo, fable, onyx, nova, shimmer
     base_url: "https://api.openai.com/v1"  # 可选：覆盖为自托管或兼容 OpenAI 的端点
+    # `text_to_speech` 工具接受可选的逐次调用参数 `instructions`
+    # （语气、情感、节奏、口音、耳语），该参数会转发给
+    # `gpt-4o-mini-tts` 以及兼容 OpenAI 的声音设计服务器
+    # （例如通过 oMLX 运行的 Qwen3-TTS-VoiceDesign）。参见 OpenAI 的声音设计指南：
+    # https://platform.openai.com/docs/guides/text-to-speech
   neutts:
     ref_audio: ''
     ref_text: ''
@@ -458,9 +508,9 @@ DISCORD_ALLOWED_USERS=...
 | **Groq** | `whisper-large-v3` | 快（约 1 秒） | 较好 | 免费额度 | 是 |
 | **OpenAI** | `whisper-1` | 快（约 1 秒） | 良好 | 付费 | 是 |
 | **OpenAI** | `gpt-4o-transcribe` | 中等（约 2 秒） | 最佳 | 付费 | 是 |
+| **OpenAI** | `gpt-transcribe` | 快 | 最佳 | 付费（$0.0045/分钟） | 是 |
 | **Mistral** | `voxtral-mini-latest` | 快 | 良好 | 付费 | 是 |
 | **xAI** | `grok-stt` | 快 | 良好 | 付费 | 是 |
-| **OpenAI** | `gpt-transcribe` | 快 | 最佳 | 付费（$0.0045/分钟） | 是 |
 
 提供商优先级（自动回退）：**本地** > **groq** > **openai**
 
@@ -474,6 +524,12 @@ DISCORD_ALLOWED_USERS=...
 | **NeuTTS** | 良好 | 免费 | 取决于 CPU/GPU | 否 |
 
 NeuTTS 使用上方的 `tts.neutts` 配置块。
+
+对于 `openai`，`text_to_speech` 工具接受可选的 `instructions`
+参数，可解锁 `gpt-4o-mini-tts` 的声音设计能力（语气、
+情感、节奏、口音、耳语）。同一字段也会路由到通过
+`tts.openai.base_url` 挂载的兼容 OpenAI 的声音设计服务器
+（例如通过 oMLX 运行的 Qwen3-TTS-VoiceDesign）。
 
 ---
 

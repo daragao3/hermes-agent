@@ -21,7 +21,7 @@ description: "在构建前验证想法的一次性实验"
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
 | 标签 | `spike`, `prototype`, `experiment`, `feasibility`, `throwaway`, `exploration`, `research`, `planning`, `mvp`, `proof-of-concept` |
-| 相关 skill | [`sketch`](/user-guide/skills/bundled/creative/creative-sketch)、[`writing-plans`](/user-guide/skills/bundled/software-development/software-development-writing-plans)、[`subagent-driven-development`](/user-guide/skills/bundled/software-development/software-development-subagent-driven-development)、`plan`（现为内置 `/plan` 命令） |
+| 相关 skill | [`sketch`](/user-guide/skills/optional/creative/creative-sketch)、[`subagent-driven-development`](/user-guide/skills/optional/software-development/software-development-subagent-driven-development) |
 
 ## 参考：完整 SKILL.md
 
@@ -138,7 +138,7 @@ spikes/
 terminal("mkdir -p spikes/001-websocket-streaming")
 write_file("spikes/001-websocket-streaming/README.md", "# 001: websocket-streaming\n\n...")
 write_file("spikes/001-websocket-streaming/main.py", "...")
-terminal("cd spikes/001-websocket-streaming && python3 main.py")
+terminal("cd spikes/001-websocket-streaming && python main.py")
 # 观察输出，迭代。
 ```
 

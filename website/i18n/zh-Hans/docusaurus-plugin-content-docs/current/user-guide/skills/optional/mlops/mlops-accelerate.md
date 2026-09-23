@@ -1,14 +1,14 @@
 ---
-title: "Huggingface Accelerate — 最简分布式训练 API"
-sidebar_label: "Huggingface Accelerate"
-description: "最简分布式训练 API"
+title: "Accelerate — 只需极少改动即可在多 GPU 上运行 PyTorch 训练"
+sidebar_label: "Accelerate"
+description: "只需极少改动即可在多 GPU 上运行 PyTorch 训练"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# Huggingface Accelerate
+# Accelerate
 
-最简分布式训练 API。仅需 4 行代码即可为任意 PyTorch 脚本添加分布式支持。统一的 DeepSpeed/FSDP/Megatron/DDP API。自动设备放置、混合精度（FP16/BF16/FP8）。交互式配置，单条启动命令。HuggingFace 生态系统标准。
+只需极少改动即可在多 GPU 上运行 PyTorch 训练。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "最简分布式训练 API"
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/mlops/accelerate` 安装 |
 | 路径 | `optional-skills/mlops/accelerate` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
 | 依赖项 | `accelerate`, `torch`, `transformers` |
@@ -163,30 +163,35 @@ for batch in dataloader:
 
 ### 工作流 3：DeepSpeed ZeRO 集成
 
-**启用 DeepSpeed ZeRO-2**：
+**启用 DeepSpeed ZeRO-2**（传入一个 `DeepSpeedPlugin`，而不是原始 dict）：
 ```python
-from accelerate import Accelerator
+from accelerate import Accelerator, DeepSpeedPlugin
+
+deepspeed_plugin = DeepSpeedPlugin(
+    zero_stage=2,                     # ZeRO-2
+    offload_optimizer_device="none",  # 或 "cpu" 以卸载
+    gradient_accumulation_steps=4,
+)
 
 accelerator = Accelerator(
     mixed_precision='bf16',
-    deepspeed_plugin={
-        "zero_stage": 2,  # ZeRO-2
-        "offload_optimizer": False,
-        "gradient_accumulation_steps": 4
-    }
+    deepspeed_plugin=deepspeed_plugin,  # DeepSpeedPlugin 实例（或 dict[str, DeepSpeedPlugin]）
 )
 
 # 代码与之前完全相同！
 model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
 ```
 
-**或通过配置**：
-```bash
-accelerate config
-# 选择：DeepSpeed → ZeRO-2
+**或通过插件指向一个完整的 DeepSpeed JSON 配置**：
+```python
+from accelerate import Accelerator, DeepSpeedPlugin
+
+# hf_ds_config 接受 DeepSpeed 配置 JSON 的路径（或一个 dict）
+deepspeed_plugin = DeepSpeedPlugin(hf_ds_config="ds_config.json")
+accelerator = Accelerator(mixed_precision='bf16', deepspeed_plugin=deepspeed_plugin)
 ```
 
-**deepspeed_config.json**：
+**ds_config.json**（原始 DeepSpeed 配置——通过插件传入，而**不是**通过 `--config_file`）：
 ```json
 {
     "fp16": {"enabled": false},
@@ -200,9 +205,20 @@ accelerate config
 }
 ```
 
-**启动**：
+**或通过交互式配置**：
 ```bash
-accelerate launch --config_file deepspeed_config.json train.py
+accelerate config
+# 选择：DeepSpeed → ZeRO-2
+# 这会写入一个 accelerate YAML 配置（默认：~/.cache/huggingface/accelerate/default_config.yaml）
+```
+
+**启动**（`--config_file` 需要的是 accelerate YAML，而不是原始 DeepSpeed JSON）：
+```bash
+# 使用 `accelerate config` 写入的默认 accelerate 配置
+accelerate launch train.py
+
+# 或指向一个特定的 accelerate YAML
+accelerate launch --config_file accelerate_deepspeed.yaml train.py
 ```
 
 ### 工作流 4：FSDP（全分片数据并行）
@@ -213,7 +229,7 @@ from accelerate import Accelerator, FullyShardedDataParallelPlugin
 
 fsdp_plugin = FullyShardedDataParallelPlugin(
     sharding_strategy="FULL_SHARD",  # 等价于 ZeRO-3
-    auto_wrap_policy="TRANSFORMER_AUTO_WRAP",
+    auto_wrap_policy="transformer_based_wrap",  # 有效值：transformer_based_wrap | size_based_wrap | no_wrap
     cpu_offload=False
 )
 

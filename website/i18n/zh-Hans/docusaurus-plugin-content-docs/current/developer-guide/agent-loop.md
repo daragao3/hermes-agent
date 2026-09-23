@@ -6,7 +6,7 @@ description: "AIAgent 执行流程、API 模式、工具、回调及回退行为
 
 # Agent Loop 内部机制
 
-核心编排引擎是 `run_agent.py` 中的 `AIAgent` 类——这是一个大型文件（15k+ 行），负责处理从 prompt（提示词）组装到工具分发再到 provider 故障转移的所有逻辑。
+核心编排引擎是 `AIAgent` 类。`run_agent.py` 现在只是一个轻量外观层（facade）：循环本身位于 `agent/conversation_loop.py`，每个轮次阶段位于 `agent/turn_*.py`（迭代准备、API 调用、API 错误、上下文溢出、截断、恢复），构造函数的装配逻辑位于 `agent/agent_init.py`，而从 prompt（提示词）组装到工具分发再到 provider 故障转移的所有逻辑，则分布在各个职责单一、混入 `AIAgent` 的 `agent/*.py` 模块中。
 
 ## 核心职责
 
@@ -149,7 +149,7 @@ for each tool_call in response.tool_calls:
 
 ### Agent 级工具
 
-部分工具在到达 `handle_function_call()` 之前，由 `run_agent.py` *提前*拦截：
+部分工具在到达 `handle_function_call()` 之前，由 `agent/tool_executor.py`（从 `agent/conversation_loop.py` 调用）*提前*拦截：
 
 | 工具 | 拦截原因 |
 |------|---------|
@@ -222,7 +222,10 @@ agent 通过 `IterationBudget` 追踪迭代次数：
 
 | 文件 | 用途 |
 |------|------|
-| `run_agent.py` | AIAgent 类——完整的 agent loop |
+| `run_agent.py` | `AIAgent` 外观层——公共入口；循环和轮次阶段位于 `agent/` |
+| `agent/conversation_loop.py` | agent loop（`run_conversation()` 的主体） |
+| `agent/turn_*.py` | 轮次阶段：iteration_prep、api_call、api_error、overflow、truncation、recovery |
+| `agent/tool_executor.py` | 工具调用执行与 agent 级工具拦截 |
 | `agent/prompt_builder.py` | 从内存、技能、上下文文件和个性组装系统 prompt |
 | `agent/context_engine.py` | ContextEngine ABC——可插拔的上下文管理 |
 | `agent/context_compressor.py` | 默认引擎——有损摘要算法 |

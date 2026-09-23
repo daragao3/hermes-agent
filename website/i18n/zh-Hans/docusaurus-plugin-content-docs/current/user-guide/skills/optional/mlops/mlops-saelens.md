@@ -1,14 +1,14 @@
 ---
-title: "稀疏自编码器训练"
-sidebar_label: "稀疏自编码器训练"
-description: "提供使用 SAELens 训练和分析稀疏自编码器（SAE）的指导，将神经网络激活分解为可解释特征"
+title: "Saelens — 训练稀疏自编码器以解释模型特征"
+sidebar_label: "Saelens"
+description: "训练稀疏自编码器以解释模型特征"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# 稀疏自编码器训练
+# Saelens
 
-提供使用 SAELens 训练和分析稀疏自编码器（SAE）的指导，将神经网络激活分解为可解释特征。适用于发现可解释特征、分析叠加现象，或研究语言模型中的单义性表示。
+训练稀疏自编码器以解释模型特征。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "提供使用 SAELens 训练和分析稀疏自编码器（SAE）的
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/mlops/saelens` 安装 |
 | 路径 | `optional-skills/mlops/saelens` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
 | 依赖 | `sae-lens>=6.0.0`, `transformer-lens>=2.0.0`, `torch>=2.0.0` |
@@ -95,11 +95,14 @@ from sae_lens import SAE
 
 # 1. 加载模型和预训练 SAE
 model = HookedTransformer.from_pretrained("gpt2-small", device="cuda")
-sae, cfg_dict, sparsity = SAE.from_pretrained(
+# 在 sae-lens v6 中，SAE.from_pretrained() 只返回 SAE（不再是元组）。
+sae = SAE.from_pretrained(
     release="gpt2-small-res-jb",
     sae_id="blocks.8.hook_resid_pre",
     device="cuda"
 )
+# 如果还需要 cfg 字典和特征稀疏度，请使用：
+# sae, cfg_dict, sparsity = SAE.from_pretrained_with_cfg_and_sparsity(...)
 
 # 2. 获取模型激活
 tokens = model.to_tokens("The capital of France is Paris")
@@ -141,24 +144,33 @@ reconstruction_error = (activations - reconstructed).norm()
 ### 步骤说明
 
 ```python
-from sae_lens import SAE, LanguageModelSAERunnerConfig, SAETrainingRunner
+from sae_lens import (
+    LanguageModelSAETrainingRunner,
+    LanguageModelSAERunnerConfig,
+    StandardTrainingSAEConfig,
+    LoggingConfig,
+)
 
-# 1. 配置训练
+# 1. 配置训练（v6 使用嵌套配置：SAE 专属选项位于 `sae=` 子配置中，
+#    日志选项位于 `logger=` 子配置中）。
+#    注意：`architecture`、`d_sae`、`l1_coefficient` 等现在位于 SAE 子配置上，
+#    而 `hook_layer`、`activation_fn`、`log_to_wandb` 等旧的扁平选项已被移除。
 cfg = LanguageModelSAERunnerConfig(
-    # 模型
-    model_name="gpt2-small",
-    hook_name="blocks.8.hook_resid_pre",
-    hook_layer=8,
-    d_in=768,  # 模型维度
+    # SAE 架构 + 稀疏性（嵌套）
+    sae=StandardTrainingSAEConfig(
+        d_in=768,          # 模型维度
+        d_sae=768 * 8,     # 扩展因子为 8
+        l1_coefficient=8e-5,  # 稀疏性惩罚
+        apply_b_dec_to_input=True,
+        normalize_activations="expected_average_only_in",
+    ),
 
-    # SAE 架构
-    architecture="standard",  # 或 "gated"、"topk"
-    d_sae=768 * 8,  # 扩展因子为 8
-    activation_fn="relu",
+    # 数据生成函数（模型 + hook 点）
+    model_name="gpt2-small",
+    hook_name="blocks.8.hook_resid_pre",  # 层号从 hook_name 推断（无需 hook_layer）
 
     # 训练
     lr=4e-4,
-    l1_coefficient=8e-5,  # 稀疏性惩罚
     l1_warm_up_steps=1000,
     train_batch_size_tokens=4096,
     training_tokens=100_000_000,
@@ -167,9 +179,11 @@ cfg = LanguageModelSAERunnerConfig(
     dataset_path="monology/pile-uncopyrighted",
     context_size=128,
 
-    # 日志
-    log_to_wandb=True,
-    wandb_project="sae-training",
+    # 日志（嵌套）
+    logger=LoggingConfig(
+        log_to_wandb=True,
+        wandb_project="sae-training",
+    ),
 
     # 检查点
     checkpoint_path="checkpoints",
@@ -177,13 +191,19 @@ cfg = LanguageModelSAERunnerConfig(
 )
 
 # 2. 训练
-trainer = SAETrainingRunner(cfg)
+trainer = LanguageModelSAETrainingRunner(cfg)  # SAETrainingRunner 仍可作为别名使用
 sae = trainer.run()
 
 # 3. 评估
 print(f"L0 (avg active features): {trainer.metrics['l0']}")
 print(f"CE Loss Recovered: {trainer.metrics['ce_loss_score']}")
 ```
+
+> **v6 迁移说明：** 如需其他 SAE 类型，请替换 `sae=` 子配置——
+> `GatedTrainingSAEConfig`、`TopKTrainingSAEConfig`（直接设置 `k`）或
+> `JumpReLUTrainingSAEConfig`（使用 `l0_coefficient`）。旧的扁平选项
+> （`architecture`、`expansion_factor`、`hook_layer`、`activation_fn`/`activation_fn_kwargs`、
+> `use_ghost_grads`、ghost grads、b_dec/解码器初始化选项）已在 v6 中移除。
 
 ### 关键超参数
 
@@ -222,7 +242,7 @@ from sae_lens import SAE
 import torch
 
 model = HookedTransformer.from_pretrained("gpt2-small", device="cuda")
-sae, _, _ = SAE.from_pretrained(
+sae = SAE.from_pretrained(  # v6 只返回 SAE
     release="gpt2-small-res-jb",
     sae_id="blocks.8.hook_resid_pre",
     device="cuda"
@@ -296,47 +316,57 @@ for idx, val in zip(top_features.indices, top_features.values):
 
 ## 常见问题与解决方案
 
+> 以下所有示例均使用 v6 嵌套配置：SAE 专属选项放在 `sae=`
+> 子配置中（`StandardTrainingSAEConfig` / `TopKTrainingSAEConfig` 等），训练
+> 参数仍位于顶层的 `LanguageModelSAERunnerConfig` 上。
+
 ### 问题：死亡特征比例过高
 ```python
+from sae_lens import LanguageModelSAERunnerConfig, StandardTrainingSAEConfig
+
 # 错误：无预热，特征早期死亡
 cfg = LanguageModelSAERunnerConfig(
-    l1_coefficient=1e-4,
+    sae=StandardTrainingSAEConfig(d_in=768, d_sae=768*8, l1_coefficient=1e-4),
     l1_warm_up_steps=0,  # 不推荐！
 )
 
-# 正确：预热 L1 惩罚
+# 正确：预热 L1 惩罚（v6 移除了 ghost grads；预热现在是主要手段）
 cfg = LanguageModelSAERunnerConfig(
-    l1_coefficient=8e-5,
+    sae=StandardTrainingSAEConfig(d_in=768, d_sae=768*8, l1_coefficient=8e-5),
     l1_warm_up_steps=1000,  # 逐步增加
-    use_ghost_grads=True,   # 复活死亡特征
 )
 ```
 
 ### 问题：重建效果差（CE 恢复率低）
 ```python
-# 降低稀疏性惩罚
+# 降低稀疏性惩罚和/或增加容量（两者都在 SAE 子配置上）
 cfg = LanguageModelSAERunnerConfig(
-    l1_coefficient=5e-5,  # 越低 = 重建越好
-    d_sae=768 * 16,       # 更大容量
+    sae=StandardTrainingSAEConfig(
+        d_in=768,
+        d_sae=768 * 16,       # 更大容量
+        l1_coefficient=5e-5,  # 越低 = 重建越好
+    ),
 )
 ```
 
 ### 问题：特征不可解释
 ```python
+from sae_lens import LanguageModelSAERunnerConfig, StandardTrainingSAEConfig, TopKTrainingSAEConfig
+
 # 提高稀疏性（更高的 L1）
 cfg = LanguageModelSAERunnerConfig(
-    l1_coefficient=1e-4,  # 越高 = 越稀疏，可解释性越强
+    sae=StandardTrainingSAEConfig(d_in=768, d_sae=768*8, l1_coefficient=1e-4),
 )
-# 或使用 TopK 架构
+# 或使用 TopK SAE（v6 中直接设置 k，而不是通过 activation_fn_kwargs）
 cfg = LanguageModelSAERunnerConfig(
-    architecture="topk",
-    activation_fn_kwargs={"k": 50},  # 恰好 50 个激活特征
+    sae=TopKTrainingSAEConfig(d_in=768, d_sae=768*8, k=50),  # 恰好 50 个激活特征
 )
 ```
 
 ### 问题：训练时内存错误
 ```python
 cfg = LanguageModelSAERunnerConfig(
+    sae=StandardTrainingSAEConfig(d_in=768, d_sae=768*8, l1_coefficient=8e-5),
     train_batch_size_tokens=2048,  # 减小批次大小
     store_batch_size_prompts=4,    # 缓冲区中更少的 prompt
     n_batches_in_buffer=8,         # 更小的激活缓冲区
@@ -358,8 +388,10 @@ cfg = LanguageModelSAERunnerConfig(
 | 类 | 用途 |
 |-------|---------|
 | `SAE` | 稀疏自编码器模型 |
-| `LanguageModelSAERunnerConfig` | 训练配置 |
-| `SAETrainingRunner` | 训练循环管理器 |
+| `LanguageModelSAERunnerConfig` | 顶层训练配置（嵌套 `sae=` 和 `logger=`） |
+| `StandardTrainingSAEConfig` / `TopKTrainingSAEConfig` / `GatedTrainingSAEConfig` / `JumpReLUTrainingSAEConfig` | 各 SAE 类型专属的子配置（v6） |
+| `LoggingConfig` | 日志/W&B 子配置（v6） |
+| `LanguageModelSAETrainingRunner` | 训练循环管理器（别名：`SAETrainingRunner`） |
 | `ActivationsStore` | 激活收集与批处理 |
 | `HookedSAETransformer` | TransformerLens + SAE 集成 |
 
@@ -398,10 +430,10 @@ cfg = LanguageModelSAERunnerConfig(
 | **TopK** | 恰好 K 个激活特征 | 一致的稀疏性 |
 
 ```python
-# TopK SAE（恰好 50 个特征激活）
+from sae_lens import LanguageModelSAERunnerConfig, TopKTrainingSAEConfig
+
+# TopK SAE（恰好 50 个特征激活）——v6 中 `k` 设置在 SAE 子配置上
 cfg = LanguageModelSAERunnerConfig(
-    architecture="topk",
-    activation_fn="topk",
-    activation_fn_kwargs={"k": 50},
+    sae=TopKTrainingSAEConfig(d_in=768, d_sae=768*8, k=50),
 )
 ```

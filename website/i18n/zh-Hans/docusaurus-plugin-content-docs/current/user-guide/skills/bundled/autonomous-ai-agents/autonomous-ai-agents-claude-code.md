@@ -16,7 +16,7 @@ description: "将编码任务委托给 Claude Code CLI（功能、PR）"
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/autonomous-ai-agents/claude-code` |
-| 版本 | `2.2.0` |
+| 版本 | `2.2.1` |
 | 作者 | Hermes Agent + Teknium |
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
@@ -230,7 +230,7 @@ terminal(command="claude -p 'List all functions in src/' --output-format json --
 terminal(command="claude -p 'Start refactoring the database layer' --output-format json --max-turns 10 > /tmp/session.json", workdir="/project", timeout=180)
 
 # 使用会话 ID 恢复
-terminal(command="claude -p 'Continue and add connection pooling' --resume $(cat /tmp/session.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"session_id\"])') --max-turns 5", workdir="/project", timeout=120)
+terminal(command="claude -p 'Continue and add connection pooling' --resume $(cat /tmp/session.json | python -c 'import json,sys; print(json.load(sys.stdin)[\"session_id\"])') --max-turns 5", workdir="/project", timeout=120)
 
 # 或恢复同一目录中最近的会话
 terminal(command="claude -p 'What did you do last time?' --continue --max-turns 1", workdir="/project", timeout=30)
@@ -283,7 +283,7 @@ terminal(command="claude -p 'task' --fallback-model haiku --max-turns 5", timeou
 | 标志 | 效果 |
 |------|--------|
 | `--model <alias>` | 模型选择：`sonnet`、`opus`、`haiku` 或完整名称如 `claude-sonnet-4-6` |
-| `--effort <level>` | 推理深度：`low`、`medium`、`high`、`max`、`auto` |
+| `--effort <level>` | 推理深度：`low`、`medium`、`high`、`xhigh`、`max` |
 | `--max-turns <n>` | 限制 agentic 循环次数（仅限 print 模式；防止失控） |
 | `--max-budget-usd <n>` | 以美元为单位限制 API 花费（仅限 print 模式） |
 | `--fallback-model <model>` | 默认模型过载时自动切换（仅限 print 模式） |
@@ -407,7 +407,7 @@ mcp__<server>__<tool>   # 特定 MCP 工具
 | 命令 | 用途 |
 |---------|---------|
 | `/model [model]` | 在会话中途切换模型（使用方向键调整 effort） |
-| `/effort [level]` | 设置推理 effort：`low`、`medium`、`high`、`max` 或 `auto` |
+| `/effort [level]` | 设置推理 effort：`low`、`medium`、`high`、`xhigh` 或 `max` |
 | `/init` | 创建 CLAUDE.md 文件用于项目记忆 |
 | `/memory` | 打开 CLAUDE.md 进行编辑 |
 | `/config` | 打开交互式设置配置 |
@@ -740,7 +740,7 @@ terminal(command="tmux capture-pane -t dev -p -S -10")
 2. **`--dangerously-skip-permissions` 对话框默认为"No, exit"** — 必须按 Down 再按 Enter 才能接受。Print 模式（`-p`）完全跳过此步骤。
 3. **`--max-budget-usd` 最低约为 $0.05** — 仅系统 prompt 缓存创建就需要这么多。设置更低会立即报错。
 4. **`--max-turns` 仅限 print 模式** — 在交互会话中被忽略。
-5. **Claude 可能使用 `python` 而非 `python3`** — 在没有 `python` 符号链接的系统上，Claude 的 bash 命令首次会失败，但它会自我纠正。
+5. **Claude 可能使用 `python` 而非 `python`** — 在没有 `python` 符号链接的系统上，Claude 的 bash 命令首次会失败，但它会自我纠正。
 6. **会话恢复需要相同目录** — `--continue` 查找当前工作目录中最近的会话。
 7. **`--json-schema` 需要足够的 `--max-turns`** — Claude 必须先读取文件才能生成结构化输出，这需要多轮次。
 8. **信任对话框每个目录只出现一次** — 仅首次出现，之后缓存。

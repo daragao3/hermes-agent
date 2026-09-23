@@ -32,7 +32,7 @@ Buzz Desktop 将 Hermes 作为预设运行时提供。按常规方式安装 Herm
 Buzz relay <-- WebSocket --> buzz-acp <-- ACP over stdio --> Hermes Agent
 ```
 
-被启动的 Hermes 使用该主机上相同的配置、凭据、记忆和技能。密钥铸造、频道发现、所有者遥测（`BUZZ_ACP_RELAY_OBSERVER`）和无头权限指南：**[ACP 宿主集成 → Buzz 频道（中继桥接）](/user-guide/features/acp)**
+被启动的 Hermes 使用与该主机上 `hermes` 相同的配置、凭据、记忆和技能。密钥铸造、频道发现、所有者遥测（`BUZZ_ACP_RELAY_OBSERVER`）和无头权限指南：**[ACP 宿主集成 → Buzz 频道（中继桥接）](/user-guide/features/acp#buzz-channels-relay-bridge)**
 
 ## ③ 原生网关平台（完整 Hermes 推荐）
 

@@ -12,8 +12,8 @@ Hermes 有四套 hook 系统，可在关键生命周期节点运行自定义代�
 |------|---------|---------|---------|
 | **[Gateway hooks](#gateway-event-hooks)** | `~/.hermes/hooks/` 下的 `HOOK.yaml` + `handler.py` | 仅 Gateway | 日志、告警、webhook |
 | **[Plugin hooks](#plugin-hooks)** | [插件](/user-guide/features/plugins)中的 `ctx.register_hook()` | CLI + Gateway | 工具拦截、指标采集、护栏 |
-| **[Shell hooks](#shell-hooks)** | `~/.hermes/config.yaml` 中 `hooks:` 块指向的 shell 脚本 | CLI + Gateway | 用于阻断、自动格式化、上下文注入的即插即用脚本 |
-| **[Outbound webhooks](#outbound-webhooks)** | `~/.hermes/config.yaml` 中的 `hooks.outbound:` 列表 | CLI + Gateway | 将签名后的生命周期事件推送到外部 HTTP endpoint |
+| **[Shell hooks](#shell-hooks)** | profile `config.yaml` 中 `hooks:` 块指向的 shell 脚本 | CLI + Gateway + Desktop/TUI/仪表板聊天 | 用于阻断、自动格式化、上下文注入的即插即用脚本 |
+| **[Outbound webhooks](#outbound-webhooks)** | `~/.hermes/config.yaml` 中的 `hooks.outbound:` 列表 | CLI + Gateway | 将签名后的生命周期事件推送到外部 HTTP endpoint——CI、仪表板、其他 agent |
 
 Hook 回调错误会被隔离并记录，不会导致 agent 崩溃。但 hook 并非全是被动观察者：指令/控制类 hook 可改变流程，transform 可替换内容，shell `pre_tool_call` 还能阻断或在失败时关闭执行。
 
@@ -71,7 +71,7 @@ async def handle(event_type: str, context: dict):
 - 可以是 `async def` 或普通 `def`——两者均可
 - 错误会被捕获并记录，不会导致 agent 崩溃
 
-### 可用事件
+### 可用事件 {#available-events}
 
 | 事件 | 触发时机 | Context 键 |
 |------|---------|-----------|
@@ -79,14 +79,21 @@ async def handle(event_type: str, context: dict):
 | `session:start` | 新消息会话创建 | `platform`、`user_id`、`session_id`、`session_key` |
 | `session:end` | 会话结束（重置前） | `platform`、`user_id`、`session_key` |
 | `session:reset` | 用户执行 `/new` 或 `/reset` | `platform`、`user_id`、`session_key` |
-| `agent:start` | Agent 开始处理消息 | `platform`、`user_id`、`session_id`、`message` |
+| `session:compress` | 某个会话的上下文压缩完成 | `platform`、`session_id`、`old_session_id`（原地压缩时为空）、`in_place`（bool——`true` = 转录在同一 id 上原地压缩，`false` = 从 `old_session_id` 轮换而来）、`compression_count` |
+| `agent:start` | Agent 开始处理消息 | `platform`、`user_id`、`chat_id`、`thread_id`（论坛话题 / 线程根 id；不在线程中时为空）、`chat_type`（`"dm"` \| `"group"` \| `"forum"`；未知时为空）、`session_id`、`message`（截断为 500 字符） |
 | `agent:step` | 工具调用循环的每次迭代 | `platform`、`user_id`、`session_id`、`iteration`、`tool_names` |
-| `agent:end` | Agent 完成处理 | `platform`、`user_id`、`session_id`、`message`、`response` |
+| `agent:end` | Agent 完成处理 | 与 `agent:start` 相同的键，另加 `response`（截断为 500 字符） |
+| `reaction:added` | 在 bot 可见的消息上添加了 emoji 回应（目前为 Slack 适配器）。需要 `reactions:read` scope 以及 `reaction_added` bot 事件订阅；bot 必须是该频道的成员。 | `platform`、`reaction`、`user_id`、`item_user_id`、`item_type`、`channel_id`、`message_ts`、`team_id`、`event_ts`、`raw_event` |
+| `reaction:removed` | 从 bot 可见的消息上移除了 emoji 回应。需要 `reaction_removed` bot 事件订阅。 | 与 `reaction:added` 结构相同 |
 | `command:*` | 任意斜杠命令执行 | `platform`、`user_id`、`command`、`args` |
 
 #### 通配符匹配
 
 注册了 `command:*` 的处理器会在任何 `command:` 事件（`command:model`、`command:reset` 等）触发时执行。通过单个订阅即可监控所有斜杠命令。
+
+:::tip 线程内回复
+若处理器要向同一个 Telegram 论坛话题发送后续消息，当 `chat_type == "forum"` 且 `thread_id` 非空时，应带上 `message_thread_id=int(thread_id)`。
+:::
 
 ### 示例
 
@@ -366,26 +373,68 @@ def register(ctx):
     ctx.register_hook("post_llm_call", my_sync_callback)
     ctx.register_hook("on_session_start", my_init_callback)
     ctx.register_hook("on_session_end", my_cleanup_callback)
+    # Kanban board lifecycle (dependency-wait blocking may fire inside its transaction):
+    ctx.register_hook("kanban_task_claimed", my_claim_callback)     # dispatcher process
+    ctx.register_hook("kanban_task_completed", my_done_callback)    # worker process
+    ctx.register_hook("kanban_task_blocked", my_blocked_callback)   # worker process
 ```
 
 **所有 hook 的通用规则：**
 
 - 回调接收**关键字参数**；为保持向前兼容，请始终接受 `**kwargs`。
 - 回调异常会被记录并跳过，后续回调仍会继续。
+- 如果某个**有超时限制**的 hook（热路径观察者，如 `post_tool_call` / `pre_llm_call`，以及策略 hook `pre_tool_call`）上的 Python 插件回调**阻塞**超过 `plugins.hook_callback_timeout`（默认 30s，设为 `0` 可禁用，最大 600），它会被放弃且不会等待其 worker 结束，从而让 agent 循环继续。超时或仍在运行中的 `pre_tool_call` 回调会 **fail closed**（阻断工具）；其他有超时限制的 hook 则 fail open（跳过）。具有明确调用方线程约定的 hook（`subagent_stop`）永远不会被移到超时 worker 上。Shell hook 保留其各条目自己的 `timeout`。
 - 下表分类仅描述当前行为：**观察者**忽略返回值，**Transform** 接受第一个有效字符串替换，**指令/控制**消费已说明的返回结构。Plugin middleware 是独立的 registry/surface，不属于另一类 hook。
 - `turn_id`、`api_request_id`、`task_id`、`session_id`、`api_call_count` 等关联字段因 hook 而异，可能不存在；应将这些 ID 视为 opaque 值。
 - 运行时事件名以 `hermes_cli.plugins.VALID_HOOKS` 为准。`hermes hooks list` 只列出已配置的 shell/outbound hook，并非可用事件目录；只有 `hermes hooks test <event>` 收到无效事件时才会打印有效集合。
 
-### 已发布的 plugin-hook 目录
+### 缓存安全的系统 prompt 段落 {#cache-safe-system-prompt-sections}
+
+需要持久、始终生效的指导的插件，可以注册一个有界的系统 prompt 段落，而不是每一轮都通过
+`pre_llm_call` 注入相同的文本：
+
+```python
+def board_rules(session_info):
+    return f"Apply the worker rules for profile {session_info['profile_name']}."
+
+def register(ctx):
+    ctx.register_system_prompt_section(
+        "kanban-advanced.worker-rules",
+        board_rules,                       # a string is also accepted
+        position="after_memory",
+        max_chars=4000,
+    )
+```
+
+该约定被刻意限定得很窄：
+
+- ID 是全局、稳定、长度 1–128 个字符的小写标识符，只能使用字母、数字、`.`、`_` 和 `-`。
+  重复的 ID 会被拒绝。
+- `after_memory` 是唯一的放置锚点。段落按 ID 排序，渲染在记忆/profile 上下文之后、会话
+  元数据之前；插件无法重新排序或替换核心 prompt 内容。
+- 可调用对象会收到一个只读映射，包含 `session_id`、`model`、`provider`、`platform`、
+  `profile_name` 和 `cwd`。它**对每个新会话只运行一次**。其渲染出的字节在压缩时被冻结，并在
+  进程重启/恢复后从已持久化的完整系统 prompt 中恢复；对于已有会话，不会重新读取插件状态。
+- `max_chars` 上限为 4,000 个字符。所有插件段落加起来（包括其审计标题）上限为 8,000 个字符
+  和 32 个段落。空的、非字符串的、超长的、超出总预算的或抛出异常的段落会被跳过并发出警告；
+  prompt 构建继续进行。
+- 每个被接受的段落都会在 prompt 中具名，并在会话开始时连同其插件、位置和字符数一起记录日志。
+
+真正动态的每轮上下文请使用 `pre_llm_call`。该约定中有意没有插件环境提示 hook：cwd、分支或
+其他环境数据的变化绝不能悄悄改变会话的缓存 prompt。此类 hook 在被加入之前，需要有具体的
+使用方，以及同样的冻结/可安全恢复的语义。
+
+### 已发布的 plugin-hook 目录 {#shipped-plugin-hook-catalog}
 
 下表列出每个 call site 实际传入的事件专属字段。为保持向后兼容，`PluginManager` 还会向每个 plugin-hook 回调加入 `telemetry_schema_version="hermes.observer.v1"`。这个旧版 envelope 标记并不表示所有 hook payload 共用同一套语义 schema；新的版本化 contract 应归属于具体事件或 capability family。
 
 | Hook | 类别 | 精确时机与返回行为 | 显式 payload 字段 | 隐私/敏感性 |
 |---|---|---|---|---|
-| `pre_tool_call` | 指令/控制 | 执行前一次；第一个有效 `block` 或 `approve` 指令生效。 | `tool_name`, `args`, `task_id`, `session_id`, `tool_call_id`, `turn_id`, `api_request_id`, `middleware_trace` | 原始参数可能含用户内容、路径、命令或 secret。 |
+| [`pre_tool_call`](#pre_tool_call) | 指令/控制 | 执行前一次；第一个有效 `block` 或 `approve` 指令生效，`modify` 返回值会被浅合并到工具参数中。 | `tool_name`, `args`, `task_id`, `session_id`, `tool_call_id`, `turn_id`, `api_request_id`, `middleware_trace` | 原始参数可能含用户内容、路径、命令或 secret。 |
 | `post_tool_call` | 观察者 | 阻断、错误或成功结果产生后；忽略返回值。 | `tool_name`, `args`, `result`, `task_id`, `session_id`, `tool_call_id`, `turn_id`, `api_request_id`, `duration_ms`, `status`, `error_type`, `error_message`, `middleware_trace` | 结果/错误文本可能含任意工具或用户内容及 secret。 |
 | `transform_tool_result` | Transform | `post_tool_call` 后、写入会话前；第一个字符串替换结果。 | `tool_name`, `args`, `result`, `task_id`, `session_id`, `tool_call_id`, `turn_id`, `api_request_id`, `duration_ms`, `status`, `error_type`, `error_message` | 暴露完整的 model-bound 结果和参数。 |
 | `transform_terminal_output` | Transform | 前台进程输出完成有界捕获后、最终 output limit 前；第一个字符串替换输出。 | `command`, `output`, `returncode`, `task_id`, `env_type` | 命令/输出可能含凭据。 |
+| `pre_transcription` | Transform | 由 STT 分发器在解析出 provider 之后、调用任何后端（内置、命令型或插件注册的）之前触发；dict 结果按注册顺序应用，每个字段后写者胜出（`prompt`、`language`、`model`；`file_path` 只读）。 | `file_path`, `provider`, `model`, `language`, `prompt`, `source` | 最终的 prompt 会随音频一起上传到所配置的 STT provider——请勿在 hook 返回值中放入 secret。 |
 | `pre_llm_call` | 指令/控制 | 每轮 loop 前一次；所有有效字符串或 `{"context": ...}` 会拼接并注入用户消息。 | `session_id`, `task_id`, `turn_id`, `user_message`, `conversation_history`, `is_first_turn`, `model`, `platform`, `parent_session_id`, `sender_id` | 完整用户消息和会话历史。 |
 | `post_llm_call` | 观察者 | 成功且未中断的轮次 finalize 时；忽略返回值。 | `session_id`, `task_id`, `turn_id`, `user_message`, `assistant_response`, `conversation_history`, `model`, `platform` | 完整 prompt、response 和 history。 |
 | `transform_llm_output` | Transform | `post_llm_call` 和最终交付前；第一个非空字符串替换 response。 | `response_text`, `session_id`, `model`, `platform` | 完整最终 assistant 文本。 |
@@ -393,6 +442,11 @@ def register(ctx):
 | `pre_api_request` | 观察者 | 每次 provider attempt 发请求前；忽略返回值。 | `task_id`, `turn_id`, `api_request_id`, `session_id`, `user_message`, `conversation_history`, `platform`, `model`, `provider`, `base_url`, `api_mode`, `api_call_count`, `retry_count`, `request_messages`, `message_count`, `tool_count`, `approx_input_tokens`, `request_char_count`, `max_tokens`, `started_at`, `middleware_trace`, `request` | 高敏感：兼容字段 `user_message`、`conversation_history`、`request_messages` 故意保留原始值；新 consumer 应优先用已清理的 `request`。 |
 | `post_api_request` | 观察者 | Provider success 归一化后；忽略返回值。 | `task_id`, `turn_id`, `api_request_id`, `session_id`, `platform`, `model`, `provider`, `base_url`, `api_mode`, `api_call_count`, `api_duration`, `started_at`, `ended_at`, `finish_reason`, `message_count`, `response_model`, `response`, `usage`, `assistant_message`, `assistant_content_chars`, `assistant_tool_call_count` | 可用已清理的 `response`，但原始归一化 `assistant_message` 可能含模型/用户内容；`usage` 是计费数据。 |
 | `api_request_error` | 观察者 | 每次失败的 provider attempt；忽略返回值。 | `task_id`, `turn_id`, `api_request_id`, `session_id`, `platform`, `model`, `provider`, `base_url`, `api_mode`, `api_call_count`, `api_duration`, `started_at`, `ended_at`, `status_code`, `retry_count`, `max_retries`, `retryable`, `reason`, `error`, `request` | Error 文本可能含 provider/用户数据；`request` 设计为已清理。 |
+| `on_stream_start` | 观察者 | 流式 LLM 响应开始时分发；经由宿主拥有的有界队列（每个回调一个 worker）在 token 路径之外投递；忽略返回值。 | `turn_id`, `iteration`, `session_id`, `model`, `provider`, `surface` | 仅标识符和 routing metadata。 |
+| `on_stream_delta` | 观察者 | 每个归一化的流式文本增量经由有界观察者队列分发；停滞的回调只会丢弃它自己最旧的事件；忽略返回值。 | `delta`, `kind`（`text` 或 `reasoning`）, `turn_id`, `iteration`, `session_id`, `model`, `provider`, `surface` | 增量文本是原始模型输出；reasoning 增量需要选择启用 `plugins.stream_reasoning_deltas`。 |
+| `on_stream_end` | 观察者 | 流式响应结束或出错时、在流关闭之后分发；忽略返回值。 | `final_text`, `finished`, `error`, `turn_id`, `iteration`, `session_id`, `model`, `provider`, `surface` | 完整拼装后的响应文本；错误文本可能包含 provider 数据。 |
+| `on_interim_message` | 观察者 | 在最终答案之前呈现循环中途的 assistant 消息时分发（流式或非流式）；忽略返回值。 | `text`, `already_streamed`, `turn_id`, `iteration`, `session_id`, `model`, `provider`, `surface` | 完整的中间 assistant 文本。 |
+| `transform_api_error_classification` | Transform | 每次失败的 provider attempt，在内置分类器最开始处触发；所有回调都会运行，然后第一个带有效 `reason` 的 dict 胜出（全部运行后取第一个），被跳过的有效结果会记录运行时警告。仅限 Python 插件。 | `provider`, `model`, `status_code`, `error_type`, `error_code`, `error_message`, `error_body`, `error`, `approx_tokens`, `context_length`, `num_messages` | `error_message` 和 `error_body` 可能包含原始 provider/用户数据。 |
 | `on_session_start` | 观察者 | 新 session 第一轮；忽略返回值。 | `session_id`, `model`, `platform` | 仅标识符和 routing metadata。 |
 | `on_session_end` | 观察者 | Canonical 路径在每轮 finalize；CLI/TUI 退出还有精简 legacy shape。 | Canonical：`session_id`, `task_id`, `turn_id`, `completed`, `failed`, `interrupted`, `turn_exit_reason`, `model`, `platform`；退出路径可能增加 `reason`/`api_request_id` 并省略字段。 | ID、model/platform 和结果；canonical payload 无消息正文。 |
 | `on_session_finalize` | 观察者 | CLI/TUI/gateway 通过 `finalize_session` teardown；gateway 关闭时可只 finalize 而不 reset。忽略返回值。 | 按 surface：`session_id`, `platform`，可选 `reason`, `old_session_id`, `new_session_id` | Session 和 routing 标识。 |
@@ -401,11 +455,66 @@ def register(ctx):
 | `subagent_start` | 观察者 | 子 agent 已构造、即将运行；忽略返回值。 | `parent_session_id`, `parent_turn_id`, `parent_subagent_id`, `child_session_id`, `child_subagent_id`, `child_role`, `child_goal` | Child goal 可能含用户/项目内容。 |
 | `subagent_stop` | 观察者 | 子 agent 退出；忽略返回值。 | `parent_session_id`, `parent_turn_id`, `child_session_id`, `child_role`, `child_summary`, `child_status`, `tool_call_history`, `duration_ms` | Summary 和已脱敏 tool-history metadata 仍可能暴露项目结构。 |
 | `pre_gateway_dispatch` | 指令/控制 | 非 internal 入站消息在 auth/pairing/dispatch 前；第一个有效 `skip`、`rewrite` 或 `allow` 控制流程。 | `event`, `gateway`, `session_store` | 极高权限的进程内对象会暴露入站用户/routing 数据和 host handle。 |
+| `gateway_platform_event` | 观察者 | 在 gateway 的 profile 范围授权成功之后，当受支持的平台原生事件在 gateway 边界被归一化时触发（Telegram：回应、消息编辑；Discord：消息编辑/删除、线程创建/重命名）；忽略返回值。 | `platform`, `event_type`, `payload`（按事件类型区分的 dict——见下方各事件约定） | 仅为归一化后的纯 dict 信封；绝不暴露原始 SDK 对象、适配器句柄和 bot 客户端。 |
+| `pre_command` | 观察者 | 已识别的斜杠命令即将分发、处理器运行之前，在 CLI 和 gateway 冷路径分发时触发；v1 中忽略返回值（指令形态的 dict 会以 debug 级别记录）。Gateway 运行中 agent 的拦截命令（`/stop`、活跃运行期间的 `/approve`）被刻意排除——控制平面的逃生通道必须处于插件触及范围之外。 | `surface`（`"cli"` \| `"gateway"`）, `command`（规范名称）, `alias_used`, `args_raw`, `session_key`, `platform` | `args_raw` 可能包含命令后输入的用户内容或 secret。 |
 | `pre_approval_request` | 观察者 | Prompted 或 smart approval 前；忽略返回值。 | `command`, `description`, `pattern_key`, `pattern_keys`, `session_key`, `surface`, `turn_id`, `tool_call_id` | 命令可能含 secret；smart observer preparation 会强制脱敏，但各 surface 并非完全相同。 |
 | `post_approval_response` | 观察者 | 决策、timeout 或 gateway 通知失败后；忽略返回值。 | `command`, `description`, `pattern_key`, `pattern_keys`, `session_key`, `surface`, `turn_id`, `tool_call_id`, `choice`；smart 路径可增加 `decided_by` | 同样的命令敏感性，加决策 metadata。 |
 | `kanban_task_claimed` | 观察者 | Claim commit 后，在 dispatcher 进程 spawn worker 前；忽略返回值。 | `task_id`, `profile_name`, `board`, `assignee`, `run_id` | Board/task/profile/assignee 标识。 |
 | `kanban_task_completed` | 观察者 | Completion 和 cleanup 后，通常在 worker 进程；忽略返回值。 | `task_id`, `profile_name`, `board`, `assignee`, `run_id`, `summary` | Summary 可能含项目/用户内容。 |
 | `kanban_task_blocked` | 观察者 | Blocked transition 后；dependency-wait 路径在 transaction 退出前触发。忽略返回值。 | `task_id`, `profile_name`, `board`, `assignee`, `run_id`, `reason` | Reason 可能含项目/用户内容。 |
+| `on_kanban_worker_spawned` | 观察者 | `spawn_fn` 返回且 worker PID 已持久化之后；在 dispatch 锁内运行，请保持回调快速。忽略返回值。 | `task_id`, `profile_name`, `board`, `assignee`, `run_id`, `worker_pid`, `workspace_path` | `workspace_path` 是文件系统路径，可能暴露项目布局或用户名。 |
+| `on_kanban_worker_exited` | 观察者 | 由 tick 派生：`detect_crashed_workers` 回收 PID 已死亡的任务且回收提交之后。忽略返回值。 | `task_id`, `profile_name`, `board`, `assignee`, `run_id`, `worker_pid`, `exit_kind`, `exit_code`, `outcome`, `retry_status` | 仅标识符和退出 metadata。 |
+| `on_kanban_worker_stale_claim` | 观察者 | TTL 过期的认领被回收之后；PID 仍存活的续期不会触发。忽略返回值。 | `task_id`, `profile_name`, `board`, `assignee`, `run_id`, `worker_pid`, `heartbeat_stale`, `retry_status` | 仅标识符和认领 metadata。 |
+| `on_kanban_task_updated` | 观察者 | 在认领/完成/阻塞生命周期之外提交任务字段写入之后（assign、覆盖设置、仪表板编辑器）。忽略返回值。 | `task_id`, `profile_name`, `board`, `assignee`, `run_id`, `changed_fields` | `changed_fields` 只携带字段名，从不携带值；看板数据库中所指的 title/body 值可能包含用户/项目内容。 |
+| `on_kanban_dispatch_tick` | 观察者 | 每个 dispatcher tick 一次，严格在 dispatch 锁释放之后；空闲和锁争用的 tick 同样会触发。忽略返回值。 | `board`, `profile_name`, `dry_run`, `outcome`, `result` | `result` 是该 tick 的 `DispatchResult`，携带任务 id、指派对象和工作区路径。 |
+
+---
+
+### 流式输出 hook {#streaming-output-hooks}
+
+这些仅观察的 hook 让插件可以消费流式 LLM 输出，用于遥测、实时仪表板或 TTS 管线，而不会改变响应。它们通过宿主拥有的有界队列投递，每个已注册回调有一个后台 worker，因此插件回调永远不会在 token 路径上内联运行。如果某个回调停滞，只有该回调的队列会被填满并丢弃其最旧的待处理观察者事件；其他观察者会继续独立地接收事件。
+
+像注册其他插件 hook 一样注册它们：
+
+```python
+def on_delta(delta, kind, model, provider, **kwargs):
+    if kind == "text":
+        print(delta, end="", flush=True)
+
+def register(ctx):
+    ctx.register_hook("on_stream_delta", on_delta)
+```
+
+四个 hook 的公共字段：
+
+| 参数 | 类型 | 描述 |
+|-----------|------|-------------|
+| `turn_id` | `str` | 不透明的轮次标识符（如有） |
+| `iteration` | `int` | 当前 API 调用/工具循环迭代 |
+| `session_id` | `str` | 当前 Hermes 会话 id |
+| `model` | `str` | 当前模型标识符 |
+| `provider` | `str` | 当前 provider 名称 |
+| `surface` | `str` | 调用界面，例如 `cli`、`discord`、`telegram` |
+
+额外字段：
+
+| Hook | 额外字段 |
+|------|--------------|
+| `on_stream_start` | 无 |
+| `on_stream_delta` | `delta: str`, `kind: "text" | "reasoning"` |
+| `on_stream_end` | `final_text: str`, `finished: bool`, `error: str | None` |
+| `on_interim_message` | `text: str`, `already_streamed: bool` |
+
+`on_interim_message` 在非流式响应之后同样可能触发，因此只注册这个 hook 并不会迫使 provider 调用改用流式传输。
+
+reasoning 增量默认不会暴露给插件。请显式选择启用：
+
+```yaml
+plugins:
+  stream_reasoning_deltas: true
+```
+
+返回值会被忽略。为了保持流的速度，回调应把自己的工作放入队列并尽快返回。异常会被记录，不会中断流。
 
 ---
 
@@ -435,9 +544,27 @@ return {"action": "block", "message": "Reason the tool call was blocked"}
 return {"action": "approve", "message": "Why approval is required", "rule_key": "optional:scope"}
 ```
 
-第一个有效指令生效。`block` 要求非空 `message`，并用该文本作为返回给模型的错误来短路工具。`approve` 将调用升级到现有的人类审批 gate；`message` 和 `rule_key` 可选，拒绝、timeout 或 gate error 都会 fail closed。其他返回值会被忽略。
+第一个有效指令生效（Python 插件先注册，然后是 shell hooks）。`block` 要求非空 `message`，并用该文本作为返回给模型的错误来短路工具。`approve` 将调用升级到现有的人类审批 gate；`message` 和 `rule_key` 可选，拒绝、timeout 或 gate error 都会 fail closed。其他返回值会被忽略，因此仅作观察用途的现有回调无需修改。
 
-**使用场景：** 日志记录、审计追踪、工具调用计数、阻断危险操作、速率限制、按用户策略执行。
+**返回值——重写工具参数：**
+
+```python
+return {"action": "modify", "args": {"new_string": "fixed content"}}
+```
+
+返回的 `args` 字典会在工具执行前浅合并到原始工具参数之上。多个 `modify` hook 会累积——每个 hook 的键都会合并到一个基于原始参数构建的累积字典中，因此 hook A 修改 `path`、hook B 修改 `content` 时两者都会保留。如果两个 hook 修改同一个键，后执行的 hook 胜出。
+
+Shell hook 也接受与 Claude Code 兼容的格式：
+
+```json
+{"decision": "modify", "tool_input": {"new_string": "fixed content"}}
+```
+
+两种格式在内部都会被归一化为 `{"action": "modify", "args": {...}}`。
+
+如果某个 `pre_tool_call` 回调超过了 `plugins.hook_callback_timeout`（或仍在运行上一次超时触发的调用），Hermes 会 **fail closed**：该工具会被阻断并返回一条超时消息，而不是在没有策略决定的情况下继续执行。
+
+**使用场景：** 日志记录、审计追踪、工具调用计数、阻断危险操作、速率限制、按用户策略执行、参数清理、路径重写、注入默认参数。
 
 **示例——工具调用审计日志：**
 
@@ -541,7 +668,7 @@ def my_callback(session_id: str, user_message: str, conversation_history: list,
 | `model` | `str` | 模型标识符（如 `"anthropic/claude-sonnet-4.6"`） |
 | `platform` | `str` | 会话运行环境：`"cli"`、`"telegram"`、`"discord"` 等 |
 
-**触发位置：** `run_agent.py` 中的 `run_conversation()` 内，上下文压缩后、主 `while` 循环前。每次 `run_conversation()` 调用触发一次（即每个用户轮次一次），而非工具循环内每次 API 调用触发一次。
+**触发位置：** `agent/turn_context.py` 中（为 `agent/conversation_loop.py` 中的 `run_conversation()` 做轮次准备），上下文压缩后、主 `while` 循环前。每次 `run_conversation()` 调用触发一次（即每个用户轮次一次），而非工具循环内每次 API 调用触发一次。
 
 **返回值：** 若回调返回包含 `"context"` 键的字典，或非空的普通字符串，该文本会追加到当前轮次的用户消息。返回 `None` 表示不注入。
 
@@ -623,7 +750,7 @@ def my_callback(session_id: str, user_message: str, assistant_response: str,
 | `model` | `str` | 模型标识符 |
 | `platform` | `str` | 会话运行环境 |
 
-**触发位置：** `run_agent.py` 中的 `run_conversation()` 内，工具循环以最终响应退出后。受 `if final_response and not interrupted` 保护——因此当用户在轮次中途中断，或 agent 在未产生响应的情况下达到迭代上限时，**不会**触发。
+**触发位置：** `agent/turn_finalizer.py` 中（`finalize_turn()`，由 `agent/conversation_loop.py` 中的 `run_conversation()` 调用），工具循环以最终响应退出后。受 `if final_response and not interrupted` 保护——因此当用户在轮次中途中断，或 agent 在未产生响应的情况下达到迭代上限时，**不会**触发。
 
 **返回值：** 忽略。
 
@@ -731,6 +858,23 @@ def register(ctx):
 
 ---
 
+### `transform_api_error_classification`
+
+每次 API 调用失败时触发一次，位于 `agent/error_classifier.classify_api_error()` 的最开始、内置管线之前。Provider 插件用它来自行处理各自 provider 的错误怪癖，而无需修改核心代码。它会改变行为（transform 家族）：返回的分类会驱动重试、压缩、凭据轮换和回退路由。
+
+回调以关键字参数形式接收解析后的错误上下文——`provider`（据此限定自身作用范围）、`model`、`status_code`、`error_type`、`error_code`、`error_message`、`error_body`、`error`、`approx_tokens`、`context_length`、`num_messages`。返回 `None` 表示不处理，或返回一个 dict 来认领该错误：
+
+```python
+return {"reason": "model_not_found",   # required: a FailoverReason name
+        "retryable": False, "should_fallback": True}  # optional recovery-hint overrides
+```
+
+分发方式为全部运行后取第一个：每个回调都会运行，失败会被隔离，按注册顺序第一个有效结果胜出（有效但落选的结果会记录运行时警告）。无效的 dict 和未知的 reason 会被跳过，因此有问题的插件永远不会破坏分类。
+
+**隐私：** `error_message` 和 `error_body` 可能携带未脱敏的 provider 数据。**仅限 Python 插件**——shell 注册会在配置解析时被拒绝并发出警告。
+
+---
+
 ### `on_session_start`
 
 在全新会话创建时触发**一次**。在会话延续时**不会**触发（用户在已有会话中发送第二条消息时）。
@@ -747,7 +891,7 @@ def my_callback(session_id: str, model: str, platform: str, **kwargs):
 | `model` | `str` | 模型标识符 |
 | `platform` | `str` | 会话运行环境 |
 
-**触发位置：** `run_agent.py` 中的 `run_conversation()` 内，新会话第一轮期间——具体在系统 prompt 构建后、工具循环开始前。检查条件为 `if not conversation_history`（无历史消息 = 新会话）。
+**触发位置：** `agent/conversation_loop.py` 中的 `run_conversation()` 内，新会话第一轮期间——具体在系统 prompt 构建后、工具循环开始前。检查条件为 `if not conversation_history`（无历史消息 = 新会话）。
 
 **返回值：** 忽略。
 
@@ -792,7 +936,7 @@ def my_callback(session_id: str, completed: bool, interrupted: bool,
 | `platform` | `str` | 会话运行环境 |
 
 **触发位置：** 两处：
-1. **`run_agent.py`** — 每次 `run_conversation()` 调用结束时，所有清理完成后。始终触发，即使轮次出错。
+1. **`agent/turn_finalizer.py`** — 每次 `run_conversation()` 调用（`agent/conversation_loop.py`）结束时，所有清理完成后。始终触发，即使轮次出错。
 2. **`cli.py`** — CLI 的 atexit 处理器中，但**仅当** agent 在退出时处于处理中状态（`_agent_running=True`）。这捕获了处理过程中的 Ctrl+C 和 `/exit`。此时 `completed=False`，`interrupted=True`。
 
 **返回值：** 忽略。
@@ -966,14 +1110,14 @@ def register(ctx):
 
 ### `subagent_stop`
 
-`delegate_task` 完成后，**每个子 agent 触发一次**。无论你委托了单个任务还是三个任务的批次，此 hook 对每个子 agent 各触发一次，在父线程上串行执行。
+`delegate_task` 完成后，**每个子 agent 触发一次**。无论你委托了单个任务还是三个任务的批次，此 hook 对每个子 agent 各触发一次。分发在子 future 排空后于父线程上串行进行，每个 Python 回调体都在同一个调用方线程上运行（而不是在超时 worker 上）。
 
 **回调签名：**
 
 ```python
 def my_callback(parent_session_id: str, child_role: str | None,
                 child_summary: str | None, child_status: str,
-                duration_ms: int, **kwargs):
+                tool_call_history: list[dict], duration_ms: int, **kwargs):
 ```
 
 | 参数 | 类型 | 描述 |
@@ -982,9 +1126,10 @@ def my_callback(parent_session_id: str, child_role: str | None,
 | `child_role` | `str \| None` | 子 agent 上设置的编排角色标签（若功能未启用则为 `None`） |
 | `child_summary` | `str \| None` | 子 agent 返回给父 agent 的最终响应 |
 | `child_status` | `str` | `"completed"`、`"failed"`、`"interrupted"` 或 `"error"` |
+| `tool_call_history` | `list[dict]` | 按顺序排列、仅含元数据的工具调用：`tool_name`、有界的 `tool_input`、`input_bytes`、`output_bytes` 和 `status`；原始输入和输出被排除 |
 | `duration_ms` | `int` | 运行子 agent 的挂钟时间，单位毫秒 |
 
-**触发位置：** `tools/delegate_tool.py` 中，`ThreadPoolExecutor.as_completed()` 排空所有子 future 后。触发被编排到父线程，因此 hook 作者无需考虑并发回调执行问题。
+**触发位置：** `tools/delegate_tool.py` 中，`ThreadPoolExecutor.as_completed()` 排空所有子 future 后。`invoke_hook("subagent_stop", ...)` 被编排到父线程，因此作者不会遇到子线程池的重入问题，回调也始终留在该调用方线程上。
 
 **返回值：** 忽略。
 
@@ -1071,6 +1216,47 @@ def buffer_or_rewrite(event, **kwargs):
 def register(ctx):
     ctx.register_hook("pre_gateway_dispatch", buffer_or_rewrite)
 ```
+
+---
+
+### `gateway_platform_event`
+
+仅在 gateway 常规的、profile 范围的授权检查成功**之后**，为受支持的平台原生事件触发。回调接收的是纯字典；原始 SDK 对象、适配器句柄、bot 客户端和回调上下文永远不属于这一稳定约定。
+
+Telegram 消息回应是第一个受支持的事件；随后又加入了消息编辑、删除和线程生命周期事件：
+
+```python
+def on_platform_event(platform, event_type, payload, **kwargs):
+    if platform == "telegram" and event_type == "reaction":
+        print(payload["chat_id"], payload["message_id"], payload["emojis"])
+    elif event_type == "message_edited":
+        print(platform, payload["chat_id"], payload["message_id"], payload["text"])
+
+def register(ctx):
+    ctx.register_hook("gateway_platform_event", on_platform_event)
+```
+
+| 参数 | 类型 | 描述 |
+|-----------|------|-------------|
+| `platform` | `str` | 稳定的平台 id（`"telegram"`、`"discord"`）。 |
+| `event_type` | `str` | 事件本地的约定 id（见下表）。 |
+| `payload` | `dict` | 按事件类型区分的字段，按事件类型分别记录在下方。 |
+
+每个 payload 都是增量扩展且事件专属的；不存在统一的 gateway payload 版本。所有 id 都是字符串；缺失/不可用的字段为 `None`，绝不猜测。格式错误的事件以及来源无法通过授权的事件会被丢弃（fail closed）。Telegram Application 的临时重建会把该观察者与核心处理器一起重新注册。
+
+**各事件的 payload 约定（v1，增量扩展）：**
+
+| `event_type` | 平台 | Payload 字段 |
+|--------------|-----------|----------------|
+| `reaction` | telegram | `emojis: list[str]`、`custom_emoji_ids: list[str]`、`chat_id: str`、`message_id: str`、`thread_id: str \| None`（Telegram 回应更新不携带话题 id，因此目前始终为 `None`）。 |
+| `message_edited` | telegram, discord | `chat_id: str`、`message_id: str`、`thread_id: str \| None`、`text: str \| None`（编辑后的文本或说明文字，有长度上限；仅媒体的编辑或未缓存时为 `None`）、`edited_at: str \| None`（ISO 8601）。 |
+| `message_deleted` | discord | `chat_id: str`、`message_id: str`、`thread_id: str \| None`、`author_id: str \| None`。Discord 的删除事件不会标识删除者；授权来源是被删除消息的作者，未缓存的删除永远不会触发。 |
+| `thread_created` | discord | `thread_id: str`、`parent_chat_id: str \| None`、`name: str \| None`、`owner_id: str \| None`。 |
+| `thread_renamed` | discord | `thread_id: str`、`parent_chat_id: str \| None`、`old_name: str \| None`、`new_name: str`。仅在名称确实发生变化时触发；其他线程更新（归档、慢速模式、标签）会被丢弃。Discord 的线程更新事件不携带操作者，因此线程所有者就是授权来源。 |
+
+bot 自身的渐进式消息编辑（流式输出）在 Discord 上永远不会触发 `message_edited`——bot 发出的事件会在触发点被丢弃。
+
+此 hook 仅用于观察：它**不会**增加原始事件访问或适配器访问。**原始 SDK payload 访问被刻意不提供**——适配器 SDK 对象会在无通知的情况下改变结构，会成为无法演进的 API 接口；确有需要时，它需要自己明确的 capability（`gateway.raw_events`），附带“无稳定性保证”的标签和独立的设计（在 #64228 中跟踪）。若要在平台上*执行操作*（添加回应、重命名线程），请使用[插件指南](plugins.md#platform-actions)中记录的、受 capability 门控的 `ctx.platform_actions` 门面——它默认处于关闭状态，受 `gateway.platform_actions` capability 门控。`PluginContext.dispatch_tool()` 只能调用在工具注册表中注册的工具；`send_message` 有意未在其中注册（其传输保留给显式的 CLI、cron、kanban 和 MCP 投递路径）。未来的出站投递约定必须先在所有适配器上提供稳定的已投递内容/句柄；本次改动不会预先注册一个无实际作用的 `gateway_message_delivered` hook。
 
 ---
 
@@ -1163,6 +1349,53 @@ def log_decision(command, choice, session_key, **kwargs):
 def register(ctx):
     ctx.register_hook("post_approval_response", log_decision)
 ```
+
+---
+
+### `pre_transcription`
+
+在 STT 分发器（`tools.transcription_tools.transcribe_audio`）内部触发，时机是在解析出 provider **之后**、调用任何后端**之前**——无论该后端是内置的、`type: command` provider，还是插件注册的 provider。它让插件能够引导转录请求本身，而不仅仅是事后观察转录结果。
+
+**回调签名：**
+
+```python
+def my_callback(
+    file_path: str,
+    provider: str,
+    model: str | None,
+    language: str | None,
+    prompt: str | None,
+    source: str | None,
+    **kwargs,
+) -> dict | None:
+```
+
+| 参数 | 类型 | 描述 |
+|-----------|------|-------------|
+| `file_path` | `str` | 即将被转录的音频文件的绝对路径。只读。 |
+| `provider` | `str` | 解析得到的 STT provider（`local`、`groq`、`openai`、`mistral`、`xai`、`elevenlabs`、`deepinfra`、`local_command`、某个命令型 provider 名称，或某个插件 provider 名称）。 |
+| `model` | `str \| None` | 目前解析得到的模型；使用后端默认值时为 `None`。 |
+| `language` | `str \| None` | 来自 provider 配置段的语言，或 `None`。 |
+| `prompt` | `str \| None` | 静态的 [`stt.prompt`](/user-guide/configuration#transcription-prompt-vocabulary-hints) 值，或 `None`。 |
+| `source` | `str \| None` | 调用方界面标签（`gateway`、`voice_mode`……）。仅用于可观测性，不参与分发。 |
+
+**返回值：** 一个 `dict`，可包含 `"prompt"`、`"language"`、`"model"` 中的任意键并映射到字符串；或返回 `None` 保持请求不变。非字符串值、未知键以及 `file_path` 会被忽略（尝试修改 `file_path` 会记录警告）。结果在 `stt.prompt` 配置值的基础上，**按注册顺序应用，每个字段后写者胜出**。对 `prompt` 返回 `""` 会清除该次请求所配置的 prompt。
+
+**使用场景：** 在音频上传之前注入按用户或按聊天的词汇表、根据调用方的区域设置强制指定 `language`、对长录音降级 `model`、把嘈杂的来源路由到不同的模型。
+
+```python
+VOCAB = "Hermes, Teknium, Nous Research, kanban"
+
+def add_vocab(provider, prompt, source, **kwargs):
+    if source != "gateway":
+        return None
+    return {"prompt": f"{prompt}. {VOCAB}" if prompt else VOCAB}
+
+def register(ctx):
+    ctx.register_hook("pre_transcription", add_vocab)
+```
+
+并非每个后端都接受 prompt。`local` 会把它映射为 faster-whisper 的 `initial_prompt`；`openai`、`groq`、`mistral` 和 `deepinfra` 会将其作为 `prompt` 发送；`xai`、`elevenlabs`、`local_command` 以及 `type: command` provider 会记录一条 DEBUG 日志并在不带 prompt 的情况下转录。完整矩阵和隐私边界请参阅 [provider 支持表](/user-guide/configuration#transcription-prompt-vocabulary-hints)。Hook 管道本身的错误会 fail open：分发继续使用未修改的请求。
 
 ---
 
@@ -1269,6 +1502,9 @@ def my_callback(
 
 **使用场景：** 应用个性/词汇转换（海盗腔、海绵宝宝体）、从最终文本中脱敏用户特定标识符、追加项目特定签名页脚、在不消耗 SOUL 指令 token 的情况下执行内部风格指南。
 
+启用 CLI 流式输出时，仅追加内容的 transform 会在流式正文之后打印。替换响应的 transform
+会在流式正文之后完整打印，并标注为流结束后的转换，因此替换内容永远不会被静默丢失。
+
 ```python
 import os, re
 
@@ -1317,15 +1553,27 @@ Completion 和 cleanup 后触发，通常位于 worker 进程；`summary` 可能
 
 三个 kanban hook 均仅观察，并携带 `task_id`、`profile_name`、`board`、`assignee`、`run_id`；completed 增加 `summary`，blocked 增加 `reason`。
 
+### Kanban worker 生命周期、任务变更与分发观察者 {#kanban-worker-lifecycle-task-mutation-and-dispatch-observers}
+
+另外五个观察者（RFC #58548）扩展了 kanban 家族。它们全都仅用于观察，在相关事务提交之后触发，并会在 `has_hook` 上短路——没有订阅者时，分发行为保持不变。任务范围的 hook 携带与上面各 hook 相同的公共字段。
+
+- **`on_kanban_worker_spawned`** —— 在 `spawn_fn` 返回且 worker PID 已持久化之后触发。增加 `worker_pid`（可能为 `None`）和 `workspace_path`。在 dispatch 锁内运行；请保持回调快速。
+- **`on_kanban_worker_exited`** —— 由 tick 派生，当 `detect_crashed_workers` 回收 PID 已死亡的任务时触发。增加 `worker_pid`、`exit_kind`、`exit_code`、`outcome`、`retry_status`。
+- **`on_kanban_worker_stale_claim`** —— 当 TTL 过期的认领被回收时触发；PID 仍存活的续期不会触发。增加 `worker_pid`、`heartbeat_stale`、`retry_status`。
+- **`on_kanban_task_updated`** —— 在认领/完成/阻塞生命周期之外提交任务字段写入之后触发（`assign_task`、模型/推理覆盖设置、仪表板编辑器）。增加 `changed_fields`——只含字段名，从不含值。
+- **`on_kanban_dispatch_tick`** —— 每个 dispatcher tick 一次，严格在 dispatch 锁释放之后触发，包括空闲和锁争用的 tick。Payload：`board`、`profile_name`、`dry_run`、`outcome`、`result`。
+
 ---
 
 ## Shell Hooks
 
-在 `cli-config.yaml` 中声明 shell 脚本 hook，Hermes 会在对应的插件 hook 事件触发时将其作为子进程运行——在 CLI 和 gateway 会话中均适用。无需编写 Python 插件。
+在 profile 的 `config.yaml` 中声明 shell 脚本 hook，Hermes 会在对应的插件 hook 事件触发时将其作为子进程运行——在 CLI、gateway、Desktop、TUI 和仪表板聊天会话中均适用。无需编写 Python 插件。
+
+Desktop、TUI 和仪表板聊天会在构建 agent 时注册 hook，使用该会话所属 profile 的配置和授权允许列表。切换 profile 不会复用另一个 profile 的 hook。现有的 hook 授权要求和安全模式行为仍然适用；未经批准的 hook 会被跳过，而不是被静默批准。
 
 当你希望用一个即插即用的单文件脚本（Bash、Python 或任何带 shebang 的脚本）来实现以下功能时，使用 shell hooks：
 
-- **阻断工具调用** — 拒绝危险的 `terminal` 命令、执行按目录策略、要求对破坏性的 `write_file` / `patch` 操作进行审批。
+- **阻断或修改工具调用** — 拒绝危险的 `terminal` 命令、执行按目录策略、要求对破坏性的 `write_file` / `patch` 操作进行审批，或在工具运行前重写参数（清理路径、注入默认值）。
 - **工具调用后运行** — 自动格式化 agent 刚写入的 Python 或 TypeScript 文件、记录 API 调用、触发 CI 工作流。
 - **向下一个 LLM 轮次注入上下文** — 在用户消息前追加 `git status` 输出、当前星期几或检索到的文档（参见 [`pre_llm_call`](#pre_llm_call)）。
 - **观察生命周期事件** — 在子 agent 完成（`subagent_stop`）或会话开始（`on_session_start`）时写入日志行。
@@ -1354,11 +1602,13 @@ hooks:
     - matcher: "<regex>"         # Optional; used for pre/post_tool_call only
       command: "<shell command>" # Required; runs via shlex.split, shell=False
       timeout: <seconds>         # Optional; default 60, capped at 300
+      fail_closed: <bool>        # Optional; default false. pre_tool_call only.
+                                 # `failClosed` also accepted (Cursor/Claude Code compat)
 
 hooks_auto_accept: false         # See "Consent model" below
 ```
 
-事件名称必须是 [plugin hook 事件](#plugin-hooks)之一；拼写错误会产生"你是否想输入 X？"警告并被跳过。单个条目中的未知键会被忽略；缺少 `command` 会跳过并发出警告。`timeout > 300` 会被截断并发出警告。
+事件名称必须是 [plugin hook 事件](#plugin-hooks)之一；拼写错误会产生"你是否想输入 X？"警告并被跳过。单个条目中的未知键会被忽略；缺少 `command` 会跳过并发出警告。`timeout > 300` 会被截断并发出警告。在 `pre_tool_call` 以外的事件上设置 `fail_closed: true` 会发出警告并被忽略（只有具备阻断能力的事件才能 fail closed）。
 
 ### JSON 通信协议
 
@@ -1386,6 +1636,10 @@ hooks_auto_accept: false         # See "Consent model" below
 {"decision": "block", "reason":  "Forbidden: rm -rf"}   // Claude-Code style
 {"action":   "block", "message": "Forbidden: rm -rf"}   // Hermes-canonical
 
+// Modify a pre_tool_call — rewrite tool args before dispatch:
+{"action": "modify", "args": {"new_string": "fixed content"}}         // Hermes-canonical
+{"decision": "modify", "tool_input": {"new_string": "fixed content"}} // Claude-Code style
+
 // Inject context for pre_llm_call:
 {"context": "Today is Friday, 2026-04-17"}
 
@@ -1397,6 +1651,50 @@ hooks_auto_accept: false         # See "Consent model" below
 ```
 
 格式错误的 JSON、非零退出码和超时会记录警告，但永远不会中止 agent 循环。
+
+### 退出码 2 = 阻断（兼容 Claude Code / Cursor） {#exit-code-2--block-claude-code--cursor-compatible}
+
+以退出码 **2** 退出的 `pre_tool_call` hook 会阻断工具调用，即使其 stdout 中没有阻断 JSON。阻断消息按以下优先级确定：
+
+1. stdout 中的阻断 JSON（`reason` / `message`），如果存在；
+2. stderr 的前 400 个字符；
+3. 通用的默认值 `"Blocked by shell hook."`。
+
+因此，最简单的阻断 hook 是：
+
+```bash
+#!/usr/bin/env bash
+echo "policy violation: rm -rf is not permitted" >&2
+exit 2
+```
+
+对于不遵循阻断指令的事件（除 `pre_tool_call` 以外的所有事件），退出码 2 与其他任何非零退出码的处理方式相同：记录一条警告，stdout 仍会被解析。
+
+### Fail-open 与 fail-closed {#fail-open-vs-fail-closed}
+
+默认情况下，shell hook 会 **fail open**：生成进程出错、超时或 stdout 无法解析时，会记录一条警告，操作继续进行。这对可观测性 hook 来说是正确的默认值——但对安全闸门来说是错误的。一个崩溃的密钥扫描器不能静默放行它本应审查的工具调用。
+
+在 `pre_tool_call` 条目上设置 `fail_closed: true`（或 Cursor/Claude Code 的写法 `failClosed: true`）即可反转这一行为：
+
+```yaml
+hooks:
+  pre_tool_call:
+    - matcher: "terminal|write_file|patch"
+      command: "~/.hermes/agent-hooks/secret-scan.sh"
+      timeout: 10
+      fail_closed: true
+```
+
+设置 `fail_closed: true` 后，以下每种情况都会以 `hook <command> failed closed: <reason>` **阻断**工具调用：
+
+| 失败情况 | Fail-open（默认） | `fail_closed: true` |
+|---------|--------------------|--------------------|
+| 命令未找到 / 不可执行 | 警告，继续 | **阻断** |
+| 超时 | 警告，继续 | **阻断** |
+| 非 JSON 的 stdout（例如堆栈跟踪） | 警告，继续 | **阻断** |
+| 正常退出，有效的空操作 JSON（`{}`） | 继续 | 继续 |
+
+`fail_closed` 只适用于具备阻断能力的事件（目前为 `pre_tool_call`）；在其他任何事件上设置它会在配置解析时记录警告并被忽略。`hermes hooks test` 反映了这些语义——`parsed` 行会准确显示分发器将收到的阻断结构。
 
 ### 实际示例
 
@@ -1489,7 +1787,7 @@ printf '{}\n'
 
 1. CLI 上的 `--accept-hooks` 标志（如 `hermes --accept-hooks chat`）
 2. `HERMES_ACCEPT_HOOKS=1` 环境变量
-3. `cli-config.yaml` 中的 `hooks_auto_accept: true`
+3. `~/.hermes/config.yaml` 中的 `hooks_auto_accept: true`
 
 非 TTY 运行（gateway、cron、CI）需要这三种方式之一——否则任何新添加的 hook 会静默保持未注册状态并记录警告。
 
@@ -1536,14 +1834,87 @@ Python 插件 hook 和 shell hook 都流经同一个 `invoke_hook()` 分发器�
 
 ## Outbound Webhooks
 
-在 `config.yaml` 的 `hooks.outbound:` 中为一个或多个已发布事件配置外部 HTTP endpoint。Outbound webhook 是**仅通知**的 consumer：回调会序列化事件并放入有界队列，由 daemon worker 发送，因此 endpoint 的返回值不能阻断、转换或引导 agent。可使用环境变量提供 HMAC secret；接收方应校验签名，并将 payload 视为与上表相同敏感度的数据。
+Outbound webhook 是[入站 webhook 平台](/user-guide/messaging/webhooks)在推送端的镜像：入站 webhook 在外部世界发生变化时唤醒 Hermes；出站 webhook 在 Hermes 做了某件事时告知外部世界。配置一组 HTTP endpoint 以及它们关心的生命周期事件，每当匹配的事件触发时，Hermes 就会向每个 endpoint POST 一份带签名的 JSON 载荷——接收端无需轮询。
+
+典型用途：
+
+- 在 agent 轮次结束时通知 CI 系统或仪表板（`on_session_end`）
+- 跨整个机队跟踪子 agent 的完成情况（`subagent_stop`）
+- 将工具活动输送到外部监控（`post_tool_call` 配合 `matcher`）
+- 唤醒*另一个* Hermes 实例：把 URL 指向该实例的入站 webhook
+
+### 配置 {#configuration}
+
+在 `~/.hermes/config.yaml` 中添加一个 `hooks.outbound:` 列表：
 
 ```yaml
 hooks:
   outbound:
-    - url: "https://example.com/hermes-events"
-      events: [post_tool_call, on_session_end]
-      secret_env: HERMES_WEBHOOK_SECRET
+    - name: ci-notify                       # optional label for logs
+      url: https://ci.example.com/hermes-events
+      events: [on_session_end, subagent_stop]
+      secret_env: HERMES_OUTBOUND_WEBHOOK_SECRET   # env var holding the HMAC secret
+      timeout: 10                           # per-attempt seconds (1–60)
+
+    - name: tool-monitor
+      url: https://metrics.example.com/hooks/hermes
+      events: [post_tool_call]
+      matcher: "terminal|delegate_task"     # regex, tool-scoped events only
 ```
 
-配置中的事件名同样以 `hermes_cli.plugins.VALID_HOOKS` 为准。`hermes hooks list` 会列出这些已配置 target，但不会输出完整的可用事件目录。
+plugin-hook 集合中的任何事件都是有效的（`pre_tool_call`、`post_tool_call`、`pre_llm_call`、`post_llm_call`、`on_session_start`、`on_session_end`、`subagent_start`、`subagent_stop`……）。格式错误的条目会发出警告并被跳过——有问题的 webhook 永远不会让 agent 崩溃。改动在下一个 CLI 会话 / gateway 重启时生效。
+
+密钥：优先使用 `secret_env`（一个环境变量的名称，通常在 `~/.hermes/.env` 中设置），而不是内联的 `secret:` 字面量，这样配置文件中就不会包含凭据。没有密钥的条目会以未签名方式投递（`hermes hooks list` 会将其标记为 `UNSIGNED`）。
+
+### 传输格式 {#wire-format}
+
+每次触发都会 POST 一个 JSON 正文，其顶层结构与 shell hook 的 stdin 相同，另加投递元数据。`profile` 指明发出该事件的 Hermes profile（不使用 profile 时为 `"default"`），因此位于多路复用 gateway 之后的接收方可以区分不同的 profile：
+
+```json
+{
+  "hook_event_name": "on_session_end",
+  "profile": "default",
+  "tool_name": null,
+  "tool_input": null,
+  "session_id": "sess_abc123",
+  "cwd": "/home/user/project",
+  "extra": {"completed": true, "interrupted": false, "model": "...", "platform": "cli"},
+  "delivery_id": "3f2c9a...",
+  "timestamp": "2026-07-22T14:00:00Z"
+}
+```
+
+请求头：
+
+| 请求头 | 值 |
+|--------|-------|
+| `Content-Type` | `application/json` |
+| `X-Hermes-Event` | hook 事件名称 |
+| `X-Hermes-Delivery` | 每次投递的唯一 id——与正文中的 `delivery_id` 值相同 |
+| `X-Hermes-Signature-256` | `sha256=<hex>`——原始正文的 HMAC-SHA256，GitHub 风格；仅在配置了密钥时存在 |
+
+校验签名的方式与校验 GitHub webhook 完全相同：
+
+```python
+import hashlib, hmac
+
+def verify(body: bytes, header: str, secret: str) -> bool:
+    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header)
+```
+
+由于 `delivery_id` 和 `timestamp` 位于**签名正文之内**，完成校验的接收方还能免费获得重放保护：
+
+- 按 `delivery_id`（或对应的 `X-Hermes-Delivery` 请求头）**去重**——记住最近见过的 id 并跳过重复项。Hermes 会对失败的投递重试一次，因此同一个 id 可能合法地到达两次。
+- 通过将 `timestamp` 与你的时钟对比（带一个容差窗口，5 分钟是常见默认值）来**拒绝过期事件**。重放捕获请求的攻击者在没有密钥的情况下无法伪造新的时间戳。
+
+### 投递语义 {#delivery-semantics}
+
+- **即发即忘，脱离热路径。** 事件会被即时序列化并入队；由单个后台线程执行 HTTP POST。缓慢或失效的 endpoint 永远不会拖住工具调用或 agent 轮次。
+- **仅通知。** 与 shell hook 不同，出站 webhook 无法阻断工具调用或注入上下文——响应正文会被忽略。它们只观察，从不引导。
+- **有限次重试。** 连接错误和 5xx 响应会带退避重试一次；4xx 响应不会重试（接收方已表明请求本身有误）。失败会被记录并丢弃——投递是尽力而为，不作保证。
+- **从不跟随重定向。** 3xx 响应会被视为配置错误并记录——跟随被重定向的 POST 会静默丢失签名载荷。请把 `url` 指向最终 endpoint。
+- **有界队列。** 如果队列积压（endpoint 失效、事件风暴），新事件会被丢弃并发出警告，而不是占用无限内存。
+- **无授权提示。** 出站目标不会在你的机器上执行任何代码——它们只是在你配置的 URL 上接收数据。`HERMES_SAFE_MODE=1` 仍会跳过注册，与插件和 shell hook 相同。请注意载荷包含工具输入和事件元数据，因此只应把目标指向你信任的 endpoint，并优先使用 `https://`。
+
+`hermes hooks list` 会在 shell hook 旁边显示已配置的出站目标，包括每个目标是否已签名。

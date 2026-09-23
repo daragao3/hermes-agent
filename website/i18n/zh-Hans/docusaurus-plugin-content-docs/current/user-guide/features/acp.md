@@ -17,7 +17,7 @@ Hermes Agent 可作为 ACP 服务器运行，让兼容 ACP 的编辑器通过 st
 
 当你希望 Hermes 表现得像编辑器原生的编码 agent，而非独立 CLI 或消息机器人时，ACP 是合适的选择。
 
-## Hermes 在 ACP 模式下暴露的内容
+## Hermes 在 ACP 模式下暴露的内容 {#what-hermes-exposes-in-acp-mode}
 
 Hermes 使用专为编辑器工作流设计的精选 `hermes-acp` 工具集运行，包括：
 
@@ -31,7 +31,7 @@ Hermes 使用专为编辑器工作流设计的精选 `hermes-acp` 工具集运�
 
 它有意排除了不适合典型编辑器 UX 的功能，例如消息投递和 cronjob 管理。
 
-## 安装
+## 安装 {#installation}
 
 正常安装 Hermes 后，从安装检出目录添加 ACP 扩展：
 
@@ -45,7 +45,7 @@ cd ~/.hermes/hermes-agent && uv pip install -e '.[acp]'
 - `hermes-acp`
 - `python -m acp_adapter`
 
-## 启动 ACP 服务器
+## 启动 ACP 服务器 {#launching-the-acp-server}
 
 以下任意命令均可以 ACP 模式启动 Hermes：
 
@@ -70,7 +70,7 @@ hermes acp --version
 hermes acp --check
 ```
 
-### 浏览器工具（可选）
+### 浏览器工具（可选） {#browser-tools-optional}
 
 浏览器工具（`browser_navigate`、`browser_click` 等）依赖 `agent-browser` npm 包和 Chromium，这些不包含在 Python wheel 中。通过以下命令安装：
 
@@ -83,15 +83,15 @@ hermes acp --setup-browser --yes     # 非交互式接受下载
 
 具体操作：
 
-- 若缺少 Node.js 22 LTS，将其安装到 `~/.hermes/node/`
+- 若缺少 Node.js 26，将其安装到 `~/.hermes/node/`
 - 将 `npm install -g agent-browser @askjo/camofox-browser` 安装到该前缀（无需 sudo — `npm` 的 `--prefix` 指向用户可写的 Hermes 管理 Node）
 - 安装 Playwright Chromium，或在检测到系统 Chrome/Chromium 时使用已有版本
 
 该引导过程是幂等的——重复运行速度很快，已完成的步骤会被跳过。
 
-## 宿主设置
+## 宿主设置 {#host-setup}
 
-### Buzz 频道（中继桥接）
+### Buzz 频道（中继桥接） {#buzz-channels-relay-bridge}
 
 [Buzz](https://github.com/block/buzz) 是一个基于 Nostr 的人机协作平台。
 其 `buzz-acp` harness 通过 stdio 将 Buzz 频道连接到任意 ACP agent：
@@ -149,12 +149,10 @@ Desktop 会在该 agent 的 **Activity log** 中实时渲染生命周期、工�
 才是所有者侧的持久历史。
 
 无头桥接会自行回应 ACP 权限请求，因为没有编辑器来展示审批对话框——参见
-[将 Buzz agent 保持为 owner-only](#将-buzz-agent-保持为-owner-only)。请将桥接视为
+[将 Buzz agent 保持为 owner-only](#keep-buzz-agents-owner-only)。请将桥接视为
 特权自动化：使用专用操作系统账户，限制哪些 Buzz 用户可以触发 agent
 （`buzz-acp` 通过 `BUZZ_ACP_AGENT_OWNER` 支持仅所有者响应门控），
 并仅在预期 Hermes 工作的频道中授予成员资格。
-
-## 编辑器设置
 
 ### VS Code
 
@@ -224,7 +222,19 @@ command -v hermes-acp || command -v hermes
 运行 `hermes update` 会为较旧的安装补上 `hermes-acp` 启动器。作为手动兜底方案，
 可以将 Buzz 的 agent 命令配置为 `hermes`，参数为 `["acp"]`。
 
-#### 将 Buzz agent 保持为 owner-only
+#### 模型选择器 {#model-picker}
+
+Buzz Desktop（v0.5.1+）会在 agent 的运行时设置中渲染 Hermes 的完整模型菜单。
+该列表由 Hermes 自身通过 ACP 提供：它会显示你在 Hermes 中已认证的所有 provider 的
+全部模型（与 `hermes model` 和 `/model` 命令背后的清单相同），因此菜单中缺少某个模型，
+意味着 Hermes 一侧没有为其 provider 配置凭据。
+
+条目 ID 的形式为 `provider:model`（例如 `openrouter:z-ai/glm-5.1`），对于在
+`config.yaml` 中定义的自定义 OpenAI 兼容端点，则为 `custom:<name>:<model>`。
+选择某个模型只会作用于该 agent 的会话；它不会改变你在 Hermes 全局的默认模型——
+如需修改默认模型，请使用 `hermes model`。
+
+#### 将 Buzz agent 保持为 owner-only {#keep-buzz-agents-owner-only}
 
 Buzz 创建的每个 agent 默认都将 **Who can talk to this agent** 设为 `Owner only`。
 当运行时为 Hermes 时，请保持该设置。
@@ -245,7 +255,7 @@ Buzz 在你选择该选项时不会给出任何警告。
 
 来自 owner 的 `!shutdown` 在任何模式下都能停止 agent，而 Buzz 会忽略其他人发出的同一命令。
 
-## 配置与凭据
+## 配置与凭据 {#configuration-and-credentials}
 
 ACP 模式使用与 CLI 相同的 Hermes 配置：
 
@@ -256,7 +266,25 @@ ACP 模式使用与 CLI 相同的 Hermes 配置：
 
 Provider 解析使用 Hermes 的正常运行时解析器，因此 ACP 继承当前配置的 provider 和凭据。Hermes 还为首次运行的 ACP 客户端提供终端认证方法（`--setup`）；这将打开 Hermes 的交互式模型/provider 设置。
 
-## 会话行为
+## 宿主集成 {#host-integration}
+
+这些变量由 **ACP 宿主进程**（编辑器或其他 agent 框架）在其派生的 Hermes 子进程上设置。
+它们不是用户配置——不要在 `.env` 或 `config.yaml` 中手动设置它们。
+
+| 变量 | 值 | 作用 |
+|----------|-------|--------|
+| `HERMES_ACP_SKIP_CONFIGURED_MCP` | `1` | 在 ACP JSON-RPC 循环开始前，跳过启动 `config.yaml` 中**全局配置**的 MCP 服务器。 |
+
+Hermes 通常会在进入 ACP JSON-RPC 循环之前，启动 `config.yaml` 中配置的每一个 MCP 服务器。
+自行管理 MCP 的宿主——通过 `session/new` 显式传入会话所需的服务器——并不需要这一全局启动，
+否则某个无关的、缓慢的或需要交互的 MCP 服务器会拖慢 `initialize`。将该标记精确设置为 `1`，
+即可让这类宿主跳过它。
+
+只有全局的 `config.yaml` 发现会被跳过。**由 ACP 会话通过 `session/new` 提供的 MCP 服务器
+仍然会被注册**，因此宿主不会失去它所请求的任何能力。任何其他值（未设置、空、`0`、`false`）
+都会保持默认行为，因此一个看起来像真值的无关字符串不会悄无声息地禁用 MCP。
+
+## 会话行为 {#session-behavior}
 
 ACP 会话在服务器运行期间由 ACP 适配器的内存会话管理器跟踪。
 
@@ -268,13 +296,20 @@ ACP 会话在服务器运行期间由 ACP 适配器的内存会话管理器跟�
 - 当前对话历史
 - 取消事件
 
-底层 `AIAgent` 仍使用 Hermes 的正常持久化/日志路径，但 ACP 的 `list/load/resume/fork` 仅限于当前运行的 ACP 服务器进程。
+对话会持久化到 Hermes 的会话数据库中，在 ACP 服务器重启后仍可被列出、加载、
+恢复或派生（fork）。在没有提示词的情况下打开一个新会话，只会将其保存在内存中：
+模型发现探测不会创建空的历史记录行。非空的派生会话会立即持久化，而即使现有会话
+当前的历史为空，其元数据仍然可以更新。
 
-## 工作目录行为
+旧版本遗留的空记录行不会被自动删除。一个处于打开状态的 ACP 记录行并不能证明其客户端
+已经断开连接。在关闭相关的编辑器会话之后，用 `hermes sessions show <id>` 检查不需要的
+记录行，并且只用 `hermes sessions delete <id>` 删除确认不需要的会话。
+
+## 工作目录行为 {#working-directory-behavior}
 
 ACP 会话将编辑器的 cwd 绑定到 Hermes 任务 ID，使文件和终端工具相对于编辑器工作区运行，而非服务器进程的 cwd。
 
-## 审批
+## 审批 {#approvals}
 
 危险的终端命令可作为审批 prompt 路由回编辑器。ACP 审批选项比 CLI 流程更简单：
 
@@ -288,7 +323,7 @@ ACP 会话将编辑器的 cwd 绑定到 Hermes 任务 ID，使文件和终端工
 
 超时或出错时，审批桥接会拒绝请求。
 
-### 会话范围的编辑自动审批
+### 会话范围的编辑自动审批 {#session-scoped-edit-auto-approval}
 
 ACP 在*允许一次*和*始终允许*之间提供第三层：**允许本次会话**。在编辑器的权限提示中选择此选项，会将审批记录在当前 ACP 会话内——该会话中所有后续匹配命令无需提示即可通过，但新的 ACP 会话（或重启编辑器）会重置状态，并在第一次时重新提示。
 
@@ -303,9 +338,9 @@ ACP 在*允许一次*和*始终允许*之间提供第三层：**允许本次会�
 
 ACP 桥接将这些选项映射到 Hermes 的内部审批语义——`allow_always` 与 CLI 相同地写入永久允许列表条目，而 `allow_session` 仅影响当前 ACP 会话的进程内审批缓存。
 
-## 故障排查
+## 故障排查 {#troubleshooting}
 
-### ACP agent 未出现在编辑器中
+### ACP agent 未出现在编辑器中 {#acp-agent-does-not-appear-in-the-editor}
 
 检查：
 
@@ -313,7 +348,7 @@ ACP 桥接将这些选项映射到 Hermes 的内部审批语义——`allow_alwa
 - Hermes 已安装且在 PATH 中。
 - ACP 扩展已安装（`cd ~/.hermes/hermes-agent && uv pip install -e '.[acp]'`）。
 
-### ACP 启动后立即报错
+### ACP 启动后立即报错 {#acp-starts-but-immediately-errors}
 
 尝试以下检查：
 
@@ -324,7 +359,7 @@ hermes doctor
 hermes status
 ```
 
-### 缺少凭据
+### 缺少凭据 {#missing-credentials}
 
 ACP 模式使用 Hermes 现有的 provider 设置。通过以下方式配置凭据：
 
@@ -334,7 +369,7 @@ hermes model
 
 或编辑 `~/.hermes/.env`。终端认证流程（`hermes acp --setup`）也可以触发交互式 provider/模型设置。
 
-## 另请参阅
+## 另请参阅 {#see-also}
 
 - [ACP 内部机制](../../developer-guide/acp-internals.md)
 - [Provider 运行时解析](../../developer-guide/provider-runtime.md)

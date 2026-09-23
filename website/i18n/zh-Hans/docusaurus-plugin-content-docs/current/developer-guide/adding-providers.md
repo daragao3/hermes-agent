@@ -34,9 +34,14 @@ Hermes 已经可以通过自定义 provider 路径与任何 OpenAI 兼容的端�
 核心抽象是 `api_mode`。
 
 - 大多数 provider 使用 `chat_completions`。
-- Codex 使用 `codex_responses`。
+- Codex 和 Meta Model API（`api.meta.ai`——Muse Spark）使用 `codex_responses`（会自动发送 `prompt_cache_retention: 24h` 以启用 prompt 缓存；`api.meta.ai` 仅在 `/v1/responses` 上才能达到 93–99% 的缓存命中率）。
+- Ramp Router（`api.router.com`）同样使用 `codex_responses`——Responses 是 Router 的原生协议（`/v1/chat/completions` 只是一个最小化的兼容层），并且它会按模型校验 `reasoning.effort`，router profile 通过从实时目录中声明每个模型的取值范围（`ProviderProfile.supported_reasoning_efforts`）来处理这一点。
 - Anthropic 使用 `anthropic_messages`。
 - 新的非 OpenAI 协议通常意味着需要添加新的适配器和新的 `api_mode` 分支。
+
+### 工具调用的传输格式 {#tool-call-wire-format}
+
+Hermes 在内部以 OpenAI chat-completions 的形状存储对话历史，因此 `chat_completions` 传输层的 `convert_messages` / `convert_tools`（`agent/transports/chat_completions.py`）几乎是恒等转换，而其他所有传输层都要*从*这一形状转换为各自的原生协议。该形状的权威参考——带有 JSON-schema `parameters` 的 `tools` 定义、带有字符串化 `function.arguments` 的 assistant `tool_calls` 条目，以及以 `tool_call_id` 为键的 `role: "tool"` 结果消息——是 [OpenAI chat completions API 参考](https://platform.openai.com/docs/api-reference/chat/create)。编写原生适配器时，该页面定义了转换的输入侧；你的 provider 文档则定义输出侧。
 
 ## 首先选择实现路径
 
@@ -61,7 +66,7 @@ Hermes 已经可以通过自定义 provider 路径与任何 OpenAI 兼容的端�
 
 当前代码库中的示例：
 
-- `codex_responses`
+- `codex_responses`（OpenAI Codex、xAI Grok、通过 `api.meta.ai` 接入的 Meta Muse Spark——后者会自动发送 `prompt_cache_retention: 24h`——以及通过 `api.router.com` 接入的 Ramp Router）
 - `anthropic_messages`
 
 此路径包含路径 A 的所有内容，另加：
@@ -146,8 +151,8 @@ Hermes 已经可以通过自定义 provider 路径与任何 OpenAI 兼容的端�
 该 id 应出现在：
 
 - `hermes_cli/auth.py` 中的 `PROVIDER_REGISTRY`
-- `hermes_cli/models.py` 中的 `_PROVIDER_LABELS`
-- `hermes_cli/auth.py` 和 `hermes_cli/models.py` 中的 `_PROVIDER_ALIASES`
+- `hermes_cli/models_catalog_static.py` 中的 `_PROVIDER_LABELS`（由 `hermes_cli/models.py` 重新导出）
+- `hermes_cli/auth.py` 和 `hermes_cli/models_catalog_static.py` 中的 `_PROVIDER_ALIASES`
 - `hermes_cli/main.py` 中的 CLI `--provider` 选项
 - setup / 模型选择分支
 - 辅助模型默认值
@@ -342,7 +347,7 @@ Prompt（提示词）缓存和 provider 专属的调节项很容易出现回归�
 
 ```bash
 source venv/bin/activate
-python -m pytest tests/hermes_cli/test_runtime_provider_resolution.py tests/cli/test_cli_provider_resolution.py tests/hermes_cli/test_setup_model_provider.py tests/run_agent/test_provider_parity.py -n0 -q
+python -m pytest tests/hermes_cli/test_runtime_provider_resolution.py tests/cli/test_cli_provider_resolution.py tests/hermes_cli/test_setup_model_provider.py tests/run_agent/test_provider_parity.py -q
 ```
 
 对于更深层的修改，在推送前运行完整测试套件：

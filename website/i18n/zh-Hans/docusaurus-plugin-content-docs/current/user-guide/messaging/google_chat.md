@@ -140,6 +140,13 @@ GOOGLE_CHAT_MAX_BYTES=16777216                  # 16 MiB — 在途消息字节�
 
 项目 ID 也可回退到 `GOOGLE_CLOUD_PROJECT`，SA 路径可回退到 `GOOGLE_APPLICATION_CREDENTIALS`——使用你偏好的约定即可。
 
+在[多 profile gateway](../multi-profile-gateways.md) 下，每一项
+`GOOGLE_CHAT_*` 设置都从被路由到的 profile 自己的 `.env` 中读取；次要 profile
+绝不会继承默认 profile 的项目、订阅或 service account。如果某个 profile 没有配置 SA，
+而进程环境中却带有另一个 profile 的 SA，适配器会拒绝回退到 Application Default
+Credentials（那样会以另一个 profile 的身份认证），并改为记录一条明确的错误——请将
+`GOOGLE_CHAT_SERVICE_ACCOUNT_JSON` 写入该 profile 的 `.env`。
+
 通过适配器维护的安装程序安装 Google Chat 依赖。该程序会应用与运行时检查相同的固定安全版本：
 
 ```bash
@@ -191,6 +198,14 @@ Agent 的系统 prompt（提示词）包含 Google Chat 专属提示，使其了
 消息大小限制：每条消息 4000 个字符。较长的 agent 回复会自动拆分为多条消息。
 
 Thread（线程）支持：当用户在 thread 中回复时，Hermes 会检测 `thread.name` 并在同一 thread 中发送回复，每个 thread 对应独立的 Hermes 会话。
+
+### 以交互式卡片呈现澄清问题 {#clarify-questions-as-interactive-cards}
+
+当 agent 提出一个多选澄清问题时，适配器会将其渲染为原生 **Card v2**，每个选项对应一个
+按钮，外加一个 **"Other / type answer"** 按钮，而不是普通的编号文本列表。
+点击按钮即可直接回答问题（`CARD_CLICKED` 事件会把所选项路由回正在等待的会话）。
+如果卡片发送失败，或该问题没有固定选项，适配器会回退到标准的文本澄清方式。
+无需任何配置。
 
 ---
 

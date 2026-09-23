@@ -1,14 +1,14 @@
 ---
-title: "Agentmail — 通过 AgentMail 为 Agent 提供专属电子邮件收件箱"
+title: "Agentmail — 当 Agent 需要 AgentMail CLI 电子邮件收件箱时使用"
 sidebar_label: "Agentmail"
-description: "通过 AgentMail 为 Agent 提供专属电子邮件收件箱"
+description: "当 Agent 需要 AgentMail CLI 电子邮件收件箱时使用"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Agentmail
 
-通过 AgentMail 为 Agent 提供专属电子邮件收件箱。使用 Agent 专属电子邮件地址（例如 hermes-agent@agentmail.to）自主发送、接收和管理电子邮件。
+当 Agent 需要 AgentMail CLI 电子邮件收件箱时使用。
 
 ## Skill 元数据
 
@@ -17,8 +17,10 @@ description: "通过 AgentMail 为 Agent 提供专属电子邮件收件箱"
 | 来源 | 可选 — 使用 `hermes skills install official/email/agentmail` 安装 |
 | 路径 | `optional-skills/email/agentmail` |
 | 版本 | `1.0.0` |
+| 作者 | Haakam Aujla (Haakam21), AgentMail |
+| 许可证 | MIT |
 | 平台 | linux, macos, windows |
-| 标签 | `email`, `communication`, `agentmail`, `mcp` |
+| 标签 | `Email`, `CLI`, `AgentMail`, `Communication` |
 
 ## 参考：完整 SKILL.md
 
@@ -26,118 +28,73 @@ description: "通过 AgentMail 为 Agent 提供专属电子邮件收件箱"
 以下是 Hermes 在触发此 skill 时加载的完整 skill 定义。这是 skill 激活时 Agent 所看到的指令内容。
 :::
 
-# AgentMail — Agent 专属电子邮件收件箱
+# AgentMail Skill
+
+AgentMail 为 Agent 提供专属的电子邮件收件箱，用于发送邮件、接收回复、完成电子邮件 OTP 流程以及运行入站邮件循环。请将其用于 Agent 自有的收件箱，而不是用户现有的 IMAP/SMTP 邮箱。
+
+优先使用 `agentmail` CLI。仅当运行环境（harness）需要 MCP 工具时才使用 MCP；仅当 CLI 缺少所需操作时才使用 REST。
+
+## 使用场景
+
+- Agent 需要一个它自己拥有的电子邮件地址。
+- 任务涉及电子邮件 OTP 流程、回复、线程、标签或附件。
+- Agent 需要通过 webhook 或 WebSocket 接收入站邮件。
 
 ## 前置要求
 
-- **AgentMail API 密钥**（必需）— 在 https://console.agentmail.to 注册（免费套餐：3 个收件箱，每月 3,000 封邮件；付费套餐起价 $20/月）
-- Node.js 18+（用于 MCP 服务器）
+- 通过 `terminal` 工具运行命令。
+- 安装 CLI：
 
-## 使用场景
-在以下情况下使用此 skill：
-- 为 Agent 提供专属电子邮件地址
-- 代表 Agent 自主发送电子邮件
-- 接收并读取传入邮件
-- 管理邮件线程和对话
-- 通过电子邮件注册服务或进行身份验证
-- 通过电子邮件与其他 Agent 或人类进行通信
-
-此 skill **不适用于**读取用户的个人邮件（请使用 himalaya 或 Gmail）。
-AgentMail 为 Agent 提供独立的身份和收件箱。
-
-## 配置
-
-### 1. 获取 API 密钥
-- 访问 https://console.agentmail.to
-- 创建账户并生成 API 密钥（以 `am_` 开头）
-
-### 2. 配置 MCP 服务器
-添加至 `~/.hermes/config.yaml`（粘贴实际密钥 — MCP 环境变量不会从 .env 展开）：
-```yaml
-mcp_servers:
-  agentmail:
-    command: "npx"
-    args: ["-y", "agentmail-mcp"]
-    env:
-      AGENTMAIL_API_KEY: "am_your_key_here"
-```
-
-### 3. 重启 Hermes
 ```bash
-hermes
+npm install -g agentmail-cli@latest
 ```
-所有 11 个 AgentMail 工具现已自动可用。
 
-## 可用工具（通过 MCP）
+- 导出 API 密钥：
 
-| 工具 | 描述 |
-|------|-------------|
-| `list_inboxes` | 列出所有 Agent 收件箱 |
-| `get_inbox` | 获取特定收件箱的详细信息 |
-| `create_inbox` | 创建新收件箱（获得真实电子邮件地址） |
-| `delete_inbox` | 删除收件箱 |
-| `list_threads` | 列出收件箱中的邮件线程 |
-| `get_thread` | 获取特定邮件线程 |
-| `send_message` | 发送新邮件 |
-| `reply_to_message` | 回复已有邮件 |
-| `forward_message` | 转发邮件 |
-| `update_message` | 更新邮件标签/状态 |
-| `get_attachment` | 下载邮件附件 |
+```bash
+export AGENTMAIL_API_KEY="am_..."
+```
+
+还没有 API 密钥？请使用 [signup.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/email/agentmail/references/signup.md)。
+
+## 运行方式
+
+当其他命令或脚本需要 ID 时，请始终使用 `--format json`。
+
+```bash
+agentmail inboxes list --format json
+```
+
+## 快速参考
+
+- [AgentMail agent reference](https://agentmail.md)：托管副本。
+- [AgentMail](https://agentmail.to)：产品首页。
+- [Console](https://console.agentmail.to)：API 密钥与账户管理。
+- [Docs](https://docs.agentmail.to)：完整产品文档。
+- [signup.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/email/agentmail/references/signup.md)：自助注册与 OTP 验证。
+- [core.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/email/agentmail/references/core.md)：收件箱、消息、线程、标签、附件。
+- [webhooks.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/email/agentmail/references/webhooks.md)：将事件推送到公网 HTTPS 服务器。
+- [websockets.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/email/agentmail/references/websockets.md)：将事件推送到本地 Agent 进程。
+- [mcp.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/email/agentmail/references/mcp.md)：MCP 集成。
 
 ## 操作流程
 
-### 创建收件箱并发送邮件
-1. 创建专属收件箱：
-   - 使用 `create_inbox` 并指定用户名（例如 `hermes-agent`）
-   - Agent 获得地址：`hermes-agent@agentmail.to`
-2. 发送邮件：
-   - 使用 `send_message`，传入 `inbox_id`、`to`、`subject`、`text`
-3. 检查回复：
-   - 使用 `list_threads` 查看传入对话
-   - 使用 `get_thread` 读取特定线程
-
-### 检查传入邮件
-1. 使用 `list_inboxes` 查找收件箱 ID
-2. 使用 `list_threads` 并传入收件箱 ID 查看对话
-3. 使用 `get_thread` 读取线程及其消息
-
-### 回复邮件
-1. 使用 `get_thread` 获取线程
-2. 使用 `reply_to_message`，传入消息 ID 和回复内容
-
-## 示例工作流
-
-**注册服务：**
-```
-1. create_inbox (username: "signup-bot")
-2. 使用该收件箱地址在服务上注册
-3. list_threads 检查验证邮件
-4. get_thread 读取验证码
-```
-
-**Agent 对人类的外发联系：**
-```
-1. create_inbox (username: "hermes-outreach")
-2. send_message (to: user@example.com, subject: "Hello", text: "...")
-3. list_threads 检查回复
-```
+1. 安装 `agentmail-cli@latest` 并验证 `agentmail inboxes list --format json`。
+2. 如果没有可用的 API 密钥，请完成 [signup.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/email/agentmail/references/signup.md)。
+3. 收件箱、发送、读取、回复、转发、标签、线程和附件相关流程请使用 [core.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/email/agentmail/references/core.md)。
+4. 仅当轮询不够用时，才添加 [webhooks.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/email/agentmail/references/webhooks.md) 或
+   [websockets.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/email/agentmail/references/websockets.md)。
 
 ## 注意事项
-- 免费套餐限制为 3 个收件箱，每月 3,000 封邮件
-- 免费套餐邮件来自 `@agentmail.to` 域名（付费套餐支持自定义域名）
-- MCP 服务器需要 Node.js（18+）（`npx -y agentmail-mcp`）
-- 必须安装 `mcp` Python 包：`pip install mcp`
-- 实时入站邮件（webhook）需要公网服务器 — 个人使用时建议改用 `list_threads` 轮询配合 cronjob
+
+- 优先使用 `AGENTMAIL_API_KEY`，而不是 `--api-key`。
+- 切勿在提示词、日志、URL 或已提交的文件中暴露 `AGENTMAIL_API_KEY`。
+- 对于会重试的创建操作，使用稳定的 `client_id` 值。
+- 如果存在 `extracted_text` 或 `extracted_html`，优先将其作为 LLM 输入。
+- 对 `message.received` 做出响应，而不是对 Agent 自己发送的消息做出响应。
 
 ## 验证
-配置完成后，使用以下命令测试：
-```
-hermes --toolsets mcp -q "Create an AgentMail inbox called test-agent and tell me its email address"
-```
-应返回新收件箱的地址。
 
-## 参考资料
-- AgentMail 文档：https://docs.agentmail.to/
-- AgentMail 控制台：https://console.agentmail.to
-- AgentMail MCP 仓库：https://github.com/agentmail-to/agentmail-mcp
-- 定价：https://www.agentmail.to/pricing
+```bash
+agentmail inboxes list --format json
+```

@@ -28,7 +28,7 @@ Hermes 有多种不同的可插拔接口——有些使用 Python `register_*` A
 | **密钥管理器后端**（保险库 / 密码管理器 / 系统钥匙串） | [密钥源插件](/developer-guide/secret-source-plugin) |
 | **仪表盘 OIDC/认证提供商** | [Web 仪表盘 — 自定义提供商](/user-guide/features/web-dashboard#custom-providers) — `ctx.register_dashboard_auth_provider()` |
 | **TTS 后端**（任意 CLI——Piper、VoxCPM、Kokoro、声音克隆等） | [TTS 自定义命令提供商](/user-guide/features/tts#custom-command-providers)——配置驱动，无需 Python |
-| **STT 后端**（自定义 whisper / ASR CLI） | [语音消息转录](/user-guide/features/tts#voice-message-transcription-stt)——将 `HERMES_LOCAL_STT_COMMAND` 设置为 shell 模板 |
+| **STT 后端**（自定义 whisper / ASR CLI） | [语音消息转录](/user-guide/features/tts#voice-message-transcription-stt)——将 `HERMES_LOCAL_STT_COMMAND` 设置为按 argv 分词的模板 |
 | **通过 MCP 接入外部工具**（文件系统、GitHub、Linear、任意 MCP 服务器） | [MCP](/user-guide/features/mcp)——在 `config.yaml` 中声明 `mcp_servers.<name>` |
 | **网关事件钩子**（在启动、会话事件、命令时触发） | [事件钩子](/user-guide/features/hooks#gateway-event-hooks)——将 `HOOK.yaml` + `handler.py` 放入 `~/.hermes/hooks/<name>/` |
 | **Shell 钩子**（在事件发生时运行 shell 命令） | [Shell 钩子](/user-guide/features/hooks#shell-hooks)——在 `config.yaml` 的 `hooks:` 下声明 |
@@ -42,6 +42,110 @@ Hermes 有多种不同的可插拔接口——有些使用 Python `register_*` A
 集成**他人产品或项目**的插件——可观测性/指标后端、厂商 SaaS 连接器、分析仪表盘、付费服务对接——应作为**独立的插件仓库**构建和分发，而不是合并进 `NousResearch/hermes-agent`。用户把它们安装到 `~/.hermes/plugins/`，或通过 pip entry point 安装；本指南中的一切在独立仓库里同样适用。这是一个耦合与维护上的决定（核心迭代很快，而我们并不拥有你的后端），不是质量门槛——一个插件可以很优秀，同时仍然应该待在自己的仓库里。欢迎在 Nous Research Discord 的 `#plugins-skills-and-skins` 频道推广它。政策详见 [CONTRIBUTING.md](https://github.com/NousResearch/hermes-agent/blob/main/CONTRIBUTING.md)。
 :::
 
+## 可移植 Agent Plugins v1 包 {#portable-agent-plugins-v1-packages}
+
+Hermes 还可以安装并加载面向 Agent Plugins v1.0.0 格式的目录包。这是针对 Hermes 已拥有的
+可移植组件的兼容适配层。它并不取代原生的 `plugin.yaml` 加 `register(ctx)` 插件。
+
+```text
+my-portable-plugin/
+├── plugin.json
+├── skills/
+│   └── summarize/
+│       ├── SKILL.md
+│       └── references/
+└── mcp.json
+```
+
+通过常规流程安装并激活可移植包：
+
+```bash
+hermes plugins install owner/repository --no-enable
+hermes plugins list
+hermes plugins enable <plugin-name>
+```
+
+可移植包在安装后处于禁用状态，除非你显式启用它们。已启用的包可以提供位于
+`skills/*/SKILL.md` 的直接目录，以及来自根目录 `mcp.json` 的 stdio MCP 服务器。技能是只读的、
+带命名空间的，并通过 `skills_list` 加 `skill_view` 加载。MCP 命令以单个可执行文件 token 加
+独立参数列表的形式传递，绝不经过 shell。使用 `skills_list` 可以发现完整的限定技能名。可移植
+技能的命名空间具有确定性的形式 `agent-plugin-<slug>-<hash>`，由发现的插件键派生而来，
+因此经过清理的名称不会发生冲突。
+
+Hermes 会在本地校验 `plugin.json`、Agent Skills frontmatter、固定的组件位置、`mcp.json`、
+解析后的路径以及符号链接的包含关系。加载包时它不会去拉取 JSON schema。当有效的同级组件
+仍能加载时，有问题的技能或 MCP 条目会在其自身边界处被跳过。`PLUGIN_ROOT` 指向解析后的包
+根目录。`PLUGIN_DATA` 指向由 Hermes 管理的、按 profile 划分的可写目录。
+在可移植 MCP 的 `env` 中声明的值是可见的包数据，而不是密钥存储机制。不要在 `mcp.json`
+中放置凭证。
+
+当前的可移植子集支持 stdio 和 Streamable HTTP 两种 MCP 条目。可移植的 `streamable-http`
+条目会经由 Hermes 现有的原生远程 MCP 客户端路由（与支撑基于 URL 的 `mcp_servers` 配置的
+是同一个运行时），并强制执行 v1 的边界规则：URL 必须是绝对的 http(s) 地址，且不含用户信息
+或片段；明文 HTTP 仅对 `localhost`/回环主机开放；配置的请求头绝不会在跨源重定向时被转发。
+旧式 `sse` 条目会被报告并跳过。Agent Plugins v1 没有定义信任、权限、来源证明或沙箱。启用
+一个包，就意味着授予其指令和本地可执行文件与其他已安装 Hermes 插件相同的完全信任。
+
+[渲染版规范](https://agent-plugins.org/specification)目前将 v1.0.0 标注为 Working Draft，而
+[带版本的规范仓库](https://github.com/agentplugins/agent-plugins-spec/blob/main/spec/1.0.0.md)
+将其记录为 Published。Hermes 的行为以规范的 v1.0.0 schema 标识符和规范性文本为准，而不依赖
+任何一个可变的状态标签。这是一个明确支持的子集，并不声称完全符合 Agent Plugins 规范。
+
+## 原生插件兼容性约定 {#native-plugin-compatibility-contract}
+
+原生的 `plugin.yaml` 加 `register(ctx)` 插件受到的是行为层面的保护，而不是某个全局插件 API
+版本号。Hermes 不公开 `PLUGIN_API_VERSION`，不要求清单级别的 `api:` 匹配，也不会给无关的
+值附加 API 版本。使用了有文档记载行为的插件，在正常的 Hermes 升级之后应当继续可用。
+
+兼容性规则如下：
+
+- **以增量方式演进。** 有文档记载的 `PluginContext` 方法不会被移除或重命名。新参数是可选的、
+  带有默认值，并且应当是仅限关键字参数。已有的返回字段不会被移除或悄悄改变类型。
+- **钩子载荷是关键字载荷。** 新的钩子数据以关键字字段的形式添加，绝不会改变已有字段的含义
+  或位置。Hermes 会检查回调签名：旧式回调接收它所声明的字段，而带有 `**kwargs` 的回调接收
+  完整的当前载荷。新插件应当接受 `**kwargs`，这样无需再次修改签名即可获得新增数据。
+- **清单对新增内容开放。** 未知的 `plugin.yaml` 字段会被忽略。因此，只要插件代码本身使用的是
+  受支持的运行时行为，较旧的 Hermes 版本也能加载清单中包含较新版本引入的元数据的插件。
+- **提供者接口通过默认值扩展。** 新的提供者方法带有默认实现。新的回调上下文是可选的，只有在
+  签名检查表明提供者接受它时才会被转发。添加抽象方法或无条件转发的参数需要一个迁移窗口，
+  而不是一刀切地更改签名。
+- **为跨越边界的约定加版本号。** 当某项能力定义了线上载荷或持久化格式时（例如观察者载荷或
+  secret-source 状态），它可以携带自己的 schema 版本。在该局部 schema 内保持字段的增量演进。
+  持久化的插件状态和配置必须保持可读，否则就要提供明确的迁移；用旧格式写入的已恢复会话必须
+  仍然可以重放。不要在无关的回调或上下文值中添加版本字面量。
+
+### 弃用策略 {#deprecation-policy}
+
+有文档记载的原生插件行为只有在同时满足以下所有条件时才可以被弃用：
+
+1. 在插件指南和发布说明中提供替代方案和迁移说明；
+2. 每个进程最多发出一次警告，指明替代方案以及最早的移除版本；
+3. 旧行为在其后至少两个次要版本中继续受支持；并且
+4. 在整个窗口期内，对旧路径和替代方案都提供基于行为的兼容性覆盖。
+
+窗口期结束后的移除必须包含持久化数据或可恢复会话所需的任何迁移。实践中，相比移除，
+更倾向于采用增量式的别名和适配器。
+
+Hermes 通过从隔离的 `HERMES_HOME` 中发现的、冻结的外部插件夹具来强制执行这一约定。这些测试
+通过 `PluginManager` 加载并调用插件；它们断言的是真实的注册和回调结果，而不是内部符号列表
+或源代码形态。
+
+### 2026 年 9 月模块拆分：旧导入路径于 2026-09-14 终止 {#sep-2026-module-decomposition-old-import-paths-end-2026-09-14}
+
+Hermes 的内部实现于 2026 年 9 月被拆分为 `<stem>_<topic>` 同级模块（PR #102117）。**内部导入
+路径从来都不属于**上述插件约定，但许多插件使用了它们。每个被移动的名称在 **2026-09-14** 之前
+仍可从其旧模块解析，之后兼容层将被移除。
+
+- **检查你的插件：** `hermes plugins compat /path/to/your/plugin` 会列出每一处使用旧路径的
+  `file:line` 以及对应的新路径，只要仍有残留就以退出码 1 退出。仓库中的 `COMPAT_MANIFEST.md`
+  是完整的映射表。
+- **用户会看到什么：** CLI 横幅下方、`hermes doctor` 中以及 `hermes update` 之后会出现一条提示，
+  Desktop 也会弹出一次性对话框并指明该插件。每次通过旧路径解析时，还会在每个进程中发出一次
+  `HermesPluginCompatWarning`。
+- **自 2026-09-14 起：** 仍在导入旧路径的插件将**不会被加载**（原因会显示在
+  `hermes plugins list` 中）。在兼容层真正被移除之前，用户可以通过
+  `plugins.allow_deprecated_imports: true` 强制加载，届时旧路径会抛出 `ImportError`。
+
 ## 你将构建什么
 
 一个**计算器**插件，包含两个工具：
@@ -52,10 +156,27 @@ Hermes 有多种不同的可插拔接口——有些使用 Python `register_*` A
 
 ## 第一步：创建插件目录
 
+创建一个目录，然后继续第二步：
+
 ```bash
 mkdir -p ~/.hermes/plugins/calculator
 cd ~/.hermes/plugins/calculator
 ```
+
+### 使用 Plugin Doctor 进行校验 {#validate-with-plugin-doctor}
+
+`hermes plugins doctor [path-or-id]` 运行的目录发现、清单解析器、命名空间导入、`register(ctx)`、
+钩子注册表和工具注册表，与 Hermes 自身使用的完全相同。它会报告无效的钩子名称、不接受
+`**kwargs` 的回调、注册失败，以及声明的与实际注册的工具/钩子之间的偏差。传入 `--ci` 可在出错时
+以非零状态退出：
+
+```bash
+hermes plugins doctor . --ci
+```
+
+Doctor 使用临时的 `HERMES_HOME`，在检查结束后恢复插件注册状态，并在注册运行期间阻止直接的
+Python socket 连接，以捕获意外的网络访问。这不是沙箱：插件代码仍在进程内以当前用户的权限执行，
+并且可以派生子进程，因此只应对你足够信任、愿意导入的代码运行 Doctor。
 
 ## 第二步：编写清单文件
 
@@ -83,7 +204,92 @@ requires_env:          # 根据环境变量决定是否加载；安装时会提�
     description: "Key for the Other service"
     url: "https://other.com/keys"
     secret: true
+capabilities:          # 你申请的特权宿主接口（授权流程）
+  - tools.override     # 替换内置工具（需要用户授权）
+  - llm.model_override # 为宿主拥有的 LLM 调用选择模型
 ```
+
+### 声明能力 {#declaring-capabilities}
+
+如果你的插件需要特权宿主接口——覆盖内置工具、为 `ctx.llm` 调用挑选模型等——请在
+`capabilities:` 中声明。在安装/启用时，用户会看到该列表并一次性授权；如果后续版本新增了某项能力，
+更新流程只会就新增部分再次询问。未声明或未获授权的能力直接处于关闭状态（fail closed），因此
+**使用前先探测，并优雅降级**：
+
+```python
+def register(ctx):
+    if ctx.has_capability("tools.override"):
+        ctx.register_tool(..., override=True)
+    else:
+        ctx.register_tool(...)   # 以不冲突的名称注册
+```
+
+已知的能力 id：`tools.override`、`llm.provider_override`、`llm.model_override`、
+`llm.agent_id_override`、`llm.profile_override`、`llm.task_override`（规范注册表见
+`hermes_cli/plugin_capabilities.py`）。未知的 id 会被忽略。较早的按能力划分的配置键
+（`plugins.entries.<id>.allow_tool_override`，……）仍然有效但已弃用——请改为声明能力，这样用户
+就能看到一个统一的、可审计的授权界面。能力是授权 + 审计，**而不是沙箱**：它们只负责门控宿主
+API 接口，仅此而已。
+
+**通过 pip 分发的插件**在安装后没有 `plugin.yaml` 目录，因此应改为在分发元数据中通过配套的
+`hermes_agent.plugin_capabilities` entry-point 组声明能力。每条声明命名为
+`<plugin-id>.<capability-id>`，并指向与你的 `hermes_agent.plugins` entry point 相同的对象：
+
+```toml
+[project.entry-points."hermes_agent.plugins"]
+calculator = "my_pkg:register"
+
+[project.entry-points."hermes_agent.plugin_capabilities"]
+"calculator.tools.override" = "my_pkg:register"
+```
+
+Hermes 会从已安装的元数据中读取这些声明而无需导入你的代码，因此对于 pip 安装，
+`hermes plugins capabilities` 和授权流程依然准确。
+
+### 清单 v2 参考 {#manifest-v2-reference}
+
+`plugin.yaml` 还支持增量式的 **v2 schema**（#64165）。每个字段都是可选的；没有
+`manifest_version` 的清单就是 v1 清单，并将永远获得完整支持。未知字段绝不会导致加载失败——
+它们会被忽略并给出警告（向前兼容），而比当前 Hermes 所能理解的更新的 `manifest_version`
+也仍会加载并给出警告。
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `manifest_version` | int | 清单**文件格式**版本。缺省 = `1`。当前最大值：`2`。与 `api_version` 相互独立。 |
+| `api_version` | int | 插件所面向的运行时**插件 API 代际**（ctx 接口 / 钩子签名）。刻意与 `manifest_version` 分属不同维度——`api_version: 1` 的插件可以使用 v2 清单。 |
+| `requires_plugins` | list | 插件间依赖：`- id: other-plugin`，可附带 `version_range: ">=1.0,<2"`。**仅供参考**：缺失的依赖会记录一条清晰的警告，但插件仍会加载——请在运行时用 `ctx.has_plugin("other-plugin")` 进行探测。加载**顺序**遵循这些依赖边：当 A 依赖 B 时，B 的 `register()` 先于 A 的运行（拓扑排序，按字母顺序打破平局；出现环时发出警告并回退为字母顺序）。 |
+| `python_dependencies` | list of str | 声明的 pip 依赖（例如 `"requests>=2.0,<3"`）。**仅是声明接缝**——Hermes 会校验它们，`hermes plugins install` / `hermes plugins doctor` 会提示缺失项并给出 `pip install` 建议，但 Hermes **绝不会自动安装**它们。请固定上界。 |
+| `config_schema` | mapping | 对 `plugins.entries.<id>.settings` 下各键的类 JSON-schema 描述：`api_url: {type: str, default: "", description: "...", required: false}`。在加载时校验；不匹配时记录可操作的警告，指明键名和期望类型——绝不会导致加载失败。类型：`str`、`int`、`float`、`bool`、`list`、`dict`（以及 JSON-schema 别名）。 |
+| `license` | str | SPDX 风格的许可证 id（例如 `MIT`）。 |
+| `homepage` | str | 项目 URL。 |
+| `tags` | list of str | 自由格式的发现标签（例如 `[gateway, telegram]`）。 |
+
+```yaml
+# plugin.yaml — manifest v2 example
+name: my-plugin
+version: 1.2.0
+manifest_version: 2
+api_version: 1
+license: MIT
+homepage: https://github.com/owner/my-plugin
+tags: [gateway, demo]
+requires_plugins:
+  - id: other-plugin
+    version_range: ">=1.0,<2"
+python_dependencies:
+  - "somepkg>=1.0,<2"     # 仅提示，绝不自动安装
+config_schema:
+  api_url: {type: str, default: "", description: "Service endpoint"}
+```
+
+:::note pip 依赖隔离被推迟
+`python_dependencies` 有意只做声明和提示。把任意包安装进 Hermes 共享的 venv 会带来冲突和
+供应链风险，因此安装接缝的隔离设计（针对宿主锁文件的 constraints 安装、按插件的 vendored 目录，
+或检测冲突并拒绝）是一项明确推迟的后续工作——参见
+[#64165](https://github.com/NousResearch/hermes-agent/issues/64165) 上的第二轮评审以及
+[#15220](https://github.com/NousResearch/hermes-agent/issues/15220)。插件包（#64166）构建在这些
+v2 字段之上。
+:::
 
 ## 第三步：编写工具 schema
 
@@ -277,6 +483,7 @@ def register(ctx):
 - `ctx.register_cli_command()` 注册 CLI 子命令（例如 `hermes my-plugin <subcommand>`）
 - `ctx.register_command()` 注册会话内斜杠命令（例如在 CLI / 网关聊天中输入 `/myplugin <args>`）——详见下方[注册斜杠命令](#register-slash-commands)
 - `ctx.dispatch_tool(name, arguments)` ——以父代理的上下文（审批、凭证、task_id 自动连接）调用任意其他工具（内置或来自其他插件）。适用于需要直接调用 `terminal`、`read_file` 或其他工具的斜杠命令处理器，效果等同于模型直接调用。
+- `ctx.get_config()` / `ctx.set_config()` 只能访问本插件自己的设置命名空间；`ctx.state` 在当前 profile 下存储插件拥有的运行时数据。
 - 如果此函数崩溃，插件将被禁用，但 Hermes 继续正常运行
 
 **`dispatch_tool` 示例——执行工具的斜杠命令：**
@@ -297,6 +504,36 @@ def register(ctx):
 ```
 
 被分发的工具会经过正常的审批、脱敏和预算流程——这是真实的工具调用，而非绕过这些流程的捷径。
+
+### 存储设置和运行时状态 {#store-settings-and-runtime-state}
+
+对用户可见的行为使用相对于插件的配置键。Hermes 会将它们解析到
+`plugins.entries.<plugin-id>.settings` 之下，并拒绝全局路径、跨插件路径和路径穿越：
+
+```python
+def register(ctx):
+    endpoint = ctx.get_config("endpoint", default="https://example.invalid")
+    retries = ctx.get_config("retry.attempts", default=3)
+
+    ctx.set_config("endpoint", endpoint)
+    ctx.set_config("retry.attempts", retries)
+```
+
+对于插件拥有的游标、缓存和去重数据，请使用 `ctx.state`，而不是把运行时簿记数据放进
+`config.yaml`：
+
+```python
+def register(ctx):
+    cursor = ctx.state.get("cursor", default={"page": 0})
+    ctx.state.set("cursor", {"page": cursor["page"] + 1})
+```
+
+状态按 profile 划分、以原子方式替换、对并发写入者安全，并且每个插件上限为 10 MiB。可移植包
+与其 `PLUGIN_DATA` 共用同一个目录；原生插件会获得一个抗冲突、在 Windows 上安全的命名空间。
+格式错误的已有状态会被报告并保留。
+
+配置和状态有不同的所有者：设置是 `config.yaml` 中对用户可见的行为，而状态是位于
+`<HERMES_HOME>/plugin-data/` 下、由插件拥有的运行时数据。两个 API 都不会暴露其他插件的命名空间。
 
 ## 第六步：测试
 
@@ -353,8 +590,8 @@ hermes logs --level WARNING | grep -i plugin
 插件未出现的常见原因：
 
 - **未在配置中启用**——插件需要手动启用。运行 `hermes plugins enable <name>`（名称来自 `plugins list` 输出，嵌套布局下可能是 `<category>/<plugin>`）。
-- **目录结构错误**——必须是 `~/.hermes/plugins/<plugin-name>/plugin.yaml`（扁平）或 `~/.hermes/plugins/<category>/<plugin-name>/plugin.yaml`（一级分类嵌套，最多）。更深层的目录会被忽略。
-- **缺少 `__init__.py`**——插件目录需要同时包含 `plugin.yaml` 和带有 `register(ctx)` 函数的 `__init__.py`。
+- **目录结构错误：** 原生包使用 `~/.hermes/plugins/<plugin-name>/plugin.yaml`（扁平）或一级分类嵌套。可移植包在相同位置使用根目录的 `plugin.json`。更深层的目录会被忽略。
+- **缺少 `__init__.py`：** 原生包需要同时包含 `plugin.yaml` 和带有 `register(ctx)` 函数的 `__init__.py`。可移植包不导入 Python，不需要 `__init__.py`。
 - **`kind` 错误**——网关适配器需要在清单中设置 `kind: platform`。记忆提供商会被自动检测为 `kind: exclusive`，并通过 `memory.provider` 配置路由，而非 `plugins.enabled`。
 
 ## 插件的最终结构
@@ -389,6 +626,28 @@ _DATA_FILE = _PLUGIN_DIR / "data" / "languages.yaml"
 with open(_DATA_FILE) as f:
     _DATA = yaml.safe_load(f)
 ```
+
+以上针对的是你*随附*的文件。你*写入*的状态则不同——参见下一节。
+
+### 存储持久化状态 {#store-durable-state}
+
+永远不要把运行时状态写进你的插件目录：那是安装树，`hermes plugins update` / `remove` 会对它
+执行 git pull 或直接删除——你的用户数据会随之消失。官方认可的存放位置是按插件划分的数据根目录，
+它在这两种操作后都能保留，并跟随当前 profile：
+
+```python
+from plugins.plugin_storage import plugin_data_dir, plugin_db
+
+# <hermes home>/plugin-data/<name>/ — 首次使用时创建
+state_file = plugin_data_dir("my-plugin") / "state.json"
+
+# 或者位于 <data dir>/data.db 的 SQLite 数据库（WAL 模式，对线程友好）
+conn = plugin_db("my-plugin")
+conn.execute("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY)")
+```
+
+每个插件一个目录，意味着每个插件的数据都可以在一个可预测的位置进行检查。密钥不属于这里——
+凭证读取与其他地方一样，走标准的 `.env` / secret-scope 路径。
 
 ### 捆绑技能 {#bundle-skills}
 
@@ -571,7 +830,20 @@ def register(ctx):
     )
 ```
 
-不加 `override=True` 时，注册表会拒绝任何会遮蔽来自不同 toolset 的已有工具的注册——这防止了意外覆盖。覆盖操作会以 INFO 级别记录日志，可在 `~/.hermes/logs/agent.log` 中审计。插件在内置工具之后加载，因此注册顺序是正确的：你的处理器会替换内置处理器。
+不加 `override=True` 时，注册表会拒绝任何会遮蔽来自不同 toolset 的已有工具的注册——这防止了意外覆盖。覆盖**内置**工具还需要运维者在 `config.yaml` 中通过 `plugins.entries.<plugin_id>.allow_tool_override: true` 选择启用；没有这道门控时，`register_tool(override=True)` 会抛出 `PluginToolOverrideError`。覆盖操作会被记录日志，可在 `~/.hermes/logs/agent.log` 中审计。插件在内置工具之后加载，因此注册顺序是正确的：你的处理器会替换内置处理器。
+
+**非捆绑插件同样需要运维者授权。** 对于任何不随 Hermes 核心一起发布的插件（user、project 或 pip 来源），针对已有内置工具使用 `override=True` 还需要在 `config.yaml` 中按插件选择启用：
+
+```yaml
+plugins:
+  entries:
+    my-plugin:                    # 来自 `hermes plugins list` 的插件注册表键
+      allow_tool_override: true
+```
+
+没有该授权时，`ctx.register_tool(..., override=True)` 会抛出 `PluginToolOverrideError`；由于 `register()` 的异常会被加载器捕获，该插件会被禁用而 Hermes 继续运行。设置这道门控的原因是：一个已启用的插件若悄悄替换了 `shell_exec` 或 `write_file` 这类特权内置工具，就可能拦截模型经由它路由的一切。捆绑插件不受此限：在那里进行覆盖是维护者的决定。如果无法加载配置，该门控会 fail closed。
+
+你通常无需手动编辑这个键。启用非捆绑插件时，`hermes plugins enable <name>` 会询问是否授予该能力（默认为否），而 `--allow-tool-override` / `--no-allow-tool-override` 标志可在脚本化安装中跳过该提示。同一授权也门控 `deregister()`：没有它，插件无法移除不属于自己的工具（否则这就成了绕过覆盖检查的一种方式）。
 
 ### 注册多个钩子
 
@@ -590,23 +862,29 @@ def register(ctx):
 
 | 钩子 | 触发时机 | 回调签名 | 返回值 |
 |------|-----------|-------------------|---------|
-| [`pre_tool_call`](/user-guide/features/hooks#pre_tool_call) | 任意工具执行前 | `tool_name: str, args: dict, task_id: str` | 忽略 |
+| [`pre_tool_call`](/user-guide/features/hooks#pre_tool_call) | 任意工具执行前 | `tool_name: str, args: dict, task_id: str` | 可选指令：`{"action": "block", "message": ...}` 否决该调用；`{"action": "approve", "message": ...}` 升级到人工审批闸门 |
 | [`post_tool_call`](/user-guide/features/hooks#post_tool_call) | 任意工具返回后 | `tool_name: str, args: dict, result: str, task_id: str, duration_ms: int` | 忽略 |
 | [`pre_llm_call`](/user-guide/features/hooks#pre_llm_call) | 每轮一次，工具调用循环前 | `session_id: str, user_message: str, conversation_history: list, is_first_turn: bool, model: str, platform: str` | [上下文注入](#pre_llm_call-context-injection) |
 | [`post_llm_call`](/user-guide/features/hooks#post_llm_call) | 每轮一次，工具调用循环后（仅成功轮次） | `session_id: str, user_message: str, assistant_response: str, conversation_history: list, model: str, platform: str` | 忽略 |
+| `pre_api_request` | 每次原始 provider API 请求之前（模型调用工具时每轮会有多次） | `session_id: str, model: str, provider: str, base_url: str, api_mode: str, api_call_count: int, message_count: int, tool_count: int, approx_input_tokens: int, max_tokens: int, request: dict` | 忽略 |
+| `post_api_request` | 每次原始 provider API 请求返回之后 | `pre_api_request` 的字段，外加 `api_duration: float, finish_reason: str, response_model: str \| None, usage: dict, response: dict, assistant_content_chars: int, assistant_tool_call_count: int` | 忽略 |
+| `api_request_error` | provider API 调用抛出异常 | 关联字段，外加 `status_code: int \| None, retry_count: int \| None, max_retries: int \| None, retryable: bool \| None, reason: str \| None, error: dict, request: dict` | 忽略 |
 | [`on_session_start`](/user-guide/features/hooks#on_session_start) | 新会话创建（仅第一轮） | `session_id: str, model: str, platform: str` | 忽略 |
 | [`on_session_end`](/user-guide/features/hooks#on_session_end) | 每次 `run_conversation` 调用结束 + CLI 退出 | `session_id: str, completed: bool, interrupted: bool, model: str, platform: str` | 忽略 |
 | [`on_session_finalize`](/user-guide/features/hooks#on_session_finalize) | CLI/网关销毁活跃会话 | `session_id: str \| None, platform: str` | 忽略 |
 | [`on_session_reset`](/user-guide/features/hooks#on_session_reset) | 网关切换新会话键（`/new`、`/reset`） | `session_id: str, platform: str` | 忽略 |
+| [`gateway_platform_event`](/user-guide/features/hooks#gateway_platform_event) | 经过授权的平台原生事件在网关边界被归一化（目前为 Telegram 回应） | `platform: str, event_type: str, payload: dict` | 忽略 |
 | `kanban_task_claimed` | kanban 任务被认领（dispatcher 进程中，worker 启动之前） | `task_id: str, board: str \| None, assignee: str \| None, run_id: int \| None, profile_name: str` | 忽略 |
 | `kanban_task_completed` | kanban 任务完成（worker 进程） | `task_id, board, assignee, run_id, profile_name, summary: str \| None` | 忽略 |
 | `kanban_task_blocked` | kanban 任务被阻塞（worker 进程） | `task_id, board, assignee, run_id, profile_name, reason: str \| None` | 忽略 |
 
-大多数钩子是即发即忘的观察者——其返回值被忽略。例外是 `pre_llm_call`，它可以向对话中注入上下文。
+大多数钩子是即发即忘的观察者——其返回值被忽略。例外是 `pre_llm_call`（可以向对话中注入上下文）和 `pre_tool_call`（可以返回 block/approve 指令）。
 
 所有回调都应接受 `**kwargs` 以保持向前兼容性。如果钩子回调崩溃，会被记录日志并跳过。其他钩子和代理继续正常运行。
 
 kanban 生命周期钩子在看板数据库变更提交**之后**触发，因此回调总是看到持久化后的状态，并且绝不会持有 SQLite 写锁。由于 kanban worker 以独立的 `hermes -p <profile> chat -q` 子进程运行，`kanban_task_claimed` 在 **dispatcher** 进程中触发，而 `kanban_task_completed` / `kanban_task_blocked` 在 **worker** 进程中触发——在 dispatcher 中挂钩可集中观察每一次状态转换，在 worker 中挂钩则可获得每个任务的会话内上下文。
+
+**API 请求钩子**是针对原始 provider 请求的观察者，比每轮一次的 `pre_llm_call` / `post_llm_call` 低一个层级：一个调用了工具的轮次会发出多个 API 请求，这些钩子会在每个请求前后触发。它们为可观测性插件（追踪、成本核算、延迟仪表盘）而设。`request` 和 `response` 关键字参数是 provider 载荷经过清理、限制大小的 JSON 视图（敏感键已脱敏、长字符串已截断、SDK 对象已归一化），`usage` 是一个普通的 token 摘要字典。每个载荷都携带关联字段 `turn_id`、`api_request_id`、`task_id`、`session_id` 和 `api_call_count`，因此插件可以把请求、工具调用和轮次串联起来。`api_request_error` 在 provider 调用抛出异常时触发，并额外提供 `status_code`、`retry_count` / `max_retries`、`retryable`、`reason`，以及一个包含 `type` 和 `message` 的 `error` 字典。
 
 ### `pre_llm_call` 上下文注入 {#pre_llm_call-context-injection}
 
@@ -627,7 +905,7 @@ return None
 
 任何非 None、非空的返回值，只要包含 `"context"` 键（或为非空纯字符串），都会被收集并追加到当前轮次的用户消息中。
 
-#### 超量上下文溢写
+#### 超量上下文溢写 {#oversized-context-spill}
 
 每个钩子的上下文默认上限为 `10,000` 个字符。超出上限的部分会被写入 `$HERMES_HOME/hook_outputs/<session_id>/<uuid>.txt`，并替换为首尾预览加上保存路径。如果模型确实需要，可以通过 `read_file` 或 `terminal` 读取完整内容。这可以防止某个失控插件撑大后续每一轮的 prompt，把 prompt 缓存前缀冲掉。可在 `config.yaml` 中调整：
 
@@ -718,6 +996,44 @@ def register(ctx):
 #### 多个插件返回上下文
 
 当多个插件从 `pre_llm_call` 返回上下文时，它们的输出以双换行符连接，一起追加到用户消息中。顺序遵循插件发现顺序（按插件目录名称字母排序）。
+
+### 中间件：改变实际发生的事情 {#middleware-change-what-happens}
+
+钩子观察代理循环（外加上文记载的少数几种引导形态）。**中间件则改变实际发生的事情**：请求中间件在任何下游组件看到之前重写实际生效的载荷，执行中间件则包裹实际的调用。在同一个 `register(ctx)` 入口点中注册它：
+
+```python
+def cap_find_output(tool_name, args, **kwargs):
+    """Rewrite terminal find commands to cap their output."""
+    command = args.get("command", "")
+    if tool_name == "terminal" and command.startswith("find "):
+        return {
+            "args": {**args, "command": command + " | head -100"},
+            "source": "my-plugin",
+            "reason": "cap find output",
+        }
+    return None  # 保持调用不变
+
+def register(ctx):
+    ctx.register_middleware("tool_request", cap_find_output)
+```
+
+种类的规范列表是 `hermes_cli/middleware.py` 中的 `VALID_MIDDLEWARE`：
+
+| 种类 | 接收 | 返回约定 |
+|------|----------|-----------------|
+| `tool_request` | `tool_name`、`args`、`original_args`、上下文关键字参数 | 返回 `{"args": {...}}`，在钩子、护栏、审批和执行看到之前替换实际生效的工具参数。返回 `None` 则保持调用不变。 |
+| `llm_request` | `request`、`original_request`、上下文关键字参数 | 返回 `{"request": {...}}`，在 Hermes 发送之前替换实际生效的 provider 关键字参数。 |
+| `tool_execution` | 载荷加上 `next_call` | 包裹工具执行。恰好调用一次 `next_call(payload)` 来运行下游链（或跳过它以短路），并返回结果。 |
+| `llm_execution` | 载荷加上 `next_call` | 形态相同，包裹 provider 调用。 |
+
+**实践中要紧的规则：**
+
+- 请求中间件是链式的：每个回调看到的是被之前回调重写后的载荷，而 `original_args` / `original_request` 始终携带中间件处理之前的副本。载荷在回调之间会被复制，因此可以随意修改。
+- 你可以在返回的字典中包含 `source`、`reason` 和 `name` 字符串。它们会进入中间件追踪记录，下游的观察者钩子会以 `middleware_trace` 关键字参数接收它。
+- 执行中间件中的 `next_call` 是**一次性的**。调用两次会抛出异常，因为那会重新运行 provider 或工具。
+- 抛出异常的中间件回调会被记录日志并跳过；链会继续。在你的 `next_call` 之后抛出的下游失败会原样传播。中间件永远不会破坏基础运行时路径。
+- 中间件载荷会在观察者遥测字段之外携带 `middleware_schema_version`（`hermes.middleware.v1`）。
+- 未知种类会在注册时给出警告而不是失败，因此针对较新 Hermes 编写的插件在较旧版本上仍能加载。
 
 ### 注册 CLI 命令
 
@@ -900,7 +1216,85 @@ def register(ctx):
 - slack_bolt 的常规规则依然适用——在 3 秒内 `await ack()`，然后再做耗时的工作。
 - 对于多工作区部署，处理器会对任意已连接工作区的点击触发；如果需要按工作区区分行为，请使用 `body["team"]["id"]`。
 
-这是插件参与 Slack 交互的公开方式。较老的插件可能会修补 `SlackAdapter.connect`；请优先使用本 API。
+这是插件参与 Slack 交互的公开方式。较老的插件可能会修补 `SlackAdapter.connect`；请优先使用本 API。如需完整的 slack_bolt 接口（事件、快捷方式、命令——而不仅仅是 Block Kit 动作），请使用下方通用的 `register_platform_handler("slack", ...)`。
+
+### 注册原生平台处理器（任意平台） {#register-native-platform-handlers-any-platform}
+
+需要接收核心适配器不会路由的平台事件的插件——额外的更新类型、原生按钮回调、回应/成员事件、webhook 路由——可以注册一个处理器工厂，由平台适配器在连接时调用。这适用于**所有**网关平台。
+
+```python
+def register(ctx):
+    def _wire(native, adapter):
+        # native: the platform's client/app object (see table below)
+        # adapter: the platform adapter instance (treat as read-only)
+        # Import platform SDKs HERE so register() works without them.
+        ...
+
+    ctx.register_platform_handler("discord", _wire)
+```
+
+**签名：** `ctx.register_platform_handler(platform, factory) -> None`
+
+| 参数 | 类型 | 描述 |
+|-----------|------|-------------|
+| `platform` | `str` | 网关平台名称，小写（`"telegram"`、`"discord"`、`"slack"`、`"matrix"`，……） |
+| `factory` | callable | 在连接时接收 `(native, adapter)` |
+
+**各平台的 `native` 是什么：**
+
+| 平台 | `native` 对象 | 常用挂钩方式 |
+|----------|-----------------|---------------|
+| `telegram` | PTB `Application` | `add_handler`——任意更新类型、按模式限定的回调 |
+| `discord` | `discord.ext.commands.Bot` | `add_listener`——回应、成员事件、线程、语音 |
+| `slack` | `slack_bolt.AsyncApp` | `app.event()` / `app.action()` / `app.command()` |
+| `matrix` | Matrix 客户端 | 事件回调 |
+| `teams` | Teams `App` | `on_message` / `on_card_action` 装饰器 |
+| `dingtalk` | `DingTalkStreamClient` | 为其他 stream 主题使用 `register_callback_handler` |
+| `feishu` | lark_oapi 客户端 | API 调用；事件路由 |
+| `line`、`api_server`、`msgraph_webhook` | aiohttp `web.Application` | `router.add_get/post`——自定义路由（在路由器冻结之前接入） |
+| 其他所有平台（whatsapp、signal、irc、email、sms、ntfy、wecom、weixin、bluebubbles、yuanbao，……） | `None` | 连接时钩子；通过 `adapter` 句柄进行操作 |
+
+**运行时行为：**
+
+- 工厂在插件加载时入队，并在平台连接时被调用——对于分发顺序很重要的平台（Telegram、Slack、Teams、aiohttp 路由器），它们会在核心处理器注册**之前**运行，因此限定了范围的插件处理器优先生效，其余一切则继续向下传递。
+- **添加到首个匹配分发表中的处理器务必限定范围。** 在 Telegram 上，请使用 `CallbackQueryHandler(..., pattern=r"^myplugin:")`——未限定范围的处理器会吞掉核心的按钮流程（执行审批、模型选择器、澄清提示）。
+- 每个工厂相互隔离：如果它抛出异常，错误会被记录，平台照常连接。
+- 请在工厂函数体内导入平台 SDK，而不是在模块级别——`register()` 必须在 SDK 未安装时也能正常工作。
+- 一个插件可以为多个平台注册工厂；每个工厂只在其对应平台连接时触发。
+
+**Telegram 别名：** `ctx.register_telegram_handler(factory)` 是 `ctx.register_platform_handler("telegram", factory)` 的向后兼容别名。
+
+示例——Telegram，按模式限定的内联按钮：
+
+```python
+def register(ctx):
+    def _wire(application, adapter):
+        from telegram.ext import CallbackQueryHandler
+
+        async def _on_button(update, context):
+            query = update.callback_query
+            await query.answer()
+            # ...handle "myplugin:*" callbacks
+
+        application.add_handler(
+            CallbackQueryHandler(_on_button, pattern=r"^myplugin:")
+        )
+
+    ctx.register_platform_handler("telegram", _wire)
+```
+
+示例——Discord，回应事件：
+
+```python
+def register(ctx):
+    def _wire(bot, adapter):
+        async def on_raw_reaction_add(payload):
+            ...  # e.g. reaction-based voting / moderation
+
+        bot.add_listener(on_raw_reaction_add, "on_raw_reaction_add")
+
+    ctx.register_platform_handler("discord", _wire)
+```
 
 :::tip
 本指南涵盖**通用插件**（工具、钩子、斜杠命令、CLI 命令）。以下各节简要介绍每种专用插件类型的编写模式；每节均链接到其完整指南以获取字段参考和示例。
@@ -1039,6 +1433,8 @@ def register(ctx):
 
 记忆提供商是单选的——同一时间只有一个处于活跃状态，通过 `config.yaml` 中的 `memory.provider` 选择。
 
+如果某个提供商同时也作为通用插件加载，则由通用发现机制负责其生命周期钩子。在同一插件来源通过通用发现成功加载之前，记忆加载器只以回退方式提供钩子。重复加载提供商会替换这组回退钩子；组内不同的回调会被保留。这不会对来自不同插件来源的钩子进行去重，也不会改变提供商的激活方式。
+
 **完整指南：** [记忆提供商插件](/developer-guide/memory-provider-plugin)——完整的 `MemoryProvider` ABC、线程约定、配置文件隔离、通过 `cli.py` 注册 CLI 命令。
 
 ### 上下文引擎插件——替换上下文压缩器
@@ -1054,7 +1450,8 @@ class MyContextEngine(ContextEngine):
 
     def update_from_response(self, usage) -> None: ...
     def should_compress(self, prompt_tokens: int = None) -> bool: ...
-    def compress(self, messages, current_tokens=None, focus_topic=None) -> list: ...
+    def compress(self, messages, current_tokens=None, focus_topic=None,
+                 force=False, memory_context="") -> list: ...
 
 def register(ctx):
     ctx.register_context_engine(MyContextEngine())
@@ -1078,7 +1475,9 @@ class MyImageGenProvider(ImageGenProvider):
         return "my-imggen"
 
     def is_available(self) -> bool: ...
-    def generate(self, prompt: str, **kwargs) -> str: ...   # returns image path
+    def generate(self, prompt: str, aspect_ratio="landscape", **kwargs) -> dict:
+        # returns success_response(...) / error_response(...)
+        ...
 
 def register(ctx):
     ctx.register_image_gen_provider(MyImageGenProvider())
@@ -1188,7 +1587,7 @@ tts:
       voice_compatible: true
 ```
 
-对于 STT，将 `HERMES_LOCAL_STT_COMMAND` 指向一个 shell 模板。支持的占位符：`{input_path}`、`{output_path}`、`{format}`、`{voice}`、`{model}`、`{speed}`（TTS）；`{input_path}`、`{output_dir}`、`{language}`、`{model}`（STT）。任何与路径交互的 CLI 都自动成为插件。
+对于 STT，将 `HERMES_LOCAL_STT_COMMAND` 指向一个按 argv 分词的模板。它在运行时不会进行隐式的 shell 解释；如果可信的本地命令需要 shell 语法，请显式地用 `sh -c`、`cmd /c` 或 PowerShell 包裹它。支持的占位符：`{input_path}`、`{output_path}`、`{format}`、`{voice}`、`{model}`、`{speed}`（TTS）；`{input_path}`、`{output_dir}`、`{language}`、`{model}`（STT）。任何与路径交互的 CLI 都自动成为插件。
 
 **完整指南：** [TTS 自定义命令提供商](/user-guide/features/tts#custom-command-providers) · [STT](/user-guide/features/tts#voice-message-transcription-stt)。
 

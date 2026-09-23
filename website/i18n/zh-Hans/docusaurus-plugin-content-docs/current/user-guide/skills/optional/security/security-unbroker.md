@@ -74,7 +74,7 @@ Python CLI（`scripts/pdd.py`）掌管确定性状态——配置、档案 + 同
 
 ## 前置条件
 
-- `python3`（仅需标准库；核心引擎不需要额外依赖包）。
+- `python`（仅需标准库；核心引擎不需要额外依赖包）。
 - **可选增强项**（没有它们此 skill 也能零配置工作；`setup --auto` 会启用它检测到的
   每一项，并从 shell 环境**以及 `$HERMES_HOME/.env`** 读取凭据，这样 Hermes
   已经为自身工具加载的密钥无需重新导出即可被使用——每一项都能把一类人工任务
@@ -113,7 +113,7 @@ Python CLI（`scripts/pdd.py`）掌管确定性状态——配置、档案 + 同
 一切都通过 `terminal` 工具运行。在此 skill 目录下：
 
 ```bash
-PDD="python3 scripts/pdd.py"
+PDD="python scripts/pdd.py"
 ```
 
 引擎把数据存放在 `$PDD_DATA_DIR`（默认 `$HERMES_HOME/unbroker`），以
@@ -325,7 +325,7 @@ PDD="python3 scripts/pdd.py"
 ## 验证
 
 - `scripts/run_tests.sh tests/skills/test_unbroker_skill.py`（封闭环境；无网络），或使用
-  零依赖运行器 `python3 tests/skills/test_unbroker_skill.py`。
+  零依赖运行器 `python tests/skills/test_unbroker_skill.py`。
 - 试运行：`$PDD setup --auto && $PDD doctor && SID=$($PDD intake --full-name "Test Person"
-  --email t@example.com --consent | python3 -c 'import sys,json;print(json.load(sys.stdin)["subject_id"])')
+  --email t@example.com --consent | python -c 'import sys,json;print(json.load(sys.stdin)["subject_id"])')
   && $PDD next "$SID"`，确认能看到就绪情况摘要以及一个有序的动作队列。

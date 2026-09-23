@@ -6,6 +6,10 @@ description: "使用 Ollama 和 Gemma 4 等开放权重模型在本机完整运�
 
 # 使用 Ollama 在本地运行 Hermes — 零 API 费用
 
+:::tip 桌面端用户：有一键式方案
+在 Hermes 桌面应用中，**设置 → 提供商 → 本地模型**（**Settings → Providers → Local Models**）会为你安装并管理一个本地 llama.cpp 服务器——包括模型下载、内存适配和上下文大小设置。参见[本地模型](/user-guide/local-models)。本指南适用于手动搭建：专门使用 Ollama、以 CLI 为主的工作流，或你想自行运行的服务器。
+:::
+
 ## 问题所在
 
 云端 LLM API 按 token（令牌）计费。一次高强度的编程会话可能花费 5–20 美元。对于个人项目、学习或隐私敏感的工作，费用会不断累积——而且你的每一段对话都会发送给第三方。
@@ -21,7 +25,7 @@ description: "使用 Ollama 和 Gemma 4 等开放权重模型在本机完整运�
 - 一个可以编辑文件、执行命令、浏览网页的本地 agent
 - 可选：由你自己的硬件驱动的 Telegram/Discord 机器人
 
-## 所需条件
+## 所需条件 {#what-you-need}
 
 | 组件 | 最低配置 | 推荐配置 |
 |-----------|---------|-------------|
@@ -170,7 +174,7 @@ ollama create gemma4-64k -f /tmp/Modelfile
 
 然后将 Hermes 配置中的模型名称更新为 `gemma4-64k`。
 
-### 保持模型常驻内存
+### 保持模型常驻内存 {#keep-the-model-loaded}
 
 默认情况下，Ollama 在模型空闲 5 分钟后将其卸载。对于持久化的 gateway 机器人，保持模型常驻：
 
@@ -188,7 +192,7 @@ curl http://localhost:11434/api/generate \
 Environment="OLLAMA_KEEP_ALIVE=24h"
 ```
 
-### 使用 GPU 卸载（如有）
+### 使用 GPU 卸载（如有） {#use-gpu-offloading-if-available}
 
 如果你有 NVIDIA GPU，Ollama 会自动将层卸载到 GPU。通过以下命令检查：
 
@@ -276,6 +280,17 @@ ollama serve
 - **检查 `ollama ps`：** 如果没有 GPU 层被卸载，响应受 CPU 限制。这对于纯 CPU 服务器是正常现象。
 - **减少上下文：** 长对话会降低推理速度。定期使用 `/compress`，或在配置中设置更低的压缩阈值。
 
+### 首次响应缓慢（预填充） {#slow-first-response-prefill}
+
+Hermes 在每次 API 调用时都会先发送一段固定载荷——系统提示词加上所有已启用工具的工具 schema——然后才是你的对话内容。在纯 CPU 或显存较小的环境中，处理这段 prompt（即*预填充*（prefill）阶段）会占据首轮对话的大部分时间：模型可能在处理 prompt 时静默数分钟，随后才以正常速度生成。这是预期行为，而不是卡死。[Mac 本地 LLM 指南](./local-llm-on-mac.md#timeouts)记录了同样的现象——在大上下文的预填充阶段，本地模型可能在处理 prompt 时数分钟内没有任何输出——并且 Hermes 会针对本地端点自动将流式读取超时从 120s 提升至 1800s（`HERMES_STREAM_READ_TIMEOUT`）。
+
+有帮助的做法：
+
+- **保持模型常驻加载** —— Ollama 会在模型空闲 5 分钟后将其卸载，导致下一次预填充前需要完整重新加载。设置 `OLLAMA_KEEP_ALIVE=24h`（参见[第六步](#keep-the-model-loaded)）。
+- **放宽 API 超时** —— 在 `~/.hermes/.env` 中设置 `HERMES_API_TIMEOUT=1800`（参见[所需条件](#what-you-need)）。
+- **测量并精简固定 prompt** —— 运行 `hermes prompt-size` 查看系统提示词和工具 schema 的字节明细，然后用 `hermes tools` 禁用未使用的工具集，并用 `hermes skills` 卸载不需要的 skill。
+- **使用 GPU 卸载** —— 即使只是部分卸载也能显著提速（参见[第六步](#use-gpu-offloading-if-available)）。
+
 ### 模型不遵循工具调用
 
 不支持工具调用的模型会输出纯文本，而非结构化的函数调用。解决方案：
@@ -283,6 +298,8 @@ ollama serve
 - **使用支持工具调用的模型** —— 在上面列出的模型中，只有 `gemma4:31b` 具备可靠的工具调用能力。
 - **Hermes 具备自动修复功能** —— 它能检测格式错误的工具调用并自动尝试修复。
 - **设置回退方案** —— 如果本地模型连续失败 3 次，Hermes 将回退到云端提供商。
+
+如果模型在回复中打印出类似 `{"name": "web_search", ...}` 的原始 JSON，而不是实际运行工具，问题通常出在*服务器*而非模型——要么未启用工具调用，要么工具调用格式没有被解析。请参阅[工具调用以文本形式出现而未执行](/integrations/providers#tool-calls-appear-as-text-instead-of-executing)中按服务器列出的修复表（llama.cpp 需要 `--jinja`，vLLM 需要 `--enable-auto-tool-choice --tool-call-parser hermes`，等等）。
 
 ### 上下文窗口错误
 

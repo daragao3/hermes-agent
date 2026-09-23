@@ -1,14 +1,14 @@
 ---
-title: "Tensorrt Llm — 使用 NVIDIA TensorRT 优化 LLM 推理以实现最大吞吐量和最低延迟"
+title: "Tensorrt Llm — 在 NVIDIA GPU 上进行高吞吐量 LLM 推理"
 sidebar_label: "Tensorrt Llm"
-description: "使用 NVIDIA TensorRT 优化 LLM 推理以实现最大吞吐量和最低延迟"
+description: "在 NVIDIA GPU 上进行高吞吐量 LLM 推理"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Tensorrt Llm
 
-使用 NVIDIA TensorRT 优化 LLM 推理，实现最大吞吐量和最低延迟。适用于在 NVIDIA GPU（A100/H100）上进行生产部署、需要比 PyTorch 快 10-100 倍的推理速度，或需要使用量化（FP8/INT4）、in-flight batching（动态批处理）和多 GPU 扩展来服务模型的场景。
+在 NVIDIA GPU 上进行高吞吐量 LLM 推理。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "使用 NVIDIA TensorRT 优化 LLM 推理以实现最大吞吐量�
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/mlops/tensorrt-llm` 安装 |
 | 路径 | `optional-skills/mlops/tensorrt-llm` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
 | 依赖项 | `tensorrt-llm`, `torch` |
@@ -31,7 +31,7 @@ description: "使用 NVIDIA TensorRT 优化 LLM 推理以实现最大吞吐量�
 
 # TensorRT-LLM
 
-NVIDIA 的开源库，用于在 NVIDIA GPU 上以最先进的性能优化 LLM 推理。
+NVIDIA 的开源库，用于在 NVIDIA GPU 上以高性能优化 LLM 推理。
 
 ## 何时使用 TensorRT-LLM
 
@@ -57,13 +57,15 @@ NVIDIA 的开源库，用于在 NVIDIA GPU 上以最先进的性能优化 LLM �
 ### 安装
 
 ```bash
-# Docker（推荐）
-docker pull nvidia/tensorrt_llm:latest
+# Docker（推荐）——镜像位于 NGC（nvcr.io），而不是 Docker Hub。
+# 将 x.y.z 替换为所需版本（例如 1.2.1）。在 NGC 上浏览标签：
+# https://catalog.ngc.nvidia.com/orgs/nvidia/teams/tensorrt-llm/containers/release/tags
+docker pull nvcr.io/nvidia/tensorrt-llm/release:x.y.z
 
-# pip 安装
-pip install tensorrt_llm==1.2.0rc3
+# pip 安装（当前稳定 GA 版本）
+pip install tensorrt_llm
 
-# 需要 CUDA 13.0.0、TensorRT 10.13.2、Python 3.10-3.12
+# 需要 CUDA 13.2.1、TensorRT 10.x、Python 3.10-3.12
 ```
 
 ### 基本推理

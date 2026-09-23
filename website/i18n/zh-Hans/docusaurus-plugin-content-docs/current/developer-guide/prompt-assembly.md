@@ -28,9 +28,9 @@ Hermes 刻意将以下内容分离：
 
 已缓存的系统 prompt 按三个有序层级组装（参见 `agent/system_prompt.py`）：
 
-1. **stable（稳定层）** — 身份（`SOUL.md` 或回退值）、工具/模型指导、skills prompt、环境提示、平台提示
-2. **context（上下文层）** — 调用方提供的 `system_message` 以及项目上下文文件（`.hermes.md` / `AGENTS.md` / `CLAUDE.md` / `.cursorrules`）
-3. **volatile（易变层）** — 内置记忆快照（`MEMORY.md`）、用户配置文件快照（`USER.md`）、外部记忆提供方块、时间戳/会话/模型/提供方行
+1. **stable（稳定层）** — 身份（`SOUL.md` 或回退值）、工具/模型指导、编码操作简报
+2. **context（上下文层）** — 调用方提供的 `system_message`、项目上下文文件（`.hermes.md` / `AGENTS.md` / `CLAUDE.md` / `.cursorrules`），然后是依赖于 worktree 的 git 工作区快照、操作员指令和平台提示
+3. **volatile（易变层）** — skills 索引、内置记忆快照（`MEMORY.md`）、用户配置文件快照（`USER.md`）、外部记忆提供方块、时间戳/会话/模型/提供方行，然后是运行时环境提示（主机 / 主目录 / **当前工作目录**）
 
 最终的系统 prompt 按此顺序拼接：`stable` → `context` → `volatile`。
 
@@ -38,6 +38,19 @@ Hermes 刻意将以下内容分离：
 - skills 属于 **stable** 层
 - 记忆/配置文件快照属于 **volatile** 层
 - 两者仍都在已缓存的系统 prompt 中（它们并非以临时的轮次中覆盖层形式注入）
+
+在上下文层内部，共享的项目文件位于任何指明当前 worktree 的内容**之前**。
+这样，同一项目在不同 git worktree 中运行的会话就能共享覆盖整个上下文块的 prompt 前缀，
+而不会在第一行依赖 cwd 的内容处中断——最长前缀式的提供方缓存复用的正是这个前缀。
+没有工作区快照的会话会把其尾部指导保留在 stable 层；运行时环境块始终位于 volatile 层的末尾。
+
+对已存储 prompt 的影响：`_stored_prompt_matches_runtime()`（`agent/conversation_loop.py`）会读取
+渲染后的 `# Hermes runtime environment` 边界之后的第一个主机信息段落，并以位于绝对末尾的结束标记
+将这种布局与引用了该标题的旧版文本区分开来。运行时边界位于所有项目、操作员、记忆和插件文本之后，
+因此这些块中的示例不会伪装成运行时 cwd。模型/提供方在运行时边界之前读取，并排除嵌入器描述。
+`Platform:` 有意不作为身份字段：界面切换（desktop ↔ TUI）会保留已存储的字节，并通过每轮用户消息通道
+以一次性提示的形式传递当前界面的指导（`agent/surface_switch.py`），从而使缓存前缀得以保留（#104414）。
+旧版 prompt 保留其原有的“主机在上下文之前”锚点，因此在重新排序之前持久化的 prompt 仍能通过验证。
 
 当设置了 `skip_context_files`（例如子 agent 委托）时，不会加载 SOUL.md，而是使用硬编码的 `DEFAULT_AGENT_IDENTITY`。
 
@@ -53,10 +66,10 @@ You value correctness, clarity, and efficiency.
 ...
 
 # Layer 2: Tool-aware behavior guidance
-You have persistent memory across sessions. Save durable facts using
-the memory tool: user preferences, environment details, tool quirks,
-and stable conventions. Memory is injected into every turn, so keep
-it compact and focused on facts that will still matter later.
+Task-learned procedures, pitfalls, and task-specific preferences belong
+in skills. Memory is the narrow exception for facts that apply to EVERY
+session regardless of task. Skill-writing instructions appear here only
+when skill_manage is available; its absence does not widen memory's scope.
 ...
 When the user references something from a past conversation or you
 suspect relevant cross-session context exists, use session_search
@@ -153,7 +166,7 @@ def load_soul_md() -> Optional[str]:
         return None
     content = soul_path.read_text(encoding="utf-8").strip()
     content = _scan_context_content(content, "SOUL.md")  # Security scan
-    content = _truncate_content(content, "SOUL.md")       # Cap defaults to 20k chars, configurable
+    content = _truncate_content(content, "SOUL.md")       # Cap scales with model context window (20k floor); config override wins
     return content
 ```
 
@@ -223,7 +236,7 @@ def build_context_files_prompt(cwd=None, skip_soul=False):
 
 所有上下文文件均会：
 - **安全扫描** — 检查 prompt 注入模式（不可见 unicode、"ignore previous instructions"、凭据窃取尝试）
-- **截断处理** — 使用 70/20 头尾比例，上限为 `context_file_max_chars` 字符（默认 20,000），并附截断标记
+- **截断处理** — 上限为 `context_file_max_chars` 字符，使用 70/20 头尾比例并附截断标记。该上限随模型上下文窗口缩放（下限 20,000 字符，上限 500K）；`config.yaml` 中显式设置的 `context_file_max_chars` 始终优先。
 - **剥离 YAML frontmatter** — `.hermes.md` 的 frontmatter 会被移除（保留供未来配置覆盖使用）
 
 ## 仅在 API 调用时生效的层

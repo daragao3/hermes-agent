@@ -63,6 +63,30 @@ optional_env:
     password: false
 ```
 
+#### 出站客户端工具：`provides_tools` {#outbound-client-tools-provides_tools}
+
+`kind: platform` 插件是**延迟加载**的：适配器模块（及其 SDK 导入）只有在 gateway、cron
+或 `send_message` 路径首次向平台注册表请求该平台时才会加载。如果你的插件还提供了 agent
+应当能够在任意会话中调用的出站*客户端工具*（例如内置 `a2a` 插件的 `a2a_call` /
+`a2a_discover` 等），请把它们放在一个专门的 `tools.py` 中，提供 `register_tools(ctx)`
+函数，并在清单中声明：
+
+```yaml
+provides_tools:
+  - my_platform_call
+  - my_platform_list
+```
+
+声明 `provides_tools` 后，Hermes 在插件发现阶段只导入 `tools.py`，并在每个进程中——包括
+CLI 和 TUI——注册这些客户端工具，而适配器仍保持延迟加载。请让包的 `__init__.py` 保持
+轻量导入，并在 `register()` 内部再引入适配器，这样急切导入的开销才能保持低廉。未声明该字段
+时一切照旧：整个插件保持延迟加载。
+
+用户可以像启用其他 toolset 一样按平台启用它，例如
+`hermes tools enable my_platform --platform cli`，或在 `config.yaml` 的
+`platform_toolsets` 下列出该 toolset 键。插件平台名称同样是有效的 `--platform` 目标，
+因此你平台上的入站会话也可以被授予它自己的出站工具。
+
 ### adapter.py
 
 ```python
@@ -78,7 +102,7 @@ class MyPlatformAdapter(BasePlatformAdapter):
         extra = config.extra or {}
         self.token = os.getenv("MY_PLATFORM_TOKEN") or extra.get("token", "")
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
         # 连接到平台 API，启动监听器
         self._mark_connected()
         return True
@@ -121,7 +145,14 @@ def register(ctx):
         name="my_platform",
         label="My Platform",
         adapter_factory=lambda cfg: MyPlatformAdapter(cfg),
+        # 被动探测——“依赖/配置当前是否就绪？”。会在状态显示和配置加载时
+        # 调用，因此绝不能执行 pip install。
         check_fn=check_requirements,
+        # 主动安装器（可选）——仅适用于 SDK 可延迟安装的平台。当 check_fn
+        # 返回 False 时，create_adapter() 会在 gateway 连接该平台之前调用它。
+        # 通常包装 tools.lazy_deps.ensure_and_bind(...)。省略它时，
+        # check_fn 返回 False 即为硬性阻断。
+        # ensure_deps_fn=ensure_requirements,
         validate_config=validate_config,
         required_env=["MY_PLATFORM_TOKEN"],
         install_hint="pip install my-platform-sdk",
@@ -176,7 +207,7 @@ gateway:
 
 | 集成点 | 工作方式 |
 |---|---|
-| Gateway 适配器创建 | 在内置 if/elif 链之前检查注册表 |
+| Gateway 适配器创建 | 在内置 `_BUILTIN_ADAPTERS` 表之前检查注册表 |
 | 配置解析 | `Platform._missing_()` 接受任意平台名称 |
 | 已连接平台验证 | 调用注册表中的 `validate_config()` |
 | 用户授权 | 检查 `allowed_users_env` / `allow_all_env` |
@@ -196,6 +227,59 @@ gateway:
 | `hermes tools` / `hermes skills` | Plugin 平台出现在每平台配置中 |
 | Token 锁（多配置文件） | 在 `connect()` 中使用 `acquire_scoped_lock()` |
 | 孤立配置警告 | Plugin 缺失时输出描述性日志 |
+
+## 独立发送路径扩展 {#standalone-send-path-extensions}
+
+独立平台可以通过在 `ctx.register_platform()` 创建的同一个 `PlatformEntry` 上声明发送行为，
+参与由宿主驱动的出站投递——即直接的 `hermes send --to ...` 以及 cron 的
+`deliver=platform:...`。`send_message` 有意不作为 agent 可调用的模型工具；插件不得注册
+让 agent 能够自行发起出站消息的等效模型接口。
+
+```python
+async def _send_request(args, chat_id, platform_name, pconfig):
+    # `args` 包含由宿主驱动的发送请求字段。
+    message_id = await client.send(
+        address=chat_id,
+        body=args["message"],
+        subject=args.get("subject"),
+    )
+    return {"success": True, "platform": platform_name,
+            "chat_id": chat_id, "message_id": message_id}
+
+
+def _parse_address(raw):
+    normalized = raw.strip().lower()
+    if normalized.startswith("@") and "@" in normalized[1:]:
+        return normalized, None  # (chat_id, 可选的 thread_id)
+    return None                 # 继续交给频道目录解析
+
+
+def _validate_address(address):
+    # True 表示接受；False 表示拒绝；返回字符串表示拒绝并附带该诊断信息。
+    return True if address.endswith("@example.com") else "unsupported domain"
+
+
+def register(ctx):
+    ctx.register_platform(
+        name="fmsg",
+        label="Fixture Message",
+        adapter_factory=lambda cfg: FmsgAdapter(cfg),
+        check_fn=check_requirements,
+        parse_target_ref_fn=_parse_address,
+        validate_target_ref_fn=_validate_address,
+        # 可以是普通函数或 async def。Hermes 会 await 任何可等待的结果，
+        # 包括可调用对象和 functools.partial 包装器。
+        send_message_handler=_send_request,
+        # 当 cron 必须在没有实时 gateway 的进程中发送时，优先使用这个
+        # 更底层的 hook。
+        standalone_sender_fn=_standalone_send,
+    )
+```
+
+目标解析在全部三个出站接口之间共享。解析器的输出会先被规范化，频道目录 ID 被视为可信。
+插件解析器必须显式接受原生目标语法；未解析的字符串绝不会被不透明地透传。未知平台和
+校验失败会返回诊断信息，而不是静默尝试投递。插件的强制重载/profile 切换会注销其拥有的
+条目，因此解析器和处理器不会泄漏到下一个 profile 中。
 
 ## 环境变量驱动的自动配置
 
@@ -466,7 +550,7 @@ LINE 两者都支持：阈值默认为 45 秒用于免费 postback 获取，`LIN
 在 `gateway/config.py` 的 `Platform` 枚举中添加你的平台：
 
 ```python
-class Platform(str, Enum):
+class Platform(Enum):
     # ... 现有平台 ...
     NEWPLAT = "newplat"
 ```
@@ -491,7 +575,7 @@ class NewPlatAdapter(BasePlatformAdapter):
         extra = config.extra or {}
         self._api_key = extra.get("api_key") or os.getenv("NEWPLAT_API_KEY", "")
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
         # 建立连接，启动轮询/webhook
         self._mark_connected()
         return True
@@ -535,21 +619,21 @@ await self.handle_message(event)
 2. **`load_gateway_config()`** — 添加 token 环境变量映射条目：`Platform.NEWPLAT: "NEWPLAT_TOKEN"`
 3. **`_apply_env_overrides()`** — 将所有 `NEWPLAT_*` 环境变量映射到配置
 
-### 4. Gateway Runner（`gateway/run.py`）
+### 4. Gateway Runner（`gateway/run.py` + `gateway/run_*.py` 同级模块）
 
 六个接触点：
 
-1. **`_instantiate_adapter()`** — 添加 `elif platform == Platform.NEWPLAT:` 分支。`_create_adapter()` 包装器会将每个成功创建的适配器绑定到其网关运行器。
+1. **`_BUILTIN_ADAPTERS` 表**（`gateway/run.py`）— 添加一个 `Platform.NEWPLAT: (module, class, check_fn, error_msg)` 条目；`_instantiate_adapter()`（`gateway/run_adapters.py`）会先查询插件注册表，再查询此表——不存在需要扩展的 `elif` 链。`_create_adapter()` 包装器会将每个成功创建的适配器绑定到其网关运行器。
 2. **`_is_user_authorized()` allowed_users 映射** — `Platform.NEWPLAT: "NEWPLAT_ALLOWED_USERS"`
 3. **`_is_user_authorized()` allow_all 映射** — `Platform.NEWPLAT: "NEWPLAT_ALLOW_ALL_USERS"`
-4. **早期环境检查 `_any_allowlist` 元组** — 添加 `"NEWPLAT_ALLOWED_USERS"`
-5. **早期环境检查 `_allow_all` 元组** — 添加 `"NEWPLAT_ALLOW_ALL_USERS"`
+4. **启动时访问策略检查**（`gateway/run_startup.py`）— 将 `"NEWPLAT"` 添加到 `_ALLOWLIST_ENV_PLATFORMS`（由此同时派生 `NEWPLAT_ALLOWED_USERS` 和 `NEWPLAT_ALLOW_ALL_USERS`）
+5. **启动时 `_BUILTIN_ALLOW_ALL_VARS`**（`gateway/run_startup.py`）— 派生自同一个 `_ALLOWLIST_ENV_PLATFORMS` 元组；无需额外添加
 6. **`_UPDATE_ALLOWED_PLATFORMS` frozenset** — 添加 `Platform.NEWPLAT`
 
 ### 5. 跨平台投递
 
 1. **`gateway/platforms/webhook.py`** — 将 `"newplat"` 添加到投递类型元组
-2. **`cron/scheduler.py`** — 添加到 `_KNOWN_DELIVERY_PLATFORMS` frozenset 和 `_deliver_result()` 平台映射
+2. **`cron/scheduler_delivery.py`** — 添加到 `_KNOWN_DELIVERY_PLATFORMS` frozenset 和 `_deliver_result()` 平台映射
 
 ### 6. CLI 集成
 
@@ -572,10 +656,10 @@ await self.handle_message(event)
 
 ### 9. 可选：平台提示
 
-**`agent/prompt_builder.py`** — 如果你的平台有特定渲染限制（不支持 markdown、消息长度限制等），在 `_PLATFORM_HINTS` 字典中添加条目。这会将平台专属指导注入系统 prompt：
+**`agent/prompt_builder.py`** — 如果你的平台有特定渲染限制（不支持 markdown、消息长度限制等），在 `PLATFORM_HINTS` 字典中添加条目。这会将平台专属指导注入系统 prompt：
 
 ```python
-_PLATFORM_HINTS = {
+PLATFORM_HINTS = {
     # ...
     "newplat": (
         "You are chatting via NewPlat. It supports markdown formatting "
@@ -668,8 +752,9 @@ async def _handle_callback(self, request):
 ```python
 from gateway.status import acquire_scoped_lock, release_scoped_lock
 
-async def connect(self):
-    if not acquire_scoped_lock("newplat", self._token):
+async def connect(self, *, is_reconnect: bool = False):
+    acquired, _existing = acquire_scoped_lock("newplat", self._token)
+    if not acquired:
         logger.error("Token already in use by another profile")
         return False
     # ... 连接
@@ -684,5 +769,6 @@ async def disconnect(self):
 |---------|---------|------------|-------------------|
 | `bluebubbles.py` | REST + webhook | 中 | 简单 REST API 集成 |
 | `weixin.py` | 长轮询 + CDN | 高 | 媒体处理、加密 |
-| `wecom_callback.py` | 回调/webhook | 中 | HTTP 服务器、AES 加密、多应用 |
+| `plugins/platforms/wecom/callback_adapter.py` | 回调/webhook | 中 | HTTP 服务器、AES 加密、多应用 |
+| `plugins/platforms/irc/adapter.py` | 长轮询 + IRC 协议 | 高 | 功能完整、带作用域 token 锁的插件适配器 |
 | `plugins/platforms/irc/adapter.py` | 长轮询 + IRC 协议 | 高 | 带作用域令牌锁的全功能插件适配器 |

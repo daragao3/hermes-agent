@@ -35,6 +35,18 @@ import Link from "@docusaurus/Link";
   >
     快速开始 →
   </Link>
+  <Link
+    to="/user-guide/bot-mode"
+    style={{
+      display: "inline-block",
+      padding: "0.6rem 1.2rem",
+      border: "1px solid rgba(255,215,0,0.2)",
+      borderRadius: "8px",
+      textDecoration: "none",
+    }}
+  >
+    探索 Bot 模式
+  </Link>
   <a
     href="https://hermes-agent.nousresearch.com/"
     style={{
@@ -99,11 +111,12 @@ iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 
 |                                                                       |                                                                    |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| 🚀 **[安装](/getting-started/installation)**                          | 在 Linux、macOS、WSL2、原生 Windows 或 Android 上 60 秒完成安装 |
+| 🚀 **[安装](/getting-started/installation)**                          | 在 Linux、macOS、WSL2、原生 Windows、Nix 与 NixOS 或 Android 上 60 秒完成安装 |
 | 📖 **[快速入门教程](/getting-started/quickstart)**                    | 第一次对话及值得尝试的核心功能                                     |
 | 🗺️ **[学习路径](/getting-started/learning-path)**                     | 根据你的经验水平找到合适的文档                                     |
 | ⚙️ **[配置](/user-guide/configuration)**                              | 配置文件、提供商、模型及选项                                       |
 | 💬 **[消息网关](/user-guide/messaging)**                              | 配置 Telegram、Discord、Slack、WhatsApp、Teams 等平台              |
+| 🤖 **[Bot 模式](/user-guide/bot-mode)**                              | 拥有独立模型、记忆、技能、例行任务和聊天的具名 Bot                 |
 | 🔧 **[工具与工具集](/user-guide/features/tools)**                     | 60+ 内置工具及其配置方式                                           |
 | 🧠 **[记忆系统](/user-guide/features/memory)**                        | 跨会话持续增长的持久记忆                                           |
 | 📚 **[技能系统](/user-guide/features/skills)**                        | 智能体创建并复用的程序性记忆                                       |
@@ -121,10 +134,11 @@ iex (irm https://hermes-agent.nousresearch.com/install.ps1)
 ## 核心功能
 
 - **闭环学习循环** — 智能体管理的记忆，配合定期提示、自主技能创建、使用中的技能自我改进、基于 FTS5 的跨会话召回与 LLM 摘要，以及 [Honcho](https://github.com/plastic-labs/honcho) 辩证式用户建模
-- **随处运行，不限于本地** — 6 种终端后端：本地、Docker、SSH、Daytona、Singularity、Modal。Daytona 和 Modal 提供 serverless 持久化——环境闲置时休眠，几乎零成本
+- **随处运行，不限于本地** — 7 种终端后端：本地、Docker、SSH、Daytona、Singularity、Modal、Vercel Sandbox。Daytona 和 Modal 提供 serverless 持久化——环境闲置时休眠，几乎零成本
 - **在你所在的地方** — CLI、Telegram、Discord、Slack、WhatsApp、Signal、Matrix、Mattermost、Email、SMS、DingTalk、Feishu、WeCom、Weixin、QQ Bot、Yuanbao、BlueBubbles、Home Assistant、Microsoft Teams、Google Chat 等——通过一个网关支持 20+ 平台
 - **由模型训练者构建** — 由 [Nous Research](https://nousresearch.com) 创建，该实验室是 Hermes、Nomos 和 Psyche 背后的团队。支持 [Nous Portal](https://portal.nousresearch.com)、[OpenRouter](https://openrouter.ai)、OpenAI 或任意端点
 - **定时自动化** — 内置 cron，可向任意平台投递
+- **[Bot 模式](/user-guide/bot-mode)** — 组建一支长期存在的专家 Bot 团队，它们在群聊中并通过 `@mentions` 协同工作
 - **委托与并行** — 派生隔离的子智能体以并行处理多个工作流。通过 `execute_code` 实现程序化工具调用，将多步骤流水线压缩为单次推理调用
 - **开放标准技能** — 兼容 [agentskills.io](https://agentskills.io)。技能可移植、可共享，并通过 Skills Hub 接受社区贡献
 - **完整的 Web 控制** — 搜索、提取、浏览、视觉、图像生成、TTS——通过 [Nous Portal](/integrations/nous-portal) 一个订阅即可打包获得全部功能

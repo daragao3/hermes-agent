@@ -10,6 +10,10 @@ MCP 让 Hermes Agent 连接到外部工具服务器，使 agent 能够使用 Her
 
 如果你曾经希望 Hermes 使用某个已经存在于其他地方的工具，MCP 通常是最简洁的方式。
 
+:::tip 从 Claude Code 迁移过来？
+你 `~/.claude.json` 中的 `mcpServers` 块对应 Hermes `config.yaml` 中的 `mcp_servers`——而 `hermes import-agent claude-code` 会自动迁移它（连同技能和指令一起）。参见[从其他 Agent 导入](../import-from-other-agents.md)。
+:::
+
 ## MCP 能给你带来什么
 
 - 无需先编写原生 Hermes 工具，即可访问外部工具生态系统
@@ -100,6 +104,12 @@ Select tools for 'linear' (SPACE toggle, ENTER confirm)
    预先剔除具有修改性或很少用到的工具）
 3. **全部工具**（如果以上两者都不适用）
 
+某些自动生成接口极其庞大的条目（例如 `cloudflare`，约 3,300 个 OpenAPI 端点工具）
+改为声明 `tools.default_excluded`——一份精选的名称与 glob 模式黑名单。安装这类条目会
+完全跳过清单，直接写入 `tools.exclude`；所有未被匹配的工具都保持启用，包括服务器之后
+新增的工具。如需重新启用某一类工具，请编辑 config.yaml 中的
+`mcp_servers.<name>.tools.exclude`。
+
 按 ENTER 提交清单。只有被勾选的工具才会写入 `mcp_servers.<name>.tools.include`。
 如果你全选，则不会写入任何过滤器（配置形态最简洁，行为完全相同）。
 
@@ -137,6 +147,11 @@ manifest 会固定一个 `manifest_version`。目录是向前兼容的：如果�
 所有内容）。当某个目录条目想引用用户在别处配置的值时，这很有用——例如
 `${HOME}/foo` 或 `${MY_PROVIDER_TOKEN}`。
 
+Cursor 风格的上下文变量同样会被替换（区分大小写）：
+`${userHome}`（主目录）、`${workspaceFolder}`（会话工作区根目录）、
+`${workspaceFolderBasename}`，以及 `${pathSeparator}` / `${/}`（操作系统路径分隔符）。
+详见 [MCP 配置参考](/reference/mcp-config-reference)。
+
 注意这与目录 manifest 中的 `${INSTALL_DIR}` 不同，后者在安装时被替换为目录克隆该
 条目仓库时使用的路径。
 
@@ -157,6 +172,19 @@ MCP 永远不会自动更新。若某个 manifest 版本有变化，请在 Herme
 要向目录添加一个 MCP，请针对
 [`optional-mcps/`](https://github.com/NousResearch/hermes-agent/tree/main/optional-mcps)
 提交 PR。
+
+### 建议元数据（`suggest:`）
+
+manifest 可以声明一个可选的 `suggest:` 块，其中包含 `keywords:` 和/或 `hosts:` 列表。
+UI 界面（目前是 Desktop 应用的输入框）会利用它：当你的草稿以完整单词的形式提到某个
+关键词，或包含一个主机名以某个主机后缀结尾的粘贴链接时，提供一键式"Add &lt;server&gt;"
+提示按钮。它纯属建议性质——安装仍走同样经过校验的目录/配置路径——大多数托管的远程
+条目（Atlassian、Sentry、Notion、Stripe、Vercel、Supabase 等）都声明了它。
+
+GitHub **刻意没有**收录在目录中：其托管 MCP 要求每个客户端自带 OAuth 应用（通用的
+动态客户端注册会被拒绝），而 Hermes 内置的、驱动 `gh` CLI 的 `github/*` 技能是能力
+更强的集成方式。在 Desktop 上，当 `gh` 尚未登录时，提到 GitHub 会改为推荐
+`github-auth` 技能。
 
 ## 两种 MCP 服务器
 
@@ -197,7 +225,22 @@ mcp_servers:
 
 ### 使用 OAuth 认证的 HTTP 服务器 {#oauth-authenticated-http-servers}
 
-大多数托管 MCP 服务器（Linear、Sentry、Atlassian、Asana、Figma、Stripe 等）要求使用 OAuth 2.1 而非静态 bearer token。设置 `auth: oauth` 后，Hermes 会通过 MCP Python SDK 处理服务发现、动态客户端注册、PKCE、token 交换、刷新以及升级认证（step-up auth）。
+大多数托管 MCP 服务器（Cloudflare、Linear、Sentry、Atlassian、Asana、Figma、Stripe 等）要求使用 OAuth 2.1 而非静态 bearer token。设置 `auth: oauth` 后，Hermes 会通过 MCP Python SDK 处理服务发现、客户端标识、PKCE、token 交换、刷新以及升级认证（step-up auth）。
+
+在支持[客户端 ID 元数据文档（Client ID Metadata Document）](../../reference/mcp-config-reference.md#client-identification-cimd-and-dcr)的服务器上，Hermes 使用它来标识自己；在不支持的服务器上则回退到动态客户端注册。两者都是自动的，无需任何配置。
+
+:::tip Figma 远程 MCP
+Figma 的托管端点（`https://mcp.figma.com/mcp`）按**精确的 `client_name`** 对动态客户端注册设置白名单——裸的 `"Hermes Agent"` 会返回 403，而 `"Claude Code"` 和 `"Codex"` 能成功。Hermes 会为 `mcp.figma.com` 自动设置 `oauth.client_name: "Claude Code"`，因此安装/登录无需任何特殊技巧即可完成：
+
+```yaml
+mcp_servers:
+  figma:
+    url: "https://mcp.figma.com/mcp"
+    auth: oauth
+```
+
+或者：`hermes mcp install figma`，然后 `hermes mcp login figma`。
+:::
 
 ```yaml
 mcp_servers:
@@ -208,9 +251,11 @@ mcp_servers:
 
 首次连接时，Hermes 会打印一个授权 URL，并在可能的情况下打开你的浏览器，然后在本地回环端口上等待 OAuth 回调。Token 缓存在 `~/.hermes/mcp-tokens/<server>.json`，权限为 0o600；后续运行会静默复用，直到刷新失败为止。
 
-**远程 / 无头主机。** 当 Hermes 运行在与你的浏览器不同的机器上时，回环回调无法到达你的笔记本。有两种方式完成该流程：
+**远程 / 无头主机。** 当 Hermes 运行在与你的浏览器不同的机器上时，回环回调无法到达你的笔记本。完成该流程的方式有：
 
+- **Hermes Desktop（自动）：** 当你在 Desktop 应用的 MCP 设置界面中针对远程后端执行 OAuth 登录时，Desktop 会在*你的*机器上托管回调监听器，并自动将授权结果转发回 gateway——无需隧道、粘贴或代理。要求 Desktop 应用和后端都已更新到最新版本。
 - **粘贴回填（无需配置）：** 在交互式终端中，Hermes 会在授权 URL 旁打印"Or paste the redirect URL here…"。在浏览器中打开该 URL 并批准，复制浏览器最终停留的完整 URL（该重定向会显示连接错误——这是预期行为），然后粘贴到提示处。裸的 `?code=…&state=…` 查询串同样有效。
+- **设备码登录（完全不需要回调）：** 如果服务器的授权服务器公布了设备授权端点，在运行 Hermes 的机器上执行 `hermes mcp login <server> --flow device`。它会打印一个验证 URL 和一个短码；在任意设备上打开该 URL、输入短码，Hermes 会轮询等待批准。主机上不会启动浏览器，也不需要回调监听器。在服务器上设置 `oauth.flow: device`，即可让 `login` 和 `reauth` 默认使用该方式。详见：[设备码登录](../../reference/mcp-config-reference.md#device-code-login-rfc-8628)。
 - **SSH 端口转发：** 在另一个终端中运行 `ssh -N -L <port>:127.0.0.1:<port> user@host`，然后让重定向正常进行。
 - **代理回调（`redirect_uri`）：** 当有一个公网 HTTPS 端点转发到该主机时（例如指向回调端口的 Tailscale Funnel 或反向代理），设置 `oauth.redirect_uri`，浏览器重定向就能自行到达 Hermes——无需隧道，也无需粘贴：
 
@@ -281,6 +326,25 @@ mcp_servers:
 
 你也可以通过 `client_cert`（合并 PEM）加上显式的 `client_key`，将证书和密钥完全分开。路径支持 `~` 展开；文件缺失时会抛出清晰且限定到具体服务器的错误，而不是晦涩的 TLS 握手失败。
 
+## 按用户的身份标识头
+
+对于依据调用方身份决定行为的远程 HTTP/SSE MCP 服务器（按用户限流、审计追踪、多租户路由），可以通过 `identity_header` 在每个请求中发送一个身份标识头：
+
+```yaml
+mcp_servers:
+  team_api:
+    url: "https://mcp.team.example.com/mcp"
+    identity_header:
+      name: "X-User-Id"
+      value_from: "static"   # "static"（默认）或 "profile"
+      value: "alice"         # static 模式下必填
+```
+
+- `value_from: static` 发送 config.yaml 中字面量的 `value`。
+- `value_from: profile` 发送当前激活的 Hermes profile 名称，在连接时解析一次——当同一台机器上的多个 profile 连接同一个服务器、而服务器需要区分它们时很有用。
+
+服务器 `headers` 映射中同名（不区分大小写）的显式条目始终优先；身份标识头永远不会覆盖你自己的头配置。无效的 `identity_header` 块会发出警告并被忽略——它们绝不会阻止服务器连接。在 stdio 服务器上，该键会被忽略并给出警告（stdio 传输没有头信息）。
+
 ## 基本配置参考
 
 Hermes 从 `~/.hermes/config.yaml` 的 `mcp_servers` 下读取 MCP 配置。
@@ -296,6 +360,7 @@ Hermes 从 `~/.hermes/config.yaml` 的 `mcp_servers` 下读取 MCP 配置。
 | `headers` | mapping | 远程服务器的 HTTP 头 |
 | `client_cert` | string \| list | 用于 mTLS 的客户端证书——合并的 PEM 路径，或 `[cert, key]` / `[cert, key, password]` |
 | `client_key` | string | 客户端私钥 PEM 路径（当与 `client_cert` 分开时） |
+| `identity_header` | mapping | 可选的按用户身份标识头，用于 HTTP/SSE 服务器——`{name, value_from: static\|profile, value}` |
 | `timeout` | number | 工具调用超时时间 |
 | `connect_timeout` | number | 初始连接超时时间（同时约束 MCP `initialize` 握手） |
 | `idle_timeout_seconds` | number | 在这么多秒没有工具调用后回收 stdio 服务器（`0` = 永不，默认）。下次工具调用时服务器会透明重启。 |
@@ -380,6 +445,13 @@ mcp_<server_name>_<tool_name>
 
 实际使用中，你通常不需要手动调用带前缀的名称——Hermes 在正常推理过程中会自动识别并选择该工具。
 
+### 工具结果清洗与 `_meta`
+
+在模型看到每个 MCP 工具结果之前，会对其应用两项处理：
+
+- **剥离不可见的 Unicode TAG 字符。** U+E0000–U+E007F 范围内的字符在终端和聊天界面中不显示任何内容，但对模型完全可见——这是恶意或被攻陷的服务器进行提示词注入夹带的经典通道。Hermes 会从工具结果、资源内容和工具描述中剥离它们。合法的 emoji 标签序列（如 🏴󠁧󠁢󠁳󠁣󠁴󠁿 这样的地区旗帜）会被保留。
+- **透传厂商 `_meta`，但不透传协议保留键。** 当服务器在工具结果上附带 `_meta` 映射（例如 `com.example/handoff` 这样的厂商命名空间）时，Hermes 会将其与结果内容一起传递给模型。位于协议保留前缀下的键——即 `modelcontextprotocol` 或 `mcp` 标签后接另一个标签，例如 `modelcontextprotocol.io/...` 或 `tools.mcp.com/...`——会被丢弃，这与 MCP 规范的键名规则一致。如果没有任何面向模型的内容剩余，则完全省略 `_meta` 字段。
+
 ## MCP 实用工具
 
 在服务器支持的情况下，Hermes 还会围绕 MCP 资源和 prompt 注册实用工具：
@@ -432,6 +504,10 @@ mcp_servers:
 
 只有列出的 MCP 服务器工具会被注册。
 
+`include`/`exclude` 中的条目也可以是 glob 模式（`*`、`?`、`[...]`，区分大小写匹配）：
+`include: ["*_dns_*"]` 会注册所有名称中包含 `_dns_` 的工具。不含通配元字符的普通条目
+仍然精确匹配。对于暴露数千个自动生成端点工具的服务器，glob 是按产品族过滤的实用方式。
+
 ### 黑名单过滤服务器工具
 
 ```yaml
@@ -443,6 +519,24 @@ mcp_servers:
 ```
 
 除排除项外，所有服务器工具均被注册。
+
+### Glob 模式
+
+两个列表都接受 fnmatch 风格的 glob，也可与精确名称混用——对于 Cloudflare API MCP
+（`?codemode=false`，约 3,300 个工具）这类庞大的扁平接口至关重要，因为逐个端点排除
+产品领域并不现实：
+
+```yaml
+mcp_servers:
+  cloudflare:
+    url: "https://mcp.cloudflare.com/mcp?codemode=false"
+    auth: oauth
+    tools:
+      exclude: ["*_radar_*", "*_accounts_dlp_*", "*_zones_web3_*"]
+```
+
+不含 glob 元字符（`*`、`?`、`[`）的条目精确匹配——`docs` 只排除名为 `docs` 的工具，
+绝不会排除 `docs_search`。
 
 ### 优先级规则
 
@@ -527,7 +621,7 @@ MCP 服务器可以在运行时通过发送 `notifications/tools/list_changed` �
 /reload-mcp
 ```
 
-这会从配置重新加载 MCP 服务器并刷新可用工具列表。对于服务器主动推送的运行时工具变更，请参阅上方的[动态工具发现](#dynamic-tool-discovery)。
+这会从配置重新加载 MCP 服务器并刷新可用工具列表。它也是重新探测受可用性门控的工具（Docker、`HASS_TOKEN`、OAuth 等）的显式方式：会话的工具集在其他情况下是冻结的，因此会话中途才出现的凭据或守护进程，只有在执行 `/reload-mcp`、`/new` 或上下文压缩时才会被识别。对于服务器主动推送的运行时工具变更，请参阅上方的[动态工具发现](#dynamic-tool-discovery)。
 
 ### 工具集
 
@@ -695,6 +789,23 @@ mcp_servers:
       enabled: false
 ```
 
+## MCP Elicitation 支持
+
+MCP 服务器可以通过 `elicitation/create` 协议（mcp Python SDK ≥ 1.11.0）在工具调用过程中向用户请求结构化输入。Hermes 会把 **form 模式**的 elicitation 请求路由到其现有的审批界面——CLI/TUI 中的交互式提示，或 Telegram、Slack 等 gateway 平台上的审批按钮——因此无论会话运行在哪里，请求都能送达你。**URL 模式**的 elicitation（服务器引导你访问外部 URL）会以不支持为由被拒绝。
+
+Elicitation 对每个服务器**默认启用**。可在 `elicitation` 键下配置：
+
+```yaml
+mcp_servers:
+  my_server:
+    command: "my-mcp-server"
+    elicitation:
+      enabled: true    # 默认：true
+      timeout: 300     # 等待你回答的秒数（默认：300）
+```
+
+5 分钟的默认超时与 gateway 审批的默认值一致，让异步界面上的用户在服务器放弃之前有时间响应。每个服务器的指标（请求数、接受数、拒绝数、错误数）会在处理器上跟踪。
+
 ## 将 Hermes 作为 MCP 服务器运行 {#running-hermes-as-an-mcp-server}
 
 除了连接**到** MCP 服务器，Hermes 也可以**作为** MCP 服务器运行。这让其他支持 MCP 的 agent（Claude Code、Cursor、Codex 或任何 MCP 客户端）能够使用 Hermes 的消息能力——列出会话、读取消息历史，以及跨所有已连接平台发送消息。
@@ -783,7 +894,7 @@ hermes mcp serve --verbose    # 在 stderr 输出调试日志
 
 ### 工作原理
 
-MCP 服务器直接从 Hermes 的会话存储（`~/.hermes/sessions/sessions.json` 和 SQLite 数据库）读取会话数据。后台线程轮询数据库以获取新消息，并维护一个内存事件队列。发送消息时，使用的是与 cron 投递和 `hermes send` CLI 相同的内部发送引擎（`tools/send_message_tool.py`）。
+MCP 服务器直接从 Hermes 的会话存储读取会话数据——`~/.hermes/state.db` 是主要来源，`sessions.json` 仅作为旧版回退保留。后台线程轮询数据库以获取新消息，并维护一个内存事件队列。发送消息时，使用的是与 cron 投递和 `hermes send` CLI 相同的内部发送引擎（`tools/send_message_tool.py`）。
 
 读取操作（列出会话、读取历史、轮询事件）**不需要** gateway 运行。发送操作**需要** gateway 运行，因为平台适配器需要活跃连接。
 

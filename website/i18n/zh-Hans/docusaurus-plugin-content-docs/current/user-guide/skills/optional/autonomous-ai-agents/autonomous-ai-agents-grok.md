@@ -16,7 +16,7 @@ description: "将编码任务委派给 xAI Grok Build CLI（功能、PR）"
 |---|---|
 | 来源 | 可选 —— 使用 `hermes skills install official/autonomous-ai-agents/grok` 安装 |
 | 路径 | `optional-skills/autonomous-ai-agents/grok` |
-| 版本 | `0.1.0` |
+| 版本 | `0.1.1` |
 | 作者 | Matt Maximo (MattMaximo), Hermes Agent |
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
@@ -118,14 +118,16 @@ terminal(command="tmux send-keys -t grok-work '/quit' Enter && sleep 1 && tmux k
 |------|--------|
 | `-p, --single <PROMPT>` | 发送一个 prompt，无头运行，退出 |
 | `-m, --model <MODEL>` | 选择模型 |
-| `-s, --session-id <ID>` | 创建或恢复一个命名的无头会话 |
-| `-r, --resume <ID>` | 恢复一个现有会话 |
+| `-s, --session-id <UUID>` | 为一次全新的对话分配一个**新的**有效 UUID（不能已存在）。它**不会**恢复会话——恢复请使用 `--resume`/`--continue`。只有与 `--fork-session` 搭配时才能和 `--resume`/`--continue` 一起使用 |
+| `-r, --resume [<UUID>]` | 按 UUID 恢复一个现有会话（省略时恢复最近的会话） |
 | `-c, --continue` | 继续当前目录中最近的会话 |
+| `--fork-session` | 恢复时创建一个新的会话 ID，而不是复用原来的 |
+| `--max-turns <N>` | 限制 agent 的最大轮数 |
 | `--cwd <PATH>` | 设置工作目录 |
 | `--output-format <FMT>` | `plain`（默认）、`json` 或 `streaming-json` |
 | `--always-approve` | 自动批准所有工具执行（`--full-auto` / `--yolo` 的等价物） |
 | `--no-alt-screen` | 内联运行，无全屏 TUI 接管 |
-| `--no-auto-update` | 跳过后台更新检查（在所有自动化中使用） |
+| `--no-auto-update` | 跳过后台更新检查（在所有自动化中使用；它不会出现在 `--help` 中，但仍然有效） |
 
 ### 输出格式
 
@@ -161,14 +163,19 @@ process(action="kill", session_id="<id>")
 
 ### 会话延续
 
+会话以 **UUID** 而非名称作为键。`--session-id` 为一次全新的运行分配一个*新的* UUID
+（它**不会**恢复会话）；`--resume` 接收一个现有会话的
+UUID（省略该值则恢复最近的会话）。
+
 ```
-# 启动一个命名会话
-terminal(command="grok --no-auto-update -s refactor-db -p 'Start refactoring the database layer' --always-approve", workdir="/project", timeout=240)
+# 以自行分配的 UUID 启动会话（必须是有效且未被使用的 UUID）
+SID=$(uuidgen)
+terminal(command="grok --no-auto-update -s $SID -p 'Start refactoring the database layer' --always-approve", workdir="/project", timeout=240)
 
-# 稍后恢复它
-terminal(command="grok --no-auto-update -r refactor-db -p 'Now add connection pooling' --always-approve", workdir="/project", timeout=180)
+# 稍后按 UUID 恢复这个确切的会话
+terminal(command="grok --no-auto-update -r $SID -p 'Now add connection pooling' --always-approve", workdir="/project", timeout=180)
 
-# 或继续此目录中最近的会话
+# 或者直接继续此目录中最近的会话（无需 UUID）
 terminal(command="grok --no-auto-update -c -p 'What did you change last time?'", workdir="/project", timeout=60)
 ```
 

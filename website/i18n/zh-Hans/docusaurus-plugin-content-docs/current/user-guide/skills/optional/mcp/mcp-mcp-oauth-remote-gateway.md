@@ -21,7 +21,7 @@ description: "在无头网关上为远程 MCP 服务器手动完成 OAuth"
 | 许可证 | MIT |
 | 平台 | linux, macos |
 | 标签 | `MCP`, `OAuth`, `PKCE`, `Remote-Deployment` |
-| 相关 skill | `native-mcp`, [`mcporter`](/user-guide/skills/optional/mcp/mcp-mcporter), [`fastmcp`](/user-guide/skills/optional/mcp/mcp-fastmcp) |
+| 相关 skill | [`hermes-agent`](/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent), [`mcporter`](/user-guide/skills/optional/mcp/mcp-mcporter), [`fastmcp`](/user-guide/skills/optional/mcp/mcp-fastmcp) |
 
 ## 参考：完整 SKILL.md
 

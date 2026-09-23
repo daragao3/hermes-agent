@@ -1,14 +1,14 @@
 ---
-title: "Xurl — 通过 xurl CLI 使用 X/Twitter：发帖、搜索、私信、媒体、v2 API"
+title: "Xurl — 通过 xurl CLI 使用 X/Twitter：原始帖子搜索、发帖、私信、媒体"
 sidebar_label: "Xurl"
-description: "通过 xurl CLI 使用 X/Twitter：发帖、搜索、私信、媒体、v2 API"
+description: "通过 xurl CLI 使用 X/Twitter：原始帖子搜索、发帖、私信、媒体"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Xurl
 
-通过 xurl CLI 使用 X/Twitter：发帖、搜索、私信、媒体、v2 API。
+通过 xurl CLI 使用 X/Twitter：原始帖子搜索、发帖、私信、媒体。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "通过 xurl CLI 使用 X/Twitter：发帖、搜索、私信、媒�
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/social-media/xurl` |
-| 版本 | `1.1.1` |
+| 版本 | `1.1.3` |
 | 作者 | xdevplatform + openclaw + Hermes Agent |
 | 许可证 | MIT |
 | 平台 | linux, macos |
@@ -34,7 +34,7 @@ description: "通过 xurl CLI 使用 X/Twitter：发帖、搜索、私信、媒�
 
 适用场景：
 - 发帖、回复、引用、删除帖子
-- 搜索帖子及读取时间线/提及
+- 搜索原始帖子（带有可供互动的 ID 的真实帖子 JSON）及读取时间线/提及
 - 点赞、转发、书签
 - 关注、取消关注、拉黑、静音
 - 私信（DM）
@@ -196,6 +196,8 @@ xurl delete 1234567890
 ```
 
 ### 读取与搜索
+
+`xurl search` 以你已认证的账号身份查询 X 索引，并返回原始帖子对象——ID、作者、全文——因此可以立即对结果进行互动（回复、点赞、转发、引用）。当你需要真实的帖子，而不是关于某个话题的摘要式回答时，请使用它。
 
 ```bash
 xurl read 1234567890
@@ -402,12 +404,14 @@ xurl --app staging /2/users/me             # 单次请求使用 staging
 ## Agent 工作流
 
 1. 验证前置条件：`xurl --help` 和 `xurl auth status`。
-2. **检查默认应用是否有凭据。** 解析 `auth status` 输出。默认应用以 `▸` 标记。如果默认应用显示 `oauth2: (none)`，但另一个应用有有效的 oauth2 用户，请告知用户运行 `xurl auth default <that-app>` 修复。这是最常见的配置错误——用户添加了自定义名称的应用但从未将其设为默认，导致 xurl 一直尝试使用空的 `default` 配置。
-3. 如果完全缺少认证，停止操作并将用户引导至"一次性用户配置"部分——不要尝试自行注册应用或传递密钥。
-4. 先执行低成本的读取操作（`xurl whoami`、`xurl user @handle`、`xurl search ... -n 3`）以确认连通性。
-5. 在执行任何写操作（发帖、回复、点赞、转发、私信、关注、拉黑、删除）前，确认目标帖子/用户及用户意图。
-6. 直接使用 JSON 输出——每个响应均已结构化。
-7. 绝不将 `~/.xurl` 内容粘贴回对话中。
+2. 使用 `xurl search` 前，先确认意图。当任务需要真实的帖子对象、已认证账号的上下文，或将引出 X 上的写操作时，就使用它——当用户想要可以互动的帖子，而不仅仅是某个话题的摘要时，它才是合适的入口。
+3. **检查默认应用是否有凭据。** 解析 `auth status` 输出。默认应用以 `▸` 标记。如果默认应用显示 `oauth2: (none)`，但另一个应用有有效的 oauth2 用户，请告知用户运行 `xurl auth default <that-app>` 修复。这是最常见的配置错误——用户添加了自定义名称的应用但从未将其设为默认，导致 xurl 一直尝试使用空的 `default` 配置。
+4. 如果完全缺少认证，停止操作并将用户引导至"一次性用户配置"部分——不要尝试自行注册应用或传递密钥。
+5. 先执行低成本的读取操作（`xurl whoami`、`xurl user @handle`、`xurl search ... -n 3`）以确认连通性。
+6. 在执行任何写操作（发帖、回复、点赞、转发、私信、关注、拉黑、删除）前，确认目标帖子/用户及用户意图。
+7. 只有 `xurl` 命令的输出（或原始 X API 响应）才能证明某个改变状态的 X 操作确实发生了。绝不要根据任何其他来源——搜索结果、摘要或先前的上下文——报告写操作已完成。
+8. 直接使用 JSON 输出——每个响应均已结构化。
+9. 绝不将 `~/.xurl` 内容粘贴回对话中。
 
 ---
 

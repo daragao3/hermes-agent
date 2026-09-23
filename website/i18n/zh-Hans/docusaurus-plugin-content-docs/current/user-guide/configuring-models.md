@@ -11,7 +11,7 @@ Hermes 使用两类模型槽位：
 - **主模型** — agent 的思考核心。每条用户消息、每个工具调用循环、每次流式响应都经由该模型处理。
 - **辅助模型** — agent 卸载给较小模型的边缘任务。包括上下文压缩、视觉（图像分析）、网页摘要、审批评分、MCP 工具路由、会话标题生成和技能搜索。每项任务有独立槽位，可单独覆盖。
 
-本页介绍如何通过仪表板配置上述两类模型。如需使用配置文件或 CLI，请跳至底部的[其他方法](#alternative-methods)。
+本页介绍如何通过仪表板配置上述两类模型。如需使用配置文件或 CLI，请跳至底部的[其他方法](#alternative-methods)。如需在自己的机器上而不是云提供商上运行模型，请参阅[本地模型](/user-guide/local-models)。
 
 :::tip 最快路径：Nous Portal
 [Nous Portal](/user-guide/features/tool-gateway) 在单一订阅下提供 300+ 个模型。全新安装后，运行 `hermes setup --portal` 即可登录并一键将 Nous 设为提供商。使用 `hermes portal info` 查看当前配置。
@@ -57,6 +57,18 @@ Hermes 使用两类模型槽位：
 prompt（提示词）缓存以处理该请求的模型为键，因此任何在对话中途更换模型的操作——显式的 `/model` 切换、[自动回退](./features/fallback-providers.md)，或是[凭证池](./features/credential-pools.md)轮换到另一个账号——都意味着下一条消息会以完整输入 token 价格重新读取整段对话，而不是享受缓存价（约 75–90% 折扣）。在长会话中，这一次性的重读开销可能远大于两个模型之间的单 token 价差。需要切换时就切换，但最好在对话早期或刚开始新会话时进行。
 :::
 
+### 无人值守的数据训练档位 {#unattended-data-training-tiers}
+
+带有 `-contributor` 后缀的模型（例如 `muse-spark-1.2-contributor`、`muse-spark-1.3-contributor`）之所以打折，是因为供应商可能会使用你的提示词和补全内容进行训练。交互式模型选择始终会显示确认提示。而 Kanban worker 和 cron agent 等非交互式启动路径会以失败关闭（fail closed），因为它们无法提出这个问题。
+
+如果可以接受供应商使用该无人值守工作负载的数据进行训练，请记录一个持久化的确认：
+
+```bash
+hermes config set security.allow_data_training_tiers_noninteractive true
+```
+
+Hermes 仍会在每次无人值守启动时打印完整的数据政策警告和该确认键，因此 worker 日志会保留审计记录。此设置不会批准昂贵模型或提供商路由相关的警告，也不会取代交互式确认提示。可使用 `hermes config unset security.allow_data_training_tiers_noninteractive` 撤销。
+
 ## 设置辅助模型
 
 点击 **Show auxiliary** 展开 11 个任务槽位：
@@ -69,7 +81,7 @@ prompt（提示词）缓存以处理该请求的模型为键，因此任何在�
 
 | 任务 | 何时覆盖 |
 |---|---|
-| **Title Gen（标题生成）** | 几乎总是。$0.10/M 的 flash 模型生成会话标题的效果与 Opus 相当。默认配置在 OpenRouter 上将此项设为 `google/gemini-3-flash-preview`。 |
+| **Title Gen（标题生成）** | 当标题生成的延迟或成本比与主模型保持一致更重要时。可固定一个已知可靠的 flash 模型，或设置 `auxiliary.title_generation.prefer_fast_model: true`，让 Hermes 选择该提供商的快速档位。 |
 | **Vision（视觉）** | 当主模型不支持视觉时。将其指向 `google/gemini-2.5-flash` 或 `gpt-4o-mini`。 |
 | **Compression（压缩）** | 当你在用 Opus/M2.7 的推理 token 来摘要上下文时。快速聊天模型以 1/50 的成本即可完成此工作。 |
 | **Approval（审批）** | 用于 `approval_mode: smart` — 由快速/廉价模型（haiku、flash、gpt-5-mini）决定是否自动批准低风险命令。此处使用昂贵模型是浪费。 |
@@ -151,6 +163,80 @@ auxiliary:
 
 当不存在 `fallback_chain` 时，`auto` 会先使用顶层的 `fallback_providers` 链，然后才使用内置的辅助任务发现链。
 
+## 按提供商的请求选项 {#per-provider-request-options}
+
+提供商条目（`providers:` 字典中的 `providers.<name>`，或旧版 `custom_providers` 列表中的条目）接受若干调节项，用于决定 Hermes 与该端点通信的方式：
+
+**`extra_headers`**——一个额外 HTTP 请求头的映射，会附加到路由至该提供商 base URL 的每个 LLM 请求上。它们最后才被应用，位于 URL/配置档默认值和用户请求头覆盖之后，因此在凭据切换和客户端重建后依然保留。适用于 Cloudflare Access 服务令牌、代理认证或自定义 bearer 方案：
+
+```yaml
+providers:
+  my-gateway:
+    api: https://llm.internal.example.com/v1
+    api_key: sk-...
+    extra_headers:
+      CF-Access-Client-Id: "xxxx.access"
+      CF-Access-Client-Secret: "yyyy"
+```
+
+请求头的值经常携带凭据——Hermes 从不记录它们。`extra_headers` 适用于 OpenAI 兼容路由；`anthropic_messages` 和 `bedrock_converse` API 模式不使用它。
+
+**`discover_models`**——设为 `false`（默认为 `true`）可跳过查询端点的 `/models` 列表，仅使用你在该条目上配置的 `models`。适合模型列表缓慢、不可靠或杂乱的网关：
+
+```yaml
+providers:
+  my-gateway:
+    api: https://llm.internal.example.com/v1
+    discover_models: false
+    models:
+      - my-finetune-v2
+      - my-finetune-v1
+```
+
+关闭发现后，模型选择器（`hermes model`、`/model`）会显示配置的列表，而不是实时探测结果。
+
+**`openai_native_compaction`**——仅当某个 OpenAI 兼容端点是你愿意托付对话内容的端点时，才将此能力设为 `true`。原生压缩会把其负载发送到该提供商配置的 `base_url`：
+
+```yaml
+providers:
+  trusted-proxy:
+    api: https://llm.internal.example.com/v1
+    capabilities:
+      openai_native_compaction: true
+```
+
+对于只有在收到请求后才解析裸模型别名的网关，可通过按模型的 `prompt_caching` 能力，让该别名启用 prompt 缓存标记：
+
+```yaml
+providers:
+  model-proxy:
+    api: https://gateway.example.com/v1
+    transport: openai_chat  # or anthropic_messages
+    models:
+      fable:
+        context_length: 1000000
+        prompt_caching: true
+```
+
+Hermes 会将此声明与确切的提供商路由和运行时模型 id 进行匹配，不会改写别名，也不会根据其提供商名称、主机或模型系列推断是否支持。标记布局遵循所配置的传输方式：`openai_chat` 使用 OpenAI 兼容的信封布局，`anthropic_messages` 使用原生的内部块布局。设置 `prompt_caching: false` 可为某个模型显式禁用缓存标记；省略时，Hermes 保持其常规的提供商与模型能力检测。
+
+:::note 旧版格式
+较旧的配置使用顶层 `custom_providers:` 列表（使用 `base_url` 而非 `api`）。它仍然可用，并会在 `hermes update` 时自动迁移为 `providers:` 字典（config v12）。
+:::
+
+### Nous Portal：哪条线路承载 Claude {#nous-portal-which-wire-carries-claude}
+
+Nous Portal 通过两条路由提供其 `anthropic/*` 模型：OpenAI 兼容的 `/v1/chat/completions`，以及原生 Anthropic Messages 线路 `/v1/messages`。`nous.anthropic_wire` 用于选择其中一条：
+
+```yaml
+nous:
+  anthropic_wire: chat     # default. "native" = the Anthropic Messages wire; "auto" = decide per session
+```
+
+目前默认值为 `chat`。原生线路是更好的传输方式（签名的 thinking 块原样透传，支持原生 `cache_control` 作用域），但在 Portal 由 OpenRouter 提供服务的路径上，它目前在并发工具循环的连续调用中有 14–20% 会重写上一轮的 prompt 缓存，占一次扇出（fan-out）缓存写入费用的 15–20%；chat 路由在同一测试中测得为 0。设置为 `native` 可重新启用它（例如在 Portal 端修复发布之后）。只有 `anthropic/*` 模型受影响；Nous 上的其他模型本来就使用 chat/completions。
+
+`auto` 适用于 Portal 从多个上游提供同一模型的情况。会话从 chat 开始，Hermes 读取是哪个上游响应了第一次调用，并且仅当该上游是已知原生线路表现干净的上游时，才将该会话切换到 native（切换发生在两次调用之间，因此不会丢失进行中的响应，也不会丢失已预热的缓存）。目前还没有任何上游通过认定，因此 `auto` 的行为与 `chat` 完全相同；它的存在是为了让切换可以基于测量结果进行，而不是依赖配置改动。
+
 ## 何时生效？
 
 - **CLI**（`hermes chat`）：下次执行 `hermes chat` 时生效。
@@ -203,7 +289,7 @@ Hermes 仅列出具有有效凭据的提供商。检查侧边栏中的 **Keys** 
 
 ### 自定义别名
 
-为常用模型定义短名称，然后在 CLI 或任意消息平台中使用 `/model <alias>`。有两种等价的格式——选择适合你工作流的一种。
+为常用模型定义短名称，然后在运行中的会话里使用 `/model <alias>`，或在启动时使用 `hermes chat --model <alias>`。有两种等价的格式——选择适合你工作流的一种。
 
 **标准形式（顶层 `model_aliases:`）**——可完整控制 provider 与 base_url：
 
@@ -218,12 +304,32 @@ model_aliases:
     provider: x-ai
 ```
 
-**短字符串形式（`model.aliases.<name>: provider/model`）**——从 shell 使用很方便，因为 `hermes config set` 只写入标量值，但它无法携带自定义的 `base_url`：
+指向自有端点的别名也可以携带该端点的凭据，使用 `api_key`（字面值，或 `"${VAR}"` 引用）或 `key_env`（环境变量的名称）。如果两者都设置，以 `api_key` 为准：
+
+```yaml
+model_aliases:
+  theta:
+    model: theta-1
+    provider: custom
+    base_url: "https://theta.example.com/v1"
+    key_env: THETA_API_KEY        # or: api_key: "${THETA_API_KEY}"
+```
+
+当别名两者都未设置时，密钥会根据别名的**主机**解析——`ollama.com` 端点使用 `OLLAMA_API_KEY`，`api.deepseek.com` 使用 `DEEPSEEK_API_KEY`，依此类推。它永远不会从切换前恰好处于活动状态的提供商继承，因此切换到某个别名不会把一个提供商的密钥发送到另一个提供商的主机。
+
+**短字符串形式（`model.aliases.<name>: provider/model`）**——从 shell 使用很方便，因为 `hermes config set` 会写入标量值，现在也能解析内联的列表/映射字面量，但这种短别名形式仍然无法携带自定义的 `base_url`：
 
 ```bash
 hermes config set model.aliases.fav anthropic/claude-opus-4.6
 hermes config set model.aliases.grok x-ai/grok-4
 ```
+
+> `hermes config set` 也接受内联的**列表/映射字面量**（JSON/YAML 流式风格）。请为它们加上引号，以便 shell 原样传递：
+>
+> ```bash
+> hermes config set platform_toolsets.line '["clarify", "file", "web"]'
+> hermes config set display.tool_progress_overrides '{"terminal": "off"}'
+> ```
 
 两种路径都进入同一个加载器（`hermes_cli/model_switch.py`）。在 `model_aliases:` 中声明的条目优先于同名的 `model.aliases:` 条目。
 

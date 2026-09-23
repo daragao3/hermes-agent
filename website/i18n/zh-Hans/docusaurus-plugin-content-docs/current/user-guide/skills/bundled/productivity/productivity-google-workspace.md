@@ -16,7 +16,7 @@ description: "通过 gws CLI 或 Python 使用 Gmail、Calendar、Drive、Docs�
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/productivity/google-workspace` |
-| 版本 | `1.1.0` |
+| 版本 | `1.2.0` |
 | 作者 | Nous Research |
 | 许可证 | MIT |
 | 平台 | linux, macos, windows |
@@ -36,6 +36,7 @@ Gmail、Calendar、Drive、Contacts、Sheets 和 Docs —— 通过 Hermes 管�
 ## 参考资料
 
 - `references/gmail-search-syntax.md` —— Gmail 搜索运算符（is:unread、from:、newer_than: 等）
+- `references/daily-brief.md` —— 每日/晨间简报流程：日程 + 冲突 + 会议准备 + 来自 Gmail 和 Calendar 的紧急邮件。当用户请求晨间简报、会议准备，或询问“我的日历上有什么、哪些邮件需要处理”时加载它。
 
 ## 脚本
 
@@ -101,7 +102,7 @@ $GSETUP --check
 > 6. 下载 JSON 文件并告诉我文件路径
 >
 > Hermes CLI 重要提示：若文件路径以 `/` 开头，请勿在 CLI 中单独发送该裸路径，因为它可能被误识别为斜杠命令。请将其放在句子中发送，例如：
-> `The JSON file path is: /home/user/Downloads/client_secret_....json`
+> `The JSON file path is: ~/Downloads/client_secret_....json`
 
 用户提供路径后：
 

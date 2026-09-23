@@ -99,6 +99,14 @@ cron:
   wrap_response: false
 ```
 
+### 检查 5：经由中继的平台（Hermes Cloud / Team Gateway）
+
+当某个平台的凭据存放在中继连接器中（例如由 Team Gateway 前置的 Slack 或 Discord），而不是在你本地的 `.env` 里时，**正在运行的 gateway 的实时中继适配器是唯一的发送方**——不存在独立的投递路径。
+
+- 只要 gateway 在运行，定时触发就能正常工作：由它的 ticker 负责经由中继的投递。
+- 独立执行的 `hermes cron run <id>` 会自动通过 api_server（`POST /api/jobs/{id}/run`）**把这次运行转发给 gateway**。这要求启用 `api_server` 平台并配置 `API_SERVER_KEY`（16 个字符以上）。`--prompt` / `cronjob(action='run', prompt=...)` 上下文会随之一起转发，并且只对这一次触发生效。
+- 如果 gateway 不可达，运行会以 "relay-fronted … start the gateway" 错误失败，而不是给出误导性的 `platform 'slack' not configured/enabled`。启动 gateway 后重试即可。
+
 ---
 
 ## Skill 加载失败

@@ -11,6 +11,7 @@ Hermes 可以在进程启动时从外部密钥管理器拉取 API 密钥，而�
 
 - [Bitwarden Secrets Manager](./bitwarden) — 使用 `bws` CLI，懒加载安装，免费套餐可用。
 - [1Password](./onepassword) — 通过官方 `op` CLI 使用 `op://` 引用；支持服务账号或桌面端 session 认证。
+- [命令辅助程序](./command) — 通过用户配置的、输出 `KEY=VALUE` 行的辅助程序接入任意 CLI 保险库（`keepassxc-cli`、`secret-tool`、`pass`、自定义脚本）。
 
 ## 同时使用多个来源
 
@@ -31,6 +32,21 @@ secrets:
 ```
 
 由某个来源注入的每一份凭据都会标注其出处——setup 流程和 `hermes model` 会在检测到的密钥旁显示 `(from Bitwarden)`，让你始终清楚某个值来自哪里。
+
+## Profile 与共享保险库 {#profiles-and-shared-vaults}
+
+两个编排器级别的开关可以让一个共享保险库在多个 [profile](../profiles) 之间安全使用：
+
+- **`secrets.preserve_existing`** —— 一个环境变量名列表，这些变量在 `.env` / shell 中已有的值始终优先，即便面对设置了 `override_existing: true` 的来源也是如此。适用于那些有意在各 profile 之间取值不同的平台密钥（例如 `FEISHU_APP_SECRET`），而其余一切仍集中轮换：
+
+  ```yaml
+  secrets:
+    preserve_existing: [FEISHU_APP_SECRET, TELEGRAM_BOT_TOKEN]
+  ```
+
+- **Profile 别名**（默认开启，设置 `secrets.profile_alias: false` 可禁用）—— 当 Hermes 在某个命名 profile 下运行时，保险库中名为 `FOO_<PROFILE>` 的密钥（仅限凭据形态的后缀：`*_API_KEY`、`*_TOKEN`、`*_SECRET`、`*_KEY`、`*_PASSWORD`）也会填充规范名 `FOO`。在共享项目中存放 `TELEGRAM_BOT_TOKEN_MILLA`，`milla` profile 的适配器——它们读取固定名称 `TELEGRAM_BOT_TOKEN`——就会自动获得正确的值。保险库直接以规范名提供的变量始终优先于别名。
+
+两者都适用于每一个来源——无论内置还是插件——因为它们位于编排器中，而不是各个后端中。
 
 ## 接入你自己的后端
 

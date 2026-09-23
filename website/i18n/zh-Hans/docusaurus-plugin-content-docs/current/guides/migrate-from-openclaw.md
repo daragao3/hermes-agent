@@ -8,6 +8,10 @@ description: "将 OpenClaw / Clawdbot 配置迁移到 Hermes Agent 的完整指�
 
 `hermes claw migrate` 将你的 OpenClaw（或旧版 Clawdbot/Moldbot）配置导入 Hermes。本指南详细说明迁移内容、配置键映射以及迁移后的验证步骤。
 
+:::note
+如果你是从 **Claude Code** 或 **OpenAI Codex CLI** 迁移过来？请使用 [`hermes import-agent`](../user-guide/import-from-other-agents.md)。
+:::
+
 :::tip
 如果你的 OpenClaw 配置使用了多个提供商，`hermes setup --portal` 可将其收敛为单一 OAuth——一次登录即可获得 300+ 模型以及 Tool Gateway。参见 [Nous Portal](/integrations/nous-portal)。
 :::
@@ -73,7 +77,7 @@ Skill 冲突由 `--skill-conflict` 处理：`skip` 保留现有 Hermes skill，`
 | 内容 | OpenClaw 配置路径 | Hermes 目标 | 备注 |
 |------|---------------------|-------------------|-------|
 | 默认模型 | `agents.defaults.model` | `config.yaml` → `model` | 可为字符串或 `{primary, fallbacks}` 对象 |
-| 自定义 providers | `models.providers.*` | `config.yaml` → `custom_providers` | 映射 `baseUrl`、`apiType`/`api`——同时处理短格式（"openai"、"anthropic"）和带连字符格式（"openai-completions"、"anthropic-messages"、"google-generative-ai"） |
+| 自定义 providers | `models.providers.*` | `config.yaml` → `custom_providers`（在下一次 `hermes update` 配置迁移时自动迁移为规范的 `providers:` 字典） | 映射 `baseUrl`、`apiType`/`api`——同时处理短格式（"openai"、"anthropic"）和带连字符格式（"openai-completions"、"anthropic-messages"、"google-generative-ai"） |
 | Provider API 密钥 | `models.providers.*.apiKey` | `~/.hermes/.env` | 需要 `--migrate-secrets`。参见下方 [API 密钥解析](#api-key-resolution) |
 
 ### Agent 行为
@@ -223,7 +227,7 @@ OpenClaw 配置中 token 和 API 密钥的值支持三种格式：
 
 5. **测试消息平台** — 若迁移了平台 token，重启 gateway：`systemctl --user restart hermes-gateway`
 
-6. **检查会话策略** — 运行 `hermes config show` 并验证其中的 `session_reset` 值是否符合预期。
+6. **检查会话归档** — 查看已归档的高级设置；空闲和每日重置计时器是有意不导入的。
 
 7. **重新配对 WhatsApp** — WhatsApp 使用二维码配对（Baileys），不支持 token 迁移。运行 `hermes whatsapp` 进行配对。
 

@@ -16,7 +16,11 @@ ASCII 视频：将视频/音频转换为彩色 ASCII MP4/GIF。
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/creative/ascii-video` |
+| 版本 | `1.0.0` |
+| 作者 | SHL0MS, Hermes Agent |
+| 许可证 | MIT |
 | 平台 | linux, macos, windows |
+| 标签 | `ASCII`, `Video`, `FFmpeg`, `Terminal-Art` |
 
 ## 参考：完整 SKILL.md
 

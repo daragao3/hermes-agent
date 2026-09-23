@@ -213,6 +213,21 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 
 ### 提供商与模型问题
 
+#### 智能体声称「Hermes policy」或「Hermes guardrails」拒绝了我的请求 {#the-agent-says-hermes-policy-or-hermes-guardrails-refused-my-request}
+
+模型无法可靠地判断自己为何拒绝某个请求。如果拒绝只出现在助手的文字回复中，它所声称的「某个隐藏的 Hermes 运行时策略导致了拒绝」，可能是幻觉出来的解释，也可能是所选模型或提供商施加的限制。
+
+Hermes 的强制措施都是显式的：被阻止的工具操作会返回一个指明被拒命令或路径的工具错误，需要审批的操作会显示审批提示。Hermes 不会悄悄把这些执行控制变成一个通用的内容拒绝层。在配置了的情况下，提供商层面的控制仍然可能生效，例如 Amazon Bedrock Guardrails。
+
+要定位来源：
+
+1. 运行 `/status` 确认当前生效的模型和提供商。
+2. 检查拒绝是否包含真正的 Hermes 工具错误或审批提示。如果只是文字，不要把模型的归因当作运行时证据。
+3. 在新会话中改用另一个已配置的模型或提供商重试。如果拒绝随模型变化，那就是模型/提供商的行为，而不是 Hermes 的执行控制。
+4. 如果出现了明确的工具错误，报告问题时请使用其确切文本。
+
+有关 Hermes 已记录的执行控制，请参阅[安全](/user-guide/security)；有关提供商配置，请参阅[提供商](/integrations/providers)。
+
 #### `/model` 只显示一个提供商 / 无法切换提供商
 
 **原因：** 会话内的 `/model` 只能在您**已配置**的提供商之间切换。如果您只设置了 OpenRouter，`/model` 就只会显示 OpenRouter。
@@ -269,7 +284,7 @@ hermes config set OPENROUTER_API_KEY sk-or-v1-xxxxxxxxxxxx
 hermes model
 
 # 设置有效的模型
-hermes config set HERMES_MODEL anthropic/claude-opus-4.7
+hermes config set model.default anthropic/claude-opus-4.7
 
 # 或按会话指定
 hermes chat --model openrouter/meta-llama/llama-3.1-70b-instruct
@@ -304,6 +319,8 @@ hermes chat --model openrouter/google/gemini-3-flash-preview
 
 查看 CLI 启动行 — 它会显示检测到的上下文长度（例如 `📊 Context limit: 128000 tokens`）。您也可以在会话中使用 `/usage` 查看。
 
+**本地服务器（llama.cpp、Ollama）静默失败而不报错：** 当提供商因请求过大而拒绝时，Hermes 会压缩对话并重新构建请求。重试前，Hermes 会重新测量*完整的*重建请求（系统 prompt + 工具 schema + 消息），如果仍超过阈值，还会再执行有限次数的压缩。如果请求仍然放不下，本轮会以 `Context length exceeded: compression could not reduce the rebuilt request below the safe threshold` 结束，而不是发送一个会被 llama.cpp 静默截断的超大请求（服务器日志中表现为 `stop processing: n_tokens = 65535, truncated = 1`）。如果遇到这条消息，解决办法几乎总是修正上文配置的 `context_length`：让它与服务器实际的 `-c` / `--ctx-size` 一致。
+
 如需修正上下文检测，请显式设置：
 
 ```yaml
@@ -313,16 +330,18 @@ model:
   context_length: 131072  # 您模型的实际上下文窗口
 ```
 
-或对于自定义端点，按模型添加：
+或对于自定义端点，在提供商条目上按模型添加：
 
 ```yaml
-custom_providers:
-  - name: "My Server"
-    base_url: "http://localhost:11434/v1"
+providers:
+  my-server:
+    api: "http://localhost:11434/v1"
     models:
       qwen3.5:27b:
-        context_length: 32768
+        context_length: 64000
 ```
+
+（较旧的配置使用旧式的 `custom_providers:` 列表——仍然受支持，并会自动迁移到 `providers:`。）
 
 有关自动检测的工作原理及所有覆盖选项，请参阅[上下文长度检测](../integrations/providers.md#context-length-detection)。
 
@@ -500,12 +519,18 @@ hermes gateway start      # 检测到更新的 plist 并重新加载
 
 **解决方案：**
 ```bash
+# 精确查看固定 prompt 的开销——按区块细分
+#（系统 prompt、技能索引、记忆、工具 schema）。可离线运行。
+hermes prompt-size
+
 # 压缩对话以减少 token
 /compress
 
 # 查看会话 token 用量
 /usage
 ```
+
+如果在你还没输入任何内容时基线就已经很高，那就是固定的 prompt 开销——每次调用都会发送的系统 prompt 加工具 schema。运行 [`hermes prompt-size`](/reference/cli-commands#hermes-prompt-size) 进行测量，然后精简：禁用不用的工具集（`hermes tools`），卸载或禁用不需要的技能（`hermes skills`）。
 
 :::tip
 在长会话中定期使用 `/compress`。它会对对话历史进行摘要，在保留上下文的同时显著减少 token 用量。
@@ -608,6 +633,8 @@ Profiles 是构建在 `HERMES_HOME` 之上的托管层。您*可以*在每次命
 ### Profiles 共享记忆或会话吗？
 
 不共享。每个 profile 都有自己独立的记忆存储、会话数据库和技能目录，完全隔离。如果您想用现有的记忆和会话创建新 profile，请使用 `hermes profile create newname --clone-all` 从当前 profile 复制所有内容，或添加 `--clone-from <profile>` 从指定源 profile 复制。
+
+这种隔离也是为什么永远不要让两个智能体同时使用*同一个* profile 或 Hermes 主目录：两者都会自动写入记忆，并且各自在会话启动时加载对方写入的内容，因此它们存储的状态会随每个会话不断退化。一个 profile 只对应一个智能体；如果确实需要在多个智能体之间共享记忆，请使用[外部记忆提供商](/user-guide/features/memory-providers)。
 
 ### 运行 `hermes update` 时会发生什么？
 
@@ -727,7 +754,7 @@ skills:
 
 3. **使用 Discord 频道。** Discord 会话按频道键控，因此同一频道中的所有用户共享上下文。为共享对话使用专用频道。
 
-### 将 Hermes 迁移到另一台机器
+### 将 Hermes 迁移到另一台机器 {#exporting-hermes-to-another-machine}
 
 **场景：** 您在一台机器上积累了技能、cron 作业和记忆，想将所有内容迁移到新的专用 Linux 机器。
 
@@ -755,7 +782,7 @@ skills:
 
 4. 在新机器上运行 `hermes setup` 以验证 API key 和提供商配置是否正常工作。
 
-### 将单个 profile 迁移到另一台机器
+### 将单个 profile 迁移到另一台机器 {#moving-a-single-profile-to-another-machine}
 
 **场景：** 您想迁移或共享某个特定 profile，而非整个安装。
 
@@ -769,7 +796,7 @@ hermes profile import ./work-backup.tar.gz work
 
 导入的 profile 将包含导出时的所有配置、记忆、会话和技能。如果新机器的设置不同，您可能需要更新路径或重新向提供商进行身份验证。
 
-### `hermes backup` 与 `hermes profile export` 的对比
+### `hermes backup` 与 `hermes profile export` 的对比 {#hermes-backup-vs-hermes-profile-export}
 
 | 功能 | `hermes backup` | `hermes profile export` |
 | :--- | :--- | :--- |

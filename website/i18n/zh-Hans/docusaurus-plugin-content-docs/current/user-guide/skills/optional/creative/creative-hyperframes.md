@@ -1,14 +1,14 @@
 ---
-title: "Hyperframes"
+title: "Hyperframes — 从 HTML 合成渲染 MP4/WebM 视频"
 sidebar_label: "Hyperframes"
-description: "使用 HyperFrames 创建基于 HTML 的视频合成、动画标题卡、社交叠加层、带字幕的对话视频、音频响应视觉效果和着色器转场"
+description: "从 HTML 合成渲染 MP4/WebM 视频"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Hyperframes
 
-使用 HyperFrames 创建基于 HTML 的视频合成、动画标题卡、社交叠加层、带字幕的对话视频、音频响应视觉效果和着色器转场。HTML 是视频的唯一真实来源。当用户需要从 HTML 合成渲染 MP4/WebM、在媒体上添加文字/Logo/图表动画、将字幕与音频同步、需要 TTS 旁白，或将网站转换为视频时使用本技能。
+从 HTML 合成渲染 MP4/WebM 视频。
 
 ## 技能元数据
 
@@ -57,10 +57,12 @@ HTML 是视频的唯一真实来源。合成（composition）是一个带有 `da
 npx hyperframes init my-video               # 初始化项目脚手架
 cd my-video
 npx hyperframes lint                        # 预览/渲染前验证
-npx hyperframes preview                     # 实时热重载浏览器预览（端口 3002）
+npx hyperframes preview                     # 实时热重载预览（长期运行的服务器，端口 3002）
 npx hyperframes render --output final.mp4   # 渲染为 MP4
 npx hyperframes doctor                      # 诊断环境问题
 ```
+
+`preview` 是一个**长期运行**的 Next.js 服务器，会保持 Chrome 渲染 worker 常驻。用完后务必停止它（见[清理](#cleanup)）——被遗忘的 preview 会让空闲的 `chrome-headless-shell` worker 一直存活，在无 GPU 的主机（WSL、容器、CI）上，它们会通过软件 WebGL（swiftshader）各自无限期占满一个 CPU 核心。
 
 渲染参数：`--quality draft|standard|high` · `--fps 24|30|60` · `--format mp4|webm` · `--docker`（可复现）· `--strict`。
 
@@ -164,7 +166,22 @@ npx hyperframes render --quality high --output final.mp4     # 最终交付
 
 使用 [references/website-to-video.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/creative/hyperframes/references/website-to-video.md) 中的 7 步捕获转视频工作流：捕获 → DESIGN.md → SCRIPT.md → 分镜 → 合成 → 渲染 → 交付。
 
+## 清理 {#cleanup}
+
+`render` 是一次性的（完成后 worker 即退出）。`preview` **不是**——它运行一个后台 Next.js 服务器，在你停止它之前会一直保持 Chrome worker 常驻。切勿让它一直运行：在无 GPU 的主机上，每个空闲 worker 的 swiftshader 进程都会占满一个 CPU 核心，而一个开了数天的 preview 会累积多个这样的进程。
+
+当用户审阅完毕时（或在启动新的 preview 之前），停止 preview：
+
+```bash
+pkill -f "hyperframes.*preview"     # Studio 服务器（释放端口 3002）
+pkill -f chrome-headless-shell      # 其渲染 worker；仅在没有其他程序使用它们时才安全
+```
+
+如果不确定是否有其他工具在使用 `chrome-headless-shell`，请先检查：`pgrep -af chrome-headless-shell`。恢复一台卡死的主机（大量空闲 worker 占用 CPU）也用同样的方法——参见 [references/troubleshooting.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/creative/hyperframes/references/troubleshooting.md#runaway-cpu-from-leftover-preview-workers)。
+
 ## 常见陷阱
+
+- **让 `preview` 一直运行** —— 它是一个持有 Chrome worker 的长期运行服务器；在 WSL/容器/CI 上，这些空闲 worker 会各自占满一个 CPU 核心（软件 WebGL）。用完后停止它——见[清理](#cleanup)。
 
 - **`HeadlessExperimental.beginFrame' wasn't found`** — Chromium 147+ 移除了此协议。确保使用 `hyperframes@>=0.4.2`（自动检测并回退到截图模式）。应急方案：`export PRODUCER_FORCE_SCREENSHOT=true`。参见 [hyperframes#294](https://github.com/heygen-com/hyperframes/issues/294) 和 [references/troubleshooting.md](https://github.com/NousResearch/hermes-agent/blob/main/optional-skills/creative/hyperframes/references/troubleshooting.md)。
 - **系统 Chrome（非 `chrome-headless-shell`）** — 渲染会挂起 120 秒后超时。运行 `npx puppeteer browsers install chrome-headless-shell`（setup.sh 已处理此步骤）。`hyperframes doctor` 会报告将使用哪个二进制文件。

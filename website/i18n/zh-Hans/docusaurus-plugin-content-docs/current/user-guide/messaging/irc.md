@@ -21,9 +21,9 @@ IRC 是纯文本协议：不支持语音、图片、文件、线程、表情回�
 
 ## 配置 Hermes
 
-配置 IRC 有两种方式——环境变量（适合快速的纯 env 配置）或 `~/.hermes/gateway-config.yaml` 中的 `gateway` 块。
+配置 IRC 有两种方式——环境变量（适合快速的纯 env 配置）或 `~/.hermes/config.yaml` 中的 `gateway` 块。
 
-### 方式 A —— gateway-config.yaml
+### 方式 A —— config.yaml
 
 ```yaml
 gateway:

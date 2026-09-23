@@ -1,14 +1,14 @@
 ---
-title: "Pinecone — 面向生产级 AI 应用的托管向量数据库"
+title: "Pinecone — 面向生产级 RAG 与搜索的托管向量数据库"
 sidebar_label: "Pinecone"
-description: "面向生产级 AI 应用的托管向量数据库"
+description: "面向生产级 RAG 与搜索的托管向量数据库"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Pinecone
 
-面向生产级 AI 应用的托管向量数据库。全托管、自动扩缩容，支持混合搜索（稠密 + 稀疏向量）、元数据过滤和命名空间。低延迟（&lt;100ms p95）。适用于生产级 RAG、推荐系统或大规模语义搜索。最适合 serverless（无服务器）托管基础设施。
+面向生产级 RAG 与搜索的托管向量数据库。
 
 ## Skill 元数据
 
@@ -16,10 +16,10 @@ description: "面向生产级 AI 应用的托管向量数据库"
 |---|---|
 | 来源 | 可选 — 通过 `hermes skills install official/mlops/pinecone` 安装 |
 | 路径 | `optional-skills/mlops/pinecone` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
-| 依赖 | `pinecone-client` |
+| 依赖 | `pinecone` |
 | 平台 | linux, macos, windows |
 | 标签 | `RAG`, `Pinecone`, `Vector Database`, `Managed Service`, `Serverless`, `Hybrid Search`, `Production`, `Auto-Scaling`, `Low Latency`, `Recommendations` |
 
@@ -59,8 +59,10 @@ description: "面向生产级 AI 应用的托管向量数据库"
 ### 安装
 
 ```bash
-pip install pinecone-client
+pip install pinecone
 ```
+
+> 注意：旧的 `pinecone-client` 包已弃用。请安装 `pinecone`（v5+；当前为 9.x）。导入语句保持为 `from pinecone import Pinecone`。
 
 ### 基本用法
 
@@ -243,14 +245,31 @@ index.upsert(vectors=[
 ])
 
 # Hybrid query
+# NOTE: index.query() does NOT accept an `alpha` kwarg. Pinecone stores a
+# single sparse-dense vector, so weighting must be applied by pre-scaling the
+# query vectors before sending them. Use the hybrid_score_norm helper below
+# (alpha * dense + (1 - alpha) * sparse; alpha=1 → pure dense, 0 → pure sparse).
+
+def hybrid_score_norm(dense, sparse, alpha: float):
+    """Scale dense/sparse query vectors for weighted hybrid search."""
+    if not 0 <= alpha <= 1:
+        raise ValueError("alpha must be between 0 and 1")
+    scaled_sparse = {
+        "indices": sparse["indices"],
+        "values": [v * (1 - alpha) for v in sparse["values"]],
+    }
+    return [v * alpha for v in dense], scaled_sparse
+
+hdense, hsparse = hybrid_score_norm(
+    dense=[0.1, 0.2, ...],
+    sparse={"indices": [10, 45], "values": [0.5, 0.3]},
+    alpha=0.5,  # 0=sparse, 1=dense, 0.5=balanced
+)
+
 results = index.query(
-    vector=[0.1, 0.2, ...],
-    sparse_vector={
-        "indices": [10, 45],
-        "values": [0.5, 0.3]
-    },
+    vector=hdense,
+    sparse_vector=hsparse,
     top_k=5,
-    alpha=0.5  # 0=sparse, 1=dense, 0.5=hybrid
 )
 ```
 

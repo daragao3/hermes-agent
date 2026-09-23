@@ -12,7 +12,9 @@ description: "在一台机器上以受管服务的方式运行多个 profile：�
 launchd/systemd 怪异行为中恢复。
 
 如果你只运行一个 Hermes agent，则不需要本页 —— 基础内容参见
-[Profiles](./profiles.md)。
+[Profiles](./profiles.md)。如果你的多个实例位于*不同*机器上，而你希望一个
+桌面应用能同时连接它们，请参见
+[将桌面应用连接到多个 Hermes 实例](./multi-connection-desktop.md)。
 
 ## 何时需要这套方案
 
@@ -149,8 +151,24 @@ configure them only on the default profile.
 
 受此规则约束的绑定端口平台有：`webhook`、`api_server`、
 `msgraph_webhook`、`feishu`、`wecom_callback`、`bluebubbles`、`sms`、
-`whatsapp_cloud`、`line`。请**只在默认 profile 上**配置这些平台；
+`whatsapp_cloud`、`line`、`teams`。请**只在默认 profile 上**配置这些平台；
 每个 profile 都可以通过它的 `/p/<profile>/` 前缀访问。
+
+认证以 URL 中指定的 profile 为准。不带前缀的端点继续使用默认监听器
+现有的凭据。
+
+- `/p/coder/...` 的 API server 请求必须使用
+  `~/.hermes/profiles/coder/.env` 中的 `API_SERVER_KEY`；默认监听器的密钥会被拒绝。
+- 以 `coder` 为目标的 webhook 路由，必须在默认 profile 的 `config.yaml` 中、
+  在其已有的路由专属 `secret` 旁边声明 `profile: coder`。此后该 secret
+  只在 `/p/coder/webhooks/<route>` 上被接受，在其他任何 profile 前缀上都会被拒绝。
+- 没有 `profile` 的 webhook 路由仍是默认 profile 的路由，无法通过具名
+  profile 前缀访问。
+
+请在次级 profile 的配置中保持绑定端口平台处于禁用状态。共享监听器及其
+路由定义都保留在默认 profile 上；profile 绑定决定每条已认证的 webhook
+路由可以在哪个 profile 中执行。当目标 profile 没有 `API_SERVER_KEY` 时，
+具名 API 请求会以失败关闭（fail closed）的方式被拒绝。
 
 只有这种共享监听器冲突才会降级为跳过某个 profile。安全相关的配置错误
 仍然是致命的：例如，一个自有策略为 `open` 的平台若没有设置
@@ -185,9 +203,37 @@ home 下写出各自的 `runtime_status.json`，因此现有的按 profile 读�
 
 按 profile 的 `.env` 凭据隔离得以保留，甚至更为严格：一个 profile 的密钥
 只从它自己的作用域解析，绝不会被合并进共享环境（这也意味着 MCP server、
-Kanban worker 等子进程只能看到自己所属 profile 的密钥）。Kanban、
+Kanban worker 等子进程只能看到自己所属 profile 的密钥）。终端设置
+（`terminal.backend`、`terminal.cwd`、`terminal.docker_volumes`、
+`terminal.docker_shared_container_key`、SSH 目标等）同样会在每个被路由的轮次中
+按 profile 解析：省略某个终端配置项的 profile 会得到文档所述的默认值，而绝不会
+沿用启动 profile 的值；`config.yaml`/`.env` 无法解析的 profile 会被拒绝执行终端
+命令，而不会在另一个 profile 的沙箱策略下运行。Kanban、
 按 profile 划分的技能/记忆/SOUL 以及模型路由，其行为与使用独立 gateway 时
 完全一致。
+
+### 只服务选定的 profile {#serving-selected-profiles}
+
+默认情况下，`gateway.multiplex_profiles: true` 会服务主机上所有有效的具名
+profile。若想保留无关 profile 的安装、但不启动它们的适配器或 cron 任务，请设置
+`gateway.multiplex_profile_allowlist`：
+
+```yaml
+gateway:
+  multiplex_profiles: true
+  multiplex_profile_allowlist:
+    - worker
+    - guest
+```
+
+默认 profile 始终会被服务，无需列出。未设置允许列表时保留以往"全部服务"
+的行为；空列表则只服务默认 profile。名称会被规范化并去重。无效的列表
+条目或未安装的名称会被跳过并记录警告。格式错误的非列表值会安全地回退为
+只服务默认 profile。
+
+最终的服务集合还决定了 `/p/<profile>/` API 和 webhook 前缀、运行时状态、
+profile 路由的资格，以及进程内 cron 调度器会 tick 哪些 profile。不在允许列表
+中的具名 profile 仍然可以运行它自己的独立 gateway。
 
 ### 将共享 bot 的会话路由到 profile（`profile_routes`）
 
@@ -218,6 +264,12 @@ gateway:
       platform: telegram
       chat_id: "-1001234567890"
       profile: tg-profile
+
+    # 一条 WhatsApp 私信 —— 填写电话号码；JID 和 LID 形式同样能匹配
+    - name: owner-whatsapp
+      platform: whatsapp
+      chat_id: "15551234567"
+      profile: owner
 ```
 
 路由按最具体优先的顺序匹配（`thread_id` > `chat_id` > `guild_id`），
@@ -226,9 +278,26 @@ gateway:
 被路由到的 profile 会获得上文描述的完整按 profile 隔离（配置、技能、记忆、
 凭据、session 命名空间）。路由适用于所有平台适配器，不只是 Discord。
 
+在 WhatsApp 和 WhatsApp Cloud 上，`chat_id` 路由会跨用户身份形式匹配：一旦
+bridge 完成配对，纯电话号码（`15551234567`）、JID
+（`15551234567@s.whatsapp.net`）和 LID（`…@lid`）都指向同一个人（与 session
+键和适配器允许列表已在使用的规范化方式相同）。你可以在 `profile_routes`
+中填写电话号码，无论 WhatsApp 投递的是 JID 还是 LID，入站私信都能匹配。
+在尚未建立 LID 映射时，号码形式仍能匹配 JID（后缀会被去除），但无法解析
+未知的 LID —— 这类入站消息会落到默认 profile，直到映射出现为止。群聊
+（`…@g.us`）不是发送者身份，仍然精确匹配。Telegram 的数字 id 不受影响。
+
 `profile_routes` 需要 `gateway.multiplex_profiles: true`；关闭多路复用时
-这些路由会被忽略。如果某条路由指向磁盘上不存在的 profile，gateway 会记录
-一条警告，指出该 profile 及其来源，并回退到默认 home。
+这些路由会被忽略。如果某条显式路由匹配成功，但其目标 profile 未安装或不在
+`multiplex_profile_allowlist` 之内，gateway 会拒绝该入站请求，并记录该路由及其
+目标。它不会改由默认 profile 运行。未匹配任何路由的流量保持以往的
+默认 profile 行为。
+
+由被路由 profile 拥有的 cron 任务也会通过共享 bot 投递，但只投递到某条
+带有 `chat_id`/`thread_id` 的已启用路由映射到该 profile 的目标 —— 被路由
+profile 的任务若以未路由的会话（或被路由到其他 profile 的会话）为目标，
+永远不会通过共享 bot 发送。仅含 guild 的路由不能使 cron 目标生效；请为投递
+频道添加一条 `chat_id` 路由。
 
 ## 一次性启动、停止或重启所有 gateway
 

@@ -1,14 +1,14 @@
 ---
-title: "Searxng Search — 通过 SearXNG 免费元搜索 — 聚合 70+ 搜索引擎的结果"
+title: "Searxng Search — 免费、无需密钥的元搜索，聚合 70+ 搜索引擎"
 sidebar_label: "Searxng Search"
-description: "通过 SearXNG 免费元搜索 — 聚合 70+ 搜索引擎的结果"
+description: "免费、无需密钥的元搜索，聚合 70+ 搜索引擎"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Searxng Search
 
-通过 SearXNG 免费元搜索（meta-search）——聚合 70+ 搜索引擎的结果。可自托管或使用公共实例。无需 API 密钥。当 web 搜索工具集不可用时自动回退。
+免费、无需密钥的元搜索（meta-search），聚合 70+ 搜索引擎。
 
 ## Skill 元数据
 
@@ -16,7 +16,7 @@ description: "通过 SearXNG 免费元搜索 — 聚合 70+ 搜索引擎的结�
 |---|---|
 | 来源 | 可选 — 使用 `hermes skills install official/research/searxng-search` 安装 |
 | 路径 | `optional-skills/research/searxng-search` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | hermes-agent |
 | 许可证 | MIT |
 | 平台 | linux, macos |
@@ -140,23 +140,6 @@ for r in data.get("results", []):
     print(r.get("content", "")[:200])
     print()
 ```
-
-## 方法三：searxng-data Python 包
-
-如需更结构化的访问，安装 `searxng-data` 包：
-
-```bash
-pip install searxng-data
-```
-
-```python
-from searxng_data import engines
-
-# 列出可用引擎
-print(engines.list_engines())
-```
-
-注意：此包仅提供引擎元数据，不提供搜索 API 本身。
 
 ## 自托管 SearXNG
 

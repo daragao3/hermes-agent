@@ -1,14 +1,14 @@
 ---
-title: "Qdrant Vector Search — 用于 RAG 和语义搜索的高性能向量相似度搜索引擎"
-sidebar_label: "Qdrant Vector Search"
-description: "用于 RAG 和语义搜索的高性能向量相似度搜索引擎"
+title: "Qdrant — 面向生产级 RAG 系统的向量搜索引擎"
+sidebar_label: "Qdrant"
+description: "面向生产级 RAG 系统的向量搜索引擎"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
-# Qdrant Vector Search
+# Qdrant
 
-用于 RAG 和语义搜索的高性能向量相似度搜索引擎。适用于构建需要快速最近邻搜索、带过滤的混合搜索，或基于 Rust 高性能的可扩展向量存储的生产级 RAG 系统。
+面向生产级 RAG 系统的向量搜索引擎。
 
 ## Skill 元数据
 
@@ -16,10 +16,10 @@ description: "用于 RAG 和语义搜索的高性能向量相似度搜索引擎"
 |---|---|
 | 来源 | 可选 — 使用 `hermes skills install official/mlops/qdrant` 安装 |
 | 路径 | `optional-skills/mlops/qdrant` |
-| 版本 | `1.0.0` |
+| 版本 | `1.0.1` |
 | 作者 | Orchestra Research |
 | 许可证 | MIT |
-| 依赖 | `qdrant-client>=1.12.0` |
+| 依赖 | `qdrant-client>=1.14.0` |
 | 平台 | linux, macos, windows |
 | 标签 | `RAG`, `Vector Search`, `Qdrant`, `Semantic Search`, `Embeddings`, `Similarity Search`, `HNSW`, `Production`, `Distributed` |
 
@@ -106,17 +106,17 @@ client.upsert(
     ]
 )
 
-# 带过滤的搜索
-results = client.search(
+# 带过滤的搜索（query_points 是当前 API；client.search 已在 qdrant-client 1.14+ 中移除）
+response = client.query_points(
     collection_name="documents",
-    query_vector=[0.15, 0.25, ...],
+    query=[0.15, 0.25, ...],
     query_filter={
         "must": [{"key": "category", "match": {"value": "tech"}}]
     },
     limit=10
 )
 
-for point in results:
+for point in response.points:
     print(f"ID: {point.id}, Score: {point.score}, Payload: {point.payload}")
 ```
 
@@ -186,14 +186,15 @@ print(f"Points: {info.points_count}, Vectors: {info.vectors_count}")
 ### 基本搜索
 
 ```python
-# 简单最近邻搜索
-results = client.search(
+# 简单最近邻搜索（返回 QueryResponse；使用 .points）
+response = client.query_points(
     collection_name="documents",
-    query_vector=[0.1, 0.2, ...],
+    query=[0.1, 0.2, ...],
     limit=10,
     with_payload=True,
     with_vectors=False  # 不返回向量（更快）
 )
+results = response.points
 ```
 
 ### 带过滤的搜索
@@ -202,9 +203,9 @@ results = client.search(
 from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
 
 # 复杂过滤
-results = client.search(
+response = client.query_points(
     collection_name="documents",
-    query_vector=query_embedding,
+    query=query_embedding,
     query_filter=Filter(
         must=[
             FieldCondition(key="category", match=MatchValue(value="tech")),
@@ -215,12 +216,12 @@ results = client.search(
         ]
     ),
     limit=10
-)
+).points
 
 # 简写过滤语法
-results = client.search(
+response = client.query_points(
     collection_name="documents",
-    query_vector=query_embedding,
+    query=query_embedding,
     query_filter={
         "must": [
             {"key": "category", "match": {"value": "tech"}},
@@ -228,23 +229,27 @@ results = client.search(
         ]
     },
     limit=10
-)
+).points
 ```
 
 ### 批量搜索
 
 ```python
-from qdrant_client.models import SearchRequest
+from qdrant_client.models import QueryRequest
 
-# 单次请求中执行多个查询
-results = client.search_batch(
+# 单次请求中执行多个查询（search_batch 已被 query_batch_points 取代）
+responses = client.query_batch_points(
     collection_name="documents",
     requests=[
-        SearchRequest(vector=[0.1, ...], limit=5),
-        SearchRequest(vector=[0.2, ...], limit=5, filter={"must": [...]}),
-        SearchRequest(vector=[0.3, ...], limit=10)
+        QueryRequest(query=[0.1, ...], limit=5),
+        QueryRequest(query=[0.2, ...], limit=5, filter={"must": [...]}),
+        QueryRequest(query=[0.3, ...], limit=10)
     ]
 )
+# 每个元素都是一个 QueryResponse；使用 .points
+for resp in responses:
+    for point in resp.points:
+        print(point.id, point.score)
 ```
 
 ## RAG 集成
@@ -285,12 +290,12 @@ client.upsert(collection_name="knowledge_base", points=points)
 # RAG 检索
 def retrieve(query: str, top_k: int = 5) -> list[dict]:
     query_vector = encoder.encode(query).tolist()
-    results = client.search(
+    response = client.query_points(
         collection_name="knowledge_base",
-        query_vector=query_vector,
+        query=query_vector,
         limit=top_k
     )
-    return [{"text": r.payload["text"], "score": r.score} for r in results]
+    return [{"text": r.payload["text"], "score": r.score} for r in response.points]
 
 # 在 RAG 流水线中使用
 context = retrieve("What is Python?")
@@ -351,12 +356,14 @@ client.upsert(
     ]
 )
 
-# 搜索指定向量
-results = client.search(
+# 搜索指定的命名向量（通过 `using` 传入向量名）
+response = client.query_points(
     collection_name="hybrid_search",
-    query_vector=("dense", query_dense),  # 指定使用哪个向量
+    query=query_dense,
+    using="dense",  # 指定要搜索的命名向量
     limit=10
 )
+results = response.points
 ```
 
 ### 稀疏向量（BM25、SPLADE）
@@ -397,12 +404,13 @@ client.create_collection(
 )
 
 # 带重新评分的搜索
-results = client.search(
+response = client.query_points(
     collection_name="quantized",
-    query_vector=query,
+    query=query,
     search_params={"quantization": {"rescore": True}},  # 对 top 结果重新评分
     limit=10
 )
+results = response.points
 ```
 
 ## Payload 索引
@@ -510,5 +518,5 @@ client = QdrantClient(
 - **文档**：https://qdrant.tech/documentation/
 - **Python 客户端**：https://github.com/qdrant/qdrant-client
 - **Cloud**：https://cloud.qdrant.io
-- **版本**：1.12.0+
+- **版本**：1.14.0+
 - **许可证**：Apache 2.0

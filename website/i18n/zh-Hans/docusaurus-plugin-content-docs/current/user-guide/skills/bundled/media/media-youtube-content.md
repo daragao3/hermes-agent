@@ -16,7 +16,11 @@ YouTube 视频转文字摘要、推文、博客。
 |---|---|
 | 来源 | 内置（默认安装） |
 | 路径 | `skills/media/youtube-content` |
+| 版本 | `1.0.0` |
+| 作者 | Teknium (teknium1), Hermes Agent |
+| 许可证 | MIT |
 | 平台 | linux, macos, windows |
+| 标签 | `YouTube`, `Video`, `Transcripts`, `Media` |
 
 ## 参考：完整 SKILL.md
 
@@ -46,16 +50,16 @@ uv pip install youtube-transcript-api
 
 ```bash
 # JSON 输出（含元数据）
-uv run python3 SKILL_DIR/scripts/fetch_transcript.py "https://youtube.com/watch?v=VIDEO_ID"
+uv run python SKILL_DIR/scripts/fetch_transcript.py "https://youtube.com/watch?v=VIDEO_ID"
 
 # 纯文本输出（适合管道传递给后续处理）
-uv run python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --text-only
+uv run python SKILL_DIR/scripts/fetch_transcript.py "URL" --text-only
 
 # 带时间戳
-uv run python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --timestamps
+uv run python SKILL_DIR/scripts/fetch_transcript.py "URL" --timestamps
 
 # 指定语言并设置回退链
-uv run python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --language tr,en
+uv run python SKILL_DIR/scripts/fetch_transcript.py "URL" --language tr,en
 ```
 
 ## 输出格式
@@ -81,7 +85,7 @@ uv run python3 SKILL_DIR/scripts/fetch_transcript.py "URL" --language tr,en
 
 ## 工作流程
 
-1. **获取**：通过 `uv run python3` 使用辅助脚本并加上 `--text-only --timestamps` 参数获取文字稿。
+1. **获取**：通过 `uv run python` 使用辅助脚本并加上 `--text-only --timestamps` 参数获取文字稿。
 2. **验证**：确认输出非空且语言符合预期。若为空，去掉 `--language` 参数重试以获取任意可用文字稿。若仍为空，告知用户该视频可能已禁用文字稿。
 3. **分块（如需）**：若文字稿超过约 50K 字符，将其拆分为有重叠的块（约 40K，重叠 2K），逐块摘要后再合并。
 4. **转换**：将内容转换为用户请求的输出格式。若用户未指定格式，默认输出摘要。
