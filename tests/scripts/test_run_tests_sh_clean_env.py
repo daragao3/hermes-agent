@@ -91,7 +91,7 @@ def test_clean_env_forwards_windows_os_path_var(var: str) -> None:
 
 
 def test_clean_env_forwards_programfiles_for_docker_cli_plugins() -> None:
-    """The Docker CLI finds buildx under %ProgramFiles%\Docker\cli-plugins. Without
+    """The Docker CLI finds buildx under %ProgramFiles%\\Docker\\cli-plugins. Without
     PROGRAMFILES it silently uses the legacy builder, and every ``COPY --chmod`` in
     the Dockerfile fails with "requires BuildKit" -- tests/docker's built_image
     fixture errored at both pins of the 2026-09-17 acceptance ceremonies this way."""
