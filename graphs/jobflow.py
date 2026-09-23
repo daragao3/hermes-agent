@@ -35,7 +35,7 @@ import time
 import uuid
 from pathlib import Path
 from collections.abc import Mapping
-from typing import List, Literal, Optional, TypedDict
+from typing import Any, List, Literal, Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
@@ -441,10 +441,36 @@ def _comp_below_floor(state: JobFlowState, floor: float) -> bool:
     breakdown = state.get("breakdown")
     if not isinstance(breakdown, Mapping):
         return False
-    value = breakdown.get(_COMP_DIMENSION)
+    return comp_value_below_floor(breakdown.get(_COMP_DIMENSION), floor)
+
+
+def comp_value_below_floor(value: Any, floor: float) -> bool:
+    """The veto test on one raw comp value (see ``_comp_below_floor`` for the asymmetry)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
     return float(value) <= floor
+
+
+def decide_route(score: float, comp_value: Any, proceed: float, review: float, comp_floor: float,
+                 *, error: bool = False) -> str:
+    """THE routing rule, pure: ``route_decision_node`` calls it, and so does Critic's golden-set
+    threshold replay (graphs/critic_golden.py), which re-routes stored scores under a PROPOSED
+    threshold triple. One function, so the replay can never drift from production routing."""
+    if error:
+        return "review"  # fail-safe: always surface errors to the operator
+    if comp_value_below_floor(comp_value, comp_floor):
+        # Above the proceed branch on purpose. `hard_filter` already excludes
+        # on a stated sub-floor ceiling with no carve-out for an otherwise
+        # excellent job, and a model-read rule that were WEAKER than the
+        # deterministic one would be the odd rule rather than the safe one.
+        # No measured item was both sub-floor and proceed-band, so this
+        # ordering is a deliberate choice and not one fitted to the data.
+        return "archive"
+    if score >= proceed:
+        return "tailor"
+    if score >= review:
+        return "review"
+    return "archive"
 
 
 def route_decision_node(state: JobFlowState) -> dict:
@@ -477,22 +503,10 @@ def route_decision_node(state: JobFlowState) -> dict:
         span.set_attribute("threshold.review", review)
         span.set_attribute("threshold.comp_floor", comp_floor)
         span.set_attribute("comp.vetoed", comp_vetoed)
-        if state.get("error"):
-            decision = "review"  # fail-safe: always surface errors to the operator
-        elif comp_vetoed:
-            # Above the proceed branch on purpose. `hard_filter` already excludes
-            # on a stated sub-floor ceiling with no carve-out for an otherwise
-            # excellent job, and a model-read rule that were WEAKER than the
-            # deterministic one would be the odd rule rather than the safe one.
-            # No measured item was both sub-floor and proceed-band, so this
-            # ordering is a deliberate choice and not one fitted to the data.
-            decision = "archive"
-        elif score >= proceed:
-            decision = "tailor"
-        elif score >= review:
-            decision = "review"
-        else:
-            decision = "archive"
+        breakdown = state.get("breakdown")
+        comp_value = breakdown.get(_COMP_DIMENSION) if isinstance(breakdown, Mapping) else None
+        decision = decide_route(score, comp_value, proceed, review, comp_floor,
+                                error=bool(state.get("error")))
         span.set_attribute("decision", decision)
         span.set_attribute("score", score)
         return {"decision": decision}

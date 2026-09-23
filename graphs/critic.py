@@ -892,11 +892,23 @@ def reflexion_replay_node(state: CriticState) -> dict:
 
     Output: each proposal in proposals_classified gains a `replay` dict with:
         {supported, recommendation_flips, agreement_after, status, notes}
+
+    GOLDEN-SET JUDGING (2026-09-23, loops critic-threshold-replay-golden-20260923). Whenever this
+    run carries a golden-set measurement (state["golden"], ok or not), a threshold proposal is
+    judged on it by ``critic_golden.judge_threshold_proposal``: the SAME run's stored per-item
+    scores re-routed under current vs proposed thresholds, accepted only if no worse on every
+    difficulty, no new false exclude of a Diego-approved job, not degenerate, and strictly better
+    on something -- statuses golden_accepted / golden_rejected, with the numbers in notes. An
+    unavailable golden replay HOLDS the proposal (held_golden_unavailable) -- never accepted --
+    and a dimension-weight proposal is held as not recomputable. The prod-vs-shadow pair replay
+    below remains for a run with no golden state (legacy callers) and only while pairs exist.
     """
     with _TRACER.start_as_current_span("critic.reflexion_replay") as span:
         proposals = state.get("proposals_classified") or []
         pairs = state.get("paired_jobs") or []
-        if not proposals or not pairs:
+        golden = state.get("golden")
+        golden_mode = golden is not None
+        if not proposals or (not pairs and not golden_mode):
             span.set_attribute("replay.skipped", "no_proposals_or_pairs")
             return {"proposals_classified": proposals}
 
@@ -960,7 +972,29 @@ def reflexion_replay_node(state: CriticState) -> dict:
                 "notes": "",
             }
 
-            if kind == "matcher.threshold_adjust":
+            if golden_mode and kind == "matcher.threshold_adjust":
+                from .critic_golden import judge_threshold_proposal, parse_proposed_thresholds
+
+                current = tuple((golden or {}).get("thresholds_at_replay") or routing_thresholds())
+                proposed = parse_proposed_thresholds(p.get("specific_change", ""), current)
+                if proposed is None and (golden or {}).get("status") == "ok":
+                    verdict = {"status": "held_unparseable",
+                               "notes": ("HELD: specific_change names none of HERMES_JOBFLOW_PROCEED_THRESHOLD / "
+                                         "_REVIEW_THRESHOLD / _COMP_FLOOR=<number>, so there is nothing to re-route.")}
+                else:
+                    verdict = judge_threshold_proposal(golden, proposed or current)
+                replay.update(verdict)
+                replay["supported"] = verdict["status"] in ("golden_accepted", "golden_rejected")
+                if contradiction and replay["supported"]:
+                    replay["notes"] += (" Also: another threshold proposal in this run pulls the "
+                                        "opposite way; review side by side.")
+            elif golden_mode and kind == "matcher.dimension_weight":
+                replay["status"] = ("held_not_recomputable" if (golden or {}).get("status") == "ok"
+                                    else "held_golden_unavailable")
+                replay["notes"] = ("HELD: the stored total is the Matcher's own weighted score after penalties, so a "
+                                   "weight change cannot be re-routed from stored scores; judging it needs a Matcher "
+                                   "re-run on the golden set with the new weights. Not accepted.")
+            elif kind == "matcher.threshold_adjust":
                 # Parse the new threshold from specific_change ("set HERMES_JOBFLOW_PROCEED_THRESHOLD=8.50, was 8.75")
                 ch = p.get("specific_change", "")
                 new_proceed = existing_proceed
