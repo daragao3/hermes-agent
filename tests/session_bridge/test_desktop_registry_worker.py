@@ -855,3 +855,121 @@ def test_duplicate_baseline_rows_also_degrade(tmp_path, store) -> None:
         build_registry_sync_plan(
             scan_desktop_registry_roots((a, b, c)), baselines=duplicated
         )
+
+
+# --- the Claude store flip: root set replaced between cycles (2026-09-23) ---
+
+
+def _copy_root(src: Path, dst: Path) -> None:
+    dst.mkdir(parents=True, exist_ok=True)
+    for path in src.iterdir():
+        target = dst / path.name
+        target.write_bytes(path.read_bytes())
+        stat = path.stat()
+        os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+
+def test_provider_is_rediscovered_each_cycle(tmp_path, store, caplog) -> None:
+    a, b, c = _roots(tmp_path)
+    for root in (a, b, c):
+        _write_record(root, "local_one", mtime_ns=100)
+    current = [(a, b)]
+    worker = DesktopRegistrySyncWorker(
+        store, registry_roots=lambda: current[0], run_min_interval_seconds=0.0
+    )
+    worker.run_once()
+    current[0] = (a, c)
+    with caplog.at_level("WARNING"):
+        worker.run_once()
+    assert worker._registry_roots == (a, c)
+    assert any(
+        "desktop_registry_roots_changed" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_provider_failure_keeps_the_last_good_root_set(tmp_path, store) -> None:
+    a, b, _c = _roots(tmp_path)
+    for root in (a, b):
+        _write_record(root, "local_one", mtime_ns=100)
+    calls = {"n": 0}
+
+    def provider():
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise OSError("claude-code-sessions unreadable")
+        return (a, b)
+
+    worker = DesktopRegistrySyncWorker(
+        store, registry_roots=provider, run_min_interval_seconds=0.0
+    )
+    worker.run_once()
+    counters = worker.run_once()
+    assert worker._registry_roots == (a, b)
+    assert counters["scan_failed"] == 0
+
+
+def test_a_replaced_root_rebootstraps_instead_of_wedging(
+    tmp_path, store, caplog
+) -> None:
+    """The store flip: the physical store moves to a new account leaf (a new
+    root identity) while the other enrolled root keeps its rows.  Before this,
+    _validate_baselines raised 'expected 2 roots, found 1' on every cycle until
+    someone deleted the baselines by hand (2026-09-21, 2026-09-23)."""
+    a, b, _c = _roots(tmp_path)
+    for root in (a, b):
+        _write_record(root, "local_one", mtime_ns=100, title="One")
+        _write_record(root, "local_two", mtime_ns=100, title="Two")
+    current = [(a, b)]
+    worker = DesktopRegistrySyncWorker(
+        store, registry_roots=lambda: current[0], run_min_interval_seconds=0.0
+    )
+    assert worker.run_once()["baseline_invalid"] == 0
+    old_root_ids = {row["root_id"] for row in store.load_desktop_registry_baselines()}
+    assert len(old_root_ids) == 2
+
+    moved = tmp_path / "a-moved"
+    _copy_root(a, moved)
+    current[0] = (moved, b)
+    with caplog.at_level("WARNING"):
+        counters = worker.run_once()
+
+    assert counters["baseline_invalid"] == 0
+    assert counters["rebootstrapped"] == 1
+    assert _heartbeat(store) is not None
+    rows = store.load_desktop_registry_baselines()
+    by_root: dict[str, int] = {}
+    for row in rows:
+        by_root[row["root_id"]] = by_root.get(row["root_id"], 0) + 1
+    assert len(by_root) == 2 and len(set(by_root.values())) == 1
+    assert set(by_root) != old_root_ids
+    assert any(
+        "desktop_registry_new_root_rebootstrap" in record.getMessage()
+        for record in caplog.records
+    )
+    # And the next cycle is ordinary steady state.
+    again = worker.run_once()
+    assert again["rebootstrapped"] == 0 and again["baseline_invalid"] == 0
+
+
+def test_a_torn_write_among_enrolled_roots_still_fails_closed(tmp_path, store) -> None:
+    """Only a root with NO rows at all is a topology change.  A root missing
+    SOME rows is the torn-write shape the validator exists for."""
+    a, b, _c = _roots(tmp_path)
+    for root in (a, b):
+        _write_record(root, "local_one", mtime_ns=100, title="One")
+        _write_record(root, "local_two", mtime_ns=100, title="Two")
+    worker = _worker(store, (a, b))
+    worker.run_once()
+    rows = store.load_desktop_registry_baselines()
+    victim_root = rows[0]["root_id"]
+    victim = [
+        {k: row[k] for k in ("filename", "root_id", "group_name")}
+        for row in rows
+        if row["root_id"] == victim_root and row["filename"] == rows[0]["filename"]
+    ][:1]
+    store.delete_desktop_registry_baselines(victim)
+
+    counters = worker.run_once()
+    assert counters["baseline_invalid"] == 1
+    assert counters["rebootstrapped"] == 0
