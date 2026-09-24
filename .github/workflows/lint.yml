@@ -186,7 +186,8 @@ jobs:
     # See scripts/check-windows-footguns.py for the full rule list.
     name: Windows footguns (blocking)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 5 -> 20: the vacuity prover below needs the project environment (uv sync).
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -229,11 +230,20 @@ jobs:
       # make an UNCHANGED test vacuous, and only `--all` catches that. Run
       # `python scripts/check_testname_assertion_vacuity.py --all` for the full
       # audit; it costs minutes, which is why it is not on the PR lane.
+      # The prover RUNS candidate tests (`sys.executable -m pytest`), so it needs
+      # the project environment; the runner's system python has no pytest and
+      # no project deps ("No module named pytest", PR #9 run 35950959768).
+      - name: Install dependencies for the vacuity prover
+        if: github.event_name == 'pull_request'
+        uses: ./.github/actions/retry
+        with:
+          command: uv sync --locked --python 3.11 --extra all --extra dev --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra hindsight --extra parallel-web
+
       - name: Presence assertions cannot be satisfied by their own test name
         if: github.event_name == 'pull_request'
         run: |
           git fetch --no-tags --deepen=200 origin "${{ github.base_ref }}" || true
-          python scripts/check_testname_assertion_vacuity.py --diff "origin/${{ github.base_ref }}"
+          uv run --no-sync python scripts/check_testname_assertion_vacuity.py --diff "origin/${{ github.base_ref }}"
 
       # The Sep 2026 decomposition kept old import paths alive for external plugins
       # (PLUGIN-COMPAT blocks, see COMPAT_MANIFEST.md). They are removed on schedule by

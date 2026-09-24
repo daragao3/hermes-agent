@@ -44,25 +44,62 @@ except ImportError:  # pragma: no cover
 # ``close()`` of any other fd on the file would silently drop), so they give
 # the same byte-level semantics. Elsewhere (macOS/BSD) the flock fallback is
 # kept: coarser, but still cross-process and fail-closed.
-def _use_ofd_locks() -> bool:
+#
+# The command numbers come from the Linux UAPI (<asm-generic/fcntl.h>, the same
+# on every architecture), NOT only from the ``fcntl`` module: CPython exports
+# ``F_OFD_*`` only when the libc headers it was BUILT against define them, and
+# the python-build-standalone interpreters ``uv python install`` provides (CI's
+# Python) are built against a glibc sysroot older than 2.20, so
+# ``fcntl.F_OFD_SETLK`` is simply absent there on a modern kernel. Keying the
+# choice on the attribute sent that interpreter down the whole-file flock path.
+# Whether the RUNNING KERNEL supports OFD locks (Linux >= 3.15) is probed once
+# with a read-only F_OFD_GETLK; EINVAL there keeps the flock fallback.
+_REAL_FCNTL = fcntl
+_LINUX_F_OFD_GETLK = 36
+_LINUX_F_OFD_SETLK = 37
+_OFD_KERNEL_SUPPORT: bool | None = None  # None = not probed yet
+
+
+def _ofd_candidate() -> bool:
     """Resolved per call from the module's CURRENT ``fcntl`` binding, so a
     stubbed or absent backend is honoured exactly like the flock/msvcrt
-    selection is."""
+    selection is: only the real module on 64-bit Linux qualifies."""
     return (
         fcntl is not None
-        and getattr(fcntl, "F_OFD_SETLK", None) is not None
+        and fcntl is _REAL_FCNTL
         and sys.platform.startswith("linux")
         and struct.calcsize("P") == 8
     )
 
 
-def _ofd_lock(fd: int, lock_type: int, offset: int) -> None:
-    """Non-blocking 1-byte OFD lock/unlock at ``offset`` (raises OSError on conflict)."""
+def _use_ofd_locks() -> bool:
+    return _ofd_candidate() and _OFD_KERNEL_SUPPORT is True
+
+
+def _flock_struct(lock_type: int, offset: int) -> bytes:
     # struct flock on 64-bit Linux: short l_type, short l_whence, off_t l_start,
     # off_t l_len, pid_t l_pid (must be 0 for OFD locks), padded to 32 bytes.
-    fcntl.fcntl(
-        fd, fcntl.F_OFD_SETLK, struct.pack("hhqqi4x", lock_type, os.SEEK_SET, offset, 1, 0)
-    )
+    return struct.pack("hhqqi4x", lock_type, os.SEEK_SET, offset, 1, 0)
+
+
+def _probe_ofd_support(fd: int) -> None:
+    """Decide once per process whether the kernel accepts OFD lock commands."""
+    global _OFD_KERNEL_SUPPORT
+    if _OFD_KERNEL_SUPPORT is not None or not _ofd_candidate():
+        return
+    command = getattr(fcntl, "F_OFD_GETLK", _LINUX_F_OFD_GETLK)
+    try:
+        fcntl.fcntl(fd, command, _flock_struct(fcntl.F_WRLCK, 0))
+    except OSError:
+        _OFD_KERNEL_SUPPORT = False
+    else:
+        _OFD_KERNEL_SUPPORT = True
+
+
+def _ofd_lock(fd: int, lock_type: int, offset: int) -> None:
+    """Non-blocking 1-byte OFD lock/unlock at ``offset`` (raises OSError on conflict)."""
+    command = getattr(fcntl, "F_OFD_SETLK", _LINUX_F_OFD_SETLK)
+    fcntl.fcntl(fd, command, _flock_struct(lock_type, offset))
 
 
 _CONTROL_SCHEMA = """
@@ -209,6 +246,7 @@ class _KernelLock:
 
     def acquire(self) -> "_KernelLock":
         handle = self._open()
+        _probe_ofd_support(handle.fileno())
         deadline = time.monotonic() + self.timeout
         if fcntl is not None and not _use_ofd_locks():
             operation = fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH

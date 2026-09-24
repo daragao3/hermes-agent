@@ -7,9 +7,17 @@ import { configure } from '@testing-library/react'
 // accessor shadows jsdom's Storage and every `localStorage.getItem(...)` in a
 // test throws "Cannot read properties of undefined". Install a real in-memory
 // Storage when the global resolves to nothing, before any test module reads it.
+//
+// Prefer jsdom's OWN Storage (vitest exposes the JSDOM instance as
+// `globalThis.jsdom`). A plain-object stand-in is not a `Storage` instance, so
+// `vi.spyOn(Storage.prototype, 'setItem')` -- the pattern voice-prefs.test.ts
+// relies on to simulate QuotaExceededError -- never intercepts its writes: on
+// Node 26 CI those tests saw the "failed" write land. The Map fallback remains
+// only for an environment without jsdom.
 if (typeof (globalThis as any).localStorage === 'undefined') {
+  const jsdomStorage: Storage | undefined = (globalThis as any).jsdom?.window?.localStorage
   const store = new Map<string, string>()
-  const storage: Storage = {
+  const storage: Storage = jsdomStorage ?? {
     get length() {
       return store.size
     },
