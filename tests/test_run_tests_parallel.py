@@ -884,7 +884,7 @@ def test_help_exits_without_starting_a_suite_run():
     """
     repo_root = Path(__file__).resolve().parent.parent
     proc = subprocess.run(
-        [sys.executable, str(repo_root / "scripts" / "run_tests_parallel.py"), "--help"],
+        [sys.executable, str(repo_root / "scripts" / "run_tests_parallel.py"), *_NESTED_RUNNER_FLAGS, "--help"],
         capture_output=True, text=True, timeout=30, cwd=str(repo_root),
     )
     assert proc.returncode == 0, proc.stderr
@@ -1039,7 +1039,7 @@ def test_node_id_selector_runs_the_named_test(tmp_path: Path) -> None:
     target = probe_dir / "test_flagprobe.py"
     repo_root = Path(__file__).resolve().parent.parent
     proc = _merged(run_text_capture(
-        [sys.executable, str(repo_root / "scripts" / "run_tests_parallel.py"),
+        [sys.executable, str(repo_root / "scripts" / "run_tests_parallel.py"), *_NESTED_RUNNER_FLAGS,
          f"{target}::test_alpha", "-j", "1", "--file-timeout", _FILE_TIMEOUT, _rootdir_flag(tmp_path)],
         cwd=repo_root,
         timeout=_RUNNER_TIMEOUT,
@@ -1058,7 +1058,7 @@ def test_explicit_k_wins_over_node_id_inference(tmp_path: Path) -> None:
     target = probe_dir / "test_flagprobe.py"
     repo_root = Path(__file__).resolve().parent.parent
     proc = _merged(run_text_capture(
-        [sys.executable, str(repo_root / "scripts" / "run_tests_parallel.py"),
+        [sys.executable, str(repo_root / "scripts" / "run_tests_parallel.py"), *_NESTED_RUNNER_FLAGS,
          f"{target}::test_alpha", "-k", "test_beta",
          "-j", "1", "--file-timeout", _FILE_TIMEOUT, _rootdir_flag(tmp_path)],
         cwd=repo_root,
