@@ -1,0 +1,40 @@
+name: Install & Update E2E (scheduler)
+
+# The clock for install-e2e.yml on this fork. It does nothing but dispatch
+# that workflow, because a direct `schedule:` trigger on install-e2e.yml
+# failed at startup -- 0 jobs, 0s, and only GitHub's generic "An unexpected
+# error has occurred" annotation, with the run named after the file path
+# because the workflow was never evaluated. It hit roughly half the fork's
+# scheduled fires from 2026-09-16 and every one from 2026-09-23 12:51Z
+# (runs 35863108755, 35927884550, 36001281162, 36068039478), on commits
+# whose workflow files were byte-identical to ones that had just run.
+# Manual dispatches of the same commits all started (16 of 16), and
+# upstream's scheduled fires of the same workflow never hit it, so this
+# routes the fork's clock through the path that works.
+#
+# The inputs reproduce the old scheduled run exactly: route=all runs every
+# OS, and tag-count=2 matches the `inputs.tag-count || 2` fallback that a
+# scheduled run used (the dispatch default is 3).
+
+on:
+  schedule:
+    # Every 12 hours, off the hour to avoid the top-of-hour runner crunch.
+    - cron: '20 7,19 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    name: Dispatch install-e2e
+    # Upstream schedules install-e2e.yml directly and never needed this.
+    if: github.repository_owner != 'NousResearch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+        run: gh workflow run install-e2e.yml --repo "$REPO" --ref "$REF" -f route=all -f tag-count=2

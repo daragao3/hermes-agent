@@ -34,7 +34,12 @@ name: Install & Update E2E
 #
 # Triggers:
 #   * every 12 hours, so upstream drift (a new uv, a Node bump, a PyPI change)
-#     surfaces on a schedule rather than in someone's review cycle;
+#     surfaces on a schedule rather than in someone's review cycle. On this
+#     fork the clock lives in install-e2e-schedule.yml, which DISPATCHES this
+#     workflow: a direct `schedule:` trigger here died at startup with 0 jobs
+#     and GitHub's generic "An unexpected error has occurred" on roughly half
+#     the fork's fires from 2026-09-16 (every fire from 2026-09-23 12:51Z on),
+#     on commits whose manual dispatches all started fine;
 #   * when a release tag is created -- the moment the set of versions users can
 #     update FROM changes, and the moment a broken updater would strand them;
 #   * manually, where you can pick the route and how many releases to sample.
@@ -62,9 +67,6 @@ on:
         required: false
         type: string
         default: ''
-  schedule:
-    # Every 12 hours, off the hour to avoid the top-of-hour runner crunch.
-    - cron: '20 7,19 * * *'
   push:
     tags:
       # Release tags only: the repo also carries backup/* and one-off tags.
@@ -77,8 +79,9 @@ permissions:
 # Keyed on the ROUTE as well as the ref. The routes target disjoint runners
 # and share no state, but a ref-only group made them mutually exclusive:
 # on 2026-09-22 dispatching route=macos-desktop cancelled 7 in-flight legs
-# of a windows-desktop run 18s later. Schedule and tag-push carry no
-# inputs.route, so they fall to 'all' and keep today's behaviour among
+# of a windows-desktop run 18s later. The scheduled dispatch passes
+# route=all and tag-push carries no inputs.route, so both land on 'all' and
+# keep today's behaviour among
 # themselves; two dispatches of the SAME route still cancel, which is what
 # the group is for. Trade-off accepted: a manual single-route dispatch no
 # longer cancels an in-flight scheduled 'all' run, so those two can overlap.
