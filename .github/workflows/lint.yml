@@ -237,7 +237,7 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: ./.github/actions/retry
         with:
-          command: uv sync --locked --python 3.11 --extra all --extra dev --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra hindsight --extra parallel-web
+          command: uv sync --locked --python 3.11 --extra all --extra dev --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra hindsight --extra parallel-web --extra jobflow-graph
 
       - name: Presence assertions cannot be satisfied by their own test name
         if: github.event_name == 'pull_request'

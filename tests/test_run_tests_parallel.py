@@ -68,6 +68,13 @@ from tests.timeout_budget import scaled
 _FILE_TIMEOUT_SECONDS = scaled(120.0)
 _FILE_TIMEOUT = str(int(_FILE_TIMEOUT_SECONDS))
 _RUNNER_TIMEOUT = _FILE_TIMEOUT_SECONDS * 2
+# Every nested runner these tests spawn opts out of the machine-global slot
+# limiter and commit-pressure gate. Otherwise it queues for a slot in
+# ~/.hermes/locks/test-slots behind the OUTER suite run that is executing this
+# very test (capacity = cpu_count, all held on a 4-core CI runner) and can sit
+# there past _RUNNER_TIMEOUT -- the 240s "flaky" hangs on PR #9. These tests
+# probe argument handling and retry semantics, not the limiter itself.
+_NESTED_RUNNER_FLAGS = ("--no-host-limit",)
 _TEST_TIMEOUT = _RUNNER_TIMEOUT + scaled(60.0)
 
 spawns_runner = pytest.mark.timeout(_TEST_TIMEOUT)
@@ -198,7 +205,7 @@ def test_progress_output_tolerates_legacy_stdout_encoding(tmp_path: Path) -> Non
     proc = _merged(run_text_capture(
         [
             sys.executable,
-            str(runner),
+            str(runner), *_NESTED_RUNNER_FLAGS,
             "--paths",
             str(probe_dir),
             "-j",
@@ -288,7 +295,7 @@ def test_grandchild_leak_is_killed_by_runner(tmp_path: Path) -> None:
     proc = subprocess.run(
         [
             sys.executable,
-            str(runner),
+            str(runner), *_NESTED_RUNNER_FLAGS,
             "--paths",
             str(probe_dir),
             "-j",
@@ -393,7 +400,7 @@ def _run_runner(probe_dir: Path, *extra: str) -> subprocess.CompletedProcess:
     # and that test is POSIX-only because the reaping is killpg-based — so
     # Windows has no such guarantee and is exactly where the hang lands.
     return _merged(run_text_capture(
-        [sys.executable, str(runner), "--paths", str(probe_dir),
+        [sys.executable, str(runner), *_NESTED_RUNNER_FLAGS, "--paths", str(probe_dir),
          "-j", "1", "--file-timeout", _FILE_TIMEOUT,
          _rootdir_flag(probe_dir), *extra],
         cwd=repo_root,
@@ -449,7 +456,7 @@ def test_positional_path_not_treated_as_flag(tmp_path: Path) -> None:
     # Pass the probe dir positionally (no --paths), plus a bare -q.
     # run_text_capture: pytest workers are grandchildren here — see _run_runner.
     proc = _merged(run_text_capture(
-        [sys.executable, str(runner), str(probe_dir), "-j", "1",
+        [sys.executable, str(runner), *_NESTED_RUNNER_FLAGS, str(probe_dir), "-j", "1",
          "--file-timeout", _FILE_TIMEOUT, _rootdir_flag(probe_dir), "-q"],
         cwd=repo_root, timeout=_RUNNER_TIMEOUT,
     ))
@@ -572,7 +579,7 @@ def test_file_retry_self_heals_and_prints_both_attempts(tmp_path: Path) -> None:
     proc = _merged(run_text_capture(
         [
             sys.executable,
-            str(runner),
+            str(runner), *_NESTED_RUNNER_FLAGS,
             "--files",
             str(probe),
             "--file-retries",
@@ -609,7 +616,7 @@ def test_file_retry_does_not_launder_deterministic_failure(tmp_path: Path) -> No
     proc = _merged(run_text_capture(
         [
             sys.executable,
-            str(runner),
+            str(runner), *_NESTED_RUNNER_FLAGS,
             "--files",
             str(probe),
             "--file-retries",
@@ -1079,7 +1086,7 @@ def test_multiple_absolute_paths_split_on_pathsep(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parent.parent
     runner = repo_root / "scripts" / "run_tests_parallel.py"
     proc = _merged(run_text_capture(
-        [sys.executable, str(runner),
+        [sys.executable, str(runner), *_NESTED_RUNNER_FLAGS,
          "--paths", os.pathsep.join([str(dir_a), str(dir_b)]),
          "-j", "1", "--file-timeout", _FILE_TIMEOUT, _rootdir_flag(tmp_path), "-q"],
         cwd=repo_root,

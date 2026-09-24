@@ -42,10 +42,12 @@ SCOPES: List[str] = ["https://www.googleapis.com/auth/chat.messages.create"]
 # Pip packages required by the Google Chat adapter and its OAuth flow.
 _REQUIRED_PACKAGES = [
     "google-cloud-pubsub==2.39.0",
-    "google-api-python-client==2.194.0",
-    "google-auth==2.55.1",
-    "google-auth-oauthlib==1.3.1",
-    "google-auth-httplib2==0.3.1",
+    # Same set as the `google` extra / tools/lazy_deps.py (d11a98e28e bump):
+    # an older on-demand install here would downgrade them in a shared venv.
+    "google-api-python-client==2.200.0",
+    "google-auth==2.58.0",
+    "google-auth-oauthlib==1.4.1",
+    "google-auth-httplib2==0.4.2",
     "httplib2==0.32.0",
     "pyasn1==0.6.4",
 ]
