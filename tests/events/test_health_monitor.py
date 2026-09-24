@@ -126,3 +126,46 @@ class TestWhatsAppProbeDebounce:
 
         events = bus.query(event_type=EventType.GATEWAY_HEALTH)
         assert [e.payload["status"] for e in events] == ["down", "up"]
+
+
+class TestStateSurvivesRestart:
+    """A planned restart must not page "-> up" for a platform that was up
+    before it (21 such pages from 10 restarts on 2026-09-23), but a platform
+    that was DOWN when the old gateway exited still gets its recovery page."""
+
+    def test_up_before_and_after_restart_is_silent(self, bus, tmp_path):
+        state = tmp_path / "gateway_health_state.json"
+        first = GatewayHealthMonitor(bus, state_path=state)
+        first.report_health("whatsapp", healthy=True)
+        first.report_health("telegram", healthy=True)
+        assert len(bus.query(event_type=EventType.GATEWAY_HEALTH)) == 2
+
+        restarted = GatewayHealthMonitor(bus, state_path=state)
+        assert restarted.report_health("whatsapp", healthy=True) is None
+        assert restarted.report_health("telegram", healthy=True) is None
+        assert len(bus.query(event_type=EventType.GATEWAY_HEALTH)) == 2
+
+    def test_down_before_restart_still_pages_recovery(self, bus, tmp_path):
+        state = tmp_path / "gateway_health_state.json"
+        first = GatewayHealthMonitor(bus, state_path=state)
+        first.report_health("whatsapp", healthy=False, detail="Bridge unreachable")
+
+        restarted = GatewayHealthMonitor(bus, state_path=state)
+        restarted.report_health("whatsapp", healthy=True)
+        events = bus.query(event_type=EventType.GATEWAY_HEALTH)
+        assert [e.payload["status"] for e in events] == ["down", "up"]
+
+    def test_down_after_restart_still_pages(self, bus, tmp_path):
+        state = tmp_path / "gateway_health_state.json"
+        GatewayHealthMonitor(bus, state_path=state).report_health("telegram", healthy=True)
+        restarted = GatewayHealthMonitor(bus, state_path=state)
+        restarted.report_health("telegram", healthy=False, detail="HTTP 502")
+        events = bus.query(event_type=EventType.GATEWAY_HEALTH)
+        assert [e.payload["status"] for e in events] == ["up", "down"]
+
+    def test_corrupt_state_file_falls_back_to_first_report_emits(self, bus, tmp_path):
+        state = tmp_path / "gateway_health_state.json"
+        state.write_text("{not json", encoding="utf-8")
+        monitor = GatewayHealthMonitor(bus, state_path=state)
+        monitor.report_health("whatsapp", healthy=True)
+        assert len(bus.query(event_type=EventType.GATEWAY_HEALTH)) == 1

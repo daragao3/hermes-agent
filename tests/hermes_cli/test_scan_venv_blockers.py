@@ -463,7 +463,7 @@ def test_main_gateway_with_long_managed_runtime_path_is_exempt(monkeypatch, caps
     """Regression: the detector must hand the FULL cmdline to the exemption.
 
     Gateways launched via the managed-runtime interpreter carry a >120-char
-    exe path (`.hermes-runtime\python\generation-...\cpython-3.11-...`).
+    exe path (`.hermes-runtime\\python\\generation-...\\cpython-3.11-...`).
     The old `cmdline_raw[:120]` truncation in the detector cut the cmdline
     before `-m hermes_cli.main gateway run`, so the exemption never matched
     and every Desktop update aborted with 'Update didn't finish'.

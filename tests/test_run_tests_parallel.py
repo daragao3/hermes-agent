@@ -916,7 +916,7 @@ def test_run_tests_sh_forwards_the_windows_os_path_vars():
 
     This test previously asserted the OPPOSITE: that SYSTEMDRIVE must never
     enter the clean env, because `env -i` dropping it is the condition that
-    makes a process expand `%SystemDrive%\ProgramData` as a RELATIVE path
+    makes a process expand `%SystemDrive%\\ProgramData` as a RELATIVE path
     and build the junk tree under its cwd. Preserving that was deliberate --
     it kept a reproducer alive while the writer was unknown.
 
@@ -1107,3 +1107,135 @@ def test_drive_letter_colon_is_not_a_path_separator(tmp_path: Path) -> None:
         f"drive letter split off as a phantom root:\n{proc.stdout}"
     )
     assert "Discovered 1 test files" in proc.stdout, proc.stdout
+
+
+# --- 2026-09-23 memory gate (loops test-runner-memory-gate-20260923) -------------
+# On 2026-09-18 two 12-worker runs took python from 10 to 40 GB in ten minutes:
+# the free-bytes check read a limit that grew with the pagefile, and after 120 s
+# the gate spawned anyway. These pin the three fixes.
+
+_GB = 1024**3
+
+
+def _fake_commit(monkeypatch, *, avail_gb, base_gb, used_gb) -> None:
+    monkeypatch.setattr(run_tests_parallel, "_available_commit_bytes", lambda: int(avail_gb * _GB))
+    monkeypatch.setattr(run_tests_parallel, "_base_commit_limit_bytes",
+                        lambda: None if base_gb is None else int(base_gb * _GB))
+    monkeypatch.setattr(run_tests_parallel, "_committed_bytes", lambda: int(used_gb * _GB))
+
+
+def test_commit_ceiling_is_measured_against_the_base_limit_not_the_grown_one(monkeypatch) -> None:
+    # Pagefile grown: 20 GB "free" against the grown limit, but 90% of the base.
+    _fake_commit(monkeypatch, avail_gb=20, base_gb=95.2, used_gb=85.7)
+    ok, reason = run_tests_parallel._commit_ok(4 * _GB, 85.0)
+    assert not ok and "base limit" in reason
+    _fake_commit(monkeypatch, avail_gb=20, base_gb=95.2, used_gb=70.0)
+    assert run_tests_parallel._commit_ok(4 * _GB, 85.0) == (True, "")
+    # Unknown base (system-managed pagefile) falls back to the free-bytes check.
+    _fake_commit(monkeypatch, avail_gb=20, base_gb=None, used_gb=94.0)
+    assert run_tests_parallel._commit_ok(4 * _GB, 85.0)[0]
+    # 0 disables the ceiling.
+    _fake_commit(monkeypatch, avail_gb=20, base_gb=95.2, used_gb=94.0)
+    assert run_tests_parallel._commit_ok(4 * _GB, 0.0)[0]
+
+
+def test_gate_keeps_holding_past_the_deadline_while_own_workers_are_alive(monkeypatch) -> None:
+    import threading
+
+    _fake_commit(monkeypatch, avail_gb=20, base_gb=100, used_gb=95)
+    monkeypatch.setattr(run_tests_parallel, "_COMMIT_HOLD_HEARTBEAT_SECONDS", 0.2)
+    monkeypatch.setattr(run_tests_parallel, "_ACTIVE_WORKERS", 1)
+    result: list[bool] = []
+    t = threading.Thread(target=lambda: result.append(
+        run_tests_parallel._await_commit_headroom(4 * _GB, deadline_seconds=0.1, max_commit_pct=85.0)),
+        daemon=True)
+    t.start()
+    t.join(2.0)
+    assert t.is_alive() and not result, "gate spawned past its deadline while this run's workers held memory"
+    # Our last worker exits -> the gate proceeds (serial progress), reporting no headroom.
+    with run_tests_parallel._active_workers_lock:
+        run_tests_parallel._ACTIVE_WORKERS = 0
+    t.join(5.0)
+    assert result == [False]
+
+
+def test_gate_returns_as_soon_as_memory_recovers(monkeypatch) -> None:
+    import threading
+
+    state = {"used": 95.0}
+    monkeypatch.setattr(run_tests_parallel, "_available_commit_bytes", lambda: 20 * _GB)
+    monkeypatch.setattr(run_tests_parallel, "_base_commit_limit_bytes", lambda: 100 * _GB)
+    monkeypatch.setattr(run_tests_parallel, "_committed_bytes", lambda: int(state["used"] * _GB))
+    monkeypatch.setattr(run_tests_parallel, "_ACTIVE_WORKERS", 3)
+    result: list[bool] = []
+    t = threading.Thread(target=lambda: result.append(
+        run_tests_parallel._await_commit_headroom(4 * _GB, deadline_seconds=0.1, max_commit_pct=85.0)),
+        daemon=True)
+    t.start()
+    time.sleep(1.0)
+    assert not result
+    state["used"] = 60.0
+    t.join(5.0)
+    assert result == [True]
+
+
+def test_initial_pagefile_size_parsing() -> None:
+    parse = run_tests_parallel._parse_initial_pagefile_mb
+    # The registry value uses backslashes; the parser only splits on whitespace.
+    assert parse([r"c:\pagefile.sys 32768 65536"]) == 32768
+    assert parse([r"c:\pagefile.sys 32768 65536", r"d:\pagefile.sys 1024 2048"]) == 33792
+    assert parse(r"c:\pagefile.sys 4096 8192") == 4096
+    assert parse([r"?:\pagefile.sys"]) is None          # system-managed
+    assert parse([r"c:\pagefile.sys 0 0"]) is None       # system-managed size
+    assert parse([r"c:\pagefile.sys"]) is None
+    assert parse([]) is None
+
+
+def test_worker_jobs_carry_the_memory_cap_and_the_runners_own_job_does_not(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake(handle, pid, process_memory_limit=0):
+        calls.append({"pid": pid, "limit": process_memory_limit})
+        return None
+
+    monkeypatch.setattr(run_tests_parallel, "_win_kill_on_close_job", fake)
+    monkeypatch.setattr(run_tests_parallel, "_WORKER_MEMORY_LIMIT", 4 * _GB)
+
+    class _P:
+        pid = 4242
+        _handle = 7
+
+    run_tests_parallel._win_job_for(_P())
+    assert calls == [{"pid": 4242, "limit": 4 * _GB}]
+    src = Path(run_tests_parallel.__file__).read_text(encoding="utf-8")
+    own = [ln for ln in src.splitlines() if "_win_kill_on_close_job(kernel32.GetCurrentProcess()" in ln]
+    assert own and all("process_memory_limit" not in ln for ln in own), \
+        "the runner's own job must not get the per-worker memory cap"
+
+
+def test_new_memory_flags_are_ours_not_pytest_passthrough() -> None:
+    for flag in ("--max-commit-pct", "--worker-memory-limit-gb"):
+        assert flag in run_tests_parallel._OUR_FLAGS
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="job-object memory cap is Windows-only")
+@spawns_child
+def test_a_capped_worker_gets_memoryerror_instead_of_paging_the_host() -> None:
+    child = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys; sys.stdin.readline()\n"
+         "try:\n    b = bytearray(512 * 1024 * 1024)\n    print('ALLOCATED')\n"
+         "except MemoryError:\n    print('MEMORYERROR')\n"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    )
+    job = run_tests_parallel._win_kill_on_close_job(
+        getattr(child, "_handle", None), child.pid, process_memory_limit=128 * 1024**2)
+    try:
+        assert job is not None, "could not create/assign the job object"
+        out, _ = child.communicate("go\n", timeout=60)
+        assert "MEMORYERROR" in out, out
+    finally:
+        if child.poll() is None:
+            child.kill()
+        if job:
+            run_tests_parallel._win_job_close(job)

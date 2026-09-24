@@ -50,7 +50,7 @@ def test_spawned_bash_runs_on_the_host_not_in_wsl() -> None:
 @pytest.mark.windows_only
 def test_bash_path_spells_a_windows_path_the_way_git_bash_resolves_it(tmp_path) -> None:
     """``bash_path`` is what a test must interpolate into ``bash -c``: the raw
-    ``C:\...`` form loses its backslashes as escapes, the ``/c/...`` form round-trips."""
+    ``C:\\...`` form loses its backslashes as escapes, the ``/c/...`` form round-trips."""
     from tests.bash_support import bash_path
 
     target = tmp_path / "probe dir" / "file.txt"

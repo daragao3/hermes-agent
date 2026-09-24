@@ -470,7 +470,10 @@ def test_enroll_runner_is_a_no_op_off_windows(harness, monkeypatch):
 
 def test_job_for_hands_the_popen_handle_and_pid_to_the_job_maker(harness, monkeypatch):
     seen = []
-    monkeypatch.setattr(harness, "_win_kill_on_close_job", lambda handle, pid: seen.append((handle, pid)) or 0x99)
+    # process_memory_limit (the per-worker cap, 2026-09-23) is pinned in
+    # tests/test_run_tests_parallel.py; this test is about handle/pid only.
+    monkeypatch.setattr(harness, "_win_kill_on_close_job",
+                        lambda handle, pid, **_kw: seen.append((handle, pid)) or 0x99)
     with_handle = _FakeProc(pid=100, returncode=None)
     with_handle._handle = 0x1234
     assert harness._win_job_for(with_handle) == 0x99

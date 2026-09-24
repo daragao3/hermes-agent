@@ -2313,6 +2313,21 @@ def _handle_process(args, **kw):
         if not session_id:
             return tool_error("session_id is required for handoff")
         return json.dumps(_handoff_process(session_id, args, kw.get("task_id")), ensure_ascii=False)
+    if action == "wait":
+        # Cron sessions only (2026-09-23): a single wait is capped like a terminal sleep.
+        from tools.terminal_tool import CRON_MAX_SLEEP_SECONDS, _cron_sleep_refusal, _in_cron_session
+        try:
+            _wait_s = float(args.get("timeout")) if args.get("timeout") is not None else None
+        except (TypeError, ValueError):
+            _wait_s = None
+        if _in_cron_session():
+            if _wait_s is None:
+                try:
+                    _wait_s = float(os.getenv("TERMINAL_TIMEOUT", "180"))
+                except (TypeError, ValueError):
+                    _wait_s = 180.0
+            if _wait_s > CRON_MAX_SLEEP_SECONDS:
+                return _cron_sleep_refusal(_wait_s, "a process wait")
     if action in _SESSION_ACTIONS:
         if not session_id:
             return tool_error(f"session_id is required for {action}")

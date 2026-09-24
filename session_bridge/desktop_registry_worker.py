@@ -23,7 +23,7 @@ import math
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Union
 
 from .desktop_registry import (
     DESKTOP_REGISTRY_GROUPING_VERSION,
@@ -54,6 +54,14 @@ WORKER_LAST_ERROR_STATE_KEY = (
 
 _LOG = logging.getLogger(__name__)
 
+#: Either a fixed root set, or a zero-argument provider re-evaluated at the
+#: start of every cycle.  The provider form exists for the Claude store flip
+#: (2026-09-16, 09-20, 09-23): an account switch moves the physical store to a
+#: different account leaf and turns the old one into a junction.  A root set
+#: fixed at construction then pointed at the junction, _root_identity
+#: raised on every cycle, and only a bridge restart recovered the leg.
+RegistryRoots = Union[Iterable[Path], Callable[[], Iterable[Path]]]
+
 
 class DesktopRegistrySyncWorker:
     """Reconcile enrolled Desktop registry roots against durable baselines."""
@@ -62,18 +70,18 @@ class DesktopRegistrySyncWorker:
         self,
         store: Any,
         *,
-        registry_roots: Iterable[Path],
+        registry_roots: RegistryRoots,
         run_min_interval_seconds: float = 300.0,
         monotonic: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         id_factory: Callable[[], str] | None = None,
     ) -> None:
-        roots = tuple(registry_roots)
-        if not roots:
-            raise ValueError("registry_roots must not be empty")
-        for root in roots:
-            if not isinstance(root, Path):
-                raise TypeError("registry_roots must contain Path entries")
+        if callable(registry_roots):
+            self._roots_provider: Callable[[], Iterable[Path]] | None = registry_roots
+            roots = self._validated_roots(registry_roots())
+        else:
+            self._roots_provider = None
+            roots = self._validated_roots(registry_roots)
         interval = float(run_min_interval_seconds)
         if not math.isfinite(interval) or interval < 0:
             raise ValueError(
@@ -96,6 +104,84 @@ class DesktopRegistrySyncWorker:
         # 2026-08-31 10:18).
         self._scan_cache = RegistryScanCache()
 
+    @staticmethod
+    def _validated_roots(registry_roots: Iterable[Path]) -> tuple[Path, ...]:
+        roots = tuple(registry_roots)
+        if not roots:
+            raise ValueError("registry_roots must not be empty")
+        for root in roots:
+            if not isinstance(root, Path):
+                raise TypeError("registry_roots must contain Path entries")
+        return roots
+
+    def _refresh_roots(self) -> None:
+        """Re-discover the root set when a provider was given.
+
+        A discovery that fails or comes back empty keeps the previous set, so
+        a transient read error cannot silence the leg; the scan below then
+        fails closed on its own if that set is genuinely unusable.
+        """
+        if self._roots_provider is None:
+            return
+        try:
+            roots = self._validated_roots(self._roots_provider())
+        except Exception as exc:  # noqa: BLE001 - keep the last good set
+            _LOG.warning("desktop_registry_root_discovery_failed error=%s", exc)
+            return
+        if roots != self._registry_roots:
+            _LOG.warning(
+                "desktop_registry_roots_changed before=%s after=%s",
+                ",".join(str(root) for root in self._registry_roots),
+                ",".join(str(root) for root in roots),
+            )
+            self._registry_roots = roots
+            # Cached observations are keyed per file; a new root set must not
+            # reuse the old one's identities.
+            self._scan_cache = RegistryScanCache()
+
+    def _rebootstrap_if_root_is_new(
+        self, scan: Any, stored_rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Drop every baseline when an enrolled root has none at all.
+
+        A root with ZERO rows across the whole table is a topology change, not
+        a torn write (a torn write leaves some records short, never a whole
+        root): the store flip gives the physical directory a new identity, the
+        old root's rows are pruned as unenrolled, and the surviving root's rows
+        then cover every group partially, so _validate_baselines fails
+        closed on every cycle forever.  Seeding the new root was evaluated on
+        2026-09-21 and rejected -- it cannot reach full coverage without
+        fabricating rows -- and the accepted remedy was to delete all rows and
+        let the planner bootstrap both roots (verified 2026-09-21 and
+        2026-09-23: one cycle, verify_failures=0).  This is that remedy, run by
+        the worker instead of by hand.  An empty table is an ordinary first run
+        and needs nothing.
+        """
+        if not stored_rows:
+            return stored_rows
+        covered = {row["root_id"] for row in stored_rows}
+        new_roots = sorted(set(scan.roots) - covered)
+        if not new_roots:
+            return stored_rows
+        deleted = self._store.delete_desktop_registry_baselines(
+            [
+                {
+                    "filename": row["filename"],
+                    "root_id": row["root_id"],
+                    "group_name": row["group_name"],
+                }
+                for row in stored_rows
+            ]
+        )
+        _LOG.warning(
+            "desktop_registry_new_root_rebootstrap new_roots=%s rows_deleted=%d "
+            "enrolled=%s",
+            ",".join(new_roots),
+            int(deleted),
+            ",".join(sorted(scan.roots)),
+        )
+        return []
+
     def run_once(self) -> dict[str, int]:
         counters = {
             "examined": 0,
@@ -106,6 +192,7 @@ class DesktopRegistrySyncWorker:
             "verify_failures": 0,
             "baseline_rows_advanced": 0,
             "stale_baseline_rows_pruned": 0,
+            "rebootstrapped": 0,
             "recovered_runs": 0,
             "scan_failed": 0,
             "baseline_invalid": 0,
@@ -131,6 +218,7 @@ class DesktopRegistrySyncWorker:
             )
             counters["recovered_runs"] = 1
 
+        self._refresh_roots()
         try:
             scan = scan_desktop_registry_roots(
                 self._registry_roots, cache=self._scan_cache
@@ -148,6 +236,10 @@ class DesktopRegistrySyncWorker:
             return counters
 
         stored_rows = self._store.load_desktop_registry_baselines()
+        loaded = len(stored_rows)
+        stored_rows = self._rebootstrap_if_root_is_new(scan, stored_rows)
+        if loaded and not stored_rows:
+            counters["rebootstrapped"] = 1
         baselines = [RegistryBaseline(**row) for row in stored_rows]
         try:
             plan = build_registry_sync_plan(scan, baselines=baselines)
