@@ -1508,7 +1508,10 @@ class TestLocalNativeMoveFastPath:
 
     def test_move_readonly_dst_falls_back(self, tmp_path):
         # os.replace over a read-only dst raises PermissionError on Windows;
-        # mv force-overwrites it. Defer so the shell wins.
+        # mv force-overwrites it. Defer so the shell wins. On POSIX the file's
+        # own mode bits do not govern a rename (the directory's do), so
+        # os.replace already overwrites it exactly as mv would and the native
+        # path must complete without a shell round trip.
         from tools.environments.local import LocalEnvironment
 
         calls = []
@@ -1529,7 +1532,12 @@ class TestLocalNativeMoveFastPath:
         try:
             ops = ShellFileOperations(_CannedLocal(cwd=str(tmp_path)), cwd=str(tmp_path))
             ops.move_file(str(src), str(dst))
-            assert calls, "read-only dst should defer to the shell mv"
+            if os.name == "nt":
+                assert calls, "read-only dst should defer to the shell mv"
+            else:
+                assert not calls, "POSIX rename over a read-only dst needs no shell"
+                assert dst.read_bytes() == b"x\n"
+                assert not src.exists()
         finally:
             os.chmod(str(dst), stat.S_IWRITE)  # let tmp_path teardown remove it
 

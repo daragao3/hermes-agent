@@ -74,7 +74,11 @@ class TestWmiSafePlatform:
 
         monkeypatch.setattr(compat, "IS_WINDOWS", True)
         monkeypatch.setattr(sys, "version_info", (3, 12, 13, "final", 0))
-        monkeypatch.setattr(platform, "_wmi_query", platform._wmi_query)
+        # ``platform._wmi_query`` exists only on Windows CPython >= 3.12; save/restore
+        # it where present and delete it again afterwards where it is not.
+        monkeypatch.setattr(
+            platform, "_wmi_query", getattr(platform, "_wmi_query", None), raising=False
+        )
         monkeypatch.setitem(sys.modules, "_wmi", sys.modules.get("_wmi", None))
 
         plat = compat.wmi_safe_platform()
@@ -88,7 +92,11 @@ class TestWmiSafePlatform:
 
         monkeypatch.setattr(compat, "IS_WINDOWS", True)
         monkeypatch.setattr(sys, "version_info", (3, 12, 13, "final", 0))
-        monkeypatch.setattr(platform, "_wmi_query", platform._wmi_query)
+        # ``platform._wmi_query`` exists only on Windows CPython >= 3.12; save/restore
+        # it where present and delete it again afterwards where it is not.
+        monkeypatch.setattr(
+            platform, "_wmi_query", getattr(platform, "_wmi_query", None), raising=False
+        )
         monkeypatch.setitem(sys.modules, "_wmi", sys.modules.get("_wmi", None))
         monkeypatch.setattr(platform, "machine", lambda: "ARM64")
 

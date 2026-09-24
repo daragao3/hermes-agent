@@ -5,8 +5,34 @@ and degradation logic run for real.
 """
 
 import json
+import sys
+import types
+
+import pytest
 
 import agent.gemini_session as gs
+
+
+@pytest.fixture(autouse=True)
+def _websocket_module(monkeypatch):
+    """Guarantee a ``websocket`` module for the tests to patch.
+
+    websocket-client is not a declared dependency (it only arrives
+    transitively via the dingtalk extra, which CI does not install). Every
+    test here replaces ``websocket.create_connection`` anyway, so when the
+    real package is absent a bare stand-in module is enough -- its default
+    ``create_connection`` refuses, so an unpatched path cannot pass by accident.
+    """
+    try:
+        import websocket  # noqa: F401
+    except ImportError:
+        stub = types.ModuleType("websocket")
+
+        def _unpatched(*_a, **_k):
+            raise ConnectionRefusedError("websocket stub: create_connection not patched")
+
+        stub.create_connection = _unpatched
+        monkeypatch.setitem(sys.modules, "websocket", stub)
 
 # Real wire shapes captured 2026-08-23 from the live apikey page.
 _USAGE_LIMITS_BODY = '[[["projects/612559014061",null,["USD",null,37474000],["USD","250"]]]]'

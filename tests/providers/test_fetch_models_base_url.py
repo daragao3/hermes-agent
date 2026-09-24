@@ -108,6 +108,13 @@ class TestCustomProviderBaseUrlPassthrough:
         """CustomProfile.fetch_models passes base_url to super()."""
         server, port = _start_server([{"id": "ollama-model"}])
         try:
+            # ``plugins/model-providers`` is hyphenated: the module name
+            # ``plugins.model_providers.custom`` exists only once provider
+            # discovery has published it, which an earlier test in the same
+            # process usually (but not always) triggered.
+            import providers
+
+            providers.get_provider_profile("custom")
             from plugins.model_providers.custom import CustomProfile
             profile = CustomProfile(
                 name="custom",

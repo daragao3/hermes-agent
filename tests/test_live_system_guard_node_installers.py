@@ -77,17 +77,22 @@ def test_guard_also_covers_plain_subprocess_run():
         subprocess.run(["npm", "ci"], capture_output=True, timeout=5)
 
 
+def _shell_echo(text):
+    """A shell-wrapped ``echo`` in this host's native shell (``cmd`` exists only on Windows)."""
+    if sys.platform == "win32":
+        return ["cmd", "/c", "echo", text]
+    return ["sh", "-c", 'echo "$1"', "sh", text]
+
+
 def test_unrelated_command_still_runs():
     """The guard must be surgical: only installers, not all subprocesses."""
-    result = run_text_capture(["cmd", "/c", "echo", "ok"], timeout=30)
+    result = run_text_capture(_shell_echo("ok"), timeout=30)
     assert result.returncode == 0
 
 
 def test_command_merely_mentioning_npm_is_not_blocked():
     """A command that names npm in an argument is not an npm invocation."""
-    result = run_text_capture(
-        ["cmd", "/c", "echo", "run npm install to continue"], timeout=30
-    )
+    result = run_text_capture(_shell_echo("run npm install to continue"), timeout=30)
     assert result.returncode == 0
 
 

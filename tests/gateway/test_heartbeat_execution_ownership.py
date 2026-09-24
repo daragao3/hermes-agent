@@ -12,6 +12,34 @@ from gateway.session import SessionSource, SessionStore
 from hermes_cli.heartbeat import HeartbeatState, migrate_heartbeat_to_session, save_heartbeat
 
 
+@pytest.fixture(autouse=True)
+def _fresh_goals_session_db_cache():
+    """Drop hermes_cli.goals' per-HERMES_HOME SessionDB cache around each test.
+
+    The cache is keyed by the HERMES_HOME *string*. With
+    ``tmp_path_retention_policy = "failed"`` a passing test's tmp dir is
+    deleted, and on Linux the next test is handed the SAME numbered path
+    (``..._execut0`` again) with a brand-new state.db at it. The cached handle
+    then sees a different inode at its path and correctly fails closed
+    ("state.db was replaced underneath the gateway"), so every second
+    parametrized case failed on CI. Windows never showed it because the open
+    handle blocks that tmp-dir deletion, so no path was ever reused.
+    """
+    import contextlib
+
+    from hermes_cli import goals
+
+    def _drop():
+        for db in list(goals._DB_CACHE.values()):
+            with contextlib.suppress(Exception):
+                db.close()
+        goals._DB_CACHE.clear()
+
+    _drop()
+    yield
+    _drop()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("boundary", ["reset", "suspend", "compression", "prepare-reset", "prepare-suspend", "unchanged"])
 async def test_admitted_heartbeat_executes_only_in_own_conversation(tmp_path, boundary):

@@ -1204,6 +1204,14 @@ class TestScopedLocks:
         monkeypatch.setattr(status, "_pid_exists", lambda pid: True)
         monkeypatch.setattr(status, "_pid_exists", lambda pid: True)
         monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123)
+        # Hermetic live-gateway cmdline. Unstubbed, the POSIX arm shells out to
+        # `ps -p 99999` with a timeout, and Popen.wait(timeout)'s poll loop
+        # calls the GLOBAL time.sleep patched below (0.001, 0.002, ... ~278
+        # times on the Linux CI runner) -- sleeps that are not the recheck
+        # this test pins.
+        monkeypatch.setattr(
+            status, "_read_process_cmdline", lambda pid: "hermes gateway run --replace"
+        )
         sleep_calls = []
         monkeypatch.setattr(status.time, "sleep", lambda s: sleep_calls.append(s))
 

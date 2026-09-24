@@ -37,6 +37,20 @@ def _wait_job(client, job_id: str, timeout: float = 10.0) -> dict:
     raise AssertionError(f"job {job_id} still running after {timeout}s")
 
 
+def _pin_generous_budget(monkeypatch):
+    """Variant selection prices against the machine running the test, and a
+    GPU-less CI runner honestly refuses every build (409 at preflight). These
+    tests are about leg sequencing, not selection, so pin the budget (same
+    pattern as tests/hermes_cli/test_local_models_routes.py)."""
+    from hermes_cli.local_runtime.estimator import HardwareBudget
+
+    budget = HardwareBudget(usable_vram_bytes=64 << 30,
+                            total_device_bytes=64 << 30,
+                            ram_available_bytes=64 << 30)
+    monkeypatch.setattr("hermes_cli.local_runtime.hardware.probe_budget",
+                        lambda **kw: budget)
+
+
 def test_quickstart_unknown_model_404s(client):
     r = client.post("/api/local-models/quickstart", json={"model_id": "no-such"})
     assert r.status_code == 404
@@ -55,6 +69,7 @@ def test_quickstart_refuses_when_nothing_fits(client, monkeypatch):
 def test_quickstart_runs_all_three_legs(client, monkeypatch, tmp_path):
     """Fresh machine: install runtime -> download recommended -> activate.
     Each leg is asserted by its observable call, in order."""
+    _pin_generous_budget(monkeypatch)
     calls: list[str] = []
 
     # Supply the same supported backend to preflight and the stubbed install;
@@ -116,6 +131,7 @@ def test_quickstart_runs_all_three_legs(client, monkeypatch, tmp_path):
 def test_quickstart_skips_satisfied_legs(client, monkeypatch):
     """Runtime present and model already staged: the response says so and
     the job goes straight to activation."""
+    _pin_generous_budget(monkeypatch)
     calls: list[str] = []
 
     monkeypatch.setattr(

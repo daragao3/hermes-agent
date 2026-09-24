@@ -48,6 +48,26 @@ def _wait_until(predicate, timeout=10.0, interval=0.005):
     return predicate()
 
 
+def _tick_lock_flock_raises(err, msg):
+    """Make ``flock`` fail with *err* on the TICK lock only.
+
+    ``tick()`` first takes a shared dispatch admission from
+    ``jobflow_dispatch.quarantine_control``, which is ALSO an ``fcntl.flock``
+    lock (polled until its 30 s timeout). Failing every ``flock`` call would
+    wedge that admission loop before the tick lock is ever reached -- a
+    pytest-timeout on Linux, not the behaviour under test. The tick lock is
+    the only caller that hands ``flock`` a file object named ``.tick.lock``.
+    """
+    real_flock = fcntl.flock
+
+    def fake_flock(fd, operation):
+        if str(getattr(fd, "name", "")).endswith(".tick.lock"):
+            raise OSError(err, msg)
+        return real_flock(fd, operation)
+
+    return patch.object(fcntl, "flock", side_effect=fake_flock)
+
+
 # ── Fix 1: tick() must not swallow EMFILE as "another instance holds the lock" ─
 
 
@@ -73,7 +93,7 @@ class TestTickLockEmfileNotSwallowed:
     def test_lock_flock_emfile_raises(self, monkeypatch):
         """flock() raising EMFILE (fd exhaustion at lock syscall) must also
         propagate — only EWOULDBLOCK/EAGAIN/EACCES mean contention."""
-        with patch.object(fcntl, "flock", side_effect=OSError(errno.EMFILE, "Too many open files")):
+        with _tick_lock_flock_raises(errno.EMFILE, "Too many open files"):
             with pytest.raises(OSError) as excinfo:
                 scheduler_mod.tick(verbose=False)
         assert excinfo.value.errno == errno.EMFILE
@@ -81,11 +101,11 @@ class TestTickLockEmfileNotSwallowed:
     def test_lock_contention_ewouldblock_still_skips_silently(self, monkeypatch):
         """Genuine contention (another ticker holds the lock) still returns 0
         silently — the cross-process mutual-exclusion contract is preserved."""
-        with patch.object(fcntl, "flock", side_effect=OSError(errno.EWOULDBLOCK, "Resource temporarily unavailable")):
+        with _tick_lock_flock_raises(errno.EWOULDBLOCK, "Resource temporarily unavailable"):
             assert scheduler_mod.tick(verbose=False) == 0
 
     def test_lock_contention_eagain_still_skips(self):
-        with patch.object(fcntl, "flock", side_effect=OSError(errno.EAGAIN, "Resource temporarily unavailable")):
+        with _tick_lock_flock_raises(errno.EAGAIN, "Resource temporarily unavailable"):
             assert scheduler_mod.tick(verbose=False) == 0
 
 

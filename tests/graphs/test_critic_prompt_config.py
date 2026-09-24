@@ -19,6 +19,10 @@ from typing import get_args
 
 import pytest
 
+# graphs.jobflow / graphs.critic need langgraph, a local-carry dependency
+# (requirements-local-graph.txt) that the locked CI environment does not install.
+pytest.importorskip("langgraph.graph")
+
 from graphs import _critic_prompts, _prompts, critic, jobflow
 
 TEMPLATE = _critic_prompts.CRITIC_PROPOSAL_USER_TEMPLATE

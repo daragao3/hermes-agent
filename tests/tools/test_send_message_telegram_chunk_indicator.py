@@ -23,6 +23,8 @@ itself is not viable: replacing the class with a ``MagicMock`` raises
 """
 
 import re
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,10 +45,43 @@ def _long_markdown_message(n_lines: int = 200) -> str:
     return "Batched (7 events):" + chr(10) + body
 
 
+def _install_minimal_telegram_if_missing(monkeypatch):
+    """Stand in for python-telegram-bot when it is not installed.
+
+    The ``messaging`` extra is lazy-installed and NOT part of ``--extra all``,
+    so CI (and a fresh venv) lacks ``telegram``; ``_send_telegram`` then
+    returns its "not installed" error before a single chunk is sent. Only the
+    three names the standalone path touches are needed -- the Bot itself never
+    speaks to the network because every send is intercepted below. Mirrors
+    ``_install_telegram_mock`` in test_send_message_tool.py.
+    """
+    try:
+        import telegram  # noqa: F401
+        import telegram.constants  # noqa: F401
+        import telegram.request  # noqa: F401
+        return
+    except ImportError:
+        pass
+    constants_mod = SimpleNamespace(
+        ParseMode=SimpleNamespace(MARKDOWN_V2="MarkdownV2", HTML="HTML")
+    )
+    request_mod = SimpleNamespace(HTTPXRequest=lambda **kw: SimpleNamespace(_kw=kw))
+    telegram_mod = SimpleNamespace(
+        Bot=lambda token, **_kw: SimpleNamespace(token=token),
+        constants=constants_mod,
+        request=request_mod,
+    )
+    monkeypatch.setitem(sys.modules, "telegram", telegram_mod)
+    monkeypatch.setitem(sys.modules, "telegram.constants", constants_mod)
+    monkeypatch.setitem(sys.modules, "telegram.request", request_mod)
+
+
 @pytest.fixture
 def captured_sends(monkeypatch):
     """Intercept every chunk at the Bot API seam and record its text."""
     from tools import send_message_senders as send_message_tool
+
+    _install_minimal_telegram_if_missing(monkeypatch)
 
     sent_texts = []
 

@@ -2521,6 +2521,29 @@ def test_winpty_reader_accepts_registered_split_across_chunks() -> None:
     assert _WinPtyProcess(Process()).read_until(0.2).strip() == "REGISTERED"
 
 
+def _pywinpty_importable() -> bool:
+    try:
+        import winpty  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+# ``_registrar_pywinpty_process_type`` subclasses pywinpty's ``PtyProcess``;
+# pywinpty is a Windows-only distribution, so off Windows the transport class
+# under test cannot be constructed at all.
+requires_pywinpty = pytest.mark.skipif(
+    not _pywinpty_importable(), reason="pywinpty (Windows-only) is not installed"
+)
+
+# ``WindowsConPtyFactory.spawn`` refuses with "pty unavailable" before spawning
+# anything off Windows, so its post-spawn reclaim path cannot be reached there.
+requires_windows_conpty_factory = pytest.mark.skipif(
+    not sys.platform.startswith("win"),
+    reason="WindowsConPtyFactory only spawns on Windows",
+)
+
+
 def _close_raw_registrar_process(process: Any) -> None:
     process.stop_transport()
     process.fileobj.close()
@@ -2528,6 +2551,7 @@ def _close_raw_registrar_process(process: Any) -> None:
     process.release_native_pty()
 
 
+@requires_pywinpty
 def test_raw_winpty_read_exception_after_exit_preserves_accumulated_output() -> None:
     class Pty:
         pid = 123
@@ -2553,6 +2577,7 @@ def test_raw_winpty_read_exception_after_exit_preserves_accumulated_output() -> 
         _close_raw_registrar_process(process)
 
 
+@requires_pywinpty
 def test_raw_winpty_read_exception_while_alive_remains_an_error() -> None:
     class Pty:
         pid = 123
@@ -2572,6 +2597,7 @@ def test_raw_winpty_read_exception_while_alive_remains_an_error() -> None:
         _close_raw_registrar_process(process)
 
 
+@requires_pywinpty
 def test_raw_winpty_empty_read_after_exit_is_eof() -> None:
     class Pty:
         pid = 123
@@ -3417,6 +3443,7 @@ def test_factory_rejects_unsafe_environment_reintroduced_after_preflight(
     assert spawns == []
 
 
+@requires_windows_conpty_factory
 def test_factory_validation_failure_reclaims_spawned_child_and_descriptors() -> None:
     class Resource:
         def __init__(self, descriptor: int):
@@ -3462,6 +3489,7 @@ def test_factory_validation_failure_reclaims_spawned_child_and_descriptors() -> 
     assert process.fd == -1
 
 
+@requires_windows_conpty_factory
 def test_factory_surfaces_unconfirmed_post_spawn_process_death() -> None:
     class Resource:
         def close(self) -> None:

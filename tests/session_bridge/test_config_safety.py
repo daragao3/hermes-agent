@@ -339,11 +339,30 @@ def test_default_config_import_is_safe_without_a_resolvable_home(
     # tree than the one under test. Not a home var, so it cannot re-resolve the
     # home this test is proving unavailable.
     environ["PYTHONPATH"] = str(repo_root) + os.pathsep + environ.get("PYTHONPATH", "")
+    # On POSIX, stripping HOME is not enough: ``Path.home()`` falls back to the
+    # passwd database (``pwd.getpwuid``), so a CI runner resolves
+    # ``/home/runner`` and the "no resolvable home" premise never holds. Make
+    # the passwd lookup fail in the child as well, which is the POSIX shape of
+    # an unresolvable home (``expanduser`` then leaves ``~`` and ``Path.home``
+    # raises RuntimeError).
+    child_code = "\n".join(
+        [
+            "import sys",
+            "if sys.platform != 'win32':",
+            "    import pwd",
+            "    def _no_passwd_entry(*_args, **_kwargs):",
+            "        raise KeyError('no passwd entry')",
+            "    pwd.getpwuid = _no_passwd_entry",
+            "    pwd.getpwnam = _no_passwd_entry",
+            "from hermes_cli.config import DEFAULT_CONFIG",
+            "print(DEFAULT_CONFIG['session_bridge']['sidebar']['inbox_cwd'])",
+        ]
+    )
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "from hermes_cli.config import DEFAULT_CONFIG; print(DEFAULT_CONFIG['session_bridge']['sidebar']['inbox_cwd'])",
+            child_code,
         ],
         capture_output=True,
         check=True,

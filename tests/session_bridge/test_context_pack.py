@@ -28,6 +28,7 @@ from session_bridge.models import (
 )
 from session_bridge.sidebar import SidebarCandidate, sidebar_bridge_id
 from session_bridge.store import SessionBridgeStore
+from tests.session_bridge._native_paths import native_path
 
 
 SECTION_HEADINGS = (
@@ -212,7 +213,7 @@ def test_pack_has_exact_section_order_and_snapshot_identity(db: SessionDB):
 
 
 def test_exact_cwd_instruction_is_bounded_and_machine_testable(db: SessionDB) -> None:
-    exact_cwd = "C:/source/worktree"
+    exact_cwd = native_path("C:/source/worktree")
     store = _seed(
         db,
         [_message("u-exact", "user", "Continue here.", timestamp=101.0)],
@@ -231,7 +232,7 @@ def test_exact_cwd_instruction_is_bounded_and_machine_testable(db: SessionDB) ->
 
     warnings = _section(pack.payload, "## Warnings")
     assert (
-        '- [exact cwd] Every command and file operation MUST pass cwd="C:/source/worktree"; '
+        f'- [exact cwd] Every command and file operation MUST pass cwd="{exact_cwd}"; '
         "sidebar project grouping is not cwd." in warnings
     )
     assert "worktree_branch_drift: recorded=main current=feature/exact" in warnings
@@ -241,7 +242,7 @@ def test_exact_cwd_instruction_is_bounded_and_machine_testable(db: SessionDB) ->
 def test_exact_cwd_replay_rejects_removed_mandatory_instruction(
     db: SessionDB,
 ) -> None:
-    exact_cwd = "C:/source/worktree"
+    exact_cwd = native_path("C:/source/worktree")
     store = _seed(
         db,
         [_message("u-exact", "user", "Continue here.", timestamp=101.0)],
@@ -250,7 +251,7 @@ def test_exact_cwd_replay_rejects_removed_mandatory_instruction(
     request = replace(_request(budget=1200), exact_cwd=exact_cwd)
     first = ContextPackBuilder(db, store).build(request)
     tampered = first.payload.replace(
-        '- [exact cwd] Every command and file operation MUST pass cwd="C:/source/worktree"; '
+        f'- [exact cwd] Every command and file operation MUST pass cwd="{exact_cwd}"; '
         "sidebar project grouping is not cwd.\n",
         "",
     )
@@ -1111,6 +1112,10 @@ def test_exact_mutable_snapshot_is_frozen_on_first_persisted_build(
     assert persisted["payload"] == first.payload
 
 
+# A concurrent writer committing while the builder's read transaction is open
+# only works in WAL mode; under Hermes' journal_mode=DELETE fallback (SQLite
+# builds with the WAL-reset bug) the writer waits out the busy timeout instead.
+@pytest.mark.requires_wal
 def test_source_rows_are_read_from_one_wal_snapshot(db: SessionDB):
     old_message = _message("u1", "user", "C1 OLD TURN", timestamp=101.0)
     store = _seed(

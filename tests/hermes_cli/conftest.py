@@ -462,6 +462,37 @@ def _stub_bundled_skills_sync(request, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_npx_version_probe(monkeypatch):
+    """Answer the agent-browser npx fallback's ``npx --version`` probe offline: not runnable.
+
+    Every dashboard/tools-config path that builds the Nous feature matrix
+    (``get_nous_subscription_features`` -> ``_has_agent_browser`` ->
+    ``tools.browser_tool_install._find_agent_browser``) falls back to
+    ``_resolve_npx_bin`` when no ``agent-browser`` binary is found, and that
+    validates each candidate with a REAL ``npx --version`` spawn. Whether it
+    is reached depends on the machine: this Windows box has a global
+    ``agent-browser`` and never gets there, while the Linux CI runner has no
+    agent-browser but does have ``/usr/local/bin/npx`` -- so there the spawn
+    hits the root conftest's Node-package-manager guard and ~16 tests
+    (test_web_server, test_dashboard_admin_endpoints, the tts/image-gen
+    pickers, post-setup gating, ...) error out on machine state.
+
+    Patched at the name ``browser_tool_install`` bound from
+    ``hermes_constants`` (its only caller of ``node_tool_runnable``), so
+    ``hermes_constants.node_tool_runnable``'s own tests are untouched, and a
+    test that patches ``tools.browser_tool_install.node_tool_runnable`` or
+    ``_resolve_npx_bin`` itself still wins -- its patch is applied after this.
+    """
+    try:
+        from tools import browser_tool_install as _browser_install
+    except Exception:
+        return
+    monkeypatch.setattr(
+        _browser_install, "node_tool_runnable", lambda *_a, **_k: False, raising=False,
+    )
+
+
 @pytest.fixture
 def isolated_update_runtime(monkeypatch, tmp_path, request):
     """Keep mocked updater flows off the host checkout and runtime fleet."""

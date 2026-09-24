@@ -200,7 +200,9 @@ def test_perform_uninstall_passes_the_expanded_home(monkeypatch, tmp_path):
 
     uninstall._perform_uninstall(
         project_root=tmp_path / "hermes-agent",
-        hermes_home=Path(r"%USERPROFILE%\.hermes"),
+        # Forward slash so the expanded result names ``tmp_path / ".hermes"`` on every host:
+        # a backslash is not a separator in a POSIX ``Path`` (CI is Linux).
+        hermes_home=Path("%USERPROFILE%/.hermes"),
         full_uninstall=False,
         remove_profiles=False,
         named_profiles=[],

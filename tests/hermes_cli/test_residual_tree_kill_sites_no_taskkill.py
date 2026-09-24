@@ -97,8 +97,32 @@ def mutant(monkeypatch):
     monkeypatch.setattr(compat, "is_genuine_child", lambda child, parent: True)
 
 
+class _OsWithNativeName:
+    """``os`` as pathlib should keep seeing it while a test pretends to be Windows.
+
+    ``pathlib.Path()`` picks its flavour from ``os.name`` at every instantiation,
+    and on a POSIX interpreter ``WindowsPath`` refuses to instantiate. With the
+    global ``os.name`` forced to ``"nt"``, every ``Path(...)`` in the code under
+    test -- and in pytest's own failure reporting -- raised NotImplementedError,
+    killing the whole file with an INTERNALERROR on the Linux CI lane.
+    """
+
+    name = os.name
+
+    def __getattr__(self, attr):
+        return getattr(os, attr)
+
+
 @pytest.fixture
 def win32(monkeypatch):
+    if os.name != "nt":
+        import pathlib
+
+        # Pin pathlib (3.11: ``pathlib``; 3.13+: ``pathlib._local``) to the real
+        # flavour before the product-facing ``os.name`` flips below.
+        for mod in (pathlib, getattr(pathlib, "_local", None)):
+            if mod is not None and getattr(mod, "os", None) is os:
+                monkeypatch.setattr(mod, "os", _OsWithNativeName())
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(os, "name", "nt")
     monkeypatch.setattr(compat, "IS_WINDOWS", True)

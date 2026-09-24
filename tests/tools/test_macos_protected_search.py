@@ -252,9 +252,14 @@ def test_rg_multi_root_keeps_explicit_protected_root_and_reports_actual_skips(
 
     command = _rg_files_commands(env.commands)[0]
     absolute_operand = downloads.as_posix() in command
+    # The files lane runs rg with merge_stderr=True (d4697a9878: its
+    # access-denied diagnostics feed the skip report), so the anchored form
+    # ends at the operand list and pipes straight into the bound -- there is
+    # no ``2>/dev/null`` after the roots any more.
     anchored_operand = (
         f"cd {ops._escape_shell_arg(downloads.parent.as_posix())} &&" in command
-        and " -- '.' 'Downloads' 2>/dev/null" in command
+        and re.search(r" -- '\.' 'Downloads'(?: 2>/dev/null)? \| head -n \d+$", command)
+        is not None
     )
     assert absolute_operand or anchored_operand
     assert "!Downloads/**" not in command

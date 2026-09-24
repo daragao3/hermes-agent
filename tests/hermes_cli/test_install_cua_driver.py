@@ -1152,38 +1152,48 @@ class TestInstallerTimeoutDrainIsBounded:
         )
 
     @pytest.mark.linux_only
-    def test_post_kill_drain_passes_a_deadline(self):
-        """``linux_only``: reaches the timeout handler through the real POSIX
-        ``killpg`` branch, so the drain under test is the one this lane runs.
+    def test_quiet_path_has_no_pipe_to_drain(self):
+        """``linux_only``: the POSIX lane's quiet (``verbose=False``) refresh.
+
+        That path no longer captures through ``Popen`` pipes at all -- it goes
+        through ``run_text_capture``, whose file-backed stdio leaves nothing
+        for a kill survivor to hold open, so there is no post-kill drain to
+        bound. Its ceiling is the ``timeout`` handed to the helper, and a
+        timeout must come back as a failed refresh. (The Windows lane pins the
+        same seam in ``TestInstallerCapturePipeHazard``; the streaming path's
+        bounded drain is ``test_verbose_path_drains_under_the_same_deadline``.)
         """
         import subprocess
-        from unittest.mock import MagicMock
         from hermes_cli import tools_config_cua as tools_config
 
-        fake_proc = MagicMock()
-        fake_proc.pid = 12345
-        fake_proc.communicate.side_effect = [
-            subprocess.TimeoutExpired(cmd="x", timeout=1),
-            ("", None),
-        ]
+        seen = []
 
+        def fake_capture(argv, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            raise subprocess.TimeoutExpired(list(argv), kwargs["timeout"])
+
+        def no_spawn(*args, **kwargs):
+            raise AssertionError(f"quiet path spawned through Popen: {args!r}")
+
+        from unittest.mock import MagicMock
+
+        # ``subprocess.run`` is the installer-script download (curl) only.
         with patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")), \
-             patch("subprocess.Popen", return_value=fake_proc), \
-             patch.object(tools_config.os, "getpgid", return_value=99999, create=True), \
-             patch.object(tools_config.os, "killpg", create=True), \
+             patch("hermes_cli._subprocess_compat.run_text_capture", fake_capture), \
+             patch("subprocess.Popen", side_effect=no_spawn), \
              patch.object(tools_config, "_clear_stale_cua_install_lock"), \
              patch.object(tools_config, "_print_warning"), \
              patch.object(tools_config, "_print_info"):
             ok = tools_config._run_cua_driver_installer(label="Refreshing", verbose=False)
 
-        assert ok is False
-        assert fake_proc.communicate.call_count == 2
-        drain_timeout = fake_proc.communicate.call_args_list[1].kwargs.get("timeout")
-        assert drain_timeout is not None, (
-            "the post-kill drain was issued without a deadline, so a survivor "
-            "of the kill can hold it open indefinitely"
+        # Vacuity guard: the function swallows unexpected exceptions into
+        # ``return False``, so prove the False came from the helper's timeout.
+        assert seen == [tools_config._CUA_INSTALLER_TIMEOUT], (
+            "the quiet install path did not go through run_text_capture with "
+            "the installer ceiling -- back on Popen+PIPE, a surviving installer "
+            "grandchild makes the post-timeout drain unbounded"
         )
-        assert drain_timeout == tools_config._CUA_INSTALLER_DRAIN_GRACE
+        assert ok is False
 
     @pytest.mark.linux_only
     def test_verbose_path_drains_under_the_same_deadline(self):

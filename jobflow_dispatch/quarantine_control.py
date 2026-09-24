@@ -14,6 +14,8 @@ import hashlib
 import json
 import os
 import sqlite3
+import struct
+import sys
 import threading
 import time
 import uuid
@@ -30,6 +32,37 @@ try:  # pragma: no cover - platform selected at import
     import msvcrt
 except ImportError:  # pragma: no cover
     msvcrt = None  # type: ignore[assignment]
+
+# Linux open-file-description byte-range locks. The lock file's layout is
+# byte-granular -- offset 0 is the initialization lock, offsets 1..N are the
+# admission slots, a barrier takes all of them -- and msvcrt enforces exactly
+# that on Windows. ``flock`` cannot: it locks the WHOLE file, so on POSIX an
+# initializing store (every process's first ``default_control_store()``)
+# waited behind any other process's active dispatch section, and timed out
+# after ``timeout``. OFD locks are per open file description like msvcrt's
+# per-handle locks (NOT per process like ``lockf``, whose locks a stray
+# ``close()`` of any other fd on the file would silently drop), so they give
+# the same byte-level semantics. Elsewhere (macOS/BSD) the flock fallback is
+# kept: coarser, but still cross-process and fail-closed.
+def _use_ofd_locks() -> bool:
+    """Resolved per call from the module's CURRENT ``fcntl`` binding, so a
+    stubbed or absent backend is honoured exactly like the flock/msvcrt
+    selection is."""
+    return (
+        fcntl is not None
+        and getattr(fcntl, "F_OFD_SETLK", None) is not None
+        and sys.platform.startswith("linux")
+        and struct.calcsize("P") == 8
+    )
+
+
+def _ofd_lock(fd: int, lock_type: int, offset: int) -> None:
+    """Non-blocking 1-byte OFD lock/unlock at ``offset`` (raises OSError on conflict)."""
+    # struct flock on 64-bit Linux: short l_type, short l_whence, off_t l_start,
+    # off_t l_len, pid_t l_pid (must be 0 for OFD locks), padded to 32 bytes.
+    fcntl.fcntl(
+        fd, fcntl.F_OFD_SETLK, struct.pack("hhqqi4x", lock_type, os.SEEK_SET, offset, 1, 0)
+    )
 
 
 _CONTROL_SCHEMA = """
@@ -159,7 +192,9 @@ class _KernelLock:
     @staticmethod
     def _try_lock(handle, offset: int) -> None:
         handle.seek(offset)
-        if msvcrt is not None:
+        if _use_ofd_locks():
+            _ofd_lock(handle.fileno(), fcntl.F_WRLCK, offset)
+        elif msvcrt is not None:
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         else:  # never silently degrade to a process-local lock
             raise RuntimeError("cross-process dispatch locking unavailable")
@@ -167,13 +202,15 @@ class _KernelLock:
     @staticmethod
     def _unlock(handle, offset: int) -> None:
         handle.seek(offset)
-        if msvcrt is not None:
+        if _use_ofd_locks():
+            _ofd_lock(handle.fileno(), fcntl.F_UNLCK, offset)
+        elif msvcrt is not None:
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
     def acquire(self) -> "_KernelLock":
         handle = self._open()
         deadline = time.monotonic() + self.timeout
-        if fcntl is not None:
+        if fcntl is not None and not _use_ofd_locks():
             operation = fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH
             while True:
                 try:
@@ -192,7 +229,7 @@ class _KernelLock:
                         )
                         raise TimeoutError(f"timed out waiting for {detail}")
                     time.sleep(self.poll_interval)
-        if msvcrt is None:
+        if msvcrt is None and not _use_ofd_locks():
             handle.close()
             raise RuntimeError("cross-process dispatch locking unavailable")
         if self.exclusive:
@@ -239,7 +276,7 @@ class _KernelLock:
             return
         try:
             if self.held:
-                if fcntl is not None:
+                if fcntl is not None and not _use_ofd_locks():
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
                 elif self.exclusive:
                     offsets = self.offsets or tuple(range(_LOCK_FILE_SIZE))

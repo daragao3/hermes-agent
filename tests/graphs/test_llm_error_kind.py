@@ -16,6 +16,10 @@ from __future__ import annotations
 
 import pytest
 
+# graphs.jobflow / graphs.critic need langgraph, a local-carry dependency
+# (requirements-local-graph.txt) that the locked CI environment does not install.
+pytest.importorskip("langgraph.graph")
+
 from graphs import jobflow
 from obs.oauth_llm import CodexTimeoutError
 

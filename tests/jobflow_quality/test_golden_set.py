@@ -19,6 +19,8 @@ same shape — and are the trap this module exists to avoid.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from jobflow_quality.golden_set import (
@@ -28,6 +30,14 @@ from jobflow_quality.golden_set import (
     build_golden_set,
 )
 from jobflow_quality.matcher_filter import DEFAULT_CRITERIA
+
+# NOT the operator's real bail line: DEFAULT_CRITERIA reads the floor from
+# matcher-criteria.json OUTSIDE the repo, so it is None on any machine without
+# that file (CI) and every posting-fact exclusion below would silently vanish.
+# Every salary fixture here (ceilings of 90k/120k) is below this value, same
+# test floor as tests/jobflow_quality/test_matcher_filter.py.
+_TEST_FLOOR_USD = 175_000
+CRITERIA = replace(DEFAULT_CRITERIA, compensation_floor_usd=_TEST_FLOOR_USD)
 
 
 def _row(**over):
@@ -74,14 +84,14 @@ def _auto_event():
 
 class TestHumanApprovalsBecomeLabels:
     def test_a_diego_actor_event_yields_an_advance_label(self):
-        items = build_golden_set({"j1": _row(history=[_human_event()])}, DEFAULT_CRITERIA)
+        items = build_golden_set({"j1": _row(history=[_human_event()])}, CRITERIA)
         assert len(items) == 1
         assert items[0].label is Label.ADVANCE
         assert items[0].source is LabelSource.HUMAN_APPROVAL
 
     def test_human_approvals_are_marked_nuanced(self):
         """They are the hard cases — a scorer must not be graded only on easy ones."""
-        items = build_golden_set({"j1": _row(history=[_human_event()])}, DEFAULT_CRITERIA)
+        items = build_golden_set({"j1": _row(history=[_human_event()])}, CRITERIA)
         assert items[0].difficulty is Difficulty.NUANCED
 
     def test_a_later_archive_does_not_revoke_the_approval(self):
@@ -91,7 +101,7 @@ class TestHumanApprovalsBecomeLabels:
         "the label was wrong" would invert most of the positive evidence.
         """
         row = _row(stage="archived", history=[_human_event()])
-        items = build_golden_set({"j1": row}, DEFAULT_CRITERIA)
+        items = build_golden_set({"j1": row}, CRITERIA)
         assert len(items) == 1
         assert items[0].label is Label.ADVANCE
 
@@ -100,31 +110,31 @@ class TestCircularLabelsAreRefused:
     """The whole point. An auto-approval is the scorer's own verdict."""
 
     def test_an_auto_route_approval_is_not_a_label(self):
-        items = build_golden_set({"j1": _row(history=[_auto_event()])}, DEFAULT_CRITERIA)
+        items = build_golden_set({"j1": _row(history=[_auto_event()])}, CRITERIA)
         assert items == ()
 
     def test_stage_approved_alone_is_not_a_label(self):
         """26 of 32 approved rows are VIP auto-approvals, not scoring judgements."""
         items = build_golden_set({"j1": _row(stage="approved", vip=True, history=[])},
-                                 DEFAULT_CRITERIA)
+                                 CRITERIA)
         assert items == ()
 
     def test_stage_archived_alone_is_not_a_label(self):
         """4,670 archived rows were archived BY the scorer. Circular."""
         items = build_golden_set({"j1": _row(stage="archived", history=[])},
-                                 DEFAULT_CRITERIA)
+                                 CRITERIA)
         assert items == ()
 
     def test_a_human_event_alongside_an_auto_event_still_counts(self):
         row = _row(history=[_auto_event(), _human_event()])
-        assert len(build_golden_set({"j1": row}, DEFAULT_CRITERIA)) == 1
+        assert len(build_golden_set({"j1": row}, CRITERIA)) == 1
 
 
 class TestDeterministicExclusions:
     def test_a_posting_under_the_bail_line_yields_an_exclude_label(self):
         row = _row(salary_range={"min": 90000.0, "max": 120000.0,
                                  "currency": "USD", "period": "annual"})
-        items = build_golden_set({"j1": row}, DEFAULT_CRITERIA)
+        items = build_golden_set({"j1": row}, CRITERIA)
         assert len(items) == 1
         assert items[0].label is Label.EXCLUDE
         assert items[0].source is LabelSource.DETERMINISTIC_EXCLUSION
@@ -133,10 +143,10 @@ class TestDeterministicExclusions:
         """Kept separate so an evaluator cannot be flattered by easy negatives."""
         row = _row(salary_range={"min": 90000.0, "max": 120000.0,
                                  "currency": "USD", "period": "annual"})
-        assert build_golden_set({"j1": row}, DEFAULT_CRITERIA)[0].difficulty is Difficulty.OBVIOUS
+        assert build_golden_set({"j1": row}, CRITERIA)[0].difficulty is Difficulty.OBVIOUS
 
     def test_an_ordinary_posting_yields_no_label(self):
-        assert build_golden_set({"j1": _row()}, DEFAULT_CRITERIA) == ()
+        assert build_golden_set({"j1": _row()}, CRITERIA) == ()
 
 
 class TestConflicts:
@@ -145,7 +155,7 @@ class TestConflicts:
         row = _row(history=[_human_event()],
                    salary_range={"min": 90000.0, "max": 120000.0,
                                  "currency": "USD", "period": "annual"})
-        items = build_golden_set({"j1": row}, DEFAULT_CRITERIA)
+        items = build_golden_set({"j1": row}, CRITERIA)
         assert len(items) == 1, "one job must never produce two contradictory labels"
         assert items[0].label is Label.ADVANCE
         assert items[0].conflicted is True
@@ -156,14 +166,14 @@ class TestSecretFree:
         """Task 6: store references and hashes, not private raw documents."""
         secret = "CONFIDENTIAL internal comp band do not distribute"
         row = _row(description_raw=secret, history=[_human_event()])
-        item = build_golden_set({"j1": row}, DEFAULT_CRITERIA)[0]
+        item = build_golden_set({"j1": row}, CRITERIA)[0]
         assert secret not in repr(item)
         for value in vars(item).values():
             assert secret not in str(value)
 
     def test_the_description_is_referenced_by_hash(self):
         row = _row(description_raw="abc", history=[_human_event()])
-        item = build_golden_set({"j1": row}, DEFAULT_CRITERIA)[0]
+        item = build_golden_set({"j1": row}, CRITERIA)[0]
         assert len(item.description_sha256) == 64
         assert item.description_sha256 == (
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
@@ -171,7 +181,7 @@ class TestSecretFree:
 
     def test_evidence_is_a_bounded_code_not_free_text(self):
         row = _row(history=[_human_event()])
-        item = build_golden_set({"j1": row}, DEFAULT_CRITERIA)[0]
+        item = build_golden_set({"j1": row}, CRITERIA)[0]
         assert item.evidence in {s.value for s in LabelSource} or item.evidence.islower()
         assert len(item.evidence) <= 64
 
@@ -179,16 +189,16 @@ class TestSecretFree:
 class TestDeterminism:
     def test_the_same_input_yields_the_same_ordering(self):
         jobs = {f"j{i}": _row(history=[_human_event()]) for i in range(8)}
-        assert build_golden_set(jobs, DEFAULT_CRITERIA) == build_golden_set(jobs, DEFAULT_CRITERIA)
+        assert build_golden_set(jobs, CRITERIA) == build_golden_set(jobs, CRITERIA)
 
     def test_ordering_does_not_depend_on_dict_insertion_order(self):
         a = {"j2": _row(history=[_human_event()]), "j1": _row(history=[_human_event()])}
         b = {"j1": _row(history=[_human_event()]), "j2": _row(history=[_human_event()])}
-        assert [i.job_id for i in build_golden_set(a, DEFAULT_CRITERIA)] == \
-               [i.job_id for i in build_golden_set(b, DEFAULT_CRITERIA)]
+        assert [i.job_id for i in build_golden_set(a, CRITERIA)] == \
+               [i.job_id for i in build_golden_set(b, CRITERIA)]
 
     def test_items_are_immutable(self):
-        item = build_golden_set({"j1": _row(history=[_human_event()])}, DEFAULT_CRITERIA)[0]
+        item = build_golden_set({"j1": _row(history=[_human_event()])}, CRITERIA)[0]
         with pytest.raises(AttributeError):
             item.label = Label.EXCLUDE
 
@@ -196,14 +206,14 @@ class TestDeterminism:
 class TestMalformedInput:
     @pytest.mark.parametrize("jobs", ({}, {"j1": None}, {"j1": "nonsense"}, {"j1": {}}))
     def test_unusable_input_yields_no_labels_and_never_raises(self, jobs):
-        assert build_golden_set(jobs, DEFAULT_CRITERIA) == ()
+        assert build_golden_set(jobs, CRITERIA) == ()
 
     def test_a_malformed_history_entry_is_skipped(self):
         row = _row(history=["nonsense", None, _human_event()])
-        assert len(build_golden_set({"j1": row}, DEFAULT_CRITERIA)) == 1
+        assert len(build_golden_set({"j1": row}, CRITERIA)) == 1
 
     def test_a_job_with_no_id_key_is_skipped(self):
-        assert build_golden_set({"": _row(history=[_human_event()])}, DEFAULT_CRITERIA) == ()
+        assert build_golden_set({"": _row(history=[_human_event()])}, CRITERIA) == ()
 
 
 class TestSetComposition:
@@ -216,7 +226,7 @@ class TestSetComposition:
                                     "currency": "USD", "period": "annual"}),
             "c": _row(),
         }
-        s = summarize(build_golden_set(jobs, DEFAULT_CRITERIA))
+        s = summarize(build_golden_set(jobs, CRITERIA))
         assert s["total"] == 2
         assert s["by_label"] == {"advance": 1, "exclude": 1}
         assert s["by_difficulty"] == {"nuanced": 1, "obvious": 1}
@@ -228,7 +238,7 @@ class TestSetComposition:
         jobs = {f"j{i}": _row(salary_range={"min": 1.0, "max": 90000.0,
                                             "currency": "USD", "period": "annual"})
                 for i in range(5)}
-        s = summarize(build_golden_set(jobs, DEFAULT_CRITERIA))
+        s = summarize(build_golden_set(jobs, CRITERIA))
         assert s["balanced"] is False
 
     def test_a_mixed_set_is_balanced(self):
@@ -238,7 +248,7 @@ class TestSetComposition:
         jobs.update({f"e{i}": _row(salary_range={"min": 1.0, "max": 90000.0,
                                                  "currency": "USD", "period": "annual"})
                      for i in range(5)})
-        assert summarize(build_golden_set(jobs, DEFAULT_CRITERIA))["balanced"] is True
+        assert summarize(build_golden_set(jobs, CRITERIA))["balanced"] is True
 
 
 class TestBalancedSampling:
@@ -254,7 +264,7 @@ class TestBalancedSampling:
         jobs.update({f"e{i:03d}": _row(salary_range={"min": 1.0, "max": 90000.0,
                                                      "currency": "USD", "period": "annual"})
                      for i in range(obvious)})
-        return build_golden_set(jobs, DEFAULT_CRITERIA)
+        return build_golden_set(jobs, CRITERIA)
 
     def test_the_dominant_difficulty_is_capped_to_the_scarcer_one(self):
         from jobflow_quality.golden_set import balanced_sample, summarize
@@ -312,7 +322,7 @@ class TestHumanLabelRequiresPositiveEvidence:
         # above is flat. Both must work, or this passes in tests and silently
         # labels nothing in production.
         items = build_golden_set({"j1": _row(history=[_nested_human_event()])},
-                                 DEFAULT_CRITERIA)
+                                 CRITERIA)
         assert len(items) == 1
         assert items[0].source is LabelSource.HUMAN_APPROVAL
 
@@ -320,18 +330,18 @@ class TestHumanLabelRequiresPositiveEvidence:
         # Exactly what the caller-default produced: the name, nothing else.
         bare = {"from_stage": "scored", "to_stage": "approved",
                 "metadata": {"actor_id": "diego"}}
-        assert build_golden_set({"j1": _row(history=[bare])}, DEFAULT_CRITERIA) == ()
+        assert build_golden_set({"j1": _row(history=[bare])}, CRITERIA) == ()
 
     def test_a_state_transition_is_not_an_approval(self):
         # Measured on live data: job 4432638835's only diego entry is a
         # review->ready move. An operator stepping a job between stages — to
         # verify a restart, say — is not a hiring decision.
         moved = _nested_human_event(intent_type="STATE_TRANSITION_INTENT")
-        assert build_golden_set({"j1": _row(history=[moved])}, DEFAULT_CRITERIA) == ()
+        assert build_golden_set({"j1": _row(history=[moved])}, CRITERIA) == ()
 
     def test_an_actor_without_the_intent_applier_is_not_a_human_decision(self):
         elsewhere = _human_event(emitted_by="operator_api")
-        assert build_golden_set({"j1": _row(history=[elsewhere])}, DEFAULT_CRITERIA) == ()
+        assert build_golden_set({"j1": _row(history=[elsewhere])}, CRITERIA) == ()
 
     def test_the_three_fields_must_sit_on_one_record(self):
         # The old check json.dumps'd the whole entry and substring-matched, so
@@ -341,13 +351,13 @@ class TestHumanLabelRequiresPositiveEvidence:
                  "metadata": {"actor_id": "diego"},
                  "other": {"emitted_by": "tracker-intent-applier",
                            "intent_type": "APPROVAL_INTENT"}}
-        assert build_golden_set({"j1": _row(history=[split])}, DEFAULT_CRITERIA) == ()
+        assert build_golden_set({"j1": _row(history=[split])}, CRITERIA) == ()
 
     def test_an_unattributed_actor_is_never_a_human_decision(self):
         # What the fix writes now in place of the fabricated default.
         unattributed = _nested_human_event(actor_id="unattributed:legacy_dashboard")
         assert build_golden_set({"j1": _row(history=[unattributed])},
-                                DEFAULT_CRITERIA) == ()
+                                CRITERIA) == ()
 
     def test_a_job_keeps_its_label_when_one_of_several_entries_qualifies(self):
         # Live shape: job e8d66258 carries two operator "post-restart verify"
@@ -358,7 +368,7 @@ class TestHumanLabelRequiresPositiveEvidence:
                                 notes="post-restart verify archived"),
             _nested_human_event(),
         ])
-        items = build_golden_set({"j1": row}, DEFAULT_CRITERIA)
+        items = build_golden_set({"j1": row}, CRITERIA)
         assert len(items) == 1
         assert items[0].source is LabelSource.HUMAN_APPROVAL
 
@@ -366,12 +376,12 @@ class TestHumanLabelRequiresPositiveEvidence:
         padded = _nested_human_event(intent_type="  approval_intent  ",
                                      emitted_by="Tracker-Intent-Applier")
         assert len(build_golden_set({"j1": _row(history=[padded])},
-                                    DEFAULT_CRITERIA)) == 1
+                                    CRITERIA)) == 1
 
     def test_a_malformed_entry_is_not_evidence_and_does_not_raise(self):
         row = _row(history=[None, 42, "nonsense", {"metadata": {"actor_id": None}},
                             _nested_human_event()])
-        items = build_golden_set({"j1": row}, DEFAULT_CRITERIA)
+        items = build_golden_set({"j1": row}, CRITERIA)
         assert len(items) == 1
 class TestSamplingRequiresAReplayablePosting:
     """An item with no posting behind it cannot measure text comprehension.
@@ -389,20 +399,20 @@ class TestSamplingRequiresAReplayablePosting:
         return _row(company="DataAnnotation", description_raw="", **over)
 
     def test_an_item_with_no_posting_is_not_replayable(self):
-        items = build_golden_set({"j1": self._textless()}, DEFAULT_CRITERIA)
+        items = build_golden_set({"j1": self._textless()}, CRITERIA)
         assert items[0].evidence == "excluded_company"
         assert items[0].replayable is False
 
     def test_an_item_with_a_posting_is_replayable(self):
         items = build_golden_set({"j1": _row(history=[_human_event()])},
-                                 DEFAULT_CRITERIA)
+                                 CRITERIA)
         assert items[0].replayable is True
 
     def test_the_empty_digest_is_what_marks_an_item_unreplayable(self):
         """Not a flag set at build time — the digest itself carries it."""
         import hashlib
 
-        items = build_golden_set({"j1": self._textless()}, DEFAULT_CRITERIA)
+        items = build_golden_set({"j1": self._textless()}, CRITERIA)
         assert items[0].description_sha256 == hashlib.sha256(b"").hexdigest()
 
     def test_sampling_drops_items_with_no_posting(self):
@@ -410,7 +420,7 @@ class TestSamplingRequiresAReplayablePosting:
 
         jobs = {f"h{i:03d}": _row(history=[_human_event()]) for i in range(5)}
         jobs.update({f"x{i:03d}": self._textless() for i in range(5)})
-        sampled = balanced_sample(build_golden_set(jobs, DEFAULT_CRITERIA))
+        sampled = balanced_sample(build_golden_set(jobs, CRITERIA))
         assert sampled == ()
 
     def test_every_sampled_item_is_replayable(self):
@@ -422,7 +432,7 @@ class TestSamplingRequiresAReplayablePosting:
                                                      "period": "annual"})
                      for i in range(4)})
         jobs.update({f"x{i:03d}": self._textless() for i in range(20)})
-        sampled = balanced_sample(build_golden_set(jobs, DEFAULT_CRITERIA))
+        sampled = balanced_sample(build_golden_set(jobs, CRITERIA))
         assert sampled
         assert all(i.replayable for i in sampled)
 
@@ -442,7 +452,7 @@ class TestSamplingRequiresAReplayablePosting:
                                                      "period": "annual"})
                      for i in range(4)})
         jobs.update({f"x{i:03d}": self._textless() for i in range(20)})
-        s = summarize(balanced_sample(build_golden_set(jobs, DEFAULT_CRITERIA)))
+        s = summarize(balanced_sample(build_golden_set(jobs, CRITERIA)))
         assert s["by_difficulty"] == {"nuanced": 4, "obvious": 4}
 
     def test_a_blocklisted_company_that_does_carry_text_is_kept(self):
@@ -459,7 +469,7 @@ class TestSamplingRequiresAReplayablePosting:
         jobs.update({f"b{i:03d}": _row(company="DataAnnotation",
                                        description_raw="A real posting.")
                      for i in range(3)})
-        sampled = balanced_sample(build_golden_set(jobs, DEFAULT_CRITERIA))
+        sampled = balanced_sample(build_golden_set(jobs, CRITERIA))
         kept = [i for i in sampled if i.evidence == "excluded_company"]
         assert len(kept) == 3
 
@@ -467,7 +477,7 @@ class TestSamplingRequiresAReplayablePosting:
         from jobflow_quality.golden_set import balanced_sample
 
         jobs = {f"x{i:03d}": self._textless() for i in range(9)}
-        assert balanced_sample(build_golden_set(jobs, DEFAULT_CRITERIA)) == ()
+        assert balanced_sample(build_golden_set(jobs, CRITERIA)) == ()
 
     def test_dropping_postings_never_invents_or_reorders_items(self):
         from jobflow_quality.golden_set import balanced_sample
@@ -478,7 +488,7 @@ class TestSamplingRequiresAReplayablePosting:
                                                      "period": "annual"})
                      for i in range(5)})
         jobs.update({f"x{i:03d}": self._textless() for i in range(5)})
-        items = build_golden_set(jobs, DEFAULT_CRITERIA)
+        items = build_golden_set(jobs, CRITERIA)
         sampled = balanced_sample(items)
         assert set(sampled) <= set(items)
         assert list(sampled) == sorted(sampled, key=lambda i: i.job_id)

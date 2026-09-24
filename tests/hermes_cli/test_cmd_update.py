@@ -1892,8 +1892,11 @@ class TestClearBytecodeCacheSkipList:
         scanned = []
         real_scandir = os.scandir
 
-        def scandir(path):
-            scanned.append(os.fspath(path))
+        def scandir(path="."):
+            # POSIX shutil.rmtree (_rmtree_safe_fd) scans by directory FD,
+            # an int with no path to record; only path-scans matter here.
+            if not isinstance(path, int):
+                scanned.append(os.fspath(path))
             return real_scandir(path)
 
         monkeypatch.setattr(os, "scandir", scandir)

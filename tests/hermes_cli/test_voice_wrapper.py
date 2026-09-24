@@ -11,8 +11,29 @@ stack.
 
 
 import json
+import os
 
 import pytest
+
+
+def _stub_voice_unlink(monkeypatch, voice):
+    """No-op only the product's own cleanup of its ``hermes_voice`` audio files.
+
+    ``voice.os`` IS the global ``os`` module, so a blanket ``lambda _path: None``
+    stays installed until monkeypatch undoes it -- after other fixtures' teardown
+    has already run ``shutil.rmtree`` on their tmp dirs. On POSIX that rmtree
+    calls ``os.unlink(name, dir_fd=fd)``, which the one-argument lambda rejects
+    with a TypeError (and a blanket no-op would leave the tree undeletable).
+    Everything else reaches the real ``os.unlink``.
+    """
+    real_unlink = os.unlink
+
+    def unlink(path, *args, **kwargs):
+        if not args and not kwargs and "hermes_voice" in os.fspath(path):
+            return None
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(voice.os, "unlink", unlink)
 
 
 class TestPublicAPI:
@@ -189,7 +210,7 @@ class TestSpeakTextGuards:
         monkeypatch.setattr(voice.os, "makedirs", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(voice.os.path, "isfile", lambda path: path == returned_path)
         monkeypatch.setattr(voice.os.path, "getsize", lambda _path: 1000)
-        monkeypatch.setattr(voice.os, "unlink", lambda _path: None)
+        _stub_voice_unlink(monkeypatch, voice)
         monkeypatch.setattr(voice, "play_audio_file", lambda path: played.append(path))
 
         assert voice.speak_text("Hello world") is None
@@ -216,7 +237,7 @@ class TestSpeakTextGuards:
         monkeypatch.setattr(voice.os, "makedirs", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(voice.os.path, "isfile", lambda _path: True)
         monkeypatch.setattr(voice.os.path, "getsize", lambda _path: 1000)
-        monkeypatch.setattr(voice.os, "unlink", lambda _path: None)
+        _stub_voice_unlink(monkeypatch, voice)
         monkeypatch.setattr(voice, "play_audio_file", lambda path: played.append(path))
 
         assert voice.speak_text("Hello world") is None

@@ -495,8 +495,11 @@ def test_unreadable_root_fail_closes_all_archival(
     _write_record(unreadable, "other")
     actual_scandir = os.scandir
 
-    def guarded_scandir(root):
-        if Path(root) == unreadable:
+    def guarded_scandir(root=".", *args, **kwargs):
+        # On POSIX ``shutil.rmtree`` (e.g. tmp_path cleanup) scans by file
+        # descriptor, so ``root`` can be an int; only path-like roots can be
+        # the unreadable one.
+        if isinstance(root, (str, os.PathLike)) and Path(root) == unreadable:
             raise PermissionError("transient root failure")
         return actual_scandir(root)
 

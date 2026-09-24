@@ -109,7 +109,7 @@ def _user_bin_dir(tmp_path):
     branch in ``tools/browser_use_cli._find_cli`` so the tests describe the host they run on."""
     if os.name == "nt":
         return tmp_path / "userhome" / "AppData" / "Roaming" / "uv" / "bin"
-    return _user_bin_dir(tmp_path)
+    return tmp_path / "userhome" / ".local" / "bin"
 
 
 class TestModeDetection:

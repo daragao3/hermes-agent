@@ -31,6 +31,10 @@ from pathlib import Path
 import pytest
 
 import hermes_constants
+# graphs.jobflow / graphs.critic need langgraph, a local-carry dependency
+# (requirements-local-graph.txt) that the locked CI environment does not install.
+pytest.importorskip("langgraph.graph")
+
 from graphs import jobflow
 
 PATH_FUNCS = [

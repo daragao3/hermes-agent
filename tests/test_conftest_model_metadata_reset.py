@@ -19,18 +19,22 @@ import pytest
 
 pytest.importorskip("agent.model_metadata")
 
+# Gone from the module, so no longer listed: the Novita-specific cache pair
+# (folded into the generic endpoint caches by d45621c032) and
+# ``_codex_oauth_context_cache_time`` (each ``_codex_oauth_context_cache``
+# entry now carries its own timestamp). The conftest block still names them
+# but tolerates their absence via getattr/hasattr.
 DICT_CACHES = (
     "_model_metadata_cache",
-    "_novita_metadata_cache",
     "_endpoint_model_metadata_cache",
     "_endpoint_model_metadata_cache_time",
     "_endpoint_probe_path_cache",
     "_codex_oauth_context_cache",
+    "_LOCAL_CTX_PROBE_CACHE",
+    "_TOOLS_TOKENS_CACHE",
 )
 SCALAR_CACHES = (
     "_model_metadata_cache_time",
-    "_novita_metadata_cache_time",
-    "_codex_oauth_context_cache_time",
 )
 
 

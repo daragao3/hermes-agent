@@ -5712,6 +5712,28 @@ def test_claude_visibility_status_does_not_construct_delivery_dependencies(
     assert result["last_registrar_result"] == {"tracked": False, "value": None}
 
 
+def _stub_passing_local_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pass the cheap local startup gate without reading the real ~/.claude.
+
+    ``_claude_visibility_runtime`` runs ``_claude_visibility_local_preflight_detail``
+    before the command preflight, and unstubbed it reads the host's real
+    ``~/.claude.json`` / ``~/.claude/settings.json``: green on a box where Claude
+    Code is onboarded, ``..._onboarding_incomplete`` on a clean CI runner.
+    """
+
+    monkeypatch.setattr(
+        "session_bridge.cli._claude_visibility_local_preflight_detail",
+        lambda: cli_module._ClaudeVisibilityPreflight(
+            {
+                "version": "2.1.216",
+                "authentication": "available",
+                "theme": "light",
+            },
+            None,
+        ),
+    )
+
+
 def test_claude_visibility_preflight_blocks_before_any_runtime_side_effect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5721,6 +5743,7 @@ def test_claude_visibility_preflight_blocks_before_any_runtime_side_effect(
             config, claude_visibility=replace(config.claude_visibility, enabled=True)
         )
     )
+    _stub_passing_local_preflight(monkeypatch)
     events: list[object] = []
 
     def resolve_executable(_name: str) -> tuple[str, ...]:
@@ -5788,6 +5811,7 @@ def test_claude_visibility_runtime_passes_only_preflight_theme_to_registrar(
             config, claude_visibility=replace(config.claude_visibility, enabled=True)
         )
     )
+    _stub_passing_local_preflight(monkeypatch)
     events: list[object] = []
     store = object()
     source = object()
@@ -9989,6 +10013,7 @@ def test_claude_visibility_runtime_raises_the_specific_preflight_gate(
     monkeypatch.setattr(
         "session_bridge.cli.resolve_cli_executable", lambda _name: ("claude",)
     )
+    _stub_passing_local_preflight(monkeypatch)
     monkeypatch.setattr(
         "session_bridge.cli._claude_visibility_preflight_detail",
         _refusing_preflight("claude_visibility_preflight_failed_auth_unavailable"),

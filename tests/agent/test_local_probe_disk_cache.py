@@ -12,7 +12,13 @@ import json
 import time
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import agent.model_metadata as MM
+
+# These tests exercise the REAL probe functions (with httpx mocked beneath
+# them), so opt out of the root conftest's local-server probe stub.
+pytestmark = pytest.mark.real_local_server_probe
 
 
 def _clear_in_proc():

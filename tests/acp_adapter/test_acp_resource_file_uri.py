@@ -9,7 +9,7 @@ attachment came back as ``[Could not read attached file: ...]``.
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -22,8 +22,11 @@ def test_windows_drive_uri_is_mounted_only_inside_wsl(uri):
     assert _path_from_file_uri(uri, in_wsl=True) == Path("/mnt/c/Users/me/notes.md")
     native = _path_from_file_uri(uri, in_wsl=False)
     assert native is not None
-    assert native.drive.upper() == "C:", native
-    assert native.parts[-3:] == ("Users", "me", "notes.md"), native
+    # Judge the spelling as a Windows path: on a POSIX host ``Path("C:/...")``
+    # is a PosixPath with no ``.drive`` although the drive letter is kept.
+    windows_view = PureWindowsPath(str(native))
+    assert windows_view.drive.upper() == "C:", native
+    assert windows_view.parts[-3:] == ("Users", "me", "notes.md"), native
 
 
 def test_this_hosts_own_file_uri_resolves_to_the_file(tmp_path):

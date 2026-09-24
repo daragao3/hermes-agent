@@ -9,7 +9,10 @@ def test_anthropic_sdk_stream_runs_through_relay_managed_execution(
     monkeypatch,
 ):
     anthropic = pytest.importorskip("anthropic")
-    httpx = pytest.importorskip("httpx")
+    # anthropic>=1.x is built on httpx2 and rejects an `httpx.Client` as
+    # `http_client` ("this SDK uses `httpx2`"), so the mock transport must be
+    # httpx2's too.
+    httpx = pytest.importorskip("httpx2")
     pytest.importorskip("nemo_relay")
     from agent import relay_runtime
     from run_agent import AIAgent

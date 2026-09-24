@@ -33,6 +33,7 @@ from session_bridge.models import (
     encode_bridge_marker,
 )
 from session_bridge.store import SessionBridgeStore, SidebarSource
+from tests.session_bridge._native_paths import native_path, native_paths
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "codex"
@@ -115,7 +116,8 @@ class _ClockAdvancingClient(FakeInitializingClient):
 
 
 def _fixture(name: str) -> dict[str, Any]:
-    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    # Fixture cwds/paths are Windows drive-rooted; see _native_paths.
+    return native_paths(json.loads((FIXTURES / name).read_text(encoding="utf-8")))
 
 
 def _summary(
@@ -124,7 +126,7 @@ def _summary(
     return CodexThreadSummary(
         native_id=native_id,
         title="Active work",
-        cwd="C:/work/active",
+        cwd=native_path("C:/work/active"),
         started_at=1783850400.0,
         last_active=1783850700.0,
         archived=archived,
@@ -435,9 +437,9 @@ class TestInventory:
     def test_inventory_accepts_equal_values_for_every_supported_cwd_alias(self) -> None:
         row = {
             "id": "equal-cwd-aliases",
-            "cwd": "C:/work/equal",
-            "workingDirectory": "C:/work/equal",
-            "working_directory": "C:/work/equal",
+            "cwd": native_path("C:/work/equal"),
+            "workingDirectory": native_path("C:/work/equal"),
+            "working_directory": native_path("C:/work/equal"),
             "createdAt": 1,
             "updatedAt": 2,
         }
@@ -447,13 +449,13 @@ class TestInventory:
             archived=False
         )
 
-        assert summary.cwd == "C:/work/equal"
+        assert summary.cwd == native_path("C:/work/equal")
 
     def test_inventory_rejects_conflicting_cwd_and_working_directory(self) -> None:
         row = {
             "id": "conflicting-cwd-aliases",
-            "cwd": "C:/work/first",
-            "workingDirectory": "C:/work/second",
+            "cwd": native_path("C:/work/first"),
+            "workingDirectory": native_path("C:/work/second"),
             "createdAt": 1,
             "updatedAt": 2,
         }
@@ -468,7 +470,7 @@ class TestInventory:
     def test_inventory_rejects_malformed_later_cwd_alias(self, malformed: Any) -> None:
         row = {
             "id": "malformed-cwd-alias",
-            "cwd": "C:/work/valid",
+            "cwd": native_path("C:/work/valid"),
             "workingDirectory": malformed,
             "createdAt": 1,
             "updatedAt": 2,
@@ -484,7 +486,7 @@ class TestInventory:
     def test_inventory_accepts_each_alternate_cwd_alias(self, alias: str) -> None:
         row = {
             "id": "alternate-cwd",
-            alias: "C:/work/alternate",
+            alias: native_path("C:/work/alternate"),
             "createdAt": 1,
             "updatedAt": 2,
         }
@@ -494,7 +496,7 @@ class TestInventory:
             archived=False
         )
 
-        assert summary.cwd == "C:/work/alternate"
+        assert summary.cwd == native_path("C:/work/alternate")
 
     @pytest.mark.skipif(os.name != "nt", reason="Windows path-equivalence policy")
     def test_inventory_cwd_aliases_follow_windows_normalization_and_case_rules(
@@ -502,7 +504,7 @@ class TestInventory:
     ) -> None:
         row = {
             "id": "windows-cwd-aliases",
-            "cwd": "C:/Work/Repo/.",
+            "cwd": native_path("C:/Work/Repo/."),
             "workingDirectory": r"c:\work\repo",
             "createdAt": 1,
             "updatedAt": 2,
@@ -513,7 +515,7 @@ class TestInventory:
             archived=False
         )
 
-        assert summary.cwd == "C:/Work/Repo/."
+        assert summary.cwd == native_path("C:/Work/Repo/.")
 
     @pytest.mark.skipif(os.name != "nt", reason="Windows path-equivalence policy")
     def test_thread_read_equivalent_cwd_alias_becomes_reconciled_canonical_value(
@@ -521,7 +523,7 @@ class TestInventory:
     ) -> None:
         row = {
             "id": "windows-read-cwd",
-            "cwd": "C:/Work/Repo/.",
+            "cwd": native_path("C:/Work/Repo/."),
             "createdAt": 1,
             "updatedAt": 2,
             "source": "vscode",
@@ -554,11 +556,11 @@ class TestInventory:
             return {
                 "id": native_id,
                 "title": "ignored title",
-                "cwd": f"C:/work/{native_id}",
+                "cwd": native_path(f"C:/work/{native_id}"),
                 "createdAt": updated - 10,
                 "updatedAt": updated,
                 "archived": archived,
-                "gitRoot": "C:/work",
+                "gitRoot": native_path("C:/work"),
                 "gitBranch": f"feature/{native_id}",
                 "gitHead": f"head-{native_id}",
                 "worktreeId": f"wt-{native_id}",
@@ -643,7 +645,7 @@ class TestInventory:
         ]
         newest = sources[0]
         assert newest.projection.messages[0].content == "Build API"
-        assert newest.git_root == "C:/work"
+        assert newest.git_root == native_path("C:/work")
         assert newest.projection.git_branch == "feature/linked-or-uncataloged"
         assert newest.git_head == "head-linked-or-uncataloged"
         assert newest.worktree_id == "wt-linked-or-uncataloged"
@@ -663,7 +665,7 @@ class TestInventory:
         def entry(native_id: str, updated: int):
             return {
                 "id": native_id,
-                "cwd": f"C:/work/{native_id}",
+                "cwd": native_path(f"C:/work/{native_id}"),
                 "createdAt": updated - 10,
                 "updatedAt": updated,
                 "source": "vscode",
@@ -831,7 +833,7 @@ class TestInventory:
 
         row = {
             "id": "active-read",
-            "cwd": "C:/work/active-read",
+            "cwd": native_path("C:/work/active-read"),
             "createdAt": 290,
             "updatedAt": 300,
             "source": "vscode",
@@ -873,8 +875,8 @@ class TestInventory:
             "id": "oversized-thread",
             "name": "Long-running bridge rollout",
             "preview": "Finish the cross-harness session bridge rollout",
-            "path": "C:/codex/sessions/oversized-thread.jsonl",
-            "cwd": "C:/work/session-bridge",
+            "path": native_path("C:/codex/sessions/oversized-thread.jsonl"),
+            "cwd": native_path("C:/work/session-bridge"),
             "createdAt": 100,
             "updatedAt": 300,
             "source": "vscode",
@@ -919,8 +921,8 @@ class TestInventory:
                 "id": native_id,
                 "name": native_id,
                 "preview": f"preview for {native_id}",
-                "path": f"C:/codex/sessions/{native_id}.jsonl",
-                "cwd": f"C:/work/{native_id}",
+                "path": native_path(f"C:/codex/sessions/{native_id}.jsonl"),
+                "cwd": native_path(f"C:/work/{native_id}"),
                 "createdAt": updated - 10,
                 "updatedAt": updated,
                 "source": source,
@@ -930,7 +932,7 @@ class TestInventory:
             provider=Provider.CODEX,
             native_id="indexed",
             title="Indexed title",
-            cwd="C:/work/indexed",
+            cwd=native_path("C:/work/indexed"),
             started_at=100.0,
             last_active=400.0,
             messages=(
@@ -942,7 +944,7 @@ class TestInventory:
                     timestamp=110.0,
                 ),
             ),
-            native_path="C:/codex/sessions/indexed.jsonl",
+            native_path=native_path("C:/codex/sessions/indexed.jsonl"),
             native_status="active",
             origin_kind=OriginKind.BRIDGE_PLACEHOLDER,
             origin_bridge_id="bridge:indexed",
@@ -950,7 +952,7 @@ class TestInventory:
         indexed = SidebarSource(
             source_session_id="codex:indexed",
             projection=indexed_projection,
-            git_root="C:/indexed-root",
+            git_root=native_path("C:/indexed-root"),
             git_head="indexed-head",
             worktree_id="indexed-worktree",
             automation_only=False,
@@ -1013,7 +1015,7 @@ class TestInventory:
             by_id["indexed"].projection.origin_kind
             is OriginKind.BRIDGE_PLACEHOLDER
         )
-        assert by_id["indexed"].git_root == "C:/indexed-root"
+        assert by_id["indexed"].git_root == native_path("C:/indexed-root")
         assert by_id["unindexed-subagent"].subagent_only is True
         assert by_id["unindexed-native"].projection.messages[0].content == (
             "Hydrate only this request"
@@ -1030,8 +1032,8 @@ class TestInventory:
                 "id": native_id,
                 "name": native_id,
                 "preview": f"preview for {native_id}",
-                "path": f"C:/codex/sessions/{native_id}.jsonl",
-                "cwd": f"C:/work/{native_id}",
+                "path": native_path(f"C:/codex/sessions/{native_id}.jsonl"),
+                "cwd": native_path(f"C:/work/{native_id}"),
                 "createdAt": updated - 10,
                 "updatedAt": updated,
                 "source": "vscode",
@@ -1049,7 +1051,7 @@ class TestInventory:
                     provider=Provider.CODEX,
                     native_id=native_id,
                     title=f"Indexed {native_id}",
-                    cwd=f"C:/work/{native_id}",
+                    cwd=native_path(f"C:/work/{native_id}"),
                     started_at=100.0,
                     last_active=last_active,
                     messages=(
@@ -1061,7 +1063,7 @@ class TestInventory:
                             timestamp=110.0,
                         ),
                     ),
-                    native_path=f"C:/codex/sessions/{native_id}.jsonl",
+                    native_path=native_path(f"C:/codex/sessions/{native_id}.jsonl"),
                     native_status="active",
                     parser_version=parser_version,
                     origin_kind=OriginKind.NATIVE,
@@ -1196,8 +1198,8 @@ class TestInventory:
             "id": "oversized-manual-thread",
             "name": "Long-running manual rollout",
             "preview": "Finish the reviewed native visibility rollout",
-            "path": "C:/codex/sessions/oversized-manual-thread.jsonl",
-            "cwd": "C:/work/session-bridge",
+            "path": native_path("C:/codex/sessions/oversized-manual-thread.jsonl"),
+            "cwd": native_path("C:/work/session-bridge"),
             "createdAt": 100,
             "updatedAt": 300,
             "source": "vscode",
@@ -1265,7 +1267,7 @@ class TestInventory:
         def entry(native_id: str, updated: int) -> dict[str, object]:
             return {
                 "id": native_id,
-                "cwd": f"C:/work/{native_id}",
+                "cwd": native_path(f"C:/work/{native_id}"),
                 "createdAt": updated - 10,
                 "updatedAt": updated,
                 "source": "vscode",
@@ -1311,7 +1313,7 @@ class TestInventory:
         clock = {"now": 100.0}
         row = {
             "id": "late",
-            "cwd": "C:/work/late",
+            "cwd": native_path("C:/work/late"),
             "createdAt": 290,
             "updatedAt": 300,
             "source": "vscode",
@@ -1352,7 +1354,7 @@ class TestInventory:
                 "id": native_id,
                 "name": native_id,
                 "preview": f"Preview {native_id}",
-                "cwd": f"C:/work/{native_id}",
+                "cwd": native_path(f"C:/work/{native_id}"),
                 "createdAt": 290 - index,
                 "updatedAt": 300 - index,
                 "source": "vscode",
@@ -1401,7 +1403,7 @@ class TestInventory:
                 "id": native_id,
                 "name": native_id,
                 "preview": f"Preview {native_id}",
-                "cwd": f"C:/work/{native_id}",
+                "cwd": native_path(f"C:/work/{native_id}"),
                 "createdAt": 290 - index,
                 "updatedAt": 300 - index,
                 "source": "vscode",
@@ -1450,7 +1452,7 @@ class TestInventory:
             "data": [
                 {
                     "id": "first-page",
-                    "cwd": "C:/work/first-page",
+                    "cwd": native_path("C:/work/first-page"),
                     "createdAt": 290,
                     "updatedAt": 300,
                     "source": "vscode",
@@ -1485,7 +1487,7 @@ class TestInventory:
         def entry(native_id: str, updated: int, source: Any, *, archived=False):
             return {
                 "id": native_id,
-                "cwd": f"C:/work/{native_id}",
+                "cwd": native_path(f"C:/work/{native_id}"),
                 "createdAt": updated - 1,
                 "updatedAt": updated,
                 "archived": archived,
@@ -1561,7 +1563,7 @@ class TestInventory:
     ) -> None:
         row = {
             "id": "delegated",
-            "cwd": "C:/work/delegated",
+            "cwd": native_path("C:/work/delegated"),
             "createdAt": 1,
             "updatedAt": 2,
             "source": "vscode",
@@ -1629,7 +1631,7 @@ class TestInventory:
         source = {"subAgent": {"thread_spawn": spawn}}
         row = {
             "id": "spawned",
-            "cwd": "C:/work/spawned",
+            "cwd": native_path("C:/work/spawned"),
             "createdAt": 1,
             "updatedAt": 2,
             "source": source,
@@ -1671,7 +1673,7 @@ class TestInventory:
         }
         row = {
             "id": "bad-spawn",
-            "cwd": "C:/work/bad-spawn",
+            "cwd": native_path("C:/work/bad-spawn"),
             "createdAt": 1,
             "updatedAt": 2,
             "source": source,
@@ -1692,7 +1694,7 @@ class TestInventory:
         sha = "0123456789abcdef0123456789abcdef01234567"
         row = {
             "id": "native-git",
-            "cwd": "C:/work/native-git",
+            "cwd": native_path("C:/work/native-git"),
             "createdAt": 1,
             "updatedAt": 2,
             "source": "vscode",
@@ -1733,8 +1735,8 @@ class TestInventory:
     @pytest.mark.parametrize(
         ("list_metadata", "read_metadata"),
         [
-            ({"cwd": "C:/work/list"}, {"cwd": "C:/work/read"}),
-            ({"gitRoot": "C:/repo/list"}, {"gitRoot": "C:/repo/read"}),
+            ({"cwd": native_path("C:/work/list")}, {"cwd": native_path("C:/work/read")}),
+            ({"gitRoot": native_path("C:/repo/list")}, {"gitRoot": native_path("C:/repo/read")}),
             ({"gitBranch": "feature/list"}, {"gitBranch": "feature/read"}),
             ({"gitHead": "a" * 40}, {"gitInfo": {"sha": "b" * 40}}),
             ({"worktreeId": "wt-list"}, {"worktreeId": "wt-read"}),
@@ -1779,9 +1781,9 @@ class TestInventory:
         }
         read = {
             "id": "read-fill",
-            "cwd": "C:/work/read-fill",
+            "cwd": native_path("C:/work/read-fill"),
             "source": "vscode",
-            "gitRoot": "C:/work",
+            "gitRoot": native_path("C:/work"),
             "gitInfo": {"branch": "feature/read-fill", "sha": sha},
             "worktreeId": "wt-read-fill",
             "turns": [],
@@ -1795,9 +1797,9 @@ class TestInventory:
             client, marker_secret=SECRET
         ).list_claude_visibility_sources(after=0)
 
-        assert candidate.projection.cwd == "C:/work/read-fill"
+        assert candidate.projection.cwd == native_path("C:/work/read-fill")
         assert candidate.projection.git_branch == "feature/read-fill"
-        assert candidate.git_root == "C:/work"
+        assert candidate.git_root == native_path("C:/work")
         assert candidate.git_head == sha
         assert candidate.worktree_id == "wt-read-fill"
         assert candidate.automation_only is False
@@ -1806,9 +1808,9 @@ class TestInventory:
     def test_claude_visibility_accepts_exact_list_and_read_metadata_match(self) -> None:
         sha = "0123456789abcdef0123456789abcdef01234567"
         metadata = {
-            "cwd": "C:/work/exact",
+            "cwd": native_path("C:/work/exact"),
             "source": {"subAgent": "review"},
-            "gitRoot": "C:/work",
+            "gitRoot": native_path("C:/work"),
             "gitInfo": {"branch": "feature/exact", "sha": sha},
             "worktreeId": "wt-exact",
         }
@@ -1846,8 +1848,8 @@ class TestInventory:
                 "id": native_id,
                 "name": native_id,
                 "preview": f"preview for {native_id}",
-                "path": f"C:/codex/sessions/{native_id}.jsonl",
-                "cwd": f"C:/work/{native_id}",
+                "path": native_path(f"C:/codex/sessions/{native_id}.jsonl"),
+                "cwd": native_path(f"C:/work/{native_id}"),
                 "createdAt": updated - 10,
                 "updatedAt": updated,
                 "source": "vscode",
@@ -1897,7 +1899,7 @@ class TestInventory:
             after=250,
             state_db_only=True,
             known_visibility_source_ids=frozenset({"codex:registered"}),
-            skip_native_path=lambda path: path == "C:/codex/sessions/echo.jsonl",
+            skip_native_path=lambda path: path == native_path("C:/codex/sessions/echo.jsonl"),
         )
 
         reads = [params for method, params, _ in client.calls if method == "thread/read"]
@@ -1907,9 +1909,9 @@ class TestInventory:
         # The two skipped sources still carry what the coordinator's exclusion
         # needs: identity, activity and the rollout path.
         assert by_id["registered"].projection.native_path == (
-            "C:/codex/sessions/registered.jsonl"
+            native_path("C:/codex/sessions/registered.jsonl")
         )
-        assert by_id["echo"].projection.native_path == "C:/codex/sessions/echo.jsonl"
+        assert by_id["echo"].projection.native_path == native_path("C:/codex/sessions/echo.jsonl")
         assert by_id["registered"].projection.last_active == 400.0
         assert by_id["fresh"].projection.messages[0].content == (
             "Hydrate only the fresh source"
@@ -1924,7 +1926,7 @@ class TestInventory:
     ) -> None:
         row = {
             "id": "bad-source-kind",
-            "cwd": "C:/work/bad-source-kind",
+            "cwd": native_path("C:/work/bad-source-kind"),
             "createdAt": 1,
             "updatedAt": 2,
             "source": source_kind,
@@ -1952,7 +1954,7 @@ class TestInventory:
     ) -> None:
         row = {
             "id": "conflict",
-            "cwd": "C:/work/conflict",
+            "cwd": native_path("C:/work/conflict"),
             "createdAt": 1,
             "updatedAt": 2,
             "source": "vscode",
@@ -2003,7 +2005,7 @@ class TestInventory:
                     "data": [{
                         "id": "thread-one",
                         "title": "One",
-                        "cwd": "C:/one",
+                        "cwd": native_path("C:/one"),
                         "createdAt": 1783850400,
                         "updatedAt": 1783850700,
                         "archived": False,
@@ -2036,7 +2038,7 @@ class TestInventory:
                         {
                             "id": "thread-cached",
                             "title": "Cached registration",
-                            "cwd": "C:/work/cached",
+                            "cwd": native_path("C:/work/cached"),
                             "createdAt": 1783850400,
                             "updatedAt": 1783850700,
                             "archived": False,
@@ -2134,7 +2136,7 @@ class TestInventory:
         assert summary == CodexThreadSummary(
             native_id="thread-archived",
             title="Archived work",
-            cwd="C:/work/archive",
+            cwd=native_path("C:/work/archive"),
             started_at=1783850000.0,
             last_active=1783850600.0,
             archived=True,
@@ -2203,7 +2205,7 @@ class TestInventory:
         base = {
             "id": "one",
             "title": "Stable",
-            "cwd": "C:/one",
+            "cwd": native_path("C:/one"),
             "createdAt": 100,
             "updatedAt": 200,
             "ephemeral": "first",
@@ -2227,7 +2229,7 @@ class TestInventory:
         first = {
             "id": "one",
             "title": "One",
-            "cwd": "C:/one",
+            "cwd": native_path("C:/one"),
             "createdAt": 100,
             "updatedAt": 200,
             "revision": "r1",
@@ -2278,7 +2280,7 @@ class TestInventory:
                     "data": [{
                         "id": "one",
                         "title": "One",
-                        "cwd": "C:/one",
+                        "cwd": native_path("C:/one"),
                         "createdAt": 100,
                         "updatedAt": 200,
                     }]
@@ -2307,7 +2309,7 @@ class TestInventory:
         row = {
             "id": "one",
             "title": "One",
-            "cwd": "C:/one",
+            "cwd": native_path("C:/one"),
             "createdAt": 100,
             "updatedAt": 200,
             "revision": "r1",
@@ -2342,7 +2344,7 @@ class TestInventory:
         first = {
             "id": "one",
             "title": "Before",
-            "cwd": "C:/before",
+            "cwd": native_path("C:/before"),
             "createdAt": 100,
             "updatedAt": 200,
             "revision": "reused",
@@ -2350,7 +2352,7 @@ class TestInventory:
         changed = {
             **first,
             "title": "After",
-            "cwd": "C:/after",
+            "cwd": native_path("C:/after"),
             "createdAt": 90,
             "updatedAt": 210,
         }
@@ -2364,7 +2366,7 @@ class TestInventory:
 
         assert len(result) == 1
         assert result[0].title == "After"
-        assert result[0].cwd == "C:/after"
+        assert result[0].cwd == native_path("C:/after")
         assert (result[0].started_at, result[0].last_active) == (90.0, 210.0)
 
     def test_inverted_inventory_activity_is_normalized_deterministically(self) -> None:
@@ -2542,7 +2544,7 @@ class TestFindThread:
         row = {
             "id": "thread-active",
             "title": "Cached title",
-            "cwd": "C:/cached",
+            "cwd": native_path("C:/cached"),
             "createdAt": 1,
             "updatedAt": 2,
             "revision": "cached-revision",
@@ -2559,7 +2561,7 @@ class TestFindThread:
 
         assert projection.native_id == "thread-active"
         assert projection.title == "Cached title"
-        assert projection.cwd == "C:/cached"
+        assert projection.cwd == native_path("C:/cached")
         assert [method for method, _params, _timeout in client.calls] == [
             "thread/list",
             "thread/read",
@@ -2685,7 +2687,7 @@ class TestProjection:
         summary = CodexThreadSummary(
             native_id="oversized-catalog-thread",
             title="Long-running catalog task",
-            cwd="C:/work/catalog",
+            cwd=native_path("C:/work/catalog"),
             started_at=100,
             last_active=300,
             archived=False,
@@ -2694,7 +2696,7 @@ class TestProjection:
             git_head="deadbeef",
             source_kind="vscode",
             preview="Keep this meaningful session discoverable",
-            native_path="C:/codex/sessions/oversized-catalog-thread.jsonl",
+            native_path=native_path("C:/codex/sessions/oversized-catalog-thread.jsonl"),
         )
         client = FakeInitializingClient({
             "thread/read": [TimeoutError("synthetic oversized thread")]
@@ -2723,11 +2725,11 @@ class TestProjection:
         )
         assert projection.provider is Provider.CODEX
         assert projection.native_id == "thread-active"
-        assert projection.native_path == "C:/diagnostics/thread-active.jsonl"
+        assert projection.native_path == native_path("C:/diagnostics/thread-active.jsonl")
         assert projection.native_cursor == "revision-1"
         assert projection.native_status == "active"
         assert projection.title == "Active work"
-        assert projection.cwd == "C:/work/active"
+        assert projection.cwd == native_path("C:/work/active")
         assert projection.started_at == 1783850400.0
         assert projection.last_active == 1783850700.0
         assert projection.native_hash and len(projection.native_hash) == 64
@@ -2747,7 +2749,7 @@ class TestProjection:
         item = {"type": "agentMessage", "text": "same"}
         direct = {
             "id": "thread-active",
-            "rollout_path": "C:/diagnostics/alias.jsonl",
+            "rollout_path": native_path("C:/diagnostics/alias.jsonl"),
             "turns": [{"items": [item]}],
         }
         client = FakeInitializingClient({"thread/read": [direct, direct]})
@@ -2756,7 +2758,7 @@ class TestProjection:
         first = adapter.project_thread(_summary())
         second = adapter.project_thread(_summary())
 
-        assert first.native_path == "C:/diagnostics/alias.jsonl"
+        assert first.native_path == native_path("C:/diagnostics/alias.jsonl")
         assert first.messages[0].native_event_id == second.messages[0].native_event_id
         assert len(first.messages[0].native_event_id) == 64
         assert first.native_hash == second.native_hash
@@ -3130,7 +3132,7 @@ class TestBridgeMarkers:
         summary = CodexThreadSummary(
             **{
                 **_summary(native_id=native_id, archived=True).__dict__,
-                "native_path": f"C:/codex/archived/{native_id}.jsonl",
+                "native_path": native_path(f"C:/codex/archived/{native_id}.jsonl"),
             }
         )
         client = FakeInitializingClient({"thread/read": [response]})
@@ -3428,7 +3430,7 @@ def test_visibility_inventory_reuses_projection_across_calls_when_unchanged() ->
             "id": native_id,
             "name": native_id,
             "preview": f"preview for {native_id}",
-            "cwd": f"C:/work/{native_id}",
+            "cwd": native_path(f"C:/work/{native_id}"),
             "createdAt": updated - 10,
             "updatedAt": updated,
             "source": "vscode",
@@ -3492,7 +3494,7 @@ def test_visibility_projection_cache_evicts_oldest_at_capacity(
             "id": native_id,
             "name": native_id,
             "preview": f"preview for {native_id}",
-            "cwd": f"C:/work/{native_id}",
+            "cwd": native_path(f"C:/work/{native_id}"),
             "createdAt": updated - 10,
             "updatedAt": updated,
             "source": "vscode",
@@ -3529,7 +3531,7 @@ def test_visibility_inventory_cache_invalidated_by_summary_revision_change() -> 
             "id": native_id,
             "name": native_id,
             "preview": f"preview for {native_id}",
-            "cwd": f"C:/work/{native_id}",
+            "cwd": native_path(f"C:/work/{native_id}"),
             "createdAt": updated - 10,
             "updatedAt": updated,
             "source": "vscode",
@@ -3642,7 +3644,7 @@ class TestMarkerKeyRotationOriginDetection:
             provider=Provider.CODEX,
             native_id="rotation-thread",
             title="Rotation thread",
-            cwd="C:/work/rotation",
+            cwd=native_path("C:/work/rotation"),
             started_at=100.0,
             last_active=200.0,
             messages=(
@@ -3654,7 +3656,7 @@ class TestMarkerKeyRotationOriginDetection:
                     timestamp=110.0,
                 ),
             ),
-            native_path="C:/codex/sessions/rotation-thread.jsonl",
+            native_path=native_path("C:/codex/sessions/rotation-thread.jsonl"),
             native_status="active",
         )
 

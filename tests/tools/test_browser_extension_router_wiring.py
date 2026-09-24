@@ -36,6 +36,15 @@ def _route_spy(monkeypatch):
 
     monkeypatch.setattr(browser_tool, "routed_browser_handler", spy)
     monkeypatch.setattr(browser_cdp_tool, "routed_browser_handler", spy)
+    # Stub EVERY legacy backend, not just navigate: the real ones run the
+    # agent-browser preflight, which probes the host's node toolchain
+    # (``npx --version`` on a runner that has node) -- host state this
+    # plumbing test must not depend on. ``_fallback_call`` looks the function
+    # up in module globals at call time, so patching the attribute suffices.
+    for _action in BROWSER_ACTIONS:
+        monkeypatch.setattr(
+            browser_tool, _action, lambda _a=_action, **_kw: f"legacy-{_a}"
+        )
     monkeypatch.setattr(
         browser_tool,
         "browser_navigate",

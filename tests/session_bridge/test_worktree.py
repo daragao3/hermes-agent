@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -323,7 +324,17 @@ def test_worktree_validation_fails_closed_after_repository_replacement(
         capture_output=True,
         timeout=10,
     )
-    _remove_tree(repo)
+    if sys.platform == "win32":
+        _remove_tree(repo)
+    else:
+        # The identity is (st_dev, st_ino) per entry. Linux filesystems hand a
+        # just-freed inode number straight back to the next mkdir, so deleting
+        # the repo and re-cloning in place can reproduce every recorded
+        # (dev, ino) pair and the replacement is indistinguishable by
+        # construction (seen on the ubuntu CI runner). Moving the old repo
+        # aside keeps its inodes allocated, so the replacement at the same
+        # path is guaranteed fresh entries -- the scenario this test is about.
+        repo.rename(tmp_path / "repo-replaced")
     subprocess.run(
         ["git", "clone", str(mirror), str(repo)],
         check=True,

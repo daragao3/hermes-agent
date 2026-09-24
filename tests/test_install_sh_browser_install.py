@@ -161,8 +161,16 @@ echo "FINAL_RC=$?"
         # worker cwd=repo_root, so anything this bash harness writes relative
         # to its CWD lands in the shared checkout root. Safe to repoint -- the
         # harness is passed inline via -c and RUNLOG is an absolute path.
+        #
+        # The harness goes in a script FILE, not ``bash -c <harness>``: the
+        # extracted run_with_timeout() says ``kill`` and the harness carries
+        # bare numbers (``-k 10 1 true``), so as one argv element the conftest
+        # live-system guard reads it as ``kill <pid 1>`` -- a live foreign PID
+        # on Linux (init), absent on Windows -- and refuses the spawn.
         with tempfile.TemporaryDirectory(prefix="install_sh_cwd_") as cwd:
-            proc = subprocess.run([BASH, "-c", harness], capture_output=True,
+            script = Path(cwd) / "harness.sh"
+            script.write_bytes(harness.encode("utf-8"))
+            proc = subprocess.run([BASH, script.name], capture_output=True,
                                   text=True, env=env, cwd=cwd)
         runs = Path(runlog).read_text(encoding="utf-8").strip().splitlines()
         final_rc = None

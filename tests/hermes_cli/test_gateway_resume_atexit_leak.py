@@ -38,6 +38,11 @@ import hermes_cli.main as cli_main
 
 fired = []
 cli_main._cold_start_windows_gateway_after_update = lambda: fired.append("SPAWNED")
+# The resume path returns early off Windows; pin the platform so the hazard is
+# demonstrated on every host (CI is Linux), and stub the launcher refresh that
+# precedes the cold start so the child never rewrites real launcher scripts.
+cli_main._is_windows = lambda: True
+cli_main._refresh_windows_gateway_launchers = lambda: None
 # atexit is LIFO: register the reporter FIRST so it runs LAST, after the hook
 # under test has had its chance to fire.
 atexit.register(lambda: print("HOOK_FIRED" if fired else "HOOK_DID_NOT_SPAWN"))
