@@ -107,15 +107,37 @@ def test_scheduling_reconnect_line_is_info():
     assert calls and all(c.func.attr == "info" for c in calls)
 
 
-def test_attempt_line_escalates_only_after_the_first_attempt():
+_THRESHOLD_LEVEL = "logging.WARNING if attempt >= _RECONNECT_WARN_FROM_ATTEMPT else logging.INFO"
+
+
+def test_attempt_line_escalates_only_from_the_measured_threshold():
+    """2026-09-24: 985 episodes, 99.9% healed by attempt 3; the one past it was a real outage."""
     calls = list(_log_calls("Telegram network error (attempt %d/%d)"))
     assert len(calls) == 1 and calls[0].func.attr == "log"
-    level = ast.unparse(calls[0].args[0])
-    assert level == "logging.WARNING if attempt > 1 else logging.INFO"
+    assert ast.unparse(calls[0].args[0]) == _THRESHOLD_LEVEL
+
+
+def test_reconnect_failed_line_uses_the_same_threshold():
+    calls = list(_log_calls("Telegram polling reconnect failed"))
+    assert len(calls) == 1 and calls[0].func.attr == "log"
+    assert ast.unparse(calls[0].args[0]) == _THRESHOLD_LEVEL
+
+
+def test_threshold_value_is_the_measured_one():
+    tree = ast.parse(ADAPTER.read_text(encoding="utf-8"))
+    values = [n.value.value for n in ast.walk(tree) if isinstance(n, ast.Assign)
+              and any(getattr(t, "id", None) == "_RECONNECT_WARN_FROM_ATTEMPT" for t in n.targets)]
+    assert values == [4]
+
+
+def test_first_send_retry_is_info_and_the_second_warns():
+    calls = list(_log_calls("Network error on send (attempt %d/3)"))
+    assert len(calls) == 1 and calls[0].func.attr == "log"
+    assert ast.unparse(calls[0].args[0]) == "logging.WARNING if _send_attempt >= 1 else logging.INFO"
 
 
 def test_heartbeat_degraded_line_is_info():
-    """The ladder it spawns escalates to WARNING from attempt 2; the degraded notice itself was
+    """The ladder it spawns escalates to WARNING from attempt 4; the degraded notice itself was
     6 WARNINGs a night for blips that all healed (2026-09-22)."""
     calls = list(_log_calls("Telegram polling degraded (%s)"))
     assert len(calls) == 1 and calls[0].func.attr == "info"

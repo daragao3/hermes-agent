@@ -110,8 +110,13 @@ async def _send_telegram_message_with_retry(bot, *, attempts: int = 3, **kwargs)
             delay = _telegram_retry_delay(exc, attempt)
             if delay is None or attempt >= attempts - 1:
                 raise
-            logger.warning("Transient Telegram send failure (attempt %d/%d), retrying in %.1fs: %s",
-                           attempt + 1, attempts, delay, _sanitize_error_text(exc))
+            # Flood control (RetryAfter) always WARNs -- it means we are sending too much. A plain
+            # connect-class failure on the first try is the off-box handshake stall the retry heals
+            # (2026-09-24), so INFO; a second failure WARNs.
+            flood = getattr(exc, "retry_after", None) is not None or "flood control" in str(exc).lower()
+            logger.log(logging.WARNING if flood or attempt >= 1 else logging.INFO,
+                       "Transient Telegram send failure (attempt %d/%d), retrying in %.1fs: %s",
+                       attempt + 1, attempts, delay, _sanitize_error_text(exc))
             await asyncio.sleep(delay)
 
 

@@ -505,6 +505,15 @@ class _PollingLifecycleAbort(RuntimeError):
     """Internal control flow for polling startup fenced by teardown."""
 
 
+
+# Reconnect-ladder attempt from which a network failure is logged at WARNING. Measured 2026-09-24
+# over 985 polling-reconnect episodes since 09-15: 94.1% healed on attempt 1, 99.5% by 2, 99.9% by 3;
+# the one episode past 3 (reached 7) was a real outage. The drops are an off-box TLS-handshake stall
+# on the path to api.telegram.org (~25% of handshakes stall ~3.5s; loops
+# telegram-ssl-wantread-ramp-starvation-20260920) that costs no deliveries, so attempts 1-3 are
+# INFO; attempt 4 means ~35s of consecutive failures.
+_RECONNECT_WARN_FROM_ATTEMPT = 4
+
 class TelegramAdapter(BasePlatformAdapter):
     """Telegram bot adapter: users/groups, MarkdownV2 replies, forum topics, media."""
 
@@ -2077,11 +2086,10 @@ class TelegramAdapter(BasePlatformAdapter):
             await self._go_fatal_network(message, "[%s] %s Last error: %s", self.name, message, _describe_transport_error(error))
             return
         delay = min(BASE_DELAY * (2 ** (attempt - 1)), MAX_DELAY)
-        # INFO on the first attempt: a single transient drop (VPN/TLS, 1-13/h on this box, measured
-        # 2026-09-22) recovers on it and printed two WARNING lines per blip to the console. A second
-        # consecutive failure is what an operator needs to see.
+        # INFO until _RECONNECT_WARN_FROM_ATTEMPT (see its comment): a transient drop that the next
+        # retry or two heals is not an outage; ~35s of consecutive failures is.
         logger.log(
-            logging.WARNING if attempt > 1 else logging.INFO,
+            logging.WARNING if attempt >= _RECONNECT_WARN_FROM_ATTEMPT else logging.INFO,
             "[%s] Telegram network error (attempt %d/%d), reconnecting in %ds. Error: %s", self.name, attempt,
             MAX_NETWORK_RETRIES, delay, _describe_transport_error(error))
         await asyncio.sleep(delay)
@@ -2113,7 +2121,10 @@ class TelegramAdapter(BasePlatformAdapter):
         except Exception as retry_err:
             if self._teardown_started:
                 return
-            logger.warning("[%s] Telegram polling reconnect failed: %s", self.name, _describe_transport_error(retry_err))
+            # Same threshold as the ladder line: the chained retry below logs the next attempt anyway.
+            logger.log(
+                logging.WARNING if attempt >= _RECONNECT_WARN_FROM_ATTEMPT else logging.INFO,
+                "[%s] Telegram polling reconnect failed: %s", self.name, _describe_transport_error(retry_err))
             # Polling is dead and no more error callbacks will fire — chain the retry ourselves.
             if not self.has_fatal_error and not self._teardown_started:
                 task = asyncio.ensure_future(self._handle_polling_network_error(retry_err))
@@ -3439,8 +3450,11 @@ class TelegramAdapter(BasePlatformAdapter):
                 if _send_attempt >= 2:
                     raise
                 wait = 2 ** _send_attempt
-                logger.warning("[%s] Network error on send (attempt %d/3), retrying in %ds: %s",
-                               self.name, _send_attempt + 1, wait, _redact_telegram_error_text(send_err))
+                # INFO on the first retry: the off-box handshake stall heals on it; a second retry, or the
+                # raise above once retries are spent, is what reaches the console.
+                logger.log(logging.WARNING if _send_attempt >= 1 else logging.INFO,
+                           "[%s] Network error on send (attempt %d/3), retrying in %ds: %s",
+                           self.name, _send_attempt + 1, wait, _redact_telegram_error_text(send_err))
                 await asyncio.sleep(wait)
             except Exception as send_err:
                 retry_after = getattr(send_err, "retry_after", None)
