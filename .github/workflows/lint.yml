@@ -242,7 +242,10 @@ jobs:
       - name: Presence assertions cannot be satisfied by their own test name
         if: github.event_name == 'pull_request'
         run: |
-          git fetch --no-tags --deepen=200 origin "${{ github.base_ref }}" || true
+          # Deepen BOTH sides: the checkout is depth 1, so without HEAD in the
+          # fetch there is no merge base ("no merge base", PR #9 run 35957671171).
+          # Same shape as the public-surface diff step below.
+          git fetch --no-tags --deepen=200 origin "${{ github.base_ref }}" HEAD || true
           uv run --no-sync python scripts/check_testname_assertion_vacuity.py --diff "origin/${{ github.base_ref }}"
 
       # The Sep 2026 decomposition kept old import paths alive for external plugins
