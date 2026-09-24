@@ -304,7 +304,10 @@ describe('status-chrome timers under an occluding overlay', () => {
     nowSpy.mockReturnValue(T0 + 300_000)
     rule.clear()
     resetOverlayState()
-    await flush()
+    // Wait for the re-render rather than a fixed 20ms `flush()`: on a loaded
+    // runner Ink's next frame can land later, and `output()` was read as ''
+    // (CI, PR #9 run 36011355696). Same assertion, just not racing the frame.
+    await vi.waitFor(() => expect(rule.output()).toContain('6m 0s'), { interval: 20, timeout: 2000 })
 
     const resumed = rule.output()
 
