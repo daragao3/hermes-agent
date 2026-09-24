@@ -69,6 +69,11 @@ VALID_STAGES = (
     "review",
     "approved",
     "tailoring",
+    # Operator release lanes (tracker_mailbox intents, jobflow_approval_queue /
+    # jobflow_assisted_apply) write these; the 2026-09-23 console warned on
+    # every operator "ready" because this list predated them.
+    "ready",
+    "applying",
     "ready_to_submit",
     "awaiting_approval",  # LangGraph HITL pause
     "submitted",
@@ -94,6 +99,7 @@ KNOWN_SOURCES = (
     "manual_submission",   # Diego did it by hand
     "chrome_extension",    # job-filler extension
     "operator_api",        # apply_packet_operator.py
+    "tracker_mailbox",     # intent_applier: dashboard intents via mailbox/tracker
     "tailor",              # agent
     "matcher",             # agent
     "scout",               # agent

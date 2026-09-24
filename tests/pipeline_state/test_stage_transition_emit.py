@@ -205,3 +205,28 @@ class TestStageTransitionEmit:
         assert payload["prior_stage"] is None
         assert payload["new_stage"] == "discovered"
         assert payload["title"] == "Something New"
+
+
+@pytest.mark.parametrize("stage,source", [
+    ("ready", "tracker_mailbox"),   # operator release via intent_applier (2026-09-23 console)
+    ("applying", "dashboard"),
+])
+def test_live_operator_stages_and_sources_are_known(pipeline_with_one_job, caplog, stage, source):
+    import logging
+
+    with patch("pipeline_state.manager.PipelineManager._emit_stage_transition"), \
+            caplog.at_level(logging.WARNING, logger="pipeline_state.manager"):
+        pipeline_with_one_job.update_stage(
+            job_id="linkedin-test-1", new_stage=stage, actor="diego", source=source)
+    assert not [r for r in caplog.records if "not in" in r.getMessage()]
+
+
+def test_unknown_stage_still_warns(pipeline_with_one_job, caplog):
+    import logging
+
+    with patch("pipeline_state.manager.PipelineManager._emit_stage_transition"), \
+            caplog.at_level(logging.WARNING, logger="pipeline_state.manager"):
+        pipeline_with_one_job.update_stage(
+            job_id="linkedin-test-1", new_stage="redy", actor="diego", source="tracker_mailbox")
+    assert [r.getMessage() for r in caplog.records] == [
+        "update_stage: new_stage='redy' not in VALID_STAGES; accepting anyway"]

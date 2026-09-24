@@ -481,3 +481,37 @@ class TestMemoryMdErrorTruncation:
         assert len(out) < 700
         assert out.count("\n## ") == 1          # exactly one '## Event' header, none smuggled in by the error
         assert "- keep me" in out
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit logging (2026-09-23: one WARNING per refused write flooded the
+# gateway console with ~330 identical lines during a score backfill)
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limited_writes_log_once_then_summarise(tmp_path, caplog):
+    import logging
+
+    writer = MemoryWriter(EventBus(db_path=tmp_path / "events" / "test.db"))
+    events = [
+        Event.create(EventType.STAGE_TRANSITION, "tracker",
+                     {"job_id": f"j{i}", "new_stage": "review"}, correlation_id=f"c{i}")
+        for i in range(25)
+    ]
+    with patch.object(writer, "_write_to_target") as write, \
+            caplog.at_level(logging.WARNING, logger="events.subscribers.memory_writer"):
+        for ev in events[:15]:
+            writer.handle(ev)
+        # gbrain cap is 10/h: 10 written, 5 refused -> exactly one line.
+        gbrain_writes = [c for c in write.call_args_list if c.args[0] == "gbrain"]
+        assert len(gbrain_writes) == 10
+        drop_lines = [r.getMessage() for r in caplog.records if "gbrain" in r.getMessage()]
+        assert len(drop_lines) == 1
+        assert "dropping" in drop_lines[0] and "queuing" not in drop_lines[0]
+
+        # Window frees up: the next accepted write reports the refused count.
+        writer._rate_counters["gbrain"].clear()
+        caplog.clear()
+        writer.handle(events[15])
+        summary = [r.getMessage() for r in caplog.records if "gbrain" in r.getMessage()]
+        assert summary == ["MemoryWriter: 5 gbrain write(s) were dropped by the rate limit"]

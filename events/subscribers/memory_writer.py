@@ -141,6 +141,11 @@ class MemoryWriter(BaseSubscriber):
     def __init__(self, bus: EventBus):
         super().__init__(bus)
         self._rate_counters: Dict[str, List[float]] = defaultdict(list)
+        # Writes refused by the per-target cap since that target last had
+        # room. Logged as ONE line when the drop run starts and one summary
+        # when it ends, not one WARNING per refused write: a 345-event score
+        # backfill (2026-09-23) printed ~330 identical lines in one second.
+        self._rate_dropped: Dict[str, int] = defaultdict(int)
         self._seen_correlation_ids: Dict[str, float] = {}  # correlation_id → timestamp
         self._DEDUP_WINDOW = 86400  # 24 hours
         # Cached MemPalace Chroma collection — None means "not loaded yet".
@@ -169,8 +174,20 @@ class MemoryWriter(BaseSubscriber):
 
         for target in routing["targets"]:
             if not self._check_rate_limit(target):
-                logger.warning("MemoryWriter: rate limit hit for %s, queuing", target)
+                # Nothing re-delivers a refused write -- it is dropped, and
+                # the log says so (until 2026-09-23 it claimed "queuing").
+                self._rate_dropped[target] += 1
+                if self._rate_dropped[target] == 1:
+                    limit = RATE_LIMITS.get(target, {}).get("max_per_hour", 20)
+                    logger.warning(
+                        "MemoryWriter: rate limit (%d/h) reached for %s; dropping "
+                        "writes until the window frees up (count logged then)",
+                        limit, target)
                 continue
+            dropped = self._rate_dropped.pop(target, 0)
+            if dropped:
+                logger.warning("MemoryWriter: %d %s write(s) were dropped by the rate limit",
+                               dropped, target)
             try:
                 content = self._build_content(event, target)
                 self._write_to_target(target, event, content)

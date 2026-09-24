@@ -45,8 +45,10 @@ from __future__ import annotations
 
 import atexit
 import base64
+import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 _LOCK = threading.Lock()
@@ -58,6 +60,51 @@ _PROVIDER = None  # TracerProvider | None
 # source-side and retention-side definitions of "infrastructure" agree.
 _INFRA_SAMPLE_DEFAULT = 0.02
 _INFRA_PREFIXES_DEFAULT = "subscriber.handle"
+
+
+# The OTLP HTTP exporter logs every retry attempt at WARNING and every
+# abandoned batch at ERROR, so a Langfuse that is simply not up yet (Docker
+# still starting after a reboot, 2026-09-23) printed three lines every ~30s
+# for as long as it stayed down -- 42 lines in 13 minutes of one boot.
+_EXPORTER_LOGGER = "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+_EXPORT_FAILURE_LOG_INTERVAL_S = 600.0
+
+
+class _ExportFailureLogThrottle(logging.Filter):
+    """Demote per-attempt retry chatter to DEBUG and let at most one
+    abandoned-batch ERROR through per interval, carrying the count it hid.
+
+    Spans are dropped either way; this only changes how loudly. Every
+    "Failed to export span batch" variant shares the one budget (an HTTP 401
+    still surfaces, once per interval); other exporter messages pass untouched.
+    """
+
+    def __init__(self, interval_s: float = _EXPORT_FAILURE_LOG_INTERVAL_S,
+                 clock=time.monotonic):
+        super().__init__()
+        self._interval_s = interval_s
+        self._clock = clock
+        self._last_emitted = None
+        self._suppressed = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if msg.startswith("Transient error"):
+            record.levelno, record.levelname = logging.DEBUG, "DEBUG"
+            return True
+        if not msg.startswith("Failed to export span batch"):
+            return True
+        now = self._clock()
+        if self._last_emitted is not None and now - self._last_emitted < self._interval_s:
+            self._suppressed += 1
+            return False
+        self._last_emitted = now
+        if self._suppressed:
+            record.msg = (f"{msg} ({self._suppressed} more batch(es) dropped since the last "
+                          f"report; is Langfuse up at LANGFUSE_HOST?)")
+            record.args = None
+            self._suppressed = 0
+        return True
 
 
 def _infra_sampling_config() -> "tuple[tuple[str, ...], float]":
@@ -273,6 +320,7 @@ def ensure_initialized(service_name: str = "hermes") -> None:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+        logging.getLogger(_EXPORTER_LOGGER).addFilter(_ExportFailureLogThrottle())
         auth = base64.b64encode(f"{pk}:{sk}".encode("utf-8")).decode("ascii")
         exporter = OTLPSpanExporter(
             endpoint=f"{host}/api/public/otel/v1/traces",

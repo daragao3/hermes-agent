@@ -1271,6 +1271,19 @@ class TestLatchedChangeDetection:
         assert route.attention is Attention.INFO
         assert route.wa_tier is None
 
+    def test_all_clear_logs_cleared_at_info_not_an_empty_warning(self, bus, caplog):
+        import logging
+
+        monitor = ResourcePressureMonitor(bus, re_alert_cooldown_seconds=900.0)
+        with caplog.at_level(logging.INFO, logger="events.producers.resource_monitor"):
+            assert monitor.evaluate(make_sample(commit_pct=88.0), now=0.0)
+            monitor.evaluate(make_sample(commit_pct=79.0), now=60.0)
+        lines = [(r.levelno, r.getMessage()) for r in caplog.records
+                 if r.getMessage().startswith("Resource pressure")]
+        assert [lvl for lvl, _ in lines] == [logging.WARNING, logging.INFO]
+        assert lines[0][1].startswith("Resource pressure: commit_high — ")
+        assert lines[1][1].startswith("Resource pressure cleared — ")
+
     def test_partial_clear_stays_bus_only(self, bus):
         from events.noise_guards import is_sustained_resource_repeat
 

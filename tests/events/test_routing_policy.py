@@ -1134,3 +1134,33 @@ def test_critical_tier_degraded_is_not_floored():
 
     assert route.verdict.state is OutcomeState.DEGRADED
     assert route.priority is not Priority.CRITICAL
+
+
+# ------------------------------------------------ matcher stage transitions
+
+@pytest.mark.parametrize("new_stage", ["review", "scored", "archived"])
+def test_matcher_stage_transition_is_batched_trace(new_stage):
+    """A bulk score (2026-09-23: 345 transitions in one minute) must batch,
+    not fan out one Telegram send per job into flood control."""
+    route = classify(make_event(
+        EventType.STAGE_TRANSITION,
+        {"prior_stage": "discovered", "new_stage": new_stage, "actor": "matcher"},
+        source="mailbox:matcher",
+    ))
+
+    assert route.attention is Attention.TRACE
+    assert route.batch is True
+    assert route.topic_key == JOBFLOW
+    assert route.wa_tier is None
+
+
+@pytest.mark.parametrize("actor", ["operator", "tailor", "tracker_mailbox", "diego", None])
+def test_non_matcher_stage_transition_keeps_info_route(actor):
+    route = classify(make_event(
+        EventType.STAGE_TRANSITION,
+        {"prior_stage": "review", "new_stage": "approved", "actor": actor},
+    ))
+
+    assert route.attention is Attention.INFO
+    assert route.batch is False
+    assert route.topic_key == JOBFLOW

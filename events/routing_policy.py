@@ -545,6 +545,20 @@ def classify(
             attention = Attention.INFO
             wa = "none"
 
+    elif et == EventType.STAGE_TRANSITION:
+        # Matcher triage is machine telemetry, the same signal JOB_SCORED
+        # already carries as TRACE (2026-09-23). Left at INFO, every
+        # transition was its own Telegram send: one 345-job score backfill
+        # became 337 individual jobflow_firehose messages over 17 minutes
+        # behind Telegram flood control, and a --replace that landed mid-
+        # backlog hung the old gateway's shutdown drain for 190s until it
+        # was force-killed. Batched, the same backfill is ~17 digests. The
+        # jobs worth a look still page individually as JOB_HIGH_SCORE, and
+        # human/operator/tailor/applier transitions keep their INFO route.
+        if str(payload.get("actor") or "").strip().lower() == "matcher":
+            attention = Attention.TRACE
+            wa = "none"
+
     elif et == EventType.JOB_HIGH_SCORE:
         try:
             score = float(payload.get("score", 0) or 0)

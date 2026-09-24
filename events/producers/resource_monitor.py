@@ -1002,11 +1002,16 @@ class ResourcePressureMonitor:
             "%.0f ms" % sample.spawn_latency_ms
             if sample.spawn_latency_ms >= 0 else "n/a"
         )
-        logger.warning(
-            "Resource pressure: %s — commit %.1f%% (%.1f/%.1f GB) · "
+        # The all_clear falling edge carries no latched axis, so the WARNING
+        # form rendered "Resource pressure:  — ..." with an empty reason list
+        # (2026-09-23). Say what it is, at INFO -- the same demotion the
+        # notification path gives it (routing_policy, formatting).
+        cleared = change == "all_clear"
+        (logger.info if cleared else logger.warning)(
+            "Resource pressure%s — commit %.1f%% (%.1f/%.1f GB) · "
             "phys %.1f%% (%.1f GB avail) · "
             "pagefile %.1f GB (+%.1f GB/%.0fm) · C: %.1f GB free · spawn %s",
-            ",".join(reasons),
+            " cleared" if cleared else ": " + ",".join(reasons),
             payload["commit_pct"], payload["commit_used_gb"], payload["commit_limit_gb"],
             payload["phys_used_pct"], payload["phys_available_gb"],
             payload["pagefile_allocated_gb"], payload["pagefile_growth_gb_10min"],
