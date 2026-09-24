@@ -126,6 +126,62 @@ _OFFER_PATTERNS = [
     re.compile(r"\bextended\s+an?\s+offer", re.I),
 ]
 
+# ---- NOTIFICATION text + employer-mail gate (2026-09-23, loops interview-detection-field-fix-20260923)
+#
+# THE FIELD BUG. This branch used to match on inner ``body`` + ``summary``. Every real NOTIFICATION
+# envelope on disk (203 across all mailboxes, 2026-09-23: sentinel 166, notifier 22, devflow 15)
+# carries its text in ``formatted_message``; ``body``/``summary`` were empty on all of them, so the
+# interview/offer patterns could never match. The text is now built from every key a producer is
+# known to populate, in this order, exact duplicates dropped, capped.
+#
+# THE GATE, and why it is the fix rather than a side issue. NOTIFICATION is an INTERNAL channel by
+# protocol (profiles/main/workspace/PROTOCOLS.md 2.15: "Notifier --> Jaum ... a formatted
+# notification ready to be delivered to the user"), and every envelope measured is internal: VIP-scan
+# summaries, morning digests, DevFlow reports. None is employer mail. Reading their text is exactly
+# where a false page comes from -- a digest line such as "Phone screen with Acme on Thursday" is the
+# PIPELINE restating state, not an employer writing, and INTERVIEW/OFFER_SIGNAL is ACT class (pages
+# WhatsApp). The patterns fire on none of today's 203 envelopes (three digests say "Responses /
+# interviews / offers: 0", which no pattern matches), but that is luck about wording, not a
+# property. So the patterns are unchanged and detection runs only on an envelope that DECLARES
+# external employer mail (``origin`` / ``type`` / ``notification_type`` in
+# _EMPLOYER_MAIL_ORIGINS). No producer sets that today -- the channel carries no employer mail -- so
+# this branch stays silent until one does, and when one does it reads the right field.
+_NOTIFICATION_TEXT_KEYS = (
+    "formatted_message", "message_text", "subject", "title", "body", "summary", "message", "text",
+)
+_NOTIFICATION_TEXT_CAP = 8000
+_EMPLOYER_MAIL_ORIGINS = frozenset({"employer_email", "external_email", "inbound_email"})
+
+
+def _notification_text(inner: Dict[str, Any]) -> str:
+    """Every populated text field of a NOTIFICATION, in _NOTIFICATION_TEXT_KEYS order, deduped, capped."""
+    parts: List[str] = []
+    seen: set = set()
+    for key in _NOTIFICATION_TEXT_KEYS:
+        value = inner.get(key)
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        parts.append(value)
+    return "\n".join(parts)[:_NOTIFICATION_TEXT_CAP]
+
+
+def _is_employer_mail(inner: Dict[str, Any]) -> bool:
+    """True only for an envelope that declares it carries mail from an employer (see the gate note)."""
+    for key in ("origin", "type", "notification_type"):
+        value = inner.get(key)
+        if isinstance(value, str) and value.strip().lower() in _EMPLOYER_MAIL_ORIGINS:
+            return True
+    return False
+
+
+def _signal_excerpt(text: str, match: "re.Match[str]", width: int = 160) -> str:
+    start = max(0, match.start() - width)
+    return " ".join(text[start:match.end() + width].split())[:2 * width + 40]
+
 
 def _stage_transition_payload(
     d: Dict[str, Any], from_agent: Optional[str] = None
@@ -781,14 +837,18 @@ class MailboxTranslator(BaseSubscriber):
         elif message_type == "ERROR":
             results.append((EventType.AGENT_ERROR, _agent_error_payload(inner), None))
 
-        elif message_type == "NOTIFICATION":
-            body = str(inner.get("body", "")) + " " + str(inner.get("summary", ""))
-            if any(p.search(body) for p in _INTERVIEW_PATTERNS):
-                results.append((EventType.INTERVIEW_SIGNAL, _copy_fields(
-                    inner, ["company", "title", "job_key", "body"]), None))
-            elif any(p.search(body) for p in _OFFER_PATTERNS):
-                results.append((EventType.OFFER_SIGNAL, _copy_fields(
-                    inner, ["company", "title", "job_key", "body"]), None))
+        elif message_type == "NOTIFICATION" and _is_employer_mail(inner):
+            # Gated to declared employer mail; see the note above _NOTIFICATION_TEXT_KEYS.
+            text = _notification_text(inner)
+            for et, patterns in ((EventType.INTERVIEW_SIGNAL, _INTERVIEW_PATTERNS),
+                                 (EventType.OFFER_SIGNAL, _OFFER_PATTERNS)):
+                match = next((m for m in (pat.search(text) for pat in patterns) if m), None)
+                if match is not None:
+                    signal = _copy_fields(inner, ["company", "title", "job_key", "body"])
+                    # whatsapp_escalator renders `detail`; before this it was never set.
+                    signal["detail"] = _signal_excerpt(text, match)
+                    results.append((et, signal, None))
+                    break
 
         return results
 

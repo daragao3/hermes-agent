@@ -667,7 +667,10 @@ def test_cursor_advances_after_poll(bus):
 
 
 def test_notification_interview_keyword_emits_interview_signal(bus):
+    # Declares employer mail: since 2026-09-23 NOTIFICATION signals fire only on envelopes that do
+    # (the channel is internal by protocol; see mailbox_translator._EMPLOYER_MAIL_ORIGINS).
     _mailbox_event(bus, "NOTIFICATION", {
+        "origin": "employer_email",
         "body": "Interview scheduled with Acme next Tuesday",
         "company": "Acme",
     })
@@ -678,6 +681,7 @@ def test_notification_interview_keyword_emits_interview_signal(bus):
 
 def test_notification_offer_keyword_emits_offer_signal(bus):
     _mailbox_event(bus, "NOTIFICATION", {
+        "origin": "employer_email",
         "body": "We are pleased to offer you the Director of Finance role",
         "company": "BigCo",
     })
