@@ -893,3 +893,30 @@ class TestReapConvergedPartials:
         bad.write_text("{not valid", encoding="utf-8")
         assert a.reap_converged_partials() == {"bad_APPROVAL_INTENT_main.rd5.json": "skipped"}
         assert bad.exists()
+
+
+class TestMirrorFileNameIsFilesystemSafe:
+    """2026-09-24: a `scout:` job id put a colon in the mirror's file name. On
+    NTFS that writes an alternate data stream on a file named `..._scout`, the
+    rename then fails (WinError 87), and the operator's archive of Lazard and
+    Wells Fargo was stranded in partial/. Real filesystem, no mocks on the path."""
+
+    def test_colon_job_id_mirrors_to_a_real_json_file_with_the_exact_id(
+            self, tmp_path, mailbox, pipeline_path):
+        a = _make_applier(tmp_path, mailbox, pipeline_path)
+        payload = json.loads(json.dumps(VALID_INTENT_PAYLOAD))
+        payload["job_id"] = "scout:62ebe11612d83db9"
+        payload["idempotency_key"] = "tracker-intent:approval_intent:scout-62:approved"
+        f = write_intent(mailbox["inbox"], "intent_INTENT_scout_62.json", payload)
+
+        assert a.apply_one(f) == "applied"
+
+        updates = _pipeline_updates(mailbox["inbox"])
+        assert len(updates) == 1
+        assert ":" not in updates[0].name
+        assert updates[0].name.endswith("_PIPELINE_UPDATE_operator_scout_62.json")
+        body = json.loads(updates[0].read_text(encoding="utf-8"))
+        assert body["job_id"] == body["payload"]["job_id"] == "scout:62ebe11612d83db9"
+        # nothing stranded, no stray extension-less debris beside it
+        assert not list(mailbox["partial"].iterdir())
+        assert all(p.suffix == ".json" for p in mailbox["inbox"].iterdir() if p.is_file())

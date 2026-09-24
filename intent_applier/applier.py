@@ -106,6 +106,8 @@ _STAGE_SATISFIED_BY: dict[str, frozenset[str]] = {
 # (they end in the poster tag, e.g. ``_main`` or a job8 hex), so a trailing
 # ``.rdN`` on the stem is unambiguously the applier's own re-drive counter.
 _REDRIVE_MARKER_RE = re.compile(r"\.rd(\d+)$")
+# Anything but these in a job id must not reach a file name (see the mirror writer).
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 
 
 class IntentApplier:
@@ -481,9 +483,15 @@ class IntentApplier:
                     "metadata": metadata,
                 },
             }
+            # The id fragment is only a human hint (the body carries the exact
+            # job_id), so it is reduced to filename-safe characters. Raw, a
+            # `scout:` key put a colon in the name: on NTFS `x_scout:62.json.tmp`
+            # silently writes an alternate data stream on a file named `x_scout`,
+            # then the rename fails with WinError 87 and the operator decision is
+            # stranded in partial/ (2026-09-24, Lazard + Wells Fargo archives).
             fname = (
                 f"{now.strftime('%Y%m%dT%H%M%S%fZ')}_PIPELINE_UPDATE_operator_"
-                f"{str(msg.job_id)[:8]}.json"
+                f"{_UNSAFE_FILENAME_CHARS.sub('_', str(msg.job_id)[:8])}.json"
             )
             # mkdir like every other writer here (_move_to does): an absent
             # inbox is a FileNotFoundError, i.e. exactly the silent-loss shape.
