@@ -3259,7 +3259,14 @@ def quarantine_claude_transcript(
             "Claude quarantine parent is a symlink or unsafe"
         ) from None
     destination = destination_root / f"{expected_id}.jsonl"
-    if destination.exists() or _path_is_redirect(destination):
+    # Redirect first: a dangling symlink reports exists() == False, and a live
+    # one reports True, so checking existence first would name a planted
+    # symlink as an ordinary collision.
+    if _path_is_redirect(destination):
+        raise UnsafeCharacterizationCleanup(
+            "Claude quarantine target is a symlink or redirect"
+        )
+    if destination.exists():
         raise UnsafeCharacterizationCleanup("Claude quarantine target already exists")
     descriptor = -1
     try:

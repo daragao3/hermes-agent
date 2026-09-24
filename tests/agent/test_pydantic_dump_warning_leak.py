@@ -11,6 +11,7 @@ Every Hermes serialization helper that dumps arbitrary SDK models must pass
 tests pin that contract for all four helpers.
 """
 
+import inspect
 import warnings
 
 import pytest
@@ -25,6 +26,7 @@ from anthropic.types import (
     RawContentBlockDeltaEvent,
     RawContentBlockStartEvent,
     RawMessageStartEvent,
+    TextBlock,
     Usage,
 )
 
@@ -53,9 +55,35 @@ def _accumulated_stop_event():
         delta={"type": "text_delta", "text": "hello"},
     )
     snapshot = None
+    # anthropic 1.x made the per-block partial-JSON buffer an explicit,
+    # required keyword (the stream owns it); older SDKs have no such param.
+    extra = (
+        {"json_bufs": {}}
+        if "json_bufs" in inspect.signature(accumulate_event).parameters
+        else {}
+    )
     for event in (start, cb_start, cb_delta):
-        snapshot = accumulate_event(event=event, current_snapshot=snapshot)
-    return build(ParsedMessageStopEvent, type="message_stop", message=snapshot), snapshot
+        snapshot = accumulate_event(event=event, current_snapshot=snapshot, **extra)
+    stop = build(ParsedMessageStopEvent, type="message_stop", message=snapshot)
+    if not _dump_warns(stop):
+        # anthropic 1.x typed ParsedMessage.content with ParsedTextBlock, so the
+        # accumulator's own output no longer mismatches its union. The guards
+        # still matter for any block the union does not expect, so keep the
+        # fixture honest by seating the mismatch explicitly: a plain TextBlock
+        # where the union now expects ParsedTextBlock (the old SDK bug, reversed).
+        block = snapshot.content[0]
+        snapshot.content[0] = TextBlock.construct(
+            type="text", text=block.text, citations=getattr(block, "citations", None)
+        )
+        stop = build(ParsedMessageStopEvent, type="message_stop", message=snapshot)
+    return stop, snapshot
+
+
+def _dump_warns(model):
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        model.model_dump()
+    return bool(_pydantic_warnings(recorded))
 
 
 def _pydantic_warnings(recorded):

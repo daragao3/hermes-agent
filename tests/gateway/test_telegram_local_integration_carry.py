@@ -80,6 +80,19 @@ def test_real_ptb_registration_in_fresh_interpreter():
     from pathlib import Path
     from hermes_constants import real_executable
     from hermes_cli._subprocess_compat import run_text_capture
+
+    # REAL python-telegram-bot is the point of this test. It ships in the
+    # lazy-installed `messaging` extra, which CI's `uv sync` deliberately does
+    # not install (see .github/workflows/tests.yml), so skip -- rather than
+    # fail on "No module named 'telegram'" -- where it is absent. Probe the
+    # SAME fresh interpreter the test uses: pytest.importorskip would be fooled
+    # by tests/gateway/conftest.py's MagicMock `telegram` in sys.modules.
+    probe = run_text_capture(
+        [real_executable(), "-c", "import telegram.ext"], timeout=20,
+        cwd=Path(__file__).resolve().parents[2],
+    )
+    if probe.returncode != 0 and "No module named 'telegram" in (probe.stderr or ""):
+        pytest.skip("python-telegram-bot (messaging extra) is not installed")
     code = """
 import asyncio
 from unittest.mock import Mock, AsyncMock

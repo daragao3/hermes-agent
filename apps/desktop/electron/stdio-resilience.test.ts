@@ -29,13 +29,13 @@ const throwingStream = (code: string) => {
   const error = Object.assign(new Error(`${code}: broken pipe, write`), { code })
 
   return {
-    write: vi.fn(() => {
+    write: vi.fn((..._args: unknown[]): boolean => {
       throw error
     })
   }
 }
 
-const okStream = () => ({ write: vi.fn(() => true) })
+const okStream = () => ({ write: vi.fn((..._args: unknown[]) => true) })
 
 describe('isBrokenPipeError', () => {
   it('recognises the codes that mean "nobody is reading"', () => {

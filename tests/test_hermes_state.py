@@ -6520,10 +6520,29 @@ class TestExecuteReadRetry:
             if got:
                 db._lock.release()
 
-    def test_read_runs_on_a_pooled_connection_without_the_writer_lock(self, db):
+    def test_read_runs_on_a_pooled_connection_without_the_writer_lock(
+        self, tmp_path, monkeypatch
+    ):
         """Under WAL the helper runs fn on a pooled read-only connection with
         ``self._lock`` NOT held (WAL readers never block on the writer; queueing
-        reads behind writer flushes was the pre-0.21.1 shape this replaces)."""
+        reads behind writer flushes was the pre-0.21.1 shape this replaces).
+
+        Builds its own DB with the WAL-reset gate lifted: the pooled path is
+        WAL-only, and the gate keeps a vulnerable SQLite (the 3.11 venvs here
+        and in CI link 3.46 / 3.50) in DELETE mode, where this path cannot run.
+        """
+        monkeypatch.setattr(
+            hermes_state_wal,
+            "is_sqlite_wal_reset_vulnerable",
+            lambda version_info=None: False,
+        )
+        db = SessionDB(db_path=tmp_path / "wal_state.db")
+        try:
+            self._assert_pooled_read_without_writer_lock(db)
+        finally:
+            db.close()
+
+    def _assert_pooled_read_without_writer_lock(self, db):
         assert db._wal_active  # the pooled path is WAL-only; guard the premise
         db.create_session("s1", source="cli")
         observed = {}

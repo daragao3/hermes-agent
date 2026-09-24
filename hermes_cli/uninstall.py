@@ -1,5 +1,6 @@
 """Hermes Agent Uninstaller."""
 
+import ntpath
 import os
 import shutil
 import subprocess
@@ -293,13 +294,17 @@ def remove_path_from_windows_registry(hermes_home: Path, *, include_managed_bin:
 def _normalize_registry_path(value) -> str:
     """Comparable form of a path stored in HKCU\\Environment: %VAR%s expanded (REG_EXPAND_SZ),
     slashes/case folded, trailing separator dropped. Not ``resolve()``: the stored path may no
-    longer exist, and a symlink must not make a different home read as this one."""
-    return os.path.normcase(os.path.normpath(os.path.expandvars(str(value)))).rstrip("\\/")
+    longer exist, and a symlink must not make a different home read as this one.
+
+    Spelled with ``ntpath``, not ``os.path``: registry values are always Windows paths, so the
+    comparison must fold case/slashes and expand ``%VAR%`` identically on every host (identical to
+    ``os.path`` on Windows, where this runs; the POSIX flavour would leave all three untouched)."""
+    return ntpath.normcase(ntpath.normpath(ntpath.expandvars(str(value)))).rstrip("\\/")
 
 
 def _is_under(path: str, root: str) -> bool:
     """``path`` == ``root`` or lies inside it (both already ``_normalize_registry_path``-ed)."""
-    return path == root or path.startswith(root + os.sep)
+    return path == root or path.startswith(root + ntpath.sep)
 
 
 def remove_hermes_env_vars_windows(hermes_home: Path) -> list[str]:
@@ -679,10 +684,10 @@ def _perform_uninstall(
          remove_path_from_shell_configs, "Updated {}", "No PATH entries found to remove in shell rc files"),
         (windows, "Removing PATH entries from Windows User environment...",
          lambda: remove_path_from_windows_registry(
-             Path(os.path.expandvars(str(hermes_home))), include_managed_bin=sweep_managed_bin),
+             Path(ntpath.expandvars(str(hermes_home))), include_managed_bin=sweep_managed_bin),
          "Removed from User PATH: {}", "No Hermes-owned PATH entries in User environment"),
         (windows, "Removing HERMES_HOME / HERMES_GIT_BASH_PATH User env vars...",
-         lambda: remove_hermes_env_vars_windows(Path(os.path.expandvars(str(hermes_home)))),
+         lambda: remove_hermes_env_vars_windows(Path(ntpath.expandvars(str(hermes_home)))),
          "Removed User env var: {}", "No Hermes-set User env vars to remove"),
         (True, "Removing hermes command...", remove_wrapper_script, "Removed {}", "No wrapper script found"),
         (windows, "Removing Windows hermes launchers...",

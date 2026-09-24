@@ -117,10 +117,20 @@ def test_assumed_interval_matches_the_live_task():
 
     Skipping on an unreadable task would let the assumption rot silently --
     which is the exact failure being fixed. Unreadable is reported as such.
+
+    The one exception is a host with no Windows Task Scheduler at all (Linux
+    CI): the deployed task cannot exist there, so there is nothing to compare
+    and "unreadable" would be a platform fact, not rot. On Windows it still
+    fails rather than skips.
     """
+    import sys
+
+    import pytest
+
+    if sys.platform != "win32":
+        pytest.skip("Task Scheduler (Get-ScheduledTask) exists only on Windows")
     live = wd.live_controller_interval_seconds()
     if live is None:
-        import pytest
         pytest.fail(
             "could not read %s repetition interval; the pinned "
             "CONTROLLER_INTERVAL_SECONDS=%s is unverified"

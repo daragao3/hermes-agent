@@ -229,7 +229,13 @@ def test_calibration_samples_the_real_all_file_set(monkeypatch):
     assert receipt["predicted_s"] == pytest.approx(
         2.0 * receipt["total_bytes"] / receipt["sample_bytes"], rel=0.01
     )
-    assert bound == _scan_timeout_from_prediction(receipt["predicted_s"])
+    # The bound is computed from the UNROUNDED prediction; the receipt shows it
+    # rounded to 0.1s for humans, so recomputing from the receipt field is off
+    # by one whenever FACTOR * prediction straddles an integer (CI: 38.5 ->
+    # 308 vs the real 309).
+    assert bound == _scan_timeout_from_prediction(
+        2.0 * receipt["total_bytes"] / receipt["sample_bytes"]
+    )
     assert receipt["bound_s"] == bound
 
 

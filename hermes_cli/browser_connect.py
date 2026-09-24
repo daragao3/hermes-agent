@@ -972,11 +972,13 @@ def _detach_kwargs(system: str, *, breakaway: bool = True) -> dict:
     """
     if system != "Windows":
         return {"start_new_session": True}
-    flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
-             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    # Win32 values spelled out: ``system`` is data, and the ``subprocess``
+    # constants exist only on a Windows interpreter.
+    flags = (getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200))
     if breakaway:
         flags |= _CREATE_BREAKAWAY_FROM_JOB
-    return {"creationflags": flags} if flags else {}
+    return {"creationflags": flags}
 
 
 def _popen_detached(argv: list[str], system: str, **kwargs) -> subprocess.Popen:

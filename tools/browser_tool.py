@@ -1388,7 +1388,11 @@ def _resolve_batch_shim(path: str) -> str:
 
     shim_dir = os.path.dirname(os.path.abspath(path))
     for match in _BATCH_SHIM_TARGET_RE.finditer(text):
-        candidate = os.path.normpath(os.path.join(shim_dir, match.group(1)))
+        # npm writes the target with backslashes; spell it with this host's
+        # separator so normpath resolves it everywhere (POSIX normpath leaves
+        # ``\`` as a literal filename character).
+        rel = match.group(1).replace("\\", os.sep)
+        candidate = os.path.normpath(os.path.join(shim_dir, rel))
         if os.path.isfile(candidate):
             return candidate
     return path

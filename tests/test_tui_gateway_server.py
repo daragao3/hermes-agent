@@ -1260,7 +1260,16 @@ def test_usage_ticker_skips_unchanged_snapshots(monkeypatch):
     # Only a changed snapshot emits.
     events: list[dict] = []
     monkeypatch.setattr(
-        server, "_emit", lambda event_type, sid, payload: events.append(payload)
+        server,
+        "_emit",
+        # Record only THIS ticker's frames: _emit is module-global, so a
+        # background thread left over from an earlier test (seen on CI: a
+        # model-info payload) would otherwise land in `events`.
+        lambda event_type, sid, payload: (
+            events.append(payload)
+            if event_type == "session.usage" and sid == "sess-1"
+            else None
+        ),
     )
     snapshot = {"input": 1200, "total": 1280}
     monkeypatch.setattr(server, "_get_usage", lambda agent: dict(snapshot))
@@ -1290,7 +1299,14 @@ def test_usage_ticker_baseline_sampled_before_thread_start(monkeypatch):
     that first growth so it never emits."""
     events: list[dict] = []
     monkeypatch.setattr(
-        server, "_emit", lambda event_type, sid, payload: events.append(payload)
+        server,
+        "_emit",
+        # Only this ticker's frames (see test_usage_ticker_skips_unchanged_snapshots).
+        lambda event_type, sid, payload: (
+            events.append(payload)
+            if event_type == "session.usage" and sid == "sess-1"
+            else None
+        ),
     )
     snapshot = {"input": 1200, "total": 1280}
     monkeypatch.setattr(server, "_get_usage", lambda agent: dict(snapshot))

@@ -51,6 +51,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.timeout_budget import scaled
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WINDOWS_PS1 = REPO_ROOT / "scripts" / "desktop-update" / "windows.ps1"
@@ -125,6 +127,11 @@ class TestIdleWatchdogCountsUpdateLogGrowth:
 
 
 @pytest.mark.windows_only
+# The self-test is slow by construction (a 45 s leak hold plus the stall and logstall
+# arms: ~55 s measured on Windows 11), so the suite-wide --timeout=30 would kill it
+# before the fixture can report. The cap sits above subprocess.run's own 300 s bound
+# so a regression still fails with the fixture's diagnosis, not an opaque timeout.
+@pytest.mark.timeout(scaled(360))
 def test_update_step_survives_pipe_leak_flood_and_live_child_stall(
     tmp_path: Path,
 ) -> None:

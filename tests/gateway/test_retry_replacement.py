@@ -18,6 +18,25 @@ from gateway.run import GatewayRunner
 from gateway.session import SessionStore
 
 
+@pytest.fixture(autouse=True)
+def _close_shared_session_dbs():
+    """Retire the process-wide SessionDB registry's handles after each test.
+
+    Tests here open stores without closing them, so each leaves a shared
+    generation registered under its ``tmp_path/state.db``. With
+    ``tmp_path_retention_policy = "failed"`` a passing test's tmp dir is
+    deleted and, on Linux, the NEXT parametrized case is handed the very same
+    numbered path. ``hermes_state_registry.acquire`` then finds no file at that
+    path yet (so no inode to compare), lends the stale generation, and its
+    first write fails closed with "state.db was replaced underneath the
+    gateway" -- the CI failure of ``[rewind]`` right after ``[rewrite]``.
+    """
+    yield
+    import hermes_state_registry
+
+    hermes_state_registry.close_all()
+
+
 def _composite_carrier(ask="REAL ASK"):
     return {
         "role": "user",

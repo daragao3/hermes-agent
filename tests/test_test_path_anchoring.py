@@ -270,22 +270,29 @@ class _TreeSnapshot:
 
 
 def _parse_tree_entries(listing: bytes) -> list[tuple[str, bytes]] | None:
-    """Return Python paths paired with blob OIDs from NUL-delimited ls-tree.
+    """Return Python paths paired with blob OIDs from ``git ls-tree -r -z``.
 
-    Paths are display/scan keys only. ``cat-file`` receives the ASCII object ID,
-    so line breaks and undecodable bytes in legal POSIX names never enter its
-    line-based request protocol.
+    Each record is ``<mode> SP <type> SP <oid> TAB <path> NUL`` with the path
+    verbatim. (``--format=...%(path)`` is NOT used: git C-quotes ``%(path)``
+    even under ``-z`` -- ``"tests/cron/test_line\\nbreak.py"`` -- so a name
+    carrying a newline or a non-ASCII byte ended in ``.py"`` and silently
+    dropped out of the scan.) Paths are display/scan keys only. ``cat-file``
+    receives the ASCII object ID, so line breaks and undecodable bytes in legal
+    POSIX names never enter its line-based request protocol.
     """
-    fields = listing.split(b"\0")
-    if fields and fields[-1] == b"":
-        fields.pop()
-    if len(fields) % 2:
-        return None
-    return [
-        (path.decode("utf-8", "surrogateescape"), oid)
-        for oid, path in zip(fields[::2], fields[1::2])
-        if path.endswith(b".py")
-    ]
+    records = listing.split(b"\0")
+    if records and records[-1] == b"":
+        records.pop()
+    entries: list[tuple[str, bytes]] = []
+    for record in records:
+        meta, tab, path = record.partition(b"\t")
+        fields = meta.split(b" ")
+        if not tab or len(fields) != 3:
+            return None
+        _mode, kind, oid = fields
+        if kind == b"blob" and path.endswith(b".py"):
+            entries.append((path.decode("utf-8", "surrogateescape"), oid))
+    return entries
 
 
 def _read_committed_tree(repo_root: pathlib.Path) -> _TreeSnapshot | None:
@@ -306,13 +313,7 @@ def _read_committed_tree(repo_root: pathlib.Path) -> _TreeSnapshot | None:
 
     try:
         commit = _git("rev-parse", "HEAD").decode("ascii").strip()
-        listing = _git(
-            "ls-tree",
-            "-r",
-            "-z",
-            "--format=%(objectname)%x00%(path)",
-            commit,
-        )
+        listing = _git("ls-tree", "-r", "-z", commit)
     except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
         return None
 
@@ -958,10 +959,10 @@ class TestScanJudgesTheCommittedTree:
         oid_a = b"a" * 40
         oid_b = b"b" * 40
         listing = (
-            oid_a
-            + b"\0tests/cron/test_line\nbreak.py\0"
-            + oid_b
-            + b"\0tests/cron/test_non_utf8_\xff.py\0"
+            b"100644 blob " + oid_a + b"\ttests/cron/test_line\nbreak.py\0"
+            + b"100644 blob " + oid_b + b"\ttests/cron/test_non_utf8_\xff.py\0"
+            # A submodule entry is not a blob and must not reach cat-file.
+            + b"160000 commit " + b"c" * 40 + b"\tvendor/submodule.py\0"
         )
 
         entries = _parse_tree_entries(listing)

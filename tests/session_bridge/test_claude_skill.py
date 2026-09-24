@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -125,8 +126,25 @@ def test_shared_asset_installer_rejects_windows_ambiguous_manifest_paths(
     )
 
 
+@pytest.mark.parametrize(
+    "relative",
+    [
+        # Equal-to-root join: platform independent.
+        ".",
+        # Drive reset: only Windows path semantics let a "D:" component escape
+        # the root; on POSIX "D:" is an ordinary file-name component and the
+        # join stays a (legitimate) descendant, so the reset cannot exist there.
+        pytest.param(
+            "D:/escape.txt",
+            marks=pytest.mark.skipif(
+                sys.platform != "win32",
+                reason="drive-letter root reset is Windows path semantics only",
+            ),
+        ),
+    ],
+)
 def test_shared_asset_join_requires_a_strict_descendant(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str
 ) -> None:
     from session_bridge import asset_installer
 
@@ -134,7 +152,7 @@ def test_shared_asset_join_requires_a_strict_descendant(
         asset_installer, "_validate_asset_file_path", lambda _path: None
     )
     with pytest.raises(ValueError, match="descendant"):
-        asset_installer._strict_descendant(tmp_path / "staging", "D:/escape.txt")
+        asset_installer._strict_descendant(tmp_path / "staging", relative)
 
 
 @requires_dir_links

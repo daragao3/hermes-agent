@@ -37,6 +37,7 @@ reconstructing FSDP incantations from memory.
 This skill includes comprehensive documentation in `references/`:
 
 - **other.md** - Other documentation
+- **common-patterns.md** - Full common-patterns catalog (runnable FSDP snippets)
 
 Use `view` to read specific reference files when detailed information is needed.
 

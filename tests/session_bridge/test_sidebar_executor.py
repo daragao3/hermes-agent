@@ -64,6 +64,13 @@ RECOVERY_KEY = "hermes-session-bridge-create-v1:" + "a" * 64
 INBOX_CWD = "C:/Users/diego/.hermes" if os.name == "nt" else "/srv/session-inbox"
 SOURCE_CWD = "C:/source" if os.name == "nt" else "/srv/session-source"
 
+# "/Users/diego/.hermes" is drive-less (rooted but not absolute) on Windows and
+# therefore malformed there; on POSIX it is an ordinary absolute path, so the
+# "malformed placement" case does not exist on that platform.
+_DRIVELESS_ROOT_IS_MALFORMED_ONLY_ON_WINDOWS = pytest.mark.skipif(
+    os.name != "nt", reason="a drive-less rooted path is only malformed on Windows"
+)
+
 
 # Guard for waits that only need a concurrent thread to REACH a point or a
 # release to ARRIVE -- never an assertion target, so it is sized for the worst
@@ -291,11 +298,14 @@ def test_codex_delivery_starts_inbox_cwd_and_returns_exact_thread_id() -> None:
             runtime_workspace_roots=("\\Users\\diego\\.hermes", SOURCE_CWD),
             placement_generation=1,
         ),
-        SidebarPlacement(
-            inbox_cwd="/Users/diego/.hermes",
-            local_host="local",
-            runtime_workspace_roots=("/Users/diego/.hermes", SOURCE_CWD),
-            placement_generation=1,
+        pytest.param(
+            SidebarPlacement(
+                inbox_cwd="/Users/diego/.hermes",
+                local_host="local",
+                runtime_workspace_roots=("/Users/diego/.hermes", SOURCE_CWD),
+                placement_generation=1,
+            ),
+            marks=_DRIVELESS_ROOT_IS_MALFORMED_ONLY_ON_WINDOWS,
         ),
         SidebarPlacement(
             inbox_cwd="\\\\?\\C:\\Users\\diego\\.hermes",
@@ -499,7 +509,7 @@ def test_sidebar_executor_maps_invalid_resolver_home_to_inbox_unavailable(
             ),
             False,
         ),
-        (
+        pytest.param(
             SidebarPlacement(
                 inbox_cwd="/Users/diego/.hermes",
                 local_host="local",
@@ -507,6 +517,7 @@ def test_sidebar_executor_maps_invalid_resolver_home_to_inbox_unavailable(
                 placement_generation=1,
             ),
             False,
+            marks=_DRIVELESS_ROOT_IS_MALFORMED_ONLY_ON_WINDOWS,
         ),
         (
             SidebarPlacement(

@@ -17,6 +17,9 @@ import { sessionTitle } from '@/lib/chat-runtime'
 import { pathLeaf } from '@/lib/display-path'
 import { compactNumber } from '@/lib/format'
 import { triggerHaptic } from '@/lib/haptics'
+import { middleClickHandlers } from '@/lib/middle-click'
+import { displayModelName } from '@/lib/model-status-label'
+import { sessionProjectLabel } from '@/lib/session-project-label'
 import {
   bridgeProviderLabel,
   bridgeSidebarStateLabel,
@@ -25,9 +28,6 @@ import {
   sessionDriverLabel,
   sessionSourceLabel
 } from '@/lib/session-source'
-import { middleClickHandlers } from '@/lib/middle-click'
-import { displayModelName } from '@/lib/model-status-label'
-import { sessionProjectLabel } from '@/lib/session-project-label'
 import { coarseElapsed } from '@/lib/time'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { cn } from '@/lib/utils'

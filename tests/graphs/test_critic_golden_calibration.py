@@ -22,6 +22,10 @@ from types import SimpleNamespace
 
 import pytest
 
+# graphs needs langgraph, which is only in requirements-local-graph.txt, not
+# the CI extras; skip rather than error at collection (same as test_critic_paths).
+pytest.importorskip("langgraph.graph")
+
 from graphs import critic, critic_golden, jobflow
 from jobflow_quality.golden_set import Difficulty, GoldenItem, Label, LabelSource
 

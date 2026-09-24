@@ -283,16 +283,28 @@ class TestCloseSkipsCheckpointOnReadOnlyHandles:
         assert len([c for c in execute_calls if "wal_checkpoint(PASSIVE)" in c]) == 1
         real_conn.close()
 
-    def test_readonly_checkpoint_could_never_have_worked(self, tmp_path):
+    def test_readonly_checkpoint_could_never_have_worked(self, tmp_path, monkeypatch):
         """Pins the premise: the skipped PRAGMA fails on a mode=ro handle.
 
         If SQLite ever starts honouring it, this test fails and the skip above
         needs re-justifying rather than silently dropping real WAL truncation.
+
+        The premise is about a WAL database, so the WAL-reset gate is lifted:
+        on a vulnerable SQLite (the 3.11 venvs here and in CI) SessionDB stays
+        in DELETE mode, where a checkpoint is a silent no-op on any handle.
         """
         import sqlite3 as _sqlite3
 
+        import hermes_state_wal
+
+        monkeypatch.setattr(
+            hermes_state_wal,
+            "is_sqlite_wal_reset_vulnerable",
+            lambda version_info=None: False,
+        )
         db_path = tmp_path / "premise.db"
         writer = SessionDB(db_path=db_path)
+        assert writer._wal_active  # the premise is about WAL; guard it
         writer.create_session("s1", "cli")
         # Leave the writer OPEN so the WAL is non-empty and unmerged.
         ro = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, isolation_level=None)

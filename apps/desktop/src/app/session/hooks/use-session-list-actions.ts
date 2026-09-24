@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 
 import { listAllProfileSessions, listSidebarSessions, type SessionInfo } from '@/hermes'
 import { translateNow } from '@/i18n'
-import { notify } from '@/store/notifications'
 import { sameCronSignature } from '@/lib/session-signatures'
 import {
   isMessagingSource,
@@ -21,7 +20,8 @@ import {
   SIDEBAR_SESSIONS_INITIAL_LIMIT,
   SIDEBAR_SESSIONS_PAGE_SIZE
 } from '@/store/layout'
-import { messagingTotalsKey, normalizeProfileKey, sidebarProfileForScope, setShowAllProfiles } from '@/store/profile'
+import { notify } from '@/store/notifications'
+import { messagingTotalsKey, normalizeProfileKey, setShowAllProfiles, sidebarProfileForScope } from '@/store/profile'
 import {
   $messagingSessions,
   $selectedStoredSessionId,
@@ -36,9 +36,9 @@ import {
   setMessagingSessions,
   setMessagingTruncated,
   setSessionAllProfileTotals,
-  setSessionProfileTotals,
   setSessionProfilesTruncated,
   setSessionProfilesUsage,
+  setSessionProfileTotals,
   setSessions,
   setSessionsLoading
 } from '@/store/session'
@@ -632,7 +632,7 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
     const ownerScope = sidebarProfileForScope(profileScopeRef.current)
     const epoch = gatewayActivationEpoch()
     const requestId = refreshSessionsRequestRef.current
-    if (ownerScope !== 'all' && ownerScope !== key) return
+    if (ownerScope !== 'all' && ownerScope !== key) {return}
     const inKey = (s: SessionInfo) => normalizeProfileKey(s.profile) === key
     const loaded = $sessions.get().filter(inKey).length
 
@@ -643,7 +643,7 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
 
     if (gatewayActivationEpoch() !== epoch || sidebarProfileForScope(profileScopeRef.current) !== ownerScope
       || refreshSessionsRequestRef.current !== requestId || result.errors?.length
-      || result.sessions.some(row => normalizeProfileKey(row.profile) !== key)) return
+      || result.sessions.some(row => normalizeProfileKey(row.profile) !== key)) {return}
 
     setSessions(prev => {
       const previousForProfile = prev.filter(inKey)

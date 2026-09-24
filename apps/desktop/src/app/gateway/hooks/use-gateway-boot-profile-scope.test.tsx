@@ -9,8 +9,8 @@ import { closeSecondaryGateways } from '@/store/gateway'
 import { $activeGatewayProfile, $profileScope, $showAllProfiles } from '@/store/profile'
 import { $connection, $gatewayState, $sessions, setSessions } from '@/store/session'
 
-import { useGatewayBoot } from './use-gateway-boot'
 import { takeGatewaySurvivor } from './gateway-hmr-survivor'
+import { useGatewayBoot } from './use-gateway-boot'
 
 // Locks the boot seam between profile adoption and the first session fetch.
 //

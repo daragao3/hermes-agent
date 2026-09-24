@@ -65,6 +65,7 @@ from session_bridge.sidebar import (
     sidebar_bridge_id,
 )
 from session_bridge.sidebar_reconciliation import SidebarReconciliationState
+from tests.session_bridge._native_paths import native_path
 
 
 SECRET = b"target-adapter-test-secret"
@@ -418,7 +419,7 @@ def _codex_inventory(
     *,
     title: str = "Mirror title",
     native_id: str = CODEX_ID,
-    cwd: str | None = "C:/valid",
+    cwd: str | None = native_path("C:/valid"),
 ):
     return {
         "data": [
@@ -479,7 +480,7 @@ def _codex_direct_read(read: dict[str, Any]) -> dict[str, Any]:
     direct = deepcopy(read)
     direct["thread"].update({
         "title": "Mirror title",
-        "cwd": "C:/valid",
+        "cwd": native_path("C:/valid"),
         "createdAt": 100.0,
         "updatedAt": 101.0,
         "revision": "revision-1",
@@ -4470,6 +4471,9 @@ def test_characterization_report_rejects_windows_reparse_attribute_without_symli
         )
 
 
+@pytest.mark.skipif(
+    os.name != "nt", reason="directory junctions (mklink /J) exist only on Windows"
+)
 def test_characterization_report_rejects_tmp_local_windows_junction(
     tmp_path: Path,
 ) -> None:

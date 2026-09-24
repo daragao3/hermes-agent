@@ -1,6 +1,9 @@
 """Path-not-found suggestions keep the caller's separator (2026-09-23: "mailbox/researcher\\processed")."""
 
+import os
 from types import SimpleNamespace
+
+import pytest
 
 from tools.file_operations_search import SearchMixin
 
@@ -25,6 +28,11 @@ def test_forward_slash_parent_gets_forward_slash_suggestions():
     assert "\\" not in res.error
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="backslash is a path separator only on Windows; on POSIX it is a filename "
+    "character, so a C:\\ path has no parent directory to suggest siblings from",
+)
 def test_backslash_parent_keeps_backslashes():
     res = _Ops("processed\n")._path_not_found_result(r"C:\Users\diego\mailbox\researcher\processing")
     assert r"C:\Users\diego\mailbox\researcher\processed" in res.error

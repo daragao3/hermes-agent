@@ -20,6 +20,8 @@ from urllib.request import urlopen
 
 import pytest
 
+from tests.timeout_budget import scaled
+
 pytestmark = pytest.mark.windows_only
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -58,6 +60,10 @@ def _read_progress(url: str, deadline: float) -> dict[str, object]:
     )
 
 
+# The self-test holds its stage for HERMES_SELFTEST_HOLD_SECONDS=30 and the script only
+# exits after that (~41 s measured), so the suite-wide --timeout=30 would always fire
+# first. Bound it above the hold plus process.wait(timeout=60) instead.
+@pytest.mark.timeout(scaled(120))
 def test_progress_advances_while_the_orchestrator_blocks(tmp_path: Path) -> None:
     powershell = shutil.which("powershell.exe")
     assert powershell, "Windows updater tests require Windows PowerShell."

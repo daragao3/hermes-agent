@@ -39,6 +39,7 @@ from session_bridge.coordinator import (
     ContinueRequest,
     SessionBridgeCoordinator,
 )
+from tests.session_bridge._native_paths import native_path
 from session_bridge.mcp_server import create_app
 from session_bridge.mirror import MirrorPolicy, enqueue_mirror_job
 from session_bridge.models import (
@@ -663,7 +664,7 @@ class _SyntheticCodexClient:
             "codex-history",
             content="codexhistoryneedle synthetic prompt",
             title="Synthetic Codex history",
-            cwd="C:/synthetic/codex",
+            cwd=native_path("C:/synthetic/codex"),
         )
 
     def seed_thread(

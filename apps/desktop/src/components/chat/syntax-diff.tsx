@@ -11,8 +11,8 @@ import { useMemo } from 'react'
 import { useShikiHighlighter } from 'react-shiki/core'
 
 import { DiffBody, type DiffLine, diffLineTransformer } from '@/components/chat/diff-lines'
-import { type CuratedHighlighter, normalizeShikiLang, useCuratedHighlighter } from '@/lib/shiki-core'
 import { SHIKI_THEME } from '@/components/chat/shiki-highlighter'
+import { type CuratedHighlighter, normalizeShikiLang, useCuratedHighlighter } from '@/lib/shiki-core'
 
 export default function SyntaxDiff({ language, lines }: { language: string; lines: DiffLine[] }) {
   const highlighter = useCuratedHighlighter()

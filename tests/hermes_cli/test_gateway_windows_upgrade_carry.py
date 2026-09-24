@@ -41,6 +41,11 @@ def test_detached_spawn_retains_breakaway_retry_and_scoped_reason(tmp_path, monk
         str(tmp_path), {"HERMES_HOME": str(tmp_path)},
     ))
     monkeypatch.setenv(gateway_windows.GATEWAY_SPAWN_SITE_ENV, "parent-site")
+    # The detach-flag helpers return 0 off Windows; pin the host so the flag
+    # assertions below check the Win32 bits on every runner (CI is Linux).
+    import hermes_cli._subprocess_compat as subprocess_compat
+
+    monkeypatch.setattr(subprocess_compat, "IS_WINDOWS", True)
 
     def popen(argv, **kwargs):
         calls.append((argv, kwargs))

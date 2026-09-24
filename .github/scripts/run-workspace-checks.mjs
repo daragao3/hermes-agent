@@ -133,7 +133,12 @@ async function main() {
   if (failed.length > 0) {
     for (const r of failed) console.error(`::error::${r.unit.pkg} :: ${r.unit.script} failed`)
     console.error(`::error::${failed.length} of ${results.length} checks failed`)
-    process.exit(1)
+    // Set the code and return; do NOT process.exit(). The unit outputs above
+    // can be megabytes, and when stdout is a pipe (as in CI) process.exit()
+    // discards whatever has not flushed yet -- which is exactly the failing
+    // unit's tail (its vitest failure report) and the summary block.
+    process.exitCode = 1
+    return
   }
   console.log(`\nall ${results.length} checks passed`)
 }

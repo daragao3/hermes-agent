@@ -1430,9 +1430,12 @@ class TestLifecycleGuardModule:
         def forbid_open(path, flags, *args, **kwargs):  # pragma: no cover
             pytest.fail("choke point opened a cloud placeholder path")
 
-        monkeypatch.setattr(lifecycle_guard.os, "open", forbid_open)
-
-        text, unsafe = lifecycle_guard._read_referenced_script(script)
+        # Scoped: ``lifecycle_guard.os`` IS the global ``os``, and a patch left
+        # installed until monkeypatch teardown also trips tmp_path cleanup
+        # (POSIX ``shutil.rmtree`` calls ``os.open`` with ``dir_fd``).
+        with monkeypatch.context() as scoped:
+            scoped.setattr(lifecycle_guard.os, "open", forbid_open)
+            text, unsafe = lifecycle_guard._read_referenced_script(script)
         assert text is None
         assert unsafe is True
 
@@ -2183,8 +2186,11 @@ class TestLifecycleGuardNeverRaises:
                 st_mode = statmod.S_IFDIR | 0o755
             return _DirStat()
 
-        monkeypatch.setattr(os, "fstat", _dir_fstat)
-        text, unsafe = _read_referenced_script(probe)
+        # Scoped: left installed until monkeypatch teardown, the stub also
+        # answers POSIX ``shutil.rmtree``'s own fstat during tmp_path cleanup.
+        with monkeypatch.context() as scoped:
+            scoped.setattr(os, "fstat", _dir_fstat)
+            text, unsafe = _read_referenced_script(probe)
         assert text is None
         assert unsafe is False
 

@@ -917,6 +917,15 @@ function openRunLog(logRoot) {
   const logPath = path.join(logRoot, `bootstrap-${ts}.log`)
   const stream = fs.createWriteStream(logPath, { flags: 'a' })
 
+  // The file is opened asynchronously; an open/write failure (logs dir removed,
+  // disk full, permissions) surfaces as an 'error' event, and an unhandled one
+  // is an uncaught exception in the Electron main process. The run log is a
+  // best-effort forensic trail, so a failure here must never take the
+  // bootstrap -- or the app -- down with it.
+  stream.on('error', () => {
+    void 0
+  })
+
   return { path: logPath, stream }
 }
 

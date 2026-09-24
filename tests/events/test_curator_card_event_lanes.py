@@ -435,7 +435,11 @@ def wake_violations(
 
 # ---------------------------------------------------------------- skip policy
 
-_hermes_root_present = (Path.home() / ".hermes").is_dir()
+# The cards ship with the sibling ~/.hermes REPO, so "this box has that repo"
+# is the checkout (``.git``), not the bare directory: a CI runner or a fresh
+# install has ~/.hermes (created by the installer or by earlier tests) with no
+# curator profile in it, and that must skip, not fail.
+_hermes_root_present = (Path.home() / ".hermes" / ".git").exists()
 _cards_present = _CARDS.is_file()
 
 _requires_cards = pytest.mark.skipif(
@@ -451,7 +455,7 @@ def test_cards_exist_whenever_the_hermes_tree_does():
     check below into a silent skip — the guard disables itself and stays green.
     """
     if not _hermes_root_present:
-        pytest.skip("no ~/.hermes on this machine")
+        pytest.skip("no ~/.hermes repo checkout on this machine")
     assert _cards_present, (
         f"~/.hermes exists but the curator cards are not at {_CARDS}. If the file "
         f"moved, update _CARDS here; otherwise this guard is silently disabled."

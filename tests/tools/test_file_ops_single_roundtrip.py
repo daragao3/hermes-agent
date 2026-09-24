@@ -215,6 +215,19 @@ class TestReadFileNonTextPaths:
 class TestWriteFileRoundTrips:
     """write_file: one probe, one atomic write, one hash check (three calls)."""
 
+    @pytest.fixture(autouse=True)
+    def _shell_backend(self, monkeypatch):
+        """Pin the SHELL write pipeline these round-trip counts describe.
+
+        On a local backend ``write_file`` now probes, writes and verifies
+        natively (``_probe_write_target`` / ``_atomic_write_native`` /
+        ``_verify_written_hash``, each gated on ``_lsp_local_only()`` with no
+        env kill switch), so against a real ``LocalEnvironment`` it makes ZERO
+        shell calls. The three-call contract is what every non-local backend
+        (Docker/SSH/Modal/Daytona) pays, so present the backend as non-local.
+        """
+        monkeypatch.setattr(ShellFileOperations, "_lsp_local_only", lambda self: False)
+
     @staticmethod
     def _execs(calls):
         return [c for c in calls]

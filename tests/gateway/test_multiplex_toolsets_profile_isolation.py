@@ -49,6 +49,15 @@ def hermes_root(tmp_path, monkeypatch):
     )
     (lokaj / ".env").write_text(f"API_SERVER_KEY={LOKAJ_KEY}\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(root))
+    # /v1/toolsets evaluates every toolset's availability check. The browser
+    # check falls back to probing a real `npx --version` when agent-browser is
+    # not installed (a clean Linux CI runner has /usr/local/bin/npx but no
+    # agent-browser), which the conftest live-system guard rightly blocks and
+    # which turned these requests into errors. Tool availability is not what
+    # this file tests, so the npx probe answers "not runnable" hermetically.
+    import tools.browser_tool_install as _browser_install
+
+    monkeypatch.setattr(_browser_install, "node_tool_runnable", lambda *a, **k: False)
     # get_default_hermes_root memoizes per (native_home, env_home) pair, so
     # the env change alone re-keys it; no cache reset needed.
     return root

@@ -13,6 +13,7 @@ in a half-changed state.
 """
 
 import logging
+import ntpath
 import os
 import sys
 from typing import Any, Dict, Optional, Tuple
@@ -98,7 +99,10 @@ def resolve_caller(caller: Optional[str]) -> Tuple[str, str]:
 
     argv = getattr(sys, "argv", None) or []
     argv0 = argv[0] if argv else ""
-    basename = os.path.basename(str(argv0).strip().rstrip("/\\")).strip()
+    # ntpath splits on BOTH separators on every host; posixpath.basename would
+    # return a whole Windows path verbatim on Linux (a script path recorded on
+    # this Windows box and replayed/tested elsewhere must still yield its name).
+    basename = ntpath.basename(str(argv0).strip().rstrip("/\\")).strip()
     if basename:
         return f"script:{basename}", DERIVED
 

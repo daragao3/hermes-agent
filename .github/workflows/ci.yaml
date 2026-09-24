@@ -17,7 +17,9 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    # codex/wave2-hermes-accepted is this fork's deployed trunk; main is frozen
+    # (tag main-frozen-20260913), so CI has to run where the code actually ships.
+    branches: [main, codex/wave2-hermes-accepted]
 
 permissions:
   contents: read

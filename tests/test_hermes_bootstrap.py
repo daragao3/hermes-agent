@@ -386,18 +386,19 @@ class TestSuppressPlatformWmiQueries:
         import platform
         hb = _fresh_import()
         monkeypatch.setattr(hb, "_IS_WINDOWS", False)
-        original = platform._wmi_query
+        # ``platform._wmi_query`` exists only on Windows CPython >= 3.12.
+        original = getattr(platform, "_wmi_query", None)
         hb.suppress_platform_wmi_queries()
-        assert platform._wmi_query is original
+        assert getattr(platform, "_wmi_query", None) is original
 
     def test_noop_on_fixed_interpreter(self, monkeypatch):
         import platform
         hb = _fresh_import()
         monkeypatch.setattr(hb, "_IS_WINDOWS", True)
         monkeypatch.setattr(sys, "version_info", (3, 13, 4, "final", 0))
-        original = platform._wmi_query
+        original = getattr(platform, "_wmi_query", None)
         hb.suppress_platform_wmi_queries()
-        assert platform._wmi_query is original
+        assert getattr(platform, "_wmi_query", None) is original
 
     @pytest.mark.parametrize("version", [(3, 12, 13, "final", 0), (3, 13, 3, "final", 0)])
     def test_stub_applied_on_affected_versions(self, monkeypatch, version):
@@ -407,7 +408,11 @@ class TestSuppressPlatformWmiQueries:
         hb = _fresh_import()
         monkeypatch.setattr(hb, "_IS_WINDOWS", True)
         monkeypatch.setattr(sys, "version_info", version)
-        monkeypatch.setattr(platform, "_wmi_query", platform._wmi_query)
+        # ``platform._wmi_query`` exists only on Windows CPython >= 3.12;
+        # save/restore it (or its absence) around the stub.
+        monkeypatch.setattr(
+            platform, "_wmi_query", getattr(platform, "_wmi_query", None), raising=False
+        )
         monkeypatch.setitem(sys.modules, "_wmi", sys.modules.get("_wmi", None))
 
         hb.suppress_platform_wmi_queries()
@@ -416,11 +421,14 @@ class TestSuppressPlatformWmiQueries:
         assert sys.modules["_wmi"] is None
         with pytest.raises(ImportError):
             import _wmi  # noqa: F401
+        assert platform._wmi_query is hb._offline_wmi_query
         # ... and an already-imported one answers the CPU query from kernel32
         # (a WMI Win32_Processor.Architecture code the stdlib table maps) and
         # raises the OSError win32_ver()'s fallback path catches for the rest.
-        [arch, *rest] = platform._wmi_query("CPU", "Architecture")
-        assert rest == [] and arch.isdigit() and int(arch) in {0, 5, 6, 9, 12}
+        # kernel32 is a Windows fact; the gate above is covered on every host.
+        if sys.platform == "win32":
+            [arch, *rest] = platform._wmi_query("CPU", "Architecture")
+            assert rest == [] and arch.isdigit() and int(arch) in {0, 5, 6, 9, 12}
         with pytest.raises(OSError):
             platform._wmi_query("OS", "Version", "ProductType")
         # Idempotent.
@@ -466,6 +474,10 @@ class TestSuppressPlatformWmiQueries:
         hb.suppress_platform_wmi_queries()
         if sys.version_info >= (3, 13, 4):
             pytest.skip("interpreter carries the gh-130727 fix; stub is a no-op by design")
+        if sys.version_info < (3, 12):
+            # 3.11's platform.machine() reads PROCESSOR_ARCHITECTURE[W6432] only and never calls
+            # _wmi_query (WMI arrived in 3.12): '' here is the stdlib's own answer, not a stub miss.
+            pytest.skip("CPython < 3.12 platform has no WMI query; the stub has nothing to feed")
 
         assert platform.machine() in {"x86", "ARM", "ia64", "AMD64", "ARM64"}  # windows-footgun: ok — stubbed above
         # The OS query still refuses -> win32_ver() takes sys.getwindowsversion().

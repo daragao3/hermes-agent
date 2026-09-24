@@ -235,7 +235,14 @@ def _attempt(
     timeout: float,
 ) -> Optional[tuple[float, float]]:
     """One interception attempt against one tab. Degrades to None."""
-    from websocket import create_connection
+    try:
+        # websocket-client is not a declared dependency (it arrives only
+        # transitively, e.g. via the dingtalk extra), so its absence must
+        # degrade like any other transport failure rather than raise.
+        from websocket import create_connection
+    except ImportError as exc:
+        logger.debug("gemini_session: websocket-client unavailable: %s", exc)
+        return None
 
     try:
         ws = create_connection(ws_url, timeout=timeout, suppress_origin=True)

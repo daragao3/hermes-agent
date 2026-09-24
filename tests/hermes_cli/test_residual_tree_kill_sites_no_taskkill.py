@@ -97,8 +97,42 @@ def mutant(monkeypatch):
     monkeypatch.setattr(compat, "is_genuine_child", lambda child, parent: True)
 
 
+class _OsWithNativeName:
+    """``os`` as pathlib should keep seeing it while a test pretends to be Windows.
+
+    ``pathlib.Path()`` picks its flavour from ``os.name`` at every instantiation,
+    and on a POSIX interpreter ``WindowsPath`` refuses to instantiate. With the
+    global ``os.name`` forced to ``"nt"``, every ``Path(...)`` in the code under
+    test -- and in pytest's own failure reporting -- raised NotImplementedError,
+    killing the whole file with an INTERNALERROR on the Linux CI lane.
+    """
+
+    name = os.name
+
+    def __getattr__(self, attr):
+        return getattr(os, attr)
+
+
 @pytest.fixture
 def win32(monkeypatch):
+    """Pretend to be Windows at RUN time -- request it only AFTER importing the
+    module under test (``request.getfixturevalue("win32")`` below the import).
+
+    Import-time platform branches must run on the REAL platform: on Linux a
+    first import under ``sys.platform == "win32"`` executes ``import msvcrt``
+    (gateway/status.py, session_bridge/store.py) and sends ``sysconfig`` down
+    its ``os.name == "nt"`` branch (``sys._vpath``, reached via zoneinfo from
+    cron). Module-level constants those branches set (``_IS_WINDOWS``,
+    ``compat.IS_WINDOWS``) are patched explicitly by each site fixture instead.
+    """
+    if os.name != "nt":
+        import pathlib
+
+        # Pin pathlib (3.11: ``pathlib``; 3.13+: ``pathlib._local``) to the real
+        # flavour before the product-facing ``os.name`` flips below.
+        for mod in (pathlib, getattr(pathlib, "_local", None)):
+            if mod is not None and getattr(mod, "os", None) is os:
+                monkeypatch.setattr(mod, "os", _OsWithNativeName())
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(os, "name", "nt")
     monkeypatch.setattr(compat, "IS_WINDOWS", True)
@@ -140,8 +174,10 @@ class _FakeProc:
 
 
 @pytest.fixture
-def sched(monkeypatch, win32):
+def sched(monkeypatch, request):
     from cron import scheduler_script as sched_script
+
+    request.getfixturevalue("win32")
 
     _no_spawn_on(monkeypatch, sched_script.subprocess, compat.subprocess)
     return sched_script
@@ -205,8 +241,10 @@ def test_cron_fallback_walk_failure_still_kills_the_root_and_never_raises(sched,
 
 
 @pytest.fixture
-def status_win(monkeypatch, win32):
+def status_win(monkeypatch, request):
     from gateway import status
+
+    request.getfixturevalue("win32")
 
     monkeypatch.setattr(status, "_IS_WINDOWS", True)
     monkeypatch.setattr(status, "write_diag", lambda *a, **k: None)
@@ -285,8 +323,10 @@ def test_terminate_pid_exited_root_that_is_gone_is_a_success(status_win, fake_ho
 
 
 @pytest.fixture
-def registry_win(monkeypatch, win32):
+def registry_win(monkeypatch, request):
     from tools import process_registry as pr
+
+    request.getfixturevalue("win32")
 
     monkeypatch.setattr(pr, "_IS_WINDOWS", True)
     monkeypatch.setattr(pr.ProcessRegistry, "_host_pid_is_ours", classmethod(lambda cls, pid, exp: True))
@@ -344,9 +384,11 @@ def test_terminate_host_pid_walk_failure_falls_back_to_a_root_only_sigterm(regis
 
 
 @pytest.fixture
-def bridge(monkeypatch, win32):
+def bridge(monkeypatch, request):
     from session_bridge import cli as bridge_cli
     from session_bridge import claude_registrar as registrar
+
+    request.getfixturevalue("win32")
 
     _no_spawn_on(monkeypatch, bridge_cli.subprocess, compat.subprocess)
     return SimpleNamespace(cli=bridge_cli, registrar=registrar)
@@ -431,8 +473,10 @@ def test_registrar_quiet_kill_is_false_off_windows_and_on_helper_failure(bridge,
 
 
 @pytest.fixture
-def lifecycle(monkeypatch, win32):
+def lifecycle(monkeypatch, request):
     from tools import browser_tool_lifecycle
+
+    request.getfixturevalue("win32")
 
     _no_spawn_on(monkeypatch, browser_tool_lifecycle.subprocess, compat.subprocess)
     return browser_tool_lifecycle
@@ -465,8 +509,10 @@ def test_browser_legacy_kill_helper_failure_never_raises(lifecycle, monkeypatch)
 
 
 @pytest.fixture
-def tts(monkeypatch, win32):
+def tts(monkeypatch, request):
     from tools import tts_command_provider
+
+    request.getfixturevalue("win32")
 
     _no_spawn_on(monkeypatch, tts_command_provider.subprocess, compat.subprocess)
     return tts_command_provider
@@ -494,8 +540,9 @@ def test_tts_terminate_on_an_exited_popen_kills_nothing(tts, fake_host):
 
 
 @pytest.fixture
-def whatsapp(monkeypatch, win32):
+def whatsapp(monkeypatch, request):
     adapter = pytest.importorskip("plugins.platforms.whatsapp.adapter")
+    request.getfixturevalue("win32")
     monkeypatch.setattr(adapter, "_IS_WINDOWS", True)
     _no_spawn_on(monkeypatch, adapter.subprocess, compat.subprocess)
     return adapter
@@ -546,8 +593,10 @@ def test_whatsapp_force_on_an_exited_bridge_is_quiet(whatsapp, fake_host):
 
 
 @pytest.fixture
-def supervisor(monkeypatch, win32):
+def supervisor(monkeypatch, request):
     from tui_gateway import host_supervisor as hs
+
+    request.getfixturevalue("win32")
 
     _no_spawn_on(monkeypatch, hs.subprocess, compat.subprocess)
     return hs

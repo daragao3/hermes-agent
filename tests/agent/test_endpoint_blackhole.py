@@ -25,6 +25,10 @@ import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# These tests exercise the REAL probe functions (with httpx/requests mocked
+# beneath them), so opt out of the root conftest's local-server probe stub.
+pytestmark = pytest.mark.real_local_server_probe
+
 
 @pytest.fixture(autouse=True)
 def _clear_caches():

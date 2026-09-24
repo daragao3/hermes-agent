@@ -123,6 +123,10 @@ dependencies = [
   # Browser CDP supervisor + browser_dialog import this directly. Keep core
   # so browser tool discovery doesn't fail on lean installs.
   "websockets==15.0.1",
+  # Sync CDP/websocket client for `hermes browser connect` (cdp_call),
+  # agent/grok_session.py and agent/gemini_session.py. Used unguarded by core
+  # code; it previously arrived only via the dingtalk extra's transitive deps.
+  "websocket-client==1.9.2",
   # .gitignore-aware file matching for desktop build stamp.
   "pathspec==1.1.1",
   "fastapi>=0.104.0,<1",
@@ -179,6 +183,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# JobFlow critic/graph runtime (graphs/). Mirrors requirements-local-graph.txt so
+# CI can run tests/graphs instead of skipping them; transitive pins match the
+# live venv's preserved closure.
+jobflow-graph = [
+  "langgraph==1.2.11",
+  "langgraph-checkpoint==4.2.0",
+  "langgraph-prebuilt==1.1.0",
+  "langgraph-sdk==0.4.2",
+  "langchain-core==1.5.5",
+  "langchain-protocol==0.0.18",
+  "langsmith==0.11.0",
+]
 # Native Anthropic provider — only needed when provider=anthropic (not via
 # OpenRouter or other aggregators).
 anthropic = ["anthropic==1.5.0"]  # CVE-2026-34450, CVE-2026-34452
@@ -476,7 +492,6 @@ googleapis-common-protos = "2026-09-13T01:35:27Z"
 httptools = "2026-09-13T01:35:27Z"
 huggingface-hub = "2026-09-13T01:35:27Z"
 importlib-metadata = "2026-09-13T01:35:27Z"
-langchain-core = "2026-09-13T01:35:27Z"
 langfuse = "2026-09-13T01:35:27Z"
 lxml = "2026-09-13T01:35:27Z"
 mcp-types = "2026-09-13T01:35:27Z"
@@ -498,7 +513,6 @@ tokenizers = "2026-09-13T01:35:27Z"
 tqdm = "2026-09-13T01:35:27Z"
 watchfiles = false
 wcwidth = "2026-09-13T01:35:27Z"
-websocket-client = "2026-09-13T01:35:27Z"
 wrapt = "2026-09-13T01:35:27Z"
 zipp = "2026-09-13T01:35:27Z"
 
@@ -543,6 +557,13 @@ httpx = false
 httpx2 = false
 huggingface_hub = false
 jinja2 = false
+langchain-core = false
+langchain-protocol = false
+langgraph = false
+langgraph-checkpoint = false
+langgraph-prebuilt = false
+langgraph-sdk = false
+langsmith = false
 lark-oapi = false
 markdown = false
 maturin = false
@@ -598,6 +619,7 @@ tzdata = false
 unpaddedbase64 = false
 uvicorn = false
 vercel = false
+websocket-client = false
 websockets = false
 youtube-transcript-api = false
 

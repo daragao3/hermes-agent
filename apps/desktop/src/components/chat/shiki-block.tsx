@@ -18,10 +18,10 @@
  * starts.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { getCuratedHighlighter, normalizeShikiLang } from '@/lib/shiki-core'
 
 import { SHIKI_HIGHLIGHT_SCOPE, SHIKI_THEME } from '@/components/chat/shiki-config'
 import { highlightCache, highlightCacheKey } from '@/components/chat/shiki-highlight-cache'
+import { getCuratedHighlighter, normalizeShikiLang } from '@/lib/shiki-core'
 
 /** Same debounce react-shiki's `delay` used to throttle highlight work with. */
 const HIGHLIGHT_DELAY_MS = 120
@@ -63,7 +63,7 @@ async function highlightToHtml(
     const { bundledThemes } = await import('shiki/themes')
     for (const name of missingThemes) {
       const load = bundledThemes[name as keyof typeof bundledThemes]
-      if (load) await highlighter.loadTheme(await load())
+      if (load) {await highlighter.loadTheme(await load())}
     }
   }
 

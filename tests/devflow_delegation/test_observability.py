@@ -5,6 +5,8 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def test_observability_source_supports_bundled_and_sibling_layouts(tmp_path):
     bundled_root = tmp_path / "bundle"
@@ -67,7 +69,14 @@ def _observability_source(test_file: Path) -> Path:
 
 
 def _load_observability(tmp_path):
-    source = _observability_source(Path(__file__).resolve())
+    # The script under test is DEPLOYED in the Hermes home tree
+    # (<hermes>/profiles/main/scripts), not tracked in this repo. A standalone
+    # checkout (CI, a fresh clone) has no such ancestor, so there is nothing to
+    # test there -- skip, mirroring test_script_slot_parity's "missing" verdict.
+    try:
+        source = _observability_source(Path(__file__).resolve())
+    except FileNotFoundError as exc:
+        pytest.skip(f"devflow_observability.py not deployed above this checkout: {exc}")
     spec = importlib.util.spec_from_file_location("devflow_observability_test", source)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

@@ -1,6 +1,6 @@
-import { createElement } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { atom } from 'nanostores'
+import { createElement } from 'react'
 import type * as React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 

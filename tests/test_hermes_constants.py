@@ -355,6 +355,11 @@ class TestNodeToolRunnable:
 
 
 
+    # The conftest live-system guard refuses ANY argv headed ``npm`` (a real
+    # npm spawns a node grandchild that can wedge the run). Here every npm on
+    # the resolution path is a tmp_path shell stub and PATH holds only
+    # tmp_path, so ``npm --version`` cannot reach a real package manager.
+    @pytest.mark.live_system_guard_bypass
     def test_broken_managed_npm_heals_when_node_still_runs(self, tmp_path, monkeypatch):
         """npm can fail while node --version still succeeds (missing lib/cli.js)."""
         profile_home = tmp_path / "profiles" / "assistant"
@@ -386,6 +391,11 @@ class TestNodeToolRunnable:
         assert resolved != str(system_bin / "npm")
 
 
+    # The conftest live-system guard refuses ANY argv headed ``npm`` (a real
+    # npm spawns a node grandchild that can wedge the run). Here every npm on
+    # the resolution path is a tmp_path shell stub and PATH holds only
+    # tmp_path, so ``npm --version`` cannot reach a real package manager.
+    @pytest.mark.live_system_guard_bypass
     def test_broken_managed_npm_returns_none_when_heal_fails(self, tmp_path, monkeypatch):
         profile_home = tmp_path / "profiles" / "assistant"
         managed_bin = profile_home / "node" / "bin"

@@ -35,13 +35,16 @@ def test_windows_bootstraps_managed_node_without_bash(monkeypatch, tmp_path, no_
     npm.write_text("@echo off\n", encoding="utf-8")
     monkeypatch.setattr(main_tui_launch.sys, "platform", "win32")
     monkeypatch.setattr(hermes_constants, "bootstrap_hermes_managed_node", lambda: str(npm))
-    monkeypatch.setenv("PATH", "C:\nowhere")
+    # A PATH entry free of os.pathsep on every host: a literal "C:..." splits on
+    # POSIX's ":" separator, so it could never be found again on Linux.
+    elsewhere = str(tmp_path / "nowhere")
+    monkeypatch.setenv("PATH", elsewhere)
 
     main_tui_launch._ensure_tui_node()
 
     parts = os.environ["PATH"].split(os.pathsep)
     assert str(node_dir.resolve()) in parts
-    assert parts.index(str(node_dir.resolve())) < parts.index("C:\nowhere")
+    assert parts.index(str(node_dir.resolve())) < parts.index(elsewhere)
 
 
 def test_windows_bootstrap_failure_is_quiet(monkeypatch, no_node_on_path):

@@ -8,12 +8,12 @@ import { SidebarProvider } from '@/components/ui/sidebar'
 import {
   $panesFlipped,
   $pinnedSessionIds,
-  setSidebarAgentsGrouped,
   $sidebarPinsOpen,
   $sidebarRecentsOpen,
   $sidebarSessionOrderIds,
   $sidebarSessionOrderManual,
-  $sidebarStatusFilter
+  $sidebarStatusFilter,
+  setSidebarAgentsGrouped
 } from '@/store/layout'
 import { $activeGatewayProfile, $profiles, $showAllProfiles } from '@/store/profile'
 import {
@@ -36,8 +36,8 @@ import {
   $sessions,
   $sessionsLoading
 } from '@/store/session'
-import { $sessionStates } from '@/store/session-states'
 import { $removedSessionIds } from '@/store/session-removal'
+import { $sessionStates } from '@/store/session-states'
 import type { SessionInfo } from '@/types/hermes'
 
 import { ChatSidebar } from './index'

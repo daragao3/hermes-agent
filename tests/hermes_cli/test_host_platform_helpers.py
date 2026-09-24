@@ -74,7 +74,11 @@ class TestWmiSafePlatform:
 
         monkeypatch.setattr(compat, "IS_WINDOWS", True)
         monkeypatch.setattr(sys, "version_info", (3, 12, 13, "final", 0))
-        monkeypatch.setattr(platform, "_wmi_query", platform._wmi_query)
+        # ``platform._wmi_query`` exists only on Windows CPython >= 3.12; save/restore
+        # it where present and delete it again afterwards where it is not.
+        monkeypatch.setattr(
+            platform, "_wmi_query", getattr(platform, "_wmi_query", None), raising=False
+        )
         monkeypatch.setitem(sys.modules, "_wmi", sys.modules.get("_wmi", None))
 
         plat = compat.wmi_safe_platform()
@@ -88,7 +92,11 @@ class TestWmiSafePlatform:
 
         monkeypatch.setattr(compat, "IS_WINDOWS", True)
         monkeypatch.setattr(sys, "version_info", (3, 12, 13, "final", 0))
-        monkeypatch.setattr(platform, "_wmi_query", platform._wmi_query)
+        # ``platform._wmi_query`` exists only on Windows CPython >= 3.12; save/restore
+        # it where present and delete it again afterwards where it is not.
+        monkeypatch.setattr(
+            platform, "_wmi_query", getattr(platform, "_wmi_query", None), raising=False
+        )
         monkeypatch.setitem(sys.modules, "_wmi", sys.modules.get("_wmi", None))
         monkeypatch.setattr(platform, "machine", lambda: "ARM64")
 
@@ -140,7 +148,9 @@ class TestBareChildNeverQueriesWmi:
             _ = eval({expr!r}, vars(_m))
             import platform
             print("WMI_CALLS", len(calls))
-            print("WMI_QUERY_OWNER", platform._wmi_query.__module__)
+            # CPython < 3.12 has no WMI path, so a site that never loads the stub leaves
+            # ``platform`` without any ``_wmi_query`` attribute at all.
+            print("WMI_QUERY_OWNER", getattr(getattr(platform, "_wmi_query", None), "__module__", None))
             """
         )
         env = dict(os.environ)
@@ -247,6 +257,10 @@ class TestHostMachineUnderEmulation:
         import platform
         if sys.version_info >= (3, 13, 4):
             pytest.skip("interpreter carries the gh-130727 fix; stub is a no-op by design")
+        if sys.version_info < (3, 12):
+            # 3.11's platform.machine() reads PROCESSOR_ARCHITECTURE[W6432] only and never calls
+            # _wmi_query (WMI arrived in 3.12), so there is no query for the stub to answer here.
+            pytest.skip("CPython < 3.12 platform has no WMI query; the stub has nothing to feed")
         monkeypatch.setattr(platform, "_wmi_query", platform._wmi_query)
         monkeypatch.setitem(sys.modules, "_wmi", sys.modules.get("_wmi", None))
         monkeypatch.setattr(platform, "_uname_cache", None)
