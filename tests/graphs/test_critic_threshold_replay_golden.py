@@ -10,6 +10,12 @@ Diego-approved job, not degenerate, strictly better on something. Unavailable go
 
 from __future__ import annotations
 
+import pytest
+
+# graphs needs langgraph, which is only in requirements-local-graph.txt, not
+# the CI extras; skip rather than error at collection (same as test_critic_paths).
+pytest.importorskip("langgraph.graph")
+
 from graphs import critic, critic_golden, jobflow
 
 CURRENT = (8.75, 5.0, 2.0)
