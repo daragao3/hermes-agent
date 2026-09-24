@@ -184,16 +184,16 @@ dependencies = [
 
 [project.optional-dependencies]
 # JobFlow critic/graph runtime (graphs/). Mirrors requirements-local-graph.txt so
-# CI can run tests/graphs instead of skipping them; transitive pins match the
-# live venv's preserved closure.
+# CI can run tests/graphs instead of skipping them. Pins match the LIVE venv
+# (~/.hermes/agent-src/.venv, 2026-09-24), which is ahead of that file.
 jobflow-graph = [
   "langgraph==1.2.11",
   "langgraph-checkpoint==4.2.0",
   "langgraph-prebuilt==1.1.0",
-  "langgraph-sdk==0.4.2",
-  "langchain-core==1.5.5",
-  "langchain-protocol==0.0.18",
-  "langsmith==0.11.0",
+  "langgraph-sdk==0.4.4",
+  "langchain-core==1.6.3",
+  "langchain-protocol==0.0.19",
+  "langsmith==0.12.4",
 ]
 # Native Anthropic provider — only needed when provider=anthropic (not via
 # OpenRouter or other aggregators).

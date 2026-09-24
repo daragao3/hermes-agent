@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-10T16:04:55.2316281Z"
+exclude-newer = "2026-09-10T18:39:25.4470466Z"
 exclude-newer-span = "P14D"
 
 [options.exclude-newer-package]
@@ -23,6 +23,7 @@ mistralai = false
 firecrawl-py = false
 parallel-web = false
 google-api-core = "2026-09-13T01:35:27Z"
+langgraph-sdk = false
 ruff = false
 pathspec = false
 openwakeword = false
@@ -35,6 +36,7 @@ propcache = "2026-09-13T01:35:27Z"
 wrapt = "2026-09-13T01:35:27Z"
 setuptools-rust = false
 multidict = "2026-09-13T01:35:27Z"
+langgraph-prebuilt = false
 slack-bolt = false
 fal-client = false
 asyncpg = false
@@ -55,11 +57,11 @@ h2 = false
 youtube-transcript-api = false
 psycopg = "2026-09-13T01:35:27Z"
 sse-starlette = "2026-09-13T01:35:27Z"
-websocket-client = "2026-09-13T01:35:27Z"
-ai-edge-litert = false
 aiohttp-socks = false
-croniter = false
+ai-edge-litert = false
 microsoft-teams-apps = false
+croniter = false
+websocket-client = false
 rpds-py = "2026-09-13T01:35:27Z"
 azure-identity = false
 lark-oapi = false
@@ -70,6 +72,7 @@ aiosqlite = false
 uvicorn = false
 python-dotenv = false
 zipp = "2026-09-13T01:35:27Z"
+langgraph-checkpoint = false
 nemo-relay = false
 requests = false
 psycopg2-binary = "2026-09-13T01:35:27Z"
@@ -85,6 +88,7 @@ tokenizers = "2026-09-13T01:35:27Z"
 google-auth-httplib2 = false
 openai = false
 psutil = false
+langgraph = false
 dingtalk-stream = false
 elevenlabs = false
 langfuse = "2026-09-13T01:35:27Z"
@@ -95,6 +99,7 @@ google-auth = false
 aiohttp = false
 darabonba-core = "2026-09-13T01:35:27Z"
 markdown = false
+langsmith = false
 opentelemetry-sdk = false
 prompt-toolkit = false
 fastapi = false
@@ -105,12 +110,13 @@ primp = "2026-09-13T01:35:27Z"
 s3transfer = "2026-09-13T01:35:27Z"
 pytest = false
 pillow = false
-langchain-core = "2026-09-13T01:35:27Z"
+langchain-core = false
 tenacity = false
 pyjwt = false
 ruamel-yaml = false
 anyio = "2026-09-13T01:35:27Z"
 sherpa-onnx = false
+langchain-protocol = false
 tqdm = "2026-09-13T01:35:27Z"
 pytest-timeout = false
 pydantic-settings = "2026-09-13T01:35:27Z"
@@ -2050,13 +2056,13 @@ requires-dist = [
     { name = "httpx2", marker = "extra == 'dev'", specifier = "==2.12.0" },
     { name = "httpx2", marker = "extra == 'mcp'", specifier = "==2.12.0" },
     { name = "jinja2", specifier = "==3.1.6" },
-    { name = "langchain-core", marker = "extra == 'jobflow-graph'", specifier = "==1.5.5" },
-    { name = "langchain-protocol", marker = "extra == 'jobflow-graph'", specifier = "==0.0.18" },
+    { name = "langchain-core", marker = "extra == 'jobflow-graph'", specifier = "==1.6.3" },
+    { name = "langchain-protocol", marker = "extra == 'jobflow-graph'", specifier = "==0.0.19" },
     { name = "langgraph", marker = "extra == 'jobflow-graph'", specifier = "==1.2.11" },
     { name = "langgraph-checkpoint", marker = "extra == 'jobflow-graph'", specifier = "==4.2.0" },
     { name = "langgraph-prebuilt", marker = "extra == 'jobflow-graph'", specifier = "==1.1.0" },
-    { name = "langgraph-sdk", marker = "extra == 'jobflow-graph'", specifier = "==0.4.2" },
-    { name = "langsmith", marker = "extra == 'jobflow-graph'", specifier = "==0.11.0" },
+    { name = "langgraph-sdk", marker = "extra == 'jobflow-graph'", specifier = "==0.4.4" },
+    { name = "langsmith", marker = "extra == 'jobflow-graph'", specifier = "==0.12.4" },
     { name = "lark-oapi", marker = "extra == 'feishu'", specifier = "==1.7.3" },
     { name = "markdown", specifier = "==3.10.3" },
     { name = "mautrix", extras = ["encryption"], marker = "extra == 'matrix'", specifier = "==0.21.1" },
@@ -2508,7 +2514,7 @@ wheels = [
 
 [[package]]
 name = "langchain-core"
-version = "1.5.5"
+version = "1.6.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -2522,21 +2528,21 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "uuid-utils" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e5/c1/c226367fdf92a173c8b520d0b3583a0aaf4c3fe4952010f680e49d88589d/langchain_core-1.5.5.tar.gz", hash = "sha256:c08d78176113867e9a76acc1007d641cd68fa5682e9e0018980d062b4ae0777e", size = 983166, upload-time = "2026-08-14T18:56:24.364Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/06/d7/1482670ccebc863166852516a08a1956fc50da40fbe2fe7dd218abfef4a1/langchain_core-1.6.3.tar.gz", hash = "sha256:88b430944fbd4d40fa98135d6c873581d497b6f33515d01962337548e918df2f", size = 1006228, upload-time = "2026-09-11T17:37:45.614Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e7/09/9f29e62e99118865d092acda6143a1ba6ce1893e3dcb72388a75b798e37d/langchain_core-1.5.5-py3-none-any.whl", hash = "sha256:537037fd44ead7c1ffb9621011029ad2e347e051519d17f112d7bf7be12f4365", size = 565884, upload-time = "2026-08-14T18:56:23.051Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/18/cf18cfec118b02e003f35300b54d6a1173dc6e4905cffdf5ea49e390a7f9/langchain_core-1.6.3-py3-none-any.whl", hash = "sha256:114fe1868c9ed60606662b9dd0074bf3152cc6b0b1522ba37cbd6b04f55ca77d", size = 571753, upload-time = "2026-09-11T17:37:43.875Z" },
 ]
 
 [[package]]
 name = "langchain-protocol"
-version = "0.0.18"
+version = "0.0.19"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d2/59/b5959aea96faa9146e2e49a7a22882b3528c62efafe9a6a95beab30c2305/langchain_protocol-0.0.18.tar.gz", hash = "sha256:ec3e11782f1ed0c9db38e5a9ed01b0e7a0d3fba406faa8aef6594b73c56a63e6", size = 6150, upload-time = "2026-06-18T17:08:26.959Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/56/913599f2f9cec8524868929f12d72b2ede377a6056ca8a40a32bdadfa535/langchain_protocol-0.0.19.tar.gz", hash = "sha256:79d90a1425122ac87e8052e2ec054fbd09c3edbf341bdfb6397112a495c7bf8c", size = 6265, upload-time = "2026-08-26T21:12:00.703Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/99/2e/d82db9eec13ad0f72e7aaad5c4bc730ab111934fdc83c85523206eb9b0a0/langchain_protocol-0.0.18-py3-none-any.whl", hash = "sha256:70b53a86fbf9cedc863555effe44da192ab02d556ddbf2cf95b8873adcf41b5a", size = 7221, upload-time = "2026-06-18T17:08:25.996Z" },
+    { url = "https://files.pythonhosted.org/packages/80/c9/f6cbf357d48ccbd18bb394433b1fd7ad9be004eed9377ad08bb85777e5e6/langchain_protocol-0.0.19-py3-none-any.whl", hash = "sha256:4cdf879a492a35980fd859ae792d3c65458ccaae504e183c9a10d7eac1f0720f", size = 7327, upload-time = "2026-08-26T21:11:59.781Z" },
 ]
 
 [[package]]
@@ -2584,7 +2590,7 @@ wheels = [
 
 [[package]]
 name = "langgraph-sdk"
-version = "0.4.2"
+version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -2593,19 +2599,19 @@ dependencies = [
     { name = "orjson" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/2b/bd8ac26d4e97f6df88ef05ce5b6a38945a3903e1025d926f4752aa88aa97/langgraph_sdk-0.4.2.tar.gz", hash = "sha256:b88f0f5f6328ac0680d6790614a905b2bcfa257f2276dba4e38f0e86db0aa738", size = 348327, upload-time = "2026-06-01T17:51:19.856Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/ae/91446c1fffa04a2dc1f81afbfb5bfff3590452891a72bd9098a656ab2657/langgraph_sdk-0.4.4.tar.gz", hash = "sha256:4e651ffa09de695681579396375377bdde23bedbc8e35b070e615cbd5af7da8b", size = 345789, upload-time = "2026-08-27T21:25:22.593Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/05/aac507337cceae773c2cc9ab91eb6301963af7aeeb55b4217a00e15aff17/langgraph_sdk-0.4.2-py3-none-any.whl", hash = "sha256:75fa5096c1177ce39c847096a8fe3745ffd480ddb412995f836e9f5f884c43dd", size = 160521, upload-time = "2026-06-01T17:51:18.849Z" },
+    { url = "https://files.pythonhosted.org/packages/43/d5/2ad7f3a835c6fcebf58b6669552536ecd52d2dfe4cf49c6c36648fd83572/langgraph_sdk-0.4.4-py3-none-any.whl", hash = "sha256:39afe416c91742925e6f8a93715f566d499b36e1b636b804a4ffe3190e4f4e64", size = 162270, upload-time = "2026-08-27T21:25:21.072Z" },
 ]
 
 [[package]]
 name = "langsmith"
-version = "0.11.0"
+version = "0.12.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "orjson", marker = "platform_python_implementation != 'PyPy'" },
     { name = "packaging" },
     { name = "pydantic" },
@@ -2618,9 +2624,9 @@ dependencies = [
     { name = "xxhash" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5b/62/a917e87073767db8ca335c3f5a42fb4c5336509b8d5b03e165e46da47e70/langsmith-0.11.0.tar.gz", hash = "sha256:7339f90e6fd9a1a009445b5084a7a0e56a8b6f17305ee5d7e8c5e7582217854f", size = 4805612, upload-time = "2026-08-14T12:56:55.409Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/92/d15b73c1550b4e005b31a22b746043a7ac154bfab7bc179da7348061feb0/langsmith-0.12.4.tar.gz", hash = "sha256:f486435323eeb0c525087cc694f0b7cd92e255f340db08db643204c789f4f1c4", size = 4886419, upload-time = "2026-09-09T21:19:57.002Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/aa/18d334f04c12bb9154568747539a1143a93d0c34b894662c065454f396c8/langsmith-0.11.0-py3-none-any.whl", hash = "sha256:e87a3929915936c066b3fa3283ec3f3f0013e2ef7f98a443a7fbe3fab8e784a3", size = 737950, upload-time = "2026-08-14T12:56:53.014Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/b1/d0c6f84cde25b2443bcdca81f9b30732fc3af602c46f5114fcbe5246b978/langsmith-0.12.4-py3-none-any.whl", hash = "sha256:b2edaa49baeec0c7347a84ca0f755039dcff9e9e52f0b9dc26423ec2a98a4dab", size = 767513, upload-time = "2026-09-09T21:19:55.283Z" },
 ]
 
 [[package]]
