@@ -38,9 +38,15 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: website/package-lock.json
+
+      # website/package.json requires npm >=11.17.0; setup-node's bundled npm
+      # is older. Match docs-site-checks.yml / deploy-site.yml.
+      - name: grab npm 12
+        run: |
+          npm i -g npm@12
 
       # --report-only so the static findings land in the summary even when the
       # build below also fails; the job's own verdict comes from the two
