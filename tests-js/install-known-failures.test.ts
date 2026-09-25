@@ -9,10 +9,24 @@ import { describe, expect, it } from 'vitest'
 const { matchKnownFailure, rules } = createRequire(import.meta.url)('../tests/install/e2e-assets/known-failures.cjs')
 const classifier = path.resolve(import.meta.dirname, '../tests/install/e2e-assets/known-failures.cjs')
 
+const gitPathFailed = "\u26a0 Git update failed: Command '['C:\\\\Users\\\\runner\\\\.local\\\\bin\\\\uv.EXE', 'pip', 'install', '-e', '.', '--quiet']' returned non-zero exit status 2."
+
+// The ZIP fallback's own dependency install hits the same lock and dies in a
+// traceback through the running launcher (run 35791535023).
 const lockedLog = [
   'error: failed to remove file `C:/install/venv/Lib/site-packages/../../Scripts/hermes.exe`: Access is denied. (os error 5)',
   'File "C:/install/venv/Scripts/hermes.exe/__main__.py", line 10, in <module>',
   "subprocess.CalledProcessError: Command '['uv', 'pip', 'install', '-e', '.', '--quiet']' returned non-zero exit status 2.",
+  gitPathFailed,
+].join('\n')
+
+// GitHub rate-limits the ZIP download, so the fallback stops before its second
+// install and prints no traceback (run 36075097022). Same root cause.
+const rateLimitedLog = [
+  'error: failed to remove file `D:/install/venv/Lib/site-packages/../../Scripts/hermes.exe`: Access is denied. (os error 5)',
+  gitPathFailed,
+  '\u2192 Falling back to ZIP download...',
+  '\u2717 ZIP update failed: HTTP Error 429: Too Many Requests',
 ].join('\n')
 
 const base = {
@@ -26,6 +40,13 @@ describe('known install failures', () => {
     expect(matchKnownFailure(base)?.id).toBe('windows-launcher-self-lock')
     expect(matchKnownFailure({ ...base, logs: { update: lockedLog.replaceAll('hermes.exe', 'other.exe') } })).toBeNull()
     expect(matchKnownFailure({ ...base, logs: { update: lockedLog.replace('(os error 5)', '(os error 32)') } })).toBeNull()
+  })
+
+  it('recognizes the launcher self-lock whichever way the ZIP fallback ends', () => {
+    expect(matchKnownFailure({ ...base, logs: { update: rateLimitedLog } })?.id).toBe('windows-launcher-self-lock')
+    // The lock alone is not enough: the git path must have died on that install.
+    expect(matchKnownFailure({ ...base, logs: { update: rateLimitedLog.replace(gitPathFailed, '') } })).toBeNull()
+    expect(matchKnownFailure({ ...base, logs: { update: rateLimitedLog.replace('exit status 2', 'exit status 1') } })).toBeNull()
   })
 
   it.each([
