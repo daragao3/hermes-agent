@@ -205,6 +205,13 @@ complete := false
 waitDeadline := A_TickCount + 1000 * 60 * 45
 Log("Waiting for install to finish (bootstrap log or Launch template) ...")
 while (A_TickCount < waitDeadline) {
+    ; A failed bootstrap never completes and never shows Launch; without
+    ; this the loop sat out all 45 minutes after a venv-stage failure at +2
+    ; minutes (run 36075097022). The update phase rotates the log first, so
+    ; this cannot match an earlier phase's line.
+    if BootstrapLogContains("bootstrap FAILED") {
+        throw Error("installer reported bootstrap FAILED (see bootstrap-installer.log)")
+    }
     if BootstrapLogContains("bootstrap complete") {
         complete := true
         completeAt := A_TickCount

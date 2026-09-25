@@ -140,6 +140,13 @@ $ServeRepo   = Join-Path $WorkRoot "serve.git"
 # OLD's own scripts/install.ps1, extracted by the stage phase and handed to
 # the installer via HERMES_SETUP_DEV_REPO_ROOT. See Set-InstallScriptPin.
 $ScriptPinRoot = Join-Path $WorkRoot "dev-script-root"
+# HEAD's own scripts/install.ps1, for the UPDATE phase on a fork only. See
+# the update-mode note in Invoke-PhaseInstallGui.
+$HeadScriptPinRoot = Join-Path $WorkRoot "dev-script-root-head"
+# A fork's HEAD is not upstream main, so the install.ps1 the published
+# installer downloads (raw.githubusercontent NousResearch main) is not
+# HEAD's script there. GITHUB_REPOSITORY_OWNER is set on every Actions runner.
+$IsForkRun = [bool]$env:GITHUB_REPOSITORY_OWNER -and ($env:GITHUB_REPOSITORY_OWNER -ne "NousResearch")
 $HermesHome  = Join-Path $WorkRoot "hermes-home"
 $InstallDir  = Join-Path $HermesHome "hermes-agent"
 $StatePath   = Join-Path $WorkRoot "shas.json"
@@ -728,6 +735,20 @@ function Invoke-PhaseStage {
         }
     }
 
+    # Fork only: stage HEAD's install.ps1 for the update phase (see the
+    # update-mode note in Invoke-PhaseInstallGui). Same byte-faithful
+    # extraction as OLD's pin above. HEAD always speaks -Manifest/-Stage.
+    if ($IsForkRun) {
+        New-Item -ItemType Directory -Path (Join-Path $HeadScriptPinRoot "scripts") -Force | Out-Null
+        $headPs1 = Join-Path $HeadScriptPinRoot "scripts\install.ps1"
+        Remove-Item -LiteralPath $headPs1 -Force -ErrorAction SilentlyContinue
+        $gitShowHead = "`"$script:RealGitExe`" -C `"$ServeRepo`" show `"${current}:scripts/install.ps1`""
+        & $env:ComSpec /d /s /c "$gitShowHead > `"$headPs1`"" | Out-Null
+        $headBody = if (Test-Path -LiteralPath $headPs1) { Get-Content -LiteralPath $headPs1 -Raw } else { "" }
+        Assert-True ($headBody -match '\$Manifest') "HEAD install-script pin staged for the update phase ($env:GITHUB_REPOSITORY_OWNER is a fork)"
+        Write-Host "  HEAD install-script pin: $headPs1 ($([math]::Round((Get-Item $headPs1).Length / 1KB)) KB)"
+    }
+
     @{ old = $old; old_ref = $oldRef; current = $current } |
         ConvertTo-Json | Set-Content -LiteralPath $StatePath -Encoding UTF8
     Write-Host "  state written: $StatePath"
@@ -803,13 +824,22 @@ function Invoke-PhaseInstallGui {
     # HEAD, where the downloaded script IS the era-correct one, so it keeps
     # the real download path and this whole branch is skipped.
     #
-    # Set HERMES_E2E_NO_SCRIPT_PIN=1 to force the download path even for
-    # install mode (useful to test script resolution itself).
-    $pinnedPs1 = Join-Path $ScriptPinRoot "scripts\install.ps1"
-    $usingScriptPin = ($Mode -eq "install") -and (Test-Path -LiteralPath $pinnedPs1) -and -not $env:HERMES_E2E_NO_SCRIPT_PIN
+    # EXCEPTION TO THE EXCEPTION, update mode on a FORK: the download comes
+    # from NousResearch main, and a fork's HEAD is not that commit, so the
+    # "era-correct" premise fails there. On 2026-09-24 upstream's install.ps1
+    # started reading pm\lock.json, which the fork's tree lacks, and every
+    # desktop-installer@latest update leg died at the venv stage
+    # (run 36075097022). On a fork the update phase therefore runs HEAD's own
+    # install.ps1, staged by Invoke-PhaseStage. Upstream is unchanged.
+    #
+    # Set HERMES_E2E_NO_SCRIPT_PIN=1 to force the download path in either
+    # mode (useful to test script resolution itself).
+    $pinRoot = if ($Mode -eq "install") { $ScriptPinRoot } elseif ($IsForkRun) { $HeadScriptPinRoot } else { $null }
+    $pinnedPs1 = if ($pinRoot) { Join-Path $pinRoot "scripts\install.ps1" } else { "" }
+    $usingScriptPin = [bool]$pinRoot -and (Test-Path -LiteralPath $pinnedPs1) -and -not $env:HERMES_E2E_NO_SCRIPT_PIN
     if ($usingScriptPin) {
-        $env:HERMES_SETUP_DEV_REPO_ROOT = $ScriptPinRoot
-        Write-Host "  install.ps1 pinned to $ExpectedLabel via HERMES_SETUP_DEV_REPO_ROOT=$ScriptPinRoot"
+        $env:HERMES_SETUP_DEV_REPO_ROOT = $pinRoot
+        Write-Host "  install.ps1 pinned to $ExpectedLabel via HERMES_SETUP_DEV_REPO_ROOT=$pinRoot"
     } else {
         Remove-Item Env:HERMES_SETUP_DEV_REPO_ROOT -ErrorAction SilentlyContinue
         Write-Host "  install.ps1: as shipped (downloaded at the binary's baked pin)"
