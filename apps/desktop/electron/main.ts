@@ -5232,7 +5232,7 @@ async function ensureRuntime(backend) {
     // exists in a local checkout), so TS can't narrow property access below
     // without an explicit discriminated union. Loosen to `any` here rather than
     // fighting the inference.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const bootstrapResult: any = await runBootstrap({
       installStamp: backend.installStamp,
       activeRoot: backend.activeRoot,

@@ -155,7 +155,6 @@ import { filterSessionsByProfileScope } from './profile-scope'
 import { ProfileRail } from './profile-switcher'
 import { ProjectDialog } from './project-dialog'
 import { resolveLiveProjectFilter } from './project-filter'
-import { elsewhereSessionTotal, isScopedEmptyWithRowsElsewhere } from './scoped-empty'
 import {
   excludeProjectSessions,
   orderProjectsByIds,
@@ -175,6 +174,7 @@ import {
   useRepoWorktreeMap
 } from './projects'
 import { WorktreeDialog } from './projects/worktree-dialog'
+import { elsewhereSessionTotal, isScopedEmptyWithRowsElsewhere } from './scoped-empty'
 import {
   SidebarBlankState,
   SidebarLoadErrorState,
@@ -1272,6 +1272,7 @@ export function ChatSidebar({
   // number under a concrete scope.
   const sessionAllProfileTotals = useStore($sessionAllProfileTotals)
   const elsewhereTotal = elsewhereSessionTotal(sessionAllProfileTotals, profileScope)
+
   const scopedEmptyWithRowsElsewhere =
     !inProject &&
     !filtersActive &&

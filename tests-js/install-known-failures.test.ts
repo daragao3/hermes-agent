@@ -80,14 +80,17 @@ describe('known install failures', () => {
       ...base, commit: '3c27eb6234bf91b8ceee9e9071591b31e9b148cb',
       logs: { desktop: '[hermes] [updates] no staged updater; surfacing manual `hermes update` for CLI install at D:/install\n[hermes] [updates] manual: hermes update\n' },
     }
+
     const cases = [
       { installMethod: 'installer-script', updateMethod: 'hermes-desktop-app-update', error: 'E2E ASSERTION FAILED: app driven via captured hermes desktop spec; update completed' },
       { installMethod: 'installer-script+desktop', updateMethod: 'hermes-desktop-app-update', error: 'E2E ASSERTION FAILED: app driven via captured hermes desktop spec; update completed' },
       { installMethod: 'installer-script+desktop', updateMethod: 'open-app-update', error: 'E2E ASSERTION FAILED: GUI driver clicked Update now and the app quit for hand-off' },
     ]
+
     for (const c of cases) {
       expect(matchKnownFailure({ ...august, ...c })?.id).toBe('windows-july-manual-app-update')
     }
+
     // A desktop-installer install has a staged updater: still not covered.
     expect(matchKnownFailure({ ...august, ...cases[0], installMethod: 'desktop-installer@latest' })).toBeNull()
     // An August CLI-update failure must fall to the loaded-extension rule, not this one.
@@ -100,11 +103,13 @@ describe('known install failures', () => {
       'cause: Failed to persist temporary file to D:/install/venv/Lib/site-packages/cryptography/hazmat/bindings/_rust.pyd: Access is denied. (os error 5)',
       "Git update failed: Command '['D:/install/bin/uv.exe', 'pip', 'install', '-e', '.']' returned non-zero exit status 2.",
     ].join('\n')
+
     const august = {
       ...base, commit: '3c27eb6234bf91b8ceee9e9071591b31e9b148cb', logs: { update: rustLock },
     }
 
     expect(matchKnownFailure(august)?.id).toBe('windows-loaded-native-extension-self-lock')
+
     // The CLI updater is the same released code regardless of how the install
     // was produced, so all three install methods are covered. Run
     // 35743063675 proved the desktop-installer one once its install phase
@@ -112,6 +117,7 @@ describe('known install failures', () => {
     for (const installMethod of ['installer-script', 'installer-script+desktop', 'desktop-installer@latest']) {
       expect(matchKnownFailure({ ...august, installMethod })?.id).toBe('windows-loaded-native-extension-self-lock')
     }
+
     expect(matchKnownFailure({ ...base, logs: { update: rustLock } })).toBeNull()
     expect(matchKnownFailure({ ...august, logs: { update: rustLock.replaceAll('_rust.pyd', '_other.pyd') } })).toBeNull()
     expect(matchKnownFailure({ ...august, logs: { update: rustLock.replaceAll('(os error 5)', '(os error 32)') } })).toBeNull()

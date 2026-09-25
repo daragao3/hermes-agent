@@ -33,9 +33,11 @@ function fakeFs(table) {
   return {
     lstatSync(p) {
       const entry = table[p]
+
       if (!entry || !entry.lstat) {
         throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' })
       }
+
       if (entry.lstat instanceof Error) {
         throw entry.lstat
       }
@@ -44,9 +46,11 @@ function fakeFs(table) {
     },
     statSync(p) {
       const entry = table[p]
+
       if (!entry || !entry.stat) {
         throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' })
       }
+
       if (entry.stat instanceof Error) {
         throw entry.stat
       }
@@ -59,17 +63,21 @@ function fakeFs(table) {
 function collectingLog() {
   const lines = []
   const log = message => lines.push(String(message))
+
   return { lines, log }
 }
 
 test('rejects a Microsoft Store app-execution-alias reparse stub and logs it', () => {
   const aliasPath =
     'C:\\Users\\diego\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\python.exe'
+
   const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+
   // Real-world shape: lstat says symlink (size = reparse buffer), follow throws.
   const fsDouble = fakeFs({
     [aliasPath]: { lstat: fakeStats({ size: 111, symlink: true, file: false }), stat: eacces }
   })
+
   const { lines, log } = collectingLog()
 
   const result = isSpawnablePythonExe(aliasPath, { fs: fsDouble, log })
@@ -82,9 +90,11 @@ test('rejects a Microsoft Store app-execution-alias reparse stub and logs it', (
 
 test('rejects a plain 0-byte stub file and logs it', () => {
   const stubPath = 'C:\\stub\\python.exe'
+
   const fsDouble = fakeFs({
     [stubPath]: { lstat: fakeStats({ size: 0, symlink: false, file: true }), stat: fakeStats({ size: 0, file: true }) }
   })
+
   const { lines, log } = collectingLog()
 
   const result = isSpawnablePythonExe(stubPath, { fs: fsDouble, log })
@@ -96,12 +106,14 @@ test('rejects a plain 0-byte stub file and logs it', () => {
 
 test('accepts a real python.exe (regular file, non-zero size) without logging', () => {
   const realPath = 'C:\\Python311\\python.exe'
+
   const fsDouble = fakeFs({
     [realPath]: {
       lstat: fakeStats({ size: 103_936, symlink: false, file: true }),
       stat: fakeStats({ size: 103_936, file: true })
     }
   })
+
   const { lines, log } = collectingLog()
 
   const result = isSpawnablePythonExe(realPath, { fs: fsDouble, log })
@@ -112,12 +124,14 @@ test('accepts a real python.exe (regular file, non-zero size) without logging', 
 
 test('accepts a healthy symlink that resolves to a real interpreter (POSIX venv)', () => {
   const venvPython = '/home/diego/proj/.venv/bin/python'
+
   const fsDouble = fakeFs({
     [venvPython]: {
       lstat: fakeStats({ size: 20, symlink: true, file: false }),
       stat: fakeStats({ size: 5_872_640, file: true })
     }
   })
+
   const { lines, log } = collectingLog()
 
   const result = isSpawnablePythonExe(venvPython, { fs: fsDouble, log })
@@ -143,6 +157,7 @@ test('real-fs: a genuine 0-byte python.exe file is rejected', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-pystub-'))
   const stub = path.join(dir, 'python.exe')
   fs.writeFileSync(stub, '')
+
   try {
     const { lines, log } = collectingLog()
     assert.equal(isSpawnablePythonExe(stub, { log }), false)

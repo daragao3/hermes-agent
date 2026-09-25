@@ -581,6 +581,7 @@ function SidebarSessionRowImpl({
                 ) : null}
               </>
             )
+
             const handoffBadge =
               handoffSource && handoffLabel ? (
                 <Tip label={r.handoffOrigin(handoffLabel)}>

@@ -501,6 +501,7 @@ async function reviewRevParse(repoPath, ref, gitBin) {
 // unambiguous; anything else is the user's decision, not ours.
 async function resolvePushRemote(git, branch) {
   const remotes = (await git.raw(['remote'])).split(/\s+/).filter(Boolean)
+
   const keys = [
     `branch.${branch}.pushRemote`,
     'remote.pushDefault',
