@@ -19,6 +19,11 @@ name: Install & Update E2E (scheduler)
 on:
   schedule:
     # Every 12 hours, off the hour to avoid the top-of-hour runner crunch.
+    # If this never fires (no `schedule` runs listed for this workflow while
+    # other schedules on the fork are firing), GitHub has not registered the
+    # cron: commit any change to this file on the default branch to make it
+    # re-read the schedule. That happened after this file was first added
+    # (no fire at 2026-09-25 07:20 or 19:20 UTC).
     - cron: '20 7,19 * * *'
   workflow_dispatch:
 
