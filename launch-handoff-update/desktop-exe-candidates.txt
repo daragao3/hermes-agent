@@ -1,0 +1,2 @@
+PRESENT  D:\a\hermes-agent\hermes-agent\..\hermes-desktop-gui-e2e\hermes-home\hermes-agent\apps\desktop\release\win-unpacked\Hermes.exe  (214007808 bytes, 2026-09-28T15:48:53.6563070+00:00)
+MISSING  D:\a\hermes-agent\hermes-agent\..\hermes-desktop-gui-e2e\hermes-home\hermes-agent\apps\desktop\release\win-arm64-unpacked\Hermes.exe

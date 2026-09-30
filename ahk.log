@@ -1,0 +1,12 @@
+[autohotkey] Waiting for a real-sized installer window (ahk_exe Hermes-Setup.exe) ...
+[autohotkey] Installer window: x=64 y=34 w=896 h=659
+[autohotkey] Clicked at 511, 454
+[autohotkey] Install clicked (template match)
+[autohotkey] Waiting for install to finish (bootstrap log or Launch template) ...
+[autohotkey] bootstrap-installer.log reports completion
+[autohotkey] Launch template matched: launch-button-focused.png
+[autohotkey] Launch template matched after completion (+2407ms)
+[autohotkey] Clicked at 512, 445
+[autohotkey] Launch clicked (template)
+[autohotkey] Launch clicked; waiting for the Hermes desktop app window
+[autohotkey] Unhandled error: Hermes.exe real-sized window did not appear within 300s of clicking Launch
