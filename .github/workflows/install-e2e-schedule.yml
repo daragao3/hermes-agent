@@ -42,4 +42,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           REF: ${{ github.ref_name }}
-        run: gh workflow run install-e2e.yml --repo "$REPO" --ref "$REF" -f route=all -f tag-count=2
+        # A paused target is a decision, not a fault. When install-e2e.yml
+        # is disabled (Actions UI "Disable workflow", or `gh workflow
+        # disable`), `gh workflow run` gets HTTP 422 "Cannot trigger a
+        # 'workflow_dispatch' on a disabled workflow" and this clock went
+        # red every 12 hours until someone noticed (2026-09-29, run
+        # 36642609692, disabled by hand ~90 min before the fire). So read
+        # the target's state first and skip green, loudly, when it is not
+        # active -- the pause stays visible as a warning on every fire
+        # without turning a deliberate pause into a failing schedule.
+        run: |
+          state=$(gh api "repos/$REPO/actions/workflows/install-e2e.yml" --jq .state)
+          if [ "$state" != "active" ]; then
+            echo "::warning title=install-e2e not dispatched::install-e2e.yml is '$state' on $REPO. Re-enable it to resume the scheduled runs: gh workflow enable install-e2e.yml --repo $REPO"
+            echo "install-e2e.yml is **$state** on \`$REPO\`; nothing dispatched. Re-enable with \`gh workflow enable install-e2e.yml --repo $REPO\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh workflow run install-e2e.yml --repo "$REPO" --ref "$REF" -f route=all -f tag-count=2
